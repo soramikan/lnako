@@ -41,6 +41,20 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| lexer_probe_run.addArgs(args);
     lexer_probe_step.dependOn(&lexer_probe_run.step);
 
+    const syntax_probe = b.addExecutable(.{
+        .name = "syntax-probe",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/syntax_probe.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "lnako", .module = lnako }},
+        }),
+    });
+    const syntax_probe_step = b.step("syntax-probe", "構文変換後のトークンをJSON Linesで出力する");
+    const syntax_probe_run = b.addRunArtifact(syntax_probe);
+    if (b.args) |args| syntax_probe_run.addArgs(args);
+    syntax_probe_step.dependOn(&syntax_probe_run.step);
+
     const module_tests = b.addTest(.{ .root_module = lnako });
     const run_module_tests = b.addRunArtifact(module_tests);
     const exe_tests = b.addTest(.{ .root_module = exe.root_module });

@@ -7,6 +7,7 @@ pub const frontend = struct {
     pub const josi = @import("frontend/josi.zig");
     pub const token = @import("frontend/token.zig");
     pub const lexer = @import("frontend/lexer.zig");
+    pub const syntax_transform = @import("frontend/syntax_transform.zig");
 };
 
 pub const Command = enum {

@@ -13,6 +13,7 @@ SHA-256検証して `.cache/oracle/` に展開し、公式TypeScriptをNode 24�
 ```sh
 node tools/setup_oracle.mjs
 node tools/compare_lexer_oracle.mjs
+node tools/compare_syntax_oracle.mjs
 ```
 
 ## コミット

@@ -41,6 +41,8 @@ jobs:
         run: node tools/setup_oracle.mjs
       - name: Differential lexer test
         run: node tools/compare_lexer_oracle.mjs
+      - name: Differential syntax transform test
+        run: node tools/compare_syntax_oracle.mjs
       - name: Format
         run: zig build fmt-check
       - name: Test

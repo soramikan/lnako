@@ -33,6 +33,9 @@ source
 - `frontend/lexer.zig` は数値・BigInt・文字列・演算子・予約語と助詞を位置情報付きトークンへ変換する。
 - 助詞は最長一致で読み、`raw_josi` と意味上の `josi` を分離する。公式処理系との差分テストは
   `tools/compare_lexer_oracle.mjs` で固定バージョンのTypeScript実装へ直接照合する。
+- `frontend/syntax_transform.zig` は明示インデント構文と行末コロンへ `ここまで` を補い、DNCL/DNCL2の
+  代入、整数除算、制御構文、配列初期化、表示命令を標準トークンへ変換する。JSON内の改行は
+  ブロック境界として扱わない。
 
 ## 互換性の原則
 

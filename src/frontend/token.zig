@@ -17,6 +17,7 @@ pub const Kind = enum {
     keyword_repeat_count,
     keyword_repeat_while,
     keyword_repeat,
+    keyword_after_test,
     keyword_foreach,
     keyword_break,
     keyword_continue,
@@ -64,6 +65,13 @@ pub const Kind = enum {
     right_brace,
     pipe,
     colon,
+};
+
+pub const Mode = enum {
+    standard,
+    indent,
+    dncl,
+    dncl2,
 };
 
 pub const Span = struct {

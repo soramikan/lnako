@@ -4,12 +4,14 @@ const josi_mod = @import("josi.zig");
 const token_mod = @import("token.zig");
 
 pub const Kind = token_mod.Kind;
+pub const Mode = token_mod.Mode;
 pub const Token = token_mod.Token;
 
 pub const TokenStream = struct {
     arena: std.heap.ArenaAllocator,
     source: source_mod.NormalizedSource,
-    tokens: []const Token,
+    tokens: []Token,
+    mode: Mode,
 
     pub fn deinit(self: *TokenStream) void {
         self.arena.deinit();
@@ -34,7 +36,34 @@ pub fn tokenize(backing_allocator: std.mem.Allocator, input: []const u8) Error!T
         .tokens = .empty,
     };
     const tokens = try lexer.run();
-    return .{ .arena = arena, .source = normalized, .tokens = tokens };
+    return .{ .arena = arena, .source = normalized, .tokens = tokens, .mode = detectMode(input) };
+}
+
+pub fn detectMode(input: []const u8) Mode {
+    var lines = std.mem.splitScalar(u8, input, '\n');
+    var count: usize = 0;
+    while (lines.next()) |line| : (count += 1) {
+        if (count >= 100) break;
+        const trimmed = trimModeIndent(line);
+        if (std.mem.startsWith(u8, trimmed, "!DNCL2モード") or std.mem.startsWith(u8, trimmed, "💡DNCL2モード") or
+            std.mem.startsWith(u8, trimmed, "!DNCL2") or std.mem.startsWith(u8, trimmed, "💡DNCL2")) return .dncl2;
+        if (std.mem.startsWith(u8, trimmed, "!DNCLモード") or std.mem.startsWith(u8, trimmed, "💡DNCLモード")) return .dncl;
+        if (std.mem.startsWith(u8, trimmed, "!インデント構文") or std.mem.startsWith(u8, trimmed, "💡インデント構文") or
+            std.mem.startsWith(u8, trimmed, "!ここまでだるい") or std.mem.startsWith(u8, trimmed, "💡ここまでだるい")) return .indent;
+    }
+    return .standard;
+}
+
+fn trimModeIndent(line: []const u8) []const u8 {
+    var offset: usize = 0;
+    while (offset < line.len) {
+        if (line[offset] == ' ' or line[offset] == '\t' or line[offset] == '\r') {
+            offset += 1;
+        } else if (std.mem.startsWith(u8, line[offset..], "　") or std.mem.startsWith(u8, line[offset..], "・")) {
+            offset += "　".len;
+        } else break;
+    }
+    return line[offset..];
 }
 
 const Lexer = struct {
@@ -47,7 +76,7 @@ const Lexer = struct {
     indent: usize = 0,
     at_line_start: bool = true,
 
-    fn run(self: *Lexer) Error![]const Token {
+    fn run(self: *Lexer) Error![]Token {
         while (self.offset < self.source.text.len) {
             if (self.at_line_start) try self.readIndent();
             if (self.offset >= self.source.text.len) break;
@@ -61,19 +90,12 @@ const Lexer = struct {
     fn readIndent(self: *Lexer) Error!void {
         self.indent = 0;
         while (self.offset < self.source.text.len) {
-            if (self.source.text[self.offset] == ' ') {
-                self.offset += 1;
-                self.column += 1;
-                self.indent += 1;
-            } else if (self.source.text[self.offset] == '\t') {
-                self.offset += 1;
-                self.column += 1;
-                self.indent += 4;
-            } else if (std.mem.startsWith(u8, self.source.text[self.offset..], "　")) {
-                self.offset += "　".len;
-                self.column += 1;
-                self.indent += 2;
-            } else break;
+            const decoded = source_mod.decodeAt(self.source.text, self.offset) catch return error.InvalidUtf8;
+            const width = indentationWidth(decoded.codepoint);
+            if (width == 0) break;
+            self.offset += decoded.len;
+            self.column += 1;
+            self.indent += width;
         }
         self.at_line_start = false;
     }
@@ -318,6 +340,7 @@ const Lexer = struct {
         const start = self.offset;
         const start_line = self.line;
         const start_column = self.column;
+        const start_indent = self.indent;
         const delimiter = stringDelimiter(self.source.text[start..]).?;
         try self.advanceBytes(delimiter.open.len);
         const content_start = self.offset;
@@ -337,6 +360,8 @@ const Lexer = struct {
             if (self.offset < self.source.text.len and self.source.text[self.offset] == ',') try self.advanceBytes(1);
         }
         const kind: Kind = if (delimiter.template and std.mem.indexOfScalar(u8, self.source.text[content_start..content_end], '{') != null) .string_template else .string;
+        self.indent = start_indent;
+        self.at_line_start = false;
         try self.emitAt(kind, start, self.offset, self.source.text[content_start..content_end], value_josi, raw_josi, start_line, start_column);
     }
 
@@ -508,6 +533,16 @@ fn isHiragana(codepoint: u21) bool {
     return codepoint >= 0x3041 and codepoint <= 0x3093;
 }
 
+fn indentationWidth(codepoint: u21) usize {
+    if (codepoint == '\t') return 4;
+    if (codepoint == ' ' or codepoint == '|') return 1;
+    if (codepoint == 0x3000 or codepoint == 0x30FB or codepoint == 0x23CB or codepoint == 0x23CC) return 2;
+    if ((codepoint >= 0x2500 and codepoint <= 0x257F) or
+        (codepoint >= 0x23A0 and codepoint <= 0x23AF) or
+        (codepoint >= 0x23B8 and codepoint <= 0x23BF)) return 2;
+    return 0;
+}
+
 fn previousCodepoint(bytes: []const u8) !u21 {
     if (bytes.len == 0) return error.InvalidUtf8;
     var start = bytes.len - 1;
@@ -578,6 +613,7 @@ fn reservedKind(value: []const u8) ?Kind {
         .{ .text = "繰返", .kind = .keyword_repeat },
         .{ .text = "増繰返", .kind = .keyword_repeat },
         .{ .text = "減繰返", .kind = .keyword_repeat },
+        .{ .text = "後判定", .kind = .keyword_after_test },
         .{ .text = "反復", .kind = .keyword_foreach },
         .{ .text = "抜", .kind = .keyword_break },
         .{ .text = "続", .kind = .keyword_continue },
@@ -649,4 +685,11 @@ test "改行とUTF-8の位置を保持する" {
     try std.testing.expectEqual(@as(usize, 1), stream.tokens[3].span.line);
     try std.testing.expectEqual(@as(usize, 1), stream.tokens[3].span.column);
     try std.testing.expectEqualStrings("B", stream.tokens[3].value);
+}
+
+test "先頭100行のモード指定を検出する" {
+    try std.testing.expectEqual(Mode.indent, detectMode("　!インデント構文\n1を表示"));
+    try std.testing.expectEqual(Mode.dncl, detectMode("💡DNCLモード\nA←1"));
+    try std.testing.expectEqual(Mode.dncl2, detectMode("!DNCL2\nA=1"));
+    try std.testing.expectEqual(Mode.standard, detectMode("1を表示"));
 }
