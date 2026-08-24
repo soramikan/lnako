@@ -22,7 +22,7 @@ const lld = resolve(target, "bin", lldName());
 if (!(await isCurrent())) await install();
 verifyTool(clang, lock.version);
 verifyTool(lld, lock.version);
-const llvmLibrary = await findLlvmLibrary(target);
+const llvmLibrary = (await findLlvmLibrary(target)) ?? buildLlvmLibrary(target);
 await exportEnvironment(llvmLibrary);
 console.log(`LLVM/LLD ${lock.version}を確認しました: ${target}`);
 
@@ -79,9 +79,29 @@ async function exportEnvironment(llvmLibrary) {
 async function findLlvmLibrary(directory) {
   const matches = [];
   await walk(directory, matches);
-  if (matches.length === 0) throw new Error(`LLVM C API共有ライブラリが配布物にありません: ${directory}`);
+  if (matches.length === 0) return null;
   matches.sort((left, right) => libraryScore(right) - libraryScore(left) || left.localeCompare(right));
   return matches[0];
+}
+
+function buildLlvmLibrary(directory) {
+  if (process.platform === "win32") throw new Error(`LLVM C API共有ライブラリが配布物にありません: ${directory}`);
+  const llvmConfig = resolve(directory, "bin", "llvm-config");
+  const compiler = resolve(directory, "bin", "clang++");
+  verifyTool(llvmConfig, lock.version);
+  const components = ["core", "irreader", "analysis", "target", "passes", "nativecodegen"];
+  const libraries = capture(llvmConfig, ["--link-static", "--libfiles", ...components]).trim().split(/\s+/).filter(Boolean);
+  const systemLibraries = capture(llvmConfig, ["--link-static", "--system-libs", ...components]).trim().split(/\s+/).filter(Boolean);
+  if (libraries.length === 0) throw new Error(`LLVM静的ライブラリを列挙できません: ${directory}`);
+  const libraryDirectory = resolve(directory, "lib");
+  const output = resolve(libraryDirectory, process.platform === "darwin" ? "libLLVM-C.dylib" : "libLLVM-C.so");
+  const linkArguments = process.platform === "darwin"
+    ? ["-dynamiclib", "-Wl,-install_name,@rpath/libLLVM-C.dylib", "-Wl,-all_load", ...libraries, `-L${libraryDirectory}`, ...systemLibraries, "-o", output]
+    : ["-shared", "-Wl,--whole-archive", ...libraries, "-Wl,--no-whole-archive", `-L${libraryDirectory}`, ...systemLibraries, "-o", output];
+  const result = spawnSync(compiler, linkArguments, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+  if (result.status !== 0) throw new Error(`LLVM C API共有ライブラリの構築に失敗しました:\n${result.stderr}`);
+  console.log(`LLVM静的ライブラリからC API共有ライブラリを構築しました: ${output}`);
+  return output;
 }
 
 async function walk(directory, matches) {
@@ -126,6 +146,12 @@ function verifyTool(command, version) {
   const result = spawnSync(command, ["--version"], { encoding: "utf8" });
   if (result.status !== 0) throw new Error(`${command}を実行できません:\n${result.stderr}`);
   if (!`${result.stdout}\n${result.stderr}`.includes(version)) throw new Error(`${command}はLLVM ${version}ではありません`);
+}
+
+function capture(command, args) {
+  const result = spawnSync(command, args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+  if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} が失敗しました:\n${result.stderr}`);
+  return result.stdout;
 }
 
 function run(command, args) {
