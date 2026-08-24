@@ -43,6 +43,10 @@ jobs:
         run: node tools/compare_lexer_oracle.mjs
       - name: Differential syntax transform test
         run: node tools/compare_syntax_oracle.mjs
+      - name: Differential parser test
+        run: node tools/compare_parser_oracle.mjs
+      - name: Differential parser diagnostic test
+        run: node tools/compare_parser_diagnostics_oracle.mjs
       - name: Format
         run: zig build fmt-check
       - name: Test
@@ -51,4 +55,6 @@ jobs:
         run: zig build -Doptimize=ReleaseSafe
       - name: Smoke test
         shell: bash
-        run: ./zig-out/bin/lnako --version
+        run: |
+          ./zig-out/bin/lnako --version
+          ./zig-out/bin/lnako check tests/fixtures/check-valid.nako3

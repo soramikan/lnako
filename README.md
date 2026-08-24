@@ -21,7 +21,14 @@ zig build test
 zig build run -- --help
 ```
 
-## 予定しているCLI
+構文検査は実装済みです。エラー時は元ソースのファイル名・行・列、診断コード、該当行を表示し、
+終了コード1を返します。
+
+```sh
+zig build run -- check program.nako3
+```
+
+## CLI
 
 ```text
 lnako build <file.nako3> -o <output> [-O0|-O1|-O2|-O3] [--compat-js] [--emit exe|obj|llvm-ir]
@@ -32,9 +39,11 @@ lnako compat report
 lnako benchmark
 ```
 
+現時点では `check`、ヘルプ、バージョン表示を利用できます。ほかのサブコマンドは後続の
+意味解析・LLVMバックエンド・ランタイム実装とともに有効化します。
+
 設計と検証方針は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) と [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) を参照してください。
 
 ## ライセンス
 
 MIT License。互換テストで参照するなでしこ3もMIT Licenseです。第三者依存関係は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) に記録します。
-

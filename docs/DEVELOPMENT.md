@@ -14,7 +14,13 @@ SHA-256検証して `.cache/oracle/` に展開し、公式TypeScriptをNode 24�
 node tools/setup_oracle.mjs
 node tools/compare_lexer_oracle.mjs
 node tools/compare_syntax_oracle.mjs
+node tools/compare_parser_oracle.mjs
+node tools/compare_parser_diagnostics_oracle.mjs
 ```
+
+AST差分テストは公式の `core/test/fixtures/parser_corpus.mjs` を直接読み、コメント・空行の保持方式に
+左右されない構文フィンガープリントを比較します。ローカル追加ケースは
+`tests/oracle/parser-cases.json`、拒否ケースは `tests/oracle/parser-diagnostic-cases.json` に置きます。
 
 ## コミット
 

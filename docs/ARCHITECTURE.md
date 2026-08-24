@@ -36,6 +36,13 @@ source
 - `frontend/syntax_transform.zig` は明示インデント構文と行末コロンへ `ここまで` を補い、DNCL/DNCL2の
   代入、整数除算、制御構文、配列初期化、表示命令を標準トークンへ変換する。JSON内の改行は
   ブロック境界として扱わない。
+- `frontend/ast.zig` は全ノードに開始・終了位置を持たせ、値、子ノード、関数引数、ループ方向を
+  arena所有の共通表現として保持する。意味解析はこのASTをHIRへ変換する。
+- `frontend/parser.zig` はPratt式パーサと再帰下降の文・ブロックパーサを組み合わせる。代入、関数、
+  条件・反復・例外、配列・辞書・参照、連文、DNCL変換後構文を扱い、公式parser corpus全67件を
+  追加ケースとともに `tools/compare_parser_oracle.mjs` で構造照合する。
+- 構文エラーは `frontend/diagnostic.zig` の安定した診断コード、元入力のバイト範囲、行・列を持つ。
+  `lnako check` と差分診断テストは同じ診断データを使用する。
 
 ## 互換性の原則
 

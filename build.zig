@@ -55,6 +55,20 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| syntax_probe_run.addArgs(args);
     syntax_probe_step.dependOn(&syntax_probe_run.step);
 
+    const parser_probe = b.addExecutable(.{
+        .name = "parser-probe",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/parser_probe.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "lnako", .module = lnako }},
+        }),
+    });
+    const parser_probe_step = b.step("parser-probe", "ASTをJSON Linesで出力する");
+    const parser_probe_run = b.addRunArtifact(parser_probe);
+    if (b.args) |args| parser_probe_run.addArgs(args);
+    parser_probe_step.dependOn(&parser_probe_run.step);
+
     const module_tests = b.addTest(.{ .root_module = lnako });
     const run_module_tests = b.addRunArtifact(module_tests);
     const exe_tests = b.addTest(.{ .root_module = exe.root_module });
