@@ -41,6 +41,13 @@ try {
     console.error(`--compat-js省略時にJS取り込みを拒否しませんでした: ${JSON.stringify(normalize(withoutFlag))}`);
   }
 
+  const hatenaFixture = resolve(root, "tests/fixtures/compat-js-hatena.nako3");
+  const hatenaWithoutFlag = spawnSync(executable, ["run", hatenaFixture], options);
+  if (hatenaWithoutFlag.status === 0 || !hatenaWithoutFlag.stderr.includes("QuickJsCompatibilityRequired")) {
+    failures += 1;
+    console.error(`ハテナ関数のJS:指定を通常モードで拒否しませんでした: ${JSON.stringify(normalize(hatenaWithoutFlag))}`);
+  }
+
   const generated = resolve(temporary, process.platform === "win32" ? "compat-program.exe" : "compat-program");
   const build = spawnSync(executable, ["build", importFixture, "-o", generated, "--compat-js"], options);
   const embedded = spawnSync(generated, [], options);

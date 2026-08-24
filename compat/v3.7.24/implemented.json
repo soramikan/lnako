@@ -3403,5 +3403,98 @@
       "system-runtime-catalog-and-namespace"
     ],
     "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "ASYNC": {
+    "status": "native",
+    "tests": [
+      "system-runtime-execution-and-debug"
+    ],
+    "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+  },
+  "AWAIT実行": {
+    "status": "native",
+    "tests": [
+      "system-runtime-execution-and-debug"
+    ],
+    "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+  },
+  "ナデシコ": {
+    "status": "native",
+    "tests": [
+      "system-runtime-execution-and-debug"
+    ],
+    "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+  },
+  "ナデシコ続": {
+    "status": "native",
+    "tests": [
+      "system-runtime-execution-and-debug"
+    ],
+    "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+  },
+  "実行": {
+    "status": "native",
+    "tests": [
+      "system-runtime-execution-and-debug"
+    ],
+    "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+  },
+  "実行時間計測": {
+    "status": "native",
+    "tests": [
+      "system-runtime-execution-and-debug"
+    ],
+    "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+  },
+  "デバッグ表示": {
+    "status": "native",
+    "tests": [
+      "system-runtime-execution-and-debug"
+    ],
+    "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+  },
+  "ハテナ関数設定": {
+    "status": "native",
+    "tests": [
+      "system-runtime-execution-and-debug",
+      "compat-js-hatena"
+    ],
+    "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+  },
+  "ハテナ関数実行": {
+    "status": "native",
+    "tests": [
+      "system-runtime-execution-and-debug",
+      "compat-js-hatena"
+    ],
+    "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+  },
+  "エラー発生": {
+    "status": "native",
+    "tests": [
+      "system-runtime-execution-and-debug"
+    ],
+    "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+  },
+  "__DEBUG": {
+    "status": "native",
+    "tests": [
+      "system-runtime-execution-and-debug"
+    ],
+    "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+  },
+  "__DEBUG_BP_WAIT": {
+    "status": "native",
+    "tests": [
+      "system-runtime-execution-and-debug"
+    ],
+    "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+  },
+  "ASSERT等": {
+    "status": "native",
+    "tests": [
+      "system-runtime-execution-and-debug"
+    ],
+    "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
   }
 }

@@ -17,4 +17,10 @@ for (const testCase of cases) for (const name of testCase.commands) {
     throw new Error(`実装台帳にQuickJS公式差分テストIDがありません: ${name} -> ${testCase.id}`);
   }
 }
+for (const testCase of cases) for (const name of testCase.relatedCommands ?? []) {
+  const implementation = implemented[name];
+  if (implementation?.status !== "native" || !implementation.tests?.includes(testCase.id)) {
+    throw new Error(`実装台帳にQuickJS境界テストIDがありません: ${name} -> ${testCase.id}`);
+  }
+}
 console.log(`QuickJS互換命令カバレッジ: ${expected.length}/${expected.length}`);

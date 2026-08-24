@@ -1404,14 +1404,16 @@
       "category": "特殊命令",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-execution-and-debug"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0055",
@@ -1428,14 +1430,16 @@
       "category": "特殊命令",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-execution-and-debug"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0056",
@@ -1480,14 +1484,16 @@
       "category": "特殊命令",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-execution-and-debug"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0058",
@@ -1504,14 +1510,16 @@
       "category": "特殊命令",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-execution-and-debug"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0059",
@@ -1528,14 +1536,16 @@
       "category": "特殊命令",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-execution-and-debug"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0060",
@@ -1552,14 +1562,16 @@
       "category": "特殊命令",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-execution-and-debug"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0061",
@@ -1602,14 +1614,16 @@
       "category": "デバッグ支援",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-execution-and-debug"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0063",
@@ -1626,14 +1640,17 @@
       "category": "デバッグ支援",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-execution-and-debug",
+        "compat-js-hatena"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0064",
@@ -1650,14 +1667,17 @@
       "category": "デバッグ支援",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-execution-and-debug",
+        "compat-js-hatena"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0065",
@@ -1674,14 +1694,16 @@
       "category": "デバッグ支援",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-execution-and-debug"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0066",
@@ -1698,14 +1720,16 @@
       "category": "デバッグ支援",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-execution-and-debug"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0067",
@@ -1800,14 +1824,16 @@
       "category": "デバッグ支援",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-execution-and-debug"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0071",
@@ -11486,14 +11512,16 @@
       "category": "テスト",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-execution-and-debug"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0759",

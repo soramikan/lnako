@@ -10,6 +10,12 @@
     "fixture": "compat-js-host.nako3"
   },
   {
+    "id": "compat-js-hatena",
+    "commands": [],
+    "relatedCommands": ["ハテナ関数設定", "ハテナ関数実行"],
+    "fixture": "compat-js-hatena.nako3"
+  },
+  {
     "id": "compat-js-find-quirks",
     "commands": [],
     "fixture": "compat-js-find-quirks.nako3"

@@ -24,6 +24,7 @@ node tools/compare_interpreter_oracle.mjs
 node tools/generate_unicode_case.mjs --check
 node tools/update_plugin_system_implemented.mjs --check
 node tools/check_plugin_system_coverage.mjs
+node tools/check_system_runtime_coverage.mjs
 node tools/compare_plugin_system_oracle.mjs
 node tools/check_standard_plugin_coverage.mjs
 node tools/compare_standard_plugin_oracle.mjs

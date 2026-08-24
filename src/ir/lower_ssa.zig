@@ -25,7 +25,19 @@ pub fn lower(backing_allocator: std.mem.Allocator, hir_program: hir.Program) !ir
     }
     const module_entries = try allocator.alloc(ir.FunctionId, hir_program.modules.len);
     for (hir_program.modules, 0..) |module, index| module_entries[index] = module.entry_function;
-    return .{ .arena = arena, .functions = try functions.toOwnedSlice(allocator), .module_entries = module_entries };
+    const module_names = try allocator.alloc([]const u8, hir_program.modules.len);
+    const module_paths = try allocator.alloc([]const u8, hir_program.modules.len);
+    for (hir_program.modules, 0..) |module, index| {
+        module_names[index] = try allocator.dupe(u8, module.name);
+        module_paths[index] = try allocator.dupe(u8, module.path);
+    }
+    return .{
+        .arena = arena,
+        .functions = try functions.toOwnedSlice(allocator),
+        .module_entries = module_entries,
+        .module_names = module_names,
+        .module_paths = module_paths,
+    };
 }
 
 const BlockBuilder = struct {

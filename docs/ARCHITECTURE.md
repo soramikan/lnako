@@ -168,7 +168,9 @@ source
 - 正規表現は外部共有ライブラリへ依存しないUTF-16バックトラッキングエンジンで、選択、グループ、量指定、
   文字クラス、アンカー、フラグ、後方参照、通常・名前付きキャプチャ、置換参照と分割を提供する。
 - `tests/oracle/plugin-system-cases.json` は対象20カテゴリと追加パス5命令、計274命令を重複なく列挙する。
+  `tests/oracle/system-runtime-cases.json` は礼節・特殊実行・デバッグ支援・プラグイン管理の33命令を列挙する。
   `tools/check_plugin_system_coverage.mjs` が公式カタログ・互換台帳・テストIDを照合し、
+  `tools/check_system_runtime_coverage.mjs` が実行器固有命令を同様に照合する。
   `tools/compare_plugin_system_oracle.mjs` が同じソースを公式cnako3と `lnako run` で実行する。
 
 ## 数学・CSV・TOML・Promise標準命令

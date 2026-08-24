@@ -16,6 +16,7 @@ const cases = [
 const executable = resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
 const officialCli = resolve(oracleRoot, "src/cnako3.mjs");
 const fixedHost = resolve(root, "tools/oracle/fixed_host.mjs");
+const normalizedDebugHost = resolve(root, "tools/oracle/normalize_debug_host.mjs");
 const temporary = await mkdtemp(join(tmpdir(), "lnako-plugin-system-"));
 
 try {
@@ -36,11 +37,15 @@ try {
       },
       maxBuffer: 16 * 1024 * 1024,
     };
-    const official = spawnSync(process.execPath, ["--import", pathToFileURL(fixedHost).href, officialCli, sourcePath], options);
+    const oracleHost = testCase.normalizeDebugDump ? normalizedDebugHost : fixedHost;
+    const official = spawnSync(process.execPath, ["--import", pathToFileURL(oracleHost).href, officialCli, sourcePath], options);
     const actual = spawnSync(executable, ["run", sourcePath], options);
-    const expectedResult = normalize(official);
-    const actualResult = normalize(actual);
-    if (official.status !== 0 || actual.status !== 0 || JSON.stringify(expectedResult) !== JSON.stringify(actualResult)) {
+    const expectedResult = testCase.expectedFailure ? normalizeFailure(official) : normalize(official);
+    const actualResult = testCase.expectedFailure ? normalizeFailure(actual) : normalize(actual);
+    const mismatched = testCase.expectedFailure
+      ? !expectedResult.failed || !actualResult.failed
+      : official.status !== 0 || actual.status !== 0 || JSON.stringify(expectedResult) !== JSON.stringify(actualResult);
+    if (mismatched) {
       failures += 1;
       console.error(`plugin_system差分 ${testCase.id}:\nofficial=${JSON.stringify(expectedResult)}\nlnako  =${JSON.stringify(actualResult)}`);
       if (official.stderr) console.error(`公式stderr:\n${official.stderr}`);
@@ -70,5 +75,12 @@ function normalize(result) {
     stderrClass: result.status === 0 ? "success" : "runtime-error",
     exitCode: result.status,
     signal: result.signal,
+  };
+}
+
+function normalizeFailure(result) {
+  const output = `${result.stdout}\n${result.stderr}`;
+  return {
+    failed: result.status !== 0 || result.stderr.length > 0 || /\[(?:実行時)?エラー\]/.test(output) || output.includes("実行時エラー:"),
   };
 }

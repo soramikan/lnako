@@ -18,7 +18,11 @@ const expected = catalog.commands
   )
   .map((command) => command.name)
   .sort();
-const tested = cases.flatMap((testCase) => testCase.commands).sort();
+const catalogByName = new Map(catalog.commands.map((command) => [command.name, command]));
+const tested = cases
+  .flatMap((testCase) => testCase.commands)
+  .filter((name) => catalogByName.get(name)?.plugin === "plugin_system")
+  .sort();
 
 if (new Set(tested).size !== tested.length) throw new Error("system runtime差分テストの命令名が重複しています");
 if (JSON.stringify(tested) !== JSON.stringify(expected)) {

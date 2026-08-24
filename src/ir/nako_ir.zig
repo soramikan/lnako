@@ -106,6 +106,8 @@ pub const Program = struct {
     arena: std.heap.ArenaAllocator,
     functions: []Function,
     module_entries: []FunctionId,
+    module_names: []const []const u8 = &.{},
+    module_paths: []const []const u8 = &.{},
     compat_js: bool = false,
     javascript_modules: []JavaScriptModule = &.{},
     native_plugin_paths: []const []const u8 = &.{},
@@ -155,6 +157,8 @@ pub const Program = struct {
             .arena = arena,
             .functions = functions,
             .module_entries = try allocator.dupe(FunctionId, self.module_entries),
+            .module_names = try cloneStrings(allocator, self.module_names),
+            .module_paths = try cloneStrings(allocator, self.module_paths),
             .compat_js = self.compat_js,
             .javascript_modules = javascript_modules,
             .native_plugin_paths = native_plugin_paths,
@@ -166,3 +170,9 @@ pub const Program = struct {
         return null;
     }
 };
+
+fn cloneStrings(allocator: std.mem.Allocator, source: []const []const u8) ![][]const u8 {
+    const result = try allocator.alloc([]const u8, source.len);
+    for (source, result) |value, *target| target.* = try allocator.dupe(u8, value);
+    return result;
+}

@@ -1,5 +1,6 @@
 const std = @import("std");
 const ir = @import("../ir/nako_ir.zig");
+const ast = @import("../frontend/ast.zig");
 const parser = @import("../frontend/parser.zig");
 const lexer = @import("../frontend/lexer.zig");
 const josi = @import("../frontend/josi.zig");
@@ -173,6 +174,11 @@ const NamespaceFrame = struct {
     plugin_name: Value,
 };
 
+const HatenaCallback = union(enum) {
+    function: Value,
+    name: Value,
+};
+
 const Frame = struct {
     parent: ?*Frame,
     function: *const ir.Function,
@@ -225,6 +231,10 @@ pub const Interpreter = struct {
     max_event_count: usize = 100_000,
     courtesy_level: f64 = std.math.nan(f64),
     namespace_stack: std.ArrayList(NamespaceFrame) = .empty,
+    hatena_callbacks: std.ArrayList(HatenaCallback) = .empty,
+    current_span: ?ast.Span = null,
+    current_source_path: []const u8 = "",
+    debug_enabled: bool = false,
     system_initialized: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, runtime: *Runtime, program: ir.Program, host: Host) Interpreter {
@@ -255,6 +265,7 @@ pub const Interpreter = struct {
         for (self.promise_all_states.items) |state| self.allocator.destroy(state);
         self.promise_all_states.deinit(self.allocator);
         self.namespace_stack.deinit(self.allocator);
+        self.hatena_callbacks.deinit(self.allocator);
         self.* = undefined;
     }
 
@@ -313,6 +324,9 @@ pub const Interpreter = struct {
         defer frame.deinit(self.allocator);
         self.active_frame = &frame;
         defer self.active_frame = frame.parent;
+        const previous_source_path = self.current_source_path;
+        self.current_source_path = self.sourcePathForFunction(function.name);
+        defer self.current_source_path = previous_source_path;
 
         if (closure) |function_value| for (function_value.captures) |capture| {
             const name = try capture.name.toUtf8Lossy(self.allocator);
@@ -373,6 +387,9 @@ pub const Interpreter = struct {
     }
 
     fn executeInstruction(self: *Interpreter, frame: *Frame, instruction: ir.Instruction, predecessor: ?ir.BlockId) anyerror!void {
+        const previous_span = self.current_span;
+        self.current_span = instruction.span;
+        defer self.current_span = previous_span;
         var result: ?Value = null;
         switch (instruction.opcode) {
             .const_number => result = .{ .number = instruction.number_value orelse 0 },
@@ -564,6 +581,22 @@ pub const Interpreter = struct {
         if (std.mem.eql(u8, name, "プラグイン一覧取得") or std.mem.eql(u8, name, "モジュール一覧取得")) return self.stringArray(&default_plugin_names);
         if (std.mem.eql(u8, name, "助詞一覧取得")) return self.stringArray(&josi.exported_list);
         if (std.mem.eql(u8, name, "予約語一覧取得")) return self.stringArray(&lexer.exported_reserved_words);
+        if (std.mem.eql(u8, name, "ASYNC")) return .undefined;
+        if (std.mem.eql(u8, name, "AWAIT実行")) return self.awaitExecute(arguments);
+        if (std.mem.eql(u8, name, "ナデシコ") or std.mem.eql(u8, name, "ナデシコ続")) {
+            if (arguments.len == 0) return .undefined;
+            return self.executeDynamicValue(arguments[arguments.len - 1]);
+        }
+        if (std.mem.eql(u8, name, "実行")) return self.executeCallable(arguments);
+        if (std.mem.eql(u8, name, "実行時間計測")) return self.measureCallable(arguments);
+        if (std.mem.eql(u8, name, "デバッグ表示")) return self.debugDisplay(arguments);
+        if (std.mem.eql(u8, name, "ハテナ関数設定")) return self.configureHatena(arguments);
+        if (std.mem.eql(u8, name, "ハテナ関数実行")) return self.invokeHatena(arguments);
+        if (std.mem.eql(u8, name, "__DEBUG")) {
+            self.debug_enabled = true;
+            return .undefined;
+        }
+        if (std.mem.eql(u8, name, "__DEBUG_BP_WAIT")) return self.debugBreakpointWait(arguments);
         if (std.mem.eql(u8, name, "表示") or std.mem.eql(u8, name, "表示する")) return self.display(arguments);
         if (std.mem.eql(u8, name, "継続表示")) return self.continueDisplay(arguments);
         if (std.mem.eql(u8, name, "連続表示")) return self.displayMany(arguments);
@@ -586,17 +619,13 @@ pub const Interpreter = struct {
             self.exception_value = if (arguments.len > 0) arguments[arguments.len - 1] else try self.runtime.stringUtf8("エラー");
             return error.NakoException;
         }
-        if (std.mem.eql(u8, name, "ナデシコ") or std.mem.eql(u8, name, "ナデシコ続")) {
-            if (arguments.len == 0) return .undefined;
-            return self.executeDynamicValue(arguments[arguments.len - 1]);
-        }
         if (std.mem.eql(u8, name, "ASSERT") or std.mem.eql(u8, name, "確認")) {
             if (arguments.len == 0 or !arguments[arguments.len - 1].toBoolean()) return error.AssertionFailed;
             return arguments[arguments.len - 1];
         }
         if (std.mem.eql(u8, name, "ASSERT等") or std.mem.eql(u8, name, "テスト実行") or std.mem.eql(u8, name, "テスト等")) {
             if (arguments.len < 2 or !Value.strictEqual(arguments[0], arguments[1])) return error.AssertionFailed;
-            return .{ .boolean = true };
+            return .undefined;
         }
         if (std.mem.eql(u8, name, "秒待") or std.mem.eql(u8, name, "秒待機") or std.mem.eql(u8, name, "秒逐次待機")) {
             const milliseconds = try self.delayMilliseconds(if (arguments.len > 0) arguments[arguments.len - 1] else .undefined);
@@ -723,6 +752,162 @@ pub const Interpreter = struct {
         const suffix = "__$entry";
         if (!std.mem.endsWith(u8, entry_name, suffix)) return "";
         return entry_name[0 .. entry_name.len - suffix.len];
+    }
+
+    fn sourcePathForFunction(self: Interpreter, function_name: []const u8) []const u8 {
+        var best: ?usize = null;
+        for (self.program.module_names, 0..) |module_name, index| {
+            if (index >= self.program.module_paths.len or !std.mem.startsWith(u8, function_name, module_name)) continue;
+            if (function_name.len <= module_name.len + 1 or !std.mem.eql(u8, function_name[module_name.len .. module_name.len + 2], "__")) continue;
+            if (best == null or module_name.len > self.program.module_names[best.?].len) best = index;
+        }
+        return if (best) |index| self.program.module_paths[index] else self.current_source_path;
+    }
+
+    fn awaitExecute(self: *Interpreter, arguments: []const Value) !Value {
+        if (arguments.len < 2) return error.InvalidAwaitArguments;
+        const callable = try self.resolveCallback(arguments[0]);
+        const call_arguments = if (arguments[1] == .array) arguments[1].array.items.items else arguments[1..2];
+        const result = try self.callFunctionValue(callable.function, call_arguments);
+        return self.awaitValue(result);
+    }
+
+    fn awaitValue(self: *Interpreter, value: Value) !Value {
+        if (value != .promise) return value;
+        var promise_root = value;
+        var roots = self.runtime.rootFrame();
+        defer roots.deinit();
+        try roots.protect(&promise_root);
+        if (promise_root.promise.state == .pending) try self.drainEventLoop();
+        return switch (promise_root.promise.state) {
+            .fulfilled => promise_root.promise.result,
+            .rejected => {
+                self.exception_value = promise_root.promise.result;
+                return error.NakoException;
+            },
+            .pending => error.PromiseStillPending,
+        };
+    }
+
+    fn executeCallable(self: *Interpreter, arguments: []const Value) !Value {
+        if (arguments.len == 0) return .undefined;
+        const candidate = arguments[arguments.len - 1];
+        if (candidate == .function) return self.callFunctionValue(candidate.function, &.{});
+        if (candidate == .string) {
+            const callable = try self.resolveCallback(candidate);
+            return self.callFunctionValue(callable.function, &.{});
+        }
+        return candidate;
+    }
+
+    fn measureCallable(self: *Interpreter, arguments: []const Value) !Value {
+        if (arguments.len == 0) return error.NotCallable;
+        const callable = try self.resolveCallback(arguments[arguments.len - 1]);
+        const started = try self.host.monotonicMilliseconds();
+        _ = try self.callFunctionValue(callable.function, &.{});
+        const finished = try self.host.monotonicMilliseconds();
+        return .{ .number = finished - started };
+    }
+
+    fn debugDisplay(self: *Interpreter, arguments: []const Value) !Value {
+        const value = if (arguments.len > 0) arguments[arguments.len - 1] else Value.undefined;
+        const printable = switch (value) {
+            .null_value, .array, .dictionary, .bytes => (try plugin_system.json.call(self.runtime, "JSON変換", &.{value})).?,
+            else => value,
+        };
+        const text = try self.runtime.valueToString(printable);
+        const utf8 = try text.string.toUtf8Lossy(self.allocator);
+        defer self.allocator.free(utf8);
+        const line = if (self.current_span) |span| span.line + 1 else 1;
+        const source_path = if (self.current_source_path.len > 0) self.current_source_path else self.primaryModuleName();
+        const message = try std.fmt.allocPrint(self.allocator, "{s}({d}): {s}", .{ source_path, line, utf8 });
+        defer self.allocator.free(message);
+        var message_value = try self.runtime.stringUtf8(message);
+        var roots = self.runtime.rootFrame();
+        defer roots.deinit();
+        try roots.protect(&message_value);
+        _ = try self.display(&.{message_value});
+        return .undefined;
+    }
+
+    fn configureHatena(self: *Interpreter, arguments: []const Value) !Value {
+        self.hatena_callbacks.clearRetainingCapacity();
+        if (arguments.len == 0) return .undefined;
+        const setting = arguments[arguments.len - 1];
+        switch (setting) {
+            .function => try self.hatena_callbacks.append(self.allocator, .{ .function = setting }),
+            .string => try self.appendHatenaName(setting),
+            .array => |array| for (array.items.items) |item| {
+                if (item != .string) return error.InvalidHatenaCallback;
+                const utf8 = try item.string.toUtf8Lossy(self.allocator);
+                defer self.allocator.free(utf8);
+                if (std.mem.startsWith(u8, utf8, "JS:")) {
+                    var code = try self.runtime.stringUtf8(utf8[3..]);
+                    var roots = self.runtime.rootFrame();
+                    defer roots.deinit();
+                    try roots.protect(&code);
+                    const callback = try self.callBuiltin("JS実行", &.{code});
+                    if (callback != .function) return error.InvalidHatenaCallback;
+                    try self.hatena_callbacks.append(self.allocator, .{ .function = callback });
+                } else try self.appendHatenaName(item);
+            },
+            else => {},
+        }
+        return .undefined;
+    }
+
+    fn appendHatenaName(self: *Interpreter, name: Value) !void {
+        try self.hatena_callbacks.append(self.allocator, .{ .name = name });
+    }
+
+    fn invokeHatena(self: *Interpreter, arguments: []const Value) !Value {
+        var parameter = if (arguments.len > 0) arguments[arguments.len - 1] else Value.undefined;
+        var roots = self.runtime.rootFrame();
+        defer roots.deinit();
+        try roots.protect(&parameter);
+        if (self.hatena_callbacks.items.len == 0) {
+            _ = try self.debugDisplay(&.{parameter});
+            return .undefined;
+        }
+        for (self.hatena_callbacks.items) |callback| parameter = switch (callback) {
+            .function => |function| try self.callFunctionValue(function.function, &.{parameter}),
+            .name => |name| try self.callNamedHatena(name, parameter),
+        };
+        return .undefined;
+    }
+
+    fn callNamedHatena(self: *Interpreter, name_value: Value, parameter: Value) !Value {
+        const name = try name_value.string.toUtf8Lossy(self.allocator);
+        defer self.allocator.free(name);
+        return self.callBuiltin(name, &.{parameter});
+    }
+
+    fn debugBreakpointWait(self: *Interpreter, arguments: []const Value) !Value {
+        const line_value = if (arguments.len > 0) arguments[arguments.len - 1] else Value.undefined;
+        const line = try self.runtime.valueToNumber(line_value);
+        const force_value: Value = self.globals.get("__DEBUG強制待機") orelse .undefined;
+        const force_wait = force_value.toBoolean();
+        try self.setGlobal("__DEBUG強制待機", .{ .number = 0 });
+        var breakpoint_hit = false;
+        if (self.globals.get("__DEBUGブレイクポイント一覧")) |breakpoints| if (breakpoints == .array) {
+            for (breakpoints.array.items.items) |candidate| if (Value.strictEqual(candidate, .{ .number = line })) {
+                breakpoint_hit = true;
+                break;
+            };
+        };
+        if (!force_wait and !breakpoint_hit) return .{ .number = line };
+
+        const plugin_name = self.globals.get("プラグイン名") orelse .undefined;
+        const main_name = try self.runtime.stringUtf8("メイン");
+        if (!Value.strictEqual(plugin_name, main_name)) return self.runtime.createPromise();
+        while (true) {
+            const flag = self.globals.get("__DEBUG待機フラグ") orelse .undefined;
+            if (flag == .number and flag.number == 1) {
+                try self.setGlobal("__DEBUG待機フラグ", .{ .number = 0 });
+                return .{ .number = line };
+            }
+            try self.waitMilliseconds(500);
+        }
     }
 
     fn display(self: *Interpreter, arguments: []const Value) !Value {
@@ -1534,6 +1719,10 @@ pub const Interpreter = struct {
             try runtime.traceExternal(entry.namespace);
             try runtime.traceExternal(entry.plugin_name);
         }
+        for (self.hatena_callbacks.items) |callback| switch (callback) {
+            .function => |function| try runtime.traceExternal(function),
+            .name => |name| try runtime.traceExternal(name),
+        };
         try self.node_state.trace(runtime);
         try self.http_server_state.trace(runtime);
         try self.caniuse_state.trace(runtime);
@@ -1628,6 +1817,56 @@ test "礼節状態と名前空間スタックと公開言語カタログを実�
         "main\nメイン\n0\n100\n101\n内側\n孫\nmain\n副\n[\"main__甲\"]\n478\n48\n38\n",
         host.written(),
     );
+}
+
+test "特殊実行とデバッグ支援命令を実行する" {
+    const source =
+        "●(Aを)倍とは\nA*2で戻る\nここまで\n" ++
+        "●七とは\n7で戻る\nここまで\n" ++
+        "●空関数とは\n1で戻る\nここまで\n" ++
+        "ASYNC()\nAWAIT実行(\"倍\",[3])を表示\n実行(\"七\")を表示\n実行(9)を表示\n" ++
+        "実行時間計測(\"空関数\")を表示\nデバッグ表示({\"a\":1})\n??(2+3)\n" ++
+        "ハテナ関数設定([\"文字列変換\",\"デバッグ表示\"])\n??(6)\n" ++
+        "エラー監視\n\"故意\"のエラー発生\nエラーならば\nエラーメッセージを表示\nここまで\n" ++
+        "__DEBUG_BP_WAIT(12)を表示\nASSERT等(1,1)を表示\n__DEBUG()\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expect(interpreter.debug_enabled);
+    try std.testing.expectEqualStrings(
+        "6\n7\n9\n0\nmain.nako3(15): {\"a\":1}\nmain.nako3(16): 5\nmain.nako3(18): 6\n故意\n12\nundefined\n",
+        host.written(),
+    );
+}
+
+test "AWAIT実行でPromiseを完了させブレイクポイント待機を解除する" {
+    const source =
+        "●(Xを)待機値とは\nXで戻る\nここまで\n" ++
+        "動いた時には(成功,失敗)\n0.001秒後には\n成功(8)\nここまで\nここまで\n" ++
+        "P=そ\nAWAIT実行(\"待機値\",[P])を表示\n" ++
+        "__DEBUGブレイクポイント一覧=[13]\n__DEBUG待機フラグ=1\n__DEBUG_BP_WAIT(13)を表示\n__DEBUG待機フラグを表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("8\n13\n0\n", host.written());
 }
 
 test "バイト列の添字・更新・反復をUint8Array互換で実行する" {
