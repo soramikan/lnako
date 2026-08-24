@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
 const root = resolve(import.meta.dirname, "..");
 const oracleArg = process.argv.indexOf("--oracle");
@@ -32,7 +33,7 @@ try {
       },
       maxBuffer: 16 * 1024 * 1024,
     };
-    const official = spawnSync(process.execPath, ["--import", fixedHost, officialCli, sourcePath], options);
+    const official = spawnSync(process.execPath, ["--import", pathToFileURL(fixedHost).href, officialCli, sourcePath], options);
     const actual = spawnSync(executable, ["run", sourcePath], options);
     const expectedResult = normalize(official);
     const actualResult = normalize(actual);
