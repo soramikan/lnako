@@ -24,7 +24,7 @@ try {
     const options = {
       cwd: temporary,
       encoding: "utf8",
-      env: { ...process.env, TZ: "Asia/Tokyo" },
+      env: { ...process.env, TZ: "Asia/Tokyo", LNAKO_LLVM_TRACE: "1" },
       maxBuffer: 16 * 1024 * 1024,
     };
     const officialSource = spawnSync(process.execPath, [officialCli, sourcePath], options);

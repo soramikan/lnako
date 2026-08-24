@@ -18,6 +18,13 @@ const categories = new Set([
   "型変換",
   "JSON",
   "正規表現",
+  "配列操作",
+  "二次元配列処理",
+  "日時処理(簡易)",
+  "URLエンコードとパラメータ",
+  "辞書型変数の操作",
+  "ハッシュ",
+  "標準出力",
 ]);
 const expected = catalog.commands
   .filter((command) => command.plugin === "plugin_system" && categories.has(command.category))
@@ -41,4 +48,4 @@ for (const testCase of cases) {
     }
   }
 }
-console.log(`plugin_system対象12カテゴリの公式命令カバレッジ: ${expected.length}/${expected.length}`);
+console.log(`plugin_system対象${categories.size}カテゴリの公式命令カバレッジ: ${expected.length}/${expected.length}`);

@@ -30,11 +30,13 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
     }
     var generated = try module_mod.generate(allocator, program, options.source_path, options.optimization != .o0);
     defer generated.deinit(allocator);
+    try trace(diagnostics, "LLVM共有ライブラリを読み込みます");
     var api = api_mod.Api.openAt(allocator, options.llvm_root, options.llvm_library) catch |failure| {
         try diagnostics.print("LLVM 22.1.8を読み込めません: {s}\n", .{@errorName(failure)});
         return failure;
     };
     defer api.close();
+    try trace(diagnostics, "LLVMコンテキストを作成します");
     const context = api.contextCreate() orelse return error.LlvmContextCreationFailed;
     defer api.contextDispose(context);
     const buffer_name = try allocator.dupeZ(u8, options.source_path);
@@ -48,6 +50,7 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
     }
     defer api.disposeModule(llvm_module);
 
+    try trace(diagnostics, "LLVMホストターゲットを初期化します");
     api.initializeTargetInfo();
     api.initializeTarget();
     api.initializeTargetMc();
@@ -69,6 +72,7 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
     api.setTarget(llvm_module, triple);
     api.setDataLayout(llvm_module, data_layout);
 
+    try trace(diagnostics, "LLVMモジュールを検証・最適化します");
     try verify(&api, llvm_module, diagnostics);
     const pass_options = api.createPassBuilderOptions() orelse return error.LlvmPassBuilderCreationFailed;
     defer api.disposePassBuilderOptions(pass_options);
@@ -87,6 +91,7 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
     }
     try verify(&api, llvm_module, diagnostics);
 
+    try trace(diagnostics, "LLVM生成物を出力します");
     switch (options.emit) {
         .llvm_ir => {
             const module_text = api.printModule(llvm_module);
@@ -103,6 +108,16 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
             try linkExecutable(allocator, io, object_path, options.output_path, options.llvm_root, diagnostics);
         },
     }
+}
+
+fn trace(diagnostics: *std.Io.Writer, message: []const u8) !void {
+    if (!llvmTraceEnabled()) return;
+    try diagnostics.print("[LLVM] {s}\n", .{message});
+}
+
+fn llvmTraceEnabled() bool {
+    if (builtin.os.tag == .windows) return false;
+    return std.c.getenv("LNAKO_LLVM_TRACE") != null;
 }
 
 fn verify(api: *api_mod.Api, module: api_mod.ModuleRef, diagnostics: *std.Io.Writer) !void {

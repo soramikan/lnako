@@ -38,9 +38,10 @@ Promiseは明示的な状態機械とFIFOマイクロタスクキューで実装
 `compat/v3.7.24/summary.json` と `implemented.json` に記録しています。
 
 `plugin_system` のシステム定数、四則・論理・ビット演算、型変換、文字列・文字種・幅・かな変換、JSON、
-正規表現の12カテゴリ168命令をZigランタイムへ実装しています。Unicode大小文字テーブルは固定Node 24の
+正規表現、配列・表・辞書・日時・URL・標準出力・タイマーの275命令をZigランタイムへ実装しています。Unicode大小文字テーブルは固定Node 24の
 ECMAScript変換から生成してコミットし、正規表現はUTF-16上の内蔵エンジンで量指定、選択、文字クラス、
-通常・名前付きキャプチャ、置換参照、分割を扱います。全168命令は公式v3.7.24との差分ケースに対応付けています。
+通常・名前付きキャプチャ、置換参照、分割を扱います。公式カタログ上は309/527命令がnativeで、各命令を
+公式v3.7.24との差分ケースに対応付けています。
 
 ```sh
 zig build run -- check program.nako3
@@ -77,6 +78,8 @@ lnako benchmark
 マイルストーンまで明示的に拒否します。
 
 設計と検証方針は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) と [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) を参照してください。
+公式実装の説明だけでは分かりにくい戻り値、破壊的変更、出力プールなどは
+[docs/COMPATIBILITY_QUIRKS.md](docs/COMPATIBILITY_QUIRKS.md) に差分テストID付きで記録します。
 
 ## ライセンス
 

@@ -4521,14 +4521,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0178",
@@ -4545,14 +4547,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0179",
@@ -4569,14 +4573,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0180",
@@ -4593,14 +4599,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0181",
@@ -4617,14 +4625,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0182",
@@ -4641,14 +4651,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0183",
@@ -4665,14 +4677,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-mutation-quirks"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "元配列を更新し空配列を返す公式挙動を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0184",
@@ -4689,14 +4703,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-mutation-quirks"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "元配列を更新して元配列を返す公式挙動を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0185",
@@ -4713,14 +4729,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0186",
@@ -4737,14 +4755,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0187",
@@ -4761,14 +4781,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0188",
@@ -4785,14 +4807,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-callbacks"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "文字列指定関数の一意解決と安定ソートを実装し、公式差分テストに成功"
     },
     {
       "id": "command-0189",
@@ -4809,14 +4833,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0190",
@@ -4833,14 +4859,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "差し替え可能な乱数源で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0191",
@@ -4857,14 +4885,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-mutation-quirks"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "配列切取の別名として実装し、公式差分テストに成功"
     },
     {
       "id": "command-0192",
@@ -4881,14 +4911,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-mutation-quirks"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "辞書のtruthy判定を含む公式挙動を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0193",
@@ -4905,14 +4937,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-mutation-quirks"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "破壊的な範囲取り出しを実装し、公式差分テストに成功"
     },
     {
       "id": "command-0194",
@@ -4929,14 +4963,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-mutation-quirks"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0195",
@@ -4953,14 +4989,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-mutation-quirks"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "更新後配列を返す公式挙動を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0196",
@@ -4977,14 +5015,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-mutation-quirks"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "配列プッシュの別名として実装し、公式差分テストに成功"
     },
     {
       "id": "command-0197",
@@ -5001,14 +5041,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式と同じJSON規則の深い複製を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0198",
@@ -5025,14 +5067,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0199",
@@ -5049,14 +5093,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "UTF-16文字列・配列・辞書の参照を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0200",
@@ -5073,14 +5119,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "参照の別名として実装し、公式差分テストに成功"
     },
     {
       "id": "command-0201",
@@ -5097,14 +5145,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式のJSON複製を含む挙動を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0202",
@@ -5121,14 +5171,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0203",
@@ -5145,14 +5197,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0204",
@@ -5169,14 +5223,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "JavaScript互換の数値変換で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0205",
@@ -5193,14 +5249,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0206",
@@ -5217,14 +5275,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0207",
@@ -5241,14 +5301,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "多次元配列と要素複製を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0208",
@@ -5265,14 +5327,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-callbacks"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "生成コード関数コールバックを実装し、公式差分テストに成功"
     },
     {
       "id": "command-0209",
@@ -5289,14 +5353,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-callbacks"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "生成コード関数コールバックを実装し、公式差分テストに成功"
     },
     {
       "id": "command-0210",
@@ -5313,14 +5379,16 @@
       "category": "配列操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-array-callbacks"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "生成コード関数コールバックを実装し、公式差分テストに成功"
     },
     {
       "id": "command-0211",
@@ -5337,14 +5405,16 @@
       "category": "二次元配列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-table"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0212",
@@ -5361,14 +5431,16 @@
       "category": "二次元配列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-table"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0213",
@@ -5385,14 +5457,16 @@
       "category": "二次元配列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-table"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0214",
@@ -5409,14 +5483,16 @@
       "category": "二次元配列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-table"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0215",
@@ -5433,14 +5509,16 @@
       "category": "二次元配列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-table"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0216",
@@ -5457,14 +5535,16 @@
       "category": "二次元配列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-table"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "空表で1を返す公式挙動を含めて実装し、公式差分テストに成功"
     },
     {
       "id": "command-0217",
@@ -5481,14 +5561,16 @@
       "category": "二次元配列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-table"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0218",
@@ -5505,14 +5587,16 @@
       "category": "二次元配列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-table"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "欠損列を空文字列で補う公式挙動を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0219",
@@ -5529,14 +5613,16 @@
       "category": "二次元配列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-table"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "欠損列をundefinedにする公式挙動を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0220",
@@ -5553,14 +5639,16 @@
       "category": "二次元配列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-table"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "挿入順を保持して実装し、公式差分テストに成功"
     },
     {
       "id": "command-0221",
@@ -5577,14 +5665,16 @@
       "category": "二次元配列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-table"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0222",
@@ -5601,14 +5691,16 @@
       "category": "二次元配列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-table"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0223",
@@ -5625,14 +5717,16 @@
       "category": "二次元配列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-table"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0224",
@@ -5649,14 +5743,16 @@
       "category": "二次元配列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-table"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "JavaScript互換加算で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0225",
@@ -5673,14 +5769,16 @@
       "category": "二次元配列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-table"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "生の正規表現文字列で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0226",
@@ -5697,14 +5795,16 @@
       "category": "二次元配列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-table"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "生の正規表現文字列で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0227",
@@ -5721,14 +5821,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "固定した元号表を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0228",
@@ -5745,14 +5847,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "差し替え可能な壁時計で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0229",
@@ -5769,14 +5873,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "差し替え可能な壁時計で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0230",
@@ -5793,14 +5899,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "差し替え可能な壁時計で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0231",
@@ -5817,14 +5925,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0232",
@@ -5841,14 +5951,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0233",
@@ -5865,14 +5977,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0234",
@@ -5889,14 +6003,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0235",
@@ -5913,14 +6029,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0236",
@@ -5937,14 +6055,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0237",
@@ -5961,14 +6081,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0238",
@@ -5985,14 +6107,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0239",
@@ -6009,14 +6133,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0240",
@@ -6033,14 +6159,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0241",
@@ -6057,14 +6185,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0242",
@@ -6081,14 +6211,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0243",
@@ -6105,14 +6237,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "UNIXTIME変換の別名として実装し、公式差分テストに成功"
     },
     {
       "id": "command-0244",
@@ -6129,14 +6263,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0245",
@@ -6153,14 +6289,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式書式トークンを実装し、公式差分テストに成功"
     },
     {
       "id": "command-0246",
@@ -6177,14 +6315,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "明治以降の元号変換を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0247",
@@ -6201,14 +6341,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0248",
@@ -6225,14 +6367,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0249",
@@ -6249,14 +6393,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0250",
@@ -6273,14 +6419,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0251",
@@ -6297,14 +6445,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0252",
@@ -6321,14 +6471,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0253",
@@ -6345,14 +6497,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "単位指定の日時間隔を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0254",
@@ -6369,14 +6523,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "JavaScript Date正規化規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0255",
@@ -6393,14 +6549,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "JavaScript Date正規化規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0256",
@@ -6417,14 +6575,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "日本語単位の日付時刻加算を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0257",
@@ -6441,14 +6601,16 @@
       "category": "日時処理(簡易)",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "差し替え可能な単調時計で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0258",
@@ -6465,14 +6627,16 @@
       "category": "URLエンコードとパラメータ",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-url"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "UTF-16サロゲート検証を含めて実装し、公式差分テストに成功"
     },
     {
       "id": "command-0259",
@@ -6489,14 +6653,16 @@
       "category": "URLエンコードとパラメータ",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-url"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "UTF-8とURI不正列検証を含めて実装し、公式差分テストに成功"
     },
     {
       "id": "command-0260",
@@ -6513,14 +6679,16 @@
       "category": "URLエンコードとパラメータ",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-url"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "重複キー末尾優先を含めて実装し、公式差分テストに成功"
     },
     {
       "id": "command-0261",
@@ -7533,14 +7701,16 @@
       "category": "辞書型変数の操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-dictionary-hash"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "挿入順を保持して実装し、公式差分テストに成功"
     },
     {
       "id": "command-0301",
@@ -7557,14 +7727,16 @@
       "category": "辞書型変数の操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-dictionary-hash"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0302",
@@ -7581,14 +7753,16 @@
       "category": "辞書型変数の操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-dictionary-hash"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0303",
@@ -7605,14 +7779,16 @@
       "category": "ハッシュ",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-dictionary-hash"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "挿入順を保持して実装し、公式差分テストに成功"
     },
     {
       "id": "command-0304",
@@ -7629,14 +7805,16 @@
       "category": "ハッシュ",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-dictionary-hash"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "挿入順を保持して実装し、公式差分テストに成功"
     },
     {
       "id": "command-0305",
@@ -7653,14 +7831,16 @@
       "category": "ハッシュ",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-dictionary-hash"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0306",
@@ -7677,14 +7857,16 @@
       "category": "ハッシュ",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-dictionary-hash"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0307",
@@ -7701,14 +7883,16 @@
       "category": "標準出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-stdio"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "継続表示プールと表示ログを含めて実装し、公式差分テストに成功"
     },
     {
       "id": "command-0308",
@@ -7725,14 +7909,16 @@
       "category": "標準出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-stdio"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "内部出力プールを実装し、公式差分テストに成功"
     },
     {
       "id": "command-0309",
@@ -7749,14 +7935,16 @@
       "category": "標準出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-stdio"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "可変個引数の連結表示を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0310",
@@ -7773,14 +7961,16 @@
       "category": "標準出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-stdio"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "可変個引数の継続表示を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0311",
@@ -7797,14 +7987,16 @@
       "category": "標準出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-stdio"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "表示履歴システム変数として実装し、公式差分テストに成功"
     },
     {
       "id": "command-0312",
@@ -7821,14 +8013,16 @@
       "category": "標準出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-stdio"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "表示履歴の初期化を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0313",
@@ -7845,14 +8039,16 @@
       "category": "標準出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-stdio"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "CLIロガーの改行規則を含めて実装し、公式差分テストに成功"
     },
     {
       "id": "command-0314",
@@ -7869,14 +8065,16 @@
       "category": "標準出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-stdio"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "標準出力への行表示を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0315",
@@ -17687,14 +17885,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "固定した元号表を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0808",
@@ -17710,14 +17910,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "差し替え可能な壁時計で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0809",
@@ -17733,14 +17935,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "差し替え可能な壁時計で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0810",
@@ -17756,14 +17960,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0811",
@@ -17779,14 +17985,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0812",
@@ -17802,14 +18010,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0813",
@@ -17825,14 +18035,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0814",
@@ -17848,14 +18060,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0815",
@@ -17871,14 +18085,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0816",
@@ -17894,14 +18110,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0817",
@@ -17917,14 +18135,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0818",
@@ -17940,14 +18160,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0819",
@@ -17963,14 +18185,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0820",
@@ -17986,14 +18210,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0821",
@@ -18009,14 +18235,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "UNIXTIME変換の別名として実装し、公式差分テストに成功"
     },
     {
       "id": "command-0822",
@@ -18032,14 +18260,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0823",
@@ -18055,14 +18285,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0824",
@@ -18078,14 +18310,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "明治以降の元号変換を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0825",
@@ -18101,14 +18335,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0826",
@@ -18124,14 +18360,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0827",
@@ -18147,14 +18385,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0828",
@@ -18170,14 +18410,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "単位指定の日時間隔を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0829",
@@ -18193,14 +18435,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0830",
@@ -18216,14 +18460,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0831",
@@ -18239,14 +18485,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0832",
@@ -18262,14 +18510,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "JavaScript Date正規化規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0833",
@@ -18285,14 +18535,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "JavaScript Date正規化規則で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0834",
@@ -18308,14 +18560,16 @@
       "category": "日時処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-datetime"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "日本語単位の日付時刻加算を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0835",

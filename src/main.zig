@@ -81,7 +81,13 @@ pub fn main(init: std.process.Init) !void {
             defer ir_program.deinit();
             var runtime = lnako.runtime.value.Runtime.init(allocator);
             defer runtime.deinit();
-            var cli_host = CliHost{ .writer = stdout, .io = init.io };
+            var cli_host = CliHost{
+                .writer = stdout,
+                .io = init.io,
+                .fixed_now_milliseconds = parseOptionalI64(init.environ_map.get("LNAKO_TEST_NOW_MS")),
+                .fixed_monotonic_milliseconds = parseOptionalF64(init.environ_map.get("LNAKO_TEST_MONOTONIC_MS")),
+                .random_state = parseOptionalU64(init.environ_map.get("LNAKO_TEST_RANDOM_SEED")) orelse 0,
+            };
             var interpreter = lnako.runtime.interpreter.Interpreter.init(allocator, &runtime, ir_program, cli_host.host());
             defer interpreter.deinit();
             _ = interpreter.run() catch |err| {
@@ -163,9 +169,19 @@ fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
 const CliHost = struct {
     writer: *std.Io.Writer,
     io: std.Io,
+    random_state: u64 = 0,
+    fixed_now_milliseconds: ?i64 = null,
+    fixed_monotonic_milliseconds: ?f64 = null,
 
     fn host(self: *CliHost) lnako.runtime.interpreter.Host {
-        return .{ .context = self, .writeFn = write, .sleepMillisecondsFn = sleepMilliseconds };
+        return .{
+            .context = self,
+            .writeFn = write,
+            .sleepMillisecondsFn = sleepMilliseconds,
+            .nowMillisecondsFn = nowMilliseconds,
+            .monotonicMillisecondsFn = monotonicMilliseconds,
+            .randomFn = random,
+        };
     }
 
     fn write(context: *anyopaque, bytes: []const u8) !void {
@@ -178,7 +194,49 @@ const CliHost = struct {
         const duration = std.Io.Duration.fromMilliseconds(std.math.cast(i64, milliseconds) orelse return error.TimerOverflow);
         try std.Io.sleep(self.io, duration, .awake);
     }
+
+    fn nowMilliseconds(context: *anyopaque) !i64 {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        if (self.fixed_now_milliseconds) |fixed| return fixed;
+        const nanoseconds = std.Io.Timestamp.now(self.io, .real).nanoseconds;
+        return @intCast(@divTrunc(nanoseconds, 1_000_000));
+    }
+
+    fn monotonicMilliseconds(context: *anyopaque) !f64 {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        if (self.fixed_monotonic_milliseconds) |fixed| return fixed;
+        const nanoseconds = std.Io.Timestamp.now(self.io, .awake).nanoseconds;
+        return @as(f64, @floatFromInt(nanoseconds)) / 1_000_000;
+    }
+
+    fn random(context: *anyopaque) !f64 {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        if (self.random_state == 0) {
+            const nanoseconds = std.Io.Timestamp.now(self.io, .real).nanoseconds;
+            self.random_state = @truncate(@as(u96, @bitCast(nanoseconds)));
+            if (self.random_state == 0) self.random_state = 0x4d595df4d0f33173;
+        }
+        var value = self.random_state;
+        value ^= value >> 12;
+        value ^= value << 25;
+        value ^= value >> 27;
+        self.random_state = value;
+        const bits = (value *% 0x2545f4914f6cdd1d) >> 11;
+        return @as(f64, @floatFromInt(bits)) / 9007199254740992.0;
+    }
 };
+
+fn parseOptionalI64(value: ?[]const u8) ?i64 {
+    return std.fmt.parseInt(i64, value orelse return null, 10) catch null;
+}
+
+fn parseOptionalU64(value: ?[]const u8) ?u64 {
+    return std.fmt.parseInt(u64, value orelse return null, 10) catch null;
+}
+
+fn parseOptionalF64(value: ?[]const u8) ?f64 {
+    return std.fmt.parseFloat(f64, value orelse return null) catch null;
+}
 
 fn compileInput(allocator: std.mem.Allocator, io: std.Io, path: []const u8, compat_js: bool, stderr: *std.Io.Writer) !?lnako.ir.nako_ir.Program {
     var file_provider = lnako.semantic.module_graph.FileProvider{ .io = io };

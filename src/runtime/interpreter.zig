@@ -16,6 +16,9 @@ pub const Host = struct {
     context: *anyopaque,
     writeFn: *const fn (context: *anyopaque, bytes: []const u8) anyerror!void,
     sleepMillisecondsFn: ?*const fn (context: *anyopaque, milliseconds: u64) anyerror!void = null,
+    nowMillisecondsFn: ?*const fn (context: *anyopaque) anyerror!i64 = null,
+    monotonicMillisecondsFn: ?*const fn (context: *anyopaque) anyerror!f64 = null,
+    randomFn: ?*const fn (context: *anyopaque) anyerror!f64 = null,
 
     pub fn write(self: Host, bytes: []const u8) !void {
         try self.writeFn(self.context, bytes);
@@ -24,12 +27,26 @@ pub const Host = struct {
     pub fn sleepMilliseconds(self: Host, milliseconds: u64) !void {
         if (self.sleepMillisecondsFn) |sleepFn| try sleepFn(self.context, milliseconds);
     }
+
+    pub fn nowMilliseconds(self: Host) !i64 {
+        return if (self.nowMillisecondsFn) |function| function(self.context) else 0;
+    }
+
+    pub fn monotonicMilliseconds(self: Host) !f64 {
+        return if (self.monotonicMillisecondsFn) |function| function(self.context) else 0;
+    }
+
+    pub fn random(self: Host) !f64 {
+        return if (self.randomFn) |function| function(self.context) else error.RandomSourceUnavailable;
+    }
 };
 
 pub const BufferHost = struct {
     allocator: std.mem.Allocator,
     output: std.ArrayList(u8) = .empty,
     elapsed_milliseconds: u64 = 0,
+    now_milliseconds: i64 = 1_735_689_845_678,
+    random_state: u64 = 0x4d595df4d0f33173,
 
     pub fn deinit(self: *BufferHost) void {
         self.output.deinit(self.allocator);
@@ -37,7 +54,14 @@ pub const BufferHost = struct {
     }
 
     pub fn host(self: *BufferHost) Host {
-        return .{ .context = self, .writeFn = write, .sleepMillisecondsFn = sleepMilliseconds };
+        return .{
+            .context = self,
+            .writeFn = write,
+            .sleepMillisecondsFn = sleepMilliseconds,
+            .nowMillisecondsFn = nowMilliseconds,
+            .monotonicMillisecondsFn = monotonicMilliseconds,
+            .randomFn = random,
+        };
     }
 
     pub fn written(self: BufferHost) []const u8 {
@@ -52,6 +76,27 @@ pub const BufferHost = struct {
     fn sleepMilliseconds(context: *anyopaque, milliseconds: u64) !void {
         const self: *BufferHost = @ptrCast(@alignCast(context));
         self.elapsed_milliseconds = std.math.add(u64, self.elapsed_milliseconds, milliseconds) catch return error.TimerOverflow;
+    }
+
+    fn nowMilliseconds(context: *anyopaque) !i64 {
+        const self: *BufferHost = @ptrCast(@alignCast(context));
+        return self.now_milliseconds;
+    }
+
+    fn monotonicMilliseconds(context: *anyopaque) !f64 {
+        const self: *BufferHost = @ptrCast(@alignCast(context));
+        return @floatFromInt(self.elapsed_milliseconds);
+    }
+
+    fn random(context: *anyopaque) !f64 {
+        const self: *BufferHost = @ptrCast(@alignCast(context));
+        var value = self.random_state;
+        value ^= value >> 12;
+        value ^= value << 25;
+        value ^= value >> 27;
+        self.random_state = value;
+        const bits = (value *% 0x2545f4914f6cdd1d) >> 11;
+        return @as(f64, @floatFromInt(bits)) / 9007199254740992.0;
     }
 };
 
@@ -119,6 +164,7 @@ pub const Interpreter = struct {
     max_dynamic_depth: usize = 64,
     test_results: std.ArrayList(TestResult) = .empty,
     output_captures: std.ArrayList(*std.ArrayList(u8)) = .empty,
+    print_pool: std.ArrayList(u8) = .empty,
     timers: std.ArrayList(Timer) = .empty,
     promise_resolvers: std.AutoHashMapUnmanaged(*value_mod.Function, PromiseResolver) = .empty,
     elapsed_milliseconds: u64 = 0,
@@ -141,6 +187,7 @@ pub const Interpreter = struct {
         }
         self.test_results.deinit(self.allocator);
         self.output_captures.deinit(self.allocator);
+        self.print_pool.deinit(self.allocator);
         self.timers.deinit(self.allocator);
         self.promise_resolvers.deinit(self.allocator);
         self.* = undefined;
@@ -406,23 +453,23 @@ pub const Interpreter = struct {
     }
 
     fn callBuiltin(self: *Interpreter, name: []const u8, arguments: []const Value) !Value {
-        if (std.mem.eql(u8, name, "表示") or std.mem.eql(u8, name, "表示する")) {
-            const value = if (arguments.len > 0) arguments[arguments.len - 1] else Value.undefined;
-            const text = try self.runtime.valueToString(value);
-            const utf8 = try text.string.toUtf8Lossy(self.allocator);
-            defer self.allocator.free(utf8);
-            try self.writeOutput(utf8);
-            try self.writeOutput("\n");
-            return value;
+        if (std.mem.eql(u8, name, "表示") or std.mem.eql(u8, name, "表示する")) return self.display(arguments);
+        if (std.mem.eql(u8, name, "継続表示")) return self.continueDisplay(arguments);
+        if (std.mem.eql(u8, name, "連続表示")) return self.displayMany(arguments);
+        if (std.mem.eql(u8, name, "連続無改行表示")) return self.continueDisplayMany(arguments);
+        if (std.mem.eql(u8, name, "表示ログクリア")) {
+            try self.setGlobal("表示ログ", try self.runtime.stringUtf8(""));
+            return .undefined;
         }
-        if (std.mem.eql(u8, name, "連続表示")) {
-            const value = if (arguments.len > 0) arguments[arguments.len - 1] else Value.undefined;
-            const text = try self.runtime.valueToString(value);
-            const utf8 = try text.string.toUtf8Lossy(self.allocator);
-            defer self.allocator.free(utf8);
-            try self.writeOutput(utf8);
+        if (std.mem.eql(u8, name, "言")) {
+            try self.writeValues(arguments, false);
             try self.writeOutput("\n");
-            return value;
+            return .undefined;
+        }
+        if (std.mem.eql(u8, name, "コンソール表示")) {
+            try self.writeValues(arguments, false);
+            try self.writeOutput("\n");
+            return .undefined;
         }
         if (std.mem.eql(u8, name, "エラー発生")) {
             self.exception_value = if (arguments.len > 0) arguments[arguments.len - 1] else try self.runtime.stringUtf8("エラー");
@@ -485,14 +532,126 @@ pub const Interpreter = struct {
             if (result.captures) |captures| try self.setGlobal("抽出文字列", captures);
             return result.value;
         }
-        if (try plugin_system.call(self.runtime, name, arguments)) |value| return value;
+        if (try plugin_system.callWithContext(self.runtime, name, arguments, try self.pluginContext())) |value| return value;
         return error.UnknownCommand;
     }
 
     fn initializeSystem(self: *Interpreter) !void {
         if (self.system_initialized) return;
         try plugin_system.constants.install(self.runtime, .{ .context = self, .setFn = installSystemConstant });
+        try plugin_system.datetime.install(self.runtime, .{ .context = self, .setFn = installSystemConstant });
         self.system_initialized = true;
+    }
+
+    fn display(self: *Interpreter, arguments: []const Value) !Value {
+        const value = if (arguments.len > 0) arguments[arguments.len - 1] else Value.undefined;
+        const text = try self.runtime.valueToString(value);
+        const utf8 = try text.string.toUtf8Lossy(self.allocator);
+        defer self.allocator.free(utf8);
+        var output: std.ArrayList(u8) = .empty;
+        defer output.deinit(self.allocator);
+        try output.appendSlice(self.allocator, self.print_pool.items);
+        try output.appendSlice(self.allocator, utf8);
+        self.print_pool.clearRetainingCapacity();
+        try self.writeOutput(output.items);
+        try self.writeOutput("\n");
+        try self.appendDisplayLog(output.items);
+        return .undefined;
+    }
+
+    fn continueDisplay(self: *Interpreter, arguments: []const Value) !Value {
+        const value = if (arguments.len > 0) arguments[arguments.len - 1] else Value.undefined;
+        const text = try self.runtime.valueToString(value);
+        const utf8 = try text.string.toUtf8Lossy(self.allocator);
+        defer self.allocator.free(utf8);
+        try self.print_pool.appendSlice(self.allocator, utf8);
+        return .undefined;
+    }
+
+    fn displayMany(self: *Interpreter, arguments: []const Value) !Value {
+        var text = try self.joinValues(arguments);
+        var roots = self.runtime.rootFrame();
+        defer roots.deinit();
+        try roots.protect(&text);
+        return self.display(&.{text});
+    }
+
+    fn continueDisplayMany(self: *Interpreter, arguments: []const Value) !Value {
+        var text = try self.joinValues(arguments);
+        var roots = self.runtime.rootFrame();
+        defer roots.deinit();
+        try roots.protect(&text);
+        return self.continueDisplay(&.{text});
+    }
+
+    fn joinValues(self: *Interpreter, arguments: []const Value) !Value {
+        var output: std.ArrayList(u8) = .empty;
+        defer output.deinit(self.allocator);
+        for (arguments) |value| {
+            const text = try self.runtime.valueToString(value);
+            const utf8 = try text.string.toUtf8Lossy(self.allocator);
+            defer self.allocator.free(utf8);
+            try output.appendSlice(self.allocator, utf8);
+        }
+        return self.runtime.stringUtf8(output.items);
+    }
+
+    fn writeValues(self: *Interpreter, arguments: []const Value, all: bool) !void {
+        const values = if (all) arguments else if (arguments.len > 0) arguments[arguments.len - 1 ..] else &.{};
+        for (values) |value| {
+            const text = try self.runtime.valueToString(value);
+            const utf8 = try text.string.toUtf8Lossy(self.allocator);
+            defer self.allocator.free(utf8);
+            try self.writeOutput(utf8);
+        }
+    }
+
+    fn appendDisplayLog(self: *Interpreter, line: []const u8) !void {
+        const current = self.globals.get("表示ログ") orelse try self.runtime.stringUtf8("");
+        const current_text = try self.runtime.valueToString(current);
+        const current_utf8 = try current_text.string.toUtf8Lossy(self.allocator);
+        defer self.allocator.free(current_utf8);
+        var output: std.ArrayList(u8) = .empty;
+        defer output.deinit(self.allocator);
+        try output.appendSlice(self.allocator, current_utf8);
+        try output.appendSlice(self.allocator, line);
+        try output.append(self.allocator, '\n');
+        try self.setGlobal("表示ログ", try self.runtime.stringUtf8(output.items));
+    }
+
+    fn pluginContext(self: *Interpreter) !plugin_system.Context {
+        return .{
+            .arrays = .{
+                .context = self,
+                .randomFn = pluginRandom,
+                .callFn = pluginCall,
+                .resolveFn = pluginResolve,
+            },
+            .datetime = .{
+                .now_milliseconds = try self.host.nowMilliseconds(),
+                .monotonic_milliseconds = try self.host.monotonicMilliseconds(),
+            },
+        };
+    }
+
+    fn pluginRandom(context: *anyopaque) !f64 {
+        const self: *Interpreter = @ptrCast(@alignCast(context));
+        return self.host.random();
+    }
+
+    fn pluginCall(context: *anyopaque, callable: Value, arguments: []const Value) !Value {
+        const self: *Interpreter = @ptrCast(@alignCast(context));
+        if (callable != .function) return error.NotCallable;
+        return self.callFunctionValue(callable.function, arguments);
+    }
+
+    fn pluginResolve(context: *anyopaque, name: []const u8) !Value {
+        const self: *Interpreter = @ptrCast(@alignCast(context));
+        var name_value = try self.runtime.stringUtf8(name);
+        var roots = self.runtime.rootFrame();
+        defer roots.deinit();
+        try roots.protect(&name_value);
+        return self.resolveCallback(name_value);
     }
 
     fn installSystemConstant(context: *anyopaque, name: []const u8, value: Value) !void {
@@ -933,7 +1092,19 @@ pub const Interpreter = struct {
 
     fn findFunction(self: Interpreter, name: []const u8) ?*const ir.Function {
         for (self.program.functions) |*function| if (std.mem.eql(u8, function.name, name)) return function;
-        return null;
+
+        // The semantic analyzer qualifies module-level declarations as
+        // `module__name`, while Nadesiko callback-taking commands receive the
+        // source spelling as a string (for example, `"二倍"`).  Accept an
+        // unqualified spelling only when it identifies exactly one function.
+        var match: ?*const ir.Function = null;
+        for (self.program.functions) |*function| {
+            const separator = std.mem.lastIndexOf(u8, function.name, "__") orelse continue;
+            if (!std.mem.eql(u8, function.name[separator + 2 ..], name)) continue;
+            if (match != null) return null;
+            match = function;
+        }
+        return match;
     }
 
     fn traceRoots(context: *anyopaque, runtime: *Runtime) !void {
@@ -1212,4 +1383,62 @@ test "GCストレス中も実行フレームと反復対象をルートとして
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("保持\n対象\nvalue\n", host.written());
+}
+
+test "継続表示プール・表示ログ・改行なし出力を公式規則で処理する" {
+    const source =
+        "\"A\"を継続表示\n" ++
+        "\"B\"を継続表示\n" ++
+        "\"C\"を表示\n" ++
+        "表示ログを表示\n" ++
+        "表示ログクリア\n" ++
+        "\"X\"を言\n" ++
+        "\"Y\"をコンソール表示\n" ++
+        "連続表示(\"1\",2,3)\n" ++
+        "連続無改行表示(\"a\",\"b\")\n" ++
+        "\"c\"を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("ABC\nABC\n\nX\nY\n123\nabc\n", host.written());
+    const log = interpreter.getGlobal("表示ログ").?;
+    const log_utf8 = try log.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(log_utf8);
+    try std.testing.expectEqualStrings("123\nabc\n", log_utf8);
+}
+
+test "配列コールバックと固定日時・乱数ホストを実行する" {
+    const source =
+        "●(Aを)二倍とは\nA*2で戻る\nここまで\n" ++
+        "●(Aを)偶数判定関数とは\n偶数(A)で戻る\nここまで\n" ++
+        "●(AとBを)降順とは\nB-Aで戻る\nここまで\n" ++
+        "JSON変換(配列マップ(\"二倍\",[1,2,3]))を表示\n" ++
+        "JSON変換(配列フィルタ(\"偶数判定関数\",[1,2,3,4]))を表示\n" ++
+        "JSON変換(配列カスタムソート(\"降順\",[1,3,2]))を表示\n" ++
+        "今日()を表示\n" ++
+        "時間ミリ秒取得()を表示\n" ++
+        "JSON変換(配列シャッフル([1,2,3,4]))を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("[2,4,6]\n[2,4]\n[3,2,1]\n2025/01/01\n0\n[2,3,1,4]\n", host.written());
 }

@@ -111,7 +111,7 @@ function buildLlvmLibrary(directory) {
     }
     const sdk = capture("xcrun", ["--sdk", "macosx", "--show-sdk-path"]).trim();
     const required = requiredSymbols.map((symbol) => `-Wl,-u,_${symbol}`);
-    return ["-dynamiclib", "-isysroot", sdk, "-Wl,-install_name,@rpath/libLLVM-C.dylib", ...required, ...libraries, `-L${libraryDirectory}`, ...systemLibraries, "-lc++", "-lc++abi", "-o", output];
+    return ["-dynamiclib", "-isysroot", sdk, "-Wl,-install_name,@rpath/libLLVM-C.dylib", "-Wl,-rpath,@loader_path", ...required, ...libraries, `-L${libraryDirectory}`, ...systemLibraries, "-lc++", "-lc++abi", "-o", output];
   }
 }
 

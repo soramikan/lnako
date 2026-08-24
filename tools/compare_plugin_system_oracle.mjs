@@ -11,6 +11,7 @@ const oracleRoot = resolve(
 const cases = JSON.parse(await readFile(resolve(root, "tests/oracle/plugin-system-cases.json"), "utf8"));
 const executable = resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
 const officialCli = resolve(oracleRoot, "src/cnako3.mjs");
+const fixedHost = resolve(root, "tools/oracle/fixed_host.mjs");
 const temporary = await mkdtemp(join(tmpdir(), "lnako-plugin-system-"));
 
 try {
@@ -22,10 +23,16 @@ try {
     const options = {
       cwd: temporary,
       encoding: "utf8",
-      env: { ...process.env, TZ: "Asia/Tokyo" },
+      env: {
+        ...process.env,
+        TZ: "Asia/Tokyo",
+        LNAKO_TEST_NOW_MS: "1735689845678",
+        LNAKO_TEST_MONOTONIC_MS: "123.5",
+        LNAKO_TEST_RANDOM_SEED: "5573589319906701683",
+      },
       maxBuffer: 16 * 1024 * 1024,
     };
-    const official = spawnSync(process.execPath, [officialCli, sourcePath], options);
+    const official = spawnSync(process.execPath, ["--import", fixedHost, officialCli, sourcePath], options);
     const actual = spawnSync(executable, ["run", sourcePath], options);
     const expectedResult = normalize(official);
     const actualResult = normalize(actual);
