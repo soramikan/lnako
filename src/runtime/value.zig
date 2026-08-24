@@ -7,6 +7,16 @@ pub const BigInt = bigint_mod.BigInt;
 
 pub const ByteKind = enum { buffer, uint8_array, array_buffer };
 
+pub const ExternalHandle = struct {
+    context: *anyopaque,
+    handle: *anyopaque,
+    releaseFn: *const fn (context: *anyopaque, handle: *anyopaque) void,
+
+    pub fn deinit(self: ExternalHandle) void {
+        self.releaseFn(self.context, self.handle);
+    }
+};
+
 pub const ByteBuffer = struct {
     gc_marked: bool = false,
     allocator: std.mem.Allocator,
@@ -32,8 +42,10 @@ pub const Array = struct {
     gc_marked: bool = false,
     allocator: std.mem.Allocator,
     items: std.ArrayList(Value) = .empty,
+    external: ?ExternalHandle = null,
 
     pub fn deinit(self: *Array) void {
+        if (self.external) |binding| binding.deinit();
         self.items.deinit(self.allocator);
         self.* = undefined;
     }
@@ -105,8 +117,10 @@ pub const Dictionary = struct {
     allocator: std.mem.Allocator,
     kind: DictionaryKind = .ordinary,
     map: DictionaryMap = .empty,
+    external: ?ExternalHandle = null,
 
     pub fn deinit(self: *Dictionary) void {
+        if (self.external) |binding| binding.deinit();
         self.map.deinit(self.allocator);
         self.* = undefined;
     }
@@ -142,7 +156,11 @@ pub const Dictionary = struct {
 
 pub const Capture = struct { name: *String, value: Value };
 pub const NativeCallback = *const fn (runtime: *Runtime, arguments: []const Value) anyerror!Value;
-pub const FunctionKind = union(enum) { ir: u32, native: NativeCallback };
+pub const ExternalFunction = struct {
+    binding: ExternalHandle,
+    callFn: *const fn (context: *anyopaque, handle: *anyopaque, runtime: *Runtime, arguments: []const Value) anyerror!Value,
+};
+pub const FunctionKind = union(enum) { ir: u32, native: NativeCallback, external: ExternalFunction };
 
 pub const Function = struct {
     gc_marked: bool = false,
@@ -155,6 +173,7 @@ pub const Function = struct {
     captures: []Capture,
 
     pub fn deinit(self: *Function) void {
+        if (self.kind == .external) self.kind.external.binding.deinit();
         self.allocator.free(self.captures);
         self.* = undefined;
     }
@@ -599,6 +618,10 @@ pub const Runtime = struct {
         return self.createFunction(name, arity, .{ .native = callback }, captures);
     }
 
+    pub fn createExternalFunction(self: *Runtime, name: *String, arity: usize, external: ExternalFunction) !Value {
+        return self.createFunction(name, arity, .{ .external = external }, &.{});
+    }
+
     fn createFunction(self: *Runtime, name: *String, arity: usize, kind: FunctionKind, captures: []const Capture) !Value {
         if (self.stress_collection or self.objects.items.len >= self.next_collection) {
             errdefer self.clearAllMarks();
@@ -634,6 +657,7 @@ pub const Runtime = struct {
         for (argument_roots) |*argument| try frame.protect(argument);
         return switch (function_root.function.kind) {
             .native => |callback| callback(self, arguments),
+            .external => |external| external.callFn(external.binding.context, external.binding.handle, self, arguments),
             .ir => error.IrFunctionNotExecutable,
         };
     }

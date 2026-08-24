@@ -34,6 +34,11 @@ pub const runtime = struct {
     pub const interpreter = @import("runtime/interpreter.zig");
 };
 
+pub const compat = struct {
+    pub const quickjs = @import("compat/quickjs.zig");
+    pub const embedded = @import("compat/embedded.zig");
+};
+
 pub const plugins = struct {
     pub const system = @import("plugins/system.zig");
     pub const math = @import("plugins/math.zig");
@@ -130,6 +135,8 @@ test {
     std.testing.refAllDecls(runtime.value);
     std.testing.refAllDecls(runtime.operators);
     std.testing.refAllDecls(runtime.interpreter);
+    std.testing.refAllDecls(compat.quickjs);
+    std.testing.refAllDecls(compat.embedded);
     std.testing.refAllDecls(plugins.system);
     std.testing.refAllDecls(plugins.math);
     std.testing.refAllDecls(plugins.csv);

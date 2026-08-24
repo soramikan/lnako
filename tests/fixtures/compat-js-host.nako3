@@ -1,0 +1,9 @@
+X=5
+JS実行(『sys.__getSysVar("X","missing")』)を表示
+JS実行(『sys.__findVar("X",99)』)を表示
+●F(A)
+  A*2で戻る
+ここまで
+JS実行(『sys.__findVar("F",null)(4)』)を表示
+JS実行(『sys.__exec("整数変換",["12.9"])』)を表示
+JS実行(『sys.__setSysVar("対象",9);sys.__getSysVar("対象")』)を表示

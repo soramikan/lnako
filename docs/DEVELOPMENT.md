@@ -13,6 +13,7 @@ SHA-256検証して `.cache/oracle/` に展開し、公式TypeScriptをNode 24�
 ```sh
 node tools/setup_oracle.mjs
 node tools/setup_llvm.mjs
+node tools/setup_quickjs.mjs
 node tools/compare_lexer_oracle.mjs
 node tools/compare_syntax_oracle.mjs
 node tools/compare_parser_oracle.mjs
@@ -26,6 +27,8 @@ node tools/compare_plugin_system_oracle.mjs
 node tools/check_standard_plugin_coverage.mjs
 node tools/compare_standard_plugin_oracle.mjs
 node tools/compare_supplemental_plugin_oracle.mjs
+node tools/check_compat_js_coverage.mjs
+node tools/compare_compat_js_oracle.mjs
 node tools/generate_legacy_encoding.mjs --check
 node tools/update_node_implemented.mjs --check
 node tools/check_node_plugin_coverage.mjs
@@ -75,3 +78,25 @@ zig build ir-probe -- $'A=1\nAを表示\n'
 ローカルでは `LNAKO_LLVM_LIBRARY`、`LNAKO_LLVM_DIR` を優先し、未指定時はPATH、Homebrew、一般的なLinuxパスの順でLLVM 22.1.8を
 探します。見つかった共有ライブラリは `LLVMGetVersion`、Clang/LLDは `--version` で完全な版を検証します。
 SDK配布物は対応するLLVM/LLDを同梱し、生成プログラム自体はLLVMやZigに依存しません。
+
+## QuickJS互換モード
+
+`zig build -Dcompat-js=true`だけがQuickJSを静的リンクします。通常の`zig build`は同じZig APIをC stubへ
+接続するため、JSエンジンを含みません。固定ソースは`tools/setup_quickjs.mjs`がURL、SHA-256、`VERSION`、
+必須ソース一式を検証します。
+
+QuickJSは`js_realloc_rt(JSRuntime *, ...)`を汎用`DynBuf` callbackへ意図的に型変換します。Zigの
+ReleaseSafeが有効にするC関数型sanitizerは、このABI互換呼び出しをmacOS arm64で`SIGTRAP`にするため、
+QuickJS Cソースに限って`-fno-sanitize=function`を指定します。他のZig/Cコードの安全検査は維持し、CIで
+DebugとReleaseSafeの両方を実行します。
+
+```sh
+node tools/setup_quickjs.mjs
+zig build -Dcompat-js=true test
+node tools/check_compat_js_coverage.mjs
+node tools/compare_compat_js_oracle.mjs
+```
+
+差分テストは4命令、なでしこ変数・関数との双方向呼び出し、配列・辞書の変更同期、ES moduleの相対依存、
+Promise、失敗境界、`build --compat-js`生成物を検証します。通常ビルドと互換ビルドを別々にテストし、
+リンク境界の混入も検出します。

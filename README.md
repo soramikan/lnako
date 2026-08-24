@@ -17,6 +17,15 @@
 `LNAKO_LLVM_LIBRARY` にファイル自体を指定できます。セットアップスクリプトとCIはアーカイブ内を検査して両方を自動設定します。
 macOSではHomebrewのLLVM/LLD 22.1.8も検出します。
 
+QuickJS互換ビルドは、固定アーカイブを検証してから明示的に有効化します。通常ビルドにはJSエンジンを
+リンクしません。
+
+```sh
+node tools/setup_quickjs.mjs
+zig build -Dcompat-js=true
+zig build -Dcompat-js=true test
+```
+
 ## ビルド
 
 ```sh
@@ -45,7 +54,7 @@ Promise集約の`束`を純Zigで実装しました。Nodeホスト層ではBuff
 hex/base64、Shift_JIS/EUC-JP、中国語・韓国語・Big5の多バイト8系統と81種の単バイトコードページ、ファイル・パス・
 標準入力・子プロセス・終了シグナル・ZIP、ハッシュ・UUID・安全な乱数、HTTPクライアントと簡易HTTPサーバを
 実装し、対象116命令をホスト抽象化へ接続しています。また、Markdown/GFM・HTML整形、固定ブラウザ対応表、任意精度の漢数字変換も
-実装しています。公式カタログ上は482/527命令がnativeで、各命令を公式差分または副作用を隔離したホストテストへ対応付けています。
+実装しています。公式カタログ上は482/527命令がnative、4命令が明示的な`compat-js`で、各命令を公式差分または副作用を隔離したホストテストへ対応付けています。
 
 ```sh
 zig build run -- check program.nako3
@@ -54,6 +63,8 @@ zig build run -- test tests/
 zig build run -- build program.nako3 -o program -O2
 zig build run -- build program.nako3 -o program.o -O2 --emit obj
 zig build run -- build program.nako3 -o program.ll -O2 --emit llvm-ir
+zig build -Dcompat-js=true run -- run program.nako3 --compat-js
+zig build -Dcompat-js=true run -- build program.nako3 -o program --compat-js
 ```
 
 `run` は条件・反復・関数・クロージャ・配列・辞書・例外監視・動的ななでしこ実行、Promise・タイマーをNako SSA IR実行器で処理します。
@@ -78,8 +89,10 @@ lnako benchmark
 ```
 
 現時点では `build`、`run`、`check`、`test`、ヘルプ、バージョン表示を利用できます。`compat report` と
-`benchmark` は後続の標準命令・性能記録実装とともに有効化します。`build --compat-js` はQuickJSを実装する
-マイルストーンまで明示的に拒否します。
+`benchmark` は後続の標準命令・性能記録実装とともに有効化します。`run --compat-js` はQuickJS 2026-06-04で
+4つのJS命令とESモジュール形式プラグインを実行します。`build --compat-js` は検証済みのなでしこ・JSソースを
+QuickJS対応ランタイムへ埋め込み、元ソース、Zig、LLVMを実行先で要求しない単一実行ファイルを生成します。
+互換生成物はランタイムを内包するため`--emit exe`専用です。
 
 設計と検証方針は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) と [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) を参照してください。
 公式実装の説明だけでは分かりにくい戻り値、破壊的変更、出力プールなどは

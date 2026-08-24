@@ -19,6 +19,53 @@ pub fn main(init: std.process.Init) !void {
     const stderr = &stderr_file_writer.interface;
     defer stderr.flush() catch {};
 
+    const executable_path = try std.process.executablePathAlloc(init.io, allocator);
+    if (try lnako.compat.embedded.readExecutable(allocator, init.io, executable_path)) |package_value| {
+        var package = package_value;
+        defer package.deinit();
+        if (!lnako.compat.quickjs.available()) {
+            try stderr.writeAll("この埋め込みプログラムにはQuickJS対応ランタイムが必要です\n");
+            try stderr.flush();
+            std.process.exit(1);
+        }
+        var ir_program = (try compileInputWithProvider(allocator, package.entry_path, true, stderr, package.sourceProvider())) orelse {
+            try stderr.flush();
+            std.process.exit(1);
+        };
+        defer ir_program.deinit();
+        var runtime = lnako.runtime.value.Runtime.init(allocator);
+        defer runtime.deinit();
+        var cli_host = CliHost{
+            .writer = stdout,
+            .error_writer = stderr,
+            .io = init.io,
+            .program_arguments = process_args,
+            .runtime_path = executable_path,
+            .source_path = package.entry_path,
+            .environment_names = init.environ_map.keys(),
+            .environment_values = init.environ_map.values(),
+            .home_directory = homeDirectory(init.environ_map),
+            .temporary_directory = temporaryDirectory(init.environ_map),
+            .fixed_now_milliseconds = parseOptionalI64(init.environ_map.get("LNAKO_TEST_NOW_MS")),
+            .fixed_monotonic_milliseconds = parseOptionalF64(init.environ_map.get("LNAKO_TEST_MONOTONIC_MS")),
+            .random_state = parseOptionalU64(init.environ_map.get("LNAKO_TEST_RANDOM_SEED")) orelse 0,
+        };
+        defer cli_host.deinit();
+        var interpreter = lnako.runtime.interpreter.Interpreter.init(allocator, &runtime, ir_program, cli_host.host());
+        defer interpreter.deinit();
+        _ = interpreter.run() catch |err| {
+            if (err == error.ProcessExitRequested) {
+                try stdout.flush();
+                try stderr.flush();
+                std.process.exit(interpreter.requestedExitCode() orelse 0);
+            }
+            try stderr.print("実行時エラー: {s}\n", .{@errorName(err)});
+            try stderr.flush();
+            std.process.exit(1);
+        };
+        return;
+    }
+
     const command = lnako.parseCommand(args) catch |err| {
         try stdout.print("コマンドラインエラー: {s}\n\n", .{@errorName(err)});
         try lnako.usage(stdout);
@@ -34,16 +81,30 @@ pub fn main(init: std.process.Init) !void {
                 try stderr.flush();
                 std.process.exit(2);
             };
-            if (options.compat_js) {
-                try stderr.writeAll("build: --compat-js はQuickJS互換モード実装後に利用できます\n");
+            if (options.compat_js and !lnako.compat.quickjs.available()) {
+                try stderr.writeAll("build: このlnakoはQuickJSなしでビルドされています。zig build -Dcompat-js=trueを使用してください\n");
                 try stderr.flush();
                 std.process.exit(2);
             }
-            var ir_program = (try compileInput(allocator, init.io, options.input, false, stderr)) orelse {
+            if (options.compat_js and options.emit != .executable) {
+                try stderr.writeAll("build: --compat-jsは--emit exeだけをサポートします\n");
+                try stderr.flush();
+                std.process.exit(2);
+            }
+            var ir_program = (try compileInput(allocator, init.io, options.input, options.compat_js, stderr)) orelse {
                 try stderr.flush();
                 std.process.exit(1);
             };
             defer ir_program.deinit();
+            if (options.compat_js) {
+                writeCompatExecutable(allocator, init.io, executable_path, options.input, options.output) catch |err| {
+                    try stderr.print("build: QuickJS互換実行ファイルの生成に失敗しました: {s}\n", .{@errorName(err)});
+                    try stderr.flush();
+                    std.process.exit(1);
+                };
+                try stdout.print("{s} を生成しました\n", .{options.output});
+                return;
+            }
             lnako.backend.llvm.compiler.compile(allocator, init.io, ir_program, .{
                 .source_path = options.input,
                 .output_path = options.output,
@@ -79,6 +140,11 @@ pub fn main(init: std.process.Init) !void {
                 std.process.exit(2);
             }
             const compat_js = hasArgument(args[2..], "--compat-js");
+            if (compat_js and !lnako.compat.quickjs.available()) {
+                try stderr.writeAll("run: このlnakoはQuickJSなしでビルドされています。zig build -Dcompat-js=trueを使用してください\n");
+                try stderr.flush();
+                std.process.exit(2);
+            }
             var ir_program = (try compileInput(allocator, init.io, args[1], compat_js, stderr)) orelse {
                 try stderr.flush();
                 std.process.exit(1);
@@ -1169,7 +1235,11 @@ fn parseOptionalF64(value: ?[]const u8) ?f64 {
 
 fn compileInput(allocator: std.mem.Allocator, io: std.Io, path: []const u8, compat_js: bool, stderr: *std.Io.Writer) !?lnako.ir.nako_ir.Program {
     var file_provider = lnako.semantic.module_graph.FileProvider{ .io = io };
-    var graph = lnako.semantic.module_graph.load(allocator, path, file_provider.sourceProvider(), .{ .compat_js = compat_js }) catch |err| {
+    return compileInputWithProvider(allocator, path, compat_js, stderr, file_provider.sourceProvider());
+}
+
+fn compileInputWithProvider(allocator: std.mem.Allocator, path: []const u8, compat_js: bool, stderr: *std.Io.Writer, source_provider: lnako.semantic.module_graph.SourceProvider) !?lnako.ir.nako_ir.Program {
+    var graph = lnako.semantic.module_graph.load(allocator, path, source_provider, .{ .compat_js = compat_js }) catch |err| {
         try stderr.print("{s}: 読み込みまたは字句解析に失敗しました: {s}\n", .{ path, @errorName(err) });
         return null;
     };
@@ -1200,6 +1270,26 @@ fn compileInput(allocator: std.mem.Allocator, io: std.Io, path: []const u8, comp
     defer hir_program.deinit();
     var ir_program = try lnako.ir.lower_ssa.lower(allocator, hir_program);
     errdefer ir_program.deinit();
+    ir_program.compat_js = compat_js;
+    var javascript_modules: std.ArrayList(lnako.ir.nako_ir.JavaScriptModule) = .empty;
+    const plugin_modules = try allocator.alloc(bool, graph.modules.len);
+    defer allocator.free(plugin_modules);
+    @memset(plugin_modules, false);
+    for (graph.modules) |module| {
+        if (module.kind != .nako3) continue;
+        for (module.imports) |item| if (item.target) |target| {
+            if (graph.modules[target].kind == .javascript) plugin_modules[target] = true;
+        };
+    }
+    for (graph.modules) |module| {
+        if (module.kind != .javascript or module.source.len == 0) continue;
+        try javascript_modules.append(ir_program.arena.allocator(), .{
+            .path = try ir_program.arena.allocator().dupe(u8, module.path),
+            .source = try ir_program.arena.allocator().dupe(u8, module.source),
+            .is_plugin = plugin_modules[module.index],
+        });
+    }
+    ir_program.javascript_modules = try javascript_modules.toOwnedSlice(ir_program.arena.allocator());
     var verification = try lnako.ir.verifier.verify(allocator, ir_program);
     defer verification.deinit();
     if (!verification.succeeded()) {
@@ -1208,6 +1298,32 @@ fn compileInput(allocator: std.mem.Allocator, io: std.Io, path: []const u8, comp
         return null;
     }
     return ir_program;
+}
+
+fn writeCompatExecutable(allocator: std.mem.Allocator, io: std.Io, executable_path: []const u8, input_path: []const u8, output_path: []const u8) !void {
+    const resolved_output = try std.fs.path.resolve(allocator, &.{output_path});
+    defer allocator.free(resolved_output);
+    const resolved_executable = try std.fs.path.resolve(allocator, &.{executable_path});
+    defer allocator.free(resolved_executable);
+    if (std.mem.eql(u8, resolved_output, resolved_executable)) return error.OutputOverwritesCompiler;
+
+    var file_provider = lnako.semantic.module_graph.FileProvider{ .io = io };
+    var graph = try lnako.semantic.module_graph.load(allocator, input_path, file_provider.sourceProvider(), .{ .compat_js = true });
+    defer graph.deinit();
+    if (!graph.succeeded()) return error.InvalidCompatSourceGraph;
+    const files = try allocator.alloc(lnako.compat.embedded.SourceFile, graph.modules.len);
+    defer allocator.free(files);
+    for (graph.modules, files) |module, *file| file.* = .{ .path = module.path, .source = module.source };
+
+    const compiler = try std.Io.Dir.cwd().readFileAlloc(io, executable_path, allocator, .limited(1024 * 1024 * 1024));
+    defer allocator.free(compiler);
+    const generated = try lnako.compat.embedded.createExecutable(allocator, compiler, graph.modules[graph.entry].path, files);
+    defer allocator.free(generated);
+    try std.Io.Dir.cwd().writeFile(io, .{
+        .sub_path = output_path,
+        .data = generated,
+        .flags = .{ .permissions = .executable_file },
+    });
 }
 
 fn runTestTarget(allocator: std.mem.Allocator, io: std.Io, path: []const u8, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !bool {

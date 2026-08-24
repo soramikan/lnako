@@ -34,9 +34,11 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: .cache/toolchains
-          key: llvm-22.1.8-${{ runner.os }}-${{ runner.arch }}-v1
+          key: toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ runner.os }}-${{ runner.arch }}-v1
       - name: Set up pinned LLVM and LLD
         run: node tools/setup_llvm.mjs
+      - name: Set up pinned QuickJS
+        run: node tools/setup_quickjs.mjs
       - name: Verify compatibility baseline
         run: |
           node tools/sync_compat.mjs --check
@@ -73,6 +75,10 @@ jobs:
           node tools/update_supplemental_implemented.mjs --check
           node tools/check_supplemental_plugin_coverage.mjs
           node tools/compare_supplemental_plugin_oracle.mjs
+      - name: Differential QuickJS compatibility test
+        run: |
+          node tools/check_compat_js_coverage.mjs
+          node tools/compare_compat_js_oracle.mjs
       - name: Differential Node host test
         run: |
           node tools/generate_legacy_encoding.mjs --check
@@ -92,8 +98,12 @@ jobs:
         run: zig build fmt-check
       - name: Test
         run: zig build test
+      - name: Test QuickJS build
+        run: zig build -Dcompat-js=true test
       - name: Build
         run: zig build -Doptimize=ReleaseSafe
+      - name: Build QuickJS compiler
+        run: zig build -Dcompat-js=true -Doptimize=ReleaseSafe
       - name: Smoke test
         shell: bash
         run: |
@@ -101,4 +111,5 @@ jobs:
           ./zig-out/bin/lnako check tests/fixtures/check-valid.nako3
           ./zig-out/bin/lnako check tests/fixtures/module/main.nako3
           ./zig-out/bin/lnako run tests/fixtures/run-control.nako3
+          ./zig-out/bin/lnako run tests/fixtures/compat-js-basic.nako3 --compat-js
           ./zig-out/bin/lnako test tests/fixtures/run-tests.nako3

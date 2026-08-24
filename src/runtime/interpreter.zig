@@ -17,6 +17,7 @@ const plugin_http_server = @import("../plugins/http_server.zig");
 const plugin_markup = @import("../plugins/markup.zig");
 const plugin_caniuse = @import("../plugins/caniuse.zig");
 const plugin_kansuji = @import("../plugins/kansuji.zig");
+const quickjs = @import("../compat/quickjs.zig");
 
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
@@ -193,6 +194,7 @@ pub const Interpreter = struct {
     node_state: plugin_node.State = .{},
     http_server_state: plugin_http_server.State = .{},
     caniuse_state: plugin_caniuse.State = .{},
+    quickjs_state: quickjs.State,
     timers: std.ArrayList(Timer) = .empty,
     promise_resolvers: std.AutoHashMapUnmanaged(*value_mod.Function, PromiseResolver) = .empty,
     promise_all_handlers: std.AutoHashMapUnmanaged(*value_mod.Function, PromiseAllHandler) = .empty,
@@ -204,7 +206,7 @@ pub const Interpreter = struct {
     system_initialized: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, runtime: *Runtime, program: ir.Program, host: Host) Interpreter {
-        return .{ .allocator = allocator, .runtime = runtime, .program = program, .host = host, .csv_state = plugin_csv.State.init(allocator) };
+        return .{ .allocator = allocator, .runtime = runtime, .program = program, .host = host, .csv_state = plugin_csv.State.init(allocator), .quickjs_state = quickjs.State.init(program.compat_js) };
     }
 
     pub fn deinit(self: *Interpreter) void {
@@ -221,6 +223,7 @@ pub const Interpreter = struct {
         self.csv_state.deinit();
         self.node_state.deinit(self.allocator);
         self.http_server_state.deinit(self.allocator);
+        self.quickjs_state.deinit();
         self.timers.deinit(self.allocator);
         self.promise_resolvers.deinit(self.allocator);
         self.promise_all_handlers.deinit(self.allocator);
@@ -485,7 +488,7 @@ pub const Interpreter = struct {
         }
         if (self.promise_all_handlers.get(function)) |handler| return self.handlePromiseAll(function, handler, arguments);
         return switch (function.kind) {
-            .native => self.runtime.call(.{ .function = function }, arguments),
+            .native, .external => self.runtime.call(.{ .function = function }, arguments),
             .ir => |function_id| self.executeFunction(&self.program.functions[function_id], arguments, function),
         };
     }
@@ -583,6 +586,7 @@ pub const Interpreter = struct {
         if (try plugin_markup.call(self.runtime, name, arguments)) |value| return value;
         if (try plugin_caniuse.call(self.runtime, &self.caniuse_state, name, arguments)) |value| return value;
         if (try plugin_kansuji.call(self.runtime, name, arguments)) |value| return value;
+        if (try quickjs.call(self.runtime, &self.quickjs_state, self.quickJsEffects(), name, arguments)) |value| return value;
         if (try plugin_encoding.call(self.runtime, name, arguments)) |value| return value;
         if (try plugin_system.callWithContext(self.runtime, name, arguments, plugin_context)) |value| return value;
         return error.UnknownCommand;
@@ -595,6 +599,7 @@ pub const Interpreter = struct {
         if (self.host.node_context) |node_context| try plugin_node.install(self.runtime, node_context, .{ .context = self, .setFn = installSystemConstant });
         if (self.host.http_server_context != null) try plugin_http_server.install(self.runtime, .{ .context = self, .setFn = installSystemConstant });
         try plugin_caniuse.install(self.runtime, &self.caniuse_state, .{ .context = self, .setFn = installSystemConstant });
+        try quickjs.installModules(self.runtime, &self.quickjs_state, self.program.javascript_modules, self.quickJsEffects());
         self.system_initialized = true;
     }
 
@@ -712,6 +717,17 @@ pub const Interpreter = struct {
         };
     }
 
+    fn quickJsEffects(self: *Interpreter) quickjs.Effects {
+        return .{
+            .context = self,
+            .invokeFn = pluginCall,
+            .resolveFn = quickJsResolve,
+            .getGlobalFn = nodeGetGlobal,
+            .setGlobalFn = nodeSetGlobal,
+            .execFn = quickJsExec,
+        };
+    }
+
     fn nodeResolve(context: *anyopaque, value: Value) !Value {
         const self: *Interpreter = @ptrCast(@alignCast(context));
         return self.resolveCallback(value);
@@ -756,6 +772,37 @@ pub const Interpreter = struct {
         defer roots.deinit();
         try roots.protect(&name_value);
         return self.resolveCallback(name_value);
+    }
+
+    fn quickJsResolve(context: *anyopaque, name: []const u8) !Value {
+        const self: *Interpreter = @ptrCast(@alignCast(context));
+        var frame = self.active_frame;
+        while (frame) |current| : (frame = current.parent) {
+            if (current.locals.get(name)) |value| return value;
+        }
+        if (self.globals.get(name)) |value| return value;
+
+        // Module-level variables are stored under `module__name`.  The
+        // official JS bridge accepts the unqualified source spelling, so use
+        // it only when it identifies exactly one global across all modules.
+        var match: ?Value = null;
+        var iterator = self.globals.iterator();
+        while (iterator.next()) |entry| {
+            const separator = std.mem.lastIndexOf(u8, entry.key_ptr.*, "__") orelse continue;
+            if (!std.mem.eql(u8, entry.key_ptr.*[separator + 2 ..], name)) continue;
+            if (match != null) return error.AmbiguousGlobal;
+            match = entry.value_ptr.*;
+        }
+        if (match) |value| return value;
+        return pluginResolve(context, name);
+    }
+
+    fn quickJsExec(context: *anyopaque, name: []const u8, arguments: []const Value) !Value {
+        const self: *Interpreter = @ptrCast(@alignCast(context));
+        if (quickJsResolve(self, name)) |callable| {
+            if (callable == .function) return self.callFunctionValue(callable.function, arguments);
+        } else |_| {}
+        return self.callBuiltin(name, arguments);
     }
 
     fn installSystemConstant(context: *anyopaque, name: []const u8, value: Value) !void {
@@ -1353,6 +1400,7 @@ pub const Interpreter = struct {
         try self.node_state.trace(runtime);
         try self.http_server_state.trace(runtime);
         try self.caniuse_state.trace(runtime);
+        try self.quickjs_state.trace(runtime);
     }
 };
 

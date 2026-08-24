@@ -67,6 +67,15 @@ lnakoは実行結果の互換性とテストの再現性を両立するため、
 |---|---|---|---|
 | Windowsの絶対パスを使う`取り込む` | `D:/path/plugin.mjs`のようなドライブ文字付きパスも相対モジュール名として扱い、現在のソースディレクトリを先頭に付ける。このため、存在する絶対パスでも取り込みに失敗する | 利用者の絶対パスは正規化して読み込む。公式オラクル用fixtureは同一ドライブ上に置き、相対パスで取り込んでOS間の比較条件を揃える | `plugin-markup-all`、`plugin-kansuji-all`、`plugin-caniuse-all` |
 
+## QuickJS互換モード
+
+| 命令・API | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID |
+|---|---|---|---|
+| `JSオブジェクト取得` / `sys.__findVar` | Mapにキーが存在するかではなく取得値をtruthy判定する。そのため値が`0`、`false`、空文字列、`null`なら、第2引数の既定値または`null`を返す | 値の型を保持したまま同じtruthy探索を再現する | `compat-js-find-quirks` |
+| `sys.__getSysVar`と`sys.__findVar` | `__getSysVar("X")`はシステム変数の非修飾キーだけを調べる。一方`__findVar("X")`はローカル変数と`module__X`を探索するため、同じ名前でも結果が異なる | システム大域表と現在フレーム・モジュール探索を分離する | `compat-js-host` |
+| JS構文・呼び出しエラーのCLI終了 | 公式`cnako3`はSyntaxError等をstderrへ出しても終了コード0になる経路がある | lnakoは診断をstderrへ出し、実行失敗を終了コード1で返す。差分テストは双方で失敗が観測できることを検証する | `compat-js-error-eval`、`compat-js-error-function`、`compat-js-error-method` |
+| `build --compat-js`の`--emit` | 公式処理系には対応するネイティブ埋め込み出力区分がない | QuickJS対応ランタイムを含む自己完結bundleなので`exe`だけを許可し、`obj` / `llvm-ir`は曖昧な中間生成物を出さず拒否する | `compat-js-plugin-imports` |
+
 ## Nodeホスト・ファイル・圧縮
 
 | 命令 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID |

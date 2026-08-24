@@ -3,12 +3,23 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const compat_js = b.option(bool, "compat-js", "QuickJS互換モードを静的リンクする") orelse false;
+    const build_options = b.addOptions();
+    build_options.addOption(bool, "quickjs_enabled", compat_js);
 
     const lnako = b.addModule("lnako", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = compat_js or target.result.os.tag == .linux,
     });
+    lnako.addOptions("build_options", build_options);
+    if (compat_js) {
+        configureQuickJs(b, lnako, target.result.os.tag);
+    } else {
+        lnako.addIncludePath(b.path("src/compat"));
+        lnako.addCSourceFiles(.{ .root = b.path("src/compat"), .files = &.{"quickjs_stub.c"} });
+    }
 
     const exe = b.addExecutable(.{
         .name = "lnako",
@@ -16,7 +27,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
-            .link_libc = target.result.os.tag == .linux,
+            .link_libc = compat_js or target.result.os.tag == .linux,
             .imports = &.{.{ .name = "lnako", .module = lnako }},
         }),
     });
@@ -127,4 +138,34 @@ pub fn build(b: *std.Build) void {
         .check = true,
     });
     fmt_step.dependOn(&fmt.step);
+}
+
+fn configureQuickJs(b: *std.Build, module: *std.Build.Module, os: std.Target.Os.Tag) void {
+    const directory = b.option([]const u8, "quickjs-dir", "QuickJSソースディレクトリ") orelse
+        b.graph.environ_map.get("LNAKO_QUICKJS_DIR") orelse
+        b.pathResolve(&.{ ".cache", "toolchains", "quickjs-2026-06-04" });
+    // QuickJS intentionally casts its JSRuntime realloc function to the generic
+    // DynBuf callback signature. ReleaseSafe's function sanitizer traps that
+    // ABI-compatible C call on arm64, so disable only that sanitizer here.
+    const flags: []const []const u8 = if (os == .windows)
+        &.{ "-std=gnu11", "-fwrapv", "-fno-sanitize=function", "-D_GNU_SOURCE", "-DCONFIG_VERSION=\"2026-06-04\"", "-DCONFIG_WIN32" }
+    else
+        &.{ "-std=gnu11", "-fwrapv", "-fno-sanitize=function", "-D_GNU_SOURCE", "-DCONFIG_VERSION=\"2026-06-04\"" };
+    module.addIncludePath(.{ .cwd_relative = directory });
+    module.addIncludePath(b.path("src/compat"));
+    module.addCSourceFiles(.{
+        .root = .{ .cwd_relative = directory },
+        .files = &.{ "quickjs.c", "dtoa.c", "libregexp.c", "libunicode.c", "cutils.c" },
+        .flags = flags,
+    });
+    module.addCSourceFiles(.{
+        .root = b.path("src/compat"),
+        .files = &.{"quickjs_bridge.c"},
+        .flags = flags,
+    });
+    if (os != .windows) {
+        module.linkSystemLibrary("m", .{});
+        module.linkSystemLibrary("pthread", .{});
+        module.linkSystemLibrary("dl", .{});
+    }
 }

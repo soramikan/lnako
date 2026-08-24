@@ -3172,5 +3172,40 @@
       "plugin-caniuse-all"
     ],
     "reason": "固定した公式プラグインとの差分テストに成功"
+  },
+  "JS実行": {
+    "status": "compat-js",
+    "tests": [
+      "compat-js-basic",
+      "compat-js-host",
+      "compat-js-error-eval"
+    ],
+    "reason": "QuickJS 2026-06-04互換ビルドで公式cnako3との差分テストに成功"
+  },
+  "JSオブジェクト取得": {
+    "status": "compat-js",
+    "tests": [
+      "compat-js-basic",
+      "compat-js-find-quirks"
+    ],
+    "reason": "QuickJS互換ブリッジで公式の変数・関数探索規則を再現"
+  },
+  "JS関数実行": {
+    "status": "compat-js",
+    "tests": [
+      "compat-js-basic",
+      "compat-js-plugin-imports",
+      "compat-js-error-function"
+    ],
+    "reason": "QuickJS関数となでしこ関数の双方向呼び出しを公式差分テストで検証"
+  },
+  "JSメソッド実行": {
+    "status": "compat-js",
+    "tests": [
+      "compat-js-basic",
+      "compat-js-mutation",
+      "compat-js-error-method"
+    ],
+    "reason": "QuickJSオブジェクトのthis束縛と変更同期を公式差分テストで検証"
   }
 }

@@ -74,6 +74,18 @@ source
 - JS固有命令は `--compat-js` 指定時だけQuickJSへ接続する。
 - 対応していない機能を暗黙に代替せず、互換表と診断に理由を出す。
 
+## QuickJS互換境界
+
+- `-Dcompat-js=true`のコンパイラだけが固定QuickJSを静的リンクし、通常ビルドは同じC ABIのstubへ接続する。
+- `.js` / `.mjs`の静的な相対依存をモジュールグラフへ再帰的に取り込み、QuickJSのES module loaderへ
+  メモリ上の固定ソースとして登録する。実行先の元ソースファイルへフォールバック依存しない。
+- QuickJS値とNako Valueの間でNumber、BigInt、UTF-16文字列、配列、辞書、関数を変換する。JS由来の
+  配列・辞書はQuickJSオブジェクトのidentityを保持し、JS呼び出し前後に変更を双方向同期する。
+- `sys.__getSysVar`、`__setSysVar`、`__findVar`、`__findFunc`、`__exec`をホストコールとして接続し、
+  なでしこ関数をQuickJSから同期呼び出しできる。
+- `build --compat-js`はコンパイラ自身のQuickJS対応ランタイムと検証済みソースグラフを1実行ファイルへ
+  埋め込む。起動時は末尾の版付きbundleを検証し、通常のCLI解析へ入らずエントリを実行する。
+
 ## 動的な値
 
 - `runtime/string.zig` は文字列をUTF-16コード単位列として保持する。補助平面文字の長さ・添字・部分列は

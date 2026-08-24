@@ -1309,14 +1309,18 @@
       "category": "特殊命令",
       "scope": "standard-cnako-v1",
       "plannedMode": "compat-js",
-      "status": "blocked",
-      "tests": [],
+      "status": "compat-js",
+      "tests": [
+        "compat-js-basic",
+        "compat-js-host",
+        "compat-js-error-eval"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "QuickJS 2026-06-04互換ビルドで公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0052",
@@ -1333,14 +1337,17 @@
       "category": "特殊命令",
       "scope": "standard-cnako-v1",
       "plannedMode": "compat-js",
-      "status": "blocked",
-      "tests": [],
+      "status": "compat-js",
+      "tests": [
+        "compat-js-basic",
+        "compat-js-find-quirks"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "QuickJS互換ブリッジで公式の変数・関数探索規則を再現"
     },
     {
       "id": "command-0053",
@@ -1357,14 +1364,18 @@
       "category": "特殊命令",
       "scope": "standard-cnako-v1",
       "plannedMode": "compat-js",
-      "status": "blocked",
-      "tests": [],
+      "status": "compat-js",
+      "tests": [
+        "compat-js-basic",
+        "compat-js-plugin-imports",
+        "compat-js-error-function"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "QuickJS関数となでしこ関数の双方向呼び出しを公式差分テストで検証"
     },
     {
       "id": "command-0054",
@@ -1429,14 +1440,18 @@
       "category": "特殊命令",
       "scope": "standard-cnako-v1",
       "plannedMode": "compat-js",
-      "status": "blocked",
-      "tests": [],
+      "status": "compat-js",
+      "tests": [
+        "compat-js-basic",
+        "compat-js-mutation",
+        "compat-js-error-method"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "QuickJSオブジェクトのthis束縛と変更同期を公式差分テストで検証"
     },
     {
       "id": "command-0057",

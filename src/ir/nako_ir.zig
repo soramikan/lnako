@@ -95,10 +95,18 @@ pub const Function = struct {
     is_test: bool,
 };
 
+pub const JavaScriptModule = struct {
+    path: []const u8,
+    source: []const u8,
+    is_plugin: bool = false,
+};
+
 pub const Program = struct {
     arena: std.heap.ArenaAllocator,
     functions: []Function,
     module_entries: []FunctionId,
+    compat_js: bool = false,
+    javascript_modules: []JavaScriptModule = &.{},
 
     pub fn deinit(self: *Program) void {
         self.arena.deinit();

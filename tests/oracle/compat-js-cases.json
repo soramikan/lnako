@@ -1,0 +1,45 @@
+[
+  {
+    "id": "compat-js-basic",
+    "commands": ["JS実行", "JSオブジェクト取得", "JS関数実行", "JSメソッド実行"],
+    "fixture": "compat-js-basic.nako3"
+  },
+  {
+    "id": "compat-js-host",
+    "commands": [],
+    "fixture": "compat-js-host.nako3"
+  },
+  {
+    "id": "compat-js-find-quirks",
+    "commands": [],
+    "fixture": "compat-js-find-quirks.nako3"
+  },
+  {
+    "id": "compat-js-mutation",
+    "commands": [],
+    "fixture": "compat-js-mutation.nako3"
+  },
+  {
+    "id": "compat-js-plugin-imports",
+    "commands": [],
+    "fixture": "compat-js-plugin-imports.nako3"
+  },
+  {
+    "id": "compat-js-error-eval",
+    "commands": [],
+    "fixture": "compat-js-error-eval.nako3",
+    "expectedFailure": true
+  },
+  {
+    "id": "compat-js-error-function",
+    "commands": [],
+    "fixture": "compat-js-error-function.nako3",
+    "expectedFailure": true
+  },
+  {
+    "id": "compat-js-error-method",
+    "commands": [],
+    "fixture": "compat-js-error-method.nako3",
+    "expectedFailure": true
+  }
+]

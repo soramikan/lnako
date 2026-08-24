@@ -175,6 +175,33 @@ const Loader = struct {
         try self.modules.append(self.allocator, module);
 
         if (kind == .javascript) {
+            var imports: std.ArrayList(Import) = .empty;
+            const requested_imports = try collectJavaScriptImports(self.allocator, source);
+            for (requested_imports) |requested| {
+                if (!std.fs.path.isAbsolute(requested) and !std.mem.startsWith(u8, requested, ".")) continue;
+                const resolved = resolveImport(self.allocator, path, requested) catch {
+                    try self.importDiagnostic(import_node, path, "JavaScriptの相対取り込みパスが不正です");
+                    continue;
+                };
+                const imported_extension = std.fs.path.extension(resolved);
+                if (!std.ascii.eqlIgnoreCase(imported_extension, ".js") and !std.ascii.eqlIgnoreCase(imported_extension, ".mjs")) continue;
+                const existing = self.find(resolved);
+                var target: ?u32 = existing;
+                var cyclic = false;
+                if (existing) |index| {
+                    cyclic = self.modules.items[index].state == .loading;
+                } else {
+                    target = self.loadOne(resolved, import_node) catch null;
+                }
+                try imports.append(self.allocator, .{
+                    .requested = try self.allocator.dupe(u8, requested),
+                    .resolved_path = resolved,
+                    .target = target,
+                    .span = ast.emptySpan(),
+                    .cyclic = cyclic,
+                });
+            }
+            module.imports = try imports.toOwnedSlice(self.allocator);
             module.state = .loaded;
             return module.index;
         }
@@ -251,6 +278,94 @@ fn collectImports(node: *ast.Node, output: *std.ArrayList(*ast.Node), allocator:
     for (node.children) |child| try collectImports(child, output, allocator);
 }
 
+const JavaScriptTokenKind = enum { identifier, string, punctuation };
+const JavaScriptToken = struct { kind: JavaScriptTokenKind, text: []const u8 };
+
+fn collectJavaScriptImports(allocator: std.mem.Allocator, source: []const u8) ![][]const u8 {
+    var result: std.ArrayList([]const u8) = .empty;
+    var index: usize = 0;
+    while (nextJavaScriptToken(source, &index)) |token| {
+        if (token.kind != .identifier) continue;
+        const is_import = std.mem.eql(u8, token.text, "import");
+        const is_export = std.mem.eql(u8, token.text, "export");
+        if (!is_import and !is_export) continue;
+        var saw_from = false;
+        var scanned: usize = 0;
+        while (scanned < 256) : (scanned += 1) {
+            const candidate = nextJavaScriptToken(source, &index) orelse break;
+            if (candidate.kind == .punctuation and (std.mem.eql(u8, candidate.text, ";") or std.mem.eql(u8, candidate.text, "("))) break;
+            if (candidate.kind == .identifier and std.mem.eql(u8, candidate.text, "from")) {
+                saw_from = true;
+                continue;
+            }
+            if (candidate.kind != .string) continue;
+            if (std.mem.indexOfScalar(u8, candidate.text, '\\') != null) return error.UnsupportedJavaScriptImportEscape;
+            if ((is_import and (saw_from or scanned == 0)) or (is_export and saw_from)) try result.append(allocator, try allocator.dupe(u8, candidate.text));
+            break;
+        }
+    }
+    return result.toOwnedSlice(allocator);
+}
+
+fn nextJavaScriptToken(source: []const u8, index: *usize) ?JavaScriptToken {
+    while (index.* < source.len) {
+        const character = source[index.*];
+        if (std.ascii.isWhitespace(character)) {
+            index.* += 1;
+            continue;
+        }
+        if (character == '/' and index.* + 1 < source.len and source[index.* + 1] == '/') {
+            index.* += 2;
+            while (index.* < source.len and source[index.*] != '\n') index.* += 1;
+            continue;
+        }
+        if (character == '/' and index.* + 1 < source.len and source[index.* + 1] == '*') {
+            index.* += 2;
+            while (index.* + 1 < source.len and !(source[index.*] == '*' and source[index.* + 1] == '/')) index.* += 1;
+            index.* = @min(source.len, index.* + 2);
+            continue;
+        }
+        if (character == '`') {
+            index.* += 1;
+            while (index.* < source.len) : (index.* += 1) {
+                if (source[index.*] == '\\') {
+                    index.* = @min(source.len, index.* + 1);
+                } else if (source[index.*] == '`') {
+                    index.* += 1;
+                    break;
+                }
+            }
+            continue;
+        }
+        if (character == '\'' or character == '"') {
+            const quote = character;
+            const start = index.* + 1;
+            index.* = start;
+            while (index.* < source.len) : (index.* += 1) {
+                if (source[index.*] == '\\') {
+                    index.* = @min(source.len, index.* + 1);
+                    continue;
+                }
+                if (source[index.*] == quote) {
+                    const text = source[start..index.*];
+                    index.* += 1;
+                    return .{ .kind = .string, .text = text };
+                }
+            }
+            return null;
+        }
+        if (std.ascii.isAlphabetic(character) or character == '_' or character == '$') {
+            const start = index.*;
+            index.* += 1;
+            while (index.* < source.len and (std.ascii.isAlphanumeric(source[index.*]) or source[index.*] == '_' or source[index.*] == '$')) index.* += 1;
+            return .{ .kind = .identifier, .text = source[start..index.*] };
+        }
+        index.* += 1;
+        return .{ .kind = .punctuation, .text = source[index.* - 1 .. index.*] };
+    }
+    return null;
+}
+
 fn normalizePath(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     return std.fs.path.resolve(allocator, &.{path});
 }
@@ -307,6 +422,22 @@ test "JS取り込みは互換モードを必須にする" {
     var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .compat_js = true });
     defer graph.deinit();
     try std.testing.expectEqual(ModuleKind.javascript, graph.modules[1].kind);
+}
+
+test "JavaScriptの相対依存を再帰ロードする" {
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「plugin.mjs」を取り込む\n" },
+        .{ .suffix = "plugin.mjs", .source = "import { value } from './helper.mjs'; export default { value };" },
+        .{ .suffix = "helper.mjs", .source = "export const value = 1;" },
+    } };
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .compat_js = true });
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 3), graph.modules.len);
+    try std.testing.expectEqual(ModuleKind.javascript, graph.modules[1].kind);
+    try std.testing.expectEqual(@as(usize, 1), graph.modules[1].imports.len);
+    try std.testing.expectEqual(@as(?u32, 2), graph.modules[1].imports[0].target);
+    try std.testing.expectEqualStrings("./helper.mjs", graph.modules[1].imports[0].requested);
 }
 
 test "ネイティブ化した公式JavaScriptプラグインは通常モードで取り込む" {
