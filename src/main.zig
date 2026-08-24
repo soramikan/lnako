@@ -117,6 +117,7 @@ pub fn main(init: std.process.Init) !void {
                 .emit = options.emit,
                 .llvm_root = init.environ_map.get("LNAKO_LLVM_DIR"),
                 .llvm_library = init.environ_map.get("LNAKO_LLVM_LIBRARY"),
+                .runtime_library = init.environ_map.get("LNAKO_AOT_RUNTIME_LIBRARY"),
                 .trace = init.environ_map.get("LNAKO_LLVM_TRACE") != null,
             }, stderr) catch |err| {
                 try stderr.print("build: ネイティブコード生成に失敗しました: {s}\n", .{@errorName(err)});

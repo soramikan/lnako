@@ -14,6 +14,11 @@ source
   -> native executable
 ```
 
+通常モードの実行ファイルは、Zigで実装した`lnako_runtime`静的ライブラリをLLDでリンクします。ランタイムABIは
+UTF-16ヒープ値、型付きルートフレーム、循環参照へ拡張可能なmark-and-sweepを持ち、生成LLVM `main` が初期化と
+終了処理を必ず呼びます。開発ツリーでは`zig-out/lib/`、配布物ではコンパイラの`../lib/`から解決し、
+`LNAKO_AOT_RUNTIME_LIBRARY`で明示パスを指定できます。
+
 フロントエンド、言語非依存に近いNako IR、LLVMバックエンド、ランタイムを分離します。公式なでしこ3のTypeScript実装を実行時依存にせず、固定バージョンの公式処理系を差分テストのオラクルとして使用します。
 
 ## モジュール境界

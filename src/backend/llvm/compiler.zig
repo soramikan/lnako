@@ -16,6 +16,7 @@ pub const Options = struct {
     output_path: []const u8,
     llvm_root: ?[]const u8 = null,
     llvm_library: ?[]const u8 = null,
+    runtime_library: ?[]const u8 = null,
     trace: bool = false,
 };
 
@@ -131,7 +132,7 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
             defer allocator.free(object_path);
             defer std.Io.Dir.cwd().deleteFile(io, object_path) catch {};
             try emitObject(allocator, &api, machine, llvm_module, object_path, diagnostics);
-            try linkExecutable(allocator, io, object_path, options.output_path, options.llvm_root, diagnostics);
+            try linkExecutable(allocator, io, object_path, options.output_path, options.llvm_root, options.runtime_library, diagnostics);
         },
     }
 }
@@ -182,18 +183,23 @@ fn nonce(io: std.Io) u64 {
     return @truncate(@as(u96, @bitCast(std.Io.Timestamp.now(io, .awake).nanoseconds)));
 }
 
-fn linkExecutable(allocator: std.mem.Allocator, io: std.Io, object_path: []const u8, output_path: []const u8, llvm_root: ?[]const u8, diagnostics: *std.Io.Writer) !void {
+fn linkExecutable(allocator: std.mem.Allocator, io: std.Io, object_path: []const u8, output_path: []const u8, llvm_root: ?[]const u8, runtime_override: ?[]const u8, diagnostics: *std.Io.Writer) !void {
     const tools = try findLinkTools(allocator, io, llvm_root);
     defer allocator.free(tools.clang);
     defer allocator.free(tools.lld);
+    const runtime_library = findRuntimeLibrary(allocator, io, runtime_override) catch |failure| {
+        try diagnostics.print("AOTランタイム静的ライブラリを読み込めません: {s}\n", .{@errorName(failure)});
+        return failure;
+    };
+    defer allocator.free(runtime_library);
     const linker_argument = try std.fmt.allocPrint(allocator, "--ld-path={s}", .{tools.lld});
     defer allocator.free(linker_argument);
     const macos_sdk: ?[]u8 = if (builtin.os.tag == .macos) try findMacOsSdk(allocator, io) else null;
     defer if (macos_sdk) |path| allocator.free(path);
     const argv: []const []const u8 = switch (builtin.os.tag) {
-        .linux => &.{ tools.clang, linker_argument, object_path, "-o", output_path, "-lm" },
-        .macos => &.{ tools.clang, linker_argument, "-isysroot", macos_sdk.?, object_path, "-o", output_path },
-        else => &.{ tools.clang, linker_argument, object_path, "-o", output_path },
+        .linux => &.{ tools.clang, linker_argument, object_path, runtime_library, "-o", output_path, "-lm" },
+        .macos => &.{ tools.clang, linker_argument, "-isysroot", macos_sdk.?, object_path, runtime_library, "-o", output_path },
+        else => &.{ tools.clang, linker_argument, object_path, runtime_library, "-o", output_path },
     };
     const result = try std.process.run(allocator, io, .{ .argv = argv });
     defer allocator.free(result.stdout);
@@ -204,6 +210,21 @@ fn linkExecutable(allocator: std.mem.Allocator, io: std.Io, object_path: []const
     }
     try diagnostics.print("LLDリンクエラー:\n{s}", .{result.stderr});
     return error.LldLinkFailed;
+}
+
+fn findRuntimeLibrary(allocator: std.mem.Allocator, io: std.Io, override: ?[]const u8) ![]u8 {
+    if (override) |path| {
+        _ = try std.Io.Dir.cwd().statFile(io, path, .{});
+        return allocator.dupe(u8, path);
+    }
+    const executable = try std.process.executablePathAlloc(io, allocator);
+    defer allocator.free(executable);
+    const directory = std.fs.path.dirname(executable) orelse return error.AotRuntimeLibraryNotFound;
+    const name = if (builtin.os.tag == .windows) "lnako_runtime.lib" else "liblnako_runtime.a";
+    const path = try std.fs.path.join(allocator, &.{ directory, "..", "lib", name });
+    errdefer allocator.free(path);
+    _ = std.Io.Dir.cwd().statFile(io, path, .{}) catch return error.AotRuntimeLibraryNotFound;
+    return path;
 }
 
 fn findMacOsSdk(allocator: std.mem.Allocator, io: std.Io) ![]u8 {

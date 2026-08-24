@@ -34,6 +34,18 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(exe);
 
+    const aot_runtime = b.addLibrary(.{
+        .name = "lnako_runtime",
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/runtime/aot.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    b.installArtifact(aot_runtime);
+
     const native_plugin_fixture = b.addLibrary(.{
         .name = "lnako_test_plugin",
         .linkage = .dynamic,
@@ -167,10 +179,13 @@ pub fn build(b: *std.Build) void {
     const run_module_tests = b.addRunArtifact(module_tests);
     const exe_tests = b.addTest(.{ .root_module = exe.root_module });
     const run_exe_tests = b.addRunArtifact(exe_tests);
+    const aot_runtime_tests = b.addTest(.{ .root_module = aot_runtime.root_module });
+    const run_aot_runtime_tests = b.addRunArtifact(aot_runtime_tests);
 
     const test_step = b.step("test", "全ての単体テストを実行する");
     test_step.dependOn(&run_module_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+    test_step.dependOn(&run_aot_runtime_tests.step);
 
     const fmt_step = b.step("fmt-check", "Zigソースのフォーマットを検査する");
     const fmt = b.addFmt(.{

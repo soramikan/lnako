@@ -107,6 +107,8 @@ const Emitter = struct {
             "; lnako Nako SSA IR -> LLVM IR\n" ++
                 "source_filename = \"lnako\"\n\n" ++
                 "%lnako.Value = type { i8, i64 }\n\n" ++
+                "declare i32 @lnako_aot_runtime_init()\n" ++
+                "declare void @lnako_aot_runtime_deinit()\n" ++
                 "declare i32 @printf(ptr, ...)\n" ++
                 "declare i32 @puts(ptr)\n" ++
                 "declare double @llvm.pow.f64(double, double)\n\n" ++
@@ -455,6 +457,7 @@ const Emitter = struct {
     fn writeMain(self: *Emitter) !void {
         const scope = 4 + self.program.functions.len;
         try self.output.writer.print("define i32 @main() !dbg !{d} {{\nentry:\n", .{scope});
+        try self.output.writer.writeAll("  %runtime.status = call i32 @lnako_aot_runtime_init()\n");
         var index = self.program.module_entries.len;
         var call_index: usize = 0;
         while (index > 0) {
@@ -463,7 +466,7 @@ const Emitter = struct {
             try self.debugSuffix(ast.emptySpan(), scope);
             call_index += 1;
         }
-        try self.output.writer.writeAll("  ret i32 0");
+        try self.output.writer.writeAll("  call void @lnako_aot_runtime_deinit()\n  ret i32 0");
         try self.debugSuffix(ast.emptySpan(), scope);
         try self.output.writer.writeAll("}\n\n");
     }
@@ -673,6 +676,8 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     var module = try generate(std.testing.allocator, program, "main.nako3", false);
     defer module.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "define i32 @main()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call i32 @lnako_aot_runtime_init()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_runtime_deinit()") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.global.0") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "!llvm.dbg.cu") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "!DILocation(line: 1") != null);
