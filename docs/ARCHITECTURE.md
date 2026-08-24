@@ -104,5 +104,9 @@ source
 - 無名関数はIR関数IDと名前付き捕捉値を持つクロージャへ変換する。動的ななでしこ実行も通常の
   parse → semantic → HIR → SSA → verifyを通し、検証済みIRだけを実行する。
 - 出力はホスト抽象化を通す。CLIは標準出力、単体・差分テストはメモリバッファを接続する。
+- Promiseは `pending` / `fulfilled` / `rejected` の状態、反応列、FIFOマイクロタスクをランタイムヒープに持ち、
+  反応先と未処理タスクもGCで追跡する。実行器は成功・失敗・両方・finallyの反応規則に従って次のPromiseへ伝播する。
+- タイマーは単調な論理ミリ秒、登録順を保つ同時刻順序、単発・周期・停止を実行器に持つ。ホストの待機関数を
+  CLIでは `std.Io.sleep`、テストでは仮想時計へ接続し、OS時計に依存しない順序テストを可能にする。
 - `tools/compare_interpreter_oracle.mjs` は同一の `.nako3` を公式 `cnako3` と `lnako run` へ渡し、
   標準出力、エラー分類、終了コード、シグナルを比較する。

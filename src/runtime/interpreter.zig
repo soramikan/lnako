@@ -14,15 +14,21 @@ pub const Runtime = value_mod.Runtime;
 pub const Host = struct {
     context: *anyopaque,
     writeFn: *const fn (context: *anyopaque, bytes: []const u8) anyerror!void,
+    sleepMillisecondsFn: ?*const fn (context: *anyopaque, milliseconds: u64) anyerror!void = null,
 
     pub fn write(self: Host, bytes: []const u8) !void {
         try self.writeFn(self.context, bytes);
+    }
+
+    pub fn sleepMilliseconds(self: Host, milliseconds: u64) !void {
+        if (self.sleepMillisecondsFn) |sleepFn| try sleepFn(self.context, milliseconds);
     }
 };
 
 pub const BufferHost = struct {
     allocator: std.mem.Allocator,
     output: std.ArrayList(u8) = .empty,
+    elapsed_milliseconds: u64 = 0,
 
     pub fn deinit(self: *BufferHost) void {
         self.output.deinit(self.allocator);
@@ -30,7 +36,7 @@ pub const BufferHost = struct {
     }
 
     pub fn host(self: *BufferHost) Host {
-        return .{ .context = self, .writeFn = write };
+        return .{ .context = self, .writeFn = write, .sleepMillisecondsFn = sleepMilliseconds };
     }
 
     pub fn written(self: BufferHost) []const u8 {
@@ -40,6 +46,11 @@ pub const BufferHost = struct {
     fn write(context: *anyopaque, bytes: []const u8) !void {
         const self: *BufferHost = @ptrCast(@alignCast(context));
         try self.output.appendSlice(self.allocator, bytes);
+    }
+
+    fn sleepMilliseconds(context: *anyopaque, milliseconds: u64) !void {
+        const self: *BufferHost = @ptrCast(@alignCast(context));
+        self.elapsed_milliseconds = std.math.add(u64, self.elapsed_milliseconds, milliseconds) catch return error.TimerOverflow;
     }
 };
 
@@ -56,6 +67,21 @@ const IteratorState = struct {
     step: f64 = 1,
     variable_name: []const u8 = "",
 };
+
+const Timer = struct {
+    id: u64,
+    due_milliseconds: u64,
+    interval_milliseconds: u64 = 0,
+    repeating: bool = false,
+    callback: Value,
+};
+
+const PromiseResolver = struct {
+    promise: *value_mod.Promise,
+    rejected: bool,
+};
+
+const PromiseChainKind = enum { success, failure, settled, finally };
 
 const Frame = struct {
     parent: ?*Frame,
@@ -92,6 +118,12 @@ pub const Interpreter = struct {
     max_dynamic_depth: usize = 64,
     test_results: std.ArrayList(TestResult) = .empty,
     output_captures: std.ArrayList(*std.ArrayList(u8)) = .empty,
+    timers: std.ArrayList(Timer) = .empty,
+    promise_resolvers: std.AutoHashMapUnmanaged(*value_mod.Function, PromiseResolver) = .empty,
+    elapsed_milliseconds: u64 = 0,
+    next_timer_id: u64 = 1,
+    event_count: usize = 0,
+    max_event_count: usize = 100_000,
 
     pub fn init(allocator: std.mem.Allocator, runtime: *Runtime, program: ir.Program, host: Host) Interpreter {
         return .{ .allocator = allocator, .runtime = runtime, .program = program, .host = host };
@@ -107,13 +139,17 @@ pub const Interpreter = struct {
         }
         self.test_results.deinit(self.allocator);
         self.output_captures.deinit(self.allocator);
+        self.timers.deinit(self.allocator);
+        self.promise_resolvers.deinit(self.allocator);
         self.* = undefined;
     }
 
     pub fn run(self: *Interpreter) !Value {
         try self.runtime.registerRootProvider(.{ .context = self, .traceFn = traceRoots });
         defer self.runtime.unregisterRootProvider(self);
-        return self.runEntries();
+        const result = try self.runEntries();
+        try self.drainEventLoop();
+        return result;
     }
 
     pub fn runTests(self: *Interpreter) ![]const TestResult {
@@ -123,6 +159,7 @@ pub const Interpreter = struct {
             if (!function.is_test) continue;
             const result = self.executeFunction(function, &.{}, null);
             if (result) |_| {
+                try self.drainEventLoop();
                 try self.test_results.append(self.allocator, .{ .name = try self.allocator.dupe(u8, function.name), .passed = true });
             } else |failure| {
                 try self.test_results.append(self.allocator, .{
@@ -329,6 +366,8 @@ pub const Interpreter = struct {
         for (instruction.operands, 0..) |operand_id, index| arguments[index] = frame.values[operand_id];
         const result = if (self.findFunction(instruction.name)) |function|
             try self.executeFunction(function, arguments, null)
+        else if (frame.locals.get(instruction.name)) |callable|
+            if (callable == .function) try self.callFunctionValue(callable.function, arguments) else return error.NotCallable
         else if (self.globals.get(instruction.name)) |callable|
             if (callable == .function) try self.callFunctionValue(callable.function, arguments) else return error.NotCallable
         else
@@ -348,6 +387,14 @@ pub const Interpreter = struct {
     }
 
     fn callFunctionValue(self: *Interpreter, function: *value_mod.Function, arguments: []const Value) !Value {
+        if (self.promise_resolvers.get(function)) |resolver| {
+            const settled = if (arguments.len > 0) arguments[0] else Value.undefined;
+            if (resolver.rejected) {
+                try self.runtime.rejectPromise(resolver.promise, settled);
+            } else try self.runtime.resolvePromise(resolver.promise, settled);
+            try self.removePromiseResolvers(resolver.promise);
+            return .undefined;
+        }
         return switch (function.kind) {
             .native => self.runtime.call(.{ .function = function }, arguments),
             .ir => |function_id| self.executeFunction(&self.program.functions[function_id], arguments, function),
@@ -388,7 +435,236 @@ pub const Interpreter = struct {
             if (arguments.len < 2 or !Value.strictEqual(arguments[0], arguments[1])) return error.AssertionFailed;
             return .{ .boolean = true };
         }
+        if (std.mem.eql(u8, name, "秒待") or std.mem.eql(u8, name, "秒待機") or std.mem.eql(u8, name, "秒逐次待機")) {
+            const milliseconds = try self.delayMilliseconds(if (arguments.len > 0) arguments[arguments.len - 1] else .undefined);
+            try self.waitMilliseconds(milliseconds);
+            return .undefined;
+        }
+        if (std.mem.eql(u8, name, "秒後")) return self.scheduleTimer(arguments, false);
+        if (std.mem.eql(u8, name, "秒毎") or std.mem.eql(u8, name, "秒タイマー開始時")) return self.scheduleTimer(arguments, true);
+        if (std.mem.eql(u8, name, "タイマー停止")) {
+            if (arguments.len == 0 or arguments[arguments.len - 1] != .number) return .{ .boolean = false };
+            const number = arguments[arguments.len - 1].number;
+            if (!std.math.isFinite(number) or number < 0 or number > @as(f64, @floatFromInt(std.math.maxInt(u64)))) return .{ .boolean = false };
+            return .{ .boolean = self.stopTimer(@intFromFloat(@trunc(number))) };
+        }
+        if (std.mem.eql(u8, name, "全タイマー停止")) {
+            self.timers.clearRetainingCapacity();
+            return .undefined;
+        }
+        if (std.mem.eql(u8, name, "動時")) return self.createPromiseWithExecutor(arguments);
+        if (std.mem.eql(u8, name, "成功時")) return self.chainPromise(arguments, .success);
+        if (std.mem.eql(u8, name, "失敗時")) return self.chainPromise(arguments, .failure);
+        if (std.mem.eql(u8, name, "処理時")) return self.chainPromise(arguments, .settled);
+        if (std.mem.eql(u8, name, "終了時")) return self.chainPromise(arguments, .finally);
         return error.UnknownCommand;
+    }
+
+    fn delayMilliseconds(self: *Interpreter, value: Value) !u64 {
+        const seconds = try self.runtime.valueToNumber(value);
+        if (!std.math.isFinite(seconds) or seconds <= 0) return 0;
+        const milliseconds = @floor(seconds * 1000);
+        if (milliseconds >= @as(f64, @floatFromInt(std.math.maxInt(u64)))) return error.TimerOverflow;
+        return @intFromFloat(milliseconds);
+    }
+
+    fn scheduleTimer(self: *Interpreter, arguments: []const Value, repeating: bool) !Value {
+        if (arguments.len < 2) return error.InvalidTimerArguments;
+        var callback = try self.resolveCallback(arguments[0]);
+        var root = self.runtime.rootFrame();
+        defer root.deinit();
+        try root.protect(&callback);
+        const delay = try self.delayMilliseconds(arguments[1]);
+        const timer_id = self.next_timer_id;
+        self.next_timer_id = std.math.add(u64, self.next_timer_id, 1) catch return error.TimerOverflow;
+        const due = std.math.add(u64, self.elapsed_milliseconds, delay) catch return error.TimerOverflow;
+        try self.timers.append(self.allocator, .{
+            .id = timer_id,
+            .due_milliseconds = due,
+            .interval_milliseconds = if (repeating) delay else 0,
+            .repeating = repeating,
+            .callback = callback,
+        });
+        const result = Value{ .number = @floatFromInt(timer_id) };
+        try self.setGlobal("対象", result);
+        return result;
+    }
+
+    fn resolveCallback(self: *Interpreter, callback: Value) !Value {
+        if (callback == .function) return callback;
+        if (callback != .string) return error.NotCallable;
+        const name = try callback.string.toUtf8Lossy(self.allocator);
+        defer self.allocator.free(name);
+        if (self.globals.get(name)) |candidate| {
+            if (candidate == .function) return candidate;
+        }
+        const function = self.findFunction(name) orelse return error.UnknownFunction;
+        var name_value = try self.runtime.stringUtf8(function.name);
+        var root = self.runtime.rootFrame();
+        defer root.deinit();
+        try root.protect(&name_value);
+        return self.runtime.createIrFunction(name_value.string, function.parameters.len, function.id, &.{});
+    }
+
+    fn stopTimer(self: *Interpreter, timer_id: u64) bool {
+        for (self.timers.items, 0..) |timer, index| {
+            if (timer.id != timer_id) continue;
+            _ = self.timers.orderedRemove(index);
+            return true;
+        }
+        return false;
+    }
+
+    fn createPromiseWithExecutor(self: *Interpreter, arguments: []const Value) !Value {
+        if (arguments.len == 0 or arguments[0] != .function) return error.NotCallable;
+        var promise = try self.runtime.createPromise();
+        var root = self.runtime.rootFrame();
+        defer root.deinit();
+        try root.protect(&promise);
+        var resolve = try self.createPromiseResolver(promise.promise, false);
+        try root.protect(&resolve);
+        var reject = try self.createPromiseResolver(promise.promise, true);
+        try root.protect(&reject);
+        _ = self.callFunctionValue(arguments[0].function, &.{ resolve, reject }) catch |failure| {
+            const reason = try self.runtime.stringUtf8(@errorName(failure));
+            try self.runtime.rejectPromise(promise.promise, reason);
+        };
+        if (promise.promise.state != .pending) try self.removePromiseResolvers(promise.promise);
+        try self.setGlobal("そ", promise);
+        return promise;
+    }
+
+    fn createPromiseResolver(self: *Interpreter, promise: *value_mod.Promise, rejected: bool) !Value {
+        var promise_root = Value{ .promise = promise };
+        var root = self.runtime.rootFrame();
+        defer root.deinit();
+        try root.protect(&promise_root);
+        var name = try self.runtime.stringUtf8(if (rejected) "reject" else "resolve");
+        try root.protect(&name);
+        const resolver = try self.runtime.createNativeFunction(name.string, 1, promiseResolverSentinel, &.{});
+        try self.promise_resolvers.put(self.allocator, resolver.function, .{ .promise = promise, .rejected = rejected });
+        return resolver;
+    }
+
+    fn removePromiseResolvers(self: *Interpreter, promise: *value_mod.Promise) !void {
+        var keys: std.ArrayList(*value_mod.Function) = .empty;
+        defer keys.deinit(self.allocator);
+        var iterator = self.promise_resolvers.iterator();
+        while (iterator.next()) |entry| if (entry.value_ptr.promise == promise) try keys.append(self.allocator, entry.key_ptr.*);
+        for (keys.items) |key| _ = self.promise_resolvers.remove(key);
+    }
+
+    fn chainPromise(self: *Interpreter, arguments: []const Value, kind: PromiseChainKind) !Value {
+        if (arguments.len < 2 or arguments[0] != .function or arguments[1] != .promise) return error.InvalidPromiseArguments;
+        const callback = arguments[0];
+        const source = arguments[1].promise;
+        const result = switch (kind) {
+            .success => try self.runtime.promiseThen(source, callback, .undefined),
+            .failure => try self.runtime.promiseThen(source, .undefined, callback),
+            .settled => try self.runtime.promiseThenMode(source, callback, callback, .settled_pair),
+            .finally => try self.runtime.promiseThenMode(source, callback, callback, .finally),
+        };
+        try self.setGlobal("そ", result);
+        return result;
+    }
+
+    fn drainEventLoop(self: *Interpreter) !void {
+        while (true) {
+            try self.drainPromiseTasks();
+            if (self.timers.items.len == 0) return;
+            try self.executeTimer(self.earliestTimerIndex().?);
+        }
+    }
+
+    fn waitMilliseconds(self: *Interpreter, milliseconds: u64) !void {
+        const target = std.math.add(u64, self.elapsed_milliseconds, milliseconds) catch return error.TimerOverflow;
+        while (true) {
+            try self.drainPromiseTasks();
+            const earliest = self.earliestTimerIndex() orelse break;
+            if (self.timers.items[earliest].due_milliseconds > target) break;
+            try self.executeTimer(earliest);
+        }
+        try self.sleepUntil(target);
+    }
+
+    fn drainPromiseTasks(self: *Interpreter) !void {
+        while (self.runtime.takePromiseTask()) |task| {
+            try self.countEvent();
+            try self.executePromiseTask(task);
+        }
+    }
+
+    fn earliestTimerIndex(self: Interpreter) ?usize {
+        if (self.timers.items.len == 0) return null;
+        var earliest: usize = 0;
+        for (self.timers.items[1..], 1..) |timer, index| {
+            if (timer.due_milliseconds < self.timers.items[earliest].due_milliseconds) earliest = index;
+        }
+        return earliest;
+    }
+
+    fn executeTimer(self: *Interpreter, index: usize) !void {
+        try self.countEvent();
+        const timer = self.timers.orderedRemove(index);
+        var callback = timer.callback;
+        var root = self.runtime.rootFrame();
+        defer root.deinit();
+        try root.protect(&callback);
+        try self.sleepUntil(timer.due_milliseconds);
+        if (timer.repeating) {
+            var next = timer;
+            next.due_milliseconds = std.math.add(u64, self.elapsed_milliseconds, timer.interval_milliseconds) catch return error.TimerOverflow;
+            try self.timers.append(self.allocator, next);
+        }
+        const id = Value{ .number = @floatFromInt(timer.id) };
+        _ = self.callFunctionValue(callback.function, &.{id}) catch |failure| {
+            self.exception_value = try self.runtime.stringUtf8(@errorName(failure));
+        };
+    }
+
+    fn sleepUntil(self: *Interpreter, target: u64) !void {
+        if (target <= self.elapsed_milliseconds) return;
+        try self.host.sleepMilliseconds(target - self.elapsed_milliseconds);
+        self.elapsed_milliseconds = target;
+    }
+
+    fn executePromiseTask(self: *Interpreter, task: value_mod.PromiseTask) !void {
+        var callback = task.callback;
+        var settled = task.settled_value;
+        var next = Value{ .promise = task.next };
+        var root = self.runtime.rootFrame();
+        defer root.deinit();
+        try root.protect(&callback);
+        try root.protect(&settled);
+        try root.protect(&next);
+        if (callback == .undefined) return self.runtime.forwardPromiseTask(task);
+        if (callback != .function) {
+            const reason = try self.runtime.stringUtf8("NotCallable");
+            return self.runtime.rejectPromise(task.next, reason);
+        }
+        if (task.mode != .finally) try self.setGlobal("対象", settled);
+        const result = switch (task.mode) {
+            .standard => self.callFunctionValue(callback.function, &.{settled}),
+            .settled_pair => self.callFunctionValue(callback.function, &.{ .{ .boolean = !task.rejected }, settled }),
+            .finally => self.callFunctionValue(callback.function, &.{}),
+        } catch |failure| {
+            const reason = if (self.exception_value != .undefined) blk: {
+                const captured = self.exception_value;
+                self.exception_value = .undefined;
+                break :blk captured;
+            } else try self.runtime.stringUtf8(@errorName(failure));
+            return self.runtime.rejectPromise(task.next, reason);
+        };
+        if (task.mode == .finally) {
+            if (task.rejected) return self.runtime.rejectPromise(task.next, task.settled_value);
+            return self.runtime.resolvePromise(task.next, task.settled_value);
+        }
+        return self.runtime.resolvePromise(task.next, result);
+    }
+
+    fn countEvent(self: *Interpreter) !void {
+        if (self.event_count >= self.max_event_count) return error.EventLoopLimitExceeded;
+        self.event_count += 1;
     }
 
     fn makeArray(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
@@ -594,6 +870,7 @@ pub const Interpreter = struct {
         try self.output_captures.append(self.allocator, &capture);
         defer _ = self.output_captures.pop();
         _ = try self.runEntries();
+        try self.drainEventLoop();
         return self.runtime.stringUtf8(capture.items);
     }
 
@@ -632,8 +909,18 @@ pub const Interpreter = struct {
             var iterators = active.iterators.valueIterator();
             while (iterators.next()) |iterator| try runtime.traceExternal(iterator.source);
         }
+        for (self.timers.items) |timer| try runtime.traceExternal(timer.callback);
+        var resolvers = self.promise_resolvers.iterator();
+        while (resolvers.next()) |entry| {
+            try runtime.traceExternal(.{ .function = entry.key_ptr.* });
+            try runtime.traceExternal(.{ .promise = entry.value_ptr.promise });
+        }
     }
 };
+
+fn promiseResolverSentinel(_: *Runtime, _: []const Value) anyerror!Value {
+    return .undefined;
+}
 
 fn maxValueId(function: ir.Function) usize {
     var maximum: usize = if (function.parameters.len == 0) 0 else function.parameters.len - 1;
@@ -754,6 +1041,103 @@ test "無名関数がローカル変数を捕捉する" {
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("15\n", host.written());
+}
+
+test "Promiseの成功・失敗・処理・終了コールバックを順に実行する" {
+    const source =
+        "動いた時には(成功,失敗)\n" ++
+        "成功(9)\n" ++
+        "ここまで\n" ++
+        "Pはそれ\n" ++
+        "Pの成功した時には\n" ++
+        "対象を表示\n" ++
+        "ここまで\n" ++
+        "動いた時には(成功,失敗)\n" ++
+        "失敗(5)\n" ++
+        "ここまで\n" ++
+        "Qはそれ\n" ++
+        "Qの処理した時には(OK,値)\n" ++
+        "OKを表示\n" ++
+        "値を表示\n" ++
+        "ここまで\n" ++
+        "その終了した時には\n" ++
+        "\"完了\"を表示\n" ++
+        "ここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("9\nfalse\n5\n完了\n", host.written());
+}
+
+test "GCストレス中もタイマーからPromiseを解決する" {
+    const source =
+        "動いた時には(成功,失敗)\n" ++
+        "0.001秒後には\n" ++
+        "成功(7)\n" ++
+        "ここまで\n" ++
+        "ここまで\n" ++
+        "Pはそ\n" ++
+        "Pの成功した時には\n" ++
+        "対象を表示\n" ++
+        "ここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("7\n", host.written());
+    try std.testing.expectEqual(@as(u64, 1), host.elapsed_milliseconds);
+}
+
+test "決定的時計でタイマーの順序・停止・待機を処理する" {
+    const source =
+        "0.003秒後には\n" ++
+        "\"三\"を表示\n" ++
+        "ここまで\n" ++
+        "0.001秒後には\n" ++
+        "\"一\"を表示\n" ++
+        "ここまで\n" ++
+        "0.002秒後には\n" ++
+        "\"停止失敗\"を表示\n" ++
+        "ここまで\n" ++
+        "対象のタイマー停止\n" ++
+        "0.004秒毎には(TID)\n" ++
+        "\"毎\"を表示\n" ++
+        "TIDのタイマー停止\n" ++
+        "ここまで\n" ++
+        "0.005秒待つ\n" ++
+        "\"待\"を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("一\n三\n毎\n待\n", host.written());
+    try std.testing.expectEqual(@as(u64, 5), host.elapsed_milliseconds);
 }
 
 test "GCストレス中も実行フレームと反復対象をルートとして保持する" {

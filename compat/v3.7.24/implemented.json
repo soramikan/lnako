@@ -1,0 +1,72 @@
+{
+  "秒待": {
+    "status": "native",
+    "tests": ["timer-wait", "timer-wait-interleaving"],
+    "reason": "差し替え可能な時計を用いた待機と公式cnako3差分テストに成功"
+  },
+  "秒待機": {
+    "status": "native",
+    "tests": ["timer-wait-aliases"],
+    "reason": "秒待の別名として公式cnako3差分テストに成功"
+  },
+  "秒逐次待機": {
+    "status": "native",
+    "tests": ["timer-wait-aliases"],
+    "reason": "逐次待機の互換呼び出しとして公式cnako3差分テストに成功"
+  },
+  "秒後": {
+    "status": "native",
+    "tests": ["timer-order", "timer-stop", "timer-wait-interleaving", "promise-async-timer"],
+    "reason": "単発タイマーの順序と停止を公式cnako3差分テストで確認"
+  },
+  "秒毎": {
+    "status": "native",
+    "tests": ["timer-interval"],
+    "reason": "周期タイマーの実行とコールバック内停止を公式cnako3差分テストで確認"
+  },
+  "秒タイマー開始時": {
+    "status": "native",
+    "tests": ["timer-interval-alias"],
+    "reason": "秒毎の別名として公式cnako3差分テストに成功"
+  },
+  "タイマー停止": {
+    "status": "native",
+    "tests": ["timer-stop", "timer-interval"],
+    "reason": "単発タイマーと周期タイマーの停止を公式cnako3差分テストで確認"
+  },
+  "全タイマー停止": {
+    "status": "native",
+    "tests": ["timer-stop-all"],
+    "reason": "登録済みタイマーの一括停止を公式cnako3差分テストで確認"
+  },
+  "そ": {
+    "status": "native",
+    "tests": ["promise-reject"],
+    "reason": "直近のPromiseを保持するシステム定数として公式cnako3差分テストに成功"
+  },
+  "動時": {
+    "status": "native",
+    "tests": ["promise-success", "promise-reject", "promise-async-timer"],
+    "reason": "resolve・reject関数を渡すPromise生成を公式cnako3差分テストで確認"
+  },
+  "成功時": {
+    "status": "native",
+    "tests": ["promise-success", "promise-async-timer"],
+    "reason": "成功反応とPromise連鎖を公式cnako3差分テストで確認"
+  },
+  "処理時": {
+    "status": "native",
+    "tests": ["promise-reject-process-finally"],
+    "reason": "成否フラグと値の反応を公式cnako3差分テストで確認"
+  },
+  "失敗時": {
+    "status": "native",
+    "tests": ["promise-reject"],
+    "reason": "拒否反応と回復後のPromise連鎖を公式cnako3差分テストで確認"
+  },
+  "終了時": {
+    "status": "native",
+    "tests": ["promise-reject-process-finally"],
+    "reason": "finally反応と元の成否伝播を公式cnako3差分テストで確認"
+  }
+}

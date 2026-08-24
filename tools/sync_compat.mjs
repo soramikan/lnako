@@ -9,11 +9,12 @@ const snapshotPath = resolve(root, "compat/v3.7.24/command_list.json");
 const matrixPath = resolve(root, "compat/v3.7.24/matrix.json");
 const targetsPath = resolve(root, "compat/v3.7.24/standard-cnako.json");
 const summaryPath = resolve(root, "compat/v3.7.24/summary.json");
+const implementationPath = resolve(root, "compat/v3.7.24/implemented.json");
 const licensePath = resolve(root, "compat/v3.7.24/UPSTREAM_LICENSE");
 const mode = process.argv[2] ?? "--check";
 
-if (!new Set(["--check", "--refresh"]).has(mode)) {
-  throw new Error("usage: node tools/sync_compat.mjs [--check|--refresh]");
+if (!new Set(["--check", "--generate", "--refresh"]).has(mode)) {
+  throw new Error("usage: node tools/sync_compat.mjs [--check|--generate|--refresh]");
 }
 
 const sha256 = (data) => createHash("sha256").update(data).digest("hex");
@@ -49,6 +50,7 @@ async function readOrRefresh(path, remote) {
 const commandListData = await readOrRefresh(snapshotPath, baseline.commandList);
 const licenseData = await readOrRefresh(licensePath, baseline.license);
 const commands = JSON.parse(commandListData.toString("utf8"));
+const implemented = JSON.parse(await readFile(implementationPath, "utf8"));
 
 if (!Array.isArray(commands) || commands.length !== 1145) {
   throw new Error(`公式命令総数が想定外です: ${commands.length}`);
@@ -76,7 +78,7 @@ function classify(command, index) {
     reason = "公式カタログで標準cnako対象に指定されていないホスト専用命令";
   }
 
-  return {
+  const entry = {
     id: `command-${String(index + 1).padStart(4, "0")}`,
     name: command.name,
     plugin: command.plugin,
@@ -92,9 +94,26 @@ function classify(command, index) {
     platforms: inScope ? platforms : [],
     reason,
   };
+  const implementation = implemented[command.name];
+  if (implementation !== undefined) {
+    if (!inScope) throw new Error(`対象外命令を実装済みに指定しています: ${command.name}`);
+    if (!new Set(["native", "compat-js"]).has(implementation.status)) {
+      throw new Error(`実装状態が不正です: ${command.name}`);
+    }
+    if (!Array.isArray(implementation.tests) || implementation.tests.length === 0) {
+      throw new Error(`実装済み命令にテストIDがありません: ${command.name}`);
+    }
+    entry.status = implementation.status;
+    entry.tests = implementation.tests;
+    entry.reason = implementation.reason;
+  }
+  return entry;
 }
 
 const entries = commands.map(classify);
+for (const name of Object.keys(implemented)) {
+  if (!entries.some((entry) => entry.name === name)) throw new Error(`実装済み命令が公式カタログにありません: ${name}`);
+}
 const standardCnako = entries.filter((entry) => entry.scope === "standard-cnako-v1");
 if (standardCnako.length !== 527) {
   throw new Error(`標準cnako命令数が想定外です: ${standardCnako.length}`);
@@ -161,12 +180,14 @@ const outputs = [
   [summaryPath, json(summary)],
 ];
 
-if (mode === "--refresh") {
+if (mode !== "--check") {
   await mkdir(dirname(snapshotPath), { recursive: true });
-  await writeFile(snapshotPath, commandListData);
-  await writeFile(licensePath, licenseData);
+  if (mode === "--refresh") {
+    await writeFile(snapshotPath, commandListData);
+    await writeFile(licensePath, licenseData);
+  }
   for (const [path, content] of outputs) await writeFile(path, content);
-  console.log("互換性スナップショットと分類表を更新しました");
+  console.log(mode === "--refresh" ? "互換性スナップショットと分類表を更新しました" : "実装状況から互換性分類表を生成しました");
 } else {
   for (const [path, expected] of outputs) {
     const actual = await readFile(path, "utf8");

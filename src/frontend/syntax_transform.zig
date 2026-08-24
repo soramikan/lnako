@@ -20,11 +20,35 @@ pub fn apply(stream: *lexer_mod.TokenStream) Error!void {
         .dncl2 => try transformDncl(&tokens, allocator, true),
         else => {},
     }
+    try expandAssignmentJosi(&tokens, allocator);
     if (stream.mode == .indent) try transformExplicitIndent(&tokens, allocator);
     removeCollectionEols(&tokens);
     try transformInlineIndent(&tokens, allocator);
     try tokens.append(allocator, eof);
     stream.tokens = try tokens.toOwnedSlice(allocator);
+}
+
+fn expandAssignmentJosi(tokens: *std.ArrayList(Token), allocator: std.mem.Allocator) !void {
+    var index: usize = 0;
+    while (index < tokens.items.len) : (index += 1) {
+        const token = &tokens.items[index];
+        if (!std.mem.eql(u8, token.josi, "は")) continue;
+        var equal = synthetic(.equal, "=", token.*);
+        const josi_length = token.raw_josi.len;
+        if (josi_length <= token.span.end - token.span.start) {
+            const assignment_offset = token.span.end - josi_length;
+            equal.span.start = assignment_offset;
+            equal.span.end = token.span.end;
+            equal.span.source_start = if (josi_length <= token.span.source_end - token.span.source_start) token.span.source_end - josi_length else token.span.source_start;
+            equal.span.source_end = token.span.source_end;
+            token.span.end = assignment_offset;
+            token.span.source_end = equal.span.source_start;
+        }
+        token.josi = "";
+        token.raw_josi = "";
+        try tokens.insert(allocator, index + 1, equal);
+        index += 1;
+    }
 }
 
 fn transformDncl(tokens: *std.ArrayList(Token), allocator: std.mem.Allocator, is_v2: bool) !void {

@@ -109,6 +109,7 @@ fn describeValue(allocator: std.mem.Allocator, value: lnako.runtime.value.Value)
         .array => allocator.dupe(u8, "array"),
         .dictionary => allocator.dupe(u8, "dictionary"),
         .function => allocator.dupe(u8, "function"),
+        .promise => allocator.dupe(u8, "promise"),
     };
 }
 

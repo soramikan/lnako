@@ -66,5 +66,57 @@
   {
     "id": "closure-capture",
     "source": "●(Aを)加算器作成とは\nF=関数(B)それはA+B\nここまで\nFで戻る\nここまで\nG=加算器作成(10)\nG(5)を表示\n"
+  },
+  {
+    "id": "assignment-josi",
+    "source": "Aは1\nBはA+2\nBを表示\n"
+  },
+  {
+    "id": "promise-success",
+    "source": "動いた時には(成功,失敗)\n成功(9)\nここまで\nFはそれ\nFの成功した時には\n対象を表示\nここまで\nその失敗した時には\n「NG」を表示\nここまで\n"
+  },
+  {
+    "id": "promise-reject-process-finally",
+    "source": "動いた時には(成功,失敗)\n失敗(5)\nここまで\nFはそれ\nFの処理した時には(OK,値)\nOKを表示\n値を表示\nここまで\nその終了した時には\n「完了」を表示\nここまで\n"
+  },
+  {
+    "id": "promise-reject",
+    "source": "動いた時には(成功,失敗)\n失敗(5)\nここまで\nFはそ\nFの失敗した時には\n対象を表示\nここまで\n"
+  },
+  {
+    "id": "promise-async-timer",
+    "source": "動いた時には(成功,失敗)\n0.001秒後には\n成功(7)\nここまで\nここまで\nFはそ\nFの成功した時には\n対象を表示\nここまで\n"
+  },
+  {
+    "id": "timer-order",
+    "source": "0.003秒後には\n「三」を表示\nここまで\n0.001秒後には\n「一」を表示\nここまで\n"
+  },
+  {
+    "id": "timer-stop",
+    "source": "0.001秒後には\n「NG」を表示\nここまで\n対象のタイマー停止\n「OK」を表示\n"
+  },
+  {
+    "id": "timer-wait",
+    "source": "「前」を表示\n0.001秒待つ\n「後」を表示\n"
+  },
+  {
+    "id": "timer-wait-interleaving",
+    "source": "0.001秒後には\n「タイマー」を表示\nここまで\n0.003秒待つ\n「待機後」を表示\n"
+  },
+  {
+    "id": "timer-wait-aliases",
+    "source": "0秒待機\n0秒逐次待機\n「待機完了」を表示\n"
+  },
+  {
+    "id": "timer-interval",
+    "source": "0秒毎には(TID)\n「毎」を表示\nTIDのタイマー停止\nここまで\n"
+  },
+  {
+    "id": "timer-interval-alias",
+    "source": "0.001秒タイマー開始した時には(TID)\n「開始」を表示\nTIDのタイマー停止\nここまで\n"
+  },
+  {
+    "id": "timer-stop-all",
+    "source": "0.001秒後には\n「NG」を表示\nここまで\n全タイマー停止\n「全停止」を表示\n"
   }
 ]

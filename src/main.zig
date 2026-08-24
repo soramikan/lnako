@@ -51,7 +51,7 @@ pub fn main(init: std.process.Init) !void {
             defer ir_program.deinit();
             var runtime = lnako.runtime.value.Runtime.init(allocator);
             defer runtime.deinit();
-            var cli_host = CliHost{ .writer = stdout };
+            var cli_host = CliHost{ .writer = stdout, .io = init.io };
             var interpreter = lnako.runtime.interpreter.Interpreter.init(allocator, &runtime, ir_program, cli_host.host());
             defer interpreter.deinit();
             _ = interpreter.run() catch |err| {
@@ -79,14 +79,21 @@ pub fn main(init: std.process.Init) !void {
 
 const CliHost = struct {
     writer: *std.Io.Writer,
+    io: std.Io,
 
     fn host(self: *CliHost) lnako.runtime.interpreter.Host {
-        return .{ .context = self, .writeFn = write };
+        return .{ .context = self, .writeFn = write, .sleepMillisecondsFn = sleepMilliseconds };
     }
 
     fn write(context: *anyopaque, bytes: []const u8) !void {
         const self: *CliHost = @ptrCast(@alignCast(context));
         try self.writer.writeAll(bytes);
+    }
+
+    fn sleepMilliseconds(context: *anyopaque, milliseconds: u64) !void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const duration = std.Io.Duration.fromMilliseconds(std.math.cast(i64, milliseconds) orelse return error.TimerOverflow);
+        try std.Io.sleep(self.io, duration, .awake);
     }
 };
 
@@ -162,7 +169,7 @@ fn runTestFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8, stdou
     defer ir_program.deinit();
     var runtime = lnako.runtime.value.Runtime.init(allocator);
     defer runtime.deinit();
-    var cli_host = CliHost{ .writer = stdout };
+    var cli_host = CliHost{ .writer = stdout, .io = io };
     var interpreter = lnako.runtime.interpreter.Interpreter.init(allocator, &runtime, ir_program, cli_host.host());
     defer interpreter.deinit();
     _ = interpreter.run() catch |err| {

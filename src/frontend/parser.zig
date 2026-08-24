@@ -445,6 +445,13 @@ const Parser = struct {
         var arguments: std.ArrayList(*ast.Node) = .empty;
         var chained_calls: std.ArrayList(*ast.Node) = .empty;
         while (!self.at(.eol) and !self.at(.eof) and !self.at(.keyword_here_end) and !self.at(.keyword_else)) {
+            if (self.at(.identifier) and isImplicitCallbackJosi(self.peek().josi)) {
+                const command = self.advance();
+                const call = try self.parseImplicitCallbackCall(command, arguments.items);
+                if (chained_calls.items.len == 0) return call;
+                try chained_calls.append(self.allocator, call);
+                return self.makeNodeWithChildren(.block, start, try chained_calls.toOwnedSlice(self.allocator));
+            }
             if (self.at(.keyword_return)) {
                 const keyword = self.advance();
                 const value = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try self.nop(keyword);
@@ -513,6 +520,7 @@ const Parser = struct {
                     return self.parseSwitch(start, condition);
                 }
                 if (try self.parseJapaneseCommand(start, command, arguments.items)) |statement| return statement;
+                if (isImplicitCallbackJosi(command.josi)) return self.parseImplicitCallbackCall(command, arguments.items);
                 const call = try self.makeCommandCall(command, try arguments.toOwnedSlice(self.allocator));
                 if (isSequenceJosi(command.josi)) {
                     try chained_calls.append(self.allocator, call);
@@ -545,6 +553,20 @@ const Parser = struct {
         call.name = command.value;
         call.josi = if (isSequenceJosi(command.josi)) "して" else command.josi;
         call.raw_josi = command.raw_josi;
+        return call;
+    }
+
+    fn parseImplicitCallbackCall(self: *Parser, command: Token, arguments: []const *ast.Node) ParseFailure!*ast.Node {
+        const callback_arguments: []ast.Argument = if (self.at(.left_paren)) try self.parseArguments() else &.{};
+        if (self.at(.eol)) self.skipEols();
+        const body = try self.parseBlock(.{ .end = true });
+        try self.requireEnd("『には』コールバック");
+        const callback = try self.makeNodeWithChildren(.anonymous_function, command, try self.copyChildren(&.{body}));
+        callback.arguments = callback_arguments;
+        callback.josi = "";
+        callback.raw_josi = "";
+        const call = try self.makeCommandCall(command, try self.prepend(callback, arguments));
+        call.josi = "して";
         return call;
     }
 
@@ -1162,6 +1184,10 @@ fn isSequenceJosi(josi: []const u8) bool {
     return false;
 }
 
+fn isImplicitCallbackJosi(josi: []const u8) bool {
+    return std.mem.eql(u8, josi, "には");
+}
+
 fn isVariableReference(kind: ast.Kind) bool {
     return kind == .word or kind == .array_reference or kind == .property_reference;
 }
@@ -1223,6 +1249,17 @@ test "代入・演算子優先順位・命令呼び出しを構文解析する" 
     try std.testing.expectEqualStrings("+", call.children[0].operator);
 }
 
+test "助詞はを代入演算子として構文解析する" {
+    var result = try parse(std.testing.allocator, "Fはそれ\n", "assignment.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const assignment = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.assignment, assignment.kind);
+    try std.testing.expectEqualStrings("F", assignment.name);
+    try std.testing.expectEqual(ast.Kind.word, assignment.children[0].kind);
+    try std.testing.expectEqualStrings("それ", assignment.children[0].value);
+}
+
 test "もし文とソース位置を構文解析する" {
     var result = try parse(std.testing.allocator, "もしA=1ならば\nB=1\n違えば\nB=2\nここまで\n", "条件.nako3");
     defer result.deinit();
@@ -1256,6 +1293,29 @@ test "それは構文を暗黙戻り値への代入として扱う" {
     const assignment = function.children[0].children[0];
     try std.testing.expectEqual(ast.Kind.assignment, assignment.kind);
     try std.testing.expectEqualStrings("それ", assignment.name);
+}
+
+test "には構文をコールバック先頭の命令呼び出しとして扱う" {
+    var timer = try parse(std.testing.allocator, "0.01秒後には\n対象を表示\nここまで\n", "timer.nako3");
+    defer timer.deinit();
+    try std.testing.expect(timer.succeeded());
+    const timer_call = timer.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, timer_call.kind);
+    try std.testing.expectEqualStrings("秒後", timer_call.name);
+    try std.testing.expectEqualStrings("して", timer_call.josi);
+    try std.testing.expectEqual(@as(usize, 2), timer_call.children.len);
+    try std.testing.expectEqual(ast.Kind.anonymous_function, timer_call.children[0].kind);
+    try std.testing.expectEqual(ast.Kind.number, timer_call.children[1].kind);
+
+    var promise = try parse(std.testing.allocator, "動いた時には(成功,失敗)\n成功(9)\nここまで\n", "promise.nako3");
+    defer promise.deinit();
+    try std.testing.expect(promise.succeeded());
+    const promise_call = promise.root.?.children[0];
+    try std.testing.expectEqualStrings("動時", promise_call.name);
+    try std.testing.expectEqual(ast.Kind.anonymous_function, promise_call.children[0].kind);
+    try std.testing.expectEqual(@as(usize, 2), promise_call.children[0].arguments.len);
+    try std.testing.expectEqualStrings("成功", promise_call.children[0].arguments[0].name);
+    try std.testing.expectEqualStrings("失敗", promise_call.children[0].arguments[1].name);
 }
 
 test "配列・辞書・添字代入を構文解析する" {

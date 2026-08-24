@@ -139,6 +139,37 @@ pub const Function = struct {
     }
 };
 
+pub const PromiseState = enum { pending, fulfilled, rejected };
+pub const PromiseReactionMode = enum { standard, settled_pair, finally };
+
+pub const PromiseReaction = struct {
+    on_fulfilled: Value = .undefined,
+    on_rejected: Value = .undefined,
+    next: *Promise,
+    mode: PromiseReactionMode = .standard,
+};
+
+pub const Promise = struct {
+    gc_marked: bool = false,
+    allocator: std.mem.Allocator,
+    state: PromiseState = .pending,
+    result: Value = .undefined,
+    reactions: std.ArrayList(PromiseReaction) = .empty,
+
+    pub fn deinit(self: *Promise) void {
+        self.reactions.deinit(self.allocator);
+        self.* = undefined;
+    }
+};
+
+pub const PromiseTask = struct {
+    callback: Value,
+    settled_value: Value,
+    rejected: bool,
+    next: *Promise,
+    mode: PromiseReactionMode,
+};
+
 pub const Value = union(enum) {
     undefined,
     null_value,
@@ -149,6 +180,7 @@ pub const Value = union(enum) {
     array: *Array,
     dictionary: *Dictionary,
     function: *Function,
+    promise: *Promise,
 
     pub fn tagName(self: Value) []const u8 {
         return @tagName(self);
@@ -161,7 +193,7 @@ pub const Value = union(enum) {
             .number => |value| value != 0 and !std.math.isNan(value),
             .bigint => |value| !value.isZero(),
             .string => |value| value.len() != 0,
-            .array, .dictionary, .function => true,
+            .array, .dictionary, .function, .promise => true,
         };
     }
 
@@ -173,7 +205,7 @@ pub const Value = union(enum) {
             .number => |value| value,
             .bigint => error.CannotConvertBigIntToNumber,
             .string => |value| parseNumber(value.*, scratch_allocator),
-            .array, .dictionary, .function => error.CannotConvertObjectToNumber,
+            .array, .dictionary, .function, .promise => error.CannotConvertObjectToNumber,
         };
     }
 
@@ -188,6 +220,7 @@ pub const Value = union(enum) {
             .array => |value| value == right.array,
             .dictionary => |value| value == right.dictionary,
             .function => |value| value == right.function,
+            .promise => |value| value == right.promise,
         };
     }
 
@@ -238,6 +271,7 @@ const HeapObject = union(enum) {
     array: *Array,
     dictionary: *Dictionary,
     function: *Function,
+    promise: *Promise,
 };
 
 pub const CollectionStats = struct { before: usize, after: usize, collected: usize };
@@ -268,6 +302,7 @@ pub const Runtime = struct {
     roots: std.ArrayList(*Value) = .empty,
     grey_objects: std.ArrayList(HeapObject) = .empty,
     root_providers: std.ArrayList(RootProvider) = .empty,
+    promise_tasks: std.ArrayList(PromiseTask) = .empty,
     stringifying_arrays: std.ArrayList(*Array) = .empty,
     next_collection: usize = 64,
     stress_collection: bool = false,
@@ -282,6 +317,7 @@ pub const Runtime = struct {
         self.roots.deinit(self.backing_allocator);
         self.grey_objects.deinit(self.backing_allocator);
         self.root_providers.deinit(self.backing_allocator);
+        self.promise_tasks.deinit(self.backing_allocator);
         self.stringifying_arrays.deinit(self.backing_allocator);
         self.* = undefined;
     }
@@ -405,6 +441,91 @@ pub const Runtime = struct {
         return .{ .dictionary = result };
     }
 
+    pub fn createPromise(self: *Runtime) !Value {
+        try self.beforeAllocation();
+        const result = try self.allocator().create(Promise);
+        errdefer self.allocator().destroy(result);
+        result.* = .{ .allocator = self.allocator() };
+        try self.objects.append(self.allocator(), .{ .promise = result });
+        return .{ .promise = result };
+    }
+
+    pub fn promiseThen(self: *Runtime, source: *Promise, on_fulfilled: Value, on_rejected: Value) !Value {
+        return self.promiseThenMode(source, on_fulfilled, on_rejected, .standard);
+    }
+
+    pub fn promiseThenMode(self: *Runtime, source: *Promise, on_fulfilled: Value, on_rejected: Value, mode: PromiseReactionMode) !Value {
+        var source_root = Value{ .promise = source };
+        var fulfilled_root = on_fulfilled;
+        var rejected_root = on_rejected;
+        var frame = self.rootFrame();
+        defer frame.deinit();
+        try frame.protect(&source_root);
+        try frame.protect(&fulfilled_root);
+        try frame.protect(&rejected_root);
+        const next_value = try self.createPromise();
+        const reaction = PromiseReaction{
+            .on_fulfilled = fulfilled_root,
+            .on_rejected = rejected_root,
+            .next = next_value.promise,
+            .mode = mode,
+        };
+        if (source.state == .pending) {
+            try source.reactions.append(self.allocator(), reaction);
+        } else {
+            try self.enqueueReaction(source, reaction);
+        }
+        return next_value;
+    }
+
+    pub fn resolvePromise(self: *Runtime, promise: *Promise, value: Value) !void {
+        if (promise.state != .pending) return;
+        if (value == .promise) {
+            if (value.promise == promise) return error.PromiseResolutionCycle;
+            if (value.promise.state == .pending) {
+                try value.promise.reactions.append(self.allocator(), .{ .next = promise });
+            } else {
+                try self.enqueueReaction(value.promise, .{ .next = promise });
+            }
+            return;
+        }
+        promise.state = .fulfilled;
+        promise.result = value;
+        try self.enqueuePromiseReactions(promise);
+    }
+
+    pub fn rejectPromise(self: *Runtime, promise: *Promise, reason: Value) !void {
+        if (promise.state != .pending) return;
+        promise.state = .rejected;
+        promise.result = reason;
+        try self.enqueuePromiseReactions(promise);
+    }
+
+    pub fn takePromiseTask(self: *Runtime) ?PromiseTask {
+        if (self.promise_tasks.items.len == 0) return null;
+        return self.promise_tasks.orderedRemove(0);
+    }
+
+    pub fn forwardPromiseTask(self: *Runtime, task: PromiseTask) !void {
+        if (task.rejected) return self.rejectPromise(task.next, task.settled_value);
+        return self.resolvePromise(task.next, task.settled_value);
+    }
+
+    fn enqueuePromiseReactions(self: *Runtime, promise: *Promise) !void {
+        for (promise.reactions.items) |reaction| try self.enqueueReaction(promise, reaction);
+        promise.reactions.clearRetainingCapacity();
+    }
+
+    fn enqueueReaction(self: *Runtime, promise: *Promise, reaction: PromiseReaction) !void {
+        try self.promise_tasks.append(self.allocator(), .{
+            .callback = if (promise.state == .rejected) reaction.on_rejected else reaction.on_fulfilled,
+            .settled_value = promise.result,
+            .rejected = promise.state == .rejected,
+            .next = reaction.next,
+            .mode = reaction.mode,
+        });
+    }
+
     pub fn createIrFunction(self: *Runtime, name: *String, arity: usize, function_id: u32, captures: []const Capture) !Value {
         return self.createFunction(name, arity, .{ .ir = function_id }, captures);
     }
@@ -481,12 +602,13 @@ pub const Runtime = struct {
                 defer self.allocator().free(text);
                 break :blk self.stringUtf8(text);
             },
+            .promise => self.stringUtf8("[object Promise]"),
         };
     }
 
     pub fn valueToPrimitive(self: *Runtime, value: Value) !Value {
         return switch (value) {
-            .array, .dictionary, .function => self.valueToString(value),
+            .array, .dictionary, .function, .promise => self.valueToString(value),
             else => value,
         };
     }
@@ -530,6 +652,11 @@ pub const Runtime = struct {
         const before = self.objects.items.len;
         for (self.roots.items) |root| try self.markValue(root.*);
         for (self.root_providers.items) |provider| try provider.traceFn(provider.context, self);
+        for (self.promise_tasks.items) |task| {
+            try self.markValue(task.callback);
+            try self.markValue(task.settled_value);
+            try self.markValue(.{ .promise = task.next });
+        }
         try self.traceGreyObjects();
         var index: usize = 0;
         while (index < self.objects.items.len) {
@@ -564,6 +691,7 @@ pub const Runtime = struct {
             .array => |object| try self.markComposite(.{ .array = object }),
             .dictionary => |object| try self.markComposite(.{ .dictionary = object }),
             .function => |object| try self.markComposite(.{ .function = object }),
+            .promise => |object| try self.markComposite(.{ .promise = object }),
             else => {},
         }
     }
@@ -588,6 +716,14 @@ pub const Runtime = struct {
                 for (function.captures) |capture| {
                     try self.markValue(.{ .string = capture.name });
                     try self.markValue(capture.value);
+                }
+            },
+            .promise => |promise| {
+                try self.markValue(promise.result);
+                for (promise.reactions.items) |reaction| {
+                    try self.markValue(reaction.on_fulfilled);
+                    try self.markValue(reaction.on_rejected);
+                    try self.markValue(.{ .promise = reaction.next });
                 }
             },
             .string, .bigint => unreachable,
@@ -878,4 +1014,52 @@ test "関数・クロージャの捕捉値を追跡して呼び出す" {
     try std.testing.expectEqual(@as(f64, 5), result.number);
     frame.deinit();
     try std.testing.expectEqual(@as(usize, 4), (try runtime.collect()).collected);
+}
+
+test "Promiseの解決・拒否と連鎖をマイクロタスクへ送る" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var fulfilled = try runtime.createPromise();
+    var rejected = try runtime.createPromise();
+    var frame = runtime.rootFrame();
+    defer frame.deinit();
+    try frame.protect(&fulfilled);
+    try frame.protect(&rejected);
+
+    var fulfilled_next = try runtime.promiseThen(fulfilled.promise, .undefined, .undefined);
+    try frame.protect(&fulfilled_next);
+    try runtime.resolvePromise(fulfilled.promise, .{ .number = 42 });
+    const fulfilled_task = runtime.takePromiseTask().?;
+    try std.testing.expect(!fulfilled_task.rejected);
+    try runtime.forwardPromiseTask(fulfilled_task);
+    try std.testing.expectEqual(PromiseState.fulfilled, fulfilled_next.promise.state);
+    try std.testing.expectEqual(@as(f64, 42), fulfilled_next.promise.result.number);
+
+    var rejected_next = try runtime.promiseThen(rejected.promise, .undefined, .undefined);
+    try frame.protect(&rejected_next);
+    const reason = try runtime.stringUtf8("失敗");
+    try runtime.rejectPromise(rejected.promise, reason);
+    const rejected_task = runtime.takePromiseTask().?;
+    try std.testing.expect(rejected_task.rejected);
+    try runtime.forwardPromiseTask(rejected_task);
+    try std.testing.expectEqual(PromiseState.rejected, rejected_next.promise.state);
+    try std.testing.expect(Value.strictEqual(reason, rejected_next.promise.result));
+}
+
+test "Promise反応とマイクロタスクをGCルートとして追跡する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var source = try runtime.createPromise();
+    var frame = runtime.rootFrame();
+    try frame.protect(&source);
+    const next = try runtime.promiseThen(source.promise, .undefined, .undefined);
+    try runtime.resolvePromise(source.promise, .{ .number = 1 });
+    frame.deinit();
+    const pending = try runtime.collect();
+    try std.testing.expectEqual(@as(usize, 1), pending.after);
+    const task = runtime.takePromiseTask().?;
+    try runtime.forwardPromiseTask(task);
+    try std.testing.expectEqual(PromiseState.fulfilled, next.promise.state);
+    const released = try runtime.collect();
+    try std.testing.expectEqual(@as(usize, 0), released.after);
 }
