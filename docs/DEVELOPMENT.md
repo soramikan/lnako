@@ -29,6 +29,7 @@ node tools/compare_standard_plugin_oracle.mjs
 node tools/compare_supplemental_plugin_oracle.mjs
 node tools/check_compat_js_coverage.mjs
 node tools/compare_compat_js_oracle.mjs
+node tools/check_native_plugin_abi.mjs
 node tools/generate_legacy_encoding.mjs --check
 node tools/update_node_implemented.mjs --check
 node tools/check_node_plugin_coverage.mjs
@@ -87,9 +88,10 @@ SDK配布物は対応するLLVM/LLDを同梱し、生成プログラム自体は
 
 QuickJSは`js_realloc_rt(JSRuntime *, ...)`を汎用`DynBuf` callbackへ意図的に型変換します。Zigの
 ReleaseSafeが有効にするC関数型sanitizerは、このABI互換呼び出しをmacOS arm64で`SIGTRAP`にします。
-また、flexible array上の`container_of`はWindowsのnull sanitizerに誤検出されます。このためQuickJS本体の
-Cソースに限って`function`と`null`の2検査を無効化します。ローカルbridgeを含む他のZig/Cコードの安全検査は
-維持し、CIでDebugとReleaseSafeの両方を実行します。
+また、tagged pointer、flexible array上の`container_of`、符号付きshift等もWindows ReleaseSafeのUBSanに
+捕捉されます。このため固定・ハッシュ検証済みのQuickJS本体Cソースに限り`undefined`群と`function`検査を
+無効化します。ローカルbridgeを含む他のZig/Cコードの安全検査は維持し、CIでDebugとReleaseSafeの両方を
+実行します。
 
 ```sh
 node tools/setup_quickjs.mjs
@@ -101,3 +103,20 @@ node tools/compare_compat_js_oracle.mjs
 差分テストは4命令、なでしこ変数・関数との双方向呼び出し、配列・辞書の変更同期、ES moduleの相対依存、
 Promise、失敗境界、`build --compat-js`生成物を検証します。通常ビルドと互換ビルドを別々にテストし、
 リンク境界の混入も検出します。
+
+## ネイティブプラグインABI
+
+公開Cヘッダとfixtureを使う実ロードテストを、macOS・Linux・Windowsの各CIランナーで実行します。
+
+```sh
+zig build native-plugin-fixture
+node tools/check_native_plugin_abi.mjs
+node tools/check_native_plugin_abi.mjs --release-safe
+zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSafe native-plugin-fixture
+```
+
+非WindowsホストのZig 0.16.0はMSVC libcを提供しないため、ローカルのWindowsクロス検査にはGNU ABIを
+使います。正式対象のMSVC ABIはWindows CIランナー上でビルドと実ロードの両方を検証します。
+
+所有権、スレッド制約、非同期完了、セキュリティ境界は
+[`docs/NATIVE_PLUGIN_ABI.md`](NATIVE_PLUGIN_ABI.md)を参照してください。

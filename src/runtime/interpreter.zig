@@ -17,6 +17,7 @@ const plugin_http_server = @import("../plugins/http_server.zig");
 const plugin_markup = @import("../plugins/markup.zig");
 const plugin_caniuse = @import("../plugins/caniuse.zig");
 const plugin_kansuji = @import("../plugins/kansuji.zig");
+const plugin_native = @import("../plugins/native.zig");
 const quickjs = @import("../compat/quickjs.zig");
 
 pub const Value = value_mod.Value;
@@ -195,6 +196,7 @@ pub const Interpreter = struct {
     http_server_state: plugin_http_server.State = .{},
     caniuse_state: plugin_caniuse.State = .{},
     quickjs_state: quickjs.State,
+    native_plugin_state: plugin_native.State,
     timers: std.ArrayList(Timer) = .empty,
     promise_resolvers: std.AutoHashMapUnmanaged(*value_mod.Function, PromiseResolver) = .empty,
     promise_all_handlers: std.AutoHashMapUnmanaged(*value_mod.Function, PromiseAllHandler) = .empty,
@@ -206,10 +208,13 @@ pub const Interpreter = struct {
     system_initialized: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, runtime: *Runtime, program: ir.Program, host: Host) Interpreter {
-        return .{ .allocator = allocator, .runtime = runtime, .program = program, .host = host, .csv_state = plugin_csv.State.init(allocator), .quickjs_state = quickjs.State.init(program.compat_js) };
+        return .{ .allocator = allocator, .runtime = runtime, .program = program, .host = host, .csv_state = plugin_csv.State.init(allocator), .quickjs_state = quickjs.State.init(program.compat_js), .native_plugin_state = plugin_native.State.init() };
     }
 
     pub fn deinit(self: *Interpreter) void {
+        // Native plugins may retain host handles and stop worker threads from
+        // deinitialize, so tear them down while all interpreter services exist.
+        self.native_plugin_state.deinit();
         self.globals.deinit(self.allocator);
         for (self.global_names.items) |name| self.allocator.free(name);
         self.global_names.deinit(self.allocator);
@@ -586,6 +591,7 @@ pub const Interpreter = struct {
         if (try plugin_markup.call(self.runtime, name, arguments)) |value| return value;
         if (try plugin_caniuse.call(self.runtime, &self.caniuse_state, name, arguments)) |value| return value;
         if (try plugin_kansuji.call(self.runtime, name, arguments)) |value| return value;
+        if (try plugin_native.call(self.runtime, &self.native_plugin_state, self.nativePluginEffects(), name, arguments)) |value| return value;
         if (try quickjs.call(self.runtime, &self.quickjs_state, self.quickJsEffects(), name, arguments)) |value| return value;
         if (try plugin_encoding.call(self.runtime, name, arguments)) |value| return value;
         if (try plugin_system.callWithContext(self.runtime, name, arguments, plugin_context)) |value| return value;
@@ -599,6 +605,7 @@ pub const Interpreter = struct {
         if (self.host.node_context) |node_context| try plugin_node.install(self.runtime, node_context, .{ .context = self, .setFn = installSystemConstant });
         if (self.host.http_server_context != null) try plugin_http_server.install(self.runtime, .{ .context = self, .setFn = installSystemConstant });
         try plugin_caniuse.install(self.runtime, &self.caniuse_state, .{ .context = self, .setFn = installSystemConstant });
+        try plugin_native.install(self.runtime, &self.native_plugin_state, self.program.native_plugin_paths, self.nativePluginEffects());
         try quickjs.installModules(self.runtime, &self.quickjs_state, self.program.javascript_modules, self.quickJsEffects());
         self.system_initialized = true;
     }
@@ -724,6 +731,14 @@ pub const Interpreter = struct {
             .resolveFn = quickJsResolve,
             .getGlobalFn = nodeGetGlobal,
             .setGlobalFn = nodeSetGlobal,
+            .execFn = quickJsExec,
+        };
+    }
+
+    fn nativePluginEffects(self: *Interpreter) plugin_native.Effects {
+        return .{
+            .context = self,
+            .invokeFn = pluginCall,
             .execFn = quickJsExec,
         };
     }
@@ -993,9 +1008,11 @@ pub const Interpreter = struct {
         while (true) {
             try self.drainPromiseTasks();
             const commands_pending = try self.pollNodeCommands();
+            const native_plugins_pending = try plugin_native.poll(self.runtime, &self.native_plugin_state);
+            try self.drainPromiseTasks();
             if (self.timers.items.len > 0) {
                 try self.executeTimer(self.earliestTimerIndex().?);
-            } else if (commands_pending) {
+            } else if (commands_pending or native_plugins_pending) {
                 try self.sleepEventSlice(1);
             } else if (try self.pollHttpServer()) {
                 try self.countEvent();
@@ -1401,6 +1418,7 @@ pub const Interpreter = struct {
         try self.http_server_state.trace(runtime);
         try self.caniuse_state.trace(runtime);
         try self.quickjs_state.trace(runtime);
+        try self.native_plugin_state.trace(runtime);
     }
 };
 

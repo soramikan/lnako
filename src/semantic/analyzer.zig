@@ -15,6 +15,7 @@ pub const ModuleInput = struct {
     path: []const u8,
     root: *ast.Node,
     imports: []const []const u8 = &.{},
+    allows_dynamic_commands: bool = false,
 };
 
 pub const Module = struct {
@@ -204,6 +205,10 @@ const Analyzer = struct {
             return;
         }
         if (self.builtins.get(name) != null) {
+            try self.bind(node, .builtin, name, name, null);
+            return;
+        }
+        if (callable and self.inputs[module_index].allows_dynamic_commands) {
             try self.bind(node, .builtin, name, name, null);
             return;
         }

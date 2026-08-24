@@ -33,6 +33,45 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(exe);
 
+    const native_plugin_fixture = b.addLibrary(.{
+        .name = "lnako_test_plugin",
+        .linkage = .dynamic,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    native_plugin_fixture.root_module.addIncludePath(b.path("include"));
+    native_plugin_fixture.root_module.addCSourceFiles(.{
+        .root = b.path("tests/native_plugin"),
+        .files = &.{"fixture.c"},
+        .flags = if (target.result.os.tag == .windows) &.{"-std=c11"} else &.{ "-std=c11", "-D_POSIX_C_SOURCE=200809L" },
+    });
+    if (target.result.os.tag != .windows) native_plugin_fixture.root_module.linkSystemLibrary("pthread", .{});
+    const install_native_plugin_fixture = b.addInstallArtifact(native_plugin_fixture, .{});
+
+    const invalid_native_plugin_fixture = b.addLibrary(.{
+        .name = "lnako_invalid_plugin",
+        .linkage = .dynamic,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    invalid_native_plugin_fixture.root_module.addIncludePath(b.path("include"));
+    invalid_native_plugin_fixture.root_module.addCSourceFiles(.{
+        .root = b.path("tests/native_plugin"),
+        .files = &.{"invalid_abi.c"},
+        .flags = &.{"-std=c11"},
+    });
+    const install_invalid_native_plugin_fixture = b.addInstallArtifact(invalid_native_plugin_fixture, .{});
+
+    const native_plugin_fixture_step = b.step("native-plugin-fixture", "ネイティブプラグインABIのfixtureを生成する");
+    native_plugin_fixture_step.dependOn(&install_native_plugin_fixture.step);
+    native_plugin_fixture_step.dependOn(&install_invalid_native_plugin_fixture.step);
+
     const run_step = b.step("run", "lnakoを実行する");
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());

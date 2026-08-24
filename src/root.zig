@@ -51,6 +51,7 @@ pub const plugins = struct {
     pub const markup = @import("plugins/markup.zig");
     pub const caniuse = @import("plugins/caniuse.zig");
     pub const kansuji = @import("plugins/kansuji.zig");
+    pub const native = @import("plugins/native.zig");
 };
 
 pub const backend = struct {
@@ -148,6 +149,7 @@ test {
     std.testing.refAllDecls(plugins.markup);
     std.testing.refAllDecls(plugins.caniuse);
     std.testing.refAllDecls(plugins.kansuji);
+    std.testing.refAllDecls(plugins.native);
     std.testing.refAllDecls(backend.llvm.api);
     std.testing.refAllDecls(backend.llvm.module);
     std.testing.refAllDecls(backend.llvm.compiler);

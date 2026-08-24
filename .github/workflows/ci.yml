@@ -79,6 +79,8 @@ jobs:
         run: |
           node tools/check_compat_js_coverage.mjs
           node tools/compare_compat_js_oracle.mjs
+      - name: Native plugin ABI test
+        run: node tools/check_native_plugin_abi.mjs --release-safe
       - name: Differential Node host test
         run: |
           node tools/generate_legacy_encoding.mjs --check

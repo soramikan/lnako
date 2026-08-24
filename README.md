@@ -55,6 +55,8 @@ hex/base64、Shift_JIS/EUC-JP、中国語・韓国語・Big5の多バイト8系�
 標準入力・子プロセス・終了シグナル・ZIP、ハッシュ・UUID・安全な乱数、HTTPクライアントと簡易HTTPサーバを
 実装し、対象116命令をホスト抽象化へ接続しています。また、Markdown/GFM・HTML整形、固定ブラウザ対応表、任意精度の漢数字変換も
 実装しています。公式カタログ上は482/527命令がnative、4命令が明示的な`compat-js`で、各命令を公式差分または副作用を隔離したホストテストへ対応付けています。
+外部ネイティブ拡張向けには、Cの公開ヘッダ、opaque値、sync・async・pure属性、Promise、host callbackを持つ
+`lnako_plugin_v1` ABIを実装しています。
 
 ```sh
 zig build run -- check program.nako3
@@ -93,6 +95,9 @@ lnako benchmark
 4つのJS命令とESモジュール形式プラグインを実行します。`build --compat-js` は検証済みのなでしこ・JSソースを
 QuickJS対応ランタイムへ埋め込み、元ソース、Zig、LLVMを実行先で要求しない単一実行ファイルを生成します。
 互換生成物はランタイムを内包するため`--emit exe`専用です。
+
+ネイティブプラグインの作成方法と所有権規則は
+[docs/NATIVE_PLUGIN_ABI.md](docs/NATIVE_PLUGIN_ABI.md)を参照してください。
 
 設計と検証方針は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) と [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) を参照してください。
 公式実装の説明だけでは分かりにくい戻り値、破壊的変更、出力プールなどは

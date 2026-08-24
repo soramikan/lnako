@@ -96,6 +96,11 @@ pub fn main(init: std.process.Init) !void {
                 std.process.exit(1);
             };
             defer ir_program.deinit();
+            if (ir_program.native_plugin_paths.len > 0) {
+                try stderr.writeAll("build: ネイティブプラグインABIは現在run/testで利用できます。LLVM AOTランタイムへの組み込みは未対応です\n");
+                try stderr.flush();
+                std.process.exit(2);
+            }
             if (options.compat_js) {
                 writeCompatExecutable(allocator, init.io, executable_path, options.input, options.output) catch |err| {
                     try stderr.print("build: QuickJS互換実行ファイルの生成に失敗しました: {s}\n", .{@errorName(err)});
@@ -1290,6 +1295,12 @@ fn compileInputWithProvider(allocator: std.mem.Allocator, path: []const u8, comp
         });
     }
     ir_program.javascript_modules = try javascript_modules.toOwnedSlice(ir_program.arena.allocator());
+    var native_plugin_paths: std.ArrayList([]const u8) = .empty;
+    for (graph.modules) |module| {
+        if (module.kind != .native_plugin) continue;
+        try native_plugin_paths.append(ir_program.arena.allocator(), try ir_program.arena.allocator().dupe(u8, module.path));
+    }
+    ir_program.native_plugin_paths = try native_plugin_paths.toOwnedSlice(ir_program.arena.allocator());
     var verification = try lnako.ir.verifier.verify(allocator, ir_program);
     defer verification.deinit();
     if (!verification.succeeded()) {

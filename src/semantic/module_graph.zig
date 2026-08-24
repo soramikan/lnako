@@ -28,7 +28,7 @@ pub const FileProvider = struct {
 };
 
 pub const Options = struct { compat_js: bool = false };
-pub const ModuleKind = enum { nako3, javascript };
+pub const ModuleKind = enum { nako3, javascript, native_plugin };
 pub const LoadState = enum { loading, loaded };
 
 pub const Import = struct {
@@ -83,15 +83,18 @@ pub const ModuleGraph = struct {
         for (self.modules) |module| {
             if (module.kind != .nako3 or module.parsed == null or module.parsed.?.root == null) continue;
             var imports: std.ArrayList([]const u8) = .empty;
+            var allows_dynamic_commands = false;
             for (module.imports) |item| if (item.target) |target| {
                 const target_module = self.modules[target];
                 if (target_module.kind == .nako3) try imports.append(temp, target_module.name);
+                if (target_module.kind == .native_plugin) allows_dynamic_commands = true;
             };
             try inputs.append(temp, .{
                 .name = module.name,
                 .path = module.path,
                 .root = module.parsed.?.root.?,
                 .imports = try imports.toOwnedSlice(temp),
+                .allows_dynamic_commands = allows_dynamic_commands,
             });
         }
         return analyzer.analyzeModules(allocator, inputs.items);
@@ -142,8 +145,10 @@ const Loader = struct {
             .nako3
         else if (std.ascii.eqlIgnoreCase(extension, ".js") or std.ascii.eqlIgnoreCase(extension, ".mjs"))
             .javascript
+        else if (isNativePluginExtension(extension))
+            .native_plugin
         else {
-            try self.importDiagnostic(import_node, path, "通常モードで取り込めるのは.nako3だけです");
+            try self.importDiagnostic(import_node, path, "取り込めるのは.nako3、JavaScript、ネイティブプラグインです");
             return error.UnsupportedImport;
         };
         const native_builtin = kind == .javascript and isNativeBuiltinPlugin(path);
@@ -152,7 +157,7 @@ const Loader = struct {
             return error.JavaScriptCompatibilityRequired;
         }
 
-        const source = if (native_builtin)
+        const source = if (native_builtin or kind == .native_plugin)
             try self.backing_allocator.alloc(u8, 0)
         else
             self.provider.read(self.backing_allocator, path) catch |err| {
@@ -173,6 +178,11 @@ const Loader = struct {
             .parsed = null,
         };
         try self.modules.append(self.allocator, module);
+
+        if (kind == .native_plugin) {
+            module.state = .loaded;
+            return module.index;
+        }
 
         if (kind == .javascript) {
             var imports: std.ArrayList(Import) = .empty;
@@ -370,6 +380,12 @@ fn normalizePath(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     return std.fs.path.resolve(allocator, &.{path});
 }
 
+fn isNativePluginExtension(extension: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(extension, ".dylib") or
+        std.ascii.eqlIgnoreCase(extension, ".so") or
+        std.ascii.eqlIgnoreCase(extension, ".dll");
+}
+
 fn resolveImport(allocator: std.mem.Allocator, importer: []const u8, requested: []const u8) ![]u8 {
     if (std.mem.indexOfScalar(u8, requested, ':') != null and !std.fs.path.isAbsolute(requested)) return error.UnsupportedImport;
     if (std.fs.path.isAbsolute(requested)) return normalizePath(allocator, requested);
@@ -438,6 +454,50 @@ test "JavaScriptの相対依存を再帰ロードする" {
     try std.testing.expectEqual(@as(usize, 1), graph.modules[1].imports.len);
     try std.testing.expectEqual(@as(?u32, 2), graph.modules[1].imports[0].target);
     try std.testing.expectEqualStrings("./helper.mjs", graph.modules[1].imports[0].requested);
+}
+
+test "ネイティブプラグインをソース読込なしで登録する" {
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!「plugin.so」を取り込む\n" },
+    } };
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{});
+    defer graph.deinit();
+    try std.testing.expect(graph.succeeded());
+    try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
+    try std.testing.expectEqual(ModuleKind.native_plugin, graph.modules[1].kind);
+    try std.testing.expectEqual(@as(usize, 0), graph.modules[1].source.len);
+}
+
+test "ネイティブプラグイン命令を厳格モードでも動的解決する" {
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!厳しくチェック\n!「plugin.so」を取り込む\n外部追加()\n" },
+    } };
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{});
+    defer graph.deinit();
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    var found = false;
+    for (program.bindings) |binding| if (binding.kind == .builtin and std.mem.eql(u8, binding.name, "外部追加")) {
+        found = true;
+    };
+    try std.testing.expect(found);
+}
+
+test "ネイティブプラグインを取り込んでも厳格モードの未知変数を拒否する" {
+    var memory = MemoryProvider{ .files = &.{
+        .{ .suffix = "main.nako3", .source = "!厳しくチェック\n!「plugin.so」を取り込む\n未知値を表示\n" },
+    } };
+    var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{});
+    defer graph.deinit();
+    var program = try graph.analyze(std.testing.allocator);
+    defer program.deinit();
+    try std.testing.expect(!program.succeeded());
+    var found = false;
+    for (program.diagnostics) |item| if (item.code == .undefined_symbol) {
+        found = true;
+    };
+    try std.testing.expect(found);
 }
 
 test "ネイティブ化した公式JavaScriptプラグインは通常モードで取り込む" {

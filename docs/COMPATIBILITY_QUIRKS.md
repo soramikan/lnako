@@ -75,6 +75,22 @@ lnakoは実行結果の互換性とテストの再現性を両立するため、
 | `sys.__getSysVar`と`sys.__findVar` | `__getSysVar("X")`はシステム変数の非修飾キーだけを調べる。一方`__findVar("X")`はローカル変数と`module__X`を探索するため、同じ名前でも結果が異なる | システム大域表と現在フレーム・モジュール探索を分離する | `compat-js-host` |
 | JS構文・呼び出しエラーのCLI終了 | 公式`cnako3`はSyntaxError等をstderrへ出しても終了コード0になる経路がある | lnakoは診断をstderrへ出し、実行失敗を終了コード1で返す。差分テストは双方で失敗が観測できることを検証する | `compat-js-error-eval`、`compat-js-error-function`、`compat-js-error-method` |
 | `build --compat-js`の`--emit` | 公式処理系には対応するネイティブ埋め込み出力区分がない | QuickJS対応ランタイムを含む自己完結bundleなので`exe`だけを許可し、`obj` / `llvm-ir`は曖昧な中間生成物を出さず拒否する | `compat-js-plugin-imports` |
+| QuickJS本体のReleaseSafe検査 | 上流Cはtagged pointer、callback cast、flexible array、符号付きshift等の低水準表現を使い、Debugでは動いてもZigのC UBSanがmacOS / Windowsでtrapする | ハッシュ固定した上流QuickJS Cだけ`undefined`群と`function`検査を外す。自作bridgeとZigコードはReleaseSafe検査を維持し、3環境で実行テストする | `Differential QuickJS compatibility test`、`Smoke test` |
+
+## ネイティブプラグイン
+
+| 境界 | 分かりにくい挙動 | lnakoの扱い | テストID |
+|---|---|---|---|
+| `.dylib` / `.so` / `.dll`の`取り込む` | 公式v3.7.24には対応するネイティブABIがなく、JSプラグインとはロード・所有権・スレッド境界が異なる | ソースとして読まず正規化パスをIRへ保持し、`run` / `test`の初期化時に`lnako_plugin_v1`を検証してロードする | `native-plugin-abi` |
+| `check`時のネイティブライブラリ | ABI初期化は任意のネイティブコードを実行するため、静的検査との境界が分かりにくい | `check`は拡張子・取り込み構造・動的命令構文までを検査し、ライブラリのロードとABI検証は行わない。欠落・ABI不一致は`run` / `test`で診断する | `native-plugin-open-failure`、`native-plugin-abi-mismatch` |
+| ネイティブプラグインを含む`build` | IR実行器では利用できるが、LLVM AOTランタイムにはまだ動的ABI dispatcherがない | 不完全な実行ファイルを生成せず、終了コード2と専用診断で拒否する | `native-plugin-abi-aot-rejection` |
+| 厳格モードの外部命令名 | 命令一覧は動的ライブラリの初期化時に登録されるため、意味解析時には確定していない | ネイティブプラグインを直接取り込むモジュールでは未知の「命令」だけを動的解決対象にする。未知の変数は従来どおり診断し、未登録命令は実行時に拒否する | `native-plugin-strict-dynamic-command` |
+| 標準命令と同名の登録 | `表示`等は実行器内の専用経路とプラグイン経路で優先順位が異なり、上書きを許すと命令ごとに挙動が変わる | ネイティブ同士の重複に加え、固定した標準cnako命令527件との名前衝突も登録時に拒否する | `ネイティブ命令登録の属性と重複を検証する` |
+| opaque値のUTF-8参照 | 任意値を暗黙に文字列化すると、配列・辞書の変更後にキャッシュ済みポインタが古くなる | `get_utf8`は不変なString / BigIntだけを受け付け、他の型は型別getterで明示的に取得する。ポインタはhandle解放まで有効 | `native-plugin-abi` |
+| 非同期完了と終了処理 | workerから呼べる関数とtokenの有効期間が通常のhost callbackと異なる | 別スレッドで許可するのは`complete_async`だけ。終了時は`deinitialize`でworkerを停止した後に未完了tokenと命令contextを破棄する | `native-plugin-async-thread` |
+| 非WindowsホストからのMSVCクロスビルド | Zig 0.16.0は`x86_64-windows-msvc`向けlibcを非Windows環境へ同梱しないため、C fixtureをリンクできない | ローカルの構文・ABIクロス検査は`x86_64-windows-gnu`で行い、正式なWindows x86_64 MSVCのビルド・実ロード・実行は`windows-2025` CIランナーで検証する | GitHub Actions `Windows x86_64` / `Native plugin ABI test` |
+
+ABI値の所有権と非同期スレッド制約は[`NATIVE_PLUGIN_ABI.md`](NATIVE_PLUGIN_ABI.md)へ分離して記録します。
 
 ## Nodeホスト・ファイル・圧縮
 

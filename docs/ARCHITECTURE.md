@@ -53,6 +53,7 @@ source
   `tools/check_builtin_catalog.mjs` が固定カタログとの全件一致をCIで検証する。
 - `semantic/module_graph.zig` は相対 `.nako3` を再帰的に読み、同一実体の重複取り込みと循環を抑止する。
   `.js` / `.mjs` は明示的な互換モードなしでは診断し、通常モードのモジュールグラフへ混入させない。
+- `.dylib` / `.so` / `.dll`はソースとして読み込まず、正規化したパスをIRのネイティブプラグイン一覧へ渡す。
 - `lnako check` はエントリだけでなくモジュールグラフ全体を構文・意味解析する。
 
 ## HIRとNako SSA IR
@@ -85,6 +86,16 @@ source
   なでしこ関数をQuickJSから同期呼び出しできる。
 - `build --compat-js`はコンパイラ自身のQuickJS対応ランタイムと検証済みソースグラフを1実行ファイルへ
   埋め込む。起動時は末尾の版付きbundleを検証し、通常のCLI解析へ入らずエントリを実行する。
+
+## ネイティブプラグイン境界
+
+- `include/lnako_plugin_v1.h`をC ABIの正本とし、descriptor、host、registry、commandの全構造体に
+  `struct_size`とABI版を持たせる。動的ライブラリは`lnako_plugin_v1`シンボルだけを必須入口にする。
+- ランタイム値はopaque handleで渡し、pluginが保持するhandleと非同期PromiseをGCの外部ルートとして追跡する。
+- 命令名、助詞、引数範囲、sync・async・pure属性を登録時に検証する。host callbackからなでしこ関数と
+  標準命令を同じ実行器上で再入呼び出しできる。
+- 非同期完了だけを別スレッドから許可し、atomicなtask境界を通してメインイベントループ上でPromiseを解決する。
+  値生成・参照・再入呼び出しはランタイム所有スレッドに限定する。
 
 ## 動的な値
 

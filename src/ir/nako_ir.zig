@@ -107,6 +107,7 @@ pub const Program = struct {
     module_entries: []FunctionId,
     compat_js: bool = false,
     javascript_modules: []JavaScriptModule = &.{},
+    native_plugin_paths: []const []const u8 = &.{},
 
     pub fn deinit(self: *Program) void {
         self.arena.deinit();
