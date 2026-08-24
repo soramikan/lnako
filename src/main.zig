@@ -30,26 +30,37 @@ pub fn main(init: std.process.Init) !void {
                 try stderr.flush();
                 std.process.exit(2);
             }
-            const source = std.Io.Dir.cwd().readFileAlloc(init.io, args[1], allocator, .limited(128 * 1024 * 1024)) catch |err| {
-                try stderr.print("{s}: 読み込みに失敗しました: {s}\n", .{ args[1], @errorName(err) });
-                try stderr.flush();
-                std.process.exit(2);
-            };
-            var result = lnako.frontend.parser.parse(allocator, source, args[1]) catch |err| {
-                try stderr.print("{s}: 字句解析に失敗しました: {s}\n", .{ args[1], @errorName(err) });
+            var file_provider = lnako.semantic.module_graph.FileProvider{ .io = init.io };
+            var graph = lnako.semantic.module_graph.load(allocator, args[1], file_provider.sourceProvider(), .{}) catch |err| {
+                try stderr.print("{s}: 読み込みまたは字句解析に失敗しました: {s}\n", .{ args[1], @errorName(err) });
                 try stderr.flush();
                 std.process.exit(1);
             };
-            defer result.deinit();
-            if (!result.succeeded()) {
-                for (result.diagnostics) |item| try item.render(source, stderr);
+            defer graph.deinit();
+            if (!graph.succeeded()) {
+                for (graph.diagnostics) |item| try item.render(sourceForDiagnostic(graph, item.file), stderr);
+                for (graph.modules) |module| if (module.parsed) |parsed| {
+                    for (parsed.diagnostics) |item| try item.render(module.source, stderr);
+                };
                 try stderr.flush();
                 std.process.exit(1);
             }
-            try stdout.print("{s}: 構文に問題はありません\n", .{args[1]});
+            var program = try graph.analyze(allocator);
+            defer program.deinit();
+            if (!program.succeeded()) {
+                for (program.diagnostics) |item| try item.render(sourceForDiagnostic(graph, item.file), stderr);
+                try stderr.flush();
+                std.process.exit(1);
+            }
+            try stdout.print("{s}: 構文と意味に問題はありません（{d}モジュール）\n", .{ args[1], graph.modules.len });
         },
         else => try stdout.print("{s}: 実装準備中です\n", .{@tagName(command)}),
     }
+}
+
+fn sourceForDiagnostic(graph: lnako.semantic.module_graph.ModuleGraph, file: []const u8) []const u8 {
+    for (graph.modules) |module| if (std.mem.eql(u8, module.path, file)) return module.source;
+    return "";
 }
 
 test "CLIモジュールを読み込める" {

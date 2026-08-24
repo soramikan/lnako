@@ -12,6 +12,12 @@ pub const Code = enum {
     invalid_assignment,
     invalid_function_definition,
     invalid_control_statement,
+    duplicate_symbol,
+    undefined_symbol,
+    assign_to_constant,
+    invalid_import,
+    import_not_found,
+    ambiguous_import,
 };
 
 pub const Diagnostic = struct {

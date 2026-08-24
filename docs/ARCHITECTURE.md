@@ -44,6 +44,17 @@ source
 - 構文エラーは `frontend/diagnostic.zig` の安定した診断コード、元入力のバイト範囲、行・列を持つ。
   `lnako check` と差分診断テストは同じ診断データを使用する。
 
+## 意味解析とモジュール
+
+- `semantic/analyzer.zig` はモジュール・関数スコープを作り、グローバル名を `module__name` へ修飾する。
+  関数引数とローカル変数を分離し、公開シンボルの非修飾・修飾参照、厳チェック、重複定義、
+  定数再代入、曖昧な取り込みを診断する。
+- `semantic/builtin_catalog.zig` は互換表の標準cnako命令527件から生成した索引である。
+  `tools/check_builtin_catalog.mjs` が固定カタログとの全件一致をCIで検証する。
+- `semantic/module_graph.zig` は相対 `.nako3` を再帰的に読み、同一実体の重複取り込みと循環を抑止する。
+  `.js` / `.mjs` は明示的な互換モードなしでは診断し、通常モードのモジュールグラフへ混入させない。
+- `lnako check` はエントリだけでなくモジュールグラフ全体を構文・意味解析する。
+
 ## 互換性の原則
 
 - JavaScriptの `Number` に合わせ、通常数値をIEEE 754 binary64として扱う。

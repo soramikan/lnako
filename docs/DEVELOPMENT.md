@@ -16,6 +16,8 @@ node tools/compare_lexer_oracle.mjs
 node tools/compare_syntax_oracle.mjs
 node tools/compare_parser_oracle.mjs
 node tools/compare_parser_diagnostics_oracle.mjs
+node tools/compare_semantic_oracle.mjs
+node tools/check_builtin_catalog.mjs
 ```
 
 AST差分テストは公式の `core/test/fixtures/parser_corpus.mjs` を直接読み、コメント・空行の保持方式に

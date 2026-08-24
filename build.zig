@@ -69,6 +69,20 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| parser_probe_run.addArgs(args);
     parser_probe_step.dependOn(&parser_probe_run.step);
 
+    const semantic_probe = b.addExecutable(.{
+        .name = "semantic-probe",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/semantic_probe.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "lnako", .module = lnako }},
+        }),
+    });
+    const semantic_probe_step = b.step("semantic-probe", "意味解析の名前解決結果をJSON Linesで出力する");
+    const semantic_probe_run = b.addRunArtifact(semantic_probe);
+    if (b.args) |args| semantic_probe_run.addArgs(args);
+    semantic_probe_step.dependOn(&semantic_probe_run.step);
+
     const module_tests = b.addTest(.{ .root_module = lnako });
     const run_module_tests = b.addRunArtifact(module_tests);
     const exe_tests = b.addTest(.{ .root_module = exe.root_module });

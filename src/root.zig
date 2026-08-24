@@ -13,6 +13,11 @@ pub const frontend = struct {
     pub const parser = @import("frontend/parser.zig");
 };
 
+pub const semantic = struct {
+    pub const analyzer = @import("semantic/analyzer.zig");
+    pub const module_graph = @import("semantic/module_graph.zig");
+};
+
 pub const Command = enum {
     build,
     run,

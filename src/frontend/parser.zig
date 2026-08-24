@@ -90,6 +90,7 @@ const Parser = struct {
 
     fn parseStatement(self: *Parser) ParseFailure!*ast.Node {
         const token = self.peek();
+        if (self.isImportDirective()) return self.parseImportDirective();
         return switch (token.kind) {
             .eol => self.parseEol(),
             .keyword_if => self.parseIf(),
@@ -223,11 +224,12 @@ const Parser = struct {
 
     fn parseFunctionDefinition(self: *Parser, is_test: bool) ParseFailure!*ast.Node {
         const start = self.advance();
-        var is_export = false;
+        var is_export = true;
         if (self.at(.left_brace)) {
             _ = self.advance();
             const attribute = try self.require(.identifier, "関数属性が必要です");
-            is_export = std.mem.eql(u8, attribute.value, "公開") or std.mem.eql(u8, attribute.value, "エクスポート");
+            if (std.mem.eql(u8, attribute.value, "非公開")) is_export = false;
+            if (std.mem.eql(u8, attribute.value, "公開") or std.mem.eql(u8, attribute.value, "エクスポート")) is_export = true;
             _ = try self.require(.right_brace, "関数属性を閉じる『}』が必要です");
         }
 
@@ -294,6 +296,26 @@ const Parser = struct {
         const path = try self.parseExpression(0);
         const node = try self.makeNodeWithChildren(.import, start, try self.copyChildren(&.{path}));
         node.value = path.value;
+        return node;
+    }
+
+    fn isImportDirective(self: *Parser) bool {
+        if (!self.at(.not) or (self.peekAhead(1).kind != .string and self.peekAhead(1).kind != .string_template)) return false;
+        var offset: usize = 2;
+        while (self.peekAhead(offset).kind != .eol and self.peekAhead(offset).kind != .eof) : (offset += 1) {
+            if (self.peekAhead(offset).kind == .keyword_import) return true;
+        }
+        return false;
+    }
+
+    fn parseImportDirective(self: *Parser) ParseFailure!*ast.Node {
+        const start = self.advance();
+        const path_token = self.advance();
+        const path = try self.valueNode(.string, path_token);
+        _ = try self.require(.keyword_import, "取り込み文に『取り込む』が必要です");
+        const node = try self.makeNodeWithChildren(.import, start, try self.copyChildren(&.{path}));
+        node.value = path.value;
+        node.josi = "";
         return node;
     }
 
@@ -425,6 +447,15 @@ const Parser = struct {
                 _ = self.advance();
                 const collection = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try self.nop(start);
                 return self.parseForeach(start, collection);
+            }
+            if (self.at(.keyword_import)) {
+                const command = self.advance();
+                if (arguments.items.len == 0) return self.fail(.expected_expression, "取り込み先が必要です", command);
+                const path = arguments.items[arguments.items.len - 1];
+                const node = try self.makeNodeWithChildren(.import, start, try self.copyChildren(&.{path}));
+                node.value = path.value;
+                node.josi = "";
+                return node;
             }
             if ((self.identifierValue("増") or self.identifierValue("減")) and self.peekAhead(1).kind == .keyword_repeat) {
                 return self.parseFor(start, arguments.items);
@@ -1197,4 +1228,13 @@ test "閉じていないブロックを位置付き診断にする" {
     try std.testing.expectEqual(@as(usize, 1), result.diagnostics.len);
     try std.testing.expectEqual(diagnostic.Code.missing_block_end, result.diagnostics[0].code);
     try std.testing.expectEqualStrings("broken.nako3", result.diagnostics[0].file);
+}
+
+test "相対nako3取り込みをASTに保持する" {
+    var result = try parse(std.testing.allocator, "!「./lib.nako3」を取り込む\n", "main.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const import_node = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.import, import_node.kind);
+    try std.testing.expectEqualStrings("./lib.nako3", import_node.value);
 }

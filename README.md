@@ -21,8 +21,8 @@ zig build test
 zig build run -- --help
 ```
 
-構文検査は実装済みです。エラー時は元ソースのファイル名・行・列、診断コード、該当行を表示し、
-終了コード1を返します。
+構文・意味検査は実装済みです。相対 `.nako3` 取り込みも再帰的に検査します。エラー時は元ソースの
+ファイル名・行・列、診断コード、該当行を表示し、終了コード1を返します。
 
 ```sh
 zig build run -- check program.nako3
@@ -40,7 +40,7 @@ lnako benchmark
 ```
 
 現時点では `check`、ヘルプ、バージョン表示を利用できます。ほかのサブコマンドは後続の
-意味解析・LLVMバックエンド・ランタイム実装とともに有効化します。
+IR・LLVMバックエンド・ランタイム実装とともに有効化します。
 
 設計と検証方針は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) と [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) を参照してください。
 
