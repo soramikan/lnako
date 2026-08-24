@@ -86,9 +86,10 @@ SDK配布物は対応するLLVM/LLDを同梱し、生成プログラム自体は
 必須ソース一式を検証します。
 
 QuickJSは`js_realloc_rt(JSRuntime *, ...)`を汎用`DynBuf` callbackへ意図的に型変換します。Zigの
-ReleaseSafeが有効にするC関数型sanitizerは、このABI互換呼び出しをmacOS arm64で`SIGTRAP`にするため、
-QuickJS Cソースに限って`-fno-sanitize=function`を指定します。他のZig/Cコードの安全検査は維持し、CIで
-DebugとReleaseSafeの両方を実行します。
+ReleaseSafeが有効にするC関数型sanitizerは、このABI互換呼び出しをmacOS arm64で`SIGTRAP`にします。
+また、flexible array上の`container_of`はWindowsのnull sanitizerに誤検出されます。このためQuickJS本体の
+Cソースに限って`function`と`null`の2検査を無効化します。ローカルbridgeを含む他のZig/Cコードの安全検査は
+維持し、CIでDebugとReleaseSafeの両方を実行します。
 
 ```sh
 node tools/setup_quickjs.mjs

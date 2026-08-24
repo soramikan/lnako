@@ -144,24 +144,28 @@ fn configureQuickJs(b: *std.Build, module: *std.Build.Module, os: std.Target.Os.
     const directory = b.option([]const u8, "quickjs-dir", "QuickJSソースディレクトリ") orelse
         b.graph.environ_map.get("LNAKO_QUICKJS_DIR") orelse
         b.pathResolve(&.{ ".cache", "toolchains", "quickjs-2026-06-04" });
-    // QuickJS intentionally casts its JSRuntime realloc function to the generic
-    // DynBuf callback signature. ReleaseSafe's function sanitizer traps that
-    // ABI-compatible C call on arm64, so disable only that sanitizer here.
-    const flags: []const []const u8 = if (os == .windows)
-        &.{ "-std=gnu11", "-fwrapv", "-fno-sanitize=function", "-D_GNU_SOURCE", "-DCONFIG_VERSION=\"2026-06-04\"", "-DCONFIG_WIN32" }
+    // QuickJS uses ABI-compatible function pointer casts and container_of over
+    // flexible array storage. Zig's C sanitizers otherwise trap those upstream
+    // implementation techniques on arm64 and Windows respectively.
+    const quickjs_flags: []const []const u8 = if (os == .windows)
+        &.{ "-std=gnu11", "-fwrapv", "-fno-sanitize=function", "-fno-sanitize=null", "-D_GNU_SOURCE", "-D__USE_MINGW_ANSI_STDIO", "-DCONFIG_VERSION=\"2026-06-04\"" }
     else
-        &.{ "-std=gnu11", "-fwrapv", "-fno-sanitize=function", "-D_GNU_SOURCE", "-DCONFIG_VERSION=\"2026-06-04\"" };
+        &.{ "-std=gnu11", "-fwrapv", "-fno-sanitize=function", "-fno-sanitize=null", "-D_GNU_SOURCE", "-DCONFIG_VERSION=\"2026-06-04\"" };
+    const bridge_flags: []const []const u8 = if (os == .windows)
+        &.{ "-std=gnu11", "-fwrapv", "-D_GNU_SOURCE", "-D__USE_MINGW_ANSI_STDIO", "-DCONFIG_VERSION=\"2026-06-04\"" }
+    else
+        &.{ "-std=gnu11", "-fwrapv", "-D_GNU_SOURCE", "-DCONFIG_VERSION=\"2026-06-04\"" };
     module.addIncludePath(.{ .cwd_relative = directory });
     module.addIncludePath(b.path("src/compat"));
     module.addCSourceFiles(.{
         .root = .{ .cwd_relative = directory },
         .files = &.{ "quickjs.c", "dtoa.c", "libregexp.c", "libunicode.c", "cutils.c" },
-        .flags = flags,
+        .flags = quickjs_flags,
     });
     module.addCSourceFiles(.{
         .root = b.path("src/compat"),
         .files = &.{"quickjs_bridge.c"},
-        .flags = flags,
+        .flags = bridge_flags,
     });
     if (os != .windows) {
         module.linkSystemLibrary("m", .{});
