@@ -672,8 +672,12 @@ const Range = struct { start: usize, count: usize };
 
 fn rangeBounds(runtime: *Runtime, value: Value, length: usize) !?Range {
     if (value != .dictionary) return null;
-    const first_key = try runtime.stringUtf8("先頭");
-    const last_key = try runtime.stringUtf8("末尾");
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var first_key = try runtime.stringUtf8("先頭");
+    try roots.protect(&first_key);
+    var last_key = try runtime.stringUtf8("末尾");
+    try roots.protect(&last_key);
     const first_value = value.dictionary.get(first_key.string) orelse return null;
     const last_value = value.dictionary.get(last_key.string) orelse return null;
     if (first_value != .number) return null;

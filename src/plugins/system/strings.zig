@@ -10,6 +10,9 @@ pub const Runtime = value_mod.Runtime;
 pub const CutResult = struct { result: Value, remainder: Value };
 
 pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Value {
+    // 後段プラグインがBufferなど非文字列値を受け取る場合があるため、
+    // このモジュールが担当しない命令の引数は先に文字列化しない。
+    if (!handles(name)) return null;
     const a = common.argument(arguments, 0);
     const b = common.argument(arguments, 1);
     const c = common.argument(arguments, 2);
@@ -84,6 +87,64 @@ pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Val
     if (eql(name, "数字判定")) return .{ .boolean = isDigit(firstUnit(a_text.string)) };
     if (eql(name, "数列判定")) return .{ .boolean = numberSequence(a_text.string.units) };
     return null;
+}
+
+fn handles(name: []const u8) bool {
+    const commands = [_][]const u8{
+        "文字数",
+        "何文字目",
+        "CHR",
+        "ASC",
+        "文字挿入",
+        "文字検索",
+        "追加",
+        "一行追加",
+        "連結",
+        "文字列連結",
+        "文字列分解",
+        "リフレイン",
+        "出現回数",
+        "MID",
+        "文字抜出",
+        "LEFT",
+        "文字左部分",
+        "RIGHT",
+        "文字右部分",
+        "区切",
+        "文字列分割",
+        "文字削除",
+        "文字始",
+        "文字終",
+        "出現",
+        "置換",
+        "単置換",
+        "トリム",
+        "空白除去",
+        "右トリム",
+        "末尾空白除去",
+        "左トリム",
+        "大文字変換",
+        "小文字変換",
+        "平仮名変換",
+        "カタカナ変換",
+        "英数全角変換",
+        "英数半角変換",
+        "英数記号全角変換",
+        "英数記号半角変換",
+        "カタカナ全角変換",
+        "カタカナ半角変換",
+        "全角変換",
+        "半角変換",
+        "通貨形式",
+        "ゼロ埋",
+        "空白埋",
+        "かなか判定",
+        "カタカナ判定",
+        "数字判定",
+        "数列判定",
+    };
+    for (commands) |command| if (eql(name, command)) return true;
+    return false;
 }
 
 pub fn cut(runtime: *Runtime, source: Value, delimiter: Value) !CutResult {

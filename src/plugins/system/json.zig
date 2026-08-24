@@ -48,6 +48,41 @@ fn writeValue(
         },
         .bigint => return error.BigIntCannotBeSerialized,
         .string => |string| try writeQuotedString(writer, string.units),
+        .bytes => |buffer| {
+            try writer.writeByte('{');
+            if (pretty) {
+                try writer.writeByte('\n');
+                try writeIndent(writer, depth + 1);
+            }
+            try writer.writeAll("\"type\":");
+            if (pretty) try writer.writeByte(' ');
+            try writer.writeAll("\"Buffer\",");
+            if (pretty) {
+                try writer.writeByte('\n');
+                try writeIndent(writer, depth + 1);
+            }
+            try writer.writeAll("\"data\":");
+            if (pretty) try writer.writeByte(' ');
+            try writer.writeByte('[');
+            for (buffer.bytes, 0..) |byte, index| {
+                if (index > 0) try writer.writeByte(',');
+                if (pretty and buffer.bytes.len > 0) {
+                    try writer.writeByte('\n');
+                    try writeIndent(writer, depth + 2);
+                }
+                try writer.print("{d}", .{byte});
+            }
+            if (pretty and buffer.bytes.len > 0) {
+                try writer.writeByte('\n');
+                try writeIndent(writer, depth + 1);
+            }
+            try writer.writeByte(']');
+            if (pretty) {
+                try writer.writeByte('\n');
+                try writeIndent(writer, depth);
+            }
+            try writer.writeByte('}');
+        },
         .array => |array| {
             if (containsPointer(value_mod.Array, active_arrays.items, array)) return error.CircularJsonValue;
             try active_arrays.append(runtime.allocator(), array);
@@ -262,4 +297,25 @@ test "JSONは重複キーの末尾値とPromiseの空オブジェクトを使う
     const promise_utf8 = try promise_json.string.toUtf8Lossy(std.testing.allocator);
     defer std.testing.allocator.free(promise_utf8);
     try std.testing.expectEqualStrings("{}", promise_utf8);
+}
+
+test "BufferをNode互換のJSONオブジェクトへ変換する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var buffer = try runtime.createBytes(&.{ 0x93, 0xfa, 0x41 });
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&buffer);
+    const encoded = (try call(&runtime, "JSON変換", &.{buffer})).?;
+    const utf8 = try encoded.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(utf8);
+    try std.testing.expectEqualStrings("{\"type\":\"Buffer\",\"data\":[147,250,65]}", utf8);
+
+    const pretty = (try call(&runtime, "JSONエンコード整形", &.{buffer})).?;
+    const pretty_utf8 = try pretty.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(pretty_utf8);
+    try std.testing.expectEqualStrings(
+        "{\n  \"type\": \"Buffer\",\n  \"data\": [\n    147,\n    250,\n    65\n  ]\n}",
+        pretty_utf8,
+    );
 }

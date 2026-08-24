@@ -50,7 +50,10 @@ const Parser = struct {
             } else {
                 var path = try self.keyPath(.equal);
                 defer path.deinit();
-                const parsed_value = try self.value();
+                var parsed_value = try self.value();
+                var value_roots = self.runtime.rootFrame();
+                defer value_roots.deinit();
+                try value_roots.protect(&parsed_value);
                 try self.assign(current, path.items.items, parsed_value);
             }
             self.skipHorizontal();
@@ -213,7 +216,10 @@ const Parser = struct {
         while (true) {
             var path = try self.keyPath(.equal);
             defer path.deinit();
-            const item = try self.value();
+            var item = try self.value();
+            var item_roots = self.runtime.rootFrame();
+            defer item_roots.deinit();
+            try item_roots.protect(&item);
             try self.assign(result.dictionary, path.items.items, item);
             self.skipHorizontal();
             if (self.consume('}')) return result;

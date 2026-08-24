@@ -11,6 +11,8 @@ const plugin_system = @import("../plugins/system.zig");
 const plugin_math = @import("../plugins/math.zig");
 const plugin_csv = @import("../plugins/csv.zig");
 const plugin_toml = @import("../plugins/toml.zig");
+const plugin_node = @import("../plugins/node.zig");
+const plugin_encoding = @import("../plugins/encoding.zig");
 
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
@@ -22,6 +24,7 @@ pub const Host = struct {
     nowMillisecondsFn: ?*const fn (context: *anyopaque) anyerror!i64 = null,
     monotonicMillisecondsFn: ?*const fn (context: *anyopaque) anyerror!f64 = null,
     randomFn: ?*const fn (context: *anyopaque) anyerror!f64 = null,
+    node_context: ?plugin_node.Context = null,
 
     pub fn write(self: Host, bytes: []const u8) !void {
         try self.writeFn(self.context, bytes);
@@ -182,6 +185,7 @@ pub const Interpreter = struct {
     output_captures: std.ArrayList(*std.ArrayList(u8)) = .empty,
     print_pool: std.ArrayList(u8) = .empty,
     csv_state: plugin_csv.State,
+    node_state: plugin_node.State = .{},
     timers: std.ArrayList(Timer) = .empty,
     promise_resolvers: std.AutoHashMapUnmanaged(*value_mod.Function, PromiseResolver) = .empty,
     promise_all_handlers: std.AutoHashMapUnmanaged(*value_mod.Function, PromiseAllHandler) = .empty,
@@ -208,6 +212,7 @@ pub const Interpreter = struct {
         self.output_captures.deinit(self.allocator);
         self.print_pool.deinit(self.allocator);
         self.csv_state.deinit();
+        self.node_state.deinit(self.allocator);
         self.timers.deinit(self.allocator);
         self.promise_resolvers.deinit(self.allocator);
         self.promise_all_handlers.deinit(self.allocator);
@@ -290,6 +295,7 @@ pub const Interpreter = struct {
             const block = function.blocks[current_block];
             var exceptional_target: ?ir.BlockId = null;
             for (block.instructions) |instruction| {
+                try self.handleNodeInterrupt();
                 self.executeInstruction(&frame, instruction, predecessor) catch |failure| {
                     if (frame.handlers.pop()) |handler| {
                         if (self.exception_value == .undefined) self.exception_value = self.runtime.stringUtf8(@errorName(failure)) catch return failure;
@@ -564,6 +570,8 @@ pub const Interpreter = struct {
         })) |value| return value;
         if (try plugin_csv.call(self.runtime, &self.csv_state, name, arguments)) |value| return value;
         if (try plugin_toml.call(self.runtime, name, arguments)) |value| return value;
+        if (self.host.node_context) |node_context| if (try plugin_node.call(self.runtime, &self.node_state, node_context, self.nodeEffects(), name, arguments)) |value| return value;
+        if (try plugin_encoding.call(self.runtime, name, arguments)) |value| return value;
         if (try plugin_system.callWithContext(self.runtime, name, arguments, plugin_context)) |value| return value;
         return error.UnknownCommand;
     }
@@ -572,6 +580,7 @@ pub const Interpreter = struct {
         if (self.system_initialized) return;
         try plugin_system.constants.install(self.runtime, .{ .context = self, .setFn = installSystemConstant });
         try plugin_system.datetime.install(self.runtime, .{ .context = self, .setFn = installSystemConstant });
+        if (self.host.node_context) |node_context| try plugin_node.install(self.runtime, node_context, .{ .context = self, .setFn = installSystemConstant });
         self.system_initialized = true;
     }
 
@@ -664,6 +673,46 @@ pub const Interpreter = struct {
                 .monotonic_milliseconds = try self.host.monotonicMilliseconds(),
             },
         };
+    }
+
+    pub fn requestedExitCode(self: Interpreter) ?u8 {
+        return self.node_state.requested_exit_code;
+    }
+
+    fn nodeEffects(self: *Interpreter) plugin_node.Effects {
+        return .{
+            .context = self,
+            .invokeFn = pluginCall,
+            .resolveFn = nodeResolve,
+            .getGlobalFn = nodeGetGlobal,
+            .setGlobalFn = nodeSetGlobal,
+        };
+    }
+
+    fn nodeResolve(context: *anyopaque, value: Value) !Value {
+        const self: *Interpreter = @ptrCast(@alignCast(context));
+        return self.resolveCallback(value);
+    }
+
+    fn nodeSetGlobal(context: *anyopaque, name: []const u8, value: Value) !void {
+        const self: *Interpreter = @ptrCast(@alignCast(context));
+        try self.setGlobal(name, value);
+    }
+
+    fn nodeGetGlobal(context: *anyopaque, name: []const u8) ?Value {
+        const self: *Interpreter = @ptrCast(@alignCast(context));
+        return self.globals.get(name);
+    }
+
+    fn handleNodeInterrupt(self: *Interpreter) !void {
+        const context = self.host.node_context orelse return;
+        const consume = context.consumeInterruptFn orelse return;
+        if (!consume(context.context) or self.node_state.interrupt_callback == .undefined) return;
+        const result = try self.callFunctionValue(self.node_state.interrupt_callback.function, &.{.undefined});
+        if (result.toBoolean()) {
+            self.node_state.requested_exit_code = 0;
+            return error.ProcessExitRequested;
+        }
     }
 
     fn pluginRandom(context: *anyopaque) !f64 {
@@ -873,8 +922,12 @@ pub const Interpreter = struct {
     fn drainEventLoop(self: *Interpreter) !void {
         while (true) {
             try self.drainPromiseTasks();
-            if (self.timers.items.len == 0) return;
-            try self.executeTimer(self.earliestTimerIndex().?);
+            const commands_pending = try self.pollNodeCommands();
+            if (self.timers.items.len > 0) {
+                try self.executeTimer(self.earliestTimerIndex().?);
+            } else if (commands_pending) {
+                try self.sleepEventSlice(1);
+            } else return;
         }
     }
 
@@ -925,9 +978,23 @@ pub const Interpreter = struct {
     }
 
     fn sleepUntil(self: *Interpreter, target: u64) !void {
-        if (target <= self.elapsed_milliseconds) return;
-        try self.host.sleepMilliseconds(target - self.elapsed_milliseconds);
-        self.elapsed_milliseconds = target;
+        while (target > self.elapsed_milliseconds) {
+            const remaining = target - self.elapsed_milliseconds;
+            const slice = @min(remaining, 20);
+            try self.sleepEventSlice(slice);
+        }
+    }
+
+    fn sleepEventSlice(self: *Interpreter, milliseconds: u64) !void {
+        try self.host.sleepMilliseconds(milliseconds);
+        self.elapsed_milliseconds += milliseconds;
+        try self.handleNodeInterrupt();
+        _ = try self.pollNodeCommands();
+    }
+
+    fn pollNodeCommands(self: *Interpreter) !bool {
+        const context = self.host.node_context orelse return false;
+        return plugin_node.pollOperations(self.runtime, &self.node_state, context, self.nodeEffects());
     }
 
     fn executePromiseTask(self: *Interpreter, task: value_mod.PromiseTask) !void {
@@ -1235,6 +1302,7 @@ pub const Interpreter = struct {
             try runtime.traceExternal(.{ .promise = state.promise });
             try runtime.traceExternal(.{ .array = state.results });
         }
+        try self.node_state.trace(runtime);
     }
 };
 

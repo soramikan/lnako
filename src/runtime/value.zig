@@ -5,6 +5,17 @@ const bigint_mod = @import("bigint.zig");
 pub const String = string_mod.String;
 pub const BigInt = bigint_mod.BigInt;
 
+pub const ByteBuffer = struct {
+    gc_marked: bool = false,
+    allocator: std.mem.Allocator,
+    bytes: []u8,
+
+    pub fn deinit(self: *ByteBuffer) void {
+        self.allocator.free(self.bytes);
+        self.* = undefined;
+    }
+};
+
 pub const Array = struct {
     gc_marked: bool = false,
     allocator: std.mem.Allocator,
@@ -177,6 +188,7 @@ pub const Value = union(enum) {
     number: f64,
     bigint: *BigInt,
     string: *String,
+    bytes: *ByteBuffer,
     array: *Array,
     dictionary: *Dictionary,
     function: *Function,
@@ -193,7 +205,7 @@ pub const Value = union(enum) {
             .number => |value| value != 0 and !std.math.isNan(value),
             .bigint => |value| !value.isZero(),
             .string => |value| value.len() != 0,
-            .array, .dictionary, .function, .promise => true,
+            .bytes, .array, .dictionary, .function, .promise => true,
         };
     }
 
@@ -205,7 +217,7 @@ pub const Value = union(enum) {
             .number => |value| value,
             .bigint => error.CannotConvertBigIntToNumber,
             .string => |value| parseNumber(value.*, scratch_allocator),
-            .array, .dictionary, .function, .promise => error.CannotConvertObjectToNumber,
+            .bytes, .array, .dictionary, .function, .promise => error.CannotConvertObjectToNumber,
         };
     }
 
@@ -217,6 +229,7 @@ pub const Value = union(enum) {
             .number => |value| !std.math.isNan(value) and !std.math.isNan(right.number) and value == right.number,
             .bigint => |value| BigInt.eql(value.*, right.bigint.*),
             .string => |value| String.eql(value.*, right.string.*),
+            .bytes => |value| value == right.bytes,
             .array => |value| value == right.array,
             .dictionary => |value| value == right.dictionary,
             .function => |value| value == right.function,
@@ -268,6 +281,7 @@ pub const Value = union(enum) {
 const HeapObject = union(enum) {
     string: *String,
     bigint: *BigInt,
+    bytes: *ByteBuffer,
     array: *Array,
     dictionary: *Dictionary,
     function: *Function,
@@ -367,6 +381,16 @@ pub const Runtime = struct {
         return .{ .string = result };
     }
 
+    pub fn stringUtf8Lossy(self: *Runtime, utf8: []const u8) !Value {
+        try self.beforeAllocation();
+        const result = try self.allocator().create(String);
+        errdefer self.allocator().destroy(result);
+        result.* = try String.fromUtf8Lossy(self.allocator(), utf8);
+        errdefer result.deinit();
+        try self.objects.append(self.allocator(), .{ .string = result });
+        return .{ .string = result };
+    }
+
     pub fn stringCodeUnits(self: *Runtime, units: []const u16) !Value {
         try self.beforeAllocation();
         const result = try self.allocator().create(String);
@@ -375,6 +399,16 @@ pub const Runtime = struct {
         errdefer result.deinit();
         try self.objects.append(self.allocator(), .{ .string = result });
         return .{ .string = result };
+    }
+
+    pub fn createBytes(self: *Runtime, bytes: []const u8) !Value {
+        try self.beforeAllocation();
+        const result = try self.allocator().create(ByteBuffer);
+        errdefer self.allocator().destroy(result);
+        result.* = .{ .allocator = self.allocator(), .bytes = try self.allocator().dupe(u8, bytes) };
+        errdefer result.deinit();
+        try self.objects.append(self.allocator(), .{ .bytes = result });
+        return .{ .bytes = result };
     }
 
     pub fn bigIntLiteral(self: *Runtime, source: []const u8) !Value {
@@ -593,6 +627,7 @@ pub const Runtime = struct {
                 break :blk self.stringUtf8(utf8);
             },
             .string => value,
+            .bytes => |buffer| self.stringUtf8Lossy(buffer.bytes),
             .array => |array| self.arrayToString(array),
             .dictionary => self.stringUtf8("[object Object]"),
             .function => |function| blk: {
@@ -608,7 +643,7 @@ pub const Runtime = struct {
 
     pub fn valueToPrimitive(self: *Runtime, value: Value) !Value {
         return switch (value) {
-            .array, .dictionary, .function, .promise => self.valueToString(value),
+            .bytes, .array, .dictionary, .function, .promise => self.valueToString(value),
             else => value,
         };
     }
@@ -688,6 +723,7 @@ pub const Runtime = struct {
         switch (value) {
             .string => |object| object.gc_marked = true,
             .bigint => |object| object.gc_marked = true,
+            .bytes => |object| object.gc_marked = true,
             .array => |object| try self.markComposite(.{ .array = object }),
             .dictionary => |object| try self.markComposite(.{ .dictionary = object }),
             .function => |object| try self.markComposite(.{ .function = object }),
@@ -726,7 +762,7 @@ pub const Runtime = struct {
                     try self.markValue(.{ .promise = reaction.next });
                 }
             },
-            .string, .bigint => unreachable,
+            .string, .bigint, .bytes => unreachable,
         };
     }
 
@@ -974,6 +1010,19 @@ test "GCストレス中もルートと循環文字列化を保護する" {
     defer std.testing.allocator.free(utf8);
     try std.testing.expectEqualStrings("", utf8);
     try std.testing.expect(runtime.objectCount() >= 2);
+}
+
+test "Bufferの文字列化は不正UTF-8を置換する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var buffer = try runtime.createBytes(&.{ 0xe3, 0x81, 0x41 });
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&buffer);
+    const string = try runtime.valueToString(buffer);
+    const utf8 = try string.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(utf8);
+    try std.testing.expectEqualStrings("�A", utf8);
 }
 
 test "深いオブジェクトグラフを再帰せずマークする" {

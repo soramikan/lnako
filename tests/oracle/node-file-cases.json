@@ -1,0 +1,76 @@
+[
+  {
+    "id": "plugin-node-path-host",
+    "commands": ["ファイル名抽出", "パス抽出", "絶対パス変換", "相対パス展開", "OS取得", "OSアーキテクチャ取得", "カレントディレクトリ取得", "カレントディレクトリ変更", "作業フォルダ取得", "作業フォルダ変更", "ホームディレクトリ取得", "デスクトップ", "マイドキュメント", "母艦パス", "母艦パス取得", "テンポラリフォルダ", "環境変数取得", "環境変数一覧取得", "コマンドライン", "ナデシコランタイム", "ナデシコランタイムパス"],
+    "source": "ファイル名抽出(\"a/b.txt\")を表示\nパス抽出(\"a/b.txt\")を表示\nC=カレントディレクトリ取得()\n(C=絶対パス変換(\".\"))を表示\n(C=作業フォルダ取得())を表示\nファイル名抽出(相対パス展開(\"a\",\"b.txt\"))を表示\nOS取得()を表示\nOSアーキテクチャ取得()を表示\n作業フォルダ変更(\".\")\nカレントディレクトリ変更(\".\")\nファイル名抽出(デスクトップ)を表示\nファイル名抽出(マイドキュメント)を表示\n(文字数(ホームディレクトリ取得())>0)を表示\nフォルダ存在(母艦パス取得())を表示\nフォルダ存在(母艦パス)を表示\nフォルダ存在(テンポラリフォルダ)を表示\n環境変数取得(\"LNAKO_NODE_TEST\")を表示\nE=環境変数一覧取得(); E[\"LNAKO_NODE_TEST\"]を表示\n(要素数(コマンドライン)>0)を表示\n(文字数(ナデシコランタイム)>0)を表示\n(文字数(ナデシコランタイムパス)>0)を表示\n"
+  },
+  {
+    "id": "plugin-node-file-core",
+    "commands": ["開", "読", "バイナリ読", "保存", "SJISファイル読", "SJISファイル保存", "EUCファイル読", "EUCファイル保存", "ファイル列挙", "全ファイル列挙", "存在", "フォルダ存在", "フォルダ作成", "ファイルコピーデフォルト動作", "ファイルコピー", "ファイル上書コピー", "ファイル移動", "ファイル上書移動", "ファイル削除", "ファイル情報取得", "ファイルサイズ取得"],
+    "source": "フォルダ作成(\"data/sub\")\n保存(\"abc\",\"data/a.txt\")\n開(\"data/a.txt\")を表示\n読(\"data/a.txt\")を表示\nJSON変換(バイナリ読(\"data/a.txt\"))を表示\nSJISファイル保存(\"日本語ABC\",\"data/sjis.txt\")\nSJISファイル読(\"data/sjis.txt\")を表示\nEUCファイル保存(\"日本語ABC\",\"data/euc.txt\")\nEUCファイル読(\"data/euc.txt\")を表示\n存在(\"data/a.txt\")を表示\nフォルダ存在(\"data/sub\")を表示\nファイルサイズ取得(\"data/a.txt\")を表示\nI=ファイル情報取得(\"data/a.txt\"); I[\"size\"]を表示\nTYPEOF(I[\"isFile\"])を表示\nTYPEOF(I[\"isDirectory\"])を表示\nJSON変換(ファイル列挙(\"data/*.txt\"))を表示\n要素数(全ファイル列挙(\"data/*.txt\"))を表示\nファイルコピー(\"data/a.txt\",\"data/b.txt\")\nファイル上書コピー(\"data/a.txt\",\"data/b.txt\")\nファイル移動(\"data/b.txt\",\"data/c.txt\")\nファイル上書移動(\"data/c.txt\",\"data/d.txt\")\nファイル削除(\"data/d.txt\")\n存在(\"data/d.txt\")を表示\nファイルコピーデフォルト動作を表示\n保存(\"old\",\"data/existing.txt\")\nファイルコピーデフォルト動作=\"上書\"\nファイルコピー(\"data/a.txt\",\"data/existing.txt\")\n読(\"data/existing.txt\")を表示\n"
+  },
+  {
+    "id": "plugin-node-file-pattern-regexp",
+    "commands": ["ファイル列挙"],
+    "source": "フォルダ作成(\"wild\")\n保存(\"1\",\"wild/a1.txt\")\n保存(\"2\",\"wild/za.txt\")\n保存(\"3\",\"wild/b.txt\")\nJSON変換(ファイル列挙(\"wild/a*.txt\"))を表示\nJSON変換(ファイル列挙(\"wild/[ab]*.txt\"))を表示\n"
+  },
+  {
+    "id": "plugin-node-encoding",
+    "commands": ["文字コード変換サポート判定", "SJIS変換", "SJIS取得", "エンコーディング変換", "エンコーディング取得"],
+    "source": "文字コード変換サポート判定(\"Shift_JIS\")を表示\n文字コード変換サポート判定(\"utf\")を表示\n文字コード変換サポート判定(\"utf16\")を表示\n文字コード変換サポート判定(\"ucs2le\")を表示\n文字コード変換サポート判定(\"windows-1252:2000\")を表示\n文字コード変換サポート判定(\"gb18030\")を表示\n文字コード変換サポート判定(\"euc-kr\")を表示\n文字コード変換サポート判定(\"big5\")を表示\n文字コード変換サポート判定(\"x-lnako-unknown\")を表示\nS=SJIS変換(\"日本語ABC\")\nJSON変換(S)を表示\nJSONエンコード整形(S)を表示\nSJIS取得(S)を表示\nE=エンコーディング変換(\"日本語ABC\",\"euc-jp\")\nJSON変換(E)を表示\nエンコーディング取得(E,\"euc-jp\")を表示\nW=エンコーディング変換(\"€Œ\",\"windows-1252\")\nJSON変換(W)を表示\nエンコーディング取得(W,\"cp1252\")を表示\nC=エンコーディング変換(\"中文€\",\"gbk\")\nJSON変換(C)を表示\nエンコーディング取得(C,\"gbk\")を表示\nG=エンコーディング変換(\"中文😀€\",\"gb18030\")\nJSON変換(G)を表示\nエンコーディング取得(G,\"gb18030\")を表示\nK=エンコーディング変換(\"한국어\",\"euc-kr\")\nJSON変換(K)を表示\nエンコーディング取得(K,\"cp949\")を表示\nT=エンコーディング変換(\"繁體中文\",\"big5\")\nJSON変換(T)を表示\nエンコーディング取得(T,\"big5-hkscs\")を表示\nエンコーディング取得(エンコーディング変換(\"8130\",\"hex\"),\"gbk\")を表示\nD=エンコーディング変換(\"日Ā\",\"binary\")\nJSON変換(D)を表示\nU16=エンコーディング変換(\"A😀\",\"utf16\")\nJSON変換(U16)を表示\nエンコーディング取得(U16,\"utf16\")を表示\nU32=エンコーディング変換(\"A😀\",\"utf32\")\nJSON変換(U32)を表示\nエンコーディング取得(U32,\"utf32\")を表示\nH=エンコーディング変換(\"4142zz\",\"hex\")\nJSON変換(H)を表示\nB=エンコーディング変換(\"QUI=xx\",\"base64\")\nJSON変換(B)を表示\n文字列変換(エンコーディング変換(\"e38141\",\"hex\"))を表示\nエンコーディング取得(エンコーディング変換(\"efbbbf41\",\"hex\"),\"utf8\")を表示\nエンコーディング取得(エンコーディング変換(\"ff\",\"hex\"),\"ascii\")を表示\n保存(エンコーディング変換(\"e38141\",\"hex\"),\"invalid-utf8.txt\")\n読(\"invalid-utf8.txt\")を表示\n"
+  },
+  {
+    "id": "plugin-node-encoding-special",
+    "commands": ["文字コード変換サポート判定", "エンコーディング変換", "エンコーディング取得"],
+    "source": "文字コード変換サポート判定(\"cesu8\")を表示\n文字コード変換サポート判定(\"utf7\")を表示\n文字コード変換サポート判定(\"utf7-imap\")を表示\nC8=エンコーディング変換(\"A+&日本😀\",\"cesu8\")\nJSON変換(C8)を表示\nエンコーディング取得(C8,\"cesu8\")を表示\nU7=エンコーディング変換(\"A+&日本😀\",\"utf7\")\nJSON変換(U7)を表示\nエンコーディング取得(U7,\"unicode-1-1-utf-7\")を表示\nU7I=エンコーディング変換(\"A+&日本😀\",\"utf7-imap\")\nJSON変換(U7I)を表示\nエンコーディング取得(U7I,\"utf7imap\")を表示\nエンコーディング取得(エンコーディング変換(\"2b2d\",\"hex\"),\"utf7\")を表示\nエンコーディング取得(エンコーディング変換(\"262d\",\"hex\"),\"utf7-imap\")を表示\n"
+  },
+  {
+    "id": "plugin-node-process",
+    "commands": ["起動待機", "起動", "コマンド実行", "コマンド実行待機", "起動時", "コンソールクリア"],
+    "files": {
+      "child-output.mjs": "process.stdout.write('CHILD')",
+      "child-empty.mjs": "process.exit(0)",
+      "child-exit.mjs": "process.exit(7)"
+    },
+    "source": "起動待機(\"node child-output.mjs\")を表示\nコマンド実行待機(\"node child-exit.mjs\")を表示\n起動(\"node child-empty.mjs\")\nコマンド実行(\"node child-empty.mjs\")\nC=[]\n完了=関数(S)それは配列追加(C,S);ここまで\n完了で\"node child-output.mjs\"を起動時\n0.05秒待\nJSON変換(C)を表示\nコンソールクリア()\n"
+  },
+  {
+    "id": "plugin-node-process-order",
+    "commands": ["起動"],
+    "files": {
+      "child-delay.mjs": "setTimeout(() => process.stdout.write('LATE'), 30)"
+    },
+    "source": "起動(\"node child-delay.mjs\")\n\"EARLY\"を表示\n"
+  },
+  {
+    "id": "plugin-node-process-completion-order",
+    "commands": ["起動時"],
+    "files": {
+      "child-slow.mjs": "setTimeout(() => process.stdout.write('SLOW'), 200)",
+      "child-fast.mjs": "setTimeout(() => process.stdout.write('FAST'), 5)"
+    },
+    "source": "C=[]\nF=関数(S)それは配列追加(C,S);ここまで\nFで\"node child-slow.mjs\"を起動時\nFで\"node child-fast.mjs\"を起動時\n0.35秒待\nJSON変換(C)を表示\n"
+  },
+  {
+    "id": "plugin-node-stdin",
+    "commands": ["尋", "文字尋", "標準入力全取得"],
+    "stdin": "abc\n41\nrest\n",
+    "source": "文字尋(\"P>\")を表示\n(尋(\"\")+1)を表示\n標準入力全取得()を表示\n"
+  },
+  {
+    "id": "plugin-node-stdin-callback",
+    "commands": ["標準入力取得時"],
+    "stdin": "A\nB\n",
+    "source": "C=\"\"\nF=関数(S)それはC=C&S;ここまで\nFを標準入力取得時\n0.05秒待\nCを表示\n"
+  },
+  {
+    "id": "plugin-node-temporary-directory",
+    "commands": ["一時フォルダ作成"],
+    "source": "T=一時フォルダ作成(\"work-\")\nフォルダ存在(T)を表示\nファイル削除(T)\n"
+  },
+  {
+    "id": "plugin-node-file-callbacks",
+    "commands": ["ファイルコピー時", "ファイル移動時", "ファイル削除時", "ファイル処理時", "ファイル処理強制停止"],
+    "source": "保存(\"A\",\"a.txt\")\n保存(\"B\",\"m.txt\")\n保存(\"C\",\"x.txt\")\nC=[]\n完了=関数(D)それは配列追加(C,1);ここまで\n完了で\"a.txt\"から\"b.txt\"へファイルコピー時\n完了で\"m.txt\"から\"n.txt\"へファイル移動時\n完了で\"x.txt\"をファイル削除時\n0.05秒待\nR=[]\n進捗=関数(P)それは配列追加(R,P[\"件数\"]+P[\"現在\"]);ここまで\n進捗でファイル処理時\nファイルコピー(\"a.txt\",\"d.txt\")\nJSON変換(R)を表示\nフォルダ作成(\"tree/sub\")\n保存(\"1\",\"tree/one.txt\")\n保存(\"2\",\"tree/sub/two.txt\")\nR=[]\nファイルコピー(\"tree\",\"tree-copy\")\nJSON変換(R)を表示\n読(\"tree-copy/sub/two.txt\")を表示\n●(Pを)停止処理とは\nファイル処理強制停止\nPで戻る\nここまで\n\"停止処理\"でファイル処理時\nファイル移動(\"tree-copy\",\"tree-move\")\n存在(\"tree-copy\")を表示\n要素数(全ファイル列挙(\"tree-move/*\"))を表示\n要素数(C)を表示\n"
+  }
+]

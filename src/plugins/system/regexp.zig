@@ -299,6 +299,22 @@ pub fn callWithEffects(runtime: *Runtime, name: []const u8, arguments: []const V
     return .{ .value = try splitCommand(runtime, source_string.units, &compiled) };
 }
 
+pub fn testRaw(allocator: std.mem.Allocator, pattern: []const u16, source: []const u16, ignore_case: bool) !bool {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var parser = Parser{ .allocator = arena.allocator(), .source = pattern };
+    const expression = try parser.parseExpression();
+    if (parser.index != pattern.len) return error.UnexpectedPatternToken;
+    const compiled = Compiled{
+        .arena = undefined,
+        .expression = expression,
+        .flags = .{ .ignore_case = ignore_case },
+        .capture_count = parser.capture_count,
+        .capture_names = parser.capture_names,
+    };
+    return try findOne(allocator, source, &compiled, 0) != null;
+}
+
 fn compile(allocator: std.mem.Allocator, specification: []const u16, default_global: bool) !Compiled {
     var arena = std.heap.ArenaAllocator.init(allocator);
     errdefer arena.deinit();

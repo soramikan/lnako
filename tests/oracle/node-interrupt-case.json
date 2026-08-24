@@ -1,0 +1,5 @@
+{
+  "id": "plugin-node-interrupt",
+  "commands": ["強制終了時"],
+  "source": "F=関数(S)それは真;ここまで\nFを強制終了時\n\"READY\"を表示\n5秒待\n\"AFTER\"を表示\n"
+}

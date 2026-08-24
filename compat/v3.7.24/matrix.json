@@ -1549,14 +1549,16 @@
       "category": "特殊命令",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-exit-alias"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "独立プロセスで標準出力と終了コードの公式差分テストに成功"
     },
     {
       "id": "command-0062",
@@ -6873,14 +6875,16 @@
       "category": "パス操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0269",
@@ -6897,14 +6901,16 @@
       "category": "パス操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0270",
@@ -15254,14 +15260,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0689",
@@ -15277,14 +15285,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0690",
@@ -15300,14 +15310,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0691",
@@ -15323,14 +15335,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0692",
@@ -15346,14 +15360,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0693",
@@ -15369,14 +15385,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0694",
@@ -15392,14 +15410,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0695",
@@ -15415,14 +15435,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0696",
@@ -15438,14 +15460,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-process"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0697",
@@ -15461,14 +15485,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-process"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0698",
@@ -15484,14 +15510,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-process"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0699",
@@ -15507,14 +15535,17 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-process",
+        "plugin-node-process-order"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0700",
@@ -15530,14 +15561,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-process"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0701",
@@ -15553,14 +15586,17 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-process",
+        "plugin-node-process-completion-order"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0702",
@@ -15576,14 +15612,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-host-open-external"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "OS別外部起動をホスト抽象化へ委譲する単体テストに成功"
     },
     {
       "id": "command-0703",
@@ -15599,14 +15637,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-host-open-external"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "OS別ファイルマネージャー起動をホスト抽象化へ委譲する単体テストに成功"
     },
     {
       "id": "command-0704",
@@ -15622,14 +15662,17 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-core",
+        "plugin-node-file-pattern-regexp"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0705",
@@ -15645,14 +15688,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0706",
@@ -15668,14 +15713,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0707",
@@ -15691,14 +15738,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0708",
@@ -15714,14 +15763,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0709",
@@ -15737,14 +15788,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0710",
@@ -15760,14 +15813,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0711",
@@ -15783,14 +15838,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0712",
@@ -15806,14 +15863,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-callbacks"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0713",
@@ -15829,14 +15888,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0714",
@@ -15852,14 +15913,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0715",
@@ -15875,14 +15938,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-callbacks"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0716",
@@ -15898,14 +15963,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-callbacks"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0717",
@@ -15921,14 +15988,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-callbacks"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0718",
@@ -15944,14 +16013,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0719",
@@ -15967,14 +16038,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-callbacks"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0720",
@@ -15990,14 +16063,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0721",
@@ -16013,14 +16088,16 @@
       "category": "ファイル入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-file-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0722",
@@ -16036,14 +16113,16 @@
       "category": "パス操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0723",
@@ -16059,14 +16138,16 @@
       "category": "パス操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0724",
@@ -16082,14 +16163,16 @@
       "category": "パス操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0725",
@@ -16105,14 +16188,16 @@
       "category": "パス操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0726",
@@ -16128,14 +16213,16 @@
       "category": "フォルダ取得",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0727",
@@ -16151,14 +16238,16 @@
       "category": "フォルダ取得",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0728",
@@ -16174,14 +16263,16 @@
       "category": "フォルダ取得",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0729",
@@ -16197,14 +16288,16 @@
       "category": "フォルダ取得",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0730",
@@ -16220,14 +16313,16 @@
       "category": "フォルダ取得",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0731",
@@ -16243,14 +16338,16 @@
       "category": "フォルダ取得",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0732",
@@ -16266,14 +16363,16 @@
       "category": "フォルダ取得",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0733",
@@ -16289,14 +16388,16 @@
       "category": "フォルダ取得",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0734",
@@ -16312,14 +16413,16 @@
       "category": "フォルダ取得",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0735",
@@ -16335,14 +16438,16 @@
       "category": "フォルダ取得",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0736",
@@ -16358,14 +16463,16 @@
       "category": "フォルダ取得",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-temporary-directory"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0737",
@@ -16381,14 +16488,16 @@
       "category": "環境変数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0738",
@@ -16404,14 +16513,16 @@
       "category": "環境変数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0739",
@@ -16427,14 +16538,16 @@
       "category": "圧縮・解凍",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-native-archive"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "ZigネイティブZIPの作成・展開スモークテストに成功"
     },
     {
       "id": "command-0740",
@@ -16450,14 +16563,16 @@
       "category": "圧縮・解凍",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-native-archive"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "ZigネイティブZIPの作成・展開スモークテストに成功"
     },
     {
       "id": "command-0741",
@@ -16473,14 +16588,16 @@
       "category": "圧縮・解凍",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-native-archive"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "ZigネイティブZIPの作成・展開スモークテストに成功"
     },
     {
       "id": "command-0742",
@@ -16496,14 +16613,16 @@
       "category": "圧縮・解凍",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-native-archive"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "ZigネイティブZIPの作成・展開スモークテストに成功"
     },
     {
       "id": "command-0743",
@@ -16519,14 +16638,16 @@
       "category": "圧縮・解凍",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-native-archive"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "ZigネイティブZIPの作成・展開スモークテストに成功"
     },
     {
       "id": "command-0744",
@@ -16542,14 +16663,16 @@
       "category": "圧縮・解凍",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-native-archive"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "ZigネイティブZIPの作成・展開スモークテストに成功"
     },
     {
       "id": "command-0745",
@@ -16565,14 +16688,16 @@
       "category": "Nodeプロセス",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-exit-alias"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "独立プロセスで標準出力と終了コードの公式差分テストに成功"
     },
     {
       "id": "command-0746",
@@ -16588,14 +16713,16 @@
       "category": "Nodeプロセス",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-exit-code"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "独立プロセスで標準出力と終了コードの公式差分テストに成功"
     },
     {
       "id": "command-0747",
@@ -16611,14 +16738,16 @@
       "category": "Nodeプロセス",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-interrupt"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "SIGINTコールバックと終了結果の公式差分テストに成功"
     },
     {
       "id": "command-0748",
@@ -16634,14 +16763,16 @@
       "category": "Nodeプロセス",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-exit-japanese-alias"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "独立プロセスで標準出力と終了コードの公式差分テストに成功"
     },
     {
       "id": "command-0749",
@@ -16657,14 +16788,16 @@
       "category": "Nodeプロセス",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0750",
@@ -16680,14 +16813,16 @@
       "category": "Nodeプロセス",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0751",
@@ -16703,14 +16838,16 @@
       "category": "コマンドラインと標準入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0752",
@@ -16726,14 +16863,16 @@
       "category": "コマンドラインと標準入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0753",
@@ -16749,14 +16888,16 @@
       "category": "コマンドラインと標準入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-path-host"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0754",
@@ -16772,14 +16913,16 @@
       "category": "コマンドラインと標準入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-stdin-callback"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0755",
@@ -16795,14 +16938,16 @@
       "category": "コマンドラインと標準入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-stdin"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0756",
@@ -16818,14 +16963,16 @@
       "category": "コマンドラインと標準入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-stdin"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0757",
@@ -16841,14 +16988,16 @@
       "category": "コマンドラインと標準入出力",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-stdin"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0758",
@@ -17508,14 +17657,17 @@
       "category": "文字コード",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-encoding",
+        "plugin-node-encoding-special"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0787",
@@ -17531,14 +17683,16 @@
       "category": "文字コード",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-encoding"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0788",
@@ -17554,14 +17708,16 @@
       "category": "文字コード",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-encoding"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0789",
@@ -17577,14 +17733,17 @@
       "category": "文字コード",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-encoding",
+        "plugin-node-encoding-special"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0790",
@@ -17600,14 +17759,17 @@
       "category": "文字コード",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-encoding",
+        "plugin-node-encoding-special"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0791",

@@ -25,6 +25,14 @@ node tools/check_plugin_system_coverage.mjs
 node tools/compare_plugin_system_oracle.mjs
 node tools/check_standard_plugin_coverage.mjs
 node tools/compare_standard_plugin_oracle.mjs
+node tools/generate_legacy_encoding.mjs --check
+node tools/update_node_implemented.mjs --check
+node tools/check_node_plugin_coverage.mjs
+node tools/compare_node_file_oracle.mjs
+node tools/check_encoding_compat.mjs
+node tools/compare_node_exit_oracle.mjs
+node tools/compare_node_interrupt_oracle.mjs
+node tools/check_node_archive_smoke.mjs
 node tools/compare_native_oracle.mjs
 node tools/check_builtin_catalog.mjs
 node tools/sync_compat.mjs --check

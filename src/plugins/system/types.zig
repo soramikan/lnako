@@ -23,7 +23,7 @@ pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Val
 fn typeOf(value: Value) []const u8 {
     return switch (value) {
         .undefined => "undefined",
-        .null_value, .array, .dictionary, .promise => "object",
+        .null_value, .bytes, .array, .dictionary, .promise => "object",
         .boolean => "boolean",
         .number => "number",
         .bigint => "bigint",

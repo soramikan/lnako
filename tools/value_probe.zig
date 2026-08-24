@@ -106,6 +106,7 @@ fn describeValue(allocator: std.mem.Allocator, value: lnako.runtime.value.Value)
             const text = try string.toUtf8Lossy(allocator);
             break :blk std.fmt.allocPrint(allocator, "string:{s}", .{text});
         },
+        .bytes => allocator.dupe(u8, "bytes"),
         .array => allocator.dupe(u8, "array"),
         .dictionary => allocator.dupe(u8, "dictionary"),
         .function => allocator.dupe(u8, "function"),

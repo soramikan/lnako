@@ -30,6 +30,89 @@ pub const String = struct {
         return .{ .allocator = allocator, .units = units };
     }
 
+    /// Node.jsのBuffer.toString()と同じWHATWG UTF-8 decoderの置換規則で、
+    /// 不正な入力をU+FFFDへ置き換える。
+    pub fn fromUtf8Lossy(allocator: std.mem.Allocator, utf8: []const u8) !String {
+        var units = try allocator.alloc(u16, utf8.len);
+        errdefer allocator.free(units);
+        var source_index: usize = 0;
+        var output_index: usize = 0;
+        var codepoint: u32 = 0;
+        var bytes_seen: u3 = 0;
+        var bytes_needed: u3 = 0;
+        var lower_boundary: u8 = 0x80;
+        var upper_boundary: u8 = 0xbf;
+
+        while (source_index < utf8.len) {
+            const byte = utf8[source_index];
+            if (bytes_needed == 0) {
+                if (byte <= 0x7f) {
+                    units[output_index] = byte;
+                    output_index += 1;
+                    source_index += 1;
+                } else if (byte >= 0xc2 and byte <= 0xdf) {
+                    codepoint = byte & 0x1f;
+                    bytes_needed = 1;
+                    source_index += 1;
+                } else if (byte >= 0xe0 and byte <= 0xef) {
+                    codepoint = byte & 0x0f;
+                    bytes_needed = 2;
+                    lower_boundary = if (byte == 0xe0) 0xa0 else 0x80;
+                    upper_boundary = if (byte == 0xed) 0x9f else 0xbf;
+                    source_index += 1;
+                } else if (byte >= 0xf0 and byte <= 0xf4) {
+                    codepoint = byte & 0x07;
+                    bytes_needed = 3;
+                    lower_boundary = if (byte == 0xf0) 0x90 else 0x80;
+                    upper_boundary = if (byte == 0xf4) 0x8f else 0xbf;
+                    source_index += 1;
+                } else {
+                    units[output_index] = 0xfffd;
+                    output_index += 1;
+                    source_index += 1;
+                }
+                continue;
+            }
+
+            if (byte < lower_boundary or byte > upper_boundary) {
+                units[output_index] = 0xfffd;
+                output_index += 1;
+                codepoint = 0;
+                bytes_seen = 0;
+                bytes_needed = 0;
+                lower_boundary = 0x80;
+                upper_boundary = 0xbf;
+                continue;
+            }
+
+            lower_boundary = 0x80;
+            upper_boundary = 0xbf;
+            codepoint = (codepoint << 6) | (byte & 0x3f);
+            bytes_seen += 1;
+            source_index += 1;
+            if (bytes_seen != bytes_needed) continue;
+
+            if (codepoint <= 0xffff) {
+                units[output_index] = @intCast(codepoint);
+                output_index += 1;
+            } else {
+                const offset = codepoint - 0x10000;
+                units[output_index] = @intCast(0xd800 + (offset >> 10));
+                units[output_index + 1] = @intCast(0xdc00 + (offset & 0x3ff));
+                output_index += 2;
+            }
+            codepoint = 0;
+            bytes_seen = 0;
+            bytes_needed = 0;
+        }
+        if (bytes_needed != 0) {
+            units[output_index] = 0xfffd;
+            output_index += 1;
+        }
+        units = try allocator.realloc(units, output_index);
+        return .{ .allocator = allocator, .units = units };
+    }
+
     pub fn fromCodeUnits(allocator: std.mem.Allocator, units: []const u16) !String {
         return .{ .allocator = allocator, .units = try allocator.dupe(u16, units) };
     }
@@ -188,6 +271,23 @@ test "UTF-16コード単位で長さと添字を扱う" {
     const lossy = try half.toUtf8Lossy(std.testing.allocator);
     defer std.testing.allocator.free(lossy);
     try std.testing.expectEqualStrings("�", lossy);
+}
+
+test "不正UTF-8をNode Bufferの最大部分列規則で置換する" {
+    const cases = [_]struct { bytes: []const u8, expected: []const u8 }{
+        .{ .bytes = &.{0x80}, .expected = "�" },
+        .{ .bytes = &.{ 0xe3, 0x81 }, .expected = "�" },
+        .{ .bytes = &.{ 0xe3, 0x81, 0x41 }, .expected = "�A" },
+        .{ .bytes = &.{ 0xe0, 0x80, 0x80 }, .expected = "���" },
+        .{ .bytes = &.{ 0xf0, 0x9f, 0x92, 0xa9 }, .expected = "💩" },
+    };
+    for (cases) |case| {
+        var value = try String.fromUtf8Lossy(std.testing.allocator, case.bytes);
+        defer value.deinit();
+        const encoded = try value.toUtf8Lossy(std.testing.allocator);
+        defer std.testing.allocator.free(encoded);
+        try std.testing.expectEqualStrings(case.expected, encoded);
+    }
 }
 
 test "sliceとsubstringをJSの添字規則で処理する" {

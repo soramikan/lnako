@@ -1,0 +1,7 @@
+[
+  {
+    "id": "plugin-node-native-archive",
+    "commands": ["圧縮解凍ツールパス", "圧縮解凍ツールパス変更", "圧縮", "解凍", "圧縮時", "解凍時"],
+    "source": "圧縮解凍ツールパスを表示\n保存(\"ABC\",\"source.txt\")\n圧縮(\"source.txt\",\"archive.zip\")を表示\nファイル削除(\"source.txt\")\n解凍(\"archive.zip\",\"output\")を表示\n開(\"output/source.txt\")を表示\nC=[]\nF=関数(S)それは配列追加(C,1);ここまで\n保存(\"XYZ\",\"second.txt\")\nFで\"second.txt\"から\"second.zip\"へ圧縮時\n0.05秒待\nファイル削除(\"second.txt\")\nFで\"second.zip\"から\"second-output\"へ解凍時\n0.05秒待\n要素数(C)を表示\n圧縮解凍ツールパス変更(\"native-tool\")\n圧縮解凍ツールパスを表示\n"
+  }
+]
