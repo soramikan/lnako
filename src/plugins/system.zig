@@ -19,6 +19,7 @@ pub const Runtime = value_mod.Runtime;
 pub const Context = struct {
     arrays: arrays.Context,
     datetime: datetime.Context,
+    path_separator: []const u8 = std.fs.path.sep_str,
 };
 
 pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Value {
@@ -35,7 +36,7 @@ pub fn callWithContext(runtime: *Runtime, name: []const u8, arguments: []const V
     if (try regexp.call(runtime, name, arguments)) |value| return value;
     if (try arrays.call(runtime, name, arguments, if (context) |actual| actual.arrays else null)) |value| return value;
     if (try dictionaries.call(runtime, name, arguments)) |value| return value;
-    if (try url.call(runtime, name, arguments)) |value| return value;
+    if (try url.callWithSeparator(runtime, name, arguments, if (context) |actual| actual.path_separator else std.fs.path.sep_str)) |value| return value;
     if (try datetime.call(runtime, name, arguments, if (context) |actual| actual.datetime else null)) |value| return value;
     return null;
 }

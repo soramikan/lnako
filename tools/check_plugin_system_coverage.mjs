@@ -22,12 +22,14 @@ const categories = new Set([
   "二次元配列処理",
   "日時処理(簡易)",
   "URLエンコードとパラメータ",
+  "BASE64",
   "辞書型変数の操作",
   "ハッシュ",
   "標準出力",
 ]);
+const additionalNames = new Set(["拡張子抽出", "拡張子変更", "終端パス追加", "終端パス除去", "終端パス削除"]);
 const expected = catalog.commands
-  .filter((command) => command.plugin === "plugin_system" && categories.has(command.category))
+  .filter((command) => command.plugin === "plugin_system" && (categories.has(command.category) || additionalNames.has(command.name)))
   .map((command) => command.name)
   .sort();
 const tested = cases.flatMap((testCase) => testCase.commands).sort();
@@ -48,4 +50,4 @@ for (const testCase of cases) {
     }
   }
 }
-console.log(`plugin_system対象${categories.size}カテゴリの公式命令カバレッジ: ${expected.length}/${expected.length}`);
+console.log(`plugin_system対象${categories.size}カテゴリと追加${additionalNames.size}命令の公式命令カバレッジ: ${expected.length}/${expected.length}`);

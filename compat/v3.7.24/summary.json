@@ -8,16 +8,16 @@
   "standardCnakoCommands": 527,
   "outOfScopeCommands": 618,
   "statuses": {
-    "blocked": 41,
+    "blocked": 34,
     "compat-js": 4,
     "excluded-browser": 429,
     "excluded-extension": 189,
-    "native": 482
+    "native": 489
   },
   "standardCnakoStatuses": {
-    "blocked": 41,
+    "blocked": 34,
     "compat-js": 4,
-    "native": 482
+    "native": 489
   },
   "standardCnakoPlannedModes": {
     "native": 523,

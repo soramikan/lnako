@@ -3207,5 +3207,54 @@
       "compat-js-error-method"
     ],
     "reason": "QuickJSオブジェクトのthis束縛と変更同期を公式差分テストで検証"
+  },
+  "BASE64エンコード": {
+    "status": "native",
+    "tests": [
+      "plugin-system-url"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "BASE64デコード": {
+    "status": "native",
+    "tests": [
+      "plugin-system-url"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "拡張子抽出": {
+    "status": "native",
+    "tests": [
+      "plugin-system-url"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "拡張子変更": {
+    "status": "native",
+    "tests": [
+      "plugin-system-url"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "終端パス追加": {
+    "status": "native",
+    "tests": [
+      "plugin-system-url"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "終端パス除去": {
+    "status": "native",
+    "tests": [
+      "plugin-system-url"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "終端パス削除": {
+    "status": "native",
+    "tests": [
+      "plugin-system-url"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
   }
 }

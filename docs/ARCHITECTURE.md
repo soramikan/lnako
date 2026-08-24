@@ -167,7 +167,7 @@ source
   ECMAScriptの `JSON.stringify` / `JSON.parse` 規則へ合わせる。循環参照とBigIntは明示エラーにする。
 - 正規表現は外部共有ライブラリへ依存しないUTF-16バックトラッキングエンジンで、選択、グループ、量指定、
   文字クラス、アンカー、フラグ、後方参照、通常・名前付きキャプチャ、置換参照と分割を提供する。
-- `tests/oracle/plugin-system-cases.json` は対象12カテゴリ168命令を重複なく列挙する。
+- `tests/oracle/plugin-system-cases.json` は対象20カテゴリと追加パス5命令、計274命令を重複なく列挙する。
   `tools/check_plugin_system_coverage.mjs` が公式カタログ・互換台帳・テストIDを照合し、
   `tools/compare_plugin_system_oracle.mjs` が同じソースを公式cnako3と `lnako run` で実行する。
 

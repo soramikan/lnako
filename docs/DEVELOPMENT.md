@@ -22,6 +22,7 @@ node tools/compare_semantic_oracle.mjs
 node tools/compare_value_oracle.mjs
 node tools/compare_interpreter_oracle.mjs
 node tools/generate_unicode_case.mjs --check
+node tools/update_plugin_system_implemented.mjs --check
 node tools/check_plugin_system_coverage.mjs
 node tools/compare_plugin_system_oracle.mjs
 node tools/check_standard_plugin_coverage.mjs
@@ -50,7 +51,7 @@ AST差分テストは公式の `core/test/fixtures/parser_corpus.mjs` を直接�
 必須にします。
 
 AOT差分ケースは `tests/oracle/native-cases.json` に置きます。公式CLIの直接実行と `--compile` 生成物、
-`lnako run`、LLVM AOT生成物の4経路を比較します。固定LLVM配布物は `tools/setup_llvm.mjs` が
+`lnako run`、LLVM AOT `-O0` / `-O1` / `-O2` / `-O3`生成物の7経路を比較します。固定LLVM配布物は `tools/setup_llvm.mjs` が
 `toolchain.lock.json` のURLとSHA-256から構築し、CIでは `LNAKO_LLVM_DIR` とアーカイブ内で検出した
 `LNAKO_LLVM_LIBRARY` を自動設定します。
 

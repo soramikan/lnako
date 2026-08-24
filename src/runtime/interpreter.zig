@@ -700,6 +700,7 @@ pub const Interpreter = struct {
                 .now_milliseconds = try self.host.nowMilliseconds(),
                 .monotonic_milliseconds = try self.host.monotonicMilliseconds(),
             },
+            .path_separator = std.fs.path.sep_str,
         };
     }
 

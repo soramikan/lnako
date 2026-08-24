@@ -66,6 +66,7 @@ jobs:
       - name: Differential plugin_system test
         run: |
           node tools/generate_unicode_case.mjs --check
+          node tools/update_plugin_system_implemented.mjs --check
           node tools/check_plugin_system_coverage.mjs
           node tools/compare_plugin_system_oracle.mjs
       - name: Differential standard plugin test
