@@ -8303,14 +8303,16 @@
       "category": "CSV操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-csv-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製CSVプラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0324",
@@ -8326,14 +8328,16 @@
       "category": "CSV操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-csv-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製CSVプラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0325",
@@ -8349,14 +8353,16 @@
       "category": "CSV操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-csv-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製CSVプラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0326",
@@ -8372,14 +8378,16 @@
       "category": "CSV操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-csv-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製CSVプラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0327",
@@ -8395,14 +8403,16 @@
       "category": "CSV操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-csv-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製CSVプラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0328",
@@ -8418,14 +8428,16 @@
       "category": "CSV操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-csv-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製CSVプラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0329",
@@ -8441,14 +8453,16 @@
       "category": "CSV操作",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-csv-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製CSVプラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0330",
@@ -8464,14 +8478,16 @@
       "category": "TOML",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-toml-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製TOMLプラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0331",
@@ -8487,14 +8503,16 @@
       "category": "TOML",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-toml-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製TOMLプラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0332",
@@ -8510,14 +8528,16 @@
       "category": "三角関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0333",
@@ -8533,14 +8553,16 @@
       "category": "三角関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0334",
@@ -8556,14 +8578,16 @@
       "category": "三角関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0335",
@@ -8579,14 +8603,16 @@
       "category": "三角関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0336",
@@ -8602,14 +8628,16 @@
       "category": "三角関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0337",
@@ -8625,14 +8653,16 @@
       "category": "三角関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0338",
@@ -8648,14 +8678,16 @@
       "category": "三角関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0339",
@@ -8671,14 +8703,16 @@
       "category": "三角関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0340",
@@ -8694,14 +8728,16 @@
       "category": "三角関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0341",
@@ -8717,14 +8753,16 @@
       "category": "三角関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0342",
@@ -8740,14 +8778,16 @@
       "category": "三角関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0343",
@@ -8763,14 +8803,16 @@
       "category": "三角関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0344",
@@ -8786,14 +8828,16 @@
       "category": "算術関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0345",
@@ -8809,14 +8853,16 @@
       "category": "算術関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0346",
@@ -8832,14 +8878,16 @@
       "category": "算術関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0347",
@@ -8855,14 +8903,16 @@
       "category": "算術関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0348",
@@ -8878,14 +8928,16 @@
       "category": "算術関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0349",
@@ -8901,14 +8953,16 @@
       "category": "算術関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0350",
@@ -8924,14 +8978,16 @@
       "category": "算術関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0351",
@@ -8947,14 +9003,16 @@
       "category": "算術関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0352",
@@ -8970,14 +9028,16 @@
       "category": "算術関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0353",
@@ -8993,14 +9053,16 @@
       "category": "算術関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0354",
@@ -9016,14 +9078,16 @@
       "category": "算術関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0355",
@@ -9039,14 +9103,16 @@
       "category": "算術関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0356",
@@ -9062,14 +9128,16 @@
       "category": "算術関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0357",
@@ -9085,14 +9153,16 @@
       "category": "算術関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0358",
@@ -9108,14 +9178,16 @@
       "category": "算術関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0359",
@@ -9131,14 +9203,16 @@
       "category": "算術関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0360",
@@ -9154,14 +9228,16 @@
       "category": "算術関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0361",
@@ -9177,14 +9253,16 @@
       "category": "数値切上切捨丸め",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0362",
@@ -9200,14 +9278,16 @@
       "category": "数値切上切捨丸め",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0363",
@@ -9223,14 +9303,16 @@
       "category": "数値切上切捨丸め",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0364",
@@ -9246,14 +9328,16 @@
       "category": "数値切上切捨丸め",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0365",
@@ -9269,14 +9353,16 @@
       "category": "数値切上切捨丸め",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0366",
@@ -9292,14 +9378,16 @@
       "category": "数値切上切捨丸め",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0367",
@@ -9315,14 +9403,16 @@
       "category": "数値切上切捨丸め",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0368",
@@ -9338,14 +9428,16 @@
       "category": "数値切上切捨丸め",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0369",
@@ -9361,14 +9453,16 @@
       "category": "数値切上切捨丸め",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-math-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0370",
@@ -9537,14 +9631,16 @@
       "category": "非同期処理の保証",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-promise-bundle"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Promise.all互換の入力順・非同期順序・失敗伝播を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0688",

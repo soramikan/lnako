@@ -114,6 +114,7 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
 fn trace(enabled: bool, diagnostics: *std.Io.Writer, message: []const u8) !void {
     if (!enabled) return;
     try diagnostics.print("[LLVM] {s}\n", .{message});
+    try diagnostics.flush();
 }
 
 fn verify(api: *api_mod.Api, module: api_mod.ModuleRef, diagnostics: *std.Io.Writer) !void {
@@ -162,10 +163,13 @@ fn linkExecutable(allocator: std.mem.Allocator, io: std.Io, object_path: []const
     defer allocator.free(tools.lld);
     const linker_argument = try std.fmt.allocPrint(allocator, "--ld-path={s}", .{tools.lld});
     defer allocator.free(linker_argument);
-    const argv: []const []const u8 = if (builtin.os.tag == .linux)
-        &.{ tools.clang, linker_argument, object_path, "-o", output_path, "-lm" }
-    else
-        &.{ tools.clang, linker_argument, object_path, "-o", output_path };
+    const macos_sdk: ?[]u8 = if (builtin.os.tag == .macos) try findMacOsSdk(allocator, io) else null;
+    defer if (macos_sdk) |path| allocator.free(path);
+    const argv: []const []const u8 = switch (builtin.os.tag) {
+        .linux => &.{ tools.clang, linker_argument, object_path, "-o", output_path, "-lm" },
+        .macos => &.{ tools.clang, linker_argument, "-isysroot", macos_sdk.?, object_path, "-o", output_path },
+        else => &.{ tools.clang, linker_argument, object_path, "-o", output_path },
+    };
     const result = try std.process.run(allocator, io, .{ .argv = argv });
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
@@ -175,6 +179,24 @@ fn linkExecutable(allocator: std.mem.Allocator, io: std.Io, object_path: []const
     }
     try diagnostics.print("LLDリンクエラー:\n{s}", .{result.stderr});
     return error.LldLinkFailed;
+}
+
+fn findMacOsSdk(allocator: std.mem.Allocator, io: std.Io) ![]u8 {
+    const result = std.process.run(allocator, io, .{
+        .argv = &.{ "xcrun", "--sdk", "macosx", "--show-sdk-path" },
+        .stdout_limit = .limited(64 * 1024),
+        .stderr_limit = .limited(64 * 1024),
+    }) catch return error.MacOsSdkNotFound;
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    const succeeded = switch (result.term) {
+        .exited => |code| code == 0,
+        else => false,
+    };
+    if (!succeeded) return error.MacOsSdkNotFound;
+    const path = std.mem.trim(u8, result.stdout, " \t\r\n");
+    if (path.len == 0) return error.MacOsSdkNotFound;
+    return allocator.dupe(u8, path);
 }
 
 const LinkTools = struct { clang: []u8, lld: []u8 };

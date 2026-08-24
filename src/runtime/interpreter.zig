@@ -8,6 +8,9 @@ const verifier = @import("../ir/verifier.zig");
 const value_mod = @import("value.zig");
 const operators = @import("operators.zig");
 const plugin_system = @import("../plugins/system.zig");
+const plugin_math = @import("../plugins/math.zig");
+const plugin_csv = @import("../plugins/csv.zig");
+const plugin_toml = @import("../plugins/toml.zig");
 
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
@@ -127,6 +130,19 @@ const PromiseResolver = struct {
     rejected: bool,
 };
 
+const PromiseAllState = struct {
+    promise: *value_mod.Promise,
+    results: *value_mod.Array,
+    remaining: usize = 0,
+};
+
+const PromiseAllHandler = struct {
+    state: *PromiseAllState,
+    index: usize,
+    rejected: bool,
+    peer: *value_mod.Function,
+};
+
 const PromiseChainKind = enum { success, failure, settled, finally };
 
 const Frame = struct {
@@ -165,8 +181,11 @@ pub const Interpreter = struct {
     test_results: std.ArrayList(TestResult) = .empty,
     output_captures: std.ArrayList(*std.ArrayList(u8)) = .empty,
     print_pool: std.ArrayList(u8) = .empty,
+    csv_state: plugin_csv.State,
     timers: std.ArrayList(Timer) = .empty,
     promise_resolvers: std.AutoHashMapUnmanaged(*value_mod.Function, PromiseResolver) = .empty,
+    promise_all_handlers: std.AutoHashMapUnmanaged(*value_mod.Function, PromiseAllHandler) = .empty,
+    promise_all_states: std.ArrayList(*PromiseAllState) = .empty,
     elapsed_milliseconds: u64 = 0,
     next_timer_id: u64 = 1,
     event_count: usize = 0,
@@ -174,7 +193,7 @@ pub const Interpreter = struct {
     system_initialized: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, runtime: *Runtime, program: ir.Program, host: Host) Interpreter {
-        return .{ .allocator = allocator, .runtime = runtime, .program = program, .host = host };
+        return .{ .allocator = allocator, .runtime = runtime, .program = program, .host = host, .csv_state = plugin_csv.State.init(allocator) };
     }
 
     pub fn deinit(self: *Interpreter) void {
@@ -188,8 +207,12 @@ pub const Interpreter = struct {
         self.test_results.deinit(self.allocator);
         self.output_captures.deinit(self.allocator);
         self.print_pool.deinit(self.allocator);
+        self.csv_state.deinit();
         self.timers.deinit(self.allocator);
         self.promise_resolvers.deinit(self.allocator);
+        self.promise_all_handlers.deinit(self.allocator);
+        for (self.promise_all_states.items) |state| self.allocator.destroy(state);
+        self.promise_all_states.deinit(self.allocator);
         self.* = undefined;
     }
 
@@ -446,6 +469,7 @@ pub const Interpreter = struct {
             try self.removePromiseResolvers(resolver.promise);
             return .undefined;
         }
+        if (self.promise_all_handlers.get(function)) |handler| return self.handlePromiseAll(function, handler, arguments);
         return switch (function.kind) {
             .native => self.runtime.call(.{ .function = function }, arguments),
             .ir => |function_id| self.executeFunction(&self.program.functions[function_id], arguments, function),
@@ -509,6 +533,7 @@ pub const Interpreter = struct {
         if (std.mem.eql(u8, name, "失敗時")) return self.chainPromise(arguments, .failure);
         if (std.mem.eql(u8, name, "処理時")) return self.chainPromise(arguments, .settled);
         if (std.mem.eql(u8, name, "終了時")) return self.chainPromise(arguments, .finally);
+        if (std.mem.eql(u8, name, "束")) return self.bundlePromises(arguments);
         if (std.mem.eql(u8, name, "二進表示")) {
             const text = (try plugin_system.types.call(self.runtime, "二進", arguments)).?;
             const utf8 = try text.string.toUtf8Lossy(self.allocator);
@@ -532,7 +557,14 @@ pub const Interpreter = struct {
             if (result.captures) |captures| try self.setGlobal("抽出文字列", captures);
             return result.value;
         }
-        if (try plugin_system.callWithContext(self.runtime, name, arguments, try self.pluginContext())) |value| return value;
+        const plugin_context = try self.pluginContext();
+        if (try plugin_math.call(self.runtime, name, arguments, .{
+            .context = self,
+            .randomFn = pluginRandom,
+        })) |value| return value;
+        if (try plugin_csv.call(self.runtime, &self.csv_state, name, arguments)) |value| return value;
+        if (try plugin_toml.call(self.runtime, name, arguments)) |value| return value;
+        if (try plugin_system.callWithContext(self.runtime, name, arguments, plugin_context)) |value| return value;
         return error.UnknownCommand;
     }
 
@@ -765,6 +797,77 @@ pub const Interpreter = struct {
         };
         try self.setGlobal("そ", result);
         return result;
+    }
+
+    fn bundlePromises(self: *Interpreter, arguments: []const Value) !Value {
+        var promise = try self.runtime.createPromise();
+        var roots = self.runtime.rootFrame();
+        defer roots.deinit();
+        try roots.protect(&promise);
+        var results = try self.runtime.createArray();
+        try roots.protect(&results);
+        for (arguments) |_| _ = try results.array.push(.undefined);
+
+        const state = try self.allocator.create(PromiseAllState);
+        errdefer self.allocator.destroy(state);
+        state.* = .{ .promise = promise.promise, .results = results.array };
+        try self.promise_all_states.append(self.allocator, state);
+        errdefer _ = self.promise_all_states.pop();
+
+        for (arguments, 0..) |argument, index| {
+            if (argument != .promise) {
+                try results.array.set(index, argument);
+                continue;
+            }
+            state.remaining += 1;
+            var handler_roots = self.runtime.rootFrame();
+            defer handler_roots.deinit();
+            var fulfilled_name = try self.runtime.stringUtf8("Promise.all fulfilled");
+            try handler_roots.protect(&fulfilled_name);
+            var fulfilled = try self.runtime.createNativeFunction(fulfilled_name.string, 1, promiseAllSentinel, &.{});
+            try handler_roots.protect(&fulfilled);
+            var rejected_name = try self.runtime.stringUtf8("Promise.all rejected");
+            try handler_roots.protect(&rejected_name);
+            var rejected = try self.runtime.createNativeFunction(rejected_name.string, 1, promiseAllSentinel, &.{});
+            try handler_roots.protect(&rejected);
+            try self.promise_all_handlers.put(self.allocator, fulfilled.function, .{ .state = state, .index = index, .rejected = false, .peer = rejected.function });
+            errdefer _ = self.promise_all_handlers.remove(fulfilled.function);
+            try self.promise_all_handlers.put(self.allocator, rejected.function, .{ .state = state, .index = index, .rejected = true, .peer = fulfilled.function });
+            errdefer _ = self.promise_all_handlers.remove(rejected.function);
+            _ = try self.runtime.promiseThen(argument.promise, fulfilled, rejected);
+        }
+        if (state.remaining == 0) {
+            if (promise.promise.state == .pending) try self.runtime.resolvePromise(promise.promise, results);
+            self.destroyPromiseAllState(state);
+        }
+        try self.setGlobal("そ", promise);
+        return promise;
+    }
+
+    fn handlePromiseAll(self: *Interpreter, function: *value_mod.Function, handler: PromiseAllHandler, arguments: []const Value) !Value {
+        _ = self.promise_all_handlers.remove(function);
+        _ = self.promise_all_handlers.remove(handler.peer);
+        const settled = if (arguments.len > 0) arguments[0] else Value.undefined;
+        if (handler.rejected) {
+            try self.runtime.rejectPromise(handler.state.promise, settled);
+        } else try handler.state.results.set(handler.index, settled);
+        std.debug.assert(handler.state.remaining > 0);
+        handler.state.remaining -= 1;
+        if (handler.state.remaining == 0) {
+            if (handler.state.promise.state == .pending) try self.runtime.resolvePromise(handler.state.promise, .{ .array = handler.state.results });
+            self.destroyPromiseAllState(handler.state);
+        }
+        return .undefined;
+    }
+
+    fn destroyPromiseAllState(self: *Interpreter, state: *PromiseAllState) void {
+        for (self.promise_all_states.items, 0..) |candidate, index| {
+            if (candidate != state) continue;
+            _ = self.promise_all_states.orderedRemove(index);
+            self.allocator.destroy(state);
+            return;
+        }
+        unreachable;
     }
 
     fn drainEventLoop(self: *Interpreter) !void {
@@ -1126,10 +1229,20 @@ pub const Interpreter = struct {
             try runtime.traceExternal(.{ .function = entry.key_ptr.* });
             try runtime.traceExternal(.{ .promise = entry.value_ptr.promise });
         }
+        var promise_all_handlers = self.promise_all_handlers.iterator();
+        while (promise_all_handlers.next()) |entry| try runtime.traceExternal(.{ .function = entry.key_ptr.* });
+        for (self.promise_all_states.items) |state| {
+            try runtime.traceExternal(.{ .promise = state.promise });
+            try runtime.traceExternal(.{ .array = state.results });
+        }
     }
 };
 
 fn promiseResolverSentinel(_: *Runtime, _: []const Value) anyerror!Value {
+    return .undefined;
+}
+
+fn promiseAllSentinel(_: *Runtime, _: []const Value) anyerror!Value {
     return .undefined;
 }
 

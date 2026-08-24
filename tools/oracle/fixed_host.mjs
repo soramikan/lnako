@@ -25,7 +25,7 @@ Math.random = () => {
   // Those compile-time calls must not consume the program's injected random
   // stream, because lnako keeps compiler and host randomness separate.
   const stack = new Error().stack ?? "";
-  if (/nako_(?:indent|gen)\.mjs|wnako3mod\.mjs/.test(stack)) return 0.5;
+  if (/nako_(?:indent|gen)\.mjs|wnako3mod\.mjs|node_modules[\\/]shell-quote[\\/]parse\.js/.test(stack)) return 0.5;
   let value = randomState;
   value ^= value >> 12n;
   value ^= (value << 25n) & mask;

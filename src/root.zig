@@ -36,6 +36,9 @@ pub const runtime = struct {
 
 pub const plugins = struct {
     pub const system = @import("plugins/system.zig");
+    pub const math = @import("plugins/math.zig");
+    pub const csv = @import("plugins/csv.zig");
+    pub const toml = @import("plugins/toml.zig");
 };
 
 pub const backend = struct {
@@ -121,6 +124,9 @@ test {
     std.testing.refAllDecls(runtime.operators);
     std.testing.refAllDecls(runtime.interpreter);
     std.testing.refAllDecls(plugins.system);
+    std.testing.refAllDecls(plugins.math);
+    std.testing.refAllDecls(plugins.csv);
+    std.testing.refAllDecls(plugins.toml);
     std.testing.refAllDecls(backend.llvm.api);
     std.testing.refAllDecls(backend.llvm.module);
     std.testing.refAllDecls(backend.llvm.compiler);

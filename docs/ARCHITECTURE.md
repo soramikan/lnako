@@ -140,3 +140,11 @@ source
 - `tests/oracle/plugin-system-cases.json` は対象12カテゴリ168命令を重複なく列挙する。
   `tools/check_plugin_system_coverage.mjs` が公式カタログ・互換台帳・テストIDを照合し、
   `tools/compare_plugin_system_oracle.mjs` が同じソースを公式cnako3と `lnako run` で実行する。
+
+## 数学・CSV・TOML・Promise標準命令
+
+- `plugins/math.zig` はbinary64演算とホスト注入乱数で`plugin_math`の38命令を実装する。
+- `plugins/csv.zig` はInterpreter単位のCSV設定を保持し、CSV/TSVの解析、引用、数値自動変換を実装する。
+- `plugins/toml.zig` は外部ランタイムへ依存せず、TOMLの表、配列テーブル、文字列、数値、配列、インライン表を扱う。
+- Promiseの`束`は入力PromiseをFIFOマイクロタスクへ接続し、入力順の成功配列、空入力、最初の失敗を`Promise.all`と同じ順序で処理する。
+- `tests/oracle/standard-plugin-cases.json` が48命令を重複なく列挙し、カバレッジ検査と公式CLI差分テストを3環境CIで実行する。

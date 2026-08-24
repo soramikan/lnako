@@ -23,6 +23,8 @@ node tools/compare_interpreter_oracle.mjs
 node tools/generate_unicode_case.mjs --check
 node tools/check_plugin_system_coverage.mjs
 node tools/compare_plugin_system_oracle.mjs
+node tools/check_standard_plugin_coverage.mjs
+node tools/compare_standard_plugin_oracle.mjs
 node tools/compare_native_oracle.mjs
 node tools/check_builtin_catalog.mjs
 node tools/sync_compat.mjs --check
