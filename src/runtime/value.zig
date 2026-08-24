@@ -5,6 +5,140 @@ const bigint_mod = @import("bigint.zig");
 pub const String = string_mod.String;
 pub const BigInt = bigint_mod.BigInt;
 
+pub const Array = struct {
+    gc_marked: bool = false,
+    allocator: std.mem.Allocator,
+    items: std.ArrayList(Value) = .empty,
+
+    pub fn deinit(self: *Array) void {
+        self.items.deinit(self.allocator);
+        self.* = undefined;
+    }
+
+    pub fn len(self: Array) usize {
+        return self.items.items.len;
+    }
+
+    pub fn get(self: Array, index: usize) Value {
+        if (index >= self.items.items.len) return .undefined;
+        return self.items.items[index];
+    }
+
+    pub fn set(self: *Array, index: usize, value: Value) !void {
+        if (index >= self.items.items.len) {
+            const old_len = self.items.items.len;
+            try self.items.resize(self.allocator, index + 1);
+            @memset(self.items.items[old_len..], .undefined);
+        }
+        self.items.items[index] = value;
+    }
+
+    pub fn push(self: *Array, value: Value) !usize {
+        try self.items.append(self.allocator, value);
+        return self.items.items.len;
+    }
+
+    pub fn pop(self: *Array) Value {
+        return self.items.pop() orelse .undefined;
+    }
+
+    pub fn unshift(self: *Array, value: Value) !usize {
+        try self.items.insert(self.allocator, 0, value);
+        return self.items.items.len;
+    }
+
+    pub fn shift(self: *Array) Value {
+        if (self.items.items.len == 0) return .undefined;
+        return self.items.orderedRemove(0);
+    }
+
+    pub fn insert(self: *Array, index: usize, value: Value) !void {
+        try self.items.insert(self.allocator, @min(index, self.items.items.len), value);
+    }
+
+    pub fn remove(self: *Array, index: usize) Value {
+        if (index >= self.items.items.len) return .undefined;
+        return self.items.orderedRemove(index);
+    }
+};
+
+const StringKeyContext = struct {
+    pub fn hash(_: @This(), key: *String) u32 {
+        return @truncate(key.hash());
+    }
+
+    pub fn eql(_: @This(), left: *String, right: *String, right_index: usize) bool {
+        _ = right_index;
+        return String.eql(left.*, right.*);
+    }
+};
+
+const DictionaryMap = std.ArrayHashMapUnmanaged(*String, Value, StringKeyContext, true);
+
+pub const Dictionary = struct {
+    gc_marked: bool = false,
+    allocator: std.mem.Allocator,
+    map: DictionaryMap = .empty,
+
+    pub fn deinit(self: *Dictionary) void {
+        self.map.deinit(self.allocator);
+        self.* = undefined;
+    }
+
+    pub fn len(self: Dictionary) usize {
+        return self.map.count();
+    }
+
+    pub fn set(self: *Dictionary, key: *String, value: Value) !void {
+        try self.map.putContext(self.allocator, key, value, .{});
+    }
+
+    pub fn get(self: Dictionary, key: *String) ?Value {
+        return self.map.getContext(key, .{});
+    }
+
+    pub fn has(self: Dictionary, key: *String) bool {
+        return self.map.getIndexContext(key, .{}) != null;
+    }
+
+    pub fn remove(self: *Dictionary, key: *String) bool {
+        return self.map.orderedRemoveContext(key, .{});
+    }
+
+    pub fn keys(self: Dictionary) []*String {
+        return self.map.keys();
+    }
+
+    pub fn values(self: Dictionary) []Value {
+        return self.map.values();
+    }
+};
+
+pub const Capture = struct { name: *String, value: Value };
+pub const NativeCallback = *const fn (runtime: *Runtime, arguments: []const Value) anyerror!Value;
+pub const FunctionKind = union(enum) { ir: u32, native: NativeCallback };
+
+pub const Function = struct {
+    gc_marked: bool = false,
+    allocator: std.mem.Allocator,
+    name: *String,
+    arity: usize,
+    is_async: bool = false,
+    pure: bool = false,
+    kind: FunctionKind,
+    captures: []Capture,
+
+    pub fn deinit(self: *Function) void {
+        self.allocator.free(self.captures);
+        self.* = undefined;
+    }
+
+    pub fn captured(self: Function, name: *String) ?Value {
+        for (self.captures) |capture| if (String.eql(capture.name.*, name.*)) return capture.value;
+        return null;
+    }
+};
+
 pub const Value = union(enum) {
     undefined,
     null_value,
@@ -12,6 +146,9 @@ pub const Value = union(enum) {
     number: f64,
     bigint: *BigInt,
     string: *String,
+    array: *Array,
+    dictionary: *Dictionary,
+    function: *Function,
 
     pub fn tagName(self: Value) []const u8 {
         return @tagName(self);
@@ -24,6 +161,7 @@ pub const Value = union(enum) {
             .number => |value| value != 0 and !std.math.isNan(value),
             .bigint => |value| !value.isZero(),
             .string => |value| value.len() != 0,
+            .array, .dictionary, .function => true,
         };
     }
 
@@ -35,6 +173,7 @@ pub const Value = union(enum) {
             .number => |value| value,
             .bigint => error.CannotConvertBigIntToNumber,
             .string => |value| parseNumber(value.*, scratch_allocator),
+            .array, .dictionary, .function => error.CannotConvertObjectToNumber,
         };
     }
 
@@ -46,6 +185,9 @@ pub const Value = union(enum) {
             .number => |value| !std.math.isNan(value) and !std.math.isNan(right.number) and value == right.number,
             .bigint => |value| BigInt.eql(value.*, right.bigint.*),
             .string => |value| String.eql(value.*, right.string.*),
+            .array => |value| value == right.array,
+            .dictionary => |value| value == right.dictionary,
+            .function => |value| value == right.function,
         };
     }
 
@@ -90,77 +232,368 @@ pub const Value = union(enum) {
     }
 };
 
-/// GC導入前の値生成コンテキスト。オブジェクトのアドレスは安定しており、次段で同じAPIをGCヒープへ接続する。
+const HeapObject = union(enum) {
+    string: *String,
+    bigint: *BigInt,
+    array: *Array,
+    dictionary: *Dictionary,
+    function: *Function,
+};
+
+pub const CollectionStats = struct { before: usize, after: usize, collected: usize };
+
+/// 生成コードはValueを格納したスタック領域のアドレスをこのフレームへ登録する。
+pub const RootFrame = struct {
+    runtime: *Runtime,
+    depth: usize,
+
+    pub fn protect(self: *RootFrame, value: *Value) !void {
+        try self.runtime.roots.append(self.runtime.backing_allocator, value);
+    }
+
+    pub fn deinit(self: *RootFrame) void {
+        self.runtime.roots.shrinkRetainingCapacity(self.depth);
+        self.* = undefined;
+    }
+};
+
+/// 循環参照を扱う正確なmark-and-sweepヒープと、生成コード向けルートスタック。
 pub const Runtime = struct {
-    arena: std.heap.ArenaAllocator,
+    backing_allocator: std.mem.Allocator,
+    objects: std.ArrayList(HeapObject) = .empty,
+    roots: std.ArrayList(*Value) = .empty,
+    grey_objects: std.ArrayList(HeapObject) = .empty,
+    stringifying_arrays: std.ArrayList(*Array) = .empty,
+    next_collection: usize = 64,
+    stress_collection: bool = false,
 
     pub fn init(backing_allocator: std.mem.Allocator) Runtime {
-        return .{ .arena = .init(backing_allocator) };
+        return .{ .backing_allocator = backing_allocator };
     }
 
     pub fn deinit(self: *Runtime) void {
-        self.arena.deinit();
+        for (self.objects.items) |object| self.destroyObject(object);
+        self.objects.deinit(self.backing_allocator);
+        self.roots.deinit(self.backing_allocator);
+        self.grey_objects.deinit(self.backing_allocator);
+        self.stringifying_arrays.deinit(self.backing_allocator);
         self.* = undefined;
     }
 
     pub fn allocator(self: *Runtime) std.mem.Allocator {
-        return self.arena.allocator();
+        return self.backing_allocator;
+    }
+
+    pub fn rootFrame(self: *Runtime) RootFrame {
+        return .{ .runtime = self, .depth = self.roots.items.len };
+    }
+
+    pub fn objectCount(self: Runtime) usize {
+        return self.objects.items.len;
+    }
+
+    pub fn setGcStress(self: *Runtime, enabled: bool) void {
+        self.stress_collection = enabled;
     }
 
     pub fn stringUtf8(self: *Runtime, utf8: []const u8) !Value {
+        try self.beforeAllocation();
         const result = try self.allocator().create(String);
+        errdefer self.allocator().destroy(result);
         result.* = try String.fromUtf8(self.allocator(), utf8);
+        errdefer result.deinit();
+        try self.objects.append(self.allocator(), .{ .string = result });
         return .{ .string = result };
     }
 
     pub fn stringCodeUnits(self: *Runtime, units: []const u16) !Value {
+        try self.beforeAllocation();
         const result = try self.allocator().create(String);
+        errdefer self.allocator().destroy(result);
         result.* = try String.fromCodeUnits(self.allocator(), units);
+        errdefer result.deinit();
+        try self.objects.append(self.allocator(), .{ .string = result });
         return .{ .string = result };
     }
 
     pub fn bigIntLiteral(self: *Runtime, source: []const u8) !Value {
+        try self.beforeAllocation();
         const result = try self.allocator().create(BigInt);
+        errdefer self.allocator().destroy(result);
         result.* = try BigInt.parseLiteral(self.allocator(), source);
+        errdefer result.deinit();
+        try self.objects.append(self.allocator(), .{ .bigint = result });
         return .{ .bigint = result };
     }
 
-    pub fn bigIntString(self: *Runtime, source: String) !Value {
+    pub fn bigIntString(self: *Runtime, source: *String) !Value {
         const trimmed = string_mod.trimWhitespace(source.units);
         var temporary = try String.fromCodeUnits(self.allocator(), trimmed);
+        defer temporary.deinit();
         const utf8 = try temporary.toUtf8Lossy(self.allocator());
+        defer self.allocator().free(utf8);
+        try self.beforeAllocationPreserving(&.{.{ .string = source }});
         const result = try self.allocator().create(BigInt);
+        errdefer self.allocator().destroy(result);
         result.* = try BigInt.parseString(self.allocator(), utf8);
+        errdefer result.deinit();
+        try self.objects.append(self.allocator(), .{ .bigint = result });
         return .{ .bigint = result };
     }
 
     pub fn ownBigInt(self: *Runtime, value: BigInt) !Value {
+        var owned = value;
+        errdefer owned.deinit();
+        try self.beforeAllocation();
         const result = try self.allocator().create(BigInt);
-        result.* = value;
+        errdefer self.allocator().destroy(result);
+        result.* = owned;
+        try self.objects.append(self.allocator(), .{ .bigint = result });
         return .{ .bigint = result };
     }
 
-    pub fn concatStrings(self: *Runtime, left: String, right: String) !Value {
+    pub fn concatStrings(self: *Runtime, left: *String, right: *String) !Value {
+        try self.beforeAllocationPreserving(&.{ .{ .string = left }, .{ .string = right } });
         const result = try self.allocator().create(String);
-        result.* = try left.concat(self.allocator(), right);
+        errdefer self.allocator().destroy(result);
+        result.* = try left.concat(self.allocator(), right.*);
+        errdefer result.deinit();
+        try self.objects.append(self.allocator(), .{ .string = result });
         return .{ .string = result };
     }
 
-    pub fn valueToString(self: *Runtime, value: Value) !Value {
-        return switch (value) {
+    pub fn createArray(self: *Runtime) !Value {
+        try self.beforeAllocation();
+        const result = try self.allocator().create(Array);
+        errdefer self.allocator().destroy(result);
+        result.* = .{ .allocator = self.allocator() };
+        try self.objects.append(self.allocator(), .{ .array = result });
+        return .{ .array = result };
+    }
+
+    pub fn createDictionary(self: *Runtime) !Value {
+        try self.beforeAllocation();
+        const result = try self.allocator().create(Dictionary);
+        errdefer self.allocator().destroy(result);
+        result.* = .{ .allocator = self.allocator() };
+        try self.objects.append(self.allocator(), .{ .dictionary = result });
+        return .{ .dictionary = result };
+    }
+
+    pub fn createIrFunction(self: *Runtime, name: *String, arity: usize, function_id: u32, captures: []const Capture) !Value {
+        return self.createFunction(name, arity, .{ .ir = function_id }, captures);
+    }
+
+    pub fn createNativeFunction(self: *Runtime, name: *String, arity: usize, callback: NativeCallback, captures: []const Capture) !Value {
+        return self.createFunction(name, arity, .{ .native = callback }, captures);
+    }
+
+    fn createFunction(self: *Runtime, name: *String, arity: usize, kind: FunctionKind, captures: []const Capture) !Value {
+        if (self.stress_collection or self.objects.items.len >= self.next_collection) {
+            errdefer self.clearAllMarks();
+            try self.markValue(.{ .string = name });
+            for (captures) |capture| {
+                try self.markValue(.{ .string = capture.name });
+                try self.markValue(capture.value);
+            }
+            _ = try self.collect();
+        }
+        const result = try self.allocator().create(Function);
+        errdefer self.allocator().destroy(result);
+        result.* = .{
+            .allocator = self.allocator(),
+            .name = name,
+            .arity = arity,
+            .kind = kind,
+            .captures = try self.allocator().dupe(Capture, captures),
+        };
+        errdefer result.deinit();
+        try self.objects.append(self.allocator(), .{ .function = result });
+        return .{ .function = result };
+    }
+
+    pub fn call(self: *Runtime, function_value: Value, arguments: []const Value) !Value {
+        if (function_value != .function) return error.NotCallable;
+        var function_root = function_value;
+        const argument_roots = try self.allocator().dupe(Value, arguments);
+        defer self.allocator().free(argument_roots);
+        var frame = self.rootFrame();
+        defer frame.deinit();
+        try frame.protect(&function_root);
+        for (argument_roots) |*argument| try frame.protect(argument);
+        return switch (function_root.function.kind) {
+            .native => |callback| callback(self, arguments),
+            .ir => error.IrFunctionNotExecutable,
+        };
+    }
+
+    pub fn valueToString(self: *Runtime, value: Value) anyerror!Value {
+        var rooted_value = value;
+        var frame = self.rootFrame();
+        defer frame.deinit();
+        try frame.protect(&rooted_value);
+        return switch (rooted_value) {
             .undefined => self.stringUtf8("undefined"),
             .null_value => self.stringUtf8("null"),
             .boolean => |boolean| self.stringUtf8(if (boolean) "true" else "false"),
             .number => |number| blk: {
                 const utf8 = try numberToStringAlloc(self.allocator(), number);
+                defer self.allocator().free(utf8);
                 break :blk self.stringUtf8(utf8);
             },
             .bigint => |bigint| blk: {
                 const utf8 = try bigint.toString(self.allocator(), 10);
+                defer self.allocator().free(utf8);
                 break :blk self.stringUtf8(utf8);
             },
             .string => value,
+            .array => |array| self.arrayToString(array),
+            .dictionary => self.stringUtf8("[object Object]"),
+            .function => |function| blk: {
+                const name = try function.name.toUtf8Lossy(self.allocator());
+                defer self.allocator().free(name);
+                const text = try std.fmt.allocPrint(self.allocator(), "function {s}() {{ [native code] }}", .{name});
+                defer self.allocator().free(text);
+                break :blk self.stringUtf8(text);
+            },
         };
+    }
+
+    pub fn valueToPrimitive(self: *Runtime, value: Value) !Value {
+        return switch (value) {
+            .array, .dictionary, .function => self.valueToString(value),
+            else => value,
+        };
+    }
+
+    pub fn valueToNumber(self: *Runtime, value: Value) !f64 {
+        const primitive = try self.valueToPrimitive(value);
+        return primitive.toNumber(self.allocator());
+    }
+
+    pub fn abstractEqual(self: *Runtime, left: Value, right: Value) !bool {
+        var left_root = left;
+        var right_root = right;
+        var frame = self.rootFrame();
+        defer frame.deinit();
+        try frame.protect(&left_root);
+        try frame.protect(&right_root);
+        const left_primitive = try self.valueToPrimitive(left_root);
+        const right_primitive = try self.valueToPrimitive(right_root);
+        return left_primitive.abstractEqual(self.allocator(), right_primitive);
+    }
+
+    fn arrayToString(self: *Runtime, array: *Array) !Value {
+        for (self.stringifying_arrays.items) |active| if (active == array) return self.stringUtf8("");
+        try self.stringifying_arrays.append(self.allocator(), array);
+        defer _ = self.stringifying_arrays.pop();
+        var output: std.Io.Writer.Allocating = .init(self.allocator());
+        defer output.deinit();
+        for (array.items.items, 0..) |item, index| {
+            if (index > 0) try output.writer.writeByte(',');
+            if (item == .undefined or item == .null_value) continue;
+            const text_value = try self.valueToString(item);
+            const utf8 = try text_value.string.toUtf8Lossy(self.allocator());
+            defer self.allocator().free(utf8);
+            try output.writer.writeAll(utf8);
+        }
+        return self.stringUtf8(output.written());
+    }
+
+    pub fn collect(self: *Runtime) !CollectionStats {
+        errdefer self.clearAllMarks();
+        const before = self.objects.items.len;
+        for (self.roots.items) |root| try self.markValue(root.*);
+        try self.traceGreyObjects();
+        var index: usize = 0;
+        while (index < self.objects.items.len) {
+            if (self.objectMarked(self.objects.items[index])) {
+                self.clearMark(self.objects.items[index]);
+                index += 1;
+            } else {
+                const dead = self.objects.swapRemove(index);
+                self.destroyObject(dead);
+            }
+        }
+        self.next_collection = @max(@as(usize, 64), self.objects.items.len * 2);
+        return .{ .before = before, .after = self.objects.items.len, .collected = before - self.objects.items.len };
+    }
+
+    fn beforeAllocation(self: *Runtime) !void {
+        if (self.stress_collection or self.objects.items.len >= self.next_collection) _ = try self.collect();
+    }
+
+    fn beforeAllocationPreserving(self: *Runtime, values: []const Value) !void {
+        if (self.stress_collection or self.objects.items.len >= self.next_collection) {
+            errdefer self.clearAllMarks();
+            for (values) |value| try self.markValue(value);
+            _ = try self.collect();
+        }
+    }
+
+    fn markValue(self: *Runtime, value: Value) !void {
+        switch (value) {
+            .string => |object| object.gc_marked = true,
+            .bigint => |object| object.gc_marked = true,
+            .array => |object| try self.markComposite(.{ .array = object }),
+            .dictionary => |object| try self.markComposite(.{ .dictionary = object }),
+            .function => |object| try self.markComposite(.{ .function = object }),
+            else => {},
+        }
+    }
+
+    fn markComposite(self: *Runtime, object: HeapObject) !void {
+        if (self.objectMarked(object)) return;
+        try self.grey_objects.append(self.allocator(), object);
+        switch (object) {
+            inline else => |value| value.gc_marked = true,
+        }
+    }
+
+    fn traceGreyObjects(self: *Runtime) !void {
+        while (self.grey_objects.pop()) |object| switch (object) {
+            .array => |array| for (array.items.items) |item| try self.markValue(item),
+            .dictionary => |dictionary| {
+                for (dictionary.keys()) |key| try self.markValue(.{ .string = key });
+                for (dictionary.values()) |item| try self.markValue(item);
+            },
+            .function => |function| {
+                try self.markValue(.{ .string = function.name });
+                for (function.captures) |capture| {
+                    try self.markValue(.{ .string = capture.name });
+                    try self.markValue(capture.value);
+                }
+            },
+            .string, .bigint => unreachable,
+        };
+    }
+
+    fn objectMarked(self: Runtime, object: HeapObject) bool {
+        _ = self;
+        return switch (object) {
+            inline else => |value| value.gc_marked,
+        };
+    }
+
+    fn clearMark(self: *Runtime, object: HeapObject) void {
+        _ = self;
+        switch (object) {
+            inline else => |value| value.gc_marked = false,
+        }
+    }
+
+    fn clearAllMarks(self: *Runtime) void {
+        self.grey_objects.clearRetainingCapacity();
+        for (self.objects.items) |object| self.clearMark(object);
+    }
+
+    fn destroyObject(self: *Runtime, object: HeapObject) void {
+        switch (object) {
+            inline else => |value| {
+                value.deinit();
+                self.backing_allocator.destroy(value);
+            },
+        }
     }
 };
 
@@ -314,4 +747,108 @@ test "数値文字列化の固定小数と指数表記境界をJSへ合わせる
         defer std.testing.allocator.free(actual);
         try std.testing.expectEqualStrings(case.expected, actual);
     }
+}
+
+test "配列の伸長と挿入順辞書の更新を扱う" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const array = try runtime.createArray();
+    _ = try array.array.push(.{ .number = 1 });
+    try array.array.set(3, .{ .number = 4 });
+    try std.testing.expectEqual(@as(usize, 4), array.array.len());
+    try std.testing.expect(array.array.get(1) == .undefined);
+    try std.testing.expectEqual(@as(f64, 4), array.array.get(3).number);
+
+    const dictionary = try runtime.createDictionary();
+    const first_a = try runtime.stringUtf8("a");
+    const second_a = try runtime.stringUtf8("a");
+    const key_b = try runtime.stringUtf8("b");
+    try dictionary.dictionary.set(first_a.string, .{ .number = 1 });
+    try dictionary.dictionary.set(key_b.string, .{ .number = 2 });
+    try dictionary.dictionary.set(second_a.string, .{ .number = 3 });
+    try std.testing.expectEqual(@as(usize, 2), dictionary.dictionary.len());
+    try std.testing.expectEqual(@as(f64, 3), dictionary.dictionary.get(first_a.string).?.number);
+    try std.testing.expect(dictionary.dictionary.keys()[0] == first_a.string);
+    try std.testing.expect(dictionary.dictionary.keys()[1] == key_b.string);
+    try std.testing.expect(try runtime.abstractEqual(array, .{ .number = std.math.nan(f64) }) == false);
+    const singleton = try runtime.createArray();
+    _ = try singleton.array.push(.{ .number = 1 });
+    try std.testing.expect(try runtime.abstractEqual(singleton, .{ .number = 1 }));
+}
+
+test "循環した配列と辞書を正確なmark-and-sweepで回収する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var array = try runtime.createArray();
+    const dictionary = try runtime.createDictionary();
+    const key = try runtime.stringUtf8("cycle");
+    _ = try array.array.push(dictionary);
+    try dictionary.dictionary.set(key.string, array);
+    _ = try runtime.stringUtf8("unreachable");
+    var frame = runtime.rootFrame();
+    try frame.protect(&array);
+    const rooted = try runtime.collect();
+    try std.testing.expectEqual(@as(usize, 3), rooted.after);
+    try std.testing.expectEqual(@as(usize, 1), rooted.collected);
+    frame.deinit();
+    const released = try runtime.collect();
+    try std.testing.expectEqual(@as(usize, 0), released.after);
+    try std.testing.expectEqual(@as(usize, 3), released.collected);
+}
+
+test "GCストレス中もルートと循環文字列化を保護する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    _ = try runtime.stringUtf8("discarded");
+    var array = try runtime.createArray();
+    _ = try array.array.push(array);
+    var frame = runtime.rootFrame();
+    defer frame.deinit();
+    try frame.protect(&array);
+    const text = try runtime.valueToString(array);
+    const utf8 = try text.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(utf8);
+    try std.testing.expectEqualStrings("", utf8);
+    try std.testing.expect(runtime.objectCount() >= 2);
+}
+
+test "深いオブジェクトグラフを再帰せずマークする" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var root = try runtime.createArray();
+    var frame = runtime.rootFrame();
+    try frame.protect(&root);
+    var current = root.array;
+    for (0..4096) |_| {
+        const child = try runtime.createArray();
+        _ = try current.push(child);
+        current = child.array;
+    }
+    try std.testing.expectEqual(@as(usize, 4097), (try runtime.collect()).after);
+    frame.deinit();
+    try std.testing.expectEqual(@as(usize, 4097), (try runtime.collect()).collected);
+}
+
+fn testNativeSum(runtime: *Runtime, arguments: []const Value) !Value {
+    var result: f64 = 0;
+    for (arguments) |argument| result += try argument.toNumber(runtime.allocator());
+    return .{ .number = result };
+}
+
+test "関数・クロージャの捕捉値を追跡して呼び出す" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const name = try runtime.stringUtf8("加算");
+    const capture_name = try runtime.stringUtf8("基準");
+    const captured = try runtime.stringUtf8("保持値");
+    var function = try runtime.createNativeFunction(name.string, 2, testNativeSum, &.{.{ .name = capture_name.string, .value = captured }});
+    var frame = runtime.rootFrame();
+    try frame.protect(&function);
+    const stats = try runtime.collect();
+    try std.testing.expectEqual(@as(usize, 4), stats.after);
+    const result = try runtime.call(function, &.{ .{ .number = 2 }, .{ .number = 3 } });
+    try std.testing.expectEqual(@as(f64, 5), result.number);
+    frame.deinit();
+    try std.testing.expectEqual(@as(usize, 4), (try runtime.collect()).collected);
 }

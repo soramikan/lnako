@@ -79,6 +79,8 @@ function parseValue(encoded) {
     case "string": return payload;
     case "bigint": return BigInt(payload.slice(0, -1));
     case "boolean": return payload === "true";
+    case "array": return payload === "" ? [] : payload.split(",").map(Number);
+    case "dictionary": return {};
     case "null": return null;
     case "undefined": return undefined;
     default: throw new Error(`未知の値: ${encoded}`);

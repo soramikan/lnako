@@ -4,6 +4,7 @@ const Managed = std.math.big.int.Managed;
 
 /// Zig標準ライブラリの多倍長整数を、なでしこ値ランタイムの所有権規則へ合わせて包む。
 pub const BigInt = struct {
+    gc_marked: bool = false,
     managed: Managed,
 
     pub fn init(allocator: std.mem.Allocator, value: anytype) !BigInt {

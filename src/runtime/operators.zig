@@ -21,17 +21,25 @@ pub const Binary = enum {
 };
 
 pub fn binary(runtime: *Runtime, operator: Binary, left: Value, right: Value) !Value {
-    if (operator == .add and (left == .string or right == .string)) {
-        const left_string = (try runtime.valueToString(left)).string;
-        const right_string = (try runtime.valueToString(right)).string;
-        return runtime.concatStrings(left_string.*, right_string.*);
+    var left_root = left;
+    var right_root = right;
+    var frame = runtime.rootFrame();
+    defer frame.deinit();
+    try frame.protect(&left_root);
+    try frame.protect(&right_root);
+    const left_primitive = try runtime.valueToPrimitive(left_root);
+    const right_primitive = try runtime.valueToPrimitive(right_root);
+    if (operator == .add and (left_primitive == .string or right_primitive == .string)) {
+        const left_string = (try runtime.valueToString(left_primitive)).string;
+        const right_string = (try runtime.valueToString(right_primitive)).string;
+        return runtime.concatStrings(left_string, right_string);
     }
-    if (left == .bigint or right == .bigint) {
-        if (left != .bigint or right != .bigint) return error.CannotMixBigIntAndNumber;
-        return bigIntBinary(runtime, operator, left.bigint.*, right.bigint.*);
+    if (left_primitive == .bigint or right_primitive == .bigint) {
+        if (left_primitive != .bigint or right_primitive != .bigint) return error.CannotMixBigIntAndNumber;
+        return bigIntBinary(runtime, operator, left_primitive.bigint.*, right_primitive.bigint.*);
     }
-    const left_number = try left.toNumber(runtime.allocator());
-    const right_number = try right.toNumber(runtime.allocator());
+    const left_number = try left_primitive.toNumber(runtime.allocator());
+    const right_number = try right_primitive.toNumber(runtime.allocator());
     return .{ .number = switch (operator) {
         .add => left_number + right_number,
         .subtract => left_number - right_number,
@@ -76,39 +84,50 @@ fn bigIntBinary(runtime: *Runtime, operator: Binary, left: BigInt, right: BigInt
 }
 
 pub fn unaryMinus(runtime: *Runtime, value: Value) !Value {
-    if (value == .bigint) return runtime.ownBigInt(try value.bigint.negate(runtime.allocator()));
-    return .{ .number = -(try value.toNumber(runtime.allocator())) };
+    const primitive = try runtime.valueToPrimitive(value);
+    if (primitive == .bigint) return runtime.ownBigInt(try primitive.bigint.negate(runtime.allocator()));
+    return .{ .number = -(try primitive.toNumber(runtime.allocator())) };
 }
 
 pub fn unaryPlus(runtime: *Runtime, value: Value) !Value {
-    if (value == .bigint) return error.CannotConvertBigIntToNumber;
-    return .{ .number = try value.toNumber(runtime.allocator()) };
+    const primitive = try runtime.valueToPrimitive(value);
+    if (primitive == .bigint) return error.CannotConvertBigIntToNumber;
+    return .{ .number = try primitive.toNumber(runtime.allocator()) };
 }
 
 pub fn bitNot(runtime: *Runtime, value: Value) !Value {
-    if (value == .bigint) return runtime.ownBigInt(try value.bigint.bitNot(runtime.allocator()));
-    return .{ .number = @floatFromInt(~toInt32(try value.toNumber(runtime.allocator()))) };
+    const primitive = try runtime.valueToPrimitive(value);
+    if (primitive == .bigint) return runtime.ownBigInt(try primitive.bigint.bitNot(runtime.allocator()));
+    return .{ .number = @floatFromInt(~toInt32(try primitive.toNumber(runtime.allocator()))) };
 }
 
 /// ECMAScriptの抽象関係比較。NaNを含む場合はnull（undefined result）を返す。
 pub fn compare(runtime: *Runtime, left: Value, right: Value) !?std.math.Order {
-    if (left == .string and right == .string) return value_mod.String.order(left.string.*, right.string.*);
-    if (left == .bigint and right == .bigint) return BigInt.order(left.bigint.*, right.bigint.*);
-    if (left == .bigint and right == .string) {
-        const converted = runtime.bigIntString(right.string.*) catch return null;
-        return BigInt.order(left.bigint.*, converted.bigint.*);
+    var left_root = left;
+    var right_root = right;
+    var frame = runtime.rootFrame();
+    defer frame.deinit();
+    try frame.protect(&left_root);
+    try frame.protect(&right_root);
+    const left_primitive = try runtime.valueToPrimitive(left_root);
+    const right_primitive = try runtime.valueToPrimitive(right_root);
+    if (left_primitive == .string and right_primitive == .string) return value_mod.String.order(left_primitive.string.*, right_primitive.string.*);
+    if (left_primitive == .bigint and right_primitive == .bigint) return BigInt.order(left_primitive.bigint.*, right_primitive.bigint.*);
+    if (left_primitive == .bigint and right_primitive == .string) {
+        const converted = runtime.bigIntString(right_primitive.string) catch return null;
+        return BigInt.order(left_primitive.bigint.*, converted.bigint.*);
     }
-    if (left == .string and right == .bigint) {
-        const converted = runtime.bigIntString(left.string.*) catch return null;
-        return BigInt.order(converted.bigint.*, right.bigint.*);
+    if (left_primitive == .string and right_primitive == .bigint) {
+        const converted = runtime.bigIntString(left_primitive.string) catch return null;
+        return BigInt.order(converted.bigint.*, right_primitive.bigint.*);
     }
-    if (left == .bigint) return compareBigIntNumber(left.bigint.*, try right.toNumber(runtime.allocator()));
-    if (right == .bigint) {
-        const order = compareBigIntNumber(right.bigint.*, try left.toNumber(runtime.allocator())) orelse return null;
+    if (left_primitive == .bigint) return compareBigIntNumber(left_primitive.bigint.*, try right_primitive.toNumber(runtime.allocator()));
+    if (right_primitive == .bigint) {
+        const order = compareBigIntNumber(right_primitive.bigint.*, try left_primitive.toNumber(runtime.allocator())) orelse return null;
         return invertOrder(order);
     }
-    const left_number = try left.toNumber(runtime.allocator());
-    const right_number = try right.toNumber(runtime.allocator());
+    const left_number = try left_primitive.toNumber(runtime.allocator());
+    const right_number = try right_primitive.toNumber(runtime.allocator());
     if (std.math.isNan(left_number) or std.math.isNan(right_number)) return null;
     return std.math.order(left_number, right_number);
 }

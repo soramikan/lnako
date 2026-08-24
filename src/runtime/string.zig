@@ -2,6 +2,7 @@ const std = @import("std");
 
 /// ECMAScript互換のUTF-16コード単位列。添字と長さはUnicode scalar数ではなくu16単位で扱う。
 pub const String = struct {
+    gc_marked: bool = false,
     allocator: std.mem.Allocator,
     units: []u16,
 
