@@ -112,6 +112,7 @@ jobs:
         shell: bash
         run: |
           ./zig-out/bin/lnako --version
+          node tools/check_compat_report.mjs
           ./zig-out/bin/lnako check tests/fixtures/check-valid.nako3
           ./zig-out/bin/lnako check tests/fixtures/module/main.nako3
           ./zig-out/bin/lnako run tests/fixtures/run-control.nako3

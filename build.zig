@@ -6,6 +6,7 @@ pub fn build(b: *std.Build) void {
     const compat_js = b.option(bool, "compat-js", "QuickJS互換モードを静的リンクする") orelse false;
     const build_options = b.addOptions();
     build_options.addOption(bool, "quickjs_enabled", compat_js);
+    build_options.addOption([]const u8, "compat_summary_json", @embedFile("compat/v3.7.24/summary.json"));
 
     const lnako = b.addModule("lnako", .{
         .root_source_file = b.path("src/root.zig"),

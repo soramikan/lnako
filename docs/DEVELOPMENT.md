@@ -43,6 +43,7 @@ node tools/check_node_archive_smoke.mjs
 node tools/compare_native_oracle.mjs
 node tools/check_builtin_catalog.mjs
 node tools/sync_compat.mjs --check
+node tools/check_compat_report.mjs
 ```
 
 AST差分テストは公式の `core/test/fixtures/parser_corpus.mjs` を直接読み、コメント・空行の保持方式に

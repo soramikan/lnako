@@ -38,6 +38,7 @@ pub const runtime = struct {
 pub const compat = struct {
     pub const quickjs = @import("compat/quickjs.zig");
     pub const embedded = @import("compat/embedded.zig");
+    pub const report = @import("compat/report.zig");
 };
 
 pub const plugins = struct {
@@ -140,6 +141,7 @@ test {
     std.testing.refAllDecls(runtime.interpreter);
     std.testing.refAllDecls(compat.quickjs);
     std.testing.refAllDecls(compat.embedded);
+    std.testing.refAllDecls(compat.report);
     std.testing.refAllDecls(plugins.system);
     std.testing.refAllDecls(plugins.math);
     std.testing.refAllDecls(plugins.csv);

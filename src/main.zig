@@ -199,6 +199,7 @@ pub fn main(init: std.process.Init) !void {
                 std.process.exit(1);
             }
         },
+        .compat => try lnako.compat.report.write(stdout),
         else => try stdout.print("{s}: 実装準備中です\n", .{@tagName(command)}),
     }
 }
