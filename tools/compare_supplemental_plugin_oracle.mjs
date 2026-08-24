@@ -1,6 +1,5 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const root = resolve(import.meta.dirname, "..");
@@ -9,11 +8,14 @@ const oracleRoot = resolve(oracleArg >= 0 ? process.argv[oracleArg + 1] : proces
 const cases = JSON.parse(await readFile(resolve(root, "tests/oracle/supplemental-plugin-cases.json"), "utf8"));
 const officialCli = resolve(oracleRoot, "src/cnako3.mjs");
 const executable = resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
-const temporary = await mkdtemp(join(tmpdir(), "lnako-supplemental-"));
+// cnako3 v3.7.24 treats a Windows drive-letter path in `取り込む` as a
+// relative module specifier.  Keep the fixture on the repository drive and
+// pass a genuinely relative path on every OS.
+const temporary = await mkdtemp(join(root, ".tmp-lnako-supplemental-"));
 const replacements = {
-  "${PLUGIN_MARKUP}": resolve(oracleRoot, "src/plugin_markup.mjs").replaceAll("\\", "/"),
-  "${PLUGIN_KANSUJI}": resolve(oracleRoot, "src/plugin_kansuji.mjs").replaceAll("\\", "/"),
-  "${PLUGIN_CANIUSE}": resolve(oracleRoot, "src/plugin_caniuse.mjs").replaceAll("\\", "/"),
+  "${PLUGIN_MARKUP}": relative(temporary, resolve(oracleRoot, "src/plugin_markup.mjs")).replaceAll("\\", "/"),
+  "${PLUGIN_KANSUJI}": relative(temporary, resolve(oracleRoot, "src/plugin_kansuji.mjs")).replaceAll("\\", "/"),
+  "${PLUGIN_CANIUSE}": relative(temporary, resolve(oracleRoot, "src/plugin_caniuse.mjs")).replaceAll("\\", "/"),
 };
 const suites = [...cases, kansujiCorpus()];
 
