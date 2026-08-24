@@ -3130,5 +3130,47 @@
       "plugin-httpserver-all"
     ],
     "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
+  },
+  "マークダウンHTML変換": {
+    "status": "native",
+    "tests": [
+      "plugin-markup-all"
+    ],
+    "reason": "固定した公式プラグインとの差分テストに成功"
+  },
+  "HTML整形": {
+    "status": "native",
+    "tests": [
+      "plugin-markup-all"
+    ],
+    "reason": "固定した公式プラグインとの差分テストに成功"
+  },
+  "漢数字": {
+    "status": "native",
+    "tests": [
+      "plugin-kansuji-all"
+    ],
+    "reason": "固定した公式プラグインとの差分テストに成功"
+  },
+  "算用数字": {
+    "status": "native",
+    "tests": [
+      "plugin-kansuji-all"
+    ],
+    "reason": "固定した公式プラグインとの差分テストに成功"
+  },
+  "ブラウザ名変換表": {
+    "status": "native",
+    "tests": [
+      "plugin-caniuse-all"
+    ],
+    "reason": "固定した公式プラグインとの差分テストに成功"
+  },
+  "対応ブラウザ一覧取得": {
+    "status": "native",
+    "tests": [
+      "plugin-caniuse-all"
+    ],
+    "reason": "固定した公式プラグインとの差分テストに成功"
   }
 }

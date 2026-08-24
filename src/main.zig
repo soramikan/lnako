@@ -887,6 +887,9 @@ fn posixNetworkAddresses(allocator: std.mem.Allocator, ipv6: bool) !lnako.plugin
     errdefer deinitNetworkAddressList(allocator, &items);
     var current = first;
     while (current) |entry| : (current = entry.next) {
+        // Nodeのos.networkInterfaces()が内部で使うlibuvと同じく、
+        // UPかつRUNNINGのインターフェイスだけを公開する。
+        if ((entry.flags & 0x1) == 0 or (entry.flags & 0x40) == 0) continue;
         const address = entry.address orelse continue;
         const family: usize = @intCast(address.family);
         if ((!ipv6 and family != std.posix.AF.INET) or (ipv6 and family != std.posix.AF.INET6)) continue;

@@ -32,7 +32,7 @@
       "child-empty.mjs": "process.exit(0)",
       "child-exit.mjs": "process.exit(7)"
     },
-    "source": "起動待機(\"node child-output.mjs\")を表示\nコマンド実行待機(\"node child-exit.mjs\")を表示\n起動(\"node child-empty.mjs\")\nコマンド実行(\"node child-empty.mjs\")\nC=[]\n完了=関数(S)それは配列追加(C,S);ここまで\n完了で\"node child-output.mjs\"を起動時\n0.05秒待\nJSON変換(C)を表示\nコンソールクリア()\n"
+    "source": "起動待機(\"node child-output.mjs\")を表示\nコマンド実行待機(\"node child-exit.mjs\")を表示\n起動(\"node child-empty.mjs\")\nコマンド実行(\"node child-empty.mjs\")\nC=[]\n完了=関数(S)それは配列追加(C,S);ここまで\n完了で\"node child-output.mjs\"を起動時\n0.5秒待\nJSON変換(C)を表示\nコンソールクリア()\n"
   },
   {
     "id": "plugin-node-process-order",

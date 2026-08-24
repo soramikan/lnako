@@ -230,7 +230,20 @@ const Loader = struct {
 
 fn isNativeBuiltinPlugin(path: []const u8) bool {
     const basename = std.fs.path.basename(path);
-    return std.ascii.eqlIgnoreCase(basename, "plugin_httpserver.mjs") or std.ascii.eqlIgnoreCase(basename, "plugin_httpserver.js");
+    const names = [_][]const u8{
+        "plugin_httpserver.mjs",
+        "plugin_httpserver.js",
+        "plugin_markup.mjs",
+        "plugin_markup.js",
+        "plugin_caniuse.mjs",
+        "plugin_caniuse.js",
+        "plugin_kansuji.mjs",
+        "plugin_kansuji.js",
+        "plugin_datetime.mjs",
+        "plugin_datetime.js",
+    };
+    for (names) |name| if (std.ascii.eqlIgnoreCase(basename, name)) return true;
+    return false;
 }
 
 fn collectImports(node: *ast.Node, output: *std.ArrayList(*ast.Node), allocator: std.mem.Allocator) !void {
@@ -294,6 +307,25 @@ test "JS取り込みは互換モードを必須にする" {
     var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{ .compat_js = true });
     defer graph.deinit();
     try std.testing.expectEqual(ModuleKind.javascript, graph.modules[1].kind);
+}
+
+test "ネイティブ化した公式JavaScriptプラグインは通常モードで取り込む" {
+    const cases = [_][]const u8{
+        "!「plugin_httpserver.mjs」を取り込む\n",
+        "!「plugin_markup.js」を取り込む\n",
+        "!「plugin_caniuse.mjs」を取り込む\n",
+        "!「plugin_kansuji.js」を取り込む\n",
+        "!「plugin_datetime.mjs」を取り込む\n",
+    };
+    for (cases) |source| {
+        var memory = MemoryProvider{ .files = &.{.{ .suffix = "main.nako3", .source = source }} };
+        var graph = try load(std.testing.allocator, "main.nako3", memory.sourceProvider(), .{});
+        defer graph.deinit();
+        try std.testing.expect(graph.succeeded());
+        try std.testing.expectEqual(@as(usize, 2), graph.modules.len);
+        try std.testing.expectEqual(ModuleKind.javascript, graph.modules[1].kind);
+        try std.testing.expectEqual(@as(usize, 0), graph.modules[1].source.len);
+    }
 }
 
 test "存在しない取り込みを位置付き診断にする" {

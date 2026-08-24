@@ -14,6 +14,9 @@ const plugin_toml = @import("../plugins/toml.zig");
 const plugin_node = @import("../plugins/node.zig");
 const plugin_encoding = @import("../plugins/encoding.zig");
 const plugin_http_server = @import("../plugins/http_server.zig");
+const plugin_markup = @import("../plugins/markup.zig");
+const plugin_caniuse = @import("../plugins/caniuse.zig");
+const plugin_kansuji = @import("../plugins/kansuji.zig");
 
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
@@ -189,6 +192,7 @@ pub const Interpreter = struct {
     csv_state: plugin_csv.State,
     node_state: plugin_node.State = .{},
     http_server_state: plugin_http_server.State = .{},
+    caniuse_state: plugin_caniuse.State = .{},
     timers: std.ArrayList(Timer) = .empty,
     promise_resolvers: std.AutoHashMapUnmanaged(*value_mod.Function, PromiseResolver) = .empty,
     promise_all_handlers: std.AutoHashMapUnmanaged(*value_mod.Function, PromiseAllHandler) = .empty,
@@ -576,6 +580,9 @@ pub const Interpreter = struct {
         if (try plugin_toml.call(self.runtime, name, arguments)) |value| return value;
         if (self.host.node_context) |node_context| if (try plugin_node.call(self.runtime, &self.node_state, node_context, self.nodeEffects(), name, arguments)) |value| return value;
         if (self.host.http_server_context) |server_context| if (try plugin_http_server.call(self.runtime, &self.http_server_state, server_context, self.httpServerEffects(), name, arguments)) |value| return value;
+        if (try plugin_markup.call(self.runtime, name, arguments)) |value| return value;
+        if (try plugin_caniuse.call(self.runtime, &self.caniuse_state, name, arguments)) |value| return value;
+        if (try plugin_kansuji.call(self.runtime, name, arguments)) |value| return value;
         if (try plugin_encoding.call(self.runtime, name, arguments)) |value| return value;
         if (try plugin_system.callWithContext(self.runtime, name, arguments, plugin_context)) |value| return value;
         return error.UnknownCommand;
@@ -587,6 +594,7 @@ pub const Interpreter = struct {
         try plugin_system.datetime.install(self.runtime, .{ .context = self, .setFn = installSystemConstant });
         if (self.host.node_context) |node_context| try plugin_node.install(self.runtime, node_context, .{ .context = self, .setFn = installSystemConstant });
         if (self.host.http_server_context != null) try plugin_http_server.install(self.runtime, .{ .context = self, .setFn = installSystemConstant });
+        try plugin_caniuse.install(self.runtime, &self.caniuse_state, .{ .context = self, .setFn = installSystemConstant });
         self.system_initialized = true;
     }
 
@@ -1344,6 +1352,7 @@ pub const Interpreter = struct {
         }
         try self.node_state.trace(runtime);
         try self.http_server_state.trace(runtime);
+        try self.caniuse_state.trace(runtime);
     }
 };
 

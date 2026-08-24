@@ -1,0 +1,27 @@
+[
+  {
+    "id": "plugin-markup-all",
+    "commands": ["マークダウンHTML変換", "HTML整形"],
+    "source": "!\"${PLUGIN_MARKUP}\"を取り込む\nJSON変換(マークダウンHTML変換(『# Heading\n\nplain *em* **strong** ~~del~~ `code`』))を表示\nJSON変換(マークダウンHTML変換(『> quote\n> next\n\n- a\n- b\n  - c』))を表示\nJSON変換(マークダウンHTML変換(『3. a\n4. b\n\n- [x] done\n- [ ] todo』))を表示\nJSON変換(マークダウンHTML変換(『| A | B |\n| :- | -: |\n| x | y |』))を表示\nJSON変換(マークダウンHTML変換(『```js\nconst x = 1 < 2;\n```』))を表示\nJSON変換(マークダウンHTML変換(『[link](https://example.com \"t\") ![alt](x.png)\n\n<https://example.com> <a@b.com>』))を表示\nJSON変換(マークダウンHTML変換(『a  \nb\n\n& < > \"』))を表示\nJSON変換(マークダウンHTML変換(『Setext\n===\n\n---\n\n<div>raw</div>』))を表示\nJSON変換(HTML整形(『<p><h1>hoge</h1></p>』))を表示\nJSON変換(HTML整形(『<div><p>A <strong>B</strong></p><p>C</p></div>』))を表示\nJSON変換(HTML整形(『<ul><li>1<ul><li>2</li></ul></li></ul>』))を表示\nJSON変換(HTML整形(『<pre> a\n  b </pre>』))を表示\nJSON変換(HTML整形(『<!doctype html><html><head><title>x</title></head><body><br><img src=\"x\"></body></html>』))を表示\n"
+  },
+  {
+    "id": "plugin-kansuji-all",
+    "commands": ["漢数字", "算用数字"],
+    "source": "!\"${PLUGIN_KANSUJI}\"を取り込む\n漢数字(0)を表示\n漢数字(10001)を表示\n漢数字(0.01)を表示\n漢数字(-12)を表示\n漢数字(\"1e-3\")を表示\n漢数字(\"１２３\")を表示\n算用数字(\"一万一\")を表示\n算用数字(\"一・二\")を表示\n算用数字(\"一二万\")を表示\n算用数字(\"無量大数\")を表示\n算用数字(\"一無量大数\")を表示\n"
+  },
+  {
+    "id": "plugin-markup-html-script",
+    "commands": [],
+    "source": "!\"${PLUGIN_MARKUP}\"を取り込む\nJSON変換(HTML整形(『<div><script>if(a){\n  x();\n}</script><style>a { color: red; }</style></div>』))を表示\nJSON変換(HTML整形(『<!-- a  b --><div x = \"a b\" y=  \"c\"> z </div>』))を表示\n"
+  },
+  {
+    "id": "plugin-markup-commonmark-gfm",
+    "commands": [],
+    "source": "!\"${PLUGIN_MARKUP}\"を取り込む\nJSON変換(マークダウンHTML変換(『***both*** a_b_c `` a ` b `` [x](a_(b))』))を表示\nJSON変換(マークダウンHTML変換(『[ref][id]\n\n[id]: https://example.com \"title\"』))を表示\nJSON変換(マークダウンHTML変換(『www.example.com a@example.com』))を表示\nJSON変換(マークダウンHTML変換(『- first\n  continued』))を表示\nJSON変換(マークダウンHTML変換(『- a\n\n- b』))を表示\nJSON変換(マークダウンHTML変換(『- a\n    - b』))を表示\nJSON変換(マークダウンHTML変換(『| a\\|b | c |\n| --- | --- |\n| x | y |』))を表示\nJSON変換(マークダウンHTML変換(『    a < b\n    c』))を表示\nJSON変換(マークダウンHTML変換(『line\\\nnext』))を表示\nJSON変換(マークダウンHTML変換(『> a\n>\n> b』))を表示\n"
+  },
+  {
+    "id": "plugin-caniuse-all",
+    "commands": ["ブラウザ名変換表", "対応ブラウザ一覧取得"],
+    "source": "!\"${PLUGIN_CANIUSE}\"を取り込む\nJSON変換(ブラウザ名変換表)を表示\nJSON変換(対応ブラウザ一覧取得())を表示\n"
+  }
+]

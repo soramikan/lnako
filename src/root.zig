@@ -43,6 +43,9 @@ pub const plugins = struct {
     pub const encoding = @import("plugins/encoding.zig");
     pub const crypto = @import("plugins/crypto.zig");
     pub const http_server = @import("plugins/http_server.zig");
+    pub const markup = @import("plugins/markup.zig");
+    pub const caniuse = @import("plugins/caniuse.zig");
+    pub const kansuji = @import("plugins/kansuji.zig");
 };
 
 pub const backend = struct {
@@ -135,6 +138,9 @@ test {
     std.testing.refAllDecls(plugins.encoding);
     std.testing.refAllDecls(plugins.crypto);
     std.testing.refAllDecls(plugins.http_server);
+    std.testing.refAllDecls(plugins.markup);
+    std.testing.refAllDecls(plugins.caniuse);
+    std.testing.refAllDecls(plugins.kansuji);
     std.testing.refAllDecls(backend.llvm.api);
     std.testing.refAllDecls(backend.llvm.module);
     std.testing.refAllDecls(backend.llvm.compiler);
