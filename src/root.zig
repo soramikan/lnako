@@ -23,6 +23,7 @@ pub const ir = struct {
     pub const nako_ir = @import("ir/nako_ir.zig");
     pub const lower_ssa = @import("ir/lower_ssa.zig");
     pub const verifier = @import("ir/verifier.zig");
+    pub const optimizer = @import("ir/optimizer.zig");
     pub const printer = @import("ir/printer.zig");
 };
 
@@ -130,6 +131,7 @@ test {
     std.testing.refAllDecls(ir.nako_ir);
     std.testing.refAllDecls(ir.lower_ssa);
     std.testing.refAllDecls(ir.verifier);
+    std.testing.refAllDecls(ir.optimizer);
     std.testing.refAllDecls(ir.printer);
     std.testing.refAllDecls(runtime.string);
     std.testing.refAllDecls(runtime.bigint);

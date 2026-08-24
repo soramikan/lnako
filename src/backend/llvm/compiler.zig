@@ -1,6 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const ir = @import("../../ir/nako_ir.zig");
+const optimizer = @import("../../ir/optimizer.zig");
+const verifier = @import("../../ir/verifier.zig");
 const api_mod = @import("api.zig");
 const module_mod = @import("module.zig");
 
@@ -18,7 +20,30 @@ pub const Options = struct {
 };
 
 pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, options: Options, diagnostics: *std.Io.Writer) !void {
-    if (module_mod.findUnsupported(program)) |feature| {
+    var optimized_program: ?ir.Program = null;
+    defer if (optimized_program) |*owned| owned.deinit();
+    if (options.optimization != .o0) {
+        optimized_program = try program.clone(allocator);
+        const max_iterations: usize = switch (options.optimization) {
+            .o0 => unreachable,
+            .o1 => 4,
+            .o2 => 8,
+            .o3 => 12,
+        };
+        const stats = try optimizer.optimize(allocator, &optimized_program.?, .{ .max_iterations = max_iterations });
+        var report = try verifier.verify(allocator, optimized_program.?);
+        defer report.deinit();
+        if (!report.succeeded()) {
+            for (report.issues) |issue| try diagnostics.print("最適化後IR検証エラー[{s}] {s}: {s}\n", .{ @tagName(issue.code), issue.function_name, issue.message });
+            return error.InvalidOptimizedIr;
+        }
+        if (options.trace) try diagnostics.print(
+            "[LLVM] Nako SSA最適化: type={d} parameter={d} return={d} direct={d} fold={d} branch={d} dce={d}\n",
+            .{ stats.inferred_values, stats.inferred_parameters, stats.inferred_returns, stats.direct_calls, stats.folded_constants, stats.simplified_branches, stats.removed_instructions },
+        );
+    }
+    const selected_program = optimized_program orelse program;
+    if (module_mod.findUnsupported(selected_program)) |feature| {
         try diagnostics.print("{s}:{d}:{d}: AOT未対応機能: opcode={s} detail={s} function={s}\n", .{
             options.source_path,
             feature.span.line + 1,
@@ -29,7 +54,7 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
         });
         return error.UnsupportedInstruction;
     }
-    var generated = try module_mod.generate(allocator, program, options.source_path, options.optimization != .o0);
+    var generated = try module_mod.generate(allocator, selected_program, options.source_path, options.optimization != .o0);
     defer generated.deinit(allocator);
     try trace(options.trace, diagnostics, "LLVM共有ライブラリを読み込みます");
     var api = api_mod.Api.openAt(allocator, options.llvm_root, options.llvm_library) catch |failure| {
@@ -274,10 +299,13 @@ test "LLVM C APIで全最適化レベルのモジュールを検証してIRを�
         defer std.testing.allocator.free(output_path);
         var diagnostics: std.Io.Writer.Allocating = .init(std.testing.allocator);
         defer diagnostics.deinit();
-        compile(std.testing.allocator, std.testing.io, program, .{ .source_path = "main.nako3", .output_path = output_path, .emit = .llvm_ir, .optimization = optimization }, &diagnostics.writer) catch |failure| switch (failure) {
+        compile(std.testing.allocator, std.testing.io, program, .{ .source_path = "main.nako3", .output_path = output_path, .emit = .llvm_ir, .optimization = optimization, .trace = true }, &diagnostics.writer) catch |failure| switch (failure) {
             error.LlvmLibraryNotFound => return error.SkipZigTest,
             else => return failure,
         };
+        if (optimization == .o0) {
+            try std.testing.expect(std.mem.indexOf(u8, diagnostics.written(), "Nako SSA最適化") == null);
+        } else try std.testing.expect(std.mem.indexOf(u8, diagnostics.written(), "Nako SSA最適化:") != null);
         const file = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, output_path, std.testing.allocator, .limited(4 * 1024 * 1024));
         defer std.testing.allocator.free(file);
         try std.testing.expect(std.mem.indexOf(u8, file, "target triple") != null);

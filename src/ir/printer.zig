@@ -46,6 +46,7 @@ fn writeInstruction(instruction: ir.Instruction, writer: *std.Io.Writer) !void {
         try std.json.Stringify.value(instruction.text, .{}, writer);
     }
     if (instruction.number_value) |number| try writer.print(" number={d}", .{number});
+    if (instruction.direct_callee) |callee| try writer.print(" callee=@{d}", .{callee});
     if (instruction.loop_direction != .automatic) try writer.print(" direction={s}", .{@tagName(instruction.loop_direction)});
     if (instruction.exception_target) |target| try writer.print(" unwind=bb{d}", .{target});
     try writer.writeByte('\n');

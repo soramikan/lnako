@@ -73,7 +73,9 @@ zig build -Dcompat-js=true run -- build program.nako3 -o program --compat-js
 `test` は単一ファイルまたはディレクトリ以下の `.nako3` を読み、テスト定義を決定的な順序で実行します。
 `build` はLLVM 22.1.8 C APIで生成IRを検証し、PassBuilderの `default<O0>` ～ `default<O3>`、
 TargetMachineによるオブジェクト生成、LLD 22.1.8によるリンクを行います。生成物には元 `.nako3` の
-ファイル・行・列に対応するデバッグメタデータを保持します。
+ファイル・行・列に対応するデバッグメタデータを保持します。`-O1`以上ではLLVMのPassBuilderへ渡す前に、
+独立複製したNako SSA IRへ型推論、定数伝播、直接呼び出し、dead code eliminationを適用し、証明済みの
+数値・真偽値をアンボックスします。`-O0`は元IRを変更せず、動的変換を維持します。
 
 現段階のAOT対応は、数値・真偽値・null・文字列定数、変数、数値演算・比較、条件・while、直接関数呼び出し、
 表示です。配列、辞書、BigInt、クロージャ、例外、非同期、残りの標準命令は後続の固定マイルストーンで

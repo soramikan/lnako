@@ -42,7 +42,7 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
                     std.mem.eql(u8, instruction.operator, "||") or std.mem.eql(u8, instruction.operator, "or"),
                 .unary => std.mem.eql(u8, instruction.operator, "!") or std.mem.eql(u8, instruction.operator, "not") or
                     std.mem.eql(u8, instruction.operator, "+") or std.mem.eql(u8, instruction.operator, "-"),
-                .call => isDisplayCall(instruction.name) or lookupFunction(program, instruction.name) != null,
+                .call => isDisplayCall(instruction.name) or validDirectCallee(program, instruction) or lookupFunction(program, instruction.name) != null,
                 else => false,
             };
             if (!supported) return .{
@@ -327,10 +327,9 @@ const Emitter = struct {
         if (std.mem.eql(u8, instruction.operator, "&&") or std.mem.eql(u8, instruction.operator, "and") or
             std.mem.eql(u8, instruction.operator, "||") or std.mem.eql(u8, instruction.operator, "or"))
         {
-            try self.output.writer.print("  %condition.{d} = call i1 @lnako.truthy(%lnako.Value ", .{result});
-            try self.writeValueRef(function, instruction.operands[0]);
-            try self.output.writer.writeByte(')');
-            try self.debugSuffix(instruction.span, scope);
+            const condition_label = try std.fmt.allocPrint(self.allocator, "condition.{d}", .{result});
+            defer self.allocator.free(condition_label);
+            try self.writeTruthyOperand(function, instruction.operands[0], condition_label, instruction.span, scope);
             try self.output.writer.print("  %v{d} = select i1 %condition.{d}, %lnako.Value ", .{ result, result });
             if (std.mem.eql(u8, instruction.operator, "&&") or std.mem.eql(u8, instruction.operator, "and")) {
                 try self.writeValueRef(function, instruction.operands[1]);
@@ -344,14 +343,12 @@ const Emitter = struct {
             try self.debugSuffix(instruction.span, scope);
             return;
         }
-        try self.output.writer.print("  %left.number.{d} = call double @lnako.to_number(%lnako.Value ", .{result});
-        try self.writeValueRef(function, instruction.operands[0]);
-        try self.output.writer.writeByte(')');
-        try self.debugSuffix(instruction.span, scope);
-        try self.output.writer.print("  %right.number.{d} = call double @lnako.to_number(%lnako.Value ", .{result});
-        try self.writeValueRef(function, instruction.operands[1]);
-        try self.output.writer.writeByte(')');
-        try self.debugSuffix(instruction.span, scope);
+        const left_label = try std.fmt.allocPrint(self.allocator, "left.number.{d}", .{result});
+        defer self.allocator.free(left_label);
+        const right_label = try std.fmt.allocPrint(self.allocator, "right.number.{d}", .{result});
+        defer self.allocator.free(right_label);
+        try self.writeNumberOperand(function, instruction.operands[0], left_label, instruction.span, scope);
+        try self.writeNumberOperand(function, instruction.operands[1], right_label, instruction.span, scope);
 
         const arithmetic = arithmeticOpcode(instruction.operator);
         if (arithmetic) |opcode| {
@@ -379,10 +376,9 @@ const Emitter = struct {
     fn writeUnary(self: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize) !void {
         const result = instruction.result orelse return error.MissingInstructionResult;
         if (std.mem.eql(u8, instruction.operator, "!") or std.mem.eql(u8, instruction.operator, "not")) {
-            try self.output.writer.print("  %truthy.{d} = call i1 @lnako.truthy(%lnako.Value ", .{result});
-            try self.writeValueRef(function, instruction.operands[0]);
-            try self.output.writer.writeByte(')');
-            try self.debugSuffix(instruction.span, scope);
+            const truthy_label = try std.fmt.allocPrint(self.allocator, "truthy.{d}", .{result});
+            defer self.allocator.free(truthy_label);
+            try self.writeTruthyOperand(function, instruction.operands[0], truthy_label, instruction.span, scope);
             try self.output.writer.print("  %not.{d} = xor i1 %truthy.{d}, true", .{ result, result });
             try self.debugSuffix(instruction.span, scope);
             try self.output.writer.print("  %not.bits.{d} = zext i1 %not.{d} to i64", .{ result, result });
@@ -391,10 +387,9 @@ const Emitter = struct {
             try self.debugSuffix(instruction.span, scope);
             return;
         }
-        try self.output.writer.print("  %unary.number.{d} = call double @lnako.to_number(%lnako.Value ", .{result});
-        try self.writeValueRef(function, instruction.operands[0]);
-        try self.output.writer.writeByte(')');
-        try self.debugSuffix(instruction.span, scope);
+        const number_label = try std.fmt.allocPrint(self.allocator, "unary.number.{d}", .{result});
+        defer self.allocator.free(number_label);
+        try self.writeNumberOperand(function, instruction.operands[0], number_label, instruction.span, scope);
         if (std.mem.eql(u8, instruction.operator, "-")) {
             try self.output.writer.print("  %unary.result.{d} = fneg double %unary.number.{d}", .{ result, result });
         } else if (std.mem.eql(u8, instruction.operator, "+")) {
@@ -417,7 +412,10 @@ const Emitter = struct {
             try self.debugSuffix(instruction.span, scope);
             return;
         }
-        const callee = self.findFunction(instruction.name) orelse return error.UnsupportedBuiltinCall;
+        const callee = if (instruction.direct_callee) |callee_id|
+            if (callee_id < self.program.functions.len) self.program.functions[callee_id] else return error.InvalidDirectCallee
+        else
+            self.findFunction(instruction.name) orelse return error.UnsupportedBuiltinCall;
         try self.output.writer.print("  %v{d} = call %lnako.Value @lnako.fn.{d}(", .{ result, callee.id });
         for (instruction.operands, 0..) |operand, index| {
             if (index > 0) try self.output.writer.writeAll(", ");
@@ -435,10 +433,9 @@ const Emitter = struct {
                 try self.debugSuffix(span, scope);
             },
             .conditional_branch => |branch| {
-                try self.output.writer.print("  %branch.condition.bb{d} = call i1 @lnako.truthy(%lnako.Value ", .{branch.then_block});
-                try self.writeValueRef(function, branch.condition);
-                try self.output.writer.writeByte(')');
-                try self.debugSuffix(span, scope);
+                const condition_label = try std.fmt.allocPrint(self.allocator, "branch.condition.bb{d}", .{branch.then_block});
+                defer self.allocator.free(condition_label);
+                try self.writeTruthyOperand(function, branch.condition, condition_label, span, scope);
                 try self.output.writer.print("  br i1 %branch.condition.bb{d}, label %bb{d}, label %bb{d}", .{ branch.then_block, branch.then_block, branch.else_block });
                 try self.debugSuffix(span, scope);
             },
@@ -520,6 +517,50 @@ const Emitter = struct {
         try self.output.writer.print("%v{d}", .{value});
     }
 
+    fn writeNumberOperand(self: *Emitter, function: ir.Function, value: ir.ValueId, label: []const u8, span: ast.Span, scope: usize) !void {
+        if (self.optimized and valueType(function, value) == .number) {
+            try self.output.writer.print("  %{s}.bits = extractvalue %lnako.Value ", .{label});
+            try self.writeValueRef(function, value);
+            try self.output.writer.writeAll(", 1");
+            try self.debugSuffix(span, scope);
+            try self.output.writer.print("  %{s} = bitcast i64 %{s}.bits to double", .{ label, label });
+            try self.debugSuffix(span, scope);
+            return;
+        }
+        try self.output.writer.print("  %{s} = call double @lnako.to_number(%lnako.Value ", .{label});
+        try self.writeValueRef(function, value);
+        try self.output.writer.writeByte(')');
+        try self.debugSuffix(span, scope);
+    }
+
+    fn writeTruthyOperand(self: *Emitter, function: ir.Function, value: ir.ValueId, label: []const u8, span: ast.Span, scope: usize) !void {
+        const value_type = valueType(function, value);
+        if (self.optimized and value_type == .boolean) {
+            try self.output.writer.print("  %{s}.bits = extractvalue %lnako.Value ", .{label});
+            try self.writeValueRef(function, value);
+            try self.output.writer.writeAll(", 1");
+            try self.debugSuffix(span, scope);
+            try self.output.writer.print("  %{s} = trunc i64 %{s}.bits to i1", .{ label, label });
+            try self.debugSuffix(span, scope);
+            return;
+        }
+        if (self.optimized and value_type == .number) {
+            try self.output.writer.print("  %{s}.bits = extractvalue %lnako.Value ", .{label});
+            try self.writeValueRef(function, value);
+            try self.output.writer.writeAll(", 1");
+            try self.debugSuffix(span, scope);
+            try self.output.writer.print("  %{s}.number = bitcast i64 %{s}.bits to double", .{ label, label });
+            try self.debugSuffix(span, scope);
+            try self.output.writer.print("  %{s} = fcmp one double %{s}.number, 0.000000e+00", .{ label, label });
+            try self.debugSuffix(span, scope);
+            return;
+        }
+        try self.output.writer.print("  %{s} = call i1 @lnako.truthy(%lnako.Value ", .{label});
+        try self.writeValueRef(function, value);
+        try self.output.writer.writeByte(')');
+        try self.debugSuffix(span, scope);
+    }
+
     fn localNames(self: *Emitter, function: ir.Function) ![][]const u8 {
         var names: std.ArrayList([]const u8) = .empty;
         defer names.deinit(self.allocator);
@@ -551,6 +592,10 @@ fn lookupFunction(program: ir.Program, name: []const u8) ?ir.Function {
     return null;
 }
 
+fn validDirectCallee(program: ir.Program, instruction: ir.Instruction) bool {
+    return if (instruction.direct_callee) |callee| callee < program.functions.len else false;
+}
+
 fn isDisplayCall(name: []const u8) bool {
     return std.mem.eql(u8, name, "表示") or std.mem.eql(u8, name, "表示する") or std.mem.eql(u8, name, "連続表示");
 }
@@ -558,6 +603,14 @@ fn isDisplayCall(name: []const u8) bool {
 fn nameIndex(names: []const []const u8, name: []const u8) ?usize {
     for (names, 0..) |candidate, index| if (std.mem.eql(u8, candidate, name)) return index;
     return null;
+}
+
+fn valueType(function: ir.Function, value: ir.ValueId) ir.Type {
+    for (function.parameters) |parameter| if (parameter.value == value) return parameter.type;
+    for (function.blocks) |block| for (block.instructions) |instruction| {
+        if (instruction.result) |result| if (result == value) return instruction.type;
+    };
+    return .dynamic;
 }
 
 fn arithmeticOpcode(operator: []const u8) ?[]const u8 {
@@ -623,4 +676,40 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.global.0") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "!llvm.dbg.cu") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "!DILocation(line: 1") != null);
+}
+
+test "O1では証明済み数値と真偽判定をアンボックスしO0のIRを変更しない" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    const optimizer = @import("../../ir/optimizer.zig");
+    const source = "●(Aを)Fとは\nB=A+1\nもしAならば\nBで戻る\n違えば\n0で戻る\nここまで\nここまで\nX=F(2)\nXを表示\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "optimized.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "optimized.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "optimized.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    var optimized_program = try program.clone(std.testing.allocator);
+    defer optimized_program.deinit();
+
+    _ = try optimizer.optimize(std.testing.allocator, &optimized_program, .{});
+    try std.testing.expectEqual(ir.Type.dynamic, program.findFunction("optimized__F").?.parameters[0].type);
+    try std.testing.expectEqual(ir.Type.number, optimized_program.findFunction("optimized__F").?.parameters[0].type);
+
+    var unoptimized_module = try generate(std.testing.allocator, program, "optimized.nako3", false);
+    defer unoptimized_module.deinit(std.testing.allocator);
+    var optimized_module = try generate(std.testing.allocator, optimized_program, "optimized.nako3", true);
+    defer optimized_module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, unoptimized_module.text, "call double @lnako.to_number") != null);
+    try std.testing.expect(std.mem.indexOf(u8, unoptimized_module.text, "call i1 @lnako.truthy") != null);
+    try std.testing.expect(std.mem.indexOf(u8, optimized_module.text, "call double @lnako.to_number") == null);
+    try std.testing.expect(std.mem.indexOf(u8, optimized_module.text, "call i1 @lnako.truthy") == null);
+    try std.testing.expect(std.mem.indexOf(u8, optimized_module.text, ".bits = extractvalue %lnako.Value") != null);
+    try std.testing.expect(std.mem.indexOf(u8, optimized_module.text, ".number = bitcast i64") != null);
 }

@@ -59,6 +59,7 @@ pub const Instruction = struct {
     names: []const []const u8 = &.{},
     number_value: ?f64 = null,
     boolean_value: bool = false,
+    direct_callee: ?FunctionId = null,
     loop_direction: LoopDirection = .automatic,
     exception_target: ?BlockId = null,
     span: ast.Span,
@@ -112,6 +113,52 @@ pub const Program = struct {
     pub fn deinit(self: *Program) void {
         self.arena.deinit();
         self.* = undefined;
+    }
+
+    pub fn clone(self: Program, backing_allocator: std.mem.Allocator) !Program {
+        var arena = std.heap.ArenaAllocator.init(backing_allocator);
+        errdefer arena.deinit();
+        const allocator = arena.allocator();
+        const functions = try allocator.alloc(Function, self.functions.len);
+        for (self.functions, functions) |source_function, *target_function| {
+            const blocks = try allocator.alloc(BasicBlock, source_function.blocks.len);
+            for (source_function.blocks, blocks) |source_block, *target_block| {
+                const instructions = try allocator.dupe(Instruction, source_block.instructions);
+                for (instructions) |*instruction| {
+                    instruction.operands = try allocator.dupe(ValueId, instruction.operands);
+                    instruction.phi_incoming = try allocator.dupe(PhiIncoming, instruction.phi_incoming);
+                    instruction.name = try allocator.dupe(u8, instruction.name);
+                    instruction.text = try allocator.dupe(u8, instruction.text);
+                    instruction.operator = try allocator.dupe(u8, instruction.operator);
+                    const names = try allocator.alloc([]const u8, instruction.names.len);
+                    for (instruction.names, names) |source_name, *target_name| target_name.* = try allocator.dupe(u8, source_name);
+                    instruction.names = names;
+                }
+                target_block.* = source_block;
+                target_block.name = try allocator.dupe(u8, source_block.name);
+                target_block.instructions = instructions;
+            }
+            target_function.* = source_function;
+            target_function.parameters = try allocator.dupe(Parameter, source_function.parameters);
+            for (target_function.parameters) |*parameter| parameter.name = try allocator.dupe(u8, parameter.name);
+            target_function.name = try allocator.dupe(u8, source_function.name);
+            target_function.blocks = blocks;
+        }
+        const javascript_modules = try allocator.dupe(JavaScriptModule, self.javascript_modules);
+        for (javascript_modules) |*module| {
+            module.path = try allocator.dupe(u8, module.path);
+            module.source = try allocator.dupe(u8, module.source);
+        }
+        const native_plugin_paths = try allocator.alloc([]const u8, self.native_plugin_paths.len);
+        for (self.native_plugin_paths, native_plugin_paths) |source_path, *target_path| target_path.* = try allocator.dupe(u8, source_path);
+        return .{
+            .arena = arena,
+            .functions = functions,
+            .module_entries = try allocator.dupe(FunctionId, self.module_entries),
+            .compat_js = self.compat_js,
+            .javascript_modules = javascript_modules,
+            .native_plugin_paths = native_plugin_paths,
+        };
     }
 
     pub fn findFunction(self: Program, name: []const u8) ?Function {

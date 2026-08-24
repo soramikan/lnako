@@ -15,6 +15,7 @@ pub const IssueCode = enum {
     invalid_phi_input_count,
     duplicate_phi_predecessor,
     invalid_exception_target,
+    invalid_direct_callee,
 };
 
 pub const Issue = struct {
@@ -44,13 +45,14 @@ const Definition = struct { block: ?ir.BlockId, instruction_index: ?usize };
 pub fn verify(backing_allocator: std.mem.Allocator, program: ir.Program) !Report {
     var arena = std.heap.ArenaAllocator.init(backing_allocator);
     errdefer arena.deinit();
-    var checker = Checker{ .allocator = arena.allocator() };
+    var checker = Checker{ .allocator = arena.allocator(), .function_count = program.functions.len };
     for (program.functions) |function| try checker.verifyFunction(function);
     return .{ .arena = arena, .issues = try checker.issues.toOwnedSlice(checker.allocator) };
 }
 
 const Checker = struct {
     allocator: std.mem.Allocator,
+    function_count: usize,
     issues: std.ArrayList(Issue) = .empty,
 
     fn verifyFunction(self: *Checker, function: ir.Function) !void {
@@ -85,6 +87,9 @@ const Checker = struct {
                     try self.add(.invalid_result_type, function, block.id, instruction_index, "命令の結果SSA値と型が一致しません");
                 }
                 if (instruction.opcode != .phi and instruction.phi_incoming.len > 0) try self.add(.invalid_phi_position, function, block.id, instruction_index, "phi以外の命令にphi入力があります");
+                if (instruction.direct_callee) |callee| {
+                    if (instruction.opcode != .call or callee >= self.function_count) try self.add(.invalid_direct_callee, function, block.id, instruction_index, "直接呼び出し先が存在しないかcall命令ではありません");
+                }
                 if (instruction.opcode == .try_begin) {
                     if (instruction.exception_target) |target| {
                         try self.recordEdge(function, predecessors, effective_block, target);
@@ -306,4 +311,22 @@ test "不正なphi入力を拒否する" {
     }
     try std.testing.expect(input_count_issue);
     try std.testing.expect(predecessor_issue);
+}
+
+test "call以外と範囲外の直接呼び出し先を拒否する" {
+    var fixture = try makeTestProgram(std.testing.allocator);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    const instruction = &fixture.ir_program.functions[0].blocks[0].instructions[0];
+    instruction.direct_callee = @intCast(fixture.ir_program.functions.len);
+    var report = try verify(std.testing.allocator, fixture.ir_program);
+    defer report.deinit();
+    try std.testing.expect(!report.succeeded());
+    var direct_issue = false;
+    for (report.issues) |issue| if (issue.code == .invalid_direct_callee) {
+        direct_issue = true;
+    };
+    try std.testing.expect(direct_issue);
 }

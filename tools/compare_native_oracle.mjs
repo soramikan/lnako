@@ -19,7 +19,6 @@ try {
   for (const testCase of cases) {
     const sourcePath = resolve(temporary, `${testCase.id}.nako3`);
     const generatedJavaScript = resolve(temporary, `${testCase.id}.mjs`);
-    const nativeExecutable = resolve(temporary, `${testCase.id}${process.platform === "win32" ? ".exe" : ""}`);
     await writeFile(sourcePath, testCase.source, "utf8");
     const options = {
       cwd: temporary,
@@ -31,24 +30,28 @@ try {
     const officialCompile = spawnSync(process.execPath, [officialCli, "--compile", "--silent", "--output", generatedJavaScript, sourcePath], options);
     const officialGenerated = officialCompile.status === 0 ? spawnSync(process.execPath, [generatedJavaScript], options) : officialCompile;
     const interpreted = spawnSync(executable, ["run", sourcePath], options);
-    const nativeCompile = spawnSync(executable, ["build", sourcePath, "-o", nativeExecutable, "-O2"], options);
-    const native = nativeCompile.status === 0 ? spawnSync(nativeExecutable, [], options) : nativeCompile;
     const results = {
       officialSource: normalize(officialSource),
       officialGenerated: normalize(officialGenerated),
       lnakoRun: normalize(interpreted),
-      lnakoNative: normalize(native),
     };
+    const compileErrors = [];
+    for (const optimization of ["O0", "O1", "O2", "O3"]) {
+      const nativeExecutable = resolve(temporary, `${testCase.id}-${optimization}${process.platform === "win32" ? ".exe" : ""}`);
+      const nativeCompile = spawnSync(executable, ["build", sourcePath, "-o", nativeExecutable, `-${optimization}`], options);
+      results[`lnakoNative${optimization}`] = normalize(nativeCompile.status === 0 ? spawnSync(nativeExecutable, [], options) : nativeCompile);
+      if (nativeCompile.status !== 0) compileErrors.push(`${optimization}:\n${nativeCompile.stderr}`);
+    }
     const expected = JSON.stringify(results.officialSource);
     if (Object.values(results).some((result) => result.exitCode !== 0 || JSON.stringify(result) !== expected)) {
       failures += 1;
       console.error(`AOT実行差分 ${testCase.id}:\n${JSON.stringify(results, null, 2)}`);
       if (officialCompile.status !== 0) console.error(`公式JavaScript生成エラー:\n${officialCompile.stderr}`);
-      if (nativeCompile.status !== 0) console.error(`lnakoネイティブ生成エラー:\n${nativeCompile.stderr}`);
+      if (compileErrors.length > 0) console.error(`lnakoネイティブ生成エラー:\n${compileErrors.join("\n")}`);
     }
   }
   if (failures > 0) throw new Error(`AOT実行結果の差分が${failures}件あります`);
-  console.log(`公式cnako3・公式生成JavaScript・lnako run・LLVM AOTの4経路差分テスト: ${cases.length}件成功`);
+  console.log(`公式cnako3・公式生成JavaScript・lnako run・LLVM AOT O0/O1/O2/O3の7経路差分テスト: ${cases.length}件成功`);
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }

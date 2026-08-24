@@ -460,7 +460,9 @@ pub const Interpreter = struct {
         var arguments = try self.allocator.alloc(Value, instruction.operands.len);
         defer self.allocator.free(arguments);
         for (instruction.operands, 0..) |operand_id, index| arguments[index] = frame.values[operand_id];
-        const result = if (self.findFunction(instruction.name)) |function|
+        const result = if (instruction.direct_callee) |callee_id|
+            if (callee_id < self.program.functions.len) try self.executeFunction(&self.program.functions[callee_id], arguments, null) else return error.InvalidDirectCallee
+        else if (self.findFunction(instruction.name)) |function|
             try self.executeFunction(function, arguments, null)
         else if (frame.locals.get(instruction.name)) |callable|
             if (callable == .function) try self.callFunctionValue(callable.function, arguments) else return error.NotCallable

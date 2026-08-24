@@ -136,10 +136,17 @@ source
 
 ## LLVMバックエンド
 
+- `ir/optimizer.zig` は `-O1` 以上でNako SSA IRの型推論、直接呼び出し解決、定数伝播、定数分岐簡約、
+  worklist方式のdead code eliminationを行う。最適化前IRを完全複製してから変更するため、同じ入力から
+  `-O0` と最適化済み生成を続けて実行しても元IRは変化しない。
+- 引数型は全静的呼び出しの実引数が一致した場合だけ推論する。関数値として外部へ渡る関数、異なる型を
+  渡す再帰呼び出し、型が確定しない呼び出しがある場合は `dynamic` を維持する。最適化後はIR verifierを
+  再実行し、支配関係、phi入力、直接呼び出し先を含む不整合をLLVMへ渡す前に拒否する。
 - `backend/llvm/api.zig` はLLVM 22.1.8のC APIを実行時に読み込み、実バージョンを `LLVMGetVersion` で
   検証する。製品コンパイラをLLVMのZig/C++ ABIへ静的に結合しない。
 - `backend/llvm/module.zig` はNako SSA IRからタグ付き動的値を使うLLVM IRを生成する。元ソースの
-  `DICompileUnit`、`DIFile`、`DISubprogram`、命令単位の `DILocation` も同時に生成する。
+  `DICompileUnit`、`DIFile`、`DISubprogram`、命令単位の `DILocation` も同時に生成する。`-O1`以上では
+  `number` / `boolean` と証明された値だけpayloadを直接取り出し、動的な数値変換・truthy判定を省略する。
 - `backend/llvm/compiler.zig` はIR解析、最適化前後のモジュール検証、PassBuilder、TargetMachineを順に
   実行する。`--emit llvm-ir|obj|exe` は同一の検証済みモジュールを入力とする。
 - 実行ファイル生成では一時オブジェクトを厳密なパスへ出力し、Clang 22.1.8へLLD 22.1.8の絶対パスを
