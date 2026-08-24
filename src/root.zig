@@ -31,6 +31,7 @@ pub const runtime = struct {
     pub const bigint = @import("runtime/bigint.zig");
     pub const value = @import("runtime/value.zig");
     pub const operators = @import("runtime/operators.zig");
+    pub const interpreter = @import("runtime/interpreter.zig");
 };
 
 pub const Command = enum {
@@ -84,6 +85,29 @@ pub fn usage(writer: *std.Io.Writer) !void {
         \\  -V, --version    バージョンを表示
         \\
     );
+}
+
+test {
+    std.testing.refAllDecls(frontend.source);
+    std.testing.refAllDecls(frontend.josi);
+    std.testing.refAllDecls(frontend.token);
+    std.testing.refAllDecls(frontend.lexer);
+    std.testing.refAllDecls(frontend.syntax_transform);
+    std.testing.refAllDecls(frontend.ast);
+    std.testing.refAllDecls(frontend.diagnostic);
+    std.testing.refAllDecls(frontend.parser);
+    std.testing.refAllDecls(semantic.analyzer);
+    std.testing.refAllDecls(semantic.module_graph);
+    std.testing.refAllDecls(ir.hir);
+    std.testing.refAllDecls(ir.nako_ir);
+    std.testing.refAllDecls(ir.lower_ssa);
+    std.testing.refAllDecls(ir.verifier);
+    std.testing.refAllDecls(ir.printer);
+    std.testing.refAllDecls(runtime.string);
+    std.testing.refAllDecls(runtime.bigint);
+    std.testing.refAllDecls(runtime.value);
+    std.testing.refAllDecls(runtime.operators);
+    std.testing.refAllDecls(runtime.interpreter);
 }
 
 test "コマンドを解析できる" {

@@ -1,0 +1,70 @@
+[
+  {
+    "id": "arithmetic-and-string",
+    "source": "(1+2*3)を表示\n「値=」&10を表示\n(8÷3)を表示\n(8÷÷3)を表示\n"
+  },
+  {
+    "id": "condition",
+    "source": "もし、3>2ならば\n「真」を表示\n違えば\n「偽」を表示\nここまで\n"
+  },
+  {
+    "id": "range-loop",
+    "source": "S=0\nNを1から4まで繰り返す\nS=S+N\nここまで\nSを表示\n"
+  },
+  {
+    "id": "while-loop",
+    "source": "N=3\n(N>0)の間、繰り返す\nNを表示\nN=N-1\nここまで\n"
+  },
+  {
+    "id": "post-test-loop",
+    "source": "N=0\n後判定\nN=N+1\nNを表示\nここまでN>=3になるまで\n"
+  },
+  {
+    "id": "repeat-break",
+    "source": "5回\n回数を表示\nもし、回数=3ならば、抜ける\nここまで\n"
+  },
+  {
+    "id": "function",
+    "source": "●(AとBを)加算とは\nA+Bで戻る\nここまで\n加算(4,5)を表示\n"
+  },
+  {
+    "id": "array-and-dictionary",
+    "source": "A=[1,2]\nA[1]=5\nA[1]を表示\nB={\"x\":7}\nB@\"x\"を表示\n"
+  },
+  {
+    "id": "exception",
+    "source": "エラー監視\n「失敗」のエラー発生\nエラーならば\nエラーメッセージを表示\nここまで\n"
+  },
+  {
+    "id": "dynamic-nadesiko",
+    "source": "「1+2を表示する。」をナデシコする。\n"
+  },
+  {
+    "id": "dynamic-nadesiko-scope",
+    "source": "A=3\n「1+Aを表示する。」をナデシコする。\n"
+  },
+  {
+    "id": "dynamic-nadesiko-result",
+    "source": "「1を表示」をナデシコする。それを表示。\n"
+  },
+  {
+    "id": "dynamic-nadesiko-continue",
+    "source": "「A=1」をナデシコ続。\n「A=A+1;Aを表示」をナデシコ続。\n"
+  },
+  {
+    "id": "break-and-continue",
+    "source": "S=0\nIを1から5まで繰り返す\nもしI=2ならば、続ける\nもしI=4ならば、抜ける\nS=S+I\nここまで\nSを表示\n"
+  },
+  {
+    "id": "foreach",
+    "source": "[3,4]を反復\n対象を表示\nここまで\n{\"a\":1,\"b\":2}を反復\n対象キーを表示\nここまで\n"
+  },
+  {
+    "id": "switch",
+    "source": "2で条件分岐\n1ならば\n「a」を表示\nここまで\n2ならば\n「b」を表示\nここまで\n違えば\n「c」を表示\nここまで\nここまで\n"
+  },
+  {
+    "id": "closure-capture",
+    "source": "●(Aを)加算器作成とは\nF=関数(B)それはA+B\nここまで\nFで戻る\nここまで\nG=加算器作成(10)\nG(5)を表示\n"
+  }
+]

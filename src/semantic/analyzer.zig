@@ -140,7 +140,7 @@ const Analyzer = struct {
             _ = try self.declare(module_index, scope, node.name, if (node.is_const) .constant else .variable, node.span, node.is_export, !node.is_const, 0);
         } else if (node.kind == .variable_list_definition) {
             for (node.arguments) |name| _ = try self.declare(module_index, scope, name.name, if (node.is_const) .constant else .variable, name.span, node.is_export, !node.is_const, 0);
-        } else if (node.kind == .assignment and self.lookupLexical(scope, node.name) == null) {
+        } else if (node.kind == .assignment and self.builtins.get(node.name) == null and self.lookupLexical(scope, node.name) == null) {
             _ = try self.declare(module_index, scope, node.name, .variable, node.span, true, true, 0);
         } else if (node.kind == .for_statement and node.name.len > 0 and self.lookupLexical(scope, node.name) == null) {
             _ = try self.declare(module_index, scope, node.name, .loop_variable, node.span, false, true, 0);
@@ -369,7 +369,7 @@ test "同名の公開シンボルは名前空間で曖昧さを解消する" {
     for (program.diagnostics) |item| if (item.code == .ambiguous_import) {
         ambiguous_count += 1;
     };
-    for (program.bindings) |binding| if (std.mem.eql(u8, binding.resolved_name, "a__F")) {
+    for (program.bindings) |binding| if (binding.kind == .call and std.mem.eql(u8, binding.resolved_name, "a__F")) {
         qualified_count += 1;
     };
     try std.testing.expectEqual(@as(usize, 1), ambiguous_count);
@@ -398,7 +398,7 @@ test "取り込んだ公開関数を非修飾名と修飾名で解決する" {
 
 test "厳チェックの未定義名と定数再代入を診断する" {
     const parser = @import("../frontend/parser.zig");
-    var parsed = try parser.parse(std.testing.allocator, "!厳チェック\n定数 A=1\nA=2\n未定義を表示\n", "strict.nako3");
+    var parsed = try parser.parse(std.testing.allocator, "!厳チェック\n定数 A=1\nA=2\n未宣言値を表示\n", "strict.nako3");
     defer parsed.deinit();
     var program = try analyze(std.testing.allocator, parsed.root.?, "strict.nako3");
     defer program.deinit();

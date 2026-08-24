@@ -23,7 +23,9 @@ pub fn lower(backing_allocator: std.mem.Allocator, hir_program: hir.Program) !ir
         if (!builder.isTerminated()) builder.terminate(.{ .return_value = null });
         try functions.append(allocator, try builder.finish());
     }
-    return .{ .arena = arena, .functions = try functions.toOwnedSlice(allocator) };
+    const module_entries = try allocator.alloc(ir.FunctionId, hir_program.modules.len);
+    for (hir_program.modules, 0..) |module, index| module_entries[index] = module.entry_function;
+    return .{ .arena = arena, .functions = try functions.toOwnedSlice(allocator), .module_entries = module_entries };
 }
 
 const BlockBuilder = struct {
@@ -61,6 +63,7 @@ const FunctionBuilder = struct {
             .entry = 0,
             .return_type = toType(self.function.return_type),
             .is_async = self.function.is_async,
+            .is_test = self.function.is_test,
         };
     }
 

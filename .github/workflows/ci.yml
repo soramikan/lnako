@@ -53,6 +53,8 @@ jobs:
         run: node tools/compare_semantic_oracle.mjs
       - name: Differential dynamic value test
         run: node tools/compare_value_oracle.mjs
+      - name: Differential interpreter test
+        run: node tools/compare_interpreter_oracle.mjs
       - name: Format
         run: zig build fmt-check
       - name: Test
@@ -65,3 +67,5 @@ jobs:
           ./zig-out/bin/lnako --version
           ./zig-out/bin/lnako check tests/fixtures/check-valid.nako3
           ./zig-out/bin/lnako check tests/fixtures/module/main.nako3
+          ./zig-out/bin/lnako run tests/fixtures/run-control.nako3
+          ./zig-out/bin/lnako test tests/fixtures/run-tests.nako3

@@ -91,6 +91,7 @@ const Parser = struct {
     fn parseStatement(self: *Parser) ParseFailure!*ast.Node {
         const token = self.peek();
         if (self.isImportDirective()) return self.parseImportDirective();
+        if (token.kind == .identifier and std.mem.eql(u8, token.value, "それ") and std.mem.eql(u8, token.josi, "は")) return self.parseImplicitResultAssignment();
         return switch (token.kind) {
             .eol => self.parseEol(),
             .keyword_if => self.parseIf(),
@@ -111,6 +112,15 @@ const Parser = struct {
                 break :blk self.parseCallOrControl();
             },
         };
+    }
+
+    fn parseImplicitResultAssignment(self: *Parser) ParseFailure!*ast.Node {
+        const start = self.advance();
+        const value = try self.parseCallExpression();
+        const node = try self.makeNodeWithChildren(.assignment, start, try self.copyChildren(&.{value}));
+        node.name = "それ";
+        node.josi = "";
+        return node;
     }
 
     fn parseEol(self: *Parser) ParseFailure!*ast.Node {
@@ -158,6 +168,7 @@ const Parser = struct {
 
     fn parseIf(self: *Parser) ParseFailure!*ast.Node {
         const start = self.advance();
+        self.skipCommas();
         const condition = try self.parseExpression(0);
         if (!isConditionalJosi(condition.josi) and !self.identifierValue("ならば")) {
             return self.fail(.invalid_control_statement, "『もし』文の条件末尾に『ならば』が必要です", self.peek());
@@ -347,6 +358,15 @@ const Parser = struct {
 
     fn parseAssignment(self: *Parser) ParseFailure!*ast.Node {
         const start = self.peek();
+        if (self.at(.left_bracket)) {
+            const names = try self.parseArrayLiteral();
+            for (names.children) |name| if (name.kind != .word) return self.fail(.invalid_assignment, "分割代入の左辺には変数名が必要です", start);
+            _ = try self.require(.equal, "変数一覧の後ろに『=』が必要です");
+            const value = try self.parseCallExpression();
+            const result = try self.makeNodeWithChildren(.variable_list_definition, start, try self.copyChildren(&.{value}));
+            result.arguments = try self.namesToArguments(names.children);
+            return result;
+        }
         var targets: std.ArrayList(*ast.Node) = .empty;
         try targets.append(self.allocator, try self.parseLValue());
         while (self.at(.comma)) {
@@ -643,6 +663,7 @@ const Parser = struct {
     }
 
     fn parseWhile(self: *Parser, start: Token, condition: *ast.Node) ParseFailure!*ast.Node {
+        self.skipCommas();
         if (self.at(.keyword_repeat)) _ = self.advance();
         const body = try self.parseLoopBody("『間』繰り返し");
         return self.makeNodeWithChildren(.while_statement, start, try self.copyChildren(&.{ condition, body }));
@@ -1213,12 +1234,45 @@ test "もし文とソース位置を構文解析する" {
     try std.testing.expectEqual(@as(usize, 1), statement.span.column);
 }
 
+test "もし直後の読点を許可する" {
+    var result = try parse(std.testing.allocator, "もし、A=1ならば\nB=1\nここまで\n", "条件.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    try std.testing.expectEqual(ast.Kind.if_statement, result.root.?.children[0].kind);
+}
+
+test "間と繰り返すの間の読点を許可する" {
+    var result = try parse(std.testing.allocator, "(N>0)の間、繰り返す\nN=N-1\nここまで\n", "反復.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    try std.testing.expectEqual(ast.Kind.while_statement, result.root.?.children[0].kind);
+}
+
+test "それは構文を暗黙戻り値への代入として扱う" {
+    var result = try parse(std.testing.allocator, "F=関数(A)それはA+1\nここまで\n", "関数.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const function = result.root.?.children[0].children[0];
+    const assignment = function.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.assignment, assignment.kind);
+    try std.testing.expectEqualStrings("それ", assignment.name);
+}
+
 test "配列・辞書・添字代入を構文解析する" {
     var result = try parse(std.testing.allocator, "A={a:1,b:2}\nB=[[0]]\nB[0,1]=A$a\n", "collection.nako3");
     defer result.deinit();
     try std.testing.expect(result.succeeded());
     try std.testing.expectEqual(ast.Kind.object_literal, result.root.?.children[0].children[0].kind);
     try std.testing.expectEqual(ast.Kind.array_assignment, result.root.?.children[4].kind);
+}
+
+test "角括弧の分割代入を構文解析する" {
+    var result = try parse(std.testing.allocator, "[A,B]=[1,2]\n", "分割.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const assignment = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.variable_list_definition, assignment.kind);
+    try std.testing.expectEqual(@as(usize, 2), assignment.arguments.len);
 }
 
 test "閉じていないブロックを位置付き診断にする" {

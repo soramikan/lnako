@@ -241,6 +241,10 @@ const HeapObject = union(enum) {
 };
 
 pub const CollectionStats = struct { before: usize, after: usize, collected: usize };
+pub const RootProvider = struct {
+    context: *anyopaque,
+    traceFn: *const fn (context: *anyopaque, runtime: *Runtime) anyerror!void,
+};
 
 /// 生成コードはValueを格納したスタック領域のアドレスをこのフレームへ登録する。
 pub const RootFrame = struct {
@@ -263,6 +267,7 @@ pub const Runtime = struct {
     objects: std.ArrayList(HeapObject) = .empty,
     roots: std.ArrayList(*Value) = .empty,
     grey_objects: std.ArrayList(HeapObject) = .empty,
+    root_providers: std.ArrayList(RootProvider) = .empty,
     stringifying_arrays: std.ArrayList(*Array) = .empty,
     next_collection: usize = 64,
     stress_collection: bool = false,
@@ -276,6 +281,7 @@ pub const Runtime = struct {
         self.objects.deinit(self.backing_allocator);
         self.roots.deinit(self.backing_allocator);
         self.grey_objects.deinit(self.backing_allocator);
+        self.root_providers.deinit(self.backing_allocator);
         self.stringifying_arrays.deinit(self.backing_allocator);
         self.* = undefined;
     }
@@ -290,6 +296,25 @@ pub const Runtime = struct {
 
     pub fn objectCount(self: Runtime) usize {
         return self.objects.items.len;
+    }
+
+    pub fn registerRootProvider(self: *Runtime, provider: RootProvider) !void {
+        try self.root_providers.append(self.allocator(), provider);
+    }
+
+    pub fn unregisterRootProvider(self: *Runtime, context: *anyopaque) void {
+        var index = self.root_providers.items.len;
+        while (index > 0) {
+            index -= 1;
+            if (self.root_providers.items[index].context == context) {
+                _ = self.root_providers.swapRemove(index);
+                return;
+            }
+        }
+    }
+
+    pub fn traceExternal(self: *Runtime, value: Value) !void {
+        try self.markValue(value);
     }
 
     pub fn setGcStress(self: *Runtime, enabled: bool) void {
@@ -504,6 +529,7 @@ pub const Runtime = struct {
         errdefer self.clearAllMarks();
         const before = self.objects.items.len;
         for (self.roots.items) |root| try self.markValue(root.*);
+        for (self.root_providers.items) |provider| try provider.traceFn(provider.context, self);
         try self.traceGreyObjects();
         var index: usize = 0;
         while (index < self.objects.items.len) {
@@ -711,7 +737,8 @@ test "動的値の真偽変換と同値性をJS規則で扱う" {
     defer runtime.deinit();
     const empty = try runtime.stringUtf8("");
     const zero_bigint = try runtime.bigIntLiteral("0n");
-    try std.testing.expect(!Value.undefined.toBoolean());
+    const undefined_value: Value = .undefined;
+    try std.testing.expect(!undefined_value.toBoolean());
     try std.testing.expect(!empty.toBoolean());
     try std.testing.expect(!zero_bigint.toBoolean());
     try std.testing.expect(!Value.strictEqual(.{ .number = std.math.nan(f64) }, .{ .number = std.math.nan(f64) }));

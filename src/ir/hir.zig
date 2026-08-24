@@ -74,6 +74,7 @@ pub const Function = struct {
     return_type: TypeHint = .dynamic,
     is_async: bool = false,
     is_entry: bool = false,
+    is_test: bool = false,
     span: ast.Span,
 };
 
@@ -169,9 +170,17 @@ const Lowerer = struct {
     functions: std.ArrayList(Function) = .empty,
     nodes: std.ArrayList(Node) = .empty,
     lambda_index: usize = 0,
+    anonymous_names: std.AutoHashMapUnmanaged(*ast.Node, []const u8) = .empty,
 
     fn collectFunctions(self: *Lowerer, node: *ast.Node, module_index: u32) !void {
-        if (node.kind == .function_definition or node.kind == .test_definition) {
+        if (node.kind == .function_definition or node.kind == .test_definition or node.kind == .anonymous_function) {
+            for (node.children) |child| try self.collectFunctions(child, module_index);
+            const function_name = if (node.kind == .anonymous_function) blk: {
+                const name = try std.fmt.allocPrint(self.allocator, "{s}__lambda${d}", .{ self.semantic_program.modules[module_index].name, self.lambda_index });
+                self.lambda_index += 1;
+                try self.anonymous_names.put(self.allocator, node, name);
+                break :blk name;
+            } else try self.resolvedName(node, node.name);
             const body = if (node.children.len > 0) try self.lowerNode(node.children[0], module_index) else try self.addNode(.nop, node.span, &.{});
             const function_id: FunctionId = @intCast(self.functions.items.len);
             var parameters = try self.allocator.alloc(Parameter, node.arguments.len);
@@ -181,10 +190,11 @@ const Lowerer = struct {
             };
             try self.functions.append(self.allocator, .{
                 .id = function_id,
-                .name = try self.resolvedName(node, node.name),
+                .name = function_name,
                 .parameters = parameters,
                 .body = body,
                 .is_async = node.is_async,
+                .is_test = node.kind == .test_definition,
                 .span = node.span,
             });
             return;
@@ -247,8 +257,7 @@ const Lowerer = struct {
         result.boolean_value = node.number_value != null and node.number_value.? != 0;
         result.loop_direction = node.loop_direction;
         if (node.kind == .anonymous_function) {
-            result.name = try std.fmt.allocPrint(self.allocator, "lambda${d}", .{self.lambda_index});
-            self.lambda_index += 1;
+            result.name = try self.allocator.dupe(u8, self.anonymous_names.get(node) orelse return error.MissingAnonymousFunction);
         }
         return id;
     }
@@ -335,8 +344,9 @@ test "名前解決済みASTをHIRへ下げる" {
 
 test "分割代入と増減とループ属性をHIRへ保持する" {
     const parser = @import("../frontend/parser.zig");
-    var parsed = try parser.parse(std.testing.allocator, "[A,B]=[1,2]\nAを1増\nIを1から3まで1ずつ増繰返\nA=A+I\nここまで\n", "main.nako3");
+    var parsed = try parser.parse(std.testing.allocator, "[A,B]=[1,2]\nAを1増\nIを1から3まで1ずつ増やし繰り返す\nA=A+I\nここまで\n", "main.nako3");
     defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
     var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
     defer analyzed.deinit();
     var program = try lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);

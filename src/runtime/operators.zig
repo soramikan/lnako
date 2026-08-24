@@ -123,7 +123,7 @@ pub fn compare(runtime: *Runtime, left: Value, right: Value) !?std.math.Order {
     }
     if (left_primitive == .bigint) return compareBigIntNumber(left_primitive.bigint.*, try right_primitive.toNumber(runtime.allocator()));
     if (right_primitive == .bigint) {
-        const order = compareBigIntNumber(right_primitive.bigint.*, try left_primitive.toNumber(runtime.allocator())) orelse return null;
+        const order = (try compareBigIntNumber(right_primitive.bigint.*, try left_primitive.toNumber(runtime.allocator()))) orelse return null;
         return invertOrder(order);
     }
     const left_number = try left_primitive.toNumber(runtime.allocator());

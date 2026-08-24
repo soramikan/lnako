@@ -133,9 +133,11 @@ pub fn normalize(allocator: std.mem.Allocator, input: []const u8) !NormalizedSou
                 if (replacement) |ascii| {
                     encoded[0] = ascii;
                     try appendMapped(&output, &offsets, allocator, encoded[0..1], i);
+                    if (ascii == '#') state = .line_comment;
                 } else if (decoded.codepoint >= 0xFF01 and decoded.codepoint <= 0xFF5E) {
                     encoded[0] = @intCast(decoded.codepoint - 0xFEE0);
                     try appendMapped(&output, &offsets, allocator, encoded[0..1], i);
+                    if (encoded[0] == '#') state = .line_comment;
                 } else {
                     try appendMapped(&output, &offsets, allocator, input[i .. i + decoded.len], i);
                 }

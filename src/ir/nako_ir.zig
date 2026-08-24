@@ -92,11 +92,13 @@ pub const Function = struct {
     entry: BlockId,
     return_type: Type,
     is_async: bool,
+    is_test: bool,
 };
 
 pub const Program = struct {
     arena: std.heap.ArenaAllocator,
     functions: []Function,
+    module_entries: []FunctionId,
 
     pub fn deinit(self: *Program) void {
         self.arena.deinit();

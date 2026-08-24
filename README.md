@@ -21,8 +21,8 @@ zig build test
 zig build run -- --help
 ```
 
-構文・意味・HIR/SSA中間表現の検査は実装済みです。相対 `.nako3` 取り込みも再帰的に検査します。エラー時は元ソースの
-ファイル名・行・列、診断コード、該当行を表示し、終了コード1を返します。
+構文・意味・HIR/SSA中間表現の検査と、SSA IRの直接実行は実装済みです。相対 `.nako3` 取り込みも再帰的に
+検査・実行します。エラー時は元ソースのファイル名・行・列、診断コード、該当行を表示し、終了コード1を返します。
 
 ランタイム値層では、JS互換のbinary64、`undefined` / `null` / 真偽値、UTF-16文字列、任意精度BigIntと
 それらの変換・演算を実装済みです。配列、挿入順辞書、関数・クロージャと、循環参照を回収する正確な
@@ -30,7 +30,13 @@ mark-and-sweep GCも値層へ統合しています。Node 24との差分テス�
 
 ```sh
 zig build run -- check program.nako3
+zig build run -- run program.nako3
+zig build run -- test tests/
 ```
+
+`run` は条件・反復・関数・クロージャ・配列・辞書・例外監視・動的ななでしこ実行をNako SSA IR実行器で処理します。
+`test` は単一ファイルまたはディレクトリ以下の `.nako3` を読み、テスト定義を決定的な順序で実行します。LLVM AOT生成は
+後続のバックエンド実装まで未対応です。
 
 ## CLI
 
@@ -43,8 +49,8 @@ lnako compat report
 lnako benchmark
 ```
 
-現時点では `check`、ヘルプ、バージョン表示を利用できます。ほかのサブコマンドは後続の
-IR・LLVMバックエンド・ランタイム実装とともに有効化します。
+現時点では `run`、`check`、`test`、ヘルプ、バージョン表示を利用できます。`build`、`compat report`、
+`benchmark` は後続のLLVMバックエンド・標準命令・配布実装とともに有効化します。
 
 設計と検証方針は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) と [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) を参照してください。
 

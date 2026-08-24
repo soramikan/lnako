@@ -18,12 +18,18 @@ node tools/compare_parser_oracle.mjs
 node tools/compare_parser_diagnostics_oracle.mjs
 node tools/compare_semantic_oracle.mjs
 node tools/compare_value_oracle.mjs
+node tools/compare_interpreter_oracle.mjs
 node tools/check_builtin_catalog.mjs
 ```
 
 AST差分テストは公式の `core/test/fixtures/parser_corpus.mjs` を直接読み、コメント・空行の保持方式に
 左右されない構文フィンガープリントを比較します。ローカル追加ケースは
 `tests/oracle/parser-cases.json`、拒否ケースは `tests/oracle/parser-diagnostic-cases.json` に置きます。
+実行差分ケースは `tests/oracle/interpreter-cases.json` に置き、公式CLIと `lnako run` の双方で成功することを
+必須にします。
+
+`src/root.zig` のテストルートは各サブモジュールを明示的に参照します。Zigの遅延解析によりテストが未収集に
+ならないよう、`zig build test --summary all` の実行件数も確認してください。
 
 HIRから生成したNako SSA IRは、次の開発用プローブで確認できます。出力前にIR検証も実行されます。
 

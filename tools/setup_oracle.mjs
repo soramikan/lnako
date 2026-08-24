@@ -9,11 +9,13 @@ const cacheRoot = resolve(root, ".cache/oracle");
 const target = resolve(cacheRoot, "nadesiko3-3.7.24");
 const marker = resolve(target, ".lnako-oracle.json");
 const lock = JSON.parse(await readFile(resolve(root, "compat/upstream.lock.json"), "utf8")).nadesiko3;
+const oracleBuild = 2;
 
 try {
   const current = JSON.parse(await readFile(marker, "utf8"));
   await access(resolve(target, "core/src/nako_lexer.mjs"));
-  if (current.commit === lock.commit && current.archiveSha256 === lock.archive.sha256) {
+  await access(resolve(target, "src/cnako3.mjs"));
+  if (current.commit === lock.commit && current.archiveSha256 === lock.archive.sha256 && current.oracleBuild === oracleBuild) {
     console.log(`公式オラクルを確認しました: ${lock.tag} (${lock.commit.slice(0, 7)})`);
     process.exit(0);
   }
@@ -53,9 +55,14 @@ try {
     ],
     extracted,
   );
+  run(
+    process.execPath,
+    ["node_modules/typescript/bin/tsc", "-p", "tsconfig.json", "--pretty", "false"],
+    extracted,
+  );
   await writeFile(
     resolve(extracted, ".lnako-oracle.json"),
-    `${JSON.stringify({ tag: lock.tag, commit: lock.commit, archiveSha256: lock.archive.sha256 }, null, 2)}\n`,
+    `${JSON.stringify({ tag: lock.tag, commit: lock.commit, archiveSha256: lock.archive.sha256, oracleBuild }, null, 2)}\n`,
   );
   await rm(target, { recursive: true, force: true });
   await rename(extracted, target);
