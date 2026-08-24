@@ -315,13 +315,13 @@ pub fn installModules(runtime: *Runtime, state: *State, modules: []const @import
     if (!state.enabled) return;
     const engine = try state.ensure(runtime, effects);
     for (modules) |module| {
-        const filename = try runtime.allocator().dupeZ(u8, module.path);
+        const filename = try moduleFilename(runtime.allocator(), module.path);
         defer runtime.allocator().free(filename);
         if (lnako_qjs_add_module_source(engine, filename.ptr, module.source.ptr, module.source.len) < 0) return error.QuickJsModuleRegistrationFailed;
     }
     for (modules) |module| {
         if (!module.is_plugin) continue;
-        const filename = try runtime.allocator().dupeZ(u8, module.path);
+        const filename = try moduleFilename(runtime.allocator(), module.path);
         defer runtime.allocator().free(filename);
         const plugin = lnako_qjs_eval_module(engine, module.source.ptr, module.source.len, filename.ptr) orelse return quickJsError(engine);
         defer lnako_qjs_value_free(plugin);
@@ -352,6 +352,14 @@ pub fn installModules(runtime: *Runtime, state: *State, modules: []const @import
         const raw_value = lnako_qjs_get_property(definition_value, "value") orelse return quickJsError(engine);
         try effects.setGlobal(name, try fromRaw(state, runtime, raw_value));
     }
+}
+
+fn moduleFilename(allocator: std.mem.Allocator, path: []const u8) ![:0]u8 {
+    const filename = try allocator.dupeZ(u8, path);
+    for (filename) |*character| if (character.* == '\\') {
+        character.* = '/';
+    };
+    return filename;
 }
 
 fn callPlugin(self: *State, runtime: *Runtime, name: []const u8, arguments: []const Value) !?Value {
@@ -764,4 +772,10 @@ fn quickJsError(engine: *Engine) anyerror {
 
 test "QuickJS互換ビルド状態を公開する" {
     try std.testing.expectEqual(build_options.quickjs_enabled, available());
+}
+
+test "QuickJSモジュール名のWindows区切りを正規化する" {
+    const filename = try moduleFilename(std.testing.allocator, "C:\\work\\plugin\\main.mjs");
+    defer std.testing.allocator.free(filename);
+    try std.testing.expectEqualStrings("C:/work/plugin/main.mjs", filename);
 }
