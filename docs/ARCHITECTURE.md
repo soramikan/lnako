@@ -26,6 +26,14 @@ source
 - `plugins`: 標準命令と `lnako_plugin_v1`
 - `cli`: build/run/check/test/compat/benchmark
 
+## フロントエンドの入力規約
+
+- `frontend/source.zig` は改行、全角ASCII、句読点、演算記号を正規化し、文字列とコメントの内容を保持する。
+- 正規化後の各UTF-8バイト位置から元入力のバイト位置へ戻せるソースマップを保持する。
+- `frontend/lexer.zig` は数値・BigInt・文字列・演算子・予約語と助詞を位置情報付きトークンへ変換する。
+- 助詞は最長一致で読み、`raw_josi` と意味上の `josi` を分離する。公式処理系との差分テストは
+  `tools/compare_lexer_oracle.mjs` で固定バージョンのTypeScript実装へ直接照合する。
+
 ## 互換性の原則
 
 - JavaScriptの `Number` に合わせ、通常数値をIEEE 754 binary64として扱う。
@@ -33,4 +41,3 @@ source
 - 通常モードはJSエンジンを含めない。
 - JS固有命令は `--compat-js` 指定時だけQuickJSへ接続する。
 - 対応していない機能を暗黙に代替せず、互換表と診断に理由を出す。
-

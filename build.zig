@@ -27,6 +27,20 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_cmd.addArgs(args);
     run_step.dependOn(&run_cmd.step);
 
+    const lexer_probe = b.addExecutable(.{
+        .name = "lexer-probe",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/lexer_probe.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "lnako", .module = lnako }},
+        }),
+    });
+    const lexer_probe_step = b.step("lexer-probe", "字句解析結果をJSON Linesで出力する");
+    const lexer_probe_run = b.addRunArtifact(lexer_probe);
+    if (b.args) |args| lexer_probe_run.addArgs(args);
+    lexer_probe_step.dependOn(&lexer_probe_run.step);
+
     const module_tests = b.addTest(.{ .root_module = lnako });
     const run_module_tests = b.addRunArtifact(module_tests);
     const exe_tests = b.addTest(.{ .root_module = exe.root_module });
@@ -38,7 +52,7 @@ pub fn build(b: *std.Build) void {
 
     const fmt_step = b.step("fmt-check", "Zigソースのフォーマットを検査する");
     const fmt = b.addFmt(.{
-        .paths = &.{ "build.zig", "src" },
+        .paths = &.{ "build.zig", "src", "tools" },
         .check = true,
     });
     fmt_step.dependOn(&fmt.step);

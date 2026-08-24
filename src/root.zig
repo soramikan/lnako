@@ -2,6 +2,13 @@ const std = @import("std");
 
 pub const version = "0.0.0-dev";
 
+pub const frontend = struct {
+    pub const source = @import("frontend/source.zig");
+    pub const josi = @import("frontend/josi.zig");
+    pub const token = @import("frontend/token.zig");
+    pub const lexer = @import("frontend/lexer.zig");
+};
+
 pub const Command = enum {
     build,
     run,

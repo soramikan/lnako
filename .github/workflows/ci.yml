@@ -33,6 +33,14 @@ jobs:
           node-version: 24.15.0
       - name: Verify compatibility baseline
         run: node tools/sync_compat.mjs --check
+      - uses: actions/cache@v4
+        with:
+          path: .cache/oracle
+          key: nadesiko3-oracle-3.7.24-${{ runner.os }}-v1
+      - name: Build official oracle
+        run: node tools/setup_oracle.mjs
+      - name: Differential lexer test
+        run: node tools/compare_lexer_oracle.mjs
       - name: Format
         run: zig build fmt-check
       - name: Test
