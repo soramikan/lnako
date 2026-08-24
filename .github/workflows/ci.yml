@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            os: ubuntu-24.04
+          - name: macOS arm64
+            os: macos-15
+          - name: Windows x86_64
+            os: windows-2025
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Format
+        run: zig build fmt-check
+      - name: Test
+        run: zig build test
+      - name: Build
+        run: zig build -Doptimize=ReleaseSafe
+      - name: Smoke test
+        shell: bash
+        run: ./zig-out/bin/lnako --version
+

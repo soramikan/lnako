@@ -1,0 +1,7 @@
+.DS_Store
+.zig-cache/
+zig-out/
+.cache/
+benchmarks/results/*.json
+!benchmarks/results/.gitkeep
+
