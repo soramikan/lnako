@@ -8,10 +8,14 @@ const sources = [
   ["tests/oracle/node-file-cases.json", "公式cnako3とのNodeホスト差分テストに成功"],
   ["tests/oracle/node-exit-cases.json", "独立プロセスで標準出力と終了コードの公式差分テストに成功"],
   ["tests/oracle/node-native-cases.json", "ZigネイティブZIPの作成・展開スモークテストに成功"],
+  ["tests/oracle/node-crypto-cases.json", "Node 24との全ハッシュ別名・乱数境界の公式差分テストに成功"],
+  ["tests/oracle/node-http-cases.json", "公式cnako3とのHTTP・ネットワーク差分テストに成功"],
+  ["tests/oracle/http-server-cases.json", "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"],
 ];
 
 for (const [path, reason] of sources) {
-  const cases = JSON.parse(await readFile(resolve(root, path), "utf8"));
+  const loaded = JSON.parse(await readFile(resolve(root, path), "utf8"));
+  const cases = Array.isArray(loaded) ? loaded : [loaded];
   for (const testCase of cases) for (const name of testCase.commands) register(name, testCase.id, reason);
 }
 const interrupt = JSON.parse(await readFile(resolve(root, "tests/oracle/node-interrupt-case.json"), "utf8"));

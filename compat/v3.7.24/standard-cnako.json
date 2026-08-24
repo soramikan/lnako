@@ -11438,14 +11438,16 @@
       "category": "ネットワーク",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-network-addresses"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0760",
@@ -11461,14 +11463,16 @@
       "category": "ネットワーク",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-network-addresses"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0761",
@@ -11484,14 +11488,16 @@
       "category": "Ajax",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-callbacks"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0762",
@@ -11507,14 +11513,16 @@
       "category": "Ajax",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-callbacks"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0763",
@@ -11530,14 +11538,16 @@
       "category": "Ajax",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-callbacks"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0764",
@@ -11553,14 +11563,17 @@
       "category": "Ajax",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-callbacks",
+        "plugin-node-http-onerror"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0765",
@@ -11576,14 +11589,16 @@
       "category": "Ajax",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-callbacks"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0766",
@@ -11599,14 +11614,17 @@
       "category": "Ajax",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-callbacks",
+        "plugin-node-http-onerror"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0767",
@@ -11622,14 +11640,16 @@
       "category": "Ajax",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-options-and-promises"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0768",
@@ -11645,14 +11665,16 @@
       "category": "Ajax",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-options-and-promises"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0769",
@@ -11668,14 +11690,16 @@
       "category": "Ajax",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-options-and-promises"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0770",
@@ -11691,14 +11715,16 @@
       "category": "Ajax",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-options-and-promises"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0771",
@@ -11714,14 +11740,16 @@
       "category": "Ajax",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-options-and-promises"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0772",
@@ -11737,14 +11765,16 @@
       "category": "Ajax",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-options-and-promises"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0773",
@@ -11760,14 +11790,16 @@
       "category": "Ajax",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-options-and-promises"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0774",
@@ -11783,14 +11815,16 @@
       "category": "Ajax",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-options-and-promises"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0775",
@@ -11806,14 +11840,16 @@
       "category": "Ajax",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-async-values"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0776",
@@ -11829,14 +11865,16 @@
       "category": "Ajax",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-post-data"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0777",
@@ -11852,14 +11890,16 @@
       "category": "Ajax",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-async-values"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0778",
@@ -11875,14 +11915,16 @@
       "category": "Ajax",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-async-values"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0779",
@@ -11898,14 +11940,16 @@
       "category": "新AJAX",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-async-values"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0780",
@@ -11921,14 +11965,16 @@
       "category": "新AJAX",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-async-values"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0781",
@@ -11944,14 +11990,16 @@
       "category": "新AJAX",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-async-values"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0782",
@@ -11967,14 +12015,17 @@
       "category": "新AJAX",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-discord",
+        "plugin-node-http-discord-failure"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0783",
@@ -11990,14 +12041,16 @@
       "category": "新AJAX",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-discord-file"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0784",
@@ -12013,14 +12066,16 @@
       "category": "LINE",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-line-message-discontinued"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0785",
@@ -12036,14 +12091,16 @@
       "category": "LINE",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-http-line-image-discontinued"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0786",
@@ -12187,14 +12244,16 @@
       "category": "ハッシュ関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-crypto"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Node 24との全ハッシュ別名・乱数境界の公式差分テストに成功"
     },
     {
       "id": "command-0792",
@@ -12210,14 +12269,16 @@
       "category": "ハッシュ関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-crypto"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Node 24との全ハッシュ別名・乱数境界の公式差分テストに成功"
     },
     {
       "id": "command-0793",
@@ -12233,14 +12294,16 @@
       "category": "ハッシュ関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-crypto"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Node 24との全ハッシュ別名・乱数境界の公式差分テストに成功"
     },
     {
       "id": "command-0794",
@@ -12256,14 +12319,16 @@
       "category": "ハッシュ関数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-node-crypto"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Node 24との全ハッシュ別名・乱数境界の公式差分テストに成功"
     },
     {
       "id": "command-0795",
@@ -12278,14 +12343,16 @@
       "category": "簡易HTTPサーバ",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-httpserver-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0796",
@@ -12300,14 +12367,16 @@
       "category": "簡易HTTPサーバ",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-httpserver-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0797",
@@ -12322,14 +12391,16 @@
       "category": "簡易HTTPサーバ",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-httpserver-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0798",
@@ -12344,14 +12415,16 @@
       "category": "簡易HTTPサーバ",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-httpserver-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0799",
@@ -12366,14 +12439,16 @@
       "category": "簡易HTTPサーバ",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-httpserver-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0800",
@@ -12388,14 +12463,16 @@
       "category": "簡易HTTPサーバ",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-httpserver-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0801",
@@ -12410,14 +12487,16 @@
       "category": "簡易HTTPサーバ",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-httpserver-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0802",
@@ -12432,14 +12511,16 @@
       "category": "簡易HTTPサーバ",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-httpserver-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0803",
@@ -12454,14 +12535,16 @@
       "category": "簡易HTTPサーバ",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-httpserver-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0804",
@@ -12476,14 +12559,16 @@
       "category": "簡易HTTPサーバ",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-httpserver-all"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0805",

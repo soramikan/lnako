@@ -13,6 +13,7 @@ const plugin_csv = @import("../plugins/csv.zig");
 const plugin_toml = @import("../plugins/toml.zig");
 const plugin_node = @import("../plugins/node.zig");
 const plugin_encoding = @import("../plugins/encoding.zig");
+const plugin_http_server = @import("../plugins/http_server.zig");
 
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
@@ -25,6 +26,7 @@ pub const Host = struct {
     monotonicMillisecondsFn: ?*const fn (context: *anyopaque) anyerror!f64 = null,
     randomFn: ?*const fn (context: *anyopaque) anyerror!f64 = null,
     node_context: ?plugin_node.Context = null,
+    http_server_context: ?plugin_http_server.Context = null,
 
     pub fn write(self: Host, bytes: []const u8) !void {
         try self.writeFn(self.context, bytes);
@@ -108,7 +110,7 @@ pub const BufferHost = struct {
 
 pub const TestResult = struct { name: []const u8, passed: bool, message: []const u8 = "" };
 
-const IteratorKind = enum { repeat, range, array, string, dictionary };
+const IteratorKind = enum { repeat, range, bytes, array, string, dictionary };
 const IteratorState = struct {
     kind: IteratorKind,
     source: Value = .undefined,
@@ -186,6 +188,7 @@ pub const Interpreter = struct {
     print_pool: std.ArrayList(u8) = .empty,
     csv_state: plugin_csv.State,
     node_state: plugin_node.State = .{},
+    http_server_state: plugin_http_server.State = .{},
     timers: std.ArrayList(Timer) = .empty,
     promise_resolvers: std.AutoHashMapUnmanaged(*value_mod.Function, PromiseResolver) = .empty,
     promise_all_handlers: std.AutoHashMapUnmanaged(*value_mod.Function, PromiseAllHandler) = .empty,
@@ -213,6 +216,7 @@ pub const Interpreter = struct {
         self.print_pool.deinit(self.allocator);
         self.csv_state.deinit();
         self.node_state.deinit(self.allocator);
+        self.http_server_state.deinit(self.allocator);
         self.timers.deinit(self.allocator);
         self.promise_resolvers.deinit(self.allocator);
         self.promise_all_handlers.deinit(self.allocator);
@@ -571,6 +575,7 @@ pub const Interpreter = struct {
         if (try plugin_csv.call(self.runtime, &self.csv_state, name, arguments)) |value| return value;
         if (try plugin_toml.call(self.runtime, name, arguments)) |value| return value;
         if (self.host.node_context) |node_context| if (try plugin_node.call(self.runtime, &self.node_state, node_context, self.nodeEffects(), name, arguments)) |value| return value;
+        if (self.host.http_server_context) |server_context| if (try plugin_http_server.call(self.runtime, &self.http_server_state, server_context, self.httpServerEffects(), name, arguments)) |value| return value;
         if (try plugin_encoding.call(self.runtime, name, arguments)) |value| return value;
         if (try plugin_system.callWithContext(self.runtime, name, arguments, plugin_context)) |value| return value;
         return error.UnknownCommand;
@@ -581,6 +586,7 @@ pub const Interpreter = struct {
         try plugin_system.constants.install(self.runtime, .{ .context = self, .setFn = installSystemConstant });
         try plugin_system.datetime.install(self.runtime, .{ .context = self, .setFn = installSystemConstant });
         if (self.host.node_context) |node_context| try plugin_node.install(self.runtime, node_context, .{ .context = self, .setFn = installSystemConstant });
+        if (self.host.http_server_context != null) try plugin_http_server.install(self.runtime, .{ .context = self, .setFn = installSystemConstant });
         self.system_initialized = true;
     }
 
@@ -685,6 +691,15 @@ pub const Interpreter = struct {
             .invokeFn = pluginCall,
             .resolveFn = nodeResolve,
             .getGlobalFn = nodeGetGlobal,
+            .setGlobalFn = nodeSetGlobal,
+        };
+    }
+
+    fn httpServerEffects(self: *Interpreter) plugin_http_server.Effects {
+        return .{
+            .context = self,
+            .invokeFn = pluginCall,
+            .resolveFn = nodeResolve,
             .setGlobalFn = nodeSetGlobal,
         };
     }
@@ -927,6 +942,8 @@ pub const Interpreter = struct {
                 try self.executeTimer(self.earliestTimerIndex().?);
             } else if (commands_pending) {
                 try self.sleepEventSlice(1);
+            } else if (try self.pollHttpServer()) {
+                try self.countEvent();
             } else return;
         }
     }
@@ -997,6 +1014,12 @@ pub const Interpreter = struct {
         return plugin_node.pollOperations(self.runtime, &self.node_state, context, self.nodeEffects());
     }
 
+    fn pollHttpServer(self: *Interpreter) !bool {
+        if (self.call_depth != 0) return false;
+        const context = self.host.http_server_context orelse return false;
+        return plugin_http_server.poll(self.runtime, &self.http_server_state, context, self.httpServerEffects());
+    }
+
     fn executePromiseTask(self: *Interpreter, task: value_mod.PromiseTask) !void {
         var callback = task.callback;
         var settled = task.settled_value;
@@ -1065,6 +1088,7 @@ pub const Interpreter = struct {
     }
 
     fn getOne(self: *Interpreter, container: Value, key: Value) !Value {
+        if (container == .bytes) return container.bytes.get(try valueIndex(self.runtime, key));
         if (container == .array) return container.array.get(try valueIndex(self.runtime, key));
         if (container == .dictionary) {
             const text = try self.runtime.valueToString(key);
@@ -1085,6 +1109,15 @@ pub const Interpreter = struct {
         var index: usize = 0;
         while (index + 1 < keys.len) : (index += 1) container = try self.getOne(container, frame.values[keys[index]]);
         const key = frame.values[keys[keys.len - 1]];
+        if (container == .bytes) {
+            const number = try self.runtime.valueToNumber(value);
+            const byte: u8 = if (!std.math.isFinite(number) or number == 0)
+                0
+            else
+                @intFromFloat(@mod(@trunc(number), 256));
+            container.bytes.set(try valueIndex(self.runtime, key), byte);
+            return;
+        }
         if (container == .array) return container.array.set(try valueIndex(self.runtime, key), value);
         if (container == .dictionary) {
             const text = try self.runtime.valueToString(key);
@@ -1141,6 +1174,7 @@ pub const Interpreter = struct {
             const source = self.operand(frame, instruction, 0);
             state = switch (source) {
                 .number => |number| .{ .kind = .repeat, .count = try repeatCount(number) },
+                .bytes => .{ .kind = .bytes, .source = source, .count = source.bytes.bytes.len },
                 .array => .{ .kind = .array, .source = source, .count = source.array.len() },
                 .string => .{ .kind = .string, .source = source, .count = source.string.len() },
                 .dictionary => .{ .kind = .dictionary, .source = source, .count = source.dictionary.len() },
@@ -1177,6 +1211,12 @@ pub const Interpreter = struct {
                 if (frame.locals.contains(state.variable_name)) {
                     try frame.locals.put(self.allocator, state.variable_name, result);
                 } else try self.setGlobal(state.variable_name, result);
+            },
+            .bytes => {
+                result = state.source.bytes.get(state.index);
+                try self.setGlobal("対象キー", .{ .number = @floatFromInt(state.index) });
+                state.index += 1;
+                try self.setGlobal("対象", result);
             },
             .array => {
                 result = state.source.array.get(state.index);
@@ -1303,6 +1343,7 @@ pub const Interpreter = struct {
             try runtime.traceExternal(.{ .array = state.results });
         }
         try self.node_state.trace(runtime);
+        try self.http_server_state.trace(runtime);
     }
 };
 
@@ -1364,6 +1405,34 @@ test "SSA IRで条件・反復・関数・配列辞書を実行する" {
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("10\n5\n7\n", host.written());
+}
+
+test "バイト列の添字・更新・反復をUint8Array互換で実行する" {
+    const TestNode = struct {
+        fn cwd(_: *anyopaque, allocator: std.mem.Allocator) ![]u8 {
+            return allocator.dupe(u8, ".");
+        }
+
+        fn randomBytes(_: *anyopaque, output: []u8) !void {
+            for (output, 0..) |*byte, index| byte.* = @intCast(index);
+        }
+    };
+    const source = "B=3のランダム配列生成\nB[0]を表示\nB[1]=258\n要素数(B)を表示\nBを反復\n対象を表示\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var runtime_host = host.host();
+    runtime_host.node_context = .{ .context = &host, .cwdFn = TestNode.cwd, .randomBytesFn = TestNode.randomBytes };
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, runtime_host);
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("0\n3\n0\n2\n2\n", host.written());
 }
 
 test "連続表示は公式処理系と同じく改行する" {

@@ -507,6 +507,17 @@ const Parser = struct {
             try arguments.append(self.allocator, expression);
 
             if (self.at(.identifier)) {
+                // 助詞付きの識別子の直後に別の命令名が続く場合、手前は命令ではなく
+                // 引数として扱う。例: `201でHを簡易HTTPサーバヘッダ出力`。
+                // 「して」などの連文助詞と「には」のコールバック構文は従来どおり
+                // その位置の識別子を命令として確定する。
+                if (self.peek().josi.len > 0 and
+                    !isSequenceJosi(self.peek().josi) and
+                    !isImplicitCallbackJosi(self.peek().josi) and
+                    self.peekAhead(1).kind == .identifier)
+                {
+                    continue;
+                }
                 if ((self.identifierValue("増") or self.identifierValue("減")) and self.peekAhead(1).kind == .keyword_repeat) {
                     return self.parseFor(start, arguments.items);
                 }
@@ -1247,6 +1258,21 @@ test "代入・演算子優先順位・命令呼び出しを構文解析する" 
     try std.testing.expectEqualStrings("表示", call.name);
     try std.testing.expectEqual(ast.Kind.binary_operator, call.children[0].kind);
     try std.testing.expectEqualStrings("+", call.children[0].operator);
+}
+
+test "識別子変数を途中の命令と誤認せず複数引数を構文解析する" {
+    var result = try parse(std.testing.allocator, "201でHを簡易HTTPサーバヘッダ出力\n", "http-server.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const call = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, call.kind);
+    try std.testing.expectEqualStrings("簡易HTTPサーバヘッダ出力", call.name);
+    try std.testing.expectEqual(@as(usize, 2), call.children.len);
+    try std.testing.expectEqual(ast.Kind.number, call.children[0].kind);
+    try std.testing.expectEqualStrings("で", call.children[0].josi);
+    try std.testing.expectEqual(ast.Kind.word, call.children[1].kind);
+    try std.testing.expectEqualStrings("H", call.children[1].value);
+    try std.testing.expectEqualStrings("を", call.children[1].josi);
 }
 
 test "助詞はを代入演算子として構文解析する" {

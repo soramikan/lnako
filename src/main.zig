@@ -202,8 +202,17 @@ const CliHost = struct {
     async_tasks: std.ArrayList(*AsyncOperationTask) = .empty,
     next_async_token: usize = 1,
     async_completion_sequence: std.atomic.Value(u64) = .init(1),
+    http_server: ?std.Io.net.Server = null,
+    http_connection: ?std.Io.net.Stream = null,
+    http_head_request: bool = false,
+    held_http_connections: std.ArrayList(std.Io.net.Stream) = .empty,
+    upload_sequence: u64 = 1,
 
     fn deinit(self: *CliHost) void {
+        if (self.http_connection) |stream| stream.close(self.io);
+        for (self.held_http_connections.items) |stream| stream.close(self.io);
+        self.held_http_connections.deinit(std.heap.page_allocator);
+        if (self.http_server) |*server| server.deinit(self.io);
         while (self.async_tasks.pop()) |task| destroyAsyncTask(task, true);
         self.async_tasks.deinit(std.heap.page_allocator);
     }
@@ -248,6 +257,21 @@ const CliHost = struct {
                 .archiveFn = archive,
                 .installInterruptFn = installInterrupt,
                 .consumeInterruptFn = consumeInterrupt,
+                .randomBytesFn = randomBytes,
+                .networkAddressesFn = networkAddresses,
+                .httpRequestFn = runHttpRequest,
+                .startHttpFn = startHttp,
+            },
+            .http_server_context = .{
+                .context = self,
+                .startFn = startHttpServer,
+                .receiveFn = receiveHttpServerRequest,
+                .respondFn = respondHttpServer,
+                .holdFn = holdHttpServerResponse,
+                .readFileFn = readFile,
+                .statPathFn = statHttpServerPath,
+                .saveUploadFn = saveHttpServerUpload,
+                .writeFn = write,
             },
         };
     }
@@ -255,11 +279,13 @@ const CliHost = struct {
     fn write(context: *anyopaque, bytes: []const u8) !void {
         const self: *CliHost = @ptrCast(@alignCast(context));
         try self.writer.writeAll(bytes);
+        try self.writer.flush();
     }
 
     fn writeError(context: *anyopaque, bytes: []const u8) !void {
         const self: *CliHost = @ptrCast(@alignCast(context));
         try self.error_writer.writeAll(bytes);
+        try self.error_writer.flush();
     }
 
     fn sleepMilliseconds(context: *anyopaque, milliseconds: u64) !void {
@@ -296,6 +322,29 @@ const CliHost = struct {
         self.random_state = value;
         const bits = (value *% 0x2545f4914f6cdd1d) >> 11;
         return @as(f64, @floatFromInt(bits)) / 9007199254740992.0;
+    }
+
+    fn randomBytes(context: *anyopaque, output: []u8) !void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        if (self.random_state == 0) {
+            try self.io.randomSecure(output);
+            return;
+        }
+        for (output) |*byte| {
+            var value = self.random_state;
+            value ^= value >> 12;
+            value ^= value << 25;
+            value ^= value >> 27;
+            self.random_state = value;
+            byte.* = @truncate(value *% 0x2545f4914f6cdd1d);
+        }
+    }
+
+    fn networkAddresses(_: *anyopaque, allocator: std.mem.Allocator, ipv6: bool) !lnako.plugins.node.NetworkAddresses {
+        return if (builtin.os.tag == .windows)
+            windowsNetworkAddresses(allocator, ipv6)
+        else
+            posixNetworkAddresses(allocator, ipv6);
     }
 
     fn currentDirectory(context: *anyopaque, allocator: std.mem.Allocator) ![]u8 {
@@ -449,6 +498,172 @@ const CliHost = struct {
         return self.startAsyncOperation(.{ .archive = .{ .operation = operation, .source = owned_source, .destination = owned_destination, .external_tool = owned_tool } });
     }
 
+    fn startHttp(context: *anyopaque, request: lnako.plugins.node.HttpRequest) !usize {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const allocator = std.heap.page_allocator;
+        const method = try allocator.dupe(u8, request.method);
+        errdefer allocator.free(method);
+        const url = try allocator.dupe(u8, request.url);
+        errdefer allocator.free(url);
+        const body = try allocator.dupe(u8, request.body);
+        errdefer allocator.free(body);
+        const headers = try allocator.alloc(lnako.plugins.node.HttpHeader, request.headers.len);
+        var initialized: usize = 0;
+        errdefer {
+            for (headers[0..initialized]) |header| {
+                allocator.free(header.name);
+                allocator.free(header.value);
+            }
+            allocator.free(headers);
+        }
+        for (request.headers, 0..) |header, index| {
+            const name = try allocator.dupe(u8, header.name);
+            errdefer allocator.free(name);
+            headers[index] = .{ .name = name, .value = try allocator.dupe(u8, header.value) };
+            initialized += 1;
+        }
+        return self.startAsyncOperation(.{ .http = .{ .method = method, .url = url, .headers = headers, .body = body, .has_body = request.has_body } });
+    }
+
+    fn runHttpRequest(context: *anyopaque, allocator: std.mem.Allocator, request: lnako.plugins.node.HttpRequest) !lnako.plugins.node.CommandResult {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        return httpRequest(self, allocator, request);
+    }
+
+    fn startHttpServer(context: *anyopaque, port: u16) !u16 {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        if (self.http_server != null) return error.HttpServerAlreadyStarted;
+        const address: std.Io.net.IpAddress = .{ .ip4 = .unspecified(port) };
+        self.http_server = try address.listen(self.io, .{ .reuse_address = true });
+        return self.http_server.?.socket.address.getPort();
+    }
+
+    fn receiveHttpServerRequest(context: *anyopaque, allocator: std.mem.Allocator) !lnako.plugins.http_server.Request {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        if (self.http_connection != null) return error.PreviousHttpResponseNotFinished;
+        const server = if (self.http_server) |*value| value else return error.HttpServerNotStarted;
+        const stream = try server.accept(self.io);
+        errdefer stream.close(self.io);
+        var buffer: [64 * 1024]u8 = undefined;
+        var reader = stream.reader(self.io, &buffer);
+        const request_line_raw = (try reader.interface.takeDelimiter('\n')) orelse return error.InvalidHttpRequest;
+        const request_line = std.mem.trimEnd(u8, request_line_raw, "\r");
+        var request_parts = std.mem.splitScalar(u8, request_line, ' ');
+        const method_source = request_parts.next() orelse return error.InvalidHttpRequest;
+        const target_source = request_parts.next() orelse return error.InvalidHttpRequest;
+        const method = try allocator.dupe(u8, method_source);
+        errdefer allocator.free(method);
+        for (method) |*byte| byte.* = std.ascii.toUpper(byte.*);
+        const target = try allocator.dupe(u8, target_source);
+        errdefer allocator.free(target);
+        var content_length: usize = 0;
+        var transfer_chunked = false;
+        var content_type: []u8 = try allocator.alloc(u8, 0);
+        errdefer allocator.free(content_type);
+        while (true) {
+            const line_raw = (try reader.interface.takeDelimiter('\n')) orelse return error.InvalidHttpRequest;
+            const line = std.mem.trimEnd(u8, line_raw, "\r");
+            if (line.len == 0) break;
+            const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+            const header_name = std.mem.trim(u8, line[0..colon], " \t");
+            const header_value = std.mem.trim(u8, line[colon + 1 ..], " \t");
+            if (std.ascii.eqlIgnoreCase(header_name, "content-length")) {
+                content_length = try std.fmt.parseInt(usize, header_value, 10);
+            } else if (std.ascii.eqlIgnoreCase(header_name, "transfer-encoding")) {
+                transfer_chunked = std.ascii.indexOfIgnoreCase(header_value, "chunked") != null;
+            } else if (std.ascii.eqlIgnoreCase(header_name, "content-type")) {
+                allocator.free(content_type);
+                content_type = try allocator.dupe(u8, header_value);
+            }
+        }
+        self.http_connection = stream;
+        self.http_head_request = std.ascii.eqlIgnoreCase(method, "HEAD");
+        if (transfer_chunked) {
+            const chunked = try readChunkedHttpBody(allocator, &reader.interface, 10 * 1024 * 1024);
+            return .{
+                .method = method,
+                .target = target,
+                .content_type = content_type,
+                .body = chunked.body,
+                .too_large = chunked.too_large,
+            };
+        }
+        if (content_length > 10 * 1024 * 1024) {
+            _ = try reader.interface.discardShort(content_length);
+            return .{
+                .method = method,
+                .target = target,
+                .content_type = content_type,
+                .body = try allocator.alloc(u8, 0),
+                .too_large = true,
+            };
+        }
+        const body = try allocator.alloc(u8, content_length);
+        errdefer allocator.free(body);
+        try reader.interface.readSliceAll(body);
+        return .{ .method = method, .target = target, .content_type = content_type, .body = body };
+    }
+
+    fn respondHttpServer(context: *anyopaque, status_code: u16, headers: []const lnako.plugins.http_server.Header, body: []const u8) !void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const stream = self.http_connection orelse return error.HttpServerResponseOutsideRequest;
+        defer {
+            stream.close(self.io);
+            self.http_connection = null;
+            self.http_head_request = false;
+        }
+        var send_buffer: [16 * 1024]u8 = undefined;
+        var writer = stream.writer(self.io, &send_buffer);
+        const status: std.http.Status = @enumFromInt(status_code);
+        try writer.interface.print("HTTP/1.1 {d} {s}\r\n", .{ status_code, status.phrase() orelse "" });
+        var has_content_length = false;
+        for (headers) |header| {
+            if (std.mem.indexOf(u8, header.name, "\r\n") != null or std.mem.indexOf(u8, header.value, "\r\n") != null) return error.InvalidHttpHeader;
+            if (std.ascii.eqlIgnoreCase(header.name, "content-length")) has_content_length = true;
+            try writer.interface.print("{s}: {s}\r\n", .{ header.name, header.value });
+        }
+        if (!has_content_length) try writer.interface.print("Content-Length: {d}\r\n", .{body.len});
+        try writer.interface.writeAll("Connection: close\r\n\r\n");
+        if (!self.http_head_request) try writer.interface.writeAll(body);
+        try writer.interface.flush();
+    }
+
+    fn holdHttpServerResponse(context: *anyopaque) !void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const stream = self.http_connection orelse return error.HttpServerResponseOutsideRequest;
+        try self.held_http_connections.append(std.heap.page_allocator, stream);
+        self.http_connection = null;
+        self.http_head_request = false;
+    }
+
+    fn statHttpServerPath(context: *anyopaque, path: []const u8) !lnako.plugins.http_server.PathStat {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const stat = std.Io.Dir.cwd().statFile(self.io, path, .{}) catch |err| return switch (err) {
+            error.FileNotFound, error.NotDir => .missing,
+            else => err,
+        };
+        return switch (stat.kind) {
+            .file => .file,
+            .directory => .directory,
+            else => .missing,
+        };
+    }
+
+    fn saveHttpServerUpload(context: *anyopaque, allocator: std.mem.Allocator, filename: []const u8, body: []const u8) ![]u8 {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const upload_directory = try std.fs.path.join(allocator, &.{ self.temporary_directory, "nako3-plugin_httpserver_upload" });
+        defer allocator.free(upload_directory);
+        try std.Io.Dir.cwd().createDirPath(self.io, upload_directory);
+        const safe_name = uploadBasename(filename);
+        const unique_name = try std.fmt.allocPrint(allocator, "{d}_{d}_{s}", .{ try nowMilliseconds(self), self.upload_sequence, safe_name });
+        defer allocator.free(unique_name);
+        self.upload_sequence +%= 1;
+        const path = try std.fs.path.join(allocator, &.{ upload_directory, unique_name });
+        errdefer allocator.free(path);
+        try std.Io.Dir.cwd().writeFile(self.io, .{ .sub_path = path, .data = body });
+        return path;
+    }
+
     fn startAsyncOperation(self: *CliHost, operation: AsyncOperation) !usize {
         const allocator = std.heap.page_allocator;
         const task = try allocator.create(AsyncOperationTask);
@@ -480,7 +695,7 @@ const CliHost = struct {
                 errdefer allocator.free(stdout_bytes);
                 const stderr_bytes = try allocator.dupe(u8, result.stderr);
                 errdefer allocator.free(stderr_bytes);
-                break :blk lnako.plugins.node.CommandResult{ .stdout = stdout_bytes, .stderr = stderr_bytes, .exit_code = result.exit_code };
+                break :blk lnako.plugins.node.CommandResult{ .stdout = stdout_bytes, .stderr = stderr_bytes, .exit_code = result.exit_code, .http_status = result.http_status };
             } else null;
             _ = self.async_tasks.orderedRemove(index);
             destroyAsyncTask(task, true);
@@ -564,6 +779,46 @@ const CliHost = struct {
     }
 };
 
+const ChunkedHttpBody = struct {
+    body: []u8,
+    too_large: bool,
+};
+
+fn readChunkedHttpBody(allocator: std.mem.Allocator, reader: *std.Io.Reader, maximum_size: usize) !ChunkedHttpBody {
+    var body: std.ArrayList(u8) = .empty;
+    errdefer body.deinit(allocator);
+    var too_large = false;
+    while (true) {
+        const size_line_raw = (try reader.takeDelimiter('\n')) orelse return error.InvalidHttpChunk;
+        const size_line = std.mem.trim(u8, std.mem.trimEnd(u8, size_line_raw, "\r"), " \t");
+        const extension = std.mem.indexOfScalar(u8, size_line, ';') orelse size_line.len;
+        const size_text = std.mem.trim(u8, size_line[0..extension], " \t");
+        if (size_text.len == 0) return error.InvalidHttpChunk;
+        const chunk_size = std.fmt.parseInt(usize, size_text, 16) catch return error.InvalidHttpChunk;
+        if (chunk_size == 0) {
+            while (true) {
+                const trailer_raw = (try reader.takeDelimiter('\n')) orelse return error.InvalidHttpChunk;
+                if (std.mem.trimEnd(u8, trailer_raw, "\r").len == 0) break;
+            }
+            break;
+        }
+        if (too_large or chunk_size > maximum_size - body.items.len) {
+            too_large = true;
+            if (try reader.discardShort(chunk_size) != chunk_size) return error.InvalidHttpChunk;
+        } else {
+            const destination = try body.addManyAsSlice(allocator, chunk_size);
+            try reader.readSliceAll(destination);
+        }
+        const terminator_raw = (try reader.takeDelimiter('\n')) orelse return error.InvalidHttpChunk;
+        if (std.mem.trimEnd(u8, terminator_raw, "\r").len != 0) return error.InvalidHttpChunk;
+    }
+    if (too_large) {
+        body.deinit(allocator);
+        return .{ .body = try allocator.alloc(u8, 0), .too_large = true };
+    }
+    return .{ .body = try body.toOwnedSlice(allocator), .too_large = false };
+}
+
 const PosixInterrupt = if (builtin.os.tag == .windows) struct {} else struct {
     fn handler(_: std.posix.SIG) callconv(.c) void {
         interrupt_requested.store(true, .release);
@@ -580,10 +835,140 @@ const WindowsInterrupt = if (builtin.os.tag == .windows) struct {
     }
 } else struct {};
 
+const PosixIfAddrs = if (builtin.os.tag == .windows) opaque {} else extern struct {
+    next: ?*PosixIfAddrs,
+    name: [*:0]const u8,
+    flags: c_uint,
+    address: ?*std.posix.sockaddr,
+    netmask: ?*std.posix.sockaddr,
+    destination: ?*std.posix.sockaddr,
+    data: ?*anyopaque,
+};
+
+const PosixInterfaces = if (builtin.os.tag == .windows) struct {} else struct {
+    extern "c" fn getifaddrs(result: *?*PosixIfAddrs) c_int;
+    extern "c" fn freeifaddrs(result: ?*PosixIfAddrs) void;
+};
+
+const WindowsSocketAddress = extern struct {
+    address: ?*std.os.windows.ws2_32.sockaddr,
+    length: c_int,
+};
+
+const WindowsUnicastAddress = extern struct {
+    alignment: u64,
+    next: ?*WindowsUnicastAddress,
+    address: WindowsSocketAddress,
+};
+
+const WindowsAdapterAddresses = extern struct {
+    alignment: u64,
+    next: ?*WindowsAdapterAddresses,
+    adapter_name: ?[*:0]u8,
+    first_unicast_address: ?*WindowsUnicastAddress,
+};
+
+const WindowsInterfaces = if (builtin.os.tag == .windows) struct {
+    extern "iphlpapi" fn GetAdaptersAddresses(
+        family: u32,
+        flags: u32,
+        reserved: ?*anyopaque,
+        addresses: ?*WindowsAdapterAddresses,
+        size: *u32,
+    ) callconv(.winapi) u32;
+} else struct {};
+
+fn posixNetworkAddresses(allocator: std.mem.Allocator, ipv6: bool) !lnako.plugins.node.NetworkAddresses {
+    if (builtin.os.tag == .windows) return error.NetworkInterfacesUnavailable;
+    var first: ?*PosixIfAddrs = null;
+    if (PosixInterfaces.getifaddrs(&first) != 0) return error.NetworkInterfacesUnavailable;
+    defer PosixInterfaces.freeifaddrs(first);
+    var items: std.ArrayList([]u8) = .empty;
+    errdefer deinitNetworkAddressList(allocator, &items);
+    var current = first;
+    while (current) |entry| : (current = entry.next) {
+        const address = entry.address orelse continue;
+        const family: usize = @intCast(address.family);
+        if ((!ipv6 and family != std.posix.AF.INET) or (ipv6 and family != std.posix.AF.INET6)) continue;
+        try items.append(allocator, try formatSockAddress(allocator, address, if (ipv6) std.mem.span(entry.name) else null));
+    }
+    return .{ .items = try items.toOwnedSlice(allocator) };
+}
+
+fn windowsNetworkAddresses(allocator: std.mem.Allocator, ipv6: bool) !lnako.plugins.node.NetworkAddresses {
+    if (builtin.os.tag != .windows) return error.NetworkInterfacesUnavailable;
+    const overflow_code = 111;
+    var size: u32 = 15 * 1024;
+    var storage = try allocator.alignedAlloc(u8, .of(WindowsAdapterAddresses), size);
+    defer allocator.free(storage);
+    var result = WindowsInterfaces.GetAdaptersAddresses(std.os.windows.ws2_32.AF.UNSPEC, 0, null, @ptrCast(storage.ptr), &size);
+    if (result == overflow_code) {
+        storage = try allocator.realloc(storage, size);
+        result = WindowsInterfaces.GetAdaptersAddresses(std.os.windows.ws2_32.AF.UNSPEC, 0, null, @ptrCast(storage.ptr), &size);
+    }
+    if (result != 0) return error.NetworkInterfacesUnavailable;
+    var items: std.ArrayList([]u8) = .empty;
+    errdefer deinitNetworkAddressList(allocator, &items);
+    var adapter: ?*WindowsAdapterAddresses = @ptrCast(storage.ptr);
+    while (adapter) |current| : (adapter = current.next) {
+        var unicast = current.first_unicast_address;
+        while (unicast) |entry| : (unicast = entry.next) {
+            const address = entry.address.address orelse continue;
+            const family: usize = @intCast(address.family);
+            if ((!ipv6 and family != std.os.windows.ws2_32.AF.INET) or (ipv6 and family != std.os.windows.ws2_32.AF.INET6)) continue;
+            try items.append(allocator, try formatWindowsSockAddress(allocator, address));
+        }
+    }
+    return .{ .items = try items.toOwnedSlice(allocator) };
+}
+
+fn deinitNetworkAddressList(allocator: std.mem.Allocator, items: *std.ArrayList([]u8)) void {
+    for (items.items) |item| allocator.free(item);
+    items.deinit(allocator);
+}
+
+fn formatSockAddress(allocator: std.mem.Allocator, address: *const std.posix.sockaddr, interface_name: ?[]const u8) ![]u8 {
+    _ = interface_name;
+    if (address.family == std.posix.AF.INET) {
+        const source: *const std.posix.sockaddr.in = @ptrCast(@alignCast(address));
+        const bytes: *const [4]u8 = @ptrCast(&source.addr);
+        return std.fmt.allocPrint(allocator, "{d}.{d}.{d}.{d}", .{ bytes[0], bytes[1], bytes[2], bytes[3] });
+    }
+    const source: *const std.posix.sockaddr.in6 = @ptrCast(@alignCast(address));
+    return formatIpv6Address(allocator, source.addr);
+}
+
+fn formatWindowsSockAddress(allocator: std.mem.Allocator, address: *const std.os.windows.ws2_32.sockaddr) ![]u8 {
+    if (address.family == std.os.windows.ws2_32.AF.INET) {
+        const source: *const std.os.windows.ws2_32.sockaddr.in = @ptrCast(@alignCast(address));
+        const bytes: *const [4]u8 = @ptrCast(&source.addr);
+        return std.fmt.allocPrint(allocator, "{d}.{d}.{d}.{d}", .{ bytes[0], bytes[1], bytes[2], bytes[3] });
+    }
+    const source: *const std.os.windows.ws2_32.sockaddr.in6 = @ptrCast(@alignCast(address));
+    return formatIpv6Address(allocator, source.addr);
+}
+
+fn formatIpv6Address(allocator: std.mem.Allocator, bytes: [16]u8) ![]u8 {
+    var output: std.Io.Writer.Allocating = .init(allocator);
+    errdefer output.deinit();
+    const unresolved: std.Io.net.Ip6Address.Unresolved = .{ .bytes = bytes, .interface_name = null };
+    try output.writer.print("{f}", .{unresolved});
+    return output.toOwnedSlice();
+}
+
+fn uploadBasename(path: []const u8) []const u8 {
+    var start: usize = 0;
+    for (path, 0..) |byte, index| if (byte == '/' or byte == '\\') {
+        start = index + 1;
+    };
+    return path[start..];
+}
+
 const AsyncOperation = union(enum) {
     command: struct { command: []u8, cwd: []u8 },
     file: struct { operation: lnako.plugins.node.FileOperation, source: []u8, destination: ?[]u8, overwrite: bool },
     archive: struct { operation: lnako.plugins.node.ArchiveOperation, source: []u8, destination: []u8, external_tool: ?[]u8 },
+    http: struct { method: []u8, url: []u8, headers: []lnako.plugins.node.HttpHeader, body: []u8, has_body: bool },
 
     fn deinit(self: *@This()) void {
         const allocator = std.heap.page_allocator;
@@ -600,6 +985,16 @@ const AsyncOperation = union(enum) {
                 allocator.free(operation.source);
                 allocator.free(operation.destination);
                 if (operation.external_tool) |tool| allocator.free(tool);
+            },
+            .http => |operation| {
+                allocator.free(operation.method);
+                allocator.free(operation.url);
+                allocator.free(operation.body);
+                for (operation.headers) |header| {
+                    allocator.free(header.name);
+                    allocator.free(header.value);
+                }
+                allocator.free(operation.headers);
             },
         }
         self.* = undefined;
@@ -645,9 +1040,46 @@ const AsyncOperationTask = struct {
                 errdefer allocator.free(stdout_bytes);
                 break :blk .{ .stdout = stdout_bytes, .stderr = try allocator.alloc(u8, 0), .exit_code = 0 };
             },
+            .http => |operation| httpRequest(self.host, allocator, operation) catch |err| blk: {
+                const message = try allocator.dupe(u8, @errorName(err));
+                errdefer allocator.free(message);
+                break :blk .{ .stdout = try allocator.alloc(u8, 0), .stderr = message, .exit_code = 1 };
+            },
         };
     }
 };
+
+fn httpMethod(source: []const u8) !std.http.Method {
+    inline for (@typeInfo(std.http.Method).@"enum".fields) |field| {
+        if (std.ascii.eqlIgnoreCase(source, field.name)) return @enumFromInt(field.value);
+    }
+    return error.UnsupportedHttpMethod;
+}
+
+fn httpRequest(host: *CliHost, allocator: std.mem.Allocator, operation: anytype) !lnako.plugins.node.CommandResult {
+    var client: std.http.Client = .{ .allocator = allocator, .io = host.io };
+    defer client.deinit();
+    const headers = try allocator.alloc(std.http.Header, operation.headers.len);
+    defer allocator.free(headers);
+    for (operation.headers, headers) |source, *target| target.* = .{ .name = source.name, .value = source.value };
+    var output: std.Io.Writer.Allocating = .init(allocator);
+    errdefer output.deinit();
+    const fetched = try client.fetch(.{
+        .location = .{ .url = operation.url },
+        .method = try httpMethod(operation.method),
+        .payload = if (operation.has_body) operation.body else null,
+        .extra_headers = headers,
+        .response_writer = &output.writer,
+    });
+    const stdout_bytes = try output.toOwnedSlice();
+    errdefer allocator.free(stdout_bytes);
+    return .{
+        .stdout = stdout_bytes,
+        .stderr = try allocator.alloc(u8, 0),
+        .exit_code = 0,
+        .http_status = @intFromEnum(fetched.status),
+    };
+}
 
 fn emptyCommandResult(allocator: std.mem.Allocator) !lnako.plugins.node.CommandResult {
     const stdout_bytes = try allocator.alloc(u8, 0);

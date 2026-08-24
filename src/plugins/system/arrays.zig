@@ -128,6 +128,7 @@ fn arraySearch(source: Value, needle: Value) i64 {
 
 fn elementCount(value: Value) usize {
     return switch (value) {
+        .bytes => |bytes| bytes.bytes.len,
         .array => |array| array.len(),
         .dictionary => |dictionary| dictionary.len(),
         .string => |string| string.len(),

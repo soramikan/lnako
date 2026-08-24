@@ -77,6 +77,9 @@ jobs:
           node tools/check_node_plugin_coverage.mjs
           node tools/compare_node_file_oracle.mjs
           node tools/check_encoding_compat.mjs
+          node tools/check_crypto_compat.mjs
+          node tools/compare_node_http_oracle.mjs
+          node tools/compare_http_server_oracle.mjs
           node tools/compare_node_exit_oracle.mjs
           node tools/compare_node_interrupt_oracle.mjs
           node tools/check_node_archive_smoke.mjs

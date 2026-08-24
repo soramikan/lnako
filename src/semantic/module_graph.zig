@@ -146,15 +146,19 @@ const Loader = struct {
             try self.importDiagnostic(import_node, path, "通常モードで取り込めるのは.nako3だけです");
             return error.UnsupportedImport;
         };
-        if (kind == .javascript and !self.options.compat_js) {
+        const native_builtin = kind == .javascript and isNativeBuiltinPlugin(path);
+        if (kind == .javascript and !self.options.compat_js and !native_builtin) {
             try self.importDiagnostic(import_node, path, "JavaScriptの取り込みには--compat-jsが必要です");
             return error.JavaScriptCompatibilityRequired;
         }
 
-        const source = self.provider.read(self.backing_allocator, path) catch |err| {
-            try self.importDiagnostic(import_node, path, "取り込み先を読み込めません");
-            return err;
-        };
+        const source = if (native_builtin)
+            try self.backing_allocator.alloc(u8, 0)
+        else
+            self.provider.read(self.backing_allocator, path) catch |err| {
+                try self.importDiagnostic(import_node, path, "取り込み先を読み込めません");
+                return err;
+            };
         errdefer self.backing_allocator.free(source);
         const module = try self.backing_allocator.create(LoadedModule);
         errdefer self.backing_allocator.destroy(module);
@@ -223,6 +227,11 @@ const Loader = struct {
         });
     }
 };
+
+fn isNativeBuiltinPlugin(path: []const u8) bool {
+    const basename = std.fs.path.basename(path);
+    return std.ascii.eqlIgnoreCase(basename, "plugin_httpserver.mjs") or std.ascii.eqlIgnoreCase(basename, "plugin_httpserver.js");
+}
 
 fn collectImports(node: *ast.Node, output: *std.ArrayList(*ast.Node), allocator: std.mem.Allocator) !void {
     if (node.kind == .import) try output.append(allocator, node);

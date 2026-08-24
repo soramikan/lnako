@@ -5,14 +5,26 @@ const bigint_mod = @import("bigint.zig");
 pub const String = string_mod.String;
 pub const BigInt = bigint_mod.BigInt;
 
+pub const ByteKind = enum { buffer, uint8_array, array_buffer };
+
 pub const ByteBuffer = struct {
     gc_marked: bool = false,
     allocator: std.mem.Allocator,
     bytes: []u8,
+    kind: ByteKind = .buffer,
 
     pub fn deinit(self: *ByteBuffer) void {
         self.allocator.free(self.bytes);
         self.* = undefined;
+    }
+
+    pub fn get(self: ByteBuffer, index: usize) Value {
+        if (index >= self.bytes.len) return .undefined;
+        return .{ .number = @floatFromInt(self.bytes[index]) };
+    }
+
+    pub fn set(self: *ByteBuffer, index: usize, value: u8) void {
+        if (index < self.bytes.len) self.bytes[index] = value;
     }
 };
 
@@ -86,9 +98,12 @@ const StringKeyContext = struct {
 
 const DictionaryMap = std.ArrayHashMapUnmanaged(*String, Value, StringKeyContext, true);
 
+pub const DictionaryKind = enum { ordinary, http_response };
+
 pub const Dictionary = struct {
     gc_marked: bool = false,
     allocator: std.mem.Allocator,
+    kind: DictionaryKind = .ordinary,
     map: DictionaryMap = .empty,
 
     pub fn deinit(self: *Dictionary) void {
@@ -402,10 +417,22 @@ pub const Runtime = struct {
     }
 
     pub fn createBytes(self: *Runtime, bytes: []const u8) !Value {
+        return self.createByteBuffer(bytes, .buffer);
+    }
+
+    pub fn createUint8Array(self: *Runtime, bytes: []const u8) !Value {
+        return self.createByteBuffer(bytes, .uint8_array);
+    }
+
+    pub fn createArrayBuffer(self: *Runtime, bytes: []const u8) !Value {
+        return self.createByteBuffer(bytes, .array_buffer);
+    }
+
+    fn createByteBuffer(self: *Runtime, bytes: []const u8, kind: ByteKind) !Value {
         try self.beforeAllocation();
         const result = try self.allocator().create(ByteBuffer);
         errdefer self.allocator().destroy(result);
-        result.* = .{ .allocator = self.allocator(), .bytes = try self.allocator().dupe(u8, bytes) };
+        result.* = .{ .allocator = self.allocator(), .bytes = try self.allocator().dupe(u8, bytes), .kind = kind };
         errdefer result.deinit();
         try self.objects.append(self.allocator(), .{ .bytes = result });
         return .{ .bytes = result };
@@ -467,10 +494,14 @@ pub const Runtime = struct {
     }
 
     pub fn createDictionary(self: *Runtime) !Value {
+        return self.createDictionaryKind(.ordinary);
+    }
+
+    pub fn createDictionaryKind(self: *Runtime, kind: DictionaryKind) !Value {
         try self.beforeAllocation();
         const result = try self.allocator().create(Dictionary);
         errdefer self.allocator().destroy(result);
-        result.* = .{ .allocator = self.allocator() };
+        result.* = .{ .allocator = self.allocator(), .kind = kind };
         try self.objects.append(self.allocator(), .{ .dictionary = result });
         return .{ .dictionary = result };
     }
@@ -627,9 +658,23 @@ pub const Runtime = struct {
                 break :blk self.stringUtf8(utf8);
             },
             .string => value,
-            .bytes => |buffer| self.stringUtf8Lossy(buffer.bytes),
+            .bytes => |buffer| switch (buffer.kind) {
+                .buffer => self.stringUtf8Lossy(buffer.bytes),
+                .uint8_array => blk: {
+                    var text: std.ArrayList(u8) = .empty;
+                    defer text.deinit(self.allocator());
+                    for (buffer.bytes, 0..) |byte, index| {
+                        if (index > 0) try text.append(self.allocator(), ',');
+                        var number_buffer: [3]u8 = undefined;
+                        const number = std.fmt.bufPrint(&number_buffer, "{d}", .{byte}) catch unreachable;
+                        try text.appendSlice(self.allocator(), number);
+                    }
+                    break :blk self.stringUtf8(text.items);
+                },
+                .array_buffer => self.stringUtf8("[object ArrayBuffer]"),
+            },
             .array => |array| self.arrayToString(array),
-            .dictionary => self.stringUtf8("[object Object]"),
+            .dictionary => |dictionary| self.stringUtf8(if (dictionary.kind == .http_response) "[object Response]" else "[object Object]"),
             .function => |function| blk: {
                 const name = try function.name.toUtf8Lossy(self.allocator());
                 defer self.allocator().free(name);
@@ -1023,6 +1068,23 @@ test "Bufferの文字列化は不正UTF-8を置換する" {
     const utf8 = try string.string.toUtf8Lossy(std.testing.allocator);
     defer std.testing.allocator.free(utf8);
     try std.testing.expectEqualStrings("�A", utf8);
+}
+
+test "Uint8Arrayは添字アクセス・更新とカンマ区切り文字列化を行う" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var bytes = try runtime.createUint8Array(&.{ 1, 2, 255 });
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&bytes);
+    try std.testing.expectEqual(@as(f64, 2), bytes.bytes.get(1).number);
+    bytes.bytes.set(1, 7);
+    try std.testing.expectEqual(@as(f64, 7), bytes.bytes.get(1).number);
+    try std.testing.expect(bytes.bytes.get(9) == .undefined);
+    const string = try runtime.valueToString(bytes);
+    const utf8 = try string.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(utf8);
+    try std.testing.expectEqualStrings("1,7,255", utf8);
 }
 
 test "深いオブジェクトグラフを再帰せずマークする" {

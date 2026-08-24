@@ -49,6 +49,26 @@ fn writeValue(
         .bigint => return error.BigIntCannotBeSerialized,
         .string => |string| try writeQuotedString(writer, string.units),
         .bytes => |buffer| {
+            if (buffer.kind == .array_buffer) return writer.writeAll("{}");
+            if (buffer.kind == .uint8_array) {
+                try writer.writeByte('{');
+                for (buffer.bytes, 0..) |byte, index| {
+                    if (index > 0) try writer.writeByte(',');
+                    if (pretty) {
+                        try writer.writeByte('\n');
+                        try writeIndent(writer, depth + 1);
+                    }
+                    try writer.print("\"{d}\":", .{index});
+                    if (pretty) try writer.writeByte(' ');
+                    try writer.print("{d}", .{byte});
+                }
+                if (pretty and buffer.bytes.len > 0) {
+                    try writer.writeByte('\n');
+                    try writeIndent(writer, depth);
+                }
+                try writer.writeByte('}');
+                return;
+            }
             try writer.writeByte('{');
             if (pretty) {
                 try writer.writeByte('\n');
@@ -103,6 +123,7 @@ fn writeValue(
             try writer.writeByte(']');
         },
         .dictionary => |dictionary| {
+            if (dictionary.kind == .http_response) return writer.writeAll("{}");
             if (containsPointer(value_mod.Dictionary, active_dictionaries.items, dictionary)) return error.CircularJsonValue;
             try active_dictionaries.append(runtime.allocator(), dictionary);
             defer _ = active_dictionaries.pop();
@@ -318,4 +339,23 @@ test "BufferをNode互換のJSONオブジェクトへ変換する" {
         "{\n  \"type\": \"Buffer\",\n  \"data\": [\n    147,\n    250,\n    65\n  ]\n}",
         pretty_utf8,
     );
+}
+
+test "Uint8ArrayをNode互換の添字JSONオブジェクトへ変換する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var bytes = try runtime.createUint8Array(&.{ 9, 2 });
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&bytes);
+
+    const encoded = (try call(&runtime, "JSON変換", &.{bytes})).?;
+    const utf8 = try encoded.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(utf8);
+    try std.testing.expectEqualStrings("{\"0\":9,\"1\":2}", utf8);
+
+    const pretty = (try call(&runtime, "JSONエンコード整形", &.{bytes})).?;
+    const pretty_utf8 = try pretty.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(pretty_utf8);
+    try std.testing.expectEqualStrings("{\n  \"0\": 9,\n  \"1\": 2\n}", pretty_utf8);
 }

@@ -61,6 +61,21 @@ lnakoは実行結果の互換性とテストの再現性を両立するため、
 | `ファイルコピーデフォルト動作` | `上書き`、`上書`、`overwrite`のいずれかと完全一致すると、通常の`ファイルコピー`と`ファイル移動`も上書きを許可する。それ以外はコピー先が存在するだけで処理前に失敗する | 同じ3値を認識し、ファイル・ディレクトリのどちらも処理開始前にコピー先を確認する | `plugin-node-file-core` |
 | Bufferの暗黙文字列化 | `Buffer.toString()`としてUTF-8復号する。不正列は例外にせずWHATWG UTF-8 decoderの最大部分列単位で`U+FFFD`へ置換する | 同じ。不正な各バイトを機械的に1文字ずつ置換せず、途中で切れた有効な接頭辞は1個の`U+FFFD`にする | `plugin-node-encoding` |
 | BufferのJSON変換 | `JSON.stringify(Buffer)`は配列でなく`{"type":"Buffer","data":[...]}`を返す。整形指定時は通常オブジェクトと配列の両方の深さで字下げする | 同じオブジェクト形状と字下げにする | `plugin-node-encoding` |
+| `ハッシュ値計算` / `ランダム配列生成`のバイト列 | エンコーディングを省略したハッシュ値は`Buffer`だが、乱数は`Uint8Array`。前者のJSONは`{"type":"Buffer","data":[...]}`、後者は`{"0":値,...}`となる。暗黙文字列化も前者はUTF-8復号、後者は10進値のカンマ区切り | バイト列の種類を内部で保持し、添字・反復は共通化しつつ、JSONと文字列化は種類ごとに同じ規則を使う | `plugin-node-crypto` |
+| `ランダム配列生成`の個数 | `NaN`は0件、小数は0方向に切り捨てる。負数は`RangeError`、65,536件超は`crypto.getRandomValues`の`QuotaExceededError`になる | 0〜65,536件を許可し、同じ変換と拒否境界にする | `plugin-node-crypto` |
+| 暗号命令の実行時例外と公式CLI終了コード | 公式`cnako3`は乱数個数の`RangeError`などをエラー表示しても、呼び出し経路によってプロセス終了コードが0のままになる | `lnako`は実行時エラーを非0終了にする。差分テストでは、公式側だけはエラー表示も失敗分類として扱う | `plugin-node-crypto` |
+| `ハッシュ関数一覧取得` | Node 24がリンクするOpenSSLの`crypto.getHashes()`をそのまま返すため、利用可能な別名と順序はNode/OpenSSLのビルドに依存し得る | 正式3環境のNode 24オラクルで一覧を比較し、一覧中の全名称を5出力形式で検証する | `plugin-node-crypto` |
+| `自分IPV6アドレス取得` | link-localアドレスも返すが、OSのscope名（`%en0`など）は戻り値に含めない | OS APIから得たscopeを除去し、公式のアドレス文字列と一致させる | `plugin-node-network-addresses` |
+| 簡易HTTPサーバの未登録URL | callbackにも静的パスにも一致しないURLでは404を送らず、接続を開いたままにする。静的パスに一致した後でファイルがなければ404を返す | 通常の404検証は静的パス内の不存在で行う。未登録URLの接続保留は専用回帰テストで扱う | `plugin-httpserver-all` |
+| HTTP callbackの文字列 | `AJAX送信時`、`POST送信時`、`AJAX失敗時`などは文字列から関数を名前解決せず、渡された値を後でそのまま呼ぶ。文字列を渡すと通信完了時に`TypeError`になる | callback値をそのまま保持する。名前付き関数は関数値または`～時には`構文で渡す | `plugin-node-http-callbacks`、`plugin-node-http-onerror` |
+| `POSTフォーム送信時`のContent-Type | FormData本文にはboundaryがあるが、公式実装が手動設定する`Content-Type: multipart/form-data`にはboundary引数がない | この命令だけ欠落を再現し、`POSTフォーム送信`と`POSTフォーム保障送信`は正しいboundaryを付ける | `plugin-node-http-callbacks` |
+| Promise版HTTP応答 | `AJAX保障送信`などは本文でなく`Response`を返す。暗黙文字列化は`[object Response]`、JSON変換は`{}`で、本文は`AJAX内容取得`により非同期取得する | HTTP応答を専用オブジェクト種別として保持し、同じ文字列化・JSON形状にする | `plugin-node-http-options-and-promises` |
+| `AJAXバイナリ取得` | Nodeの`Buffer`や`Uint8Array`でなく`ArrayBuffer`を返す。暗黙文字列化は`[object ArrayBuffer]`、JSON変換は`{}` | バイト内容を保持した専用`ArrayBuffer`種別を返す | `plugin-node-http-async-values` |
+| HTTPの`asyncFn`命令 | `POST送信`、`POSTフォーム送信`、`AJAXテキスト取得`、`AJAX_JSON取得`、`AJAXバイナリ取得`は、なでしこ言語側ではPromiseでなくawait済みの値になる | 呼び出しを完了まで待ち、値を直接返す | `plugin-node-http-async-values` |
+| Discord送信の戻り値 | `DISCORD送信`と`DISCORDファイル送信`は`asyncFn`だが`return_none`でもあり、文として完了を待つ。戻り値を変数へ代入しようとすると公式コンパイラが拒否する | 文として同期的に完了を待ち、成功時は`undefined`とする | `plugin-node-http-discord`、`plugin-node-http-discord-file` |
+| LINE Notify命令 | `LINE送信`と`LINE画像送信`はAPIを呼ばず、2025年4月で利用不能になった旨の例外を常に投げる | 同じく常に失敗させ、外部通信しない | `plugin-node-http-line-message-discontinued`、`plugin-node-http-line-image-discontinued` |
+| HTTP callbackの完了順 | 複数のfetchは開始順ではなく実際の通信完了順にcallbackを呼ぶ | ホストワーカーの完了順を採番してメインイベントループでcallbackを実行する | `plugin-node-http-callbacks` |
+| 簡易HTTPサーバの本文上限 | POST本文が10MiBを超えると413と`Request entity too large.`を返す。静的ファイルやGETにはこの上限を適用しない | 10MiB超をランタイムへ渡さず、入力を排出してから同じ413応答を返す | `plugin-httpserver-all` |
 | `エンコーディング変換`（`hex`） | Nodeの`Buffer.from(S, "hex")`規則に従い、奇数桁の末尾を無視し、最初の非16進文字で変換を打ち切る | 同じ。例えば`4142zz`は`[65,66]`になる | `plugin-node-encoding` |
 | `エンコーディング変換`（`base64`） | `iconv-lite`のencoderはUTF-16文字数を4文字境界で本体と端数に分け、それぞれを復号する。このため`QUI=xx`は`[65,66,199]`になる | 同じ分割規則と、空白・非base64文字・URL-safe文字の扱いを実装する | `plugin-node-encoding` |
 | `cesu8` | 補助平面文字を通常のUTF-8の4バイト列ではなく、UTF-16のサロゲート各1単位を3バイトずつ、合計6バイトへ変換する。一方、取得時は連続するサロゲートをJS文字列として保持するため表示時には元の1文字へ戻る | UTF-16コード単位ごとのCESU-8変換と、孤立・不正列の置換規則を独立実装する | `plugin-node-encoding-special` |

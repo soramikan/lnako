@@ -2840,5 +2840,295 @@
       "plugin-node-host-open-external"
     ],
     "reason": "OS別ファイルマネージャー起動をホスト抽象化へ委譲する単体テストに成功"
+  },
+  "ハッシュ関数一覧取得": {
+    "status": "native",
+    "tests": [
+      "plugin-node-crypto"
+    ],
+    "reason": "Node 24との全ハッシュ別名・乱数境界の公式差分テストに成功"
+  },
+  "ハッシュ値計算": {
+    "status": "native",
+    "tests": [
+      "plugin-node-crypto"
+    ],
+    "reason": "Node 24との全ハッシュ別名・乱数境界の公式差分テストに成功"
+  },
+  "ランダムUUID生成": {
+    "status": "native",
+    "tests": [
+      "plugin-node-crypto"
+    ],
+    "reason": "Node 24との全ハッシュ別名・乱数境界の公式差分テストに成功"
+  },
+  "ランダム配列生成": {
+    "status": "native",
+    "tests": [
+      "plugin-node-crypto"
+    ],
+    "reason": "Node 24との全ハッシュ別名・乱数境界の公式差分テストに成功"
+  },
+  "POSTデータ生成": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-post-data"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "自分IPアドレス取得": {
+    "status": "native",
+    "tests": [
+      "plugin-node-network-addresses"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "自分IPV6アドレス取得": {
+    "status": "native",
+    "tests": [
+      "plugin-node-network-addresses"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "AJAX送信時": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-callbacks"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "AJAX受信時": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-callbacks"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "GET送信時": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-callbacks"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "POST送信時": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-callbacks",
+      "plugin-node-http-onerror"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "POSTフォーム送信時": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-callbacks"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "AJAX失敗時": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-callbacks",
+      "plugin-node-http-onerror"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "AJAXオプション": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-options-and-promises"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "AJAXオプション設定": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-options-and-promises"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "AJAX保障送信": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-options-and-promises"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "HTTP保障取得": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-options-and-promises"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "GET保障送信": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-options-and-promises"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "POST保障送信": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-options-and-promises"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "POSTフォーム保障送信": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-options-and-promises"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "AJAX内容取得": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-options-and-promises"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "AJAX受信": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-async-values"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "POST送信": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-async-values"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "POSTフォーム送信": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-async-values"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "AJAXテキスト取得": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-async-values"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "AJAX_JSON取得": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-async-values"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "AJAXバイナリ取得": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-async-values"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "DISCORD送信": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-discord",
+      "plugin-node-http-discord-failure"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "DISCORDファイル送信": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-discord-file"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "LINE送信": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-line-message-discontinued"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "LINE画像送信": {
+    "status": "native",
+    "tests": [
+      "plugin-node-http-line-image-discontinued"
+    ],
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+  },
+  "HTTPメソッド": {
+    "status": "native",
+    "tests": [
+      "plugin-httpserver-all"
+    ],
+    "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
+  },
+  "GETデータ": {
+    "status": "native",
+    "tests": [
+      "plugin-httpserver-all"
+    ],
+    "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
+  },
+  "POSTデータ": {
+    "status": "native",
+    "tests": [
+      "plugin-httpserver-all"
+    ],
+    "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
+  },
+  "FILESデータ": {
+    "status": "native",
+    "tests": [
+      "plugin-httpserver-all"
+    ],
+    "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
+  },
+  "簡易HTTPサーバ起動時": {
+    "status": "native",
+    "tests": [
+      "plugin-httpserver-all"
+    ],
+    "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
+  },
+  "簡易HTTPサーバ静的パス指定": {
+    "status": "native",
+    "tests": [
+      "plugin-httpserver-all"
+    ],
+    "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
+  },
+  "簡易HTTPサーバ受信時": {
+    "status": "native",
+    "tests": [
+      "plugin-httpserver-all"
+    ],
+    "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
+  },
+  "簡易HTTPサーバ出力": {
+    "status": "native",
+    "tests": [
+      "plugin-httpserver-all"
+    ],
+    "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
+  },
+  "簡易HTTPサーバヘッダ出力": {
+    "status": "native",
+    "tests": [
+      "plugin-httpserver-all"
+    ],
+    "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
+  },
+  "簡易HTTPサーバ移動": {
+    "status": "native",
+    "tests": [
+      "plugin-httpserver-all"
+    ],
+    "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
   }
 }

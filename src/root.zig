@@ -41,6 +41,8 @@ pub const plugins = struct {
     pub const toml = @import("plugins/toml.zig");
     pub const node = @import("plugins/node.zig");
     pub const encoding = @import("plugins/encoding.zig");
+    pub const crypto = @import("plugins/crypto.zig");
+    pub const http_server = @import("plugins/http_server.zig");
 };
 
 pub const backend = struct {
@@ -131,6 +133,8 @@ test {
     std.testing.refAllDecls(plugins.toml);
     std.testing.refAllDecls(plugins.node);
     std.testing.refAllDecls(plugins.encoding);
+    std.testing.refAllDecls(plugins.crypto);
+    std.testing.refAllDecls(plugins.http_server);
     std.testing.refAllDecls(backend.llvm.api);
     std.testing.refAllDecls(backend.llvm.module);
     std.testing.refAllDecls(backend.llvm.compiler);
