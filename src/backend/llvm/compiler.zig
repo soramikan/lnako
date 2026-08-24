@@ -199,7 +199,7 @@ fn linkExecutable(allocator: std.mem.Allocator, io: std.Io, object_path: []const
     const argv: []const []const u8 = switch (builtin.os.tag) {
         .linux => &.{ tools.clang, linker_argument, object_path, runtime_library, "-o", output_path, "-lm" },
         .macos => &.{ tools.clang, linker_argument, "-isysroot", macos_sdk.?, object_path, runtime_library, "-o", output_path },
-        .windows => &.{ tools.clang, linker_argument, object_path, runtime_library, "ntdll.lib", "-o", output_path },
+        .windows => &.{ tools.clang, linker_argument, object_path, runtime_library, "-lntdll", "-o", output_path },
         else => &.{ tools.clang, linker_argument, object_path, runtime_library, "-o", output_path },
     };
     const result = try std.process.run(allocator, io, .{ .argv = argv });

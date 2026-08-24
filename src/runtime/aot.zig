@@ -9,6 +9,7 @@ pub const Tag = enum(u8) {
     utf16_string = 5,
     array = 6,
     dictionary = 7,
+    iterator = 8,
 };
 
 pub const Value = extern struct {
@@ -18,7 +19,7 @@ pub const Value = extern struct {
     pub fn object(self: Value) ?*Object {
         if (self.payload == 0) return null;
         return switch (@as(Tag, @enumFromInt(self.tag))) {
-            .utf16_string, .array, .dictionary => @ptrFromInt(self.payload),
+            .utf16_string, .array, .dictionary, .iterator => @ptrFromInt(self.payload),
             else => null,
         };
     }
@@ -31,11 +32,22 @@ pub const RootFrame = extern struct {
 };
 
 const DictionaryEntry = struct { key: Value, value: Value };
+const IteratorKind = enum { repeat, range, array, dictionary };
+const Iterator = struct {
+    kind: IteratorKind,
+    source: Value = .{},
+    index: usize = 0,
+    count: usize = 0,
+    current: f64 = 0,
+    end: f64 = 0,
+    step: f64 = 1,
+};
 
 const Payload = union(enum) {
     utf16_string: []u16,
     array: std.ArrayList(Value),
     dictionary: std.ArrayList(DictionaryEntry),
+    iterator: Iterator,
 };
 
 const Object = struct {
@@ -89,6 +101,30 @@ const Runtime = struct {
         return self.createObject(.{ .dictionary = entries }, .dictionary);
     }
 
+    fn createIterator(self: *Runtime, values: []const Value, is_range: bool, direction: u8) !Value {
+        if (values.len == 0) return error.InvalidIterator;
+        try self.beforeAllocation();
+        const iterator: Iterator = if (is_range) blk: {
+            if (values.len < 2) return error.InvalidIterator;
+            const start = valueToNumber(values[0]);
+            const end = valueToNumber(values[1]);
+            var step: f64 = if (values.len >= 3 and values[2].tag != @intFromEnum(Tag.undefined))
+                valueToNumber(values[2])
+            else if (direction == 2 or (direction == 0 and start > end)) -1 else 1;
+            if (direction == 2 and step > 0) step = -step;
+            if (direction == 1 and step < 0) step = -step;
+            if (!std.math.isFinite(start) or !std.math.isFinite(end)) return error.InvalidIteratorRange;
+            if (!std.math.isFinite(step) or step == 0) return error.InvalidIteratorStep;
+            break :blk .{ .kind = .range, .current = start, .end = end, .step = step };
+        } else switch (@as(Tag, @enumFromInt(values[0].tag))) {
+            .number => .{ .kind = .repeat, .count = try repeatCount(valueToNumber(values[0])) },
+            .array => .{ .kind = .array, .source = values[0], .count = values[0].object().?.payload.array.items.len },
+            .dictionary => .{ .kind = .dictionary, .source = values[0], .count = values[0].object().?.payload.dictionary.items.len },
+            else => return error.NotIterable,
+        };
+        return self.createObject(.{ .iterator = iterator }, .iterator);
+    }
+
     fn createObject(self: *Runtime, payload: Payload, tag: Tag) !Value {
         const object = try self.allocator.create(Object);
         errdefer self.allocator.destroy(object);
@@ -133,6 +169,7 @@ const Runtime = struct {
                     self.markValue(entry.key);
                     self.markValue(entry.value);
                 },
+                .iterator => |iterator| self.markValue(iterator.source),
             }
         }
         var reclaimed: usize = 0;
@@ -164,6 +201,7 @@ const Runtime = struct {
             .utf16_string => |units| self.allocator.free(units),
             .array => |*items| items.deinit(self.allocator),
             .dictionary => |*entries| entries.deinit(self.allocator),
+            .iterator => {},
         }
         self.allocator.destroy(object);
     }
@@ -197,6 +235,51 @@ const Runtime = struct {
         }
     }
 
+    fn iteratorHasNext(_: *Runtime, value: Value) bool {
+        const object = value.object() orelse return false;
+        if (object.payload != .iterator) return false;
+        const iterator = object.payload.iterator;
+        return switch (iterator.kind) {
+            .range => if (iterator.step > 0) iterator.current <= iterator.end else iterator.current >= iterator.end,
+            else => iterator.index < iterator.count,
+        };
+    }
+
+    fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_target: ?*Value, key_target: ?*Value, range_target: ?*Value) Value {
+        const object = value.object() orelse return .{};
+        if (object.payload != .iterator) return .{};
+        const iterator = &object.payload.iterator;
+        if (!self.iteratorHasNext(value)) return .{};
+        return switch (iterator.kind) {
+            .repeat => blk: {
+                iterator.index += 1;
+                const result = numberValue(@floatFromInt(iterator.index));
+                if (repeat_target) |target| target.* = result;
+                break :blk result;
+            },
+            .range => blk: {
+                const result = numberValue(iterator.current);
+                iterator.current += iterator.step;
+                if (range_target) |target| target.* = result;
+                break :blk result;
+            },
+            .array => blk: {
+                const result = iterator.source.object().?.payload.array.items[iterator.index];
+                if (key_target) |target| target.* = numberValue(@floatFromInt(iterator.index));
+                iterator.index += 1;
+                if (value_target) |target| target.* = result;
+                break :blk result;
+            },
+            .dictionary => blk: {
+                const entry = iterator.source.object().?.payload.dictionary.items[iterator.index];
+                if (key_target) |target| target.* = entry.key;
+                iterator.index += 1;
+                if (value_target) |target| target.* = entry.value;
+                break :blk entry.value;
+            },
+        };
+    }
+
     fn setDictionary(self: *Runtime, entries: *std.ArrayList(DictionaryEntry), key: Value, value: Value) !void {
         for (entries.items) |*entry| if (sameKey(entry.key, key)) {
             entry.value = value;
@@ -213,6 +296,21 @@ fn valueIndex(value: Value) ?usize {
     return @intFromFloat(number);
 }
 
+fn valueToNumber(value: Value) f64 {
+    return switch (@as(Tag, @enumFromInt(value.tag))) {
+        .null_value => 0,
+        .boolean => if (value.payload == 0) 0 else 1,
+        .number => @bitCast(value.payload),
+        else => std.math.nan(f64),
+    };
+}
+
+fn repeatCount(number: f64) !usize {
+    if (std.math.isNan(number) or number <= 0) return 0;
+    if (!std.math.isFinite(number) or number >= @as(f64, @floatFromInt(std.math.maxInt(usize)))) return error.IteratorCountTooLarge;
+    return @intFromFloat(@trunc(number));
+}
+
 fn sameKey(left: Value, right: Value) bool {
     if (left.tag != right.tag) return false;
     return switch (@as(Tag, @enumFromInt(left.tag))) {
@@ -220,7 +318,7 @@ fn sameKey(left: Value, right: Value) bool {
         .boolean, .number => left.payload == right.payload,
         .static_utf8_string => std.mem.eql(u8, staticUtf8(left), staticUtf8(right)),
         .utf16_string => std.mem.eql(u16, left.object().?.payload.utf16_string, right.object().?.payload.utf16_string),
-        .array, .dictionary => left.payload == right.payload,
+        .array, .dictionary, .iterator => left.payload == right.payload,
     };
 }
 
@@ -279,6 +377,20 @@ pub export fn lnako_aot_index_set(container: Value, key: Value, value: Value) ca
     const runtime = if (active_runtime) |*active| active else return -1;
     runtime.indexSet(container, key, value) catch return -1;
     return 0;
+}
+
+pub export fn lnako_aot_iterator_new(values: ?[*]const Value, len: usize, is_range: bool, direction: u8) callconv(.c) Value {
+    const runtime = if (active_runtime) |*value| value else return .{};
+    const source = if (values) |pointer| pointer[0..len] else if (len == 0) &.{} else return .{};
+    return runtime.createIterator(source, is_range, direction) catch .{};
+}
+
+pub export fn lnako_aot_iterator_has_next(iterator: Value) callconv(.c) c_int {
+    return if (active_runtime) |*runtime| @intFromBool(runtime.iteratorHasNext(iterator)) else 0;
+}
+
+pub export fn lnako_aot_iterator_next(iterator: Value, repeat_target: ?*Value, value_target: ?*Value, key_target: ?*Value, range_target: ?*Value) callconv(.c) Value {
+    return if (active_runtime) |*runtime| runtime.iteratorNext(iterator, repeat_target, value_target, key_target, range_target) else .{};
 }
 
 test "UTF-16文字列をルートから正確にmark-and-sweepする" {
@@ -343,6 +455,33 @@ test "配列の伸長と辞書の挿入位置を保った更新を行う" {
     const entries = dictionary.object().?.payload.dictionary.items;
     try std.testing.expectEqual(@as(usize, 2), entries.len);
     try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 7))), entries[0].value.payload);
+}
+
+test "回数・範囲・配列・辞書の反復状態と元コレクションを追跡する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var values = [_]Value{try runtime.createArray(&.{ numberValue(3), numberValue(4) })};
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &values, values.len);
+    values[0] = try runtime.createIterator(&.{values[0]}, false, 0);
+    try std.testing.expectEqual(@as(usize, 0), runtime.collect());
+    try std.testing.expectEqual(@as(usize, 2), runtime.object_count);
+    var target: Value = .{};
+    var key: Value = .{};
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 3))), runtime.iteratorNext(values[0], null, &target, &key, null).payload);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 0))), key.payload);
+    try std.testing.expect(runtime.iteratorHasNext(values[0]));
+    _ = runtime.iteratorNext(values[0], null, &target, &key, null);
+    try std.testing.expect(!runtime.iteratorHasNext(values[0]));
+    runtime.popRoots(&frame);
+    try std.testing.expectEqual(@as(usize, 2), runtime.collect());
+
+    var repeat = try runtime.createIterator(&.{numberValue(2)}, false, 0);
+    runtime.pushRoots(&frame, @ptrCast(&repeat), 1);
+    var repeat_target: Value = .{};
+    _ = runtime.iteratorNext(repeat, &repeat_target, null, null, null);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 1))), repeat_target.payload);
+    runtime.popRoots(&frame);
 }
 
 fn numberValue(number: f64) Value {

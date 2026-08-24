@@ -36,6 +36,8 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
                 .property_get,
                 .array_set,
                 .property_set,
+                .iterator_next,
+                .iterator_has_next,
                 .phi,
                 .speed_mode_begin,
                 .speed_mode_end,
@@ -49,6 +51,7 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
                 .unary => std.mem.eql(u8, instruction.operator, "!") or std.mem.eql(u8, instruction.operator, "not") or
                     std.mem.eql(u8, instruction.operator, "+") or std.mem.eql(u8, instruction.operator, "-"),
                 .call => isDisplayCall(instruction.name) or validDirectCallee(program, instruction) or lookupFunction(program, instruction.name) != null,
+                .iterator_begin => iteratorSourceSupported(function, instruction),
                 else => false,
             };
             if (!supported) return .{
@@ -122,6 +125,9 @@ const Emitter = struct {
                 "declare %lnako.Value @lnako_aot_dictionary_new(ptr, i64)\n" ++
                 "declare %lnako.Value @lnako_aot_index_get(%lnako.Value, %lnako.Value)\n" ++
                 "declare i32 @lnako_aot_index_set(%lnako.Value, %lnako.Value, %lnako.Value)\n" ++
+                "declare %lnako.Value @lnako_aot_iterator_new(ptr, i64, i1, i8)\n" ++
+                "declare i32 @lnako_aot_iterator_has_next(%lnako.Value)\n" ++
+                "declare %lnako.Value @lnako_aot_iterator_next(%lnako.Value, ptr, ptr, ptr, ptr)\n" ++
                 "declare i32 @printf(ptr, ...)\n" ++
                 "declare i32 @puts(ptr)\n" ++
                 "declare double @llvm.pow.f64(double, double)\n\n" ++
@@ -350,6 +356,9 @@ const Emitter = struct {
             .make_object => try self.writeAggregate(function, instruction, scope, aggregate_count, "lnako_aot_dictionary_new"),
             .array_get, .property_get => try self.writeIndexGet(function, instruction, scope),
             .array_set, .property_set => try self.writeIndexSet(function, locals, instruction, scope),
+            .iterator_begin => try self.writeIteratorBegin(function, instruction, scope, aggregate_count),
+            .iterator_has_next => try self.writeIteratorHasNext(function, instruction, scope),
+            .iterator_next => try self.writeIteratorNext(function, locals, instruction, scope),
             .phi => {
                 try self.output.writer.print("  %v{d} = phi %lnako.Value ", .{result orelse return error.MissingInstructionResult});
                 for (instruction.phi_incoming, 0..) |incoming, index| {
@@ -438,6 +447,68 @@ const Emitter = struct {
         try self.writeValueRef(function, instruction.operands[0]);
         try self.output.writer.writeByte(')');
         try self.debugSuffix(instruction.span, scope);
+    }
+
+    fn writeIteratorBegin(self: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
+        const result = instruction.result orelse return error.MissingInstructionResult;
+        if (instruction.operands.len == 0 or instruction.operands.len > aggregate_count) return error.InvalidIterator;
+        for (instruction.operands, 0..) |operand, index| {
+            try self.output.writer.print("  %iterator.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+            try self.debugSuffix(instruction.span, scope);
+            try self.output.writer.writeAll("  store %lnako.Value ");
+            try self.writeValueRef(function, operand);
+            try self.output.writer.print(", ptr %iterator.{d}.slot.{d}", .{ result, index });
+            try self.debugSuffix(instruction.span, scope);
+        }
+        const is_range = instruction.name.len > 0 and instruction.operands.len >= 2;
+        const direction: u8 = switch (instruction.loop_direction) {
+            .automatic => 0,
+            .up => 1,
+            .down => 2,
+        };
+        try self.output.writer.print("  %v{d} = call %lnako.Value @lnako_aot_iterator_new(ptr %iterator.{d}.slot.0, i64 {d}, i1 {s}, i8 {d})", .{ result, result, instruction.operands.len, if (is_range) "true" else "false", direction });
+        try self.debugSuffix(instruction.span, scope);
+    }
+
+    fn writeIteratorHasNext(self: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize) !void {
+        const result = instruction.result orelse return error.MissingInstructionResult;
+        if (instruction.operands.len != 1) return error.InvalidIterator;
+        try self.output.writer.print("  %iterator.has.{d} = call i32 @lnako_aot_iterator_has_next(%lnako.Value ", .{result});
+        try self.writeValueRef(function, instruction.operands[0]);
+        try self.output.writer.writeByte(')');
+        try self.debugSuffix(instruction.span, scope);
+        try self.output.writer.print("  %iterator.bool.{d} = icmp ne i32 %iterator.has.{d}, 0", .{ result, result });
+        try self.debugSuffix(instruction.span, scope);
+        try self.output.writer.print("  %iterator.bits.{d} = zext i1 %iterator.bool.{d} to i64", .{ result, result });
+        try self.debugSuffix(instruction.span, scope);
+        try self.output.writer.print("  %v{d} = insertvalue %lnako.Value {{ i8 2, i64 0 }}, i64 %iterator.bits.{d}, 1", .{ result, result });
+        try self.debugSuffix(instruction.span, scope);
+    }
+
+    fn writeIteratorNext(self: *Emitter, function: ir.Function, locals: []const []const u8, instruction: ir.Instruction, scope: usize) !void {
+        const result = instruction.result orelse return error.MissingInstructionResult;
+        if (instruction.operands.len != 1) return error.InvalidIterator;
+        const begin = instructionForValue(function, instruction.operands[0]) orelse return error.InvalidIterator;
+        if (begin.opcode != .iterator_begin) return error.InvalidIterator;
+        try self.output.writer.print("  %v{d} = call %lnako.Value @lnako_aot_iterator_next(%lnako.Value ", .{result});
+        try self.writeValueRef(function, instruction.operands[0]);
+        try self.output.writer.writeAll(", ptr ");
+        try self.writeOptionalNamedPointer(locals, "回数");
+        try self.output.writer.writeAll(", ptr ");
+        try self.writeOptionalNamedPointer(locals, "対象");
+        try self.output.writer.writeAll(", ptr ");
+        try self.writeOptionalNamedPointer(locals, "対象キー");
+        try self.output.writer.writeAll(", ptr ");
+        try self.writeOptionalNamedPointer(locals, begin.name);
+        try self.output.writer.writeByte(')');
+        try self.debugSuffix(instruction.span, scope);
+    }
+
+    fn writeOptionalNamedPointer(self: *Emitter, locals: []const []const u8, name: []const u8) !void {
+        if (name.len == 0) return self.output.writer.writeAll("null");
+        if (nameIndex(locals, name)) |index| return self.output.writer.print("%local.{d}", .{index});
+        if (self.globalIndex(name)) |index| return self.output.writer.print("@lnako.global.{d}", .{index});
+        return self.output.writer.writeAll("null");
     }
 
     fn writeBinary(self: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize) !void {
@@ -754,10 +825,26 @@ fn functionValueCount(function: ir.Function) usize {
 fn maxAggregateOperandCount(function: ir.Function) usize {
     var count: usize = 0;
     for (function.blocks) |block| for (block.instructions) |instruction| switch (instruction.opcode) {
-        .make_array, .make_object => count = @max(count, instruction.operands.len),
+        .make_array, .make_object, .iterator_begin => count = @max(count, instruction.operands.len),
         else => {},
     };
     return count;
+}
+
+fn instructionForValue(function: ir.Function, value: ir.ValueId) ?ir.Instruction {
+    for (function.blocks) |block| for (block.instructions) |instruction| {
+        if (instruction.result) |result| if (result == value) return instruction;
+    };
+    return null;
+}
+
+fn iteratorSourceSupported(function: ir.Function, instruction: ir.Instruction) bool {
+    if (instruction.operands.len == 0) return false;
+    if (instruction.name.len > 0 and instruction.operands.len >= 2) return true;
+    return switch (valueType(function, instruction.operands[0])) {
+        .number, .array, .object => true,
+        else => false,
+    };
 }
 
 fn arithmeticOpcode(operator: []const u8) ?[]const u8 {
@@ -852,6 +939,48 @@ test "配列と辞書をルート付きAOTランタイム呼び出しへ変換�
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_dictionary_new") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_index_get") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_index_set") != null);
+}
+
+test "回数・範囲・コレクション反復をAOTイテレーターへ変換する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    const source = "2回\n回数を表示\nここまで\nNを1から2まで繰り返す\nNを表示\nここまで\n[3,4]を反復\n対象を表示\nここまで\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "iterators.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "iterators.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "iterators.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    try std.testing.expect(findUnsupported(program) == null);
+    var module = try generate(std.testing.allocator, program, "iterators.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_iterator_new") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_iterator_has_next") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_iterator_next") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "ptr @lnako.global.") != null);
+}
+
+test "未実装の文字列反復をAOT対応として扱わない" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "「ab」を反復\n対象を表示\nここまで\n", "string-iterator.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "string-iterator.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "string-iterator.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    const unsupported = findUnsupported(program) orelse return error.ExpectedUnsupportedIterator;
+    try std.testing.expectEqualStrings("iterator_begin", unsupported.opcode);
 }
 
 test "O1では証明済み数値と真偽判定をアンボックスしO0のIRを変更しない" {

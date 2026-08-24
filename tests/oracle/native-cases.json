@@ -34,5 +34,17 @@
   {
     "id": "native-nested-and-sparse-collections",
     "source": "A=[1]\nA[3]=9\nA[1]を表示\nA[3]を表示\nB={\"x\":1}\nB@\"x\"=2\nB@\"x\"を表示\nC={\"outer\":{\"inner\":4}}\nC@\"outer\"@\"inner\"を表示\nC@\"outer\"@\"inner\"=8\nC@\"outer\"@\"inner\"を表示\n"
+  },
+  {
+    "id": "native-repeat-break",
+    "source": "5回\n回数を表示\nもし、回数=3ならば、抜ける\nここまで\n"
+  },
+  {
+    "id": "native-range-break-and-continue",
+    "source": "S=0\nIを1から5まで繰り返す\nもしI=2ならば、続ける\nもしI=4ならば、抜ける\nS=S+I\nここまで\nSを表示\n"
+  },
+  {
+    "id": "native-collection-foreach",
+    "source": "[3,4]を反復\n対象を表示\nここまで\n{\"a\":1,\"b\":2}を反復\n対象キーを表示\nここまで\n"
   }
 ]
