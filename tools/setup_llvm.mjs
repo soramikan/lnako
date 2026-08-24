@@ -96,14 +96,15 @@ async function walk(directory, matches) {
 }
 
 function isLlvmLibrary(name) {
-  if (process.platform === "darwin") return /^libLLVM(?:[-.]22(?:\.1(?:\.8)?)?)?\.dylib$/.test(name);
-  if (process.platform === "linux") return /^libLLVM(?:-22)?\.so(?:\.22(?:\.1(?:\.8)?)?)?$/.test(name);
+  if (process.platform === "darwin") return /^libLLVM(?:-C|[-.]22(?:\.1(?:\.8)?)?)?\.dylib$/.test(name);
+  if (process.platform === "linux") return /^libLLVM(?:-C|-22)?\.so(?:\.22(?:\.1(?:\.8)?)?)?$/.test(name);
   return /^(?:LLVM-C|LLVM|libLLVM)\.dll$/i.test(name);
 }
 
 function libraryScore(path) {
   const name = path.split(/[\\/]/).at(-1);
-  if (name === "libLLVM.dylib" || name === "libLLVM.so.22.1" || name === "LLVM-C.dll") return 3;
+  if (name === "libLLVM-C.dylib" || name === "libLLVM-C.so" || name === "LLVM-C.dll") return 4;
+  if (name === "libLLVM.dylib" || name === "libLLVM.so.22.1") return 3;
   if (name.includes("22")) return 2;
   return 1;
 }

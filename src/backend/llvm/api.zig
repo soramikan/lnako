@@ -147,8 +147,8 @@ const PosixLibrary = struct {
         if (llvm_library) |path| return .{ .inner = std.DynLib.open(path) catch return error.LlvmLibraryNotFound };
         if (llvm_root) |root| {
             const rooted_candidates: []const []const u8 = switch (builtin.os.tag) {
-                .macos => &.{ "lib/libLLVM.dylib", "lib/libLLVM-22.dylib" },
-                else => &.{ "lib/libLLVM.so.22.1", "lib/libLLVM.so.22", "lib/libLLVM-22.so", "lib/libLLVM.so" },
+                .macos => &.{ "lib/libLLVM-C.dylib", "lib/libLLVM.dylib", "lib/libLLVM-22.dylib" },
+                else => &.{ "lib/libLLVM-C.so", "lib/libLLVM.so.22.1", "lib/libLLVM.so.22", "lib/libLLVM-22.so", "lib/libLLVM.so" },
             };
             for (rooted_candidates) |relative| {
                 const candidate = try std.fs.path.join(allocator, &.{ root, relative });
@@ -160,12 +160,15 @@ const PosixLibrary = struct {
         }
         const candidates: []const []const u8 = switch (builtin.os.tag) {
             .macos => &.{
+                "/opt/homebrew/opt/llvm/lib/libLLVM-C.dylib",
+                "/usr/local/opt/llvm/lib/libLLVM-C.dylib",
                 "/opt/homebrew/opt/llvm/lib/libLLVM.dylib",
                 "/usr/local/opt/llvm/lib/libLLVM.dylib",
                 "libLLVM-22.dylib",
                 "libLLVM.dylib",
             },
             else => &.{
+                "libLLVM-C.so",
                 "libLLVM.so.22.1",
                 "libLLVM.so.22",
                 "libLLVM-22.so",
