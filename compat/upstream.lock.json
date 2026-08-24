@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "nadesiko3": {
+    "repository": "https://github.com/kujirahand/nadesiko3.git",
+    "tag": "3.7.24",
+    "commit": "aa18c7e640523938c680958fe731418cc6f7a58f",
+    "archive": {
+      "url": "https://github.com/kujirahand/nadesiko3/archive/refs/tags/3.7.24.tar.gz",
+      "sha256": "c3bedbf101118a261f631d331127ae441657fec091c712b07d237c4336eb0011"
+    },
+    "commandList": {
+      "url": "https://raw.githubusercontent.com/kujirahand/nadesiko3/3.7.24/doc/command_list.json",
+      "sha256": "0eff352616d925e74caae069baf4d718b8cca1b6fc28ebb28fb12f21b485c732"
+    },
+    "license": {
+      "url": "https://raw.githubusercontent.com/kujirahand/nadesiko3/3.7.24/LICENSE",
+      "sha256": "bb972b990b63ee903524b7bdc0a53925addee16eeedd625bc7967e3a488b0021"
+    }
+  }
+}

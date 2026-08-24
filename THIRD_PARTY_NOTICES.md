@@ -1,6 +1,7 @@
 # Third-party notices
 
-実際に取り込んだソースと配布物について、バージョン、取得元、ハッシュ、ライセンス本文への参照をここへ追加します。
+バージョン、取得元、配布物のSHA-256は `toolchain.lock.json` と `compat/upstream.lock.json` に固定します。
+上流の命令カタログに添付されるMITライセンスは `compat/v3.7.24/UPSTREAM_LICENSE` に保存します。
 
 | Component | Version | License | Use |
 | --- | --- | --- | --- |
@@ -8,4 +9,3 @@
 | Zig | 0.16.0 | MIT | コンパイラ実装とビルド |
 | Nadesiko 3 | 3.7.24 | MIT | 仕様・差分テストオラクル |
 | QuickJS | 2026-06-04 | MIT | 明示的なJS互換モード |
-

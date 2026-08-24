@@ -28,6 +28,11 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+      - name: Verify compatibility baseline
+        run: node tools/sync_compat.mjs --check
       - name: Format
         run: zig build fmt-check
       - name: Test
@@ -37,4 +42,3 @@ jobs:
       - name: Smoke test
         shell: bash
         run: ./zig-out/bin/lnako --version
-

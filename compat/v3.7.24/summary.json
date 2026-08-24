@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "baseline": {
+    "tag": "3.7.24",
+    "commit": "aa18c7e640523938c680958fe731418cc6f7a58f"
+  },
+  "catalogCommands": 1145,
+  "standardCnakoCommands": 527,
+  "outOfScopeCommands": 618,
+  "statuses": {
+    "blocked": 527,
+    "excluded-browser": 429,
+    "excluded-extension": 189
+  },
+  "standardCnakoStatuses": {
+    "blocked": 527
+  },
+  "standardCnakoPlannedModes": {
+    "native": 523,
+    "compat-js": 4
+  },
+  "standardCnakoByPlugin": {
+    "plugin_caniuse": 2,
+    "plugin_csv": 7,
+    "plugin_datetime": 28,
+    "plugin_httpserver": 10,
+    "plugin_kansuji": 2,
+    "plugin_markup": 2,
+    "plugin_math": 38,
+    "plugin_node": 107,
+    "plugin_promise": 7,
+    "plugin_system": 322,
+    "plugin_toml": 2
+  }
+}
