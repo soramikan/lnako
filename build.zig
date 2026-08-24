@@ -83,6 +83,20 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| semantic_probe_run.addArgs(args);
     semantic_probe_step.dependOn(&semantic_probe_run.step);
 
+    const ir_probe = b.addExecutable(.{
+        .name = "ir-probe",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/ir_probe.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "lnako", .module = lnako }},
+        }),
+    });
+    const ir_probe_step = b.step("ir-probe", "Nako SSA IRをテキストで出力する");
+    const ir_probe_run = b.addRunArtifact(ir_probe);
+    if (b.args) |args| ir_probe_run.addArgs(args);
+    ir_probe_step.dependOn(&ir_probe_run.step);
+
     const module_tests = b.addTest(.{ .root_module = lnako });
     const run_module_tests = b.addRunArtifact(module_tests);
     const exe_tests = b.addTest(.{ .root_module = exe.root_module });

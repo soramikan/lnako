@@ -52,7 +52,27 @@ pub fn main(init: std.process.Init) !void {
                 try stderr.flush();
                 std.process.exit(1);
             }
-            try stdout.print("{s}: 構文と意味に問題はありません（{d}モジュール）\n", .{ args[1], graph.modules.len });
+            var roots: std.ArrayList(*lnako.frontend.ast.Node) = .empty;
+            var names: std.ArrayList([]const u8) = .empty;
+            var paths: std.ArrayList([]const u8) = .empty;
+            for (graph.modules) |module| {
+                if (module.kind != .nako3) continue;
+                try roots.append(allocator, module.parsed.?.root.?);
+                try names.append(allocator, module.name);
+                try paths.append(allocator, module.path);
+            }
+            var hir_program = try lnako.ir.hir.lower(allocator, roots.items, names.items, paths.items, program);
+            defer hir_program.deinit();
+            var ir_program = try lnako.ir.lower_ssa.lower(allocator, hir_program);
+            defer ir_program.deinit();
+            var verification = try lnako.ir.verifier.verify(allocator, ir_program);
+            defer verification.deinit();
+            if (!verification.succeeded()) {
+                for (verification.issues) |issue| try stderr.print("IR検証エラー[{s}] {s}: {s}\n", .{ @tagName(issue.code), issue.function_name, issue.message });
+                try stderr.flush();
+                std.process.exit(1);
+            }
+            try stdout.print("{s}: 構文・意味・中間表現に問題はありません（{d}モジュール）\n", .{ args[1], graph.modules.len });
         },
         else => try stdout.print("{s}: 実装準備中です\n", .{@tagName(command)}),
     }

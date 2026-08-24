@@ -24,6 +24,12 @@ AST差分テストは公式の `core/test/fixtures/parser_corpus.mjs` を直接�
 左右されない構文フィンガープリントを比較します。ローカル追加ケースは
 `tests/oracle/parser-cases.json`、拒否ケースは `tests/oracle/parser-diagnostic-cases.json` に置きます。
 
+HIRから生成したNako SSA IRは、次の開発用プローブで確認できます。出力前にIR検証も実行されます。
+
+```sh
+zig build ir-probe -- $'A=1\nAを表示\n'
+```
+
 ## コミット
 
 - 機能と対応テストを同じコミットに含める。

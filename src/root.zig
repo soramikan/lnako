@@ -18,6 +18,14 @@ pub const semantic = struct {
     pub const module_graph = @import("semantic/module_graph.zig");
 };
 
+pub const ir = struct {
+    pub const hir = @import("ir/hir.zig");
+    pub const nako_ir = @import("ir/nako_ir.zig");
+    pub const lower_ssa = @import("ir/lower_ssa.zig");
+    pub const verifier = @import("ir/verifier.zig");
+    pub const printer = @import("ir/printer.zig");
+};
+
 pub const Command = enum {
     build,
     run,
