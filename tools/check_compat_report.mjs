@@ -10,8 +10,10 @@ const environment = {
   ZIG_GLOBAL_CACHE_DIR: process.env.ZIG_GLOBAL_CACHE_DIR ?? resolve(root, ".zig-global-cache"),
 };
 
-const build = spawnSync("zig", ["build"], { cwd: root, encoding: "utf8", env: environment });
-if (build.status !== 0) throw new Error(`lnakoのビルドに失敗しました:\n${build.stderr}`);
+if (!process.argv.includes("--no-build")) {
+  const build = spawnSync("zig", ["build"], { cwd: root, encoding: "utf8", env: environment });
+  if (build.status !== 0) throw new Error(`lnakoのビルドに失敗しました:\n${build.stderr}`);
+}
 
 const report = spawnSync(executable, ["compat", "report"], { cwd: root, encoding: "utf8", env: environment });
 if (report.status !== 0 || report.stderr !== "") {

@@ -199,6 +199,7 @@ fn linkExecutable(allocator: std.mem.Allocator, io: std.Io, object_path: []const
     const argv: []const []const u8 = switch (builtin.os.tag) {
         .linux => &.{ tools.clang, linker_argument, object_path, runtime_library, "-o", output_path, "-lm" },
         .macos => &.{ tools.clang, linker_argument, "-isysroot", macos_sdk.?, object_path, runtime_library, "-o", output_path },
+        .windows => &.{ tools.clang, linker_argument, object_path, runtime_library, "ntdll.lib", "-o", output_path },
         else => &.{ tools.clang, linker_argument, object_path, runtime_library, "-o", output_path },
     };
     const result = try std.process.run(allocator, io, .{ .argv = argv });
@@ -339,7 +340,7 @@ test "未対応AOT命令をソース位置付きで拒否する" {
     const semantic = @import("../../semantic/analyzer.zig");
     const hir = @import("../../ir/hir.zig");
     const lower = @import("../../ir/lower_ssa.zig");
-    var parsed = try parser.parse(std.testing.allocator, "A=[1,2]\n", "unsupported.nako3");
+    var parsed = try parser.parse(std.testing.allocator, "A=1_000n\n", "unsupported.nako3");
     defer parsed.deinit();
     var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "unsupported.nako3");
     defer analyzed.deinit();
@@ -353,6 +354,6 @@ test "未対応AOT命令をソース位置付きで拒否する" {
         .source_path = "unsupported.nako3",
         .output_path = "/tmp/unused-lnako-output",
     }, &diagnostics.writer));
-    try std.testing.expect(std.mem.indexOf(u8, diagnostics.written(), "opcode=make_array") != null);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostics.written(), "opcode=const_bigint") != null);
     try std.testing.expect(std.mem.indexOf(u8, diagnostics.written(), "unsupported.nako3:1:") != null);
 }

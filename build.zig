@@ -40,10 +40,12 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/runtime/aot.zig"),
             .target = target,
-            .optimize = optimize,
+            .optimize = .ReleaseSafe,
+            .strip = true,
             .link_libc = true,
         }),
     });
+    aot_runtime.bundle_compiler_rt = true;
     b.installArtifact(aot_runtime);
 
     const native_plugin_fixture = b.addLibrary(.{

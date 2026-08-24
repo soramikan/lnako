@@ -20,6 +20,7 @@ lnakoは、意図的な非互換として合意した項目を除き、説明文
 | `表右回転` | 行に列がない箇所を補わず`undefined`のまま残す | 同じ | `plugin-system-table` |
 | `表曖昧検索` / `表正規表現ピックアップ` | `/式/フラグ`形式ではなく、`RegExp`コンストラクタへ渡す生のパターン文字列を受け取る | 同じ | `plugin-system-table` |
 | `表CSV変換` / `CSV変換` / `表TSV変換` / `TSV変換` | 変換結果を返すだけでなく、入力表の各セルを引用処理後の文字列へ置き換える | 公式互換のため入力表も変更する | `plugin-csv-all` |
+| 辞書リテラルの数値キー | `{1:2}`はJavaScriptのオブジェクト構文なら有効に見えるが、公式パーサーは数値をキーとして受理せず、辞書の閉じ括弧不足に見える文法エラーを返す | 識別子または引用文字列だけを受理し、数値キーは同じ行の構文診断にする | `公式同様に辞書リテラルの数値キーを拒否する`、`parser-diagnostic-cases` |
 
 根拠は固定オラクルの
 [`core/src/plugin_system_array.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_array.mts) と
@@ -104,6 +105,13 @@ ABI値の所有権と非同期スレッド制約は[`NATIVE_PLUGIN_ABI.md`](NATI
 
 全最適化レベルの意味同一性は、公式cnako3、公式生成JavaScript、`lnako run`、AOT `-O0` / `-O1` /
 `-O2` / `-O3`の7経路差分テストで確認します。
+
+## AOTランタイムとビルド検証
+
+| 境界 | 分かりにくい挙動 | lnakoの扱い | テストID |
+|---|---|---|---|
+| AOTの`-O0`〜`-O3`とランタイム静的ライブラリ | CLIの最適化指定はNako SSA IRと生成LLVMモジュールに対する指定であり、別にリンクするZigランタイムまで同じモードにするとDebug版だけがZigの診断用OS依存を持つ | 生成コードは指定レベルを維持し、配布ランタイムはReleaseSafe・strip・compiler-rt同梱で固定する。WindowsではZigの安全検査経路が使うNT APIを`ntdll.lib`で解決する | `Differential native AOT test`、GitHub Actions `Windows x86_64` |
+| `check_compat_report.mjs`をQuickJSビルド後に実行 | 検査スクリプト自身が通常版を再ビルドすると、直前に生成したQuickJS対応`lnako`を同じ`zig-out/bin`上で置き換える | 単独実行は従来どおりビルドしてから検査し、既存配布物を検査するCIでは`--no-build`を指定してバイナリを変更しない | `check_compat_report.mjs --no-build`、GitHub Actions `Smoke test` |
 
 ## 礼節・言語カタログ・名前空間
 

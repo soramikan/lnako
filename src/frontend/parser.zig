@@ -945,7 +945,7 @@ const Parser = struct {
                 continue;
             }
             const key_token = self.advance();
-            if (key_token.kind != .identifier and key_token.kind != .string and key_token.kind != .number) {
+            if (key_token.kind != .identifier and key_token.kind != .string) {
                 return self.fail(.expected_name, "辞書のキーが必要です", key_token);
             }
             const key = try self.valueNode(.string, key_token);
@@ -1350,6 +1350,14 @@ test "配列・辞書・添字代入を構文解析する" {
     try std.testing.expect(result.succeeded());
     try std.testing.expectEqual(ast.Kind.object_literal, result.root.?.children[0].children[0].kind);
     try std.testing.expectEqual(ast.Kind.array_assignment, result.root.?.children[4].kind);
+}
+
+test "公式同様に辞書リテラルの数値キーを拒否する" {
+    var result = try parse(std.testing.allocator, "A={1:2}\n", "numeric-key.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+    try std.testing.expectEqual(diagnostic.Code.expected_name, result.diagnostics[0].code);
+    try std.testing.expectEqual(@as(usize, 0), result.diagnostics[0].span.line);
 }
 
 test "角括弧の分割代入を構文解析する" {
