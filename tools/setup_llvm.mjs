@@ -97,6 +97,7 @@ function buildLlvmLibrary(directory) {
   if (libraries.length === 0) throw new Error(`LLVM静的ライブラリを列挙できません: ${directory}`);
   const libraryDirectory = resolve(directory, "lib");
   const output = resolve(libraryDirectory, process.platform === "darwin" ? "libLLVM-C.dylib" : "libLLVM-C.so");
+  const requiredSymbols = llvmApiSymbols();
   const linkArguments = ifDarwinLinkArguments();
   const result = spawnSync(compiler, linkArguments, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
   if (result.status !== 0) throw new Error(`LLVM C API共有ライブラリの構築に失敗しました:\n${result.stderr}`);
@@ -105,11 +106,48 @@ function buildLlvmLibrary(directory) {
 
   function ifDarwinLinkArguments() {
     if (process.platform !== "darwin") {
-      return ["-shared", "-Wl,--whole-archive", ...libraries, "-Wl,--no-whole-archive", ...systemLibraries, "-o", output];
+      const required = requiredSymbols.map((symbol) => `-Wl,--undefined=${symbol}`);
+      return ["-shared", ...required, "-Wl,--start-group", ...libraries, "-Wl,--end-group", ...systemLibraries, "-o", output];
     }
     const sdk = capture("xcrun", ["--sdk", "macosx", "--show-sdk-path"]).trim();
-    return ["-dynamiclib", "-isysroot", sdk, "-Wl,-install_name,@rpath/libLLVM-C.dylib", "-Wl,-all_load", ...libraries, `-L${libraryDirectory}`, ...systemLibraries, "-o", output];
+    const required = requiredSymbols.map((symbol) => `-Wl,-u,_${symbol}`);
+    return ["-dynamiclib", "-isysroot", sdk, "-Wl,-install_name,@rpath/libLLVM-C.dylib", ...required, ...libraries, `-L${libraryDirectory}`, ...systemLibraries, "-lc++", "-lc++abi", "-o", output];
   }
+}
+
+function llvmApiSymbols() {
+  const target = process.arch === "arm64" ? "AArch64" : "X86";
+  return [
+    "LLVMGetVersion",
+    "LLVMContextCreate",
+    "LLVMContextDispose",
+    "LLVMCreateMemoryBufferWithMemoryRangeCopy",
+    "LLVMParseIRInContext",
+    "LLVMDisposeModule",
+    "LLVMVerifyModule",
+    "LLVMPrintModuleToString",
+    "LLVMDisposeMessage",
+    "LLVMSetTarget",
+    "LLVMSetDataLayout",
+    `LLVMInitialize${target}TargetInfo`,
+    `LLVMInitialize${target}Target`,
+    `LLVMInitialize${target}TargetMC`,
+    `LLVMInitialize${target}AsmPrinter`,
+    "LLVMGetDefaultTargetTriple",
+    "LLVMGetTargetFromTriple",
+    "LLVMCreateTargetMachine",
+    "LLVMDisposeTargetMachine",
+    "LLVMCreateTargetDataLayout",
+    "LLVMCopyStringRepOfTargetData",
+    "LLVMDisposeTargetData",
+    "LLVMTargetMachineEmitToFile",
+    "LLVMCreatePassBuilderOptions",
+    "LLVMPassBuilderOptionsSetVerifyEach",
+    "LLVMRunPasses",
+    "LLVMDisposePassBuilderOptions",
+    "LLVMGetErrorMessage",
+    "LLVMDisposeErrorMessage",
+  ];
 }
 
 function preferSharedSystemLibraries(libraries) {
