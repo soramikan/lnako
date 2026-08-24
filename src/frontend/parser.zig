@@ -358,15 +358,6 @@ const Parser = struct {
 
     fn parseAssignment(self: *Parser) ParseFailure!*ast.Node {
         const start = self.peek();
-        if (self.at(.left_bracket)) {
-            const names = try self.parseArrayLiteral();
-            for (names.children) |name| if (name.kind != .word) return self.fail(.invalid_assignment, "分割代入の左辺には変数名が必要です", start);
-            _ = try self.require(.equal, "変数一覧の後ろに『=』が必要です");
-            const value = try self.parseCallExpression();
-            const result = try self.makeNodeWithChildren(.variable_list_definition, start, try self.copyChildren(&.{value}));
-            result.arguments = try self.namesToArguments(names.children);
-            return result;
-        }
         var targets: std.ArrayList(*ast.Node) = .empty;
         try targets.append(self.allocator, try self.parseLValue());
         while (self.at(.comma)) {
@@ -1360,13 +1351,26 @@ test "公式同様に辞書リテラルの数値キーを拒否する" {
     try std.testing.expectEqual(@as(usize, 0), result.diagnostics[0].span.line);
 }
 
-test "角括弧の分割代入を構文解析する" {
-    var result = try parse(std.testing.allocator, "[A,B]=[1,2]\n", "分割.nako3");
+test "変数と定数の角括弧分割宣言を構文解析する" {
+    var result = try parse(std.testing.allocator, "変数[A,B]=[1,2]\n定数[C,D]=[3,4]\n", "分割.nako3");
     defer result.deinit();
     try std.testing.expect(result.succeeded());
-    const assignment = result.root.?.children[0];
-    try std.testing.expectEqual(ast.Kind.variable_list_definition, assignment.kind);
-    try std.testing.expectEqual(@as(usize, 2), assignment.arguments.len);
+    const variable_declaration = result.root.?.children[0];
+    const constant_declaration = result.root.?.children[2];
+    try std.testing.expectEqual(ast.Kind.variable_list_definition, variable_declaration.kind);
+    try std.testing.expectEqual(@as(usize, 2), variable_declaration.arguments.len);
+    try std.testing.expect(!variable_declaration.is_const);
+    try std.testing.expectEqual(ast.Kind.variable_list_definition, constant_declaration.kind);
+    try std.testing.expectEqual(@as(usize, 2), constant_declaration.arguments.len);
+    try std.testing.expect(constant_declaration.is_const);
+}
+
+test "公式同様に宣言なしの角括弧分割代入を拒否する" {
+    var result = try parse(std.testing.allocator, "[A,B]=[1,2]\n", "分割.nako3");
+    defer result.deinit();
+    try std.testing.expect(!result.succeeded());
+    try std.testing.expectEqual(diagnostic.Code.expected_token, result.diagnostics[0].code);
+    try std.testing.expectEqual(@as(usize, 0), result.diagnostics[0].span.line);
 }
 
 test "閉じていないブロックを位置付き診断にする" {

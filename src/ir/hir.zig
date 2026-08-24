@@ -344,7 +344,7 @@ test "名前解決済みASTをHIRへ下げる" {
 
 test "分割代入と増減とループ属性をHIRへ保持する" {
     const parser = @import("../frontend/parser.zig");
-    var parsed = try parser.parse(std.testing.allocator, "[A,B]=[1,2]\nAを1増\nIを1から3まで1ずつ増やし繰り返す\nA=A+I\nここまで\n", "main.nako3");
+    var parsed = try parser.parse(std.testing.allocator, "変数[A,B]=[1,2]\nAを1増\nIを1から3まで1ずつ増やし繰り返す\nA=A+I\nここまで\n", "main.nako3");
     defer parsed.deinit();
     try std.testing.expect(parsed.succeeded());
     var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");

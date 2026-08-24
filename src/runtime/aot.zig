@@ -351,46 +351,52 @@ pub export fn lnako_aot_collect() callconv(.c) usize {
     return if (active_runtime) |*runtime| runtime.collect() else 0;
 }
 
-pub export fn lnako_aot_string_new(units: ?[*]const u16, len: usize) callconv(.c) Value {
-    const runtime = if (active_runtime) |*value| value else return .{};
-    const source = if (units) |pointer| pointer[0..len] else if (len == 0) &.{} else return .{};
-    return runtime.createString(source) catch .{};
+pub export fn lnako_aot_string_new(out: *Value, units: ?[*]const u16, len: usize) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*value| value else return;
+    const source = if (units) |pointer| pointer[0..len] else if (len == 0) &.{} else return;
+    out.* = runtime.createString(source) catch return;
 }
 
-pub export fn lnako_aot_array_new(values: ?[*]const Value, len: usize) callconv(.c) Value {
-    const runtime = if (active_runtime) |*value| value else return .{};
-    const source = if (values) |pointer| pointer[0..len] else if (len == 0) &.{} else return .{};
-    return runtime.createArray(source) catch .{};
+pub export fn lnako_aot_array_new(out: *Value, values: ?[*]const Value, len: usize) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*value| value else return;
+    const source = if (values) |pointer| pointer[0..len] else if (len == 0) &.{} else return;
+    out.* = runtime.createArray(source) catch return;
 }
 
-pub export fn lnako_aot_dictionary_new(values: ?[*]const Value, len: usize) callconv(.c) Value {
-    const runtime = if (active_runtime) |*value| value else return .{};
-    const source = if (values) |pointer| pointer[0..len] else if (len == 0) &.{} else return .{};
-    return runtime.createDictionary(source) catch .{};
+pub export fn lnako_aot_dictionary_new(out: *Value, values: ?[*]const Value, len: usize) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*value| value else return;
+    const source = if (values) |pointer| pointer[0..len] else if (len == 0) &.{} else return;
+    out.* = runtime.createDictionary(source) catch return;
 }
 
-pub export fn lnako_aot_index_get(container: Value, key: Value) callconv(.c) Value {
-    return if (active_runtime) |*runtime| runtime.indexGet(container, key) else .{};
+pub export fn lnako_aot_index_get(out: *Value, container: *const Value, key: *const Value) callconv(.c) void {
+    const container_value = container.*;
+    const key_value = key.*;
+    out.* = if (active_runtime) |*runtime| runtime.indexGet(container_value, key_value) else .{};
 }
 
-pub export fn lnako_aot_index_set(container: Value, key: Value, value: Value) callconv(.c) c_int {
+pub export fn lnako_aot_index_set(container: *const Value, key: *const Value, value: *const Value) callconv(.c) c_int {
     const runtime = if (active_runtime) |*active| active else return -1;
-    runtime.indexSet(container, key, value) catch return -1;
+    runtime.indexSet(container.*, key.*, value.*) catch return -1;
     return 0;
 }
 
-pub export fn lnako_aot_iterator_new(values: ?[*]const Value, len: usize, is_range: bool, direction: u8) callconv(.c) Value {
-    const runtime = if (active_runtime) |*value| value else return .{};
-    const source = if (values) |pointer| pointer[0..len] else if (len == 0) &.{} else return .{};
-    return runtime.createIterator(source, is_range, direction) catch .{};
+pub export fn lnako_aot_iterator_new(out: *Value, values: ?[*]const Value, len: usize, is_range: bool, direction: u8) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*value| value else return;
+    const source = if (values) |pointer| pointer[0..len] else if (len == 0) &.{} else return;
+    out.* = runtime.createIterator(source, is_range, direction) catch return;
 }
 
-pub export fn lnako_aot_iterator_has_next(iterator: Value) callconv(.c) c_int {
-    return if (active_runtime) |*runtime| @intFromBool(runtime.iteratorHasNext(iterator)) else 0;
+pub export fn lnako_aot_iterator_has_next(iterator: *const Value) callconv(.c) c_int {
+    return if (active_runtime) |*runtime| @intFromBool(runtime.iteratorHasNext(iterator.*)) else 0;
 }
 
-pub export fn lnako_aot_iterator_next(iterator: Value, repeat_target: ?*Value, value_target: ?*Value, key_target: ?*Value, range_target: ?*Value) callconv(.c) Value {
-    return if (active_runtime) |*runtime| runtime.iteratorNext(iterator, repeat_target, value_target, key_target, range_target) else .{};
+pub export fn lnako_aot_iterator_next(out: *Value, iterator: *const Value, repeat_target: ?*Value, value_target: ?*Value, key_target: ?*Value, range_target: ?*Value) callconv(.c) void {
+    out.* = if (active_runtime) |*runtime| runtime.iteratorNext(iterator.*, repeat_target, value_target, key_target, range_target) else .{};
 }
 
 test "UTF-16文字列をルートから正確にmark-and-sweepする" {
@@ -411,6 +417,12 @@ test "LLVM側の値ABIと同じ16バイト配置を保つ" {
     try std.testing.expectEqual(@as(usize, 16), @sizeOf(Value));
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(Value, "tag"));
     try std.testing.expectEqual(@as(usize, 8), @offsetOf(Value, "payload"));
+}
+
+test "公開AOT ABIは動的値をポインタで受け渡す" {
+    try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_array_new));
+    try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_index_get));
+    try std.testing.expectEqual(*const fn (*const Value, *const Value, *const Value) callconv(.c) c_int, @TypeOf(&lnako_aot_index_set));
 }
 
 test "ルートフレームをLIFOで連結する" {

@@ -21,6 +21,7 @@ lnakoは、意図的な非互換として合意した項目を除き、説明文
 | `表曖昧検索` / `表正規表現ピックアップ` | `/式/フラグ`形式ではなく、`RegExp`コンストラクタへ渡す生のパターン文字列を受け取る | 同じ | `plugin-system-table` |
 | `表CSV変換` / `CSV変換` / `表TSV変換` / `TSV変換` | 変換結果を返すだけでなく、入力表の各セルを引用処理後の文字列へ置き換える | 公式互換のため入力表も変更する | `plugin-csv-all` |
 | 辞書リテラルの数値キー | `{1:2}`はJavaScriptのオブジェクト構文なら有効に見えるが、公式パーサーは数値をキーとして受理せず、辞書の閉じ括弧不足に見える文法エラーを返す | 識別子または引用文字列だけを受理し、数値キーは同じ行の構文診断にする | `公式同様に辞書リテラルの数値キーを拒否する`、`parser-diagnostic-cases` |
+| 角括弧の分割代入 | `[A,B]=[1,2]`でも分割代入に見えるが、公式パーサーは宣言なしの形を受理しない。`変数[A,B]=[1,2]`または`定数[A,B]=[1,2]`だけが分割宣言になる | 宣言キーワードを必須にし、裸の角括弧形式は同じ行の構文診断にする | `公式同様に宣言なしの角括弧分割代入を拒否する`、`parser-diagnostic-cases`、`native-array-destructure` |
 
 根拠は固定オラクルの
 [`core/src/plugin_system_array.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_array.mts) と
@@ -111,6 +112,7 @@ ABI値の所有権と非同期スレッド制約は[`NATIVE_PLUGIN_ABI.md`](NATI
 | 境界 | 分かりにくい挙動 | lnakoの扱い | テストID |
 |---|---|---|---|
 | AOTの`-O0`〜`-O3`とランタイム静的ライブラリ | CLIの最適化指定はNako SSA IRと生成LLVMモジュールに対する指定であり、別にリンクするZigランタイムまで同じモードにするとDebug版だけがZigの診断用OS依存を持つ | 生成コードは指定レベルを維持し、配布ランタイムはReleaseSafe・strip・compiler-rt同梱で固定する。WindowsではZigの安全検査経路が使うNT APIを`ntdll.lib`で解決する | `Differential native AOT test`、GitHub Actions `Windows x86_64` |
+| 16バイト動的値のWindows ABI | `%lnako.Value`をC関数の引数・戻り値として値渡しすると、Windows x64とSystem Vで集約値の呼出規約が異なる。macOS/Linuxで動いてもWindows生成物だけが配列生成時にアクセス違反になり得る | Zig製AOTランタイムとの公開境界では動的値をすべてポインタ渡しにし、集約値のC ABI分類へ依存しない | `公開AOT ABIは動的値をポインタで受け渡す`、`Differential native AOT test`、GitHub Actions `Windows x86_64` |
 | `check_compat_report.mjs`をQuickJSビルド後に実行 | 検査スクリプト自身が通常版を再ビルドすると、直前に生成したQuickJS対応`lnako`を同じ`zig-out/bin`上で置き換える | 単独実行は従来どおりビルドしてから検査し、既存配布物を検査するCIでは`--no-build`を指定してバイナリを変更しない | `check_compat_report.mjs --no-build`、GitHub Actions `Smoke test` |
 
 ## 礼節・言語カタログ・名前空間

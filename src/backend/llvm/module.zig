@@ -44,6 +44,7 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
                 .performance_monitor_begin,
                 .performance_monitor_end,
                 => true,
+                .destructure_store => destructureSourceSupported(function, instruction),
                 .const_string => std.mem.indexOfScalar(u8, instruction.text, 0) == null,
                 .binary => arithmeticOpcode(instruction.operator) != null or comparisonPredicate(instruction.operator) != null or
                     std.mem.eql(u8, instruction.operator, "&&") or std.mem.eql(u8, instruction.operator, "and") or
@@ -121,13 +122,13 @@ const Emitter = struct {
                 "declare void @lnako_aot_runtime_deinit()\n" ++
                 "declare void @lnako_aot_push_roots(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_pop_roots(ptr)\n" ++
-                "declare %lnako.Value @lnako_aot_array_new(ptr, i64)\n" ++
-                "declare %lnako.Value @lnako_aot_dictionary_new(ptr, i64)\n" ++
-                "declare %lnako.Value @lnako_aot_index_get(%lnako.Value, %lnako.Value)\n" ++
-                "declare i32 @lnako_aot_index_set(%lnako.Value, %lnako.Value, %lnako.Value)\n" ++
-                "declare %lnako.Value @lnako_aot_iterator_new(ptr, i64, i1, i8)\n" ++
-                "declare i32 @lnako_aot_iterator_has_next(%lnako.Value)\n" ++
-                "declare %lnako.Value @lnako_aot_iterator_next(%lnako.Value, ptr, ptr, ptr, ptr)\n" ++
+                "declare void @lnako_aot_array_new(ptr, ptr, i64)\n" ++
+                "declare void @lnako_aot_dictionary_new(ptr, ptr, i64)\n" ++
+                "declare void @lnako_aot_index_get(ptr, ptr, ptr)\n" ++
+                "declare i32 @lnako_aot_index_set(ptr, ptr, ptr)\n" ++
+                "declare void @lnako_aot_iterator_new(ptr, ptr, i64, i1, i8)\n" ++
+                "declare i32 @lnako_aot_iterator_has_next(ptr)\n" ++
+                "declare void @lnako_aot_iterator_next(ptr, ptr, ptr, ptr, ptr, ptr)\n" ++
                 "declare i32 @printf(ptr, ...)\n" ++
                 "declare i32 @puts(ptr)\n" ++
                 "declare double @llvm.pow.f64(double, double)\n\n" ++
@@ -159,6 +160,9 @@ const Emitter = struct {
             if ((instruction.opcode == .load_global or instruction.opcode == .store_global) and self.globalIndex(instruction.name) == null) {
                 try self.globals.append(self.allocator, instruction.name);
             }
+            if (instruction.opcode == .destructure_store) for (instruction.names) |name| {
+                if (isQualifiedGlobal(name) and self.globalIndex(name) == null) try self.globals.append(self.allocator, name);
+            };
             if (instruction.opcode == .const_string) {
                 try self.strings.append(self.allocator, .{
                     .function_id = function.id,
@@ -270,6 +274,8 @@ const Emitter = struct {
             if (block.id == function.entry) {
                 try self.output.writer.print("  %root.values = alloca [{d} x %lnako.Value]\n", .{root_storage_count});
                 try self.output.writer.writeAll("  %root.frame = alloca %lnako.RootFrame\n");
+                try self.output.writer.writeAll("  %runtime.scratch = alloca %lnako.Value\n");
+                try self.output.writer.writeAll("  store %lnako.Value { i8 0, i64 0 }, ptr %runtime.scratch\n");
                 for (0..root_count) |index| {
                     try self.output.writer.print("  %root.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %root.values, i64 0, i64 {d}\n", .{ index, root_storage_count, index });
                     try self.output.writer.print("  store %lnako.Value {{ i8 0, i64 0 }}, ptr %root.slot.{d}\n", .{index});
@@ -349,15 +355,16 @@ const Emitter = struct {
                 try self.output.writer.print(", ptr %local.{d}", .{index});
                 try self.debugSuffix(instruction.span, scope);
             },
+            .destructure_store => try self.writeDestructure(locals, instruction, scope),
             .binary => try self.writeBinary(function, instruction, scope),
             .unary => try self.writeUnary(function, instruction, scope),
             .call => try self.writeCall(function, instruction, scope),
             .make_array => try self.writeAggregate(function, instruction, scope, aggregate_count, "lnako_aot_array_new"),
             .make_object => try self.writeAggregate(function, instruction, scope, aggregate_count, "lnako_aot_dictionary_new"),
-            .array_get, .property_get => try self.writeIndexGet(function, instruction, scope),
-            .array_set, .property_set => try self.writeIndexSet(function, locals, instruction, scope),
+            .array_get, .property_get => try self.writeIndexGet(instruction, scope),
+            .array_set, .property_set => try self.writeIndexSet(locals, instruction, scope),
             .iterator_begin => try self.writeIteratorBegin(function, instruction, scope, aggregate_count),
-            .iterator_has_next => try self.writeIteratorHasNext(function, instruction, scope),
+            .iterator_has_next => try self.writeIteratorHasNext(instruction, scope),
             .iterator_next => try self.writeIteratorNext(function, locals, instruction, scope),
             .phi => {
                 try self.output.writer.print("  %v{d} = phi %lnako.Value ", .{result orelse return error.MissingInstructionResult});
@@ -379,6 +386,19 @@ const Emitter = struct {
         try self.output.writer.print("  store %lnako.Value %v{d}, ptr %root.slot.{d}\n", .{ result, result });
     }
 
+    fn writeDestructure(self: *Emitter, locals: []const []const u8, instruction: ir.Instruction, scope: usize) !void {
+        if (instruction.operands.len != 1) return error.InvalidDestructure;
+        for (instruction.names, 0..) |name, index| {
+            const bits: u64 = @bitCast(@as(f64, @floatFromInt(index)));
+            try self.output.writer.print("  store %lnako.Value {{ i8 3, i64 {d} }}, ptr %runtime.scratch", .{bits});
+            try self.debugSuffix(instruction.span, scope);
+            try self.output.writer.writeAll("  call void @lnako_aot_index_get(ptr ");
+            try self.writeRequiredNamedPointer(locals, name);
+            try self.output.writer.print(", ptr %root.slot.{d}, ptr %runtime.scratch)", .{instruction.operands[0]});
+            try self.debugSuffix(instruction.span, scope);
+        }
+    }
+
     fn writeAggregate(self: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize, runtime_name: []const u8) !void {
         const result = instruction.result orelse return error.MissingInstructionResult;
         if (instruction.operands.len > aggregate_count) return error.InvalidAggregateScratch;
@@ -390,34 +410,34 @@ const Emitter = struct {
             try self.output.writer.print(", ptr %aggregate.{d}.slot.{d}", .{ result, index });
             try self.debugSuffix(instruction.span, scope);
         }
-        try self.output.writer.print("  %v{d} = call %lnako.Value @{s}(ptr ", .{ result, runtime_name });
+        try self.output.writer.print("  call void @{s}(ptr %root.slot.{d}, ptr ", .{ runtime_name, result });
         if (instruction.operands.len > 0) {
             try self.output.writer.print("%aggregate.{d}.slot.0", .{result});
         } else try self.output.writer.writeAll("null");
         try self.output.writer.print(", i64 {d})", .{instruction.operands.len});
         try self.debugSuffix(instruction.span, scope);
+        try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+        try self.debugSuffix(instruction.span, scope);
     }
 
-    fn writeIndexGet(self: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize) !void {
+    fn writeIndexGet(self: *Emitter, instruction: ir.Instruction, scope: usize) !void {
         const result = instruction.result orelse return error.MissingInstructionResult;
         if (instruction.operands.len < 2) return error.InvalidIndexReference;
         for (instruction.operands[1..], 0..) |key, index| {
             const last = index + 2 == instruction.operands.len;
-            if (last) {
-                try self.output.writer.print("  %v{d}", .{result});
-            } else try self.output.writer.print("  %index.{d}.{d}", .{ result, index });
-            try self.output.writer.writeAll(" = call %lnako.Value @lnako_aot_index_get(%lnako.Value ");
+            try self.output.writer.print("  call void @lnako_aot_index_get(ptr %root.slot.{d}, ptr ", .{result});
             if (index == 0) {
-                try self.writeValueRef(function, instruction.operands[0]);
-            } else try self.output.writer.print("%index.{d}.{d}", .{ result, index - 1 });
-            try self.output.writer.writeAll(", %lnako.Value ");
-            try self.writeValueRef(function, key);
-            try self.output.writer.writeByte(')');
+                try self.output.writer.print("%root.slot.{d}", .{instruction.operands[0]});
+            } else try self.output.writer.print("%root.slot.{d}", .{result});
+            try self.output.writer.print(", ptr %root.slot.{d})", .{key});
+            try self.debugSuffix(instruction.span, scope);
+            if (!last) continue;
+            try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
             try self.debugSuffix(instruction.span, scope);
         }
     }
 
-    fn writeIndexSet(self: *Emitter, function: ir.Function, locals: []const []const u8, instruction: ir.Instruction, scope: usize) !void {
+    fn writeIndexSet(self: *Emitter, locals: []const []const u8, instruction: ir.Instruction, scope: usize) !void {
         if (instruction.operands.len < 2) return error.InvalidIndexAssignment;
         const temporary = self.next_metadata;
         try self.output.writer.print("  %set.container.{d} = load %lnako.Value, ptr ", .{temporary});
@@ -428,24 +448,26 @@ const Emitter = struct {
         } else return error.UnknownAssignmentContainer;
         try self.debugSuffix(instruction.span, scope);
         for (instruction.operands[1 .. instruction.operands.len - 1], 0..) |key, index| {
-            try self.output.writer.print("  %set.index.{d}.{d} = call %lnako.Value @lnako_aot_index_get(%lnako.Value ", .{ temporary, index });
+            try self.output.writer.writeAll("  call void @lnako_aot_index_get(ptr %runtime.scratch, ptr ");
             if (index == 0) {
-                try self.output.writer.print("%set.container.{d}", .{temporary});
-            } else try self.output.writer.print("%set.index.{d}.{d}", .{ temporary, index - 1 });
-            try self.output.writer.writeAll(", %lnako.Value ");
-            try self.writeValueRef(function, key);
-            try self.output.writer.writeByte(')');
+                if (nameIndex(locals, instruction.name)) |local_index| {
+                    try self.output.writer.print("%local.{d}", .{local_index});
+                } else if (self.globalIndex(instruction.name)) |global_index| {
+                    try self.output.writer.print("@lnako.global.{d}", .{global_index});
+                } else return error.UnknownAssignmentContainer;
+            } else try self.output.writer.writeAll("%runtime.scratch");
+            try self.output.writer.print(", ptr %root.slot.{d})", .{key});
             try self.debugSuffix(instruction.span, scope);
         }
-        try self.output.writer.print("  %set.status.{d} = call i32 @lnako_aot_index_set(%lnako.Value ", .{temporary});
+        try self.output.writer.print("  %set.status.{d} = call i32 @lnako_aot_index_set(ptr ", .{temporary});
         if (instruction.operands.len == 2) {
-            try self.output.writer.print("%set.container.{d}", .{temporary});
-        } else try self.output.writer.print("%set.index.{d}.{d}", .{ temporary, instruction.operands.len - 3 });
-        try self.output.writer.writeAll(", %lnako.Value ");
-        try self.writeValueRef(function, instruction.operands[instruction.operands.len - 1]);
-        try self.output.writer.writeAll(", %lnako.Value ");
-        try self.writeValueRef(function, instruction.operands[0]);
-        try self.output.writer.writeByte(')');
+            if (nameIndex(locals, instruction.name)) |local_index| {
+                try self.output.writer.print("%local.{d}", .{local_index});
+            } else if (self.globalIndex(instruction.name)) |global_index| {
+                try self.output.writer.print("@lnako.global.{d}", .{global_index});
+            } else return error.UnknownAssignmentContainer;
+        } else try self.output.writer.writeAll("%runtime.scratch");
+        try self.output.writer.print(", ptr %root.slot.{d}, ptr %root.slot.{d})", .{ instruction.operands[instruction.operands.len - 1], instruction.operands[0] });
         try self.debugSuffix(instruction.span, scope);
     }
 
@@ -466,16 +488,16 @@ const Emitter = struct {
             .up => 1,
             .down => 2,
         };
-        try self.output.writer.print("  %v{d} = call %lnako.Value @lnako_aot_iterator_new(ptr %iterator.{d}.slot.0, i64 {d}, i1 {s}, i8 {d})", .{ result, result, instruction.operands.len, if (is_range) "true" else "false", direction });
+        try self.output.writer.print("  call void @lnako_aot_iterator_new(ptr %root.slot.{d}, ptr %iterator.{d}.slot.0, i64 {d}, i1 {s}, i8 {d})", .{ result, result, instruction.operands.len, if (is_range) "true" else "false", direction });
+        try self.debugSuffix(instruction.span, scope);
+        try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try self.debugSuffix(instruction.span, scope);
     }
 
-    fn writeIteratorHasNext(self: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize) !void {
+    fn writeIteratorHasNext(self: *Emitter, instruction: ir.Instruction, scope: usize) !void {
         const result = instruction.result orelse return error.MissingInstructionResult;
         if (instruction.operands.len != 1) return error.InvalidIterator;
-        try self.output.writer.print("  %iterator.has.{d} = call i32 @lnako_aot_iterator_has_next(%lnako.Value ", .{result});
-        try self.writeValueRef(function, instruction.operands[0]);
-        try self.output.writer.writeByte(')');
+        try self.output.writer.print("  %iterator.has.{d} = call i32 @lnako_aot_iterator_has_next(ptr %root.slot.{d})", .{ result, instruction.operands[0] });
         try self.debugSuffix(instruction.span, scope);
         try self.output.writer.print("  %iterator.bool.{d} = icmp ne i32 %iterator.has.{d}, 0", .{ result, result });
         try self.debugSuffix(instruction.span, scope);
@@ -490,9 +512,7 @@ const Emitter = struct {
         if (instruction.operands.len != 1) return error.InvalidIterator;
         const begin = instructionForValue(function, instruction.operands[0]) orelse return error.InvalidIterator;
         if (begin.opcode != .iterator_begin) return error.InvalidIterator;
-        try self.output.writer.print("  %v{d} = call %lnako.Value @lnako_aot_iterator_next(%lnako.Value ", .{result});
-        try self.writeValueRef(function, instruction.operands[0]);
-        try self.output.writer.writeAll(", ptr ");
+        try self.output.writer.print("  call void @lnako_aot_iterator_next(ptr %root.slot.{d}, ptr %root.slot.{d}, ptr ", .{ result, instruction.operands[0] });
         try self.writeOptionalNamedPointer(locals, "回数");
         try self.output.writer.writeAll(", ptr ");
         try self.writeOptionalNamedPointer(locals, "対象");
@@ -502,6 +522,8 @@ const Emitter = struct {
         try self.writeOptionalNamedPointer(locals, begin.name);
         try self.output.writer.writeByte(')');
         try self.debugSuffix(instruction.span, scope);
+        try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+        try self.debugSuffix(instruction.span, scope);
     }
 
     fn writeOptionalNamedPointer(self: *Emitter, locals: []const []const u8, name: []const u8) !void {
@@ -509,6 +531,12 @@ const Emitter = struct {
         if (nameIndex(locals, name)) |index| return self.output.writer.print("%local.{d}", .{index});
         if (self.globalIndex(name)) |index| return self.output.writer.print("@lnako.global.{d}", .{index});
         return self.output.writer.writeAll("null");
+    }
+
+    fn writeRequiredNamedPointer(self: *Emitter, locals: []const []const u8, name: []const u8) !void {
+        if (nameIndex(locals, name)) |index| return self.output.writer.print("%local.{d}", .{index});
+        if (self.globalIndex(name)) |index| return self.output.writer.print("@lnako.global.{d}", .{index});
+        return error.UnknownAssignmentTarget;
     }
 
     fn writeBinary(self: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize) !void {
@@ -769,6 +797,9 @@ const Emitter = struct {
             if ((instruction.opcode == .load_local or instruction.opcode == .store_local) and nameIndex(names.items, instruction.name) == null) {
                 try names.append(self.allocator, instruction.name);
             }
+            if (instruction.opcode == .destructure_store) for (instruction.names) |name| {
+                if (!isQualifiedGlobal(name) and nameIndex(names.items, name) == null) try names.append(self.allocator, name);
+            };
         };
         return self.allocator.dupe([]const u8, names.items);
     }
@@ -847,6 +878,14 @@ fn iteratorSourceSupported(function: ir.Function, instruction: ir.Instruction) b
     };
 }
 
+fn destructureSourceSupported(function: ir.Function, instruction: ir.Instruction) bool {
+    return instruction.operands.len == 1 and valueType(function, instruction.operands[0]) == .array;
+}
+
+fn isQualifiedGlobal(name: []const u8) bool {
+    return std.mem.indexOf(u8, name, "__") != null;
+}
+
 fn arithmeticOpcode(operator: []const u8) ?[]const u8 {
     const entries = [_]struct { operator: []const u8, opcode: []const u8 }{
         .{ .operator = "+", .opcode = "fadd" },
@@ -919,7 +958,7 @@ test "配列と辞書をルート付きAOTランタイム呼び出しへ変換�
     const semantic = @import("../../semantic/analyzer.zig");
     const hir = @import("../../ir/hir.zig");
     const lower = @import("../../ir/lower_ssa.zig");
-    const source = "A=[1,2]\nA[1]=5\nA[1]を表示\nB={\"x\":7}\nB@\"x\"を表示\n";
+    const source = "A=[1,2]\nA[1]=5\nA[1]を表示\nB={\"x\":7}\nB@\"x\"を表示\n変数[C,D]=[8,9]\nCを表示\n";
     var parsed = try parser.parse(std.testing.allocator, source, "collections.nako3");
     defer parsed.deinit();
     try std.testing.expect(parsed.succeeded());
@@ -939,6 +978,9 @@ test "配列と辞書をルート付きAOTランタイム呼び出しへ変換�
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_dictionary_new") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_index_get") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_index_set") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_index_get(ptr, ptr, ptr)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "ptr %runtime.scratch") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare %lnako.Value @lnako_aot_") == null);
 }
 
 test "回数・範囲・コレクション反復をAOTイテレーターへ変換する" {
