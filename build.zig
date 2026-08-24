@@ -144,13 +144,15 @@ fn configureQuickJs(b: *std.Build, module: *std.Build.Module, os: std.Target.Os.
     const directory = b.option([]const u8, "quickjs-dir", "QuickJSソースディレクトリ") orelse
         b.graph.environ_map.get("LNAKO_QUICKJS_DIR") orelse
         b.pathResolve(&.{ ".cache", "toolchains", "quickjs-2026-06-04" });
-    // QuickJS uses ABI-compatible function pointer casts and container_of over
-    // flexible array storage. Zig's C sanitizers otherwise trap those upstream
-    // implementation techniques on arm64 and Windows respectively.
+    // QuickJS uses implementation-defined/undefined C techniques such as
+    // ABI-compatible callback casts, tagged pointers, flexible-array
+    // container_of and signed shifts. ReleaseSafe's C instrumentation traps
+    // those upstream techniques, so disable it only for QuickJS itself. The
+    // local bridge is compiled with all normal safety instrumentation.
     const quickjs_flags: []const []const u8 = if (os == .windows)
-        &.{ "-std=gnu11", "-fwrapv", "-fno-sanitize=function", "-fno-sanitize=null", "-D_GNU_SOURCE", "-D__USE_MINGW_ANSI_STDIO", "-DCONFIG_VERSION=\"2026-06-04\"" }
+        &.{ "-std=gnu11", "-fwrapv", "-fno-sanitize=undefined", "-fno-sanitize=function", "-D_GNU_SOURCE", "-D__USE_MINGW_ANSI_STDIO", "-DCONFIG_VERSION=\"2026-06-04\"" }
     else
-        &.{ "-std=gnu11", "-fwrapv", "-fno-sanitize=function", "-fno-sanitize=null", "-D_GNU_SOURCE", "-DCONFIG_VERSION=\"2026-06-04\"" };
+        &.{ "-std=gnu11", "-fwrapv", "-fno-sanitize=undefined", "-fno-sanitize=function", "-D_GNU_SOURCE", "-DCONFIG_VERSION=\"2026-06-04\"" };
     const bridge_flags: []const []const u8 = if (os == .windows)
         &.{ "-std=gnu11", "-fwrapv", "-D_GNU_SOURCE", "-D__USE_MINGW_ANSI_STDIO", "-DCONFIG_VERSION=\"2026-06-04\"" }
     else
