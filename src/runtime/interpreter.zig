@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const ir = @import("../ir/nako_ir.zig");
 const ast = @import("../frontend/ast.zig");
 const parser = @import("../frontend/parser.zig");
@@ -819,7 +820,8 @@ pub const Interpreter = struct {
         const utf8 = try text.string.toUtf8Lossy(self.allocator);
         defer self.allocator.free(utf8);
         const line = if (self.current_span) |span| span.line + 1 else 1;
-        const source_path = if (self.current_source_path.len > 0) self.current_source_path else self.primaryModuleName();
+        const raw_source_path = if (self.current_source_path.len > 0) self.current_source_path else self.primaryModuleName();
+        const source_path = normalizeDebugSourcePath(raw_source_path, builtin.os.tag == .windows);
         const message = try std.fmt.allocPrint(self.allocator, "{s}({d}): {s}", .{ source_path, line, utf8 });
         defer self.allocator.free(message);
         var message_value = try self.runtime.stringUtf8(message);
@@ -828,6 +830,13 @@ pub const Interpreter = struct {
         try roots.protect(&message_value);
         _ = try self.display(&.{message_value});
         return .undefined;
+    }
+
+    fn normalizeDebugSourcePath(source_path: []const u8, windows: bool) []const u8 {
+        if (windows) {
+            if (std.mem.indexOfScalar(u8, source_path, ':')) |separator| return source_path[0..separator];
+        }
+        return source_path;
     }
 
     fn configureHatena(self: *Interpreter, arguments: []const Value) !Value {
@@ -1867,6 +1876,17 @@ test "AWAIT実行でPromiseを完了させブレイクポイント待機を解�
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("8\n13\n0\n", host.written());
+}
+
+test "Windowsのデバッグ表示パスを公式処理系と同じドライブ名へ短縮する" {
+    try std.testing.expectEqualStrings(
+        "C",
+        Interpreter.normalizeDebugSourcePath("C:\\work\\main.nako3", true),
+    );
+    try std.testing.expectEqualStrings(
+        "/work/main.nako3",
+        Interpreter.normalizeDebugSourcePath("/work/main.nako3", false),
+    );
 }
 
 test "バイト列の添字・更新・反復をUint8Array互換で実行する" {
