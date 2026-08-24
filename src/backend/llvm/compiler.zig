@@ -13,6 +13,7 @@ pub const Options = struct {
     source_path: []const u8,
     output_path: []const u8,
     llvm_root: ?[]const u8 = null,
+    llvm_library: ?[]const u8 = null,
 };
 
 pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, options: Options, diagnostics: *std.Io.Writer) !void {
@@ -29,7 +30,7 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
     }
     var generated = try module_mod.generate(allocator, program, options.source_path, options.optimization != .o0);
     defer generated.deinit(allocator);
-    var api = api_mod.Api.openAt(allocator, options.llvm_root) catch |failure| {
+    var api = api_mod.Api.openAt(allocator, options.llvm_root, options.llvm_library) catch |failure| {
         try diagnostics.print("LLVM 22.1.8を読み込めません: {s}\n", .{@errorName(failure)});
         return failure;
     };
@@ -232,11 +233,12 @@ test "LLVM C APIで全最適化レベルのモジュールを検証してIRを�
     defer hir_program.deinit();
     var program = try lower.lower(std.testing.allocator, hir_program);
     defer program.deinit();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
     const optimizations = [_]Optimization{ .o0, .o1, .o2, .o3 };
     for (optimizations) |optimization| {
-        const output_path = try std.fmt.allocPrint(std.testing.allocator, "/tmp/lnako-llvm-{x}-{s}.ll", .{ nonce(std.testing.io), @tagName(optimization) });
+        const output_path = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}/lnako-llvm-{s}.ll", .{ temporary.sub_path, @tagName(optimization) });
         defer std.testing.allocator.free(output_path);
-        defer std.Io.Dir.deleteFileAbsolute(std.testing.io, output_path) catch {};
         var diagnostics: std.Io.Writer.Allocating = .init(std.testing.allocator);
         defer diagnostics.deinit();
         compile(std.testing.allocator, std.testing.io, program, .{ .source_path = "main.nako3", .output_path = output_path, .emit = .llvm_ir, .optimization = optimization }, &diagnostics.writer) catch |failure| switch (failure) {

@@ -13,7 +13,9 @@
 
 `node tools/setup_llvm.mjs` は `toolchain.lock.json` のOS別アーカイブをストリーミング取得し、SHA-256を
 検証して `.cache/toolchains/` へ展開します。CIはこの固定配布物だけを使います。手動配置したLLVMを使う場合は
-配布ルートを `LNAKO_LLVM_DIR` に指定できます。macOSではHomebrewのLLVM/LLD 22.1.8も検出します。
+配布ルートを `LNAKO_LLVM_DIR` に指定できます。共有ライブラリが標準位置にない配布物では
+`LNAKO_LLVM_LIBRARY` にファイル自体を指定できます。セットアップスクリプトとCIはアーカイブ内を検査して両方を自動設定します。
+macOSではHomebrewのLLVM/LLD 22.1.8も検出します。
 
 ## ビルド
 
@@ -34,6 +36,11 @@ Promiseは明示的な状態機械とFIFOマイクロタスクキューで実装
 扱います。タイマーはホスト抽象化された時計を使い、CLIでは実時間、テストでは待たずに進む決定的時計で
 `秒待`、単発・周期タイマー、個別・一括停止を検証します。現在の標準命令の実装状況は
 `compat/v3.7.24/summary.json` と `implemented.json` に記録しています。
+
+`plugin_system` のシステム定数、四則・論理・ビット演算、型変換、文字列・文字種・幅・かな変換、JSON、
+正規表現の12カテゴリ168命令をZigランタイムへ実装しています。Unicode大小文字テーブルは固定Node 24の
+ECMAScript変換から生成してコミットし、正規表現はUTF-16上の内蔵エンジンで量指定、選択、文字クラス、
+通常・名前付きキャプチャ、置換参照、分割を扱います。全168命令は公式v3.7.24との差分ケースに対応付けています。
 
 ```sh
 zig build run -- check program.nako3

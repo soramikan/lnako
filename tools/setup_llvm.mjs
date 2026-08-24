@@ -22,7 +22,8 @@ const lld = resolve(target, "bin", lldName());
 if (!(await isCurrent())) await install();
 verifyTool(clang, lock.version);
 verifyTool(lld, lock.version);
-await exportEnvironment();
+const llvmLibrary = await findLlvmLibrary(target);
+await exportEnvironment(llvmLibrary);
 console.log(`LLVM/LLD ${lock.version}を確認しました: ${target}`);
 
 async function isCurrent() {
@@ -69,9 +70,42 @@ async function install() {
   }
 }
 
-async function exportEnvironment() {
+async function exportEnvironment(llvmLibrary) {
   if (process.env.GITHUB_ENV) await appendFile(process.env.GITHUB_ENV, `LNAKO_LLVM_DIR=${target}\n`);
+  if (process.env.GITHUB_ENV) await appendFile(process.env.GITHUB_ENV, `LNAKO_LLVM_LIBRARY=${llvmLibrary}\n`);
   if (process.env.GITHUB_PATH) await appendFile(process.env.GITHUB_PATH, `${resolve(target, "bin")}\n`);
+}
+
+async function findLlvmLibrary(directory) {
+  const matches = [];
+  await walk(directory, matches);
+  if (matches.length === 0) throw new Error(`LLVM C API共有ライブラリが配布物にありません: ${directory}`);
+  matches.sort((left, right) => libraryScore(right) - libraryScore(left) || left.localeCompare(right));
+  return matches[0];
+}
+
+async function walk(directory, matches) {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = resolve(directory, entry.name);
+    if (entry.isDirectory()) {
+      await walk(path, matches);
+    } else if (isLlvmLibrary(entry.name)) {
+      matches.push(path);
+    }
+  }
+}
+
+function isLlvmLibrary(name) {
+  if (process.platform === "darwin") return /^libLLVM(?:[-.]22(?:\.1(?:\.8)?)?)?\.dylib$/.test(name);
+  if (process.platform === "linux") return /^libLLVM(?:-22)?\.so(?:\.22(?:\.1(?:\.8)?)?)?$/.test(name);
+  return /^(?:LLVM-C|LLVM|libLLVM)\.dll$/i.test(name);
+}
+
+function libraryScore(path) {
+  const name = path.split(/[\\/]/).at(-1);
+  if (name === "libLLVM.dylib" || name === "libLLVM.so.22.1" || name === "LLVM-C.dll") return 3;
+  if (name.includes("22")) return 2;
+  return 1;
 }
 
 function platformArtifactKey() {

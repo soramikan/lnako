@@ -125,3 +125,18 @@ source
   ランタイムABI実装で順次この許可集合へ加える。
 - `tools/compare_native_oracle.mjs` は同じ入力を公式CLI、公式生成済みJavaScript＋Node、`lnako run`、
   `lnako build` の実行ファイルという4経路で実行し、標準出力・エラー分類・終了コード・シグナルを照合する。
+
+## plugin_system標準命令
+
+- `plugins/system` は定数、共通変換、数値・論理・ビット、型、文字列、JSON、正規表現を分割実装する。
+  実行器固有の副作用を持つ `二進表示`、`切取`、`範囲切取`、正規表現キャプチャだけをInterpreterが仲介する。
+- 文字列はUTF-16で保持しつつ、公式実装が `Array.from` を使う文字数・検索・部分抽出はUnicode scalar単位で扱う。
+  ECMAScript大小文字変換は `tools/generate_unicode_case.mjs` がNode 24.15.0から生成した固定テーブルを使い、
+  複数文字への写像と文脈依存のGreek final sigmaも処理する。
+- JSONは挿入順辞書を保ち、非有限数、`undefined`、関数、Promise、重複キー、孤立サロゲート、循環参照を
+  ECMAScriptの `JSON.stringify` / `JSON.parse` 規則へ合わせる。循環参照とBigIntは明示エラーにする。
+- 正規表現は外部共有ライブラリへ依存しないUTF-16バックトラッキングエンジンで、選択、グループ、量指定、
+  文字クラス、アンカー、フラグ、後方参照、通常・名前付きキャプチャ、置換参照と分割を提供する。
+- `tests/oracle/plugin-system-cases.json` は対象12カテゴリ168命令を重複なく列挙する。
+  `tools/check_plugin_system_coverage.mjs` が公式カタログ・互換台帳・テストIDを照合し、
+  `tools/compare_plugin_system_oracle.mjs` が同じソースを公式cnako3と `lnako run` で実行する。

@@ -95,8 +95,7 @@ function classify(command, index) {
     reason,
   };
   const implementation = implemented[command.name];
-  if (implementation !== undefined) {
-    if (!inScope) throw new Error(`対象外命令を実装済みに指定しています: ${command.name}`);
+  if (implementation !== undefined && inScope) {
     if (!new Set(["native", "compat-js"]).has(implementation.status)) {
       throw new Error(`実装状態が不正です: ${command.name}`);
     }
@@ -112,7 +111,7 @@ function classify(command, index) {
 
 const entries = commands.map(classify);
 for (const name of Object.keys(implemented)) {
-  if (!entries.some((entry) => entry.name === name)) throw new Error(`実装済み命令が公式カタログにありません: ${name}`);
+  if (!entries.some((entry) => entry.name === name && entry.scope === "standard-cnako-v1")) throw new Error(`実装済み命令が標準cnakoカタログにありません: ${name}`);
 }
 const standardCnako = entries.filter((entry) => entry.scope === "standard-cnako-v1");
 if (standardCnako.length !== 527) {

@@ -21,14 +21,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0002",
@@ -45,14 +47,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0003",
@@ -69,14 +73,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0004",
@@ -93,14 +99,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0005",
@@ -117,14 +125,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0006",
@@ -141,14 +151,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0007",
@@ -165,14 +177,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0008",
@@ -189,14 +203,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0009",
@@ -213,14 +229,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0010",
@@ -237,14 +255,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0011",
@@ -261,14 +281,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0012",
@@ -285,14 +307,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0013",
@@ -309,14 +333,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0014",
@@ -333,14 +359,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0015",
@@ -357,14 +385,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0016",
@@ -381,14 +411,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0017",
@@ -405,14 +437,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0018",
@@ -429,14 +463,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0019",
@@ -453,14 +489,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0020",
@@ -477,14 +515,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0021",
@@ -501,14 +541,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0022",
@@ -525,14 +567,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0023",
@@ -549,14 +593,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0024",
@@ -573,14 +619,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0025",
@@ -597,14 +645,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0026",
@@ -621,14 +671,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0027",
@@ -645,14 +697,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0028",
@@ -669,14 +723,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0029",
@@ -693,14 +749,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0030",
@@ -717,14 +775,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0031",
@@ -741,14 +801,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0032",
@@ -765,14 +827,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0033",
@@ -789,14 +853,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0034",
@@ -813,14 +879,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0035",
@@ -837,14 +905,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0036",
@@ -861,14 +931,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0037",
@@ -885,14 +957,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0038",
@@ -909,14 +983,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0039",
@@ -933,14 +1009,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0040",
@@ -957,14 +1035,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0041",
@@ -981,14 +1061,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0042",
@@ -1005,14 +1087,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0043",
@@ -1029,14 +1113,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0044",
@@ -1053,14 +1139,16 @@
       "category": "システム定数",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-constants"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0045",
@@ -1989,14 +2077,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0084",
@@ -2013,14 +2103,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0085",
@@ -2037,14 +2129,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0086",
@@ -2061,14 +2155,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0087",
@@ -2085,14 +2181,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0088",
@@ -2109,14 +2207,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0089",
@@ -2133,14 +2233,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0090",
@@ -2157,14 +2259,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0091",
@@ -2181,14 +2285,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0092",
@@ -2205,14 +2311,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0093",
@@ -2229,14 +2337,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0094",
@@ -2253,14 +2363,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0095",
@@ -2277,14 +2389,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0096",
@@ -2301,14 +2415,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0097",
@@ -2325,14 +2441,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0098",
@@ -2349,14 +2467,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0099",
@@ -2373,14 +2493,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0100",
@@ -2397,14 +2519,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0101",
@@ -2421,14 +2545,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0102",
@@ -2445,14 +2571,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0103",
@@ -2469,14 +2597,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0104",
@@ -2493,14 +2623,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0105",
@@ -2517,14 +2649,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0106",
@@ -2541,14 +2675,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0107",
@@ -2565,14 +2701,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0108",
@@ -2589,14 +2727,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0109",
@@ -2613,14 +2753,16 @@
       "category": "四則演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0110",
@@ -2637,14 +2779,16 @@
       "category": "論理演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0111",
@@ -2661,14 +2805,16 @@
       "category": "論理演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0112",
@@ -2685,14 +2831,16 @@
       "category": "論理演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0113",
@@ -2709,14 +2857,16 @@
       "category": "ビット演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0114",
@@ -2733,14 +2883,16 @@
       "category": "ビット演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0115",
@@ -2757,14 +2909,16 @@
       "category": "ビット演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0116",
@@ -2781,14 +2935,16 @@
       "category": "ビット演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0117",
@@ -2805,14 +2961,16 @@
       "category": "ビット演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0118",
@@ -2829,14 +2987,16 @@
       "category": "ビット演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0119",
@@ -2853,14 +3013,16 @@
       "category": "ビット演算",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-math"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0120",
@@ -2877,14 +3039,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0121",
@@ -2901,14 +3065,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0122",
@@ -2925,14 +3091,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0123",
@@ -2949,14 +3117,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0124",
@@ -2973,14 +3143,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0125",
@@ -2997,14 +3169,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0126",
@@ -3021,14 +3195,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0127",
@@ -3045,14 +3221,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0128",
@@ -3069,14 +3247,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0129",
@@ -3093,14 +3273,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0130",
@@ -3117,14 +3299,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0131",
@@ -3141,14 +3325,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0132",
@@ -3165,14 +3351,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0133",
@@ -3189,14 +3377,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0134",
@@ -3213,14 +3403,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0135",
@@ -3237,14 +3429,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0136",
@@ -3261,14 +3455,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0137",
@@ -3285,14 +3481,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0138",
@@ -3309,14 +3507,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0139",
@@ -3333,14 +3533,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0140",
@@ -3357,14 +3559,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0141",
@@ -3381,14 +3585,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0142",
@@ -3405,14 +3611,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0143",
@@ -3429,14 +3637,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0144",
@@ -3453,14 +3663,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0145",
@@ -3477,14 +3689,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0146",
@@ -3501,14 +3715,16 @@
       "category": "文字列処理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-core"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0147",
@@ -3525,14 +3741,16 @@
       "category": "置換・トリム",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0148",
@@ -3549,14 +3767,16 @@
       "category": "置換・トリム",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0149",
@@ -3573,14 +3793,16 @@
       "category": "置換・トリム",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0150",
@@ -3597,14 +3819,16 @@
       "category": "置換・トリム",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0151",
@@ -3621,14 +3845,16 @@
       "category": "置換・トリム",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0152",
@@ -3645,14 +3871,16 @@
       "category": "置換・トリム",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0153",
@@ -3669,14 +3897,16 @@
       "category": "置換・トリム",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0154",
@@ -3693,14 +3923,16 @@
       "category": "文字変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0155",
@@ -3717,14 +3949,16 @@
       "category": "文字変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0156",
@@ -3741,14 +3975,16 @@
       "category": "文字変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0157",
@@ -3765,14 +4001,16 @@
       "category": "文字変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0158",
@@ -3789,14 +4027,16 @@
       "category": "文字変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0159",
@@ -3813,14 +4053,16 @@
       "category": "文字変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0160",
@@ -3837,14 +4079,16 @@
       "category": "文字変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0161",
@@ -3861,14 +4105,16 @@
       "category": "文字変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0162",
@@ -3885,14 +4131,16 @@
       "category": "文字変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0163",
@@ -3909,14 +4157,16 @@
       "category": "文字変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0164",
@@ -3933,14 +4183,16 @@
       "category": "文字変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0165",
@@ -3957,14 +4209,16 @@
       "category": "文字変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0166",
@@ -3981,14 +4235,16 @@
       "category": "文字変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0167",
@@ -4005,14 +4261,16 @@
       "category": "文字変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0168",
@@ -4029,14 +4287,16 @@
       "category": "文字変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0169",
@@ -4053,14 +4313,16 @@
       "category": "文字変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0170",
@@ -4077,14 +4339,16 @@
       "category": "指定形式",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0171",
@@ -4101,14 +4365,16 @@
       "category": "指定形式",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0172",
@@ -4125,14 +4391,16 @@
       "category": "指定形式",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0173",
@@ -4149,14 +4417,16 @@
       "category": "文字種類",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0174",
@@ -4173,14 +4443,16 @@
       "category": "文字種類",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0175",
@@ -4197,14 +4469,16 @@
       "category": "文字種類",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0176",
@@ -4221,14 +4495,16 @@
       "category": "文字種類",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-string-conversion"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0177",
@@ -6477,14 +6753,16 @@
       "category": "型変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-types"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0271",
@@ -6501,14 +6779,16 @@
       "category": "型変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-types"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0272",
@@ -6525,14 +6805,16 @@
       "category": "型変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-types"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0273",
@@ -6549,14 +6831,16 @@
       "category": "型変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-types"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0274",
@@ -6573,14 +6857,16 @@
       "category": "型変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-types"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0275",
@@ -6597,14 +6883,16 @@
       "category": "型変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-types"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0276",
@@ -6621,14 +6909,16 @@
       "category": "型変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-types"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0277",
@@ -6645,14 +6935,16 @@
       "category": "型変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-types"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0278",
@@ -6669,14 +6961,16 @@
       "category": "型変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-types"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0279",
@@ -6693,14 +6987,16 @@
       "category": "型変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-types"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0280",
@@ -6717,14 +7013,16 @@
       "category": "型変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-types"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0281",
@@ -6741,14 +7039,16 @@
       "category": "型変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-types"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0282",
@@ -6765,14 +7065,16 @@
       "category": "型変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-types"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0283",
@@ -6789,14 +7091,16 @@
       "category": "型変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-types"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0284",
@@ -6813,14 +7117,16 @@
       "category": "型変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-types"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0285",
@@ -6837,14 +7143,16 @@
       "category": "型変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-types"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0286",
@@ -6861,14 +7169,16 @@
       "category": "型変換",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-types"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0287",
@@ -6885,14 +7195,16 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-json"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0288",
@@ -6909,14 +7221,16 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-json"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0289",
@@ -6933,14 +7247,16 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-json"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0290",
@@ -6957,14 +7273,16 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-json"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0291",
@@ -6981,14 +7299,16 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-json"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0292",
@@ -7005,14 +7325,16 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-json"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0293",
@@ -7029,14 +7351,16 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-json"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0294",
@@ -7053,14 +7377,16 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-json"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0295",
@@ -7077,14 +7403,16 @@
       "category": "正規表現",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-regexp"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0296",
@@ -7101,14 +7429,16 @@
       "category": "正規表現",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-regexp"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0297",
@@ -7125,14 +7455,16 @@
       "category": "正規表現",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-regexp"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0298",
@@ -7149,14 +7481,16 @@
       "category": "正規表現",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-regexp"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0299",
@@ -7173,14 +7507,16 @@
       "category": "正規表現",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-regexp"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
       "id": "command-0300",

@@ -7,6 +7,7 @@ const lower_ssa = @import("../ir/lower_ssa.zig");
 const verifier = @import("../ir/verifier.zig");
 const value_mod = @import("value.zig");
 const operators = @import("operators.zig");
+const plugin_system = @import("../plugins/system.zig");
 
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
@@ -124,6 +125,7 @@ pub const Interpreter = struct {
     next_timer_id: u64 = 1,
     event_count: usize = 0,
     max_event_count: usize = 100_000,
+    system_initialized: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, runtime: *Runtime, program: ir.Program, host: Host) Interpreter {
         return .{ .allocator = allocator, .runtime = runtime, .program = program, .host = host };
@@ -147,6 +149,7 @@ pub const Interpreter = struct {
     pub fn run(self: *Interpreter) !Value {
         try self.runtime.registerRootProvider(.{ .context = self, .traceFn = traceRoots });
         defer self.runtime.unregisterRootProvider(self);
+        try self.initializeSystem();
         const result = try self.runEntries();
         try self.drainEventLoop();
         return result;
@@ -155,6 +158,7 @@ pub const Interpreter = struct {
     pub fn runTests(self: *Interpreter) ![]const TestResult {
         try self.runtime.registerRootProvider(.{ .context = self, .traceFn = traceRoots });
         defer self.runtime.unregisterRootProvider(self);
+        try self.initializeSystem();
         for (self.program.functions) |*function| {
             if (!function.is_test) continue;
             const result = self.executeFunction(function, &.{}, null);
@@ -458,7 +462,42 @@ pub const Interpreter = struct {
         if (std.mem.eql(u8, name, "失敗時")) return self.chainPromise(arguments, .failure);
         if (std.mem.eql(u8, name, "処理時")) return self.chainPromise(arguments, .settled);
         if (std.mem.eql(u8, name, "終了時")) return self.chainPromise(arguments, .finally);
+        if (std.mem.eql(u8, name, "二進表示")) {
+            const text = (try plugin_system.types.call(self.runtime, "二進", arguments)).?;
+            const utf8 = try text.string.toUtf8Lossy(self.allocator);
+            defer self.allocator.free(utf8);
+            try self.writeOutput(utf8);
+            try self.writeOutput("\n");
+            return .undefined;
+        }
+        if (std.mem.eql(u8, name, "切取")) {
+            const result = try plugin_system.strings.cut(self.runtime, if (arguments.len > 0) arguments[0] else .undefined, if (arguments.len > 1) arguments[1] else .undefined);
+            try self.setGlobal("対象", result.remainder);
+            return result.result;
+        }
+        if (std.mem.eql(u8, name, "範囲切取")) {
+            const result = try plugin_system.strings.cutRange(self.runtime, if (arguments.len > 0) arguments[0] else .undefined, if (arguments.len > 1) arguments[1] else .undefined, if (arguments.len > 2) arguments[2] else .undefined);
+            try self.setGlobal("対象", result.remainder);
+            return result.result;
+        }
+        if (std.mem.eql(u8, name, "正規表現マッチ") or std.mem.eql(u8, name, "正規表現抽出")) {
+            const result = (try plugin_system.regexp.callWithEffects(self.runtime, name, arguments)).?;
+            if (result.captures) |captures| try self.setGlobal("抽出文字列", captures);
+            return result.value;
+        }
+        if (try plugin_system.call(self.runtime, name, arguments)) |value| return value;
         return error.UnknownCommand;
+    }
+
+    fn initializeSystem(self: *Interpreter) !void {
+        if (self.system_initialized) return;
+        try plugin_system.constants.install(self.runtime, .{ .context = self, .setFn = installSystemConstant });
+        self.system_initialized = true;
+    }
+
+    fn installSystemConstant(context: *anyopaque, name: []const u8, value: Value) !void {
+        const self: *Interpreter = @ptrCast(@alignCast(context));
+        try self.setGlobal(name, value);
     }
 
     fn delayMilliseconds(self: *Interpreter, value: Value) !u64 {

@@ -1,72 +1,1284 @@
 {
   "秒待": {
     "status": "native",
-    "tests": ["timer-wait", "timer-wait-interleaving"],
+    "tests": [
+      "timer-wait",
+      "timer-wait-interleaving"
+    ],
     "reason": "差し替え可能な時計を用いた待機と公式cnako3差分テストに成功"
   },
   "秒待機": {
     "status": "native",
-    "tests": ["timer-wait-aliases"],
+    "tests": [
+      "timer-wait-aliases"
+    ],
     "reason": "秒待の別名として公式cnako3差分テストに成功"
   },
   "秒逐次待機": {
     "status": "native",
-    "tests": ["timer-wait-aliases"],
+    "tests": [
+      "timer-wait-aliases"
+    ],
     "reason": "逐次待機の互換呼び出しとして公式cnako3差分テストに成功"
   },
   "秒後": {
     "status": "native",
-    "tests": ["timer-order", "timer-stop", "timer-wait-interleaving", "promise-async-timer"],
+    "tests": [
+      "timer-order",
+      "timer-stop",
+      "timer-wait-interleaving",
+      "promise-async-timer"
+    ],
     "reason": "単発タイマーの順序と停止を公式cnako3差分テストで確認"
   },
   "秒毎": {
     "status": "native",
-    "tests": ["timer-interval"],
+    "tests": [
+      "timer-interval"
+    ],
     "reason": "周期タイマーの実行とコールバック内停止を公式cnako3差分テストで確認"
   },
   "秒タイマー開始時": {
     "status": "native",
-    "tests": ["timer-interval-alias"],
+    "tests": [
+      "timer-interval-alias"
+    ],
     "reason": "秒毎の別名として公式cnako3差分テストに成功"
   },
   "タイマー停止": {
     "status": "native",
-    "tests": ["timer-stop", "timer-interval"],
+    "tests": [
+      "timer-stop",
+      "timer-interval"
+    ],
     "reason": "単発タイマーと周期タイマーの停止を公式cnako3差分テストで確認"
   },
   "全タイマー停止": {
     "status": "native",
-    "tests": ["timer-stop-all"],
+    "tests": [
+      "timer-stop-all"
+    ],
     "reason": "登録済みタイマーの一括停止を公式cnako3差分テストで確認"
   },
   "そ": {
     "status": "native",
-    "tests": ["promise-reject"],
+    "tests": [
+      "promise-reject"
+    ],
     "reason": "直近のPromiseを保持するシステム定数として公式cnako3差分テストに成功"
   },
   "動時": {
     "status": "native",
-    "tests": ["promise-success", "promise-reject", "promise-async-timer"],
+    "tests": [
+      "promise-success",
+      "promise-reject",
+      "promise-async-timer"
+    ],
     "reason": "resolve・reject関数を渡すPromise生成を公式cnako3差分テストで確認"
   },
   "成功時": {
     "status": "native",
-    "tests": ["promise-success", "promise-async-timer"],
+    "tests": [
+      "promise-success",
+      "promise-async-timer"
+    ],
     "reason": "成功反応とPromise連鎖を公式cnako3差分テストで確認"
   },
   "処理時": {
     "status": "native",
-    "tests": ["promise-reject-process-finally"],
+    "tests": [
+      "promise-reject-process-finally"
+    ],
     "reason": "成否フラグと値の反応を公式cnako3差分テストで確認"
   },
   "失敗時": {
     "status": "native",
-    "tests": ["promise-reject"],
+    "tests": [
+      "promise-reject"
+    ],
     "reason": "拒否反応と回復後のPromise連鎖を公式cnako3差分テストで確認"
   },
   "終了時": {
     "status": "native",
-    "tests": ["promise-reject-process-finally"],
+    "tests": [
+      "promise-reject-process-finally"
+    ],
     "reason": "finally反応と元の成否伝播を公式cnako3差分テストで確認"
+  },
+  "ナデシコバージョン": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "ナデシコ言語バージョン": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "ナデシコエンジン": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "ナデシコ種類": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "はい": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "いいえ": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "真": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "偽": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "永遠": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "オン": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "オフ": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "改行": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "タブ": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "カッコ": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "カッコ閉": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "波カッコ": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "波カッコ閉": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "OK": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "NG": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "キャンセル": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "TRUE": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "FALSE": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "true": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "false": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "PI": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "空": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "NULL": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "undefined": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "未定義": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "エラーメッセージ": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "対象": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "対象キー": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "回数": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "CR": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "LF": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "非数": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "無限大": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "戻値無": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "戻値有": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "空配列": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "空辞書": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "空ハッシュ": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "空オブジェクト": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "真偽判定": {
+    "status": "native",
+    "tests": [
+      "plugin-system-constants"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "足": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "合計": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "引": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "掛": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "倍": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "割": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "割余": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "偶数": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "奇数": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "二乗": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "べき乗": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "以上": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "以下": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "未満": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "超": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "等": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "等無": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "一致": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "不一致": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "範囲内": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "範囲": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "連続加算": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "MAX": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "最大値": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "MIN": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "最小値": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "CLAMP": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "論理OR": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "論理AND": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "論理NOT": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "OR": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "AND": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "XOR": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "NOT": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "SHIFT_L": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "SHIFT_R": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "SHIFT_UR": {
+    "status": "native",
+    "tests": [
+      "plugin-system-math"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "変数型確認": {
+    "status": "native",
+    "tests": [
+      "plugin-system-types"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "TYPEOF": {
+    "status": "native",
+    "tests": [
+      "plugin-system-types"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "文字列変換": {
+    "status": "native",
+    "tests": [
+      "plugin-system-types"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "TOSTR": {
+    "status": "native",
+    "tests": [
+      "plugin-system-types"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "整数変換": {
+    "status": "native",
+    "tests": [
+      "plugin-system-types"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "TOINT": {
+    "status": "native",
+    "tests": [
+      "plugin-system-types"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "実数変換": {
+    "status": "native",
+    "tests": [
+      "plugin-system-types"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "TOFLOAT": {
+    "status": "native",
+    "tests": [
+      "plugin-system-types"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "INT": {
+    "status": "native",
+    "tests": [
+      "plugin-system-types"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "FLOAT": {
+    "status": "native",
+    "tests": [
+      "plugin-system-types"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "NAN判定": {
+    "status": "native",
+    "tests": [
+      "plugin-system-types"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "非数判定": {
+    "status": "native",
+    "tests": [
+      "plugin-system-types"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "HEX": {
+    "status": "native",
+    "tests": [
+      "plugin-system-types"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "進数変換": {
+    "status": "native",
+    "tests": [
+      "plugin-system-types"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "二進": {
+    "status": "native",
+    "tests": [
+      "plugin-system-types"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "二進表示": {
+    "status": "native",
+    "tests": [
+      "plugin-system-types"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "RGB": {
+    "status": "native",
+    "tests": [
+      "plugin-system-types"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "文字数": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "何文字目": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "CHR": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "ASC": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "文字挿入": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "文字検索": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "追加": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "一行追加": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "連結": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "文字列連結": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "文字列分解": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "リフレイン": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "出現回数": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "MID": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "文字抜出": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "LEFT": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "文字左部分": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "RIGHT": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "文字右部分": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "区切": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "文字列分割": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "切取": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "範囲切取": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "文字削除": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "文字始": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "文字終": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "出現": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-core"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "置換": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "単置換": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "トリム": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "空白除去": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "右トリム": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "左トリム": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "末尾空白除去": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "大文字変換": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "小文字変換": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "平仮名変換": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "カタカナ変換": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "英数全角変換": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "英数半角変換": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "英数記号全角変換": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "英数記号半角変換": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "カタカナ全角変換": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "カタカナ半角変換": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "全角変換": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "半角変換": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "全角カナ一覧": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "全角カナ濁音一覧": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "半角カナ一覧": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "半角カナ濁音一覧": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "通貨形式": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "ゼロ埋": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "空白埋": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "かなか判定": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "カタカナ判定": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "数字判定": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "数列判定": {
+    "status": "native",
+    "tests": [
+      "plugin-system-string-conversion"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "JSON変換": {
+    "status": "native",
+    "tests": [
+      "plugin-system-json"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "JSON取得": {
+    "status": "native",
+    "tests": [
+      "plugin-system-json"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "JSONエンコード": {
+    "status": "native",
+    "tests": [
+      "plugin-system-json"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "JSONエンコード整形": {
+    "status": "native",
+    "tests": [
+      "plugin-system-json"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "JSONデコード": {
+    "status": "native",
+    "tests": [
+      "plugin-system-json"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "JSON_E": {
+    "status": "native",
+    "tests": [
+      "plugin-system-json"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "JSON_ES": {
+    "status": "native",
+    "tests": [
+      "plugin-system-json"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "JSON_D": {
+    "status": "native",
+    "tests": [
+      "plugin-system-json"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "正規表現マッチ": {
+    "status": "native",
+    "tests": [
+      "plugin-system-regexp"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "正規表現抽出": {
+    "status": "native",
+    "tests": [
+      "plugin-system-regexp"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "抽出文字列": {
+    "status": "native",
+    "tests": [
+      "plugin-system-regexp"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "正規表現置換": {
+    "status": "native",
+    "tests": [
+      "plugin-system-regexp"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+  },
+  "正規表現区切": {
+    "status": "native",
+    "tests": [
+      "plugin-system-regexp"
+    ],
+    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
   }
 }

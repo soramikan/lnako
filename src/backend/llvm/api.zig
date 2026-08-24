@@ -72,11 +72,11 @@ pub const Api = struct {
     disposeErrorMessage: FnDisposeErrorMessage,
 
     pub fn open(allocator: std.mem.Allocator) !Api {
-        return openAt(allocator, null);
+        return openAt(allocator, null, null);
     }
 
-    pub fn openAt(allocator: std.mem.Allocator, llvm_root: ?[]const u8) !Api {
-        var library = try NativeLibrary.openCandidates(allocator, llvm_root);
+    pub fn openAt(allocator: std.mem.Allocator, llvm_root: ?[]const u8, llvm_library: ?[]const u8) !Api {
+        var library = try NativeLibrary.openCandidates(allocator, llvm_root, llvm_library);
         errdefer library.close();
         const target_prefix = switch (builtin.cpu.arch) {
             .aarch64 => "AArch64",
@@ -143,7 +143,8 @@ const NativeLibrary = if (builtin.os.tag == .windows) WindowsLibrary else PosixL
 const PosixLibrary = struct {
     inner: std.DynLib,
 
-    fn openCandidates(allocator: std.mem.Allocator, llvm_root: ?[]const u8) !PosixLibrary {
+    fn openCandidates(allocator: std.mem.Allocator, llvm_root: ?[]const u8, llvm_library: ?[]const u8) !PosixLibrary {
+        if (llvm_library) |path| return .{ .inner = std.DynLib.open(path) catch return error.LlvmLibraryNotFound };
         if (llvm_root) |root| {
             const rooted_candidates: []const []const u8 = switch (builtin.os.tag) {
                 .macos => &.{ "lib/libLLVM.dylib", "lib/libLLVM-22.dylib" },
@@ -191,7 +192,12 @@ const PosixLibrary = struct {
 const WindowsLibrary = struct {
     handle: *anyopaque,
 
-    fn openCandidates(allocator: std.mem.Allocator, llvm_root: ?[]const u8) !WindowsLibrary {
+    fn openCandidates(allocator: std.mem.Allocator, llvm_root: ?[]const u8, llvm_library: ?[]const u8) !WindowsLibrary {
+        if (llvm_library) |path| {
+            const path_z = try allocator.dupeZ(u8, path);
+            defer allocator.free(path_z);
+            return .{ .handle = LoadLibraryA(path_z) orelse return error.LlvmLibraryNotFound };
+        }
         const candidates = [_][]const u8{ "LLVM-C.dll", "LLVM.dll", "libLLVM.dll" };
         if (llvm_root) |root| {
             for (candidates) |name| {

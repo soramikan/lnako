@@ -34,6 +34,10 @@ pub const runtime = struct {
     pub const interpreter = @import("runtime/interpreter.zig");
 };
 
+pub const plugins = struct {
+    pub const system = @import("plugins/system.zig");
+};
+
 pub const backend = struct {
     pub const llvm = struct {
         pub const api = @import("backend/llvm/api.zig");
@@ -116,6 +120,7 @@ test {
     std.testing.refAllDecls(runtime.value);
     std.testing.refAllDecls(runtime.operators);
     std.testing.refAllDecls(runtime.interpreter);
+    std.testing.refAllDecls(plugins.system);
     std.testing.refAllDecls(backend.llvm.api);
     std.testing.refAllDecls(backend.llvm.module);
     std.testing.refAllDecls(backend.llvm.compiler);
