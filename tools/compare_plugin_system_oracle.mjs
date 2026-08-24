@@ -9,7 +9,10 @@ const oracleArg = process.argv.indexOf("--oracle");
 const oracleRoot = resolve(
   oracleArg >= 0 ? process.argv[oracleArg + 1] : process.env.NADESIKO3_ORACLE ?? resolve(root, ".cache/oracle/nadesiko3-3.7.24"),
 );
-const cases = JSON.parse(await readFile(resolve(root, "tests/oracle/plugin-system-cases.json"), "utf8"));
+const cases = [
+  ...JSON.parse(await readFile(resolve(root, "tests/oracle/plugin-system-cases.json"), "utf8")),
+  ...JSON.parse(await readFile(resolve(root, "tests/oracle/system-runtime-cases.json"), "utf8")),
+];
 const executable = resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
 const officialCli = resolve(oracleRoot, "src/cnako3.mjs");
 const fixedHost = resolve(root, "tools/oracle/fixed_host.mjs");

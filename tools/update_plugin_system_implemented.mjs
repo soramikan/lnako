@@ -4,7 +4,10 @@ import { resolve } from "node:path";
 const root = resolve(import.meta.dirname, "..");
 const implementationPath = resolve(root, "compat/v3.7.24/implemented.json");
 const implemented = JSON.parse(await readFile(implementationPath, "utf8"));
-const cases = JSON.parse(await readFile(resolve(root, "tests/oracle/plugin-system-cases.json"), "utf8"));
+const cases = [
+  ...JSON.parse(await readFile(resolve(root, "tests/oracle/plugin-system-cases.json"), "utf8")),
+  ...JSON.parse(await readFile(resolve(root, "tests/oracle/system-runtime-cases.json"), "utf8")),
+];
 
 for (const testCase of cases) for (const name of testCase.commands) {
   const current = implemented[name];

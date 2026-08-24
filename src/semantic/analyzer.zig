@@ -327,14 +327,32 @@ fn dupeStrings(allocator: std.mem.Allocator, values: []const []const u8) ![][]co
 }
 
 pub fn moduleName(allocator: std.mem.Allocator, filename: []const u8) ![]u8 {
-    const basename = std.fs.path.basename(filename);
-    const extension = std.fs.path.extension(basename);
-    const stem = basename[0 .. basename.len - extension.len];
-    const result = try allocator.dupe(u8, stem);
-    for (result) |*byte| if (byte.* < 0x80 and !std.ascii.isAlphanumeric(byte.*) and byte.* != '_') {
-        byte.* = '_';
+    var basename_start: usize = 0;
+    for (filename, 0..) |byte, index| if (byte == '/' or byte == '\\' or byte == ':') {
+        basename_start = index + 1;
     };
-    return result;
+    const basename = filename[basename_start..];
+    const suffix_length: usize = if (std.mem.endsWith(u8, basename, ".nako3"))
+        ".nako3".len
+    else if (std.mem.endsWith(u8, basename, ".nako"))
+        ".nako".len
+    else
+        0;
+    return allocator.dupe(u8, basename[0 .. basename.len - suffix_length]);
+}
+
+test "公式と同じファイル名をモジュール名に保つ" {
+    const hyphenated = try moduleName(std.testing.allocator, "dir/system-runtime.nako3");
+    defer std.testing.allocator.free(hyphenated);
+    try std.testing.expectEqualStrings("system-runtime", hyphenated);
+
+    const windows = try moduleName(std.testing.allocator, "C:\\dir\\a.b.nako");
+    defer std.testing.allocator.free(windows);
+    try std.testing.expectEqualStrings("a.b", windows);
+
+    const unrelated_extension = try moduleName(std.testing.allocator, "sample.txt");
+    defer std.testing.allocator.free(unrelated_extension);
+    try std.testing.expectEqualStrings("sample.txt", unrelated_extension);
 }
 
 test "グローバル・引数・組み込み命令を解決する" {

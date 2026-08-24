@@ -1165,14 +1165,16 @@
       "category": "敬語",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-courtesy"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0046",
@@ -1189,14 +1191,16 @@
       "category": "敬語",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-courtesy"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0047",
@@ -1213,14 +1217,16 @@
       "category": "敬語",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-courtesy"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0048",
@@ -1237,14 +1243,16 @@
       "category": "敬語",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-courtesy"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0049",
@@ -1261,14 +1269,16 @@
       "category": "敬語",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-courtesy"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0050",
@@ -1285,14 +1295,16 @@
       "category": "敬語",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-courtesy"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0051",
@@ -1710,14 +1722,16 @@
       "category": "デバッグ支援",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-catalog-and-namespace"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0068",
@@ -1734,14 +1748,16 @@
       "category": "デバッグ支援",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-catalog-and-namespace"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0069",
@@ -1758,14 +1774,16 @@
       "category": "デバッグ支援",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-catalog-and-namespace"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0070",
@@ -1806,14 +1824,16 @@
       "category": "デバッグ支援",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-catalog-and-namespace"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0072",
@@ -1830,14 +1850,16 @@
       "category": "デバッグ支援",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-catalog-and-namespace"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0073",
@@ -1854,14 +1876,16 @@
       "category": "デバッグ支援",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-catalog-and-namespace"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0074",
@@ -1878,14 +1902,16 @@
       "category": "デバッグ支援",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-catalog-and-namespace"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0075",
@@ -1902,14 +1928,16 @@
       "category": "デバッグ支援",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-catalog-and-namespace"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0076",
@@ -1926,14 +1954,16 @@
       "category": "デバッグ支援",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-catalog-and-namespace"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0077",
@@ -1950,14 +1980,16 @@
       "category": "デバッグ支援",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-catalog-and-namespace"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0078",
@@ -1974,14 +2006,16 @@
       "category": "プラグイン管理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-catalog-and-namespace"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0079",
@@ -1998,14 +2032,16 @@
       "category": "プラグイン管理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-catalog-and-namespace"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0080",
@@ -2022,14 +2058,16 @@
       "category": "プラグイン管理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-catalog-and-namespace"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0081",
@@ -2046,14 +2084,16 @@
       "category": "プラグイン管理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-catalog-and-namespace"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0082",
@@ -2070,14 +2110,16 @@
       "category": "プラグイン管理",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "system-runtime-catalog-and-namespace"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "実装および公式処理系との差分テストを待機中"
+      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
       "id": "command-0083",

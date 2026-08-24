@@ -604,6 +604,49 @@ fn parseNumberValue(literal: []const u8, base: u8) Error!f64 {
     return @floatFromInt(integer);
 }
 
+/// `予約語一覧取得`が返す、公式v3.7.24の公開順序。
+/// 実際の字句種別は構文上の別名も扱うため、`reservedKind`の表とは分離する。
+pub const exported_reserved_words = [_][]const u8{
+    "もし",
+    "回",
+    "回繰返",
+    "間",
+    "間繰返",
+    "繰返",
+    "増繰返",
+    "減繰返",
+    "後判定",
+    "反復",
+    "抜",
+    "続",
+    "戻",
+    "先",
+    "次",
+    "代入",
+    "実行速度優先",
+    "パフォーマンスモニタ適用",
+    "定",
+    "逐次実行",
+    "条件分岐",
+    "増",
+    "減",
+    "変数",
+    "定数",
+    "エラー監視",
+    "エラー",
+    "それ",
+    "そう",
+    "関数",
+    "インデント構文",
+    "非同期モード",
+    "DNCLモード",
+    "DNCL2モード",
+    "モード設定",
+    "取込",
+    "モジュール公開既定値",
+    "厳チェック",
+};
+
 fn reservedKind(value: []const u8) ?Kind {
     const words = [_]struct { text: []const u8, kind: Kind }{
         .{ .text = "回", .kind = .keyword_repeat_count },

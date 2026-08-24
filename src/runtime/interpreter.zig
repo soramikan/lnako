@@ -1,7 +1,10 @@
 const std = @import("std");
 const ir = @import("../ir/nako_ir.zig");
 const parser = @import("../frontend/parser.zig");
+const lexer = @import("../frontend/lexer.zig");
+const josi = @import("../frontend/josi.zig");
 const semantic = @import("../semantic/analyzer.zig");
+const builtin_catalog = @import("../semantic/builtin_catalog.zig");
 const hir = @import("../ir/hir.zig");
 const lower_ssa = @import("../ir/lower_ssa.zig");
 const verifier = @import("../ir/verifier.zig");
@@ -22,6 +25,16 @@ const quickjs = @import("../compat/quickjs.zig");
 
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
+
+const default_plugin_names = [_][]const u8{
+    "plugin_system",
+    "plugin_math",
+    "plugin_promise",
+    "plugin_test",
+    "plugin_csv",
+    "plugin_toml",
+    "plugin_node",
+};
 
 pub const Host = struct {
     context: *anyopaque,
@@ -155,6 +168,11 @@ const PromiseAllHandler = struct {
 
 const PromiseChainKind = enum { success, failure, settled, finally };
 
+const NamespaceFrame = struct {
+    namespace: Value,
+    plugin_name: Value,
+};
+
 const Frame = struct {
     parent: ?*Frame,
     function: *const ir.Function,
@@ -205,6 +223,8 @@ pub const Interpreter = struct {
     next_timer_id: u64 = 1,
     event_count: usize = 0,
     max_event_count: usize = 100_000,
+    courtesy_level: f64 = std.math.nan(f64),
+    namespace_stack: std.ArrayList(NamespaceFrame) = .empty,
     system_initialized: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, runtime: *Runtime, program: ir.Program, host: Host) Interpreter {
@@ -234,6 +254,7 @@ pub const Interpreter = struct {
         self.promise_all_handlers.deinit(self.allocator);
         for (self.promise_all_states.items) |state| self.allocator.destroy(state);
         self.promise_all_states.deinit(self.allocator);
+        self.namespace_stack.deinit(self.allocator);
         self.* = undefined;
     }
 
@@ -501,6 +522,48 @@ pub const Interpreter = struct {
     }
 
     fn callBuiltin(self: *Interpreter, name: []const u8, arguments: []const Value) !Value {
+        if (std.mem.eql(u8, name, "ください") or std.mem.eql(u8, name, "お願") or std.mem.eql(u8, name, "です")) {
+            if (!std.math.isFinite(self.courtesy_level) or self.courtesy_level == 0) self.courtesy_level = 0;
+            self.courtesy_level += 1;
+            return .undefined;
+        }
+        if (std.mem.eql(u8, name, "拝啓")) {
+            self.courtesy_level = 0;
+            return .undefined;
+        }
+        if (std.mem.eql(u8, name, "敬具")) {
+            self.courtesy_level += 100;
+            return .undefined;
+        }
+        if (std.mem.eql(u8, name, "礼節レベル取得")) {
+            if (!std.math.isFinite(self.courtesy_level) or self.courtesy_level == 0) self.courtesy_level = 0;
+            return .{ .number = self.courtesy_level };
+        }
+        if (std.mem.eql(u8, name, "プラグイン名設定")) {
+            try self.setGlobal("プラグイン名", try self.stringArgument(arguments));
+            return .undefined;
+        }
+        if (std.mem.eql(u8, name, "名前空間設定")) {
+            try self.namespace_stack.append(self.allocator, .{
+                .namespace = self.globals.get("名前空間") orelse .undefined,
+                .plugin_name = self.globals.get("プラグイン名") orelse .undefined,
+            });
+            try self.setGlobal("名前空間", try self.stringArgument(arguments));
+            return .undefined;
+        }
+        if (std.mem.eql(u8, name, "名前空間ポップ")) {
+            if (self.namespace_stack.pop()) |previous| {
+                try self.setGlobal("名前空間", previous.namespace);
+                try self.setGlobal("プラグイン名", previous.plugin_name);
+            }
+            return .undefined;
+        }
+        if (std.mem.eql(u8, name, "グローバル関数一覧取得")) return self.globalFunctionNames();
+        if (std.mem.eql(u8, name, "システム関数一覧取得")) return self.stringArray(&builtin_catalog.default_names);
+        if (std.mem.eql(u8, name, "システム関数存在")) return .{ .boolean = try self.defaultSystemNameExists(arguments) };
+        if (std.mem.eql(u8, name, "プラグイン一覧取得") or std.mem.eql(u8, name, "モジュール一覧取得")) return self.stringArray(&default_plugin_names);
+        if (std.mem.eql(u8, name, "助詞一覧取得")) return self.stringArray(&josi.exported_list);
+        if (std.mem.eql(u8, name, "予約語一覧取得")) return self.stringArray(&lexer.exported_reserved_words);
         if (std.mem.eql(u8, name, "表示") or std.mem.eql(u8, name, "表示する")) return self.display(arguments);
         if (std.mem.eql(u8, name, "継続表示")) return self.continueDisplay(arguments);
         if (std.mem.eql(u8, name, "連続表示")) return self.displayMany(arguments);
@@ -609,7 +672,57 @@ pub const Interpreter = struct {
         try plugin_caniuse.install(self.runtime, &self.caniuse_state, .{ .context = self, .setFn = installSystemConstant });
         try plugin_native.install(self.runtime, &self.native_plugin_state, self.program.native_plugin_paths, self.nativePluginEffects());
         try quickjs.installModules(self.runtime, &self.quickjs_state, self.program.javascript_modules, self.quickJsEffects());
+        try self.setGlobal("名前空間", try self.runtime.stringUtf8(self.primaryModuleName()));
         self.system_initialized = true;
+    }
+
+    fn stringArgument(self: *Interpreter, arguments: []const Value) !Value {
+        const value = if (arguments.len > 0) arguments[arguments.len - 1] else Value.undefined;
+        return self.runtime.valueToString(value);
+    }
+
+    fn stringArray(self: *Interpreter, values: []const []const u8) !Value {
+        var result = try self.runtime.createArray();
+        var roots = self.runtime.rootFrame();
+        defer roots.deinit();
+        try roots.protect(&result);
+        for (values) |item| {
+            const string = try self.runtime.stringUtf8(item);
+            _ = try result.array.push(string);
+        }
+        return result;
+    }
+
+    fn globalFunctionNames(self: *Interpreter) !Value {
+        var result = try self.runtime.createArray();
+        var roots = self.runtime.rootFrame();
+        defer roots.deinit();
+        try roots.protect(&result);
+        for (self.program.functions) |function| {
+            if (std.mem.endsWith(u8, function.name, "__$entry") or std.mem.indexOf(u8, function.name, "__lambda$") != null) continue;
+            const name = try self.runtime.stringUtf8(function.name);
+            _ = try result.array.push(name);
+        }
+        return result;
+    }
+
+    fn defaultSystemNameExists(self: *Interpreter, arguments: []const Value) !bool {
+        const value = if (arguments.len > 0) arguments[arguments.len - 1] else Value.undefined;
+        const string = try self.runtime.valueToString(value);
+        const name = try string.string.toUtf8Lossy(self.allocator);
+        defer self.allocator.free(name);
+        for (builtin_catalog.default_names) |candidate| if (std.mem.eql(u8, name, candidate)) return true;
+        return false;
+    }
+
+    fn primaryModuleName(self: Interpreter) []const u8 {
+        if (self.program.module_entries.len == 0) return "";
+        const id = self.program.module_entries[0];
+        if (id >= self.program.functions.len) return "";
+        const entry_name = self.program.functions[id].name;
+        const suffix = "__$entry";
+        if (!std.mem.endsWith(u8, entry_name, suffix)) return "";
+        return entry_name[0 .. entry_name.len - suffix.len];
     }
 
     fn display(self: *Interpreter, arguments: []const Value) !Value {
@@ -1417,6 +1530,10 @@ pub const Interpreter = struct {
             try runtime.traceExternal(.{ .promise = state.promise });
             try runtime.traceExternal(.{ .array = state.results });
         }
+        for (self.namespace_stack.items) |entry| {
+            try runtime.traceExternal(entry.namespace);
+            try runtime.traceExternal(entry.plugin_name);
+        }
         try self.node_state.trace(runtime);
         try self.http_server_state.trace(runtime);
         try self.caniuse_state.trace(runtime);
@@ -1483,6 +1600,34 @@ test "SSA IRで条件・反復・関数・配列辞書を実行する" {
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("10\n5\n7\n", host.written());
+}
+
+test "礼節状態と名前空間スタックと公開言語カタログを実行する" {
+    const source =
+        "●甲とは\n1で戻る\nここまで\n" ++
+        "名前空間を表示\nプラグイン名を表示\n" ++
+        "敬具()\n礼節レベル取得()を表示\n敬具()\n礼節レベル取得()を表示\nください()\n礼節レベル取得()を表示\n" ++
+        "プラグイン名設定(\"副\")\n名前空間設定(\"内側\")\nプラグイン名設定(\"孫\")\n" ++
+        "名前空間を表示\nプラグイン名を表示\n名前空間ポップ()\n名前空間を表示\nプラグイン名を表示\n" ++
+        "JSON変換(グローバル関数一覧取得())を表示\n" ++
+        "要素数(システム関数一覧取得())を表示\n" ++
+        "要素数(助詞一覧取得())を表示\n要素数(予約語一覧取得())を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings(
+        "main\nメイン\n0\n100\n101\n内側\n孫\nmain\n副\n[\"main__甲\"]\n478\n48\n38\n",
+        host.written(),
+    );
 }
 
 test "バイト列の添字・更新・反復をUint8Array互換で実行する" {

@@ -27,6 +27,7 @@ pub fn install(runtime: *Runtime, installer: Installer) !void {
     try installer.set("未定義", .undefined);
     for (string_constants) |constant| try installer.set(constant.name, try runtime.stringUtf8(constant.value));
     try installer.set("抽出文字列", try runtime.createArray());
+    try installer.set("__DEBUGブレイクポイント一覧", try runtime.createArray());
 }
 
 const boolean_constants = [_]BooleanConstant{
@@ -50,6 +51,8 @@ const number_constants = [_]NumberConstant{
     .{ .name = "PI", .value = std.math.pi },
     .{ .name = "戻値無", .value = 0 },
     .{ .name = "戻値有", .value = 1 },
+    .{ .name = "__DEBUG強制待機", .value = 0 },
+    .{ .name = "__DEBUG待機フラグ", .value = 0 },
 };
 
 const string_constants = [_]StringConstant{
@@ -75,6 +78,8 @@ const string_constants = [_]StringConstant{
     .{ .name = "半角カナ一覧", .value = "ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜｦﾝｧｨｩｪｫｬｭｮｯ､｡ｰ｢｣ﾞﾟ" },
     .{ .name = "半角カナ濁音一覧", .value = "ｶﾞｷﾞｸﾞｹﾞｺﾞｻﾞｼﾞｽﾞｾﾞｿﾞﾀﾞﾁﾞﾂﾞﾃﾞﾄﾞﾊﾞﾋﾞﾌﾞﾍﾞﾎﾞﾊﾟﾋﾟﾌﾟﾍﾟﾎﾟ" },
     .{ .name = "表示ログ", .value = "" },
+    .{ .name = "プラグイン名", .value = "メイン" },
+    .{ .name = "名前空間", .value = "" },
 };
 
 test "v3.7.24のシステム定数を実体化する" {
@@ -95,6 +100,8 @@ test "v3.7.24のシステム定数を実体化する" {
     defer std.testing.allocator.free(version);
     try std.testing.expectEqualStrings("3.7.24", version);
     try std.testing.expect(context.values.get("抽出文字列").? == .array);
+    try std.testing.expect(context.values.get("__DEBUGブレイクポイント一覧").? == .array);
+    try std.testing.expectEqual(@as(f64, 0), context.values.get("__DEBUG待機フラグ").?.number);
 }
 
 fn valueUtf8(allocator: std.mem.Allocator, value: Value) ![]u8 {

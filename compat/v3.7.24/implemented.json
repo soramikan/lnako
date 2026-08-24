@@ -3256,5 +3256,152 @@
       "plugin-system-url"
     ],
     "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "ください": {
+    "status": "native",
+    "tests": [
+      "system-runtime-courtesy"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "お願": {
+    "status": "native",
+    "tests": [
+      "system-runtime-courtesy"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "です": {
+    "status": "native",
+    "tests": [
+      "system-runtime-courtesy"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "拝啓": {
+    "status": "native",
+    "tests": [
+      "system-runtime-courtesy"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "敬具": {
+    "status": "native",
+    "tests": [
+      "system-runtime-courtesy"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "礼節レベル取得": {
+    "status": "native",
+    "tests": [
+      "system-runtime-courtesy"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "__DEBUG強制待機": {
+    "status": "native",
+    "tests": [
+      "system-runtime-catalog-and-namespace"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "__DEBUGブレイクポイント一覧": {
+    "status": "native",
+    "tests": [
+      "system-runtime-catalog-and-namespace"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "__DEBUG待機フラグ": {
+    "status": "native",
+    "tests": [
+      "system-runtime-catalog-and-namespace"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "グローバル関数一覧取得": {
+    "status": "native",
+    "tests": [
+      "system-runtime-catalog-and-namespace"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "システム関数一覧取得": {
+    "status": "native",
+    "tests": [
+      "system-runtime-catalog-and-namespace"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "システム関数存在": {
+    "status": "native",
+    "tests": [
+      "system-runtime-catalog-and-namespace"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "プラグイン一覧取得": {
+    "status": "native",
+    "tests": [
+      "system-runtime-catalog-and-namespace"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "モジュール一覧取得": {
+    "status": "native",
+    "tests": [
+      "system-runtime-catalog-and-namespace"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "助詞一覧取得": {
+    "status": "native",
+    "tests": [
+      "system-runtime-catalog-and-namespace"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "予約語一覧取得": {
+    "status": "native",
+    "tests": [
+      "system-runtime-catalog-and-namespace"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "プラグイン名": {
+    "status": "native",
+    "tests": [
+      "system-runtime-catalog-and-namespace"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "プラグイン名設定": {
+    "status": "native",
+    "tests": [
+      "system-runtime-catalog-and-namespace"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "名前空間": {
+    "status": "native",
+    "tests": [
+      "system-runtime-catalog-and-namespace"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "名前空間設定": {
+    "status": "native",
+    "tests": [
+      "system-runtime-catalog-and-namespace"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+  },
+  "名前空間ポップ": {
+    "status": "native",
+    "tests": [
+      "system-runtime-catalog-and-namespace"
+    ],
+    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
   }
 }
