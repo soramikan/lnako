@@ -97,6 +97,20 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| ir_probe_run.addArgs(args);
     ir_probe_step.dependOn(&ir_probe_run.step);
 
+    const value_probe = b.addExecutable(.{
+        .name = "value-probe",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/value_probe.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "lnako", .module = lnako }},
+        }),
+    });
+    const value_probe_step = b.step("value-probe", "動的値の変換結果をJSON Linesで出力する");
+    const value_probe_run = b.addRunArtifact(value_probe);
+    if (b.args) |args| value_probe_run.addArgs(args);
+    value_probe_step.dependOn(&value_probe_run.step);
+
     const module_tests = b.addTest(.{ .root_module = lnako });
     const run_module_tests = b.addRunArtifact(module_tests);
     const exe_tests = b.addTest(.{ .root_module = exe.root_module });

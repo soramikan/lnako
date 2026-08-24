@@ -17,6 +17,7 @@ node tools/compare_syntax_oracle.mjs
 node tools/compare_parser_oracle.mjs
 node tools/compare_parser_diagnostics_oracle.mjs
 node tools/compare_semantic_oracle.mjs
+node tools/compare_value_oracle.mjs
 node tools/check_builtin_catalog.mjs
 ```
 

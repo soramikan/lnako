@@ -26,6 +26,13 @@ pub const ir = struct {
     pub const printer = @import("ir/printer.zig");
 };
 
+pub const runtime = struct {
+    pub const string = @import("runtime/string.zig");
+    pub const bigint = @import("runtime/bigint.zig");
+    pub const value = @import("runtime/value.zig");
+    pub const operators = @import("runtime/operators.zig");
+};
+
 pub const Command = enum {
     build,
     run,

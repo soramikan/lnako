@@ -73,3 +73,14 @@ source
 - 通常モードはJSエンジンを含めない。
 - JS固有命令は `--compat-js` 指定時だけQuickJSへ接続する。
 - 対応していない機能を暗黙に代替せず、互換表と診断に理由を出す。
+
+## 動的な値
+
+- `runtime/string.zig` は文字列をUTF-16コード単位列として保持する。補助平面文字の長さ・添字・部分列は
+  ECMAScriptと同じになり、UTF-8出力時だけ孤立サロゲートをU+FFFDへ置換する。
+- `runtime/bigint.zig` はZig標準ライブラリの多倍長整数を所有し、10/2/8/16進解析、四則、剰余、累乗、
+  符号付きビット演算とシフトを精度損失なしで実行する。
+- `runtime/value.zig` は `undefined`、`null`、真偽値、binary64、BigInt、文字列をタグ付き値として表し、
+  JS互換の真偽・数値・文字列変換、厳密同値・SameValue・抽象同値を提供する。
+- `runtime/operators.zig` はNumberとBigIntの混在を拒否し、Numberのビット演算をToInt32/ToUint32へ正規化する。
+  固定ケースと決定的に生成したbinary64ケースを `tools/compare_value_oracle.mjs` でNode 24へ照合する。
