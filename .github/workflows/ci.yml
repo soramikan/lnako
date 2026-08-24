@@ -35,7 +35,6 @@ jobs:
         with:
           path: .cache/toolchains
           key: llvm-22.1.8-${{ runner.os }}-${{ runner.arch }}-v1
-          save-always: true
       - name: Set up pinned LLVM and LLD
         run: node tools/setup_llvm.mjs
       - name: Verify compatibility baseline

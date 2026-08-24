@@ -91,17 +91,33 @@ function buildLlvmLibrary(directory) {
   verifyTool(llvmConfig, lock.version);
   const components = ["core", "irreader", "analysis", "target", "passes", "nativecodegen"];
   const libraries = capture(llvmConfig, ["--link-static", "--libfiles", ...components]).trim().split(/\s+/).filter(Boolean);
-  const systemLibraries = capture(llvmConfig, ["--link-static", "--system-libs", ...components]).trim().split(/\s+/).filter(Boolean);
+  const systemLibraries = preferSharedSystemLibraries(
+    capture(llvmConfig, ["--link-static", "--system-libs", ...components]).trim().split(/\s+/).filter(Boolean),
+  );
   if (libraries.length === 0) throw new Error(`LLVM静的ライブラリを列挙できません: ${directory}`);
   const libraryDirectory = resolve(directory, "lib");
   const output = resolve(libraryDirectory, process.platform === "darwin" ? "libLLVM-C.dylib" : "libLLVM-C.so");
-  const linkArguments = process.platform === "darwin"
-    ? ["-dynamiclib", "-Wl,-install_name,@rpath/libLLVM-C.dylib", "-Wl,-all_load", ...libraries, `-L${libraryDirectory}`, ...systemLibraries, "-o", output]
-    : ["-shared", "-Wl,--whole-archive", ...libraries, "-Wl,--no-whole-archive", `-L${libraryDirectory}`, ...systemLibraries, "-o", output];
+  const linkArguments = ifDarwinLinkArguments();
   const result = spawnSync(compiler, linkArguments, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
   if (result.status !== 0) throw new Error(`LLVM C API共有ライブラリの構築に失敗しました:\n${result.stderr}`);
   console.log(`LLVM静的ライブラリからC API共有ライブラリを構築しました: ${output}`);
   return output;
+
+  function ifDarwinLinkArguments() {
+    if (process.platform !== "darwin") {
+      return ["-shared", "-Wl,--whole-archive", ...libraries, "-Wl,--no-whole-archive", ...systemLibraries, "-o", output];
+    }
+    const sdk = capture("xcrun", ["--sdk", "macosx", "--show-sdk-path"]).trim();
+    return ["-dynamiclib", "-isysroot", sdk, "-Wl,-install_name,@rpath/libLLVM-C.dylib", "-Wl,-all_load", ...libraries, `-L${libraryDirectory}`, ...systemLibraries, "-o", output];
+  }
+}
+
+function preferSharedSystemLibraries(libraries) {
+  if (process.platform !== "linux") return libraries;
+  return libraries.map((library) => {
+    const archive = /(?:^|\/)lib([^/]+)\.a$/.exec(library);
+    return archive ? `-l${archive[1]}` : library;
+  });
 }
 
 async function walk(directory, matches) {
