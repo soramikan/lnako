@@ -34,6 +34,14 @@ pub const runtime = struct {
     pub const interpreter = @import("runtime/interpreter.zig");
 };
 
+pub const backend = struct {
+    pub const llvm = struct {
+        pub const api = @import("backend/llvm/api.zig");
+        pub const module = @import("backend/llvm/module.zig");
+        pub const compiler = @import("backend/llvm/compiler.zig");
+    };
+};
+
 pub const Command = enum {
     build,
     run,
@@ -108,6 +116,9 @@ test {
     std.testing.refAllDecls(runtime.value);
     std.testing.refAllDecls(runtime.operators);
     std.testing.refAllDecls(runtime.interpreter);
+    std.testing.refAllDecls(backend.llvm.api);
+    std.testing.refAllDecls(backend.llvm.module);
+    std.testing.refAllDecls(backend.llvm.compiler);
 }
 
 test "コマンドを解析できる" {

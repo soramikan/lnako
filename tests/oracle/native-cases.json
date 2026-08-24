@@ -1,0 +1,30 @@
+[
+  {
+    "id": "native-arithmetic",
+    "source": "(1+2*3)を表示\n(9-4)/2を表示\n"
+  },
+  {
+    "id": "native-string-format",
+    "source": "「100%安全%s」を表示\n「連続%」を連続表示\n「表示」を表示\n"
+  },
+  {
+    "id": "native-assignment",
+    "source": "Aは1\nBはA+2\nBを表示\n"
+  },
+  {
+    "id": "native-condition",
+    "source": "もし、3>2ならば\n「真」を表示\n違えば\n「偽」を表示\nここまで\n"
+  },
+  {
+    "id": "native-while",
+    "source": "N=3\n(N>0)の間、繰り返す\nNを表示\nN=N-1\nここまで\n"
+  },
+  {
+    "id": "native-function",
+    "source": "●(AとBを)加算とは\nA+Bで戻る\nここまで\n加算(4,5)を表示\n"
+  },
+  {
+    "id": "native-unary-boolean",
+    "source": "(-3)を表示\nもし、!(1>2)ならば\n「否定」を表示\nここまで\n"
+  }
+]

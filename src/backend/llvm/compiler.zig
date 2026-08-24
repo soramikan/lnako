@@ -1,0 +1,274 @@
+const std = @import("std");
+const builtin = @import("builtin");
+const ir = @import("../../ir/nako_ir.zig");
+const api_mod = @import("api.zig");
+const module_mod = @import("module.zig");
+
+pub const Optimization = enum { o0, o1, o2, o3 };
+pub const Emit = enum { llvm_ir, object, executable };
+
+pub const Options = struct {
+    optimization: Optimization = .o0,
+    emit: Emit = .executable,
+    source_path: []const u8,
+    output_path: []const u8,
+    llvm_root: ?[]const u8 = null,
+};
+
+pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, options: Options, diagnostics: *std.Io.Writer) !void {
+    if (module_mod.findUnsupported(program)) |feature| {
+        try diagnostics.print("{s}:{d}:{d}: AOT未対応機能: opcode={s} detail={s} function={s}\n", .{
+            options.source_path,
+            feature.span.line + 1,
+            @max(@as(usize, 1), feature.span.column),
+            feature.opcode,
+            feature.detail,
+            feature.function_name,
+        });
+        return error.UnsupportedInstruction;
+    }
+    var generated = try module_mod.generate(allocator, program, options.source_path, options.optimization != .o0);
+    defer generated.deinit(allocator);
+    var api = api_mod.Api.openAt(allocator, options.llvm_root) catch |failure| {
+        try diagnostics.print("LLVM 22.1.8を読み込めません: {s}\n", .{@errorName(failure)});
+        return failure;
+    };
+    defer api.close();
+    const context = api.contextCreate() orelse return error.LlvmContextCreationFailed;
+    defer api.contextDispose(context);
+    const buffer_name = try allocator.dupeZ(u8, options.source_path);
+    defer allocator.free(buffer_name);
+    const buffer = api.createMemoryBuffer(generated.text.ptr, generated.text.len, buffer_name.ptr) orelse return error.LlvmMemoryBufferCreationFailed;
+    var llvm_module: api_mod.ModuleRef = null;
+    var message: api_mod.Message = null;
+    if (api.parseIr(context, buffer, &llvm_module, &message) != 0) {
+        try reportMessage(&api, diagnostics, "LLVM IR解析エラー", message);
+        return error.InvalidGeneratedLlvmIr;
+    }
+    defer api.disposeModule(llvm_module);
+
+    api.initializeTargetInfo();
+    api.initializeTarget();
+    api.initializeTargetMc();
+    api.initializeAsmPrinter();
+    const triple = api.getDefaultTargetTriple();
+    defer api.disposeMessage(triple);
+    var target: api_mod.TargetRef = null;
+    message = null;
+    if (api.getTargetFromTriple(triple, &target, &message) != 0) {
+        try reportMessage(&api, diagnostics, "LLVMターゲット取得エラー", message);
+        return error.LlvmTargetUnavailable;
+    }
+    const machine = api.createTargetMachine(target, triple, "generic", "", codeGenLevel(options.optimization), 2, 0) orelse return error.LlvmTargetMachineCreationFailed;
+    defer api.disposeTargetMachine(machine);
+    const target_data = api.createTargetDataLayout(machine) orelse return error.LlvmDataLayoutCreationFailed;
+    defer api.disposeTargetData(target_data);
+    const data_layout = api.copyDataLayout(target_data);
+    defer api.disposeMessage(data_layout);
+    api.setTarget(llvm_module, triple);
+    api.setDataLayout(llvm_module, data_layout);
+
+    try verify(&api, llvm_module, diagnostics);
+    const pass_options = api.createPassBuilderOptions() orelse return error.LlvmPassBuilderCreationFailed;
+    defer api.disposePassBuilderOptions(pass_options);
+    api.passBuilderSetVerifyEach(pass_options, 1);
+    const pipeline: [:0]const u8 = switch (options.optimization) {
+        .o0 => "default<O0>",
+        .o1 => "default<O1>",
+        .o2 => "default<O2>",
+        .o3 => "default<O3>",
+    };
+    if (api.runPasses(llvm_module, pipeline.ptr, machine, pass_options)) |pass_error| {
+        const error_message = api.getErrorMessage(pass_error);
+        defer api.disposeErrorMessage(error_message);
+        try diagnostics.print("LLVM最適化エラー: {s}\n", .{std.mem.span(error_message)});
+        return error.LlvmOptimizationFailed;
+    }
+    try verify(&api, llvm_module, diagnostics);
+
+    switch (options.emit) {
+        .llvm_ir => {
+            const module_text = api.printModule(llvm_module);
+            defer api.disposeMessage(module_text);
+            try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = options.output_path, .data = std.mem.span(module_text) });
+        },
+        .object => try emitObject(allocator, &api, machine, llvm_module, options.output_path, diagnostics),
+        .executable => {
+            const temporary_nonce = nonce(io);
+            const object_path = try std.fmt.allocPrint(allocator, "{s}.lnako-{x}.o", .{ options.output_path, temporary_nonce });
+            defer allocator.free(object_path);
+            defer std.Io.Dir.cwd().deleteFile(io, object_path) catch {};
+            try emitObject(allocator, &api, machine, llvm_module, object_path, diagnostics);
+            try linkExecutable(allocator, io, object_path, options.output_path, options.llvm_root, diagnostics);
+        },
+    }
+}
+
+fn verify(api: *api_mod.Api, module: api_mod.ModuleRef, diagnostics: *std.Io.Writer) !void {
+    var message: api_mod.Message = null;
+    if (api.verifyModule(module, 2, &message) != 0) {
+        try reportMessage(api, diagnostics, "LLVMモジュール検証エラー", message);
+        return error.LlvmModuleVerificationFailed;
+    }
+    if (message) |unused| api.disposeMessage(unused);
+}
+
+fn emitObject(allocator: std.mem.Allocator, api: *api_mod.Api, machine: api_mod.TargetMachineRef, module: api_mod.ModuleRef, path: []const u8, diagnostics: *std.Io.Writer) !void {
+    const output = try allocator.dupeZ(u8, path);
+    defer allocator.free(output);
+    var message: api_mod.Message = null;
+    if (api.emitToFile(machine, module, output.ptr, 1, &message) != 0) {
+        try reportMessage(api, diagnostics, "LLVMオブジェクト出力エラー", message);
+        return error.LlvmObjectEmissionFailed;
+    }
+    if (message) |unused| api.disposeMessage(unused);
+}
+
+fn reportMessage(api: *api_mod.Api, diagnostics: *std.Io.Writer, prefix: []const u8, message: api_mod.Message) !void {
+    if (message) |text| {
+        defer api.disposeMessage(text);
+        try diagnostics.print("{s}: {s}\n", .{ prefix, std.mem.span(text) });
+    } else try diagnostics.print("{s}\n", .{prefix});
+}
+
+fn codeGenLevel(optimization: Optimization) c_uint {
+    return switch (optimization) {
+        .o0 => 0,
+        .o1 => 1,
+        .o2 => 2,
+        .o3 => 3,
+    };
+}
+
+fn nonce(io: std.Io) u64 {
+    return @truncate(@as(u96, @bitCast(std.Io.Timestamp.now(io, .awake).nanoseconds)));
+}
+
+fn linkExecutable(allocator: std.mem.Allocator, io: std.Io, object_path: []const u8, output_path: []const u8, llvm_root: ?[]const u8, diagnostics: *std.Io.Writer) !void {
+    const tools = try findLinkTools(allocator, io, llvm_root);
+    defer allocator.free(tools.clang);
+    defer allocator.free(tools.lld);
+    const linker_argument = try std.fmt.allocPrint(allocator, "--ld-path={s}", .{tools.lld});
+    defer allocator.free(linker_argument);
+    const argv: []const []const u8 = if (builtin.os.tag == .linux)
+        &.{ tools.clang, linker_argument, object_path, "-o", output_path, "-lm" }
+    else
+        &.{ tools.clang, linker_argument, object_path, "-o", output_path };
+    const result = try std.process.run(allocator, io, .{ .argv = argv });
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    switch (result.term) {
+        .exited => |code| if (code == 0) return,
+        else => {},
+    }
+    try diagnostics.print("LLDリンクエラー:\n{s}", .{result.stderr});
+    return error.LldLinkFailed;
+}
+
+const LinkTools = struct { clang: []u8, lld: []u8 };
+
+fn findLinkTools(allocator: std.mem.Allocator, io: std.Io, llvm_root: ?[]const u8) !LinkTools {
+    if (llvm_root) |root| {
+        const clang_name = if (builtin.os.tag == .windows) "clang.exe" else "clang";
+        const lld_name = switch (builtin.os.tag) {
+            .macos => "ld64.lld",
+            .windows => "lld-link.exe",
+            else => "ld.lld",
+        };
+        const clang = try std.fs.path.join(allocator, &.{ root, "bin", clang_name });
+        errdefer allocator.free(clang);
+        const lld = try std.fs.path.join(allocator, &.{ root, "bin", lld_name });
+        errdefer allocator.free(lld);
+        try requireVersionedTool(allocator, io, clang);
+        try requireVersionedTool(allocator, io, lld);
+        return .{ .clang = clang, .lld = lld };
+    }
+    const clang_candidates: []const []const u8 = switch (builtin.os.tag) {
+        .macos => &.{ "/opt/homebrew/opt/llvm/bin/clang", "/usr/local/opt/llvm/bin/clang", "clang-22", "clang" },
+        .windows => &.{ "clang.exe", "clang-cl.exe" },
+        else => &.{ "/usr/lib/llvm-22/bin/clang", "/usr/local/bin/clang-22", "clang-22", "clang" },
+    };
+    const lld_candidates: []const []const u8 = switch (builtin.os.tag) {
+        .macos => &.{ "/opt/homebrew/opt/lld/bin/ld64.lld", "/usr/local/opt/lld/bin/ld64.lld", "ld64.lld" },
+        .windows => &.{ "lld-link.exe", "lld-link" },
+        else => &.{ "/usr/lib/llvm-22/bin/ld.lld", "/usr/local/bin/ld.lld", "ld.lld" },
+    };
+    const clang = try findVersionedTool(allocator, io, clang_candidates);
+    errdefer allocator.free(clang);
+    const lld = try findVersionedTool(allocator, io, lld_candidates);
+    return .{ .clang = clang, .lld = lld };
+}
+
+fn findVersionedTool(allocator: std.mem.Allocator, io: std.Io, candidates: []const []const u8) ![]u8 {
+    for (candidates) |candidate| {
+        requireVersionedTool(allocator, io, candidate) catch continue;
+        return allocator.dupe(u8, candidate);
+    }
+    return error.Llvm22LinkerToolsNotFound;
+}
+
+fn requireVersionedTool(allocator: std.mem.Allocator, io: std.Io, candidate: []const u8) !void {
+    const result = std.process.run(allocator, io, .{ .argv = &.{ candidate, "--version" }, .stdout_limit = .limited(64 * 1024), .stderr_limit = .limited(64 * 1024) }) catch return error.Llvm22LinkerToolsNotFound;
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    const succeeded = switch (result.term) {
+        .exited => |code| code == 0,
+        else => false,
+    };
+    if (!succeeded) return error.Llvm22LinkerToolsNotFound;
+    if (std.mem.indexOf(u8, result.stdout, "22.1.8") == null and std.mem.indexOf(u8, result.stderr, "22.1.8") == null) return error.Llvm22LinkerToolsNotFound;
+}
+
+test "LLVM C APIで全最適化レベルのモジュールを検証してIRを出力する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "1+2を表示\n", "main.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    const optimizations = [_]Optimization{ .o0, .o1, .o2, .o3 };
+    for (optimizations) |optimization| {
+        const output_path = try std.fmt.allocPrint(std.testing.allocator, "/tmp/lnako-llvm-{x}-{s}.ll", .{ nonce(std.testing.io), @tagName(optimization) });
+        defer std.testing.allocator.free(output_path);
+        defer std.Io.Dir.deleteFileAbsolute(std.testing.io, output_path) catch {};
+        var diagnostics: std.Io.Writer.Allocating = .init(std.testing.allocator);
+        defer diagnostics.deinit();
+        compile(std.testing.allocator, std.testing.io, program, .{ .source_path = "main.nako3", .output_path = output_path, .emit = .llvm_ir, .optimization = optimization }, &diagnostics.writer) catch |failure| switch (failure) {
+            error.LlvmLibraryNotFound => return error.SkipZigTest,
+            else => return failure,
+        };
+        const file = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, output_path, std.testing.allocator, .limited(4 * 1024 * 1024));
+        defer std.testing.allocator.free(file);
+        try std.testing.expect(std.mem.indexOf(u8, file, "target triple") != null);
+        try std.testing.expect(std.mem.indexOf(u8, file, "!llvm.dbg.cu") != null);
+    }
+}
+
+test "未対応AOT命令をソース位置付きで拒否する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "A=[1,2]\n", "unsupported.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "unsupported.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "unsupported.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    var diagnostics: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer diagnostics.deinit();
+    try std.testing.expectError(error.UnsupportedInstruction, compile(std.testing.allocator, std.testing.io, program, .{
+        .source_path = "unsupported.nako3",
+        .output_path = "/tmp/unused-lnako-output",
+    }, &diagnostics.writer));
+    try std.testing.expect(std.mem.indexOf(u8, diagnostics.written(), "opcode=make_array") != null);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostics.written(), "unsupported.nako3:1:") != null);
+}

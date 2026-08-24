@@ -24,6 +24,35 @@ pub fn main(init: std.process.Init) !void {
     switch (command) {
         .help => try lnako.usage(stdout),
         .version => try stdout.print("lnako {s}\n", .{lnako.version}),
+        .build => {
+            const options = parseBuildOptions(args[1..]) catch |err| {
+                try stderr.print("build: コマンドラインエラー: {s}\n", .{@errorName(err)});
+                try stderr.flush();
+                std.process.exit(2);
+            };
+            if (options.compat_js) {
+                try stderr.writeAll("build: --compat-js はQuickJS互換モード実装後に利用できます\n");
+                try stderr.flush();
+                std.process.exit(2);
+            }
+            var ir_program = (try compileInput(allocator, init.io, options.input, false, stderr)) orelse {
+                try stderr.flush();
+                std.process.exit(1);
+            };
+            defer ir_program.deinit();
+            lnako.backend.llvm.compiler.compile(allocator, init.io, ir_program, .{
+                .source_path = options.input,
+                .output_path = options.output,
+                .optimization = options.optimization,
+                .emit = options.emit,
+                .llvm_root = init.environ_map.get("LNAKO_LLVM_DIR"),
+            }, stderr) catch |err| {
+                try stderr.print("build: ネイティブコード生成に失敗しました: {s}\n", .{@errorName(err)});
+                try stderr.flush();
+                std.process.exit(1);
+            };
+            try stdout.print("{s} を生成しました\n", .{options.output});
+        },
         .check => {
             if (args.len < 2) {
                 try stderr.writeAll("check: 入力ファイルを指定してください\n");
@@ -75,6 +104,59 @@ pub fn main(init: std.process.Init) !void {
         },
         else => try stdout.print("{s}: 実装準備中です\n", .{@tagName(command)}),
     }
+}
+
+const BuildOptions = struct {
+    input: []const u8,
+    output: []const u8,
+    optimization: lnako.backend.llvm.compiler.Optimization = .o0,
+    emit: lnako.backend.llvm.compiler.Emit = .executable,
+    compat_js: bool = false,
+};
+
+fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
+    if (arguments.len == 0) return error.MissingInput;
+    var output: ?[]const u8 = null;
+    var optimization: lnako.backend.llvm.compiler.Optimization = .o0;
+    var emit: lnako.backend.llvm.compiler.Emit = .executable;
+    var compat_js = false;
+    var index: usize = 1;
+    while (index < arguments.len) : (index += 1) {
+        const argument = arguments[index];
+        if (std.mem.eql(u8, argument, "-o")) {
+            index += 1;
+            if (index >= arguments.len) return error.MissingOutput;
+            output = arguments[index];
+        } else if (std.mem.eql(u8, argument, "-O0")) {
+            optimization = .o0;
+        } else if (std.mem.eql(u8, argument, "-O1")) {
+            optimization = .o1;
+        } else if (std.mem.eql(u8, argument, "-O2")) {
+            optimization = .o2;
+        } else if (std.mem.eql(u8, argument, "-O3")) {
+            optimization = .o3;
+        } else if (std.mem.eql(u8, argument, "--compat-js")) {
+            compat_js = true;
+        } else if (std.mem.eql(u8, argument, "--emit")) {
+            index += 1;
+            if (index >= arguments.len) return error.MissingEmitKind;
+            emit = if (std.mem.eql(u8, arguments[index], "exe"))
+                .executable
+            else if (std.mem.eql(u8, arguments[index], "obj"))
+                .object
+            else if (std.mem.eql(u8, arguments[index], "llvm-ir"))
+                .llvm_ir
+            else
+                return error.InvalidEmitKind;
+        } else return error.UnknownBuildOption;
+    }
+    return .{
+        .input = arguments[0],
+        .output = output orelse return error.MissingOutput,
+        .optimization = optimization,
+        .emit = emit,
+        .compat_js = compat_js,
+    };
 }
 
 const CliHost = struct {
@@ -206,4 +288,14 @@ fn sourceForDiagnostic(graph: lnako.semantic.module_graph.ModuleGraph, file: []c
 
 test "CLIモジュールを読み込める" {
     try std.testing.expect(lnako.version.len > 0);
+}
+
+test "buildの出力形式と最適化レベルを解析する" {
+    const options = try parseBuildOptions(&.{ "main.nako3", "-o", "main", "-O3", "--emit", "obj" });
+    try std.testing.expectEqualStrings("main.nako3", options.input);
+    try std.testing.expectEqualStrings("main", options.output);
+    try std.testing.expectEqual(lnako.backend.llvm.compiler.Optimization.o3, options.optimization);
+    try std.testing.expectEqual(lnako.backend.llvm.compiler.Emit.object, options.emit);
+    try std.testing.expectError(error.MissingOutput, parseBuildOptions(&.{"main.nako3"}));
+    try std.testing.expectError(error.InvalidEmitKind, parseBuildOptions(&.{ "main.nako3", "-o", "main", "--emit", "asm" }));
 }

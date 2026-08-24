@@ -417,6 +417,7 @@ pub const Interpreter = struct {
             const utf8 = try text.string.toUtf8Lossy(self.allocator);
             defer self.allocator.free(utf8);
             try self.writeOutput(utf8);
+            try self.writeOutput("\n");
             return value;
         }
         if (std.mem.eql(u8, name, "エラー発生")) {
@@ -972,6 +973,22 @@ test "SSA IRで条件・反復・関数・配列辞書を実行する" {
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("10\n5\n7\n", host.written());
+}
+
+test "連続表示は公式処理系と同じく改行する" {
+    var fixture = try compileForTest(std.testing.allocator, "\"100%安全%s\"を連続表示\n\"次\"を表示\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("100%安全%s\n次\n", host.written());
 }
 
 test "例外監視と動的ななでしこ実行を処理する" {

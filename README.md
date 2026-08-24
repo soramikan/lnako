@@ -11,7 +11,9 @@
 - Node.js 24.x（公式処理系との互換テストだけで使用）
 - QuickJS 2026-06-04（`--compat-js` ビルドだけで使用）
 
-macOSではHomebrewのLLVMを `/opt/homebrew/opt/llvm` または `/usr/local/opt/llvm` から検出します。
+`node tools/setup_llvm.mjs` は `toolchain.lock.json` のOS別アーカイブをストリーミング取得し、SHA-256を
+検証して `.cache/toolchains/` へ展開します。CIはこの固定配布物だけを使います。手動配置したLLVMを使う場合は
+配布ルートを `LNAKO_LLVM_DIR` に指定できます。macOSではHomebrewのLLVM/LLD 22.1.8も検出します。
 
 ## ビルド
 
@@ -37,11 +39,20 @@ Promiseは明示的な状態機械とFIFOマイクロタスクキューで実装
 zig build run -- check program.nako3
 zig build run -- run program.nako3
 zig build run -- test tests/
+zig build run -- build program.nako3 -o program -O2
+zig build run -- build program.nako3 -o program.o -O2 --emit obj
+zig build run -- build program.nako3 -o program.ll -O2 --emit llvm-ir
 ```
 
 `run` は条件・反復・関数・クロージャ・配列・辞書・例外監視・動的ななでしこ実行、Promise・タイマーをNako SSA IR実行器で処理します。
-`test` は単一ファイルまたはディレクトリ以下の `.nako3` を読み、テスト定義を決定的な順序で実行します。LLVM AOT生成は
-後続のバックエンド実装まで未対応です。
+`test` は単一ファイルまたはディレクトリ以下の `.nako3` を読み、テスト定義を決定的な順序で実行します。
+`build` はLLVM 22.1.8 C APIで生成IRを検証し、PassBuilderの `default<O0>` ～ `default<O3>`、
+TargetMachineによるオブジェクト生成、LLD 22.1.8によるリンクを行います。生成物には元 `.nako3` の
+ファイル・行・列に対応するデバッグメタデータを保持します。
+
+現段階のAOT対応は、数値・真偽値・null・文字列定数、変数、数値演算・比較、条件・while、直接関数呼び出し、
+表示です。配列、辞書、BigInt、クロージャ、例外、非同期、残りの標準命令は後続の固定マイルストーンで
+生成コード用ランタイムABIへ接続します。未対応IRを含む入力は誤変換せず、命令名と元ソース位置付きで拒否します。
 
 ## CLI
 
@@ -54,8 +65,9 @@ lnako compat report
 lnako benchmark
 ```
 
-現時点では `run`、`check`、`test`、ヘルプ、バージョン表示を利用できます。`build`、`compat report`、
-`benchmark` は後続のLLVMバックエンド・標準命令・配布実装とともに有効化します。
+現時点では `build`、`run`、`check`、`test`、ヘルプ、バージョン表示を利用できます。`compat report` と
+`benchmark` は後続の標準命令・性能記録実装とともに有効化します。`build --compat-js` はQuickJSを実装する
+マイルストーンまで明示的に拒否します。
 
 設計と検証方針は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) と [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) を参照してください。
 

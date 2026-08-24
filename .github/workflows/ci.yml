@@ -31,6 +31,12 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24.15.0
+      - uses: actions/cache@v4
+        with:
+          path: .cache/toolchains
+          key: llvm-22.1.8-${{ runner.os }}-${{ runner.arch }}-v1
+      - name: Set up pinned LLVM and LLD
+        run: node tools/setup_llvm.mjs
       - name: Verify compatibility baseline
         run: |
           node tools/sync_compat.mjs --check
@@ -55,6 +61,8 @@ jobs:
         run: node tools/compare_value_oracle.mjs
       - name: Differential interpreter test
         run: node tools/compare_interpreter_oracle.mjs
+      - name: Differential native AOT test
+        run: node tools/compare_native_oracle.mjs
       - name: Format
         run: zig build fmt-check
       - name: Test

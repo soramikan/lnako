@@ -110,3 +110,18 @@ source
   CLIでは `std.Io.sleep`、テストでは仮想時計へ接続し、OS時計に依存しない順序テストを可能にする。
 - `tools/compare_interpreter_oracle.mjs` は同一の `.nako3` を公式 `cnako3` と `lnako run` へ渡し、
   標準出力、エラー分類、終了コード、シグナルを比較する。
+
+## LLVMバックエンド
+
+- `backend/llvm/api.zig` はLLVM 22.1.8のC APIを実行時に読み込み、実バージョンを `LLVMGetVersion` で
+  検証する。製品コンパイラをLLVMのZig/C++ ABIへ静的に結合しない。
+- `backend/llvm/module.zig` はNako SSA IRからタグ付き動的値を使うLLVM IRを生成する。元ソースの
+  `DICompileUnit`、`DIFile`、`DISubprogram`、命令単位の `DILocation` も同時に生成する。
+- `backend/llvm/compiler.zig` はIR解析、最適化前後のモジュール検証、PassBuilder、TargetMachineを順に
+  実行する。`--emit llvm-ir|obj|exe` は同一の検証済みモジュールを入力とする。
+- 実行ファイル生成では一時オブジェクトを厳密なパスへ出力し、Clang 22.1.8へLLD 22.1.8の絶対パスを
+  `--ld-path` で渡す。リンク後は一時オブジェクトを削除する。
+- 現在の生成対象外opcodeは事前検査で元ソース位置とともに拒否する。ヒープ値とホスト命令は後続の
+  ランタイムABI実装で順次この許可集合へ加える。
+- `tools/compare_native_oracle.mjs` は同じ入力を公式CLI、公式生成済みJavaScript＋Node、`lnako run`、
+  `lnako build` の実行ファイルという4経路で実行し、標準出力・エラー分類・終了コード・シグナルを照合する。
