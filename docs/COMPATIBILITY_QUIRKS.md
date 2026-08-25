@@ -22,6 +22,8 @@ lnakoは、意図的な非互換として合意した項目を除き、説明文
 | `表CSV変換` / `CSV変換` / `表TSV変換` / `TSV変換` | 変換結果を返すだけでなく、入力表の各セルを引用処理後の文字列へ置き換える | 公式互換のため入力表も変更する | `plugin-csv-all` |
 | 辞書リテラルの数値キー | `{1:2}`はJavaScriptのオブジェクト構文なら有効に見えるが、公式パーサーは数値をキーとして受理せず、辞書の閉じ括弧不足に見える文法エラーを返す | 識別子または引用文字列だけを受理し、数値キーは同じ行の構文診断にする | `公式同様に辞書リテラルの数値キーを拒否する`、`parser-diagnostic-cases` |
 | 角括弧の分割代入 | `[A,B]=[1,2]`でも分割代入に見えるが、公式パーサーは宣言なしの形を受理しない。`変数[A,B]=[1,2]`または`定数[A,B]=[1,2]`だけが分割宣言になる | 宣言キーワードを必須にし、裸の角括弧形式は同じ行の構文診断にする | `公式同様に宣言なしの角括弧分割代入を拒否する`、`parser-diagnostic-cases`、`native-array-destructure` |
+| プリミティブ値への添字代入 | 公式CLI直接実行はNumber、Boolean、String、BigIntへの`A[0]=値`を変更も例外もなく無視する。一方、公式生成JavaScriptはES moduleのstrict modeで動くため、最初のNumber代入から`Cannot create property '0' on number '1'`例外になる。`null`と`undefined`への代入は両経路でTypeErrorになる | 通常の利用経路である公式CLI直接実行に合わせ、数値・真偽値・文字列・BigIntへの代入を無操作にする。差分ケースは`oracle: official-source`を明示する。`null` / `undefined`の例外文とAOT監視連携は未実装 | `native-primitive-index-assignment-and-empty-iteration`、`プリミティブへの添字代入を無視し非反復値を空として扱う` |
+| 反復不能値の`反復` | `null`、`undefined`、Boolean、BigInt、関数は例外にせず要素数0として扱い、反復本体を実行しない | 全ての値を反復入力として受理し、配列・辞書・文字列・Number以外は空反復子へ変換する | `native-primitive-index-assignment-and-empty-iteration`、`プリミティブへの添字代入を無視し非反復値を空として扱う` |
 
 根拠は固定オラクルの
 [`core/src/plugin_system_array.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_array.mts) と

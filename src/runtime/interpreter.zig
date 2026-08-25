@@ -1540,7 +1540,10 @@ pub const Interpreter = struct {
             const text = try self.runtime.valueToString(key);
             return container.dictionary.set(text.string, value);
         }
-        return error.InvalidAssignment;
+        return switch (container) {
+            .undefined, .null_value => error.InvalidAssignment,
+            else => {},
+        };
     }
 
     fn increment(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
@@ -1594,7 +1597,7 @@ pub const Interpreter = struct {
                 .array => .{ .kind = .array, .source = source, .count = source.array.len() },
                 .string => .{ .kind = .string, .source = source, .count = source.string.len() },
                 .dictionary => .{ .kind = .dictionary, .source = source, .count = source.dictionary.len() },
-                else => return error.NotIterable,
+                else => .{ .kind = .repeat, .count = 0 },
             };
         }
         try frame.iterators.put(self.allocator, id, state);
@@ -2235,6 +2238,28 @@ test "連続する例外監視で直前の捕捉値を再利用しない" {
             "BigInts have no unsigned right shift, use >> instead\n",
         host.written(),
     );
+}
+
+test "プリミティブへの添字代入と反復を公式同様に無操作とする" {
+    const source =
+        "A=1\nA[0]=2\nAを表示\n" ++
+        "B=「abc」\nB[0]=「x」\nBを表示\n" ++
+        "NULLを反復\n「到達不可」を表示\nここまで\n" ++
+        "はいを反復\n「到達不可」を表示\nここまで\n" ++
+        "「後」を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("1\nabc\n後\n", host.written());
 }
 
 test "GCストレス中も実行フレームと反復対象をルートとして保持する" {

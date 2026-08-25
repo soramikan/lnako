@@ -188,7 +188,7 @@ const Runtime = struct {
             .utf16_string => .{ .kind = .string, .source = values[0], .count = values[0].object().?.payload.utf16_string.len },
             .array => .{ .kind = .array, .source = values[0], .count = values[0].object().?.payload.array.items.len },
             .dictionary => .{ .kind = .dictionary, .source = values[0], .count = values[0].object().?.payload.dictionary.items.len },
-            else => return error.NotIterable,
+            else => .{ .kind = .repeat, .count = 0 },
         };
         return self.createObject(.{ .iterator = iterator }, .iterator);
     }
@@ -342,7 +342,10 @@ const Runtime = struct {
     }
 
     fn indexSet(self: *Runtime, container: Value, key: Value, value: Value) !void {
-        const object = container.object() orelse return error.InvalidContainer;
+        const object = container.object() orelse return switch (@as(Tag, @enumFromInt(container.tag))) {
+            .undefined, .null_value => error.InvalidContainer,
+            else => {},
+        };
         switch (object.payload) {
             .array => |*items| {
                 const index = valueIndex(key) orelse return error.InvalidIndex;
@@ -354,7 +357,7 @@ const Runtime = struct {
                 items.items[index] = value;
             },
             .dictionary => |*entries| try self.setDictionary(entries, key, value),
-            else => return error.InvalidContainer,
+            .utf16_string, .bigint, .function, .iterator, .binding_cell => {},
         }
     }
 
@@ -1331,6 +1334,18 @@ test "配列の伸長と辞書の挿入位置を保った更新を行う" {
     try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 7))), entries[0].value.payload);
 }
 
+test "プリミティブへの添字代入を無視し非反復値を空として扱う" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    try runtime.indexSet(numberValue(1), numberValue(0), numberValue(2));
+    try runtime.indexSet(.{ .tag = @intFromEnum(Tag.boolean), .payload = 1 }, numberValue(0), numberValue(2));
+    const text = try runtime.createString(&.{ 'a', 'b', 'c' });
+    try runtime.indexSet(text, numberValue(0), numberValue(2));
+    try std.testing.expectEqualSlices(u16, &.{ 'a', 'b', 'c' }, text.object().?.payload.utf16_string);
+    const iterator = try runtime.createIterator(&.{.{ .tag = @intFromEnum(Tag.null_value) }}, false, 0);
+    try std.testing.expect(!runtime.iteratorHasNext(iterator));
+}
+
 test "AOT分割宣言は非配列を1要素の値として扱う" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -1529,7 +1544,8 @@ test "回数・範囲・配列・辞書の反復状態と元コレクション�
     _ = runtime.iteratorNext(repeat, &repeat_target, null, null, null);
     try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 1))), repeat_target.payload);
     runtime.popRoots(&frame);
-    try std.testing.expectError(error.NotIterable, runtime.createIterator(&.{try runtime.createBigInt("1n")}, false, 0));
+    const non_iterable = try runtime.createIterator(&.{try runtime.createBigInt("1n")}, false, 0);
+    try std.testing.expect(!runtime.iteratorHasNext(non_iterable));
 }
 
 fn numberValue(number: f64) Value {

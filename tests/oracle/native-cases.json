@@ -88,6 +88,11 @@
     "source": "A=[1]\nA[3]=9\nA[1]を表示\nA[3]を表示\nB={\"x\":1}\nB@\"x\"=2\nB@\"x\"を表示\nC={\"outer\":{\"inner\":4}}\nC@\"outer\"@\"inner\"を表示\nC@\"outer\"@\"inner\"=8\nC@\"outer\"@\"inner\"を表示\n"
   },
   {
+    "id": "native-primitive-index-assignment-and-empty-iteration",
+    "oracle": "official-source",
+    "source": "A=1\nA[0]=2\nAを表示\nB=はい\nB[0]=2\nBを表示\nC=「abc」\nC[0]=「x」\nCを表示\nD=1n\nD[0]=2\nDを表示\nNULLを反復\n「到達不可」を表示\nここまで\nはいを反復\n「到達不可」を表示\nここまで\n1nを反復\n「到達不可」を表示\nここまで\nF=関数()それは1;ここまで\nFを反復\n「到達不可」を表示\nここまで\n「後」を表示\n"
+  },
+  {
     "id": "native-repeat-break",
     "source": "5回\n回数を表示\nもし、回数=3ならば、抜ける\nここまで\n"
   },

@@ -1247,8 +1247,8 @@ fn iteratorSourceSupported(function: ir.Function, instruction: ir.Instruction) b
     if (instruction.operands.len == 0) return false;
     if (instruction.name.len > 0 and instruction.operands.len >= 2) return true;
     return switch (valueType(function, instruction.operands[0])) {
-        .dynamic, .number, .string, .array, .object => true,
-        else => false,
+        .void => false,
+        else => true,
     };
 }
 
