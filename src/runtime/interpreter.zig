@@ -2309,6 +2309,29 @@ test "CHRの不正コードポイントを値付き公式文言で監視する" 
     try std.testing.expectEqualStrings("Invalid code point -1\nInvalid code point 1.5\n", host.written());
 }
 
+test "文字列挿入検索は公式の小数位置とNaN位置を保持する" {
+    const source =
+        "文字挿入(\"A😀B\",2,\"X\")を表示\n" ++
+        "文字挿入(\"ABC\",2.9,\"X\")を表示\n" ++
+        "文字挿入(\"ABC\",\"2rest\",\"X\")を表示\n" ++
+        "文字検索(\"A😀B😀\",3,\"😀\")を表示\n" ++
+        "文字検索(\"A😀B😀\",2.9,\"😀\")を表示\n" ++
+        "文字検索(\"A😀B😀\",\"2rest\",\"😀\")を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("AX😀B\nAXBC\nXABC\n4\n2.9\n0\n", host.written());
+}
+
 test "連続する例外監視で直前の捕捉値を再利用しない" {
     const source =
         "エラー監視\nA=1n+1\nエラーならば\nエラーメッセージを表示\nここまで\n" ++

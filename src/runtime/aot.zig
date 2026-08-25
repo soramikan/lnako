@@ -1597,6 +1597,23 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             };
         },
+        .string_insert, .string_search => {
+            if (len < 3) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            if (command == .string_insert) {
+                out.* = stringInsertBuiltin(runtime, arguments.?[0], arguments.?[1], arguments.?[2]) catch |failure| {
+                    runtime.setFailure(failure);
+                    return;
+                };
+            } else {
+                out.* = numberValue(stringSearchBuiltin(runtime, arguments.?[0], arguments.?[1], arguments.?[2]) catch |failure| {
+                    runtime.setFailure(failure);
+                    return;
+                });
+            }
+        },
     }
 }
 
@@ -1900,6 +1917,54 @@ fn firstCodePointBuiltin(runtime: *Runtime, value: Value) !u21 {
         return @intCast(0x10000 + ((@as(u32, units[0]) - 0xd800) << 10) + (@as(u32, units[1]) - 0xdc00));
     }
     return @intCast(units[0]);
+}
+
+fn stringInsertBuiltin(runtime: *Runtime, source_value: Value, position_value: Value, addition_value: Value) !Value {
+    const source = try valueUtf16Alloc(runtime, source_value);
+    defer runtime.allocator.free(source);
+    const addition = try valueUtf16Alloc(runtime, addition_value);
+    defer runtime.allocator.free(addition);
+    var position = try valueToNumberRuntime(runtime, position_value);
+    if (position <= 0) position = 1;
+    const scalar_index = stringCollectionIndex(position - 1, codePointCount(source));
+    const unit_index = codePointOffsetBuiltin(source, scalar_index);
+    const output = try runtime.allocator.alloc(u16, source.len + addition.len);
+    @memcpy(output[0..unit_index], source[0..unit_index]);
+    @memcpy(output[unit_index .. unit_index + addition.len], addition);
+    @memcpy(output[unit_index + addition.len ..], source[unit_index..]);
+    return runtime.ownString(output);
+}
+
+fn stringSearchBuiltin(runtime: *Runtime, source_value: Value, start_value: Value, needle_value: Value) !f64 {
+    const source = try valueUtf16Alloc(runtime, source_value);
+    defer runtime.allocator.free(source);
+    const needle = try valueUtf16Alloc(runtime, needle_value);
+    defer runtime.allocator.free(needle);
+    var start = try valueToNumberRuntime(runtime, start_value);
+    if (start <= 0) start = 1;
+    var index = start - 1;
+    const source_count = codePointCount(source);
+    const needle_count = codePointCount(needle);
+    while (index < @as(f64, @floatFromInt(source_count))) : (index += 1) {
+        const scalar_index = stringCollectionIndex(index, source_count);
+        const unit_start = codePointOffsetBuiltin(source, scalar_index);
+        const unit_end = codePointOffsetBuiltin(source, @min(source_count, scalar_index +| needle_count));
+        if (std.mem.eql(u16, source[unit_start..unit_end], needle)) return index + 1;
+    }
+    return 0;
+}
+
+fn codePointOffsetBuiltin(units: []const u16, target: usize) usize {
+    var count: usize = 0;
+    var index: usize = 0;
+    while (index < units.len and count < target) : (count += 1) index += codePointLength(units, index);
+    return index;
+}
+
+fn stringCollectionIndex(number: f64, length: usize) usize {
+    if (std.math.isNan(number) or number <= 0) return 0;
+    if (!std.math.isFinite(number) or number >= @as(f64, @floatFromInt(length))) return length;
+    return @intFromFloat(@trunc(number));
 }
 
 test "UTF-16文字列をルートから正確にmark-and-sweepする" {
@@ -2344,6 +2409,34 @@ test "AOT文字コード命令は補助平面と配列と動的例外文言を�
     const message = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, taken.object().?.payload.utf16_string);
     defer std.testing.allocator.free(message);
     try std.testing.expectEqualStrings("Invalid code point -1", message);
+}
+
+test "AOT文字列挿入検索はUnicode scalar位置と小数開始値を保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    const insert_arguments = [_]Value{ staticStringValue("A😀B"), numberValue(2), staticStringValue("X") };
+    lnako_aot_builtin_call(&roots[0], &insert_arguments, insert_arguments.len, @intFromEnum(aot_builtin.Command.string_insert));
+    try std.testing.expectEqualSlices(u16, &.{ 'A', 'X', 0xd83d, 0xde00, 'B' }, roots[0].object().?.payload.utf16_string);
+    const nan_position_arguments = [_]Value{ staticStringValue("ABC"), staticStringValue("2rest"), staticStringValue("X") };
+    lnako_aot_builtin_call(&roots[1], &nan_position_arguments, nan_position_arguments.len, @intFromEnum(aot_builtin.Command.string_insert));
+    try std.testing.expectEqualSlices(u16, &.{ 'X', 'A', 'B', 'C' }, roots[1].object().?.payload.utf16_string);
+
+    const fractional_search = [_]Value{ staticStringValue("A😀B😀"), numberValue(2.9), staticStringValue("😀") };
+    lnako_aot_builtin_call(&roots[2], &fractional_search, fractional_search.len, @intFromEnum(aot_builtin.Command.string_search));
+    try std.testing.expectEqual(@as(f64, 2.9), valueToNumber(roots[2]));
+    const nan_search = [_]Value{ staticStringValue("A😀B😀"), staticStringValue("2rest"), staticStringValue("😀") };
+    lnako_aot_builtin_call(&roots[3], &nan_search, nan_search.len, @intFromEnum(aot_builtin.Command.string_search));
+    try std.testing.expectEqual(@as(f64, 0), valueToNumber(roots[3]));
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {

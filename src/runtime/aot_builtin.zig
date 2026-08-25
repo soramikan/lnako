@@ -55,6 +55,8 @@ pub const Command = enum(u16) {
     sequential_add,
     chr,
     asc,
+    string_insert,
+    string_search,
 };
 
 pub fn lookup(name: []const u8) ?Command {
@@ -112,6 +114,8 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "連続加算")) return .sequential_add;
     if (std.mem.eql(u8, name, "CHR")) return .chr;
     if (std.mem.eql(u8, name, "ASC")) return .asc;
+    if (std.mem.eql(u8, name, "文字挿入")) return .string_insert;
+    if (std.mem.eql(u8, name, "文字検索")) return .string_search;
     return null;
 }
 
@@ -182,5 +186,7 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.sequential_add, lookup("連続加算").?);
     try std.testing.expectEqual(Command.chr, lookup("CHR").?);
     try std.testing.expectEqual(Command.asc, lookup("ASC").?);
+    try std.testing.expectEqual(Command.string_insert, lookup("文字挿入").?);
+    try std.testing.expectEqual(Command.string_search, lookup("文字検索").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }

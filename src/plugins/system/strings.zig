@@ -37,9 +37,7 @@ pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Val
     if (eql(name, "ASC")) return try asc(runtime, a);
     if (eql(name, "文字挿入")) return try insert(runtime, a_text, b, c_text);
     if (eql(name, "文字検索")) {
-        const start_number = try common.parseIntValue(runtime, b, null);
-        const start = oneBasedIndex(start_number);
-        return .{ .number = @floatFromInt(findCodePoints(a_text.string.units, c_text.string.units, start) orelse return Value{ .number = 0 }) };
+        return .{ .number = searchCodePoints(a_text.string.units, try runtime.valueToNumber(b), c_text.string.units) };
     }
     if (eql(name, "追加") or eql(name, "一行追加")) return try append(runtime, a, b, a_text, b_text, eql(name, "一行追加"));
     if (eql(name, "連結") or eql(name, "文字列連結")) return try join(runtime, arguments);
@@ -260,8 +258,9 @@ fn asc(runtime: *Runtime, value: Value) !Value {
 fn insert(runtime: *Runtime, source: Value, position: Value, addition: Value) !Value {
     const source_units = (try text(runtime, source)).units;
     const addition_units = (try text(runtime, addition)).units;
-    const number = try common.parseIntValue(runtime, position, null);
-    const codepoint_index = if (std.math.isNan(number) or number <= 1) @as(usize, 0) else safeUsize(@trunc(number) - 1);
+    var number = try runtime.valueToNumber(position);
+    if (number <= 0) number = 1;
+    const codepoint_index = collectionIndex(number - 1, codePointCount(source_units));
     const offset = codePointOffset(source_units, codepoint_index);
     var output = try runtime.allocator().alloc(u16, source_units.len + addition_units.len);
     defer runtime.allocator().free(output);
@@ -654,6 +653,21 @@ fn findCodePoints(haystack: []const u16, needle: []const u16, from_codepoint: us
     return null;
 }
 
+fn searchCodePoints(haystack: []const u16, start_value: f64, needle: []const u16) f64 {
+    var start = start_value;
+    if (start <= 0) start = 1;
+    var index = start - 1;
+    const haystack_count = codePointCount(haystack);
+    const needle_count = codePointCount(needle);
+    while (index < @as(f64, @floatFromInt(haystack_count))) : (index += 1) {
+        const scalar_index = collectionIndex(index, haystack_count);
+        const unit_start = codePointOffset(haystack, scalar_index);
+        const unit_end = codePointOffset(haystack, @min(haystack_count, scalar_index +| needle_count));
+        if (std.mem.eql(u16, haystack[unit_start..unit_end], needle)) return index + 1;
+    }
+    return 0;
+}
+
 fn indexOfUnits(haystack: []const u16, needle: []const u16, start: usize) ?usize {
     if (needle.len == 0) return @min(start, haystack.len);
     if (start > haystack.len or needle.len > haystack.len - start) return null;
@@ -689,6 +703,12 @@ fn safeUsize(number: f64) usize {
     if (!std.math.isFinite(number) or number <= 0) return 0;
     if (number >= @as(f64, @floatFromInt(std.math.maxInt(usize)))) return std.math.maxInt(usize);
     return @intFromFloat(number);
+}
+
+fn collectionIndex(number: f64, length: usize) usize {
+    if (std.math.isNan(number) or number <= 0) return 0;
+    if (!std.math.isFinite(number) or number >= @as(f64, @floatFromInt(length))) return length;
+    return @intFromFloat(@trunc(number));
 }
 
 fn firstUnit(value: *string_mod.String) u16 {
