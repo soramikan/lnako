@@ -134,6 +134,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_print_utf16(ptr, i1)\n" ++
                 "declare void @lnako_aot_bigint_new(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_print_bigint(ptr, i1)\n" ++
+                "declare void @lnako_aot_print_collection(ptr, i1)\n" ++
                 "declare i32 @lnako_aot_bigint_truthy(ptr)\n" ++
                 "declare void @lnako_aot_bigint_arithmetic(ptr, ptr, ptr, i8)\n" ++
                 "declare void @lnako_aot_compare(ptr, ptr, ptr, i8)\n" ++
@@ -297,7 +298,7 @@ const Emitter = struct {
                 "  %display.value = alloca %lnako.Value\n" ++
                 "  store %lnako.Value %value, ptr %display.value\n" ++
                 "  %tag = extractvalue %lnako.Value %value, 0\n" ++
-                "  switch i8 %tag, label %undefined [ i8 1, label %null i8 2, label %boolean i8 3, label %number i8 4, label %static_string i8 5, label %heap_string i8 9, label %bigint ]\n" ++
+                "  switch i8 %tag, label %undefined [ i8 1, label %null i8 2, label %boolean i8 3, label %number i8 4, label %static_string i8 5, label %heap_string i8 6, label %collection i8 7, label %collection i8 9, label %bigint ]\n" ++
                 "undefined:\n" ++
                 "  call void @lnako.print_text(ptr @.lnako.undefined, i1 %newline)\n" ++
                 "  br label %done\n" ++
@@ -338,6 +339,9 @@ const Emitter = struct {
                 "  br label %done\n" ++
                 "heap_string:\n" ++
                 "  call void @lnako_aot_print_utf16(ptr %display.value, i1 %newline)\n" ++
+                "  br label %done\n" ++
+                "collection:\n" ++
+                "  call void @lnako_aot_print_collection(ptr %display.value, i1 %newline)\n" ++
                 "  br label %done\n" ++
                 "bigint:\n" ++
                 "  call void @lnako_aot_print_bigint(ptr %display.value, i1 %newline)\n" ++
@@ -1184,7 +1188,7 @@ test "配列と辞書をルート付きAOTランタイム呼び出しへ変換�
     const semantic = @import("../../semantic/analyzer.zig");
     const hir = @import("../../ir/hir.zig");
     const lower = @import("../../ir/lower_ssa.zig");
-    const source = "A=[1,2]\nA[1]=5\nA[1]を表示\nB={\"x\":7}\nB@\"x\"を表示\nX=[8,9]\n変数[C,D]=X\nCを表示\n変数[E,F]=7\nEを表示\n";
+    const source = "A=[1,2]\nA[1]=5\nA[1]を表示\nAを表示\nB={\"x\":7}\nB@\"x\"を表示\nBを表示\nX=[8,9]\n変数[C,D]=X\nCを表示\n変数[E,F]=7\nEを表示\n";
     var parsed = try parser.parse(std.testing.allocator, source, "collections.nako3");
     defer parsed.deinit();
     try std.testing.expect(parsed.succeeded());
@@ -1205,6 +1209,7 @@ test "配列と辞書をルート付きAOTランタイム呼び出しへ変換�
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_index_get") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_index_set") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_destructure_get") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_print_collection") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_index_get(ptr, ptr, ptr)") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "ptr %runtime.scratch") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare %lnako.Value @lnako_aot_") == null);

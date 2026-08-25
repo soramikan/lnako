@@ -51,6 +51,7 @@ lnakoは、意図的な非互換として合意した項目を除き、説明文
 | `連続無改行表示` | 可変個引数を結合して`継続表示`へ渡すため、次の`表示`まで出力を保留する | 同じ | `plugin-system-stdio` |
 | `言` | 命令本体は文字列だけをロガーへ送るが、公式CLIのstdoutロガーを通すと1行出力になり改行が付く。`表示ログ`には追加しない | CLIで同じ1行出力にする | `plugin-system-stdio` |
 | `表示` | 保留中の継続表示を先頭に付けて出力し、改行付きの内容を`表示ログ`へ追記する | 同じ | `plugin-system-stdio` |
+| 配列・辞書の`表示` | 配列は要素をカンマで連結し、辞書は内容ではなく`[object Object]`と表示する。自己循環した配列は循環箇所を空文字にするため、自分自身だけを持つ配列の表示結果は空行になる | AOTでも循環検出付きのUTF-16文字列化を通してから出力する | `AOTの値をUTF-16文字列として連結する`、`native-array-and-dictionary` |
 
 根拠は固定オラクルの
 [`core/src/plugin_system_stdio.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_stdio.mts) です。

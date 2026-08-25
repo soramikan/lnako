@@ -874,6 +874,14 @@ pub export fn lnako_aot_print_bigint(value: *const Value, newline: bool) callcon
     writeBytes(text, newline);
 }
 
+pub export fn lnako_aot_print_collection(value: *const Value, newline: bool) callconv(.c) void {
+    const runtime = if (active_runtime) |*active| active else return;
+    if (value.tag != @intFromEnum(Tag.array) and value.tag != @intFromEnum(Tag.dictionary)) return;
+    const units = valueUtf16Alloc(runtime, value.*) catch |failure| runtimeFailure(failure);
+    defer runtime.allocator.free(units);
+    writeUtf16(units, newline);
+}
+
 pub export fn lnako_aot_bigint_truthy(value: *const Value) callconv(.c) c_int {
     const object = value.object() orelse return 0;
     if (object.payload != .bigint) return 0;
@@ -990,6 +998,7 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_shift));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_concat));
     try std.testing.expectEqual(*const fn (*Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_increment));
+    try std.testing.expectEqual(*const fn (*const Value, bool) callconv(.c) void, @TypeOf(&lnako_aot_print_collection));
 }
 
 test "ルートフレームをLIFOで連結する" {

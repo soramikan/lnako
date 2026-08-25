@@ -53,7 +53,7 @@
   },
   {
     "id": "native-array-and-dictionary",
-    "source": "A=[1,2]\nA[1]=5\nA[1]を表示\nB={\"x\":7}\nB@\"x\"を表示\n"
+    "source": "A=[1,2]\nA[1]=5\nA[1]を表示\nAを表示\nB={\"x\":7}\nB@\"x\"を表示\nBを表示\nC=[]\nC[0]=C\nCを表示\n"
   },
   {
     "id": "native-nested-and-sparse-collections",
