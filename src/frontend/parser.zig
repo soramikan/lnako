@@ -68,6 +68,7 @@ const Parser = struct {
     filename: []const u8,
     mode: token_mod.Mode,
     index: usize = 0,
+    delimited_expression_depth: usize = 0,
     diagnostics: std.ArrayList(diagnostic.Diagnostic) = .empty,
 
     fn parseProgram(self: *Parser) ParseFailure!*ast.Node {
@@ -773,6 +774,9 @@ const Parser = struct {
 
     fn parseUnary(self: *Parser) ParseFailure!*ast.Node {
         if (self.at(.plus)) return self.fail(.unexpected_token, "単項『+』は使用できません", self.peek());
+        if (self.delimited_expression_depth > 0 and self.at(.minus) and self.peekAhead(1).kind == .bigint) {
+            return self.fail(.unexpected_token, "括弧・配列・辞書の内側では負のBigIntリテラルを直接使用できません", self.peek());
+        }
         if (self.at(.not) or self.at(.minus)) {
             const operator_token = self.advance();
             const operand = try self.parseUnary();
@@ -803,6 +807,8 @@ const Parser = struct {
         while (true) {
             if (self.at(.left_paren) and value.kind == .word and value.josi.len == 0) {
                 const open = self.advance();
+                self.delimited_expression_depth += 1;
+                defer self.delimited_expression_depth -= 1;
                 var arguments: std.ArrayList(*ast.Node) = .empty;
                 while (!self.at(.right_paren) and !self.at(.eof)) {
                     try arguments.append(self.allocator, try self.parseExpression(0));
@@ -819,6 +825,8 @@ const Parser = struct {
             }
             if (self.at(.left_paren) and value.kind == .function_call) {
                 const open = self.advance();
+                self.delimited_expression_depth += 1;
+                defer self.delimited_expression_depth -= 1;
                 var arguments: std.ArrayList(*ast.Node) = .empty;
                 try arguments.append(self.allocator, value);
                 while (!self.at(.right_paren) and !self.at(.eof)) {
@@ -840,6 +848,8 @@ const Parser = struct {
             }
             if (self.at(.left_bracket) and value.josi.len == 0) {
                 const open = self.advance();
+                self.delimited_expression_depth += 1;
+                defer self.delimited_expression_depth -= 1;
                 var indexes: std.ArrayList(*ast.Node) = .empty;
                 while (!self.at(.right_bracket) and !self.at(.eof)) {
                     try indexes.append(self.allocator, try self.parseExpression(0));
@@ -882,6 +892,8 @@ const Parser = struct {
                 break :blk node;
             },
             .left_paren => blk: {
+                self.delimited_expression_depth += 1;
+                defer self.delimited_expression_depth -= 1;
                 const value = try self.parseExpression(0);
                 if (!self.at(.right_paren)) return self.fail(.expected_token, "式を閉じる『)』が必要です", token);
                 const close = self.advance();
@@ -920,6 +932,8 @@ const Parser = struct {
     }
 
     fn parseArrayAfterOpen(self: *Parser, open: Token) ParseFailure!*ast.Node {
+        self.delimited_expression_depth += 1;
+        defer self.delimited_expression_depth -= 1;
         var values: std.ArrayList(*ast.Node) = .empty;
         while (!self.at(.right_bracket) and !self.at(.eof)) {
             if (self.at(.eol) or self.at(.comma)) {
@@ -938,6 +952,8 @@ const Parser = struct {
     }
 
     fn parseObjectAfterOpen(self: *Parser, open: Token) ParseFailure!*ast.Node {
+        self.delimited_expression_depth += 1;
+        defer self.delimited_expression_depth -= 1;
         var values: std.ArrayList(*ast.Node) = .empty;
         while (!self.at(.right_brace) and !self.at(.eof)) {
             if (self.at(.eol) or self.at(.comma)) {
@@ -1429,6 +1445,25 @@ test "負のBigIntリテラルと変数への単項マイナスを区別する" 
     try std.testing.expectEqualStrings("*", variable_negation.operator);
     try std.testing.expectEqualStrings("-1", variable_negation.children[0].value);
     try std.testing.expectEqualStrings("A", variable_negation.children[1].value);
+}
+
+test "公式同様に区切り内の負のBigInt直接指定を拒否する" {
+    const rejected = [_][]const u8{
+        "A=(-1n)\n",
+        "HEX(-1n)\n",
+        "A=[-1n]\n",
+        "A={x:-1n}\n",
+    };
+    for (rejected) |source| {
+        var result = try parse(std.testing.allocator, source, "negative-bigint.nako3");
+        defer result.deinit();
+        try std.testing.expect(!result.succeeded());
+        try std.testing.expectEqual(diagnostic.Code.unexpected_token, result.diagnostics[0].code);
+        try std.testing.expectEqual(@as(usize, 0), result.diagnostics[0].span.line);
+    }
+    var workaround = try parse(std.testing.allocator, "A=-1n\nB=(0n-1n)\n", "negative-bigint.nako3");
+    defer workaround.deinit();
+    try std.testing.expect(workaround.succeeded());
 }
 
 test "閉じていないブロックを位置付き診断にする" {
