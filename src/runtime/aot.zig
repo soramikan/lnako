@@ -1252,7 +1252,7 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -1614,6 +1614,46 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 });
             }
         },
+        .append, .append_line => {
+            if (len < 2) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            out.* = appendBuiltin(runtime, arguments.?[0], arguments.?[1], command == .append_line) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .concat_join => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = joinBuiltin(runtime, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .explode => {
+            out.* = explodeBuiltin(runtime, value) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .refrain, .occurrence_count => {
+            if (len < 2) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            if (command == .refrain) {
+                out.* = refrainBuiltin(runtime, arguments.?[0], arguments.?[1]) catch |failure| {
+                    runtime.setFailure(failure);
+                    return;
+                };
+            } else {
+                out.* = numberValue(@floatFromInt(occurrenceCountBuiltin(runtime, arguments.?[0], arguments.?[1]) catch |failure| {
+                    runtime.setFailure(failure);
+                    return;
+                }));
+            }
+        },
     }
 }
 
@@ -1965,6 +2005,85 @@ fn stringCollectionIndex(number: f64, length: usize) usize {
     if (std.math.isNan(number) or number <= 0) return 0;
     if (!std.math.isFinite(number) or number >= @as(f64, @floatFromInt(length))) return length;
     return @intFromFloat(@trunc(number));
+}
+
+fn appendBuiltin(runtime: *Runtime, source: Value, addition: Value, newline: bool) !Value {
+    if (source.tag == @intFromEnum(Tag.array)) {
+        try source.object().?.payload.array.append(runtime.allocator, addition);
+        return source;
+    }
+    const source_units = try valueUtf16Alloc(runtime, source);
+    defer runtime.allocator.free(source_units);
+    const addition_units = try valueUtf16Alloc(runtime, addition);
+    defer runtime.allocator.free(addition_units);
+    const extra: usize = @intFromBool(newline);
+    const base_length = std.math.add(usize, source_units.len, addition_units.len) catch return error.StringTooLarge;
+    const length = std.math.add(usize, base_length, extra) catch return error.StringTooLarge;
+    const output = try runtime.allocator.alloc(u16, length);
+    @memcpy(output[0..source_units.len], source_units);
+    @memcpy(output[source_units.len .. source_units.len + addition_units.len], addition_units);
+    if (newline) output[output.len - 1] = '\n';
+    return runtime.ownString(output);
+}
+
+fn joinBuiltin(runtime: *Runtime, values: []const Value) !Value {
+    var units: std.ArrayList(u16) = .empty;
+    errdefer units.deinit(runtime.allocator);
+    for (values) |value| switch (@as(Tag, @enumFromInt(value.tag))) {
+        .undefined, .null_value => {},
+        else => {
+            const part = try valueUtf16Alloc(runtime, value);
+            defer runtime.allocator.free(part);
+            try units.appendSlice(runtime.allocator, part);
+        },
+    };
+    return runtime.ownString(try units.toOwnedSlice(runtime.allocator));
+}
+
+fn explodeBuiltin(runtime: *Runtime, value: Value) !Value {
+    const units = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(units);
+    var roots = [_]Value{ .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[0] = try runtime.createArray(&.{});
+    var index: usize = 0;
+    while (index < units.len) {
+        const length = codePointLength(units, index);
+        roots[1] = try runtime.createString(units[index .. index + length]);
+        try roots[0].object().?.payload.array.append(runtime.allocator, roots[1]);
+        index += length;
+    }
+    return roots[0];
+}
+
+fn refrainBuiltin(runtime: *Runtime, value: Value, count_value: Value) !Value {
+    const count_number = try valueToNumberRuntime(runtime, count_value);
+    if (std.math.isNan(count_number) or count_number <= 0) return runtime.createString(&.{});
+    if (!std.math.isFinite(count_number) or count_number > @as(f64, @floatFromInt(std.math.maxInt(usize)))) return error.RepetitionTooLarge;
+    const count: usize = @intFromFloat(@ceil(count_number));
+    const units = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(units);
+    const length = std.math.mul(usize, units.len, count) catch return error.RepetitionTooLarge;
+    const output = try runtime.allocator.alloc(u16, length);
+    for (0..count) |index| @memcpy(output[index * units.len ..][0..units.len], units);
+    return runtime.ownString(output);
+}
+
+fn occurrenceCountBuiltin(runtime: *Runtime, source_value: Value, needle_value: Value) !i64 {
+    const source = try valueUtf16Alloc(runtime, source_value);
+    defer runtime.allocator.free(source);
+    const needle = try valueUtf16Alloc(runtime, needle_value);
+    defer runtime.allocator.free(needle);
+    if (needle.len == 0) return @as(i64, @intCast(source.len)) - 1;
+    var count: i64 = 0;
+    var start: usize = 0;
+    while (std.mem.indexOfPos(u16, source, start, needle)) |found| {
+        count += 1;
+        start = found + needle.len;
+    }
+    return count;
 }
 
 test "UTF-16文字列をルートから正確にmark-and-sweepする" {
@@ -2437,6 +2556,49 @@ test "AOT文字列挿入検索はUnicode scalar位置と小数開始値を保持
     const nan_search = [_]Value{ staticStringValue("A😀B😀"), staticStringValue("2rest"), staticStringValue("😀") };
     lnako_aot_builtin_call(&roots[3], &nan_search, nan_search.len, @intFromEnum(aot_builtin.Command.string_search));
     try std.testing.expectEqual(@as(f64, 0), valueToNumber(roots[3]));
+}
+
+test "AOT文字列連結分解反復出現命令は公式の型変換を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try active_runtime.?.createArray(&.{numberValue(1)});
+    const append_arguments = [_]Value{ roots[0], numberValue(2) };
+    lnako_aot_builtin_call(&roots[1], &append_arguments, append_arguments.len, @intFromEnum(aot_builtin.Command.append));
+    try std.testing.expectEqual(roots[0].payload, roots[1].payload);
+    try std.testing.expectEqual(@as(usize, 2), roots[0].object().?.payload.array.items.len);
+
+    const line_arguments = [_]Value{ staticStringValue("a"), staticStringValue("b") };
+    lnako_aot_builtin_call(&roots[2], &line_arguments, line_arguments.len, @intFromEnum(aot_builtin.Command.append_line));
+    try std.testing.expectEqualSlices(u16, &.{ 'a', 'b', '\n' }, roots[2].object().?.payload.utf16_string);
+    const join_arguments = [_]Value{ staticStringValue("a"), numberValue(1), .{ .tag = @intFromEnum(Tag.null_value) }, .{} };
+    lnako_aot_builtin_call(&roots[3], &join_arguments, join_arguments.len, @intFromEnum(aot_builtin.Command.concat_join));
+    try std.testing.expectEqualSlices(u16, &.{ 'a', '1' }, roots[3].object().?.payload.utf16_string);
+
+    const explode_arguments = [_]Value{staticStringValue("A😀B")};
+    lnako_aot_builtin_call(&roots[4], &explode_arguments, explode_arguments.len, @intFromEnum(aot_builtin.Command.explode));
+    const characters = roots[4].object().?.payload.array.items;
+    try std.testing.expectEqual(@as(usize, 3), characters.len);
+    try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00 }, characters[1].object().?.payload.utf16_string);
+
+    const refrain_arguments = [_]Value{ staticStringValue("x"), numberValue(2.1) };
+    lnako_aot_builtin_call(&roots[5], &refrain_arguments, refrain_arguments.len, @intFromEnum(aot_builtin.Command.refrain));
+    try std.testing.expectEqualSlices(u16, &.{ 'x', 'x', 'x' }, roots[5].object().?.payload.utf16_string);
+    const empty_count_arguments = [_]Value{ staticStringValue(""), staticStringValue("") };
+    lnako_aot_builtin_call(&roots[6], &empty_count_arguments, empty_count_arguments.len, @intFromEnum(aot_builtin.Command.occurrence_count));
+    try std.testing.expectEqual(@as(f64, -1), valueToNumber(roots[6]));
+    const emoji_count_arguments = [_]Value{ staticStringValue("😀"), staticStringValue("") };
+    lnako_aot_builtin_call(&roots[7], &emoji_count_arguments, emoji_count_arguments.len, @intFromEnum(aot_builtin.Command.occurrence_count));
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(roots[7]));
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {

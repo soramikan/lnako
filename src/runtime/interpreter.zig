@@ -2332,6 +2332,28 @@ test "文字列挿入検索は公式の小数位置とNaN位置を保持する" 
     try std.testing.expectEqualStrings("AX😀B\nAXBC\nXABC\n4\n2.9\n0\n", host.written());
 }
 
+test "文字列連結反復出現は公式のnullと小数と空区切りを扱う" {
+    const source =
+        "連結(\"a\",1,NULL,undefined)を表示\n" ++
+        "リフレイン(\"x\",2.1)を表示\n" ++
+        "リフレイン(\"x\",\"2rest\")を表示\n" ++
+        "出現回数(\"😀\",\"\")を表示\n" ++
+        "出現回数(\"\",\"\")を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("a1\nxxx\n\n1\n-1\n", host.written());
+}
+
 test "連続する例外監視で直前の捕捉値を再利用しない" {
     const source =
         "エラー監視\nA=1n+1\nエラーならば\nエラーメッセージを表示\nここまで\n" ++

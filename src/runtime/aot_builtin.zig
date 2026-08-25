@@ -57,6 +57,12 @@ pub const Command = enum(u16) {
     asc,
     string_insert,
     string_search,
+    append,
+    append_line,
+    concat_join,
+    explode,
+    refrain,
+    occurrence_count,
 };
 
 pub fn lookup(name: []const u8) ?Command {
@@ -116,6 +122,12 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "ASC")) return .asc;
     if (std.mem.eql(u8, name, "文字挿入")) return .string_insert;
     if (std.mem.eql(u8, name, "文字検索")) return .string_search;
+    if (std.mem.eql(u8, name, "追加")) return .append;
+    if (std.mem.eql(u8, name, "一行追加")) return .append_line;
+    if (std.mem.eql(u8, name, "連結") or std.mem.eql(u8, name, "文字列連結")) return .concat_join;
+    if (std.mem.eql(u8, name, "文字列分解")) return .explode;
+    if (std.mem.eql(u8, name, "リフレイン")) return .refrain;
+    if (std.mem.eql(u8, name, "出現回数")) return .occurrence_count;
     return null;
 }
 
@@ -188,5 +200,12 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.asc, lookup("ASC").?);
     try std.testing.expectEqual(Command.string_insert, lookup("文字挿入").?);
     try std.testing.expectEqual(Command.string_search, lookup("文字検索").?);
+    try std.testing.expectEqual(Command.append, lookup("追加").?);
+    try std.testing.expectEqual(Command.append_line, lookup("一行追加").?);
+    try std.testing.expectEqual(Command.concat_join, lookup("連結").?);
+    try std.testing.expectEqual(Command.concat_join, lookup("文字列連結").?);
+    try std.testing.expectEqual(Command.explode, lookup("文字列分解").?);
+    try std.testing.expectEqual(Command.refrain, lookup("リフレイン").?);
+    try std.testing.expectEqual(Command.occurrence_count, lookup("出現回数").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }

@@ -40,7 +40,7 @@ pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Val
         return .{ .number = searchCodePoints(a_text.string.units, try runtime.valueToNumber(b), c_text.string.units) };
     }
     if (eql(name, "追加") or eql(name, "一行追加")) return try append(runtime, a, b, a_text, b_text, eql(name, "一行追加"));
-    if (eql(name, "連結") or eql(name, "文字列連結")) return try join(runtime, arguments);
+    if (eql(name, "連結") or eql(name, "文字列連結")) return try joinArguments(runtime, arguments);
     if (eql(name, "文字列分解")) return try explode(runtime, a_text);
     if (eql(name, "リフレイン")) return try repeat(runtime, a_text, b);
     if (eql(name, "出現回数")) return .{ .number = @floatFromInt(countOccurrences(a_text.string.units, b_text.string.units)) };
@@ -288,6 +288,16 @@ fn join(runtime: *Runtime, values: []const Value) !Value {
     return runtime.stringCodeUnits(units.items);
 }
 
+fn joinArguments(runtime: *Runtime, values: []const Value) !Value {
+    var units: std.ArrayList(u16) = .empty;
+    defer units.deinit(runtime.allocator());
+    for (values) |value| switch (value) {
+        .undefined, .null_value => {},
+        else => try units.appendSlice(runtime.allocator(), (try text(runtime, value)).units),
+    };
+    return runtime.stringCodeUnits(units.items);
+}
+
 fn explode(runtime: *Runtime, value: Value) !Value {
     const units = (try text(runtime, value)).units;
     var result = try runtime.createArray();
@@ -305,10 +315,11 @@ fn explode(runtime: *Runtime, value: Value) !Value {
 }
 
 fn repeat(runtime: *Runtime, value: Value, count_value: Value) !Value {
-    const units = (try text(runtime, value)).units;
-    const count_number = try common.parseIntValue(runtime, count_value, null);
+    const count_number = try runtime.valueToNumber(count_value);
     if (std.math.isNan(count_number) or count_number <= 0) return runtime.stringUtf8("");
-    const count = safeUsize(@trunc(count_number));
+    if (!std.math.isFinite(count_number)) return error.RepetitionTooLarge;
+    const count = safeUsize(@ceil(count_number));
+    const units = (try text(runtime, value)).units;
     const length = std.math.mul(usize, units.len, count) catch return error.RepetitionTooLarge;
     var output = try runtime.allocator().alloc(u16, length);
     defer runtime.allocator().free(output);
@@ -676,9 +687,9 @@ fn indexOfUnits(haystack: []const u16, needle: []const u16, start: usize) ?usize
     return null;
 }
 
-fn countOccurrences(haystack: []const u16, needle: []const u16) usize {
-    if (needle.len == 0) return haystack.len -| 1;
-    var count: usize = 0;
+fn countOccurrences(haystack: []const u16, needle: []const u16) i64 {
+    if (needle.len == 0) return @as(i64, @intCast(haystack.len)) - 1;
+    var count: i64 = 0;
     var start: usize = 0;
     while (indexOfUnits(haystack, needle, start)) |found| {
         count += 1;
