@@ -312,6 +312,13 @@ pub const Value = union(enum) {
     }
 };
 
+fn isObjectValue(value: Value) bool {
+    return switch (value) {
+        .bytes, .array, .dictionary, .function, .promise => true,
+        else => false,
+    };
+}
+
 const HeapObject = union(enum) {
     string: *String,
     bigint: *BigInt,
@@ -729,8 +736,12 @@ pub const Runtime = struct {
         defer frame.deinit();
         try frame.protect(&left_root);
         try frame.protect(&right_root);
-        const left_primitive = try self.valueToPrimitive(left_root);
-        const right_primitive = try self.valueToPrimitive(right_root);
+        if (std.meta.activeTag(left_root) == std.meta.activeTag(right_root)) return Value.strictEqual(left_root, right_root);
+        const left_is_object = isObjectValue(left_root);
+        const right_is_object = isObjectValue(right_root);
+        if (left_is_object and right_is_object) return false;
+        const left_primitive = if (left_is_object) try self.valueToPrimitive(left_root) else left_root;
+        const right_primitive = if (right_is_object) try self.valueToPrimitive(right_root) else right_root;
         return left_primitive.abstractEqual(self.allocator(), right_primitive);
     }
 
@@ -1042,6 +1053,14 @@ test "配列の伸長と挿入順辞書の更新を扱う" {
     const singleton = try runtime.createArray();
     _ = try singleton.array.push(.{ .number = 1 });
     try std.testing.expect(try runtime.abstractEqual(singleton, .{ .number = 1 }));
+    const other_singleton = try runtime.createArray();
+    _ = try other_singleton.array.push(.{ .number = 1 });
+    try std.testing.expect(try runtime.abstractEqual(singleton, singleton));
+    try std.testing.expect(!(try runtime.abstractEqual(singleton, other_singleton)));
+    const other_dictionary = try runtime.createDictionary();
+    const other_key = try runtime.stringUtf8("a");
+    try other_dictionary.dictionary.set(other_key.string, .{ .number = 3 });
+    try std.testing.expect(!(try runtime.abstractEqual(dictionary, other_dictionary)));
 }
 
 test "循環した配列と辞書を正確なmark-and-sweepで回収する" {

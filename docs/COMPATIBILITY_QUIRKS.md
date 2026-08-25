@@ -34,6 +34,15 @@ lnakoは、意図的な非互換として合意した項目を除き、説明文
 | 補助平面文字の添字と`反復` | 文字列をUnicode文字数ではなくUTF-16コード単位で扱う。`「A😀B」`の添字と反復キーは0〜3になり、1と2の値は高位・低位サロゲート単独になる。CLIが各単独値をUTF-8へ出力するとそれぞれ`�`へ置換される | AOTを含む全経路でUTF-16ヒープ文字列を使い、添字・反復・孤立サロゲートの出力置換を同じ境界にする | `UTF-16文字列の添字と反復をコード単位で処理する`、`native-utf16-string-index-and-foreach` |
 | 文字列中のNUL | `U+0000`は文字列の終端ではなく通常のUTF-16コード単位であり、後続文字も保持・出力する | CのNUL終端文字列として埋め込まず、長さ付き`i16`定数からヒープ値を生成する | `UTF-16文字列定数と添字と反復をAOTランタイムへ変換する`、`native-utf16-string-index-and-foreach` |
 
+## 比較演算
+
+| 構文 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID |
+|---|---|---|---|
+| 配列・辞書の`==`と`===` | 両辺が配列・辞書なら内容比較や文字列変換をせず、参照が同一かを判定する。同じ内容の別配列`A=[1]; C=[1]`では`A==C`も`A===C`も偽だが、`B=A`なら両方とも真。一方、片辺だけがオブジェクトの`[1]==1`では配列を文字列`「1」`へ変換するため真になる | インタプリタとAOTで、両辺がオブジェクトなら参照同一性を先に判定し、片辺だけならJavaScriptのToPrimitive相当を適用する | `配列の伸長と挿入順辞書の更新を扱う`、`AOT動的比較は文字列変換と参照同一性を区別する`、`native-dynamic-comparison` |
+
+固定した公式処理系は[`nako_gen.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/nako_gen.mts)で
+比較をJavaScript演算子へ生成します。上表は公式CLIと生成済みJavaScriptの両方をオラクルにして固定します。
+
 ## 標準出力
 
 | 命令 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID |
@@ -59,7 +68,7 @@ lnakoは、意図的な非互換として合意した項目を除き、説明文
 | `^`と`**` | `^`はXORではなく冪乗である。またJavaScriptの`**`と異なり、両方とも左結合なので`2^3^2`と`2**3**2`は`64`になる | `^`を`**`へ正規化したうえで、両構文を左結合としてNumberとBigIntの冪乗へ下げる | `冪乗演算子を公式同様に左結合として構文解析する`、`native-number-and-bigint-shifts` |
 | 負のBigIntシフト量 | `S=-2n`のとき`8n<<S`は右へ2ビット移動した`2`、`8n>>S`は左へ2ビット移動した`32`になる | シフト量の符号で方向を反転し、任意精度のまま処理する | `AOTのNumberとBigIntシフトを公式規則で処理する`、`native-number-and-bigint-shifts` |
 | BigIntの`>>>` | 符号なし右シフトはBigIntに定義されず、実行時エラーになる | 値を生成せず`UnsignedShiftOfBigInt`として拒否する | `AOTのNumberとBigIntシフトを公式規則で処理する` |
-| `+`と`&`の文字列 | なでしこ式の`+`はJavaScriptの`+`と異なり文字列連結を行わない。`3+「個」`は`NaN`、`1n+「個」`はBigInt型混在エラーになる。連結は`&`を使い、`1n&「個」`は`1個`になる | インタプリタとAOTの`+`を数値加算に限定し、`&`は値をUTF-16文字列へ変換して連結する | `なでしこ式の加算は文字列を連結せず数値へ変換する`、`AOTの値をUTF-16文字列として連結する`、`native-string-concatenation-and-bigint-string-comparison` |
+| `+`と`&`の文字列 | なでしこ式の`+`はJavaScriptの`+`と異なり文字列連結を行わない。`3+「個」`は`NaN`、`1n+「個」`はBigInt型混在エラーになる。連結は`&`を使い、`1n&「個」`は`1個`、`[1,2]&「個」`は`1,2個`、辞書なら`[object Object]個`になる。自己循環した配列は循環箇所を空文字として扱う | インタプリタとAOTの`+`を数値加算に限定し、`&`は循環を検出しながら値をUTF-16文字列へ変換して連結する | `なでしこ式の加算は文字列を連結せず数値へ変換する`、`AOTの値をUTF-16文字列として連結する`、`native-string-concatenation-and-bigint-string-comparison` |
 | BigIntと文字列の比較 | 算術では型混在エラーだが、抽象等価・関係比較では整数として解釈可能な文字列をBigIntへ変換する。`1n==「1」`は真、`1n===「1」`は偽 | UTF-16文字列を整数として厳密に解析し、変換不能時は比較を偽にする | `AOT BigInt比較をNumberとの間でも精度を落とさず処理する`、`native-string-concatenation-and-bigint-string-comparison` |
 | NaNとInfinityの表示 | Cの`printf`では環境により`nan`や`inf`になるが、公式は`NaN`、`Infinity`、`-Infinity`と大文字小文字を固定して表示する | 特殊値をLLVM上で先に判定し、固定文字列を出力する | `native-string-concatenation-and-bigint-string-comparison` |
 | `増`・`減`の型変換 | 通常の`+`と異なり、未定義の対象は0から開始し、文字列やBigIntもNumberへ変換する。`A=5n; Aを2増`の結果はBigIntではなくNumberの`7`になる | 専用の増減経路で対象と増減量をNumberへ変換し、常にNumberを書き戻す | `増減文は未定義・文字列・BigIntをNumberへ変換する`、`AOT増減は未定義・文字列・BigIntをNumberへ変換する`、`native-increment-and-decrement` |

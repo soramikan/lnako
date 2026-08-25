@@ -136,7 +136,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_print_bigint(ptr, i1)\n" ++
                 "declare i32 @lnako_aot_bigint_truthy(ptr)\n" ++
                 "declare void @lnako_aot_bigint_arithmetic(ptr, ptr, ptr, i8)\n" ++
-                "declare void @lnako_aot_bigint_compare(ptr, ptr, ptr, i8)\n" ++
+                "declare void @lnako_aot_compare(ptr, ptr, ptr, i8)\n" ++
                 "declare void @lnako_aot_shift(ptr, ptr, ptr, i8)\n" ++
                 "declare void @lnako_aot_concat(ptr, ptr, ptr)\n" ++
                 "declare void @lnako_aot_increment(ptr, ptr)\n" ++
@@ -665,8 +665,8 @@ const Emitter = struct {
         if (shiftOpcode(instruction.operator)) |opcode| {
             return self.writeShift(instruction, scope, opcode);
         }
-        if (bigIntComparisonOpcode(instruction.operator)) |opcode| {
-            return self.writeBigIntAwareComparison(function, instruction, scope, opcode);
+        if (comparisonOpcode(instruction.operator)) |opcode| {
+            return self.writeComparison(instruction, scope, opcode);
         }
         return error.UnsupportedBinaryOperator;
     }
@@ -712,35 +712,12 @@ const Emitter = struct {
         try self.debugSuffix(instruction.span, scope);
     }
 
-    fn writeBigIntAwareComparison(self: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, bigint_opcode: u8) !void {
+    fn writeComparison(self: *Emitter, instruction: ir.Instruction, scope: usize, opcode: u8) !void {
         const result = instruction.result orelse return error.MissingInstructionResult;
         if (instruction.operands.len < 2) return error.InvalidBinaryInstruction;
-        try self.writeBigIntBranch(function, instruction, scope);
-        try self.output.writer.print("binary.bigint.path.{d}:\n", .{result});
-        try self.output.writer.print("  call void @lnako_aot_bigint_compare(ptr %root.slot.{d}, ptr %root.slot.{d}, ptr %root.slot.{d}, i8 {d})", .{ result, instruction.operands[0], instruction.operands[1], bigint_opcode });
+        try self.output.writer.print("  call void @lnako_aot_compare(ptr %root.slot.{d}, ptr %root.slot.{d}, ptr %root.slot.{d}, i8 {d})", .{ result, instruction.operands[0], instruction.operands[1], opcode });
         try self.debugSuffix(instruction.span, scope);
-        try self.output.writer.print("  %compare.bigint.value.{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
-        try self.debugSuffix(instruction.span, scope);
-        try self.output.writer.print("  br label %compare.done.{d}", .{result});
-        try self.debugSuffix(instruction.span, scope);
-        try self.output.writer.print("binary.numeric.path.{d}:\n", .{result});
-        const left_label = try std.fmt.allocPrint(self.allocator, "left.number.{d}", .{result});
-        defer self.allocator.free(left_label);
-        const right_label = try std.fmt.allocPrint(self.allocator, "right.number.{d}", .{result});
-        defer self.allocator.free(right_label);
-        try self.writeNumberOperand(function, instruction.operands[0], left_label, instruction.span, scope);
-        try self.writeNumberOperand(function, instruction.operands[1], right_label, instruction.span, scope);
-        const predicate = comparisonPredicate(instruction.operator) orelse return error.UnsupportedBinaryOperator;
-        try self.output.writer.print("  %compare.{d} = fcmp {s} double %left.number.{d}, %right.number.{d}", .{ result, predicate, result, result });
-        try self.debugSuffix(instruction.span, scope);
-        try self.output.writer.print("  %compare.bits.{d} = zext i1 %compare.{d} to i64", .{ result, result });
-        try self.debugSuffix(instruction.span, scope);
-        try self.output.writer.print("  %compare.number.value.{d} = insertvalue %lnako.Value {{ i8 2, i64 0 }}, i64 %compare.bits.{d}, 1", .{ result, result });
-        try self.debugSuffix(instruction.span, scope);
-        try self.output.writer.print("  br label %compare.done.{d}", .{result});
-        try self.debugSuffix(instruction.span, scope);
-        try self.output.writer.print("compare.done.{d}:\n", .{result});
-        try self.output.writer.print("  %v{d} = phi %lnako.Value [ %compare.bigint.value.{d}, %binary.bigint.path.{d} ], [ %compare.number.value.{d}, %binary.numeric.path.{d} ]", .{ result, result, result, result, result });
+        try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try self.debugSuffix(instruction.span, scope);
     }
 
@@ -1124,7 +1101,7 @@ fn bigIntArithmeticOpcode(operator: []const u8) ?u8 {
     return null;
 }
 
-fn bigIntComparisonOpcode(operator: []const u8) ?u8 {
+fn comparisonOpcode(operator: []const u8) ?u8 {
     const entries = [_]struct { operator: []const u8, opcode: u8 }{
         .{ .operator = "==", .opcode = 0 },
         .{ .operator = "=", .opcode = 0 },
@@ -1319,7 +1296,7 @@ test "BigInt算術と比較を型タグでAOTランタイムへ分岐する" {
     var module = try generate(std.testing.allocator, program, "bigint-operators.nako3", false);
     defer module.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_bigint_arithmetic") != null);
-    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_bigint_compare") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_compare") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_shift") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_concat") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "binary.has.bigint.") != null);

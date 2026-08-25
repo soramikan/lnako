@@ -1,5 +1,6 @@
 const std = @import("std");
 const BigInt = @import("bigint.zig").BigInt;
+const string_mod = @import("string.zig");
 
 pub const Tag = enum(u8) {
     undefined = 0,
@@ -55,7 +56,7 @@ const BigIntArithmetic = enum(u8) {
     integer_divide,
 };
 
-const BigIntComparison = enum(u8) {
+const Comparison = enum(u8) {
     abstract_equal,
     strict_equal,
     abstract_not_equal,
@@ -94,6 +95,7 @@ const Runtime = struct {
     grey: ?*Object = null,
     object_count: usize = 0,
     next_collection: usize = 64,
+    stringifying_arrays: std.ArrayList(*Object) = .empty,
 
     fn deinit(self: *Runtime) void {
         var current = self.objects;
@@ -102,6 +104,7 @@ const Runtime = struct {
             self.destroyObject(object);
             current = next;
         }
+        self.stringifying_arrays.deinit(self.allocator);
         self.* = undefined;
     }
 
@@ -384,6 +387,67 @@ fn valueToNumber(value: Value) f64 {
     };
 }
 
+fn valueToNumberRuntime(runtime: *Runtime, value: Value) !f64 {
+    return switch (@as(Tag, @enumFromInt(value.tag))) {
+        .undefined => std.math.nan(f64),
+        .null_value => 0,
+        .boolean => if (value.payload == 0) 0 else 1,
+        .number => @bitCast(value.payload),
+        .static_utf8_string, .utf16_string => parseStringNumber(runtime, value),
+        .bigint => error.CannotConvertBigIntToNumber,
+        .array, .dictionary, .iterator => valueToNumberRuntime(runtime, try valueToPrimitive(runtime, value)),
+    };
+}
+
+fn parseStringNumber(runtime: *Runtime, value: Value) !f64 {
+    const units = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(units);
+    const trimmed = string_mod.trimWhitespace(units);
+    if (trimmed.len == 0) return 0;
+    for (trimmed) |unit| if (unit > 0x7f) return std.math.nan(f64);
+    const ascii = try runtime.allocator.alloc(u8, trimmed.len);
+    defer runtime.allocator.free(ascii);
+    for (trimmed, 0..) |unit, index| ascii[index] = @intCast(unit);
+    if (std.mem.eql(u8, ascii, "Infinity") or std.mem.eql(u8, ascii, "+Infinity")) return std.math.inf(f64);
+    if (std.mem.eql(u8, ascii, "-Infinity")) return -std.math.inf(f64);
+    if (std.mem.eql(u8, ascii, "NaN")) return std.math.nan(f64);
+    if (ascii.len >= 2 and ascii[0] == '0') {
+        const prefix = std.ascii.toLower(ascii[1]);
+        if (prefix == 'x' or prefix == 'o' or prefix == 'b') {
+            const base: u8 = if (prefix == 'x') 16 else if (prefix == 'o') 8 else 2;
+            if (ascii.len == 2) return std.math.nan(f64);
+            var result: f64 = 0;
+            for (ascii[2..]) |character| {
+                const digit = std.fmt.charToDigit(character, base) catch return std.math.nan(f64);
+                result = result * @as(f64, @floatFromInt(base)) + @as(f64, @floatFromInt(digit));
+            }
+            return result;
+        }
+    }
+    if (!validDecimalNumber(ascii)) return std.math.nan(f64);
+    return std.fmt.parseFloat(f64, ascii) catch std.math.nan(f64);
+}
+
+fn validDecimalNumber(text: []const u8) bool {
+    var index: usize = 0;
+    if (index < text.len and (text[index] == '+' or text[index] == '-')) index += 1;
+    var digits: usize = 0;
+    while (index < text.len and std.ascii.isDigit(text[index])) : (index += 1) digits += 1;
+    if (index < text.len and text[index] == '.') {
+        index += 1;
+        while (index < text.len and std.ascii.isDigit(text[index])) : (index += 1) digits += 1;
+    }
+    if (digits == 0) return false;
+    if (index < text.len and (text[index] == 'e' or text[index] == 'E')) {
+        index += 1;
+        if (index < text.len and (text[index] == '+' or text[index] == '-')) index += 1;
+        const exponent_start = index;
+        while (index < text.len and std.ascii.isDigit(text[index])) : (index += 1) {}
+        if (index == exponent_start) return false;
+    }
+    return index == text.len;
+}
+
 fn incrementNumber(runtime: *Runtime, value: Value) f64 {
     if (value.tag == @intFromEnum(Tag.bigint)) return value.object().?.payload.bigint.toF64();
     if (isString(value)) {
@@ -405,15 +469,22 @@ fn isString(value: Value) bool {
     return value.tag == @intFromEnum(Tag.static_utf8_string) or value.tag == @intFromEnum(Tag.utf16_string);
 }
 
+fn isObject(value: Value) bool {
+    return value.tag == @intFromEnum(Tag.array) or value.tag == @intFromEnum(Tag.dictionary) or value.tag == @intFromEnum(Tag.iterator);
+}
+
 fn stringUtf8Alloc(runtime: *Runtime, value: Value) ![]u8 {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
         .static_utf8_string => runtime.allocator.dupe(u8, staticUtf8(value)),
-        .utf16_string => std.unicode.utf16LeToUtf8Alloc(runtime.allocator, value.object().?.payload.utf16_string),
+        .utf16_string => (string_mod.String{
+            .allocator = runtime.allocator,
+            .units = value.object().?.payload.utf16_string,
+        }).toUtf8Lossy(runtime.allocator),
         else => error.ExpectedString,
     };
 }
 
-fn valueUtf16Alloc(runtime: *Runtime, value: Value) ![]u16 {
+fn valueUtf16Alloc(runtime: *Runtime, value: Value) anyerror![]u16 {
     if (value.tag == @intFromEnum(Tag.utf16_string)) return runtime.allocator.dupe(u16, value.object().?.payload.utf16_string);
     const utf8 = switch (@as(Tag, @enumFromInt(value.tag))) {
         .undefined => try runtime.allocator.dupe(u8, "undefined"),
@@ -421,11 +492,145 @@ fn valueUtf16Alloc(runtime: *Runtime, value: Value) ![]u16 {
         .boolean => try runtime.allocator.dupe(u8, if (value.payload == 0) "false" else "true"),
         .number => try numberString(runtime.allocator, @bitCast(value.payload)),
         .static_utf8_string => try runtime.allocator.dupe(u8, staticUtf8(value)),
+        .utf16_string => unreachable,
         .bigint => try value.object().?.payload.bigint.toString(runtime.allocator, 10),
-        else => return error.CannotConvertValueToString,
+        .array => return arrayUtf16Alloc(runtime, value.object().?),
+        .dictionary, .iterator => try runtime.allocator.dupe(u8, "[object Object]"),
     };
     defer runtime.allocator.free(utf8);
     return std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, utf8);
+}
+
+fn arrayUtf16Alloc(runtime: *Runtime, object: *Object) anyerror![]u16 {
+    for (runtime.stringifying_arrays.items) |active| if (active == object) return runtime.allocator.alloc(u16, 0);
+    try runtime.stringifying_arrays.append(runtime.allocator, object);
+    defer _ = runtime.stringifying_arrays.pop();
+    var output: std.ArrayList(u16) = .empty;
+    errdefer output.deinit(runtime.allocator);
+    for (object.payload.array.items, 0..) |item, index| {
+        if (index > 0) try output.append(runtime.allocator, ',');
+        if (item.tag == @intFromEnum(Tag.undefined) or item.tag == @intFromEnum(Tag.null_value)) continue;
+        const units = try valueUtf16Alloc(runtime, item);
+        defer runtime.allocator.free(units);
+        try output.appendSlice(runtime.allocator, units);
+    }
+    return output.toOwnedSlice(runtime.allocator);
+}
+
+fn valueToPrimitive(runtime: *Runtime, value: Value) !Value {
+    return switch (@as(Tag, @enumFromInt(value.tag))) {
+        .array => blk: {
+            const units = try arrayUtf16Alloc(runtime, value.object().?);
+            defer runtime.allocator.free(units);
+            break :blk try runtime.createString(units);
+        },
+        .dictionary, .iterator => staticStringValue("[object Object]"),
+        else => value,
+    };
+}
+
+fn stringEqual(runtime: *Runtime, left: Value, right: Value) !bool {
+    const left_units = try valueUtf16Alloc(runtime, left);
+    defer runtime.allocator.free(left_units);
+    const right_units = try valueUtf16Alloc(runtime, right);
+    defer runtime.allocator.free(right_units);
+    return std.mem.eql(u16, left_units, right_units);
+}
+
+fn stringOrder(runtime: *Runtime, left: Value, right: Value) !std.math.Order {
+    const left_units = try valueUtf16Alloc(runtime, left);
+    defer runtime.allocator.free(left_units);
+    const right_units = try valueUtf16Alloc(runtime, right);
+    defer runtime.allocator.free(right_units);
+    return std.mem.order(u16, left_units, right_units);
+}
+
+fn strictEqual(runtime: *Runtime, left: Value, right: Value) !bool {
+    if (isString(left) and isString(right)) return stringEqual(runtime, left, right);
+    if (left.tag != right.tag) return false;
+    return switch (@as(Tag, @enumFromInt(left.tag))) {
+        .undefined, .null_value => true,
+        .boolean => (left.payload != 0) == (right.payload != 0),
+        .number => blk: {
+            const left_number: f64 = @bitCast(left.payload);
+            const right_number: f64 = @bitCast(right.payload);
+            break :blk !std.math.isNan(left_number) and !std.math.isNan(right_number) and left_number == right_number;
+        },
+        .bigint => BigInt.eql(left.object().?.payload.bigint, right.object().?.payload.bigint),
+        .static_utf8_string, .utf16_string => unreachable,
+        .array, .dictionary, .iterator => left.payload == right.payload,
+    };
+}
+
+fn abstractEqual(runtime: *Runtime, left: Value, right: Value) !bool {
+    if ((isString(left) and isString(right)) or left.tag == right.tag) return strictEqual(runtime, left, right);
+    const left_tag: Tag = @enumFromInt(left.tag);
+    const right_tag: Tag = @enumFromInt(right.tag);
+    if ((left_tag == .undefined and right_tag == .null_value) or (left_tag == .null_value and right_tag == .undefined)) return true;
+    if (isObject(left) and isObject(right)) return false;
+    if (left_tag == .boolean) return abstractEqual(runtime, numberValue(if (left.payload == 0) 0 else 1), right);
+    if (right_tag == .boolean) return abstractEqual(runtime, left, numberValue(if (right.payload == 0) 0 else 1));
+    if (left_tag == .array or left_tag == .dictionary or left_tag == .iterator) return abstractEqual(runtime, try valueToPrimitive(runtime, left), right);
+    if (right_tag == .array or right_tag == .dictionary or right_tag == .iterator) return abstractEqual(runtime, left, try valueToPrimitive(runtime, right));
+    if (left_tag == .number and isString(right)) return @as(f64, @bitCast(left.payload)) == try valueToNumberRuntime(runtime, right);
+    if (isString(left) and right_tag == .number) return try valueToNumberRuntime(runtime, left) == @as(f64, @bitCast(right.payload));
+    if (left_tag == .bigint and isString(right)) return bigIntEqualsString(runtime, left.object().?.payload.bigint, right);
+    if (isString(left) and right_tag == .bigint) return bigIntEqualsString(runtime, right.object().?.payload.bigint, left);
+    if (left_tag == .bigint and right_tag == .number) return bigIntEqualsNumber(runtime, left.object().?.payload.bigint, @bitCast(right.payload));
+    if (left_tag == .number and right_tag == .bigint) return bigIntEqualsNumber(runtime, right.object().?.payload.bigint, @bitCast(left.payload));
+    return false;
+}
+
+fn relationalOrder(runtime: *Runtime, left: Value, right: Value) !?std.math.Order {
+    var roots = [_]Value{ left, right, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[2] = try valueToPrimitive(runtime, roots[0]);
+    roots[3] = try valueToPrimitive(runtime, roots[1]);
+    const left_primitive = roots[2];
+    const right_primitive = roots[3];
+    if (isString(left_primitive) and isString(right_primitive)) return @as(?std.math.Order, try stringOrder(runtime, left_primitive, right_primitive));
+    const left_tag: Tag = @enumFromInt(left_primitive.tag);
+    const right_tag: Tag = @enumFromInt(right_primitive.tag);
+    if (left_tag == .bigint and right_tag == .bigint) return @as(?std.math.Order, BigInt.order(left_primitive.object().?.payload.bigint, right_primitive.object().?.payload.bigint));
+    if (left_tag == .bigint and isString(right_primitive)) return compareBigIntString(runtime, left_primitive.object().?.payload.bigint, right_primitive);
+    if (isString(left_primitive) and right_tag == .bigint) {
+        const order = (try compareBigIntString(runtime, right_primitive.object().?.payload.bigint, left_primitive)) orelse return null;
+        return invertOrder(order);
+    }
+    if (left_tag == .bigint) return compareBigIntNumber(runtime, left_primitive.object().?.payload.bigint, try valueToNumberRuntime(runtime, right_primitive));
+    if (right_tag == .bigint) {
+        const order = (try compareBigIntNumber(runtime, right_primitive.object().?.payload.bigint, try valueToNumberRuntime(runtime, left_primitive))) orelse return null;
+        return invertOrder(order);
+    }
+    const left_number = try valueToNumberRuntime(runtime, left_primitive);
+    const right_number = try valueToNumberRuntime(runtime, right_primitive);
+    if (std.math.isNan(left_number) or std.math.isNan(right_number)) return null;
+    return std.math.order(left_number, right_number);
+}
+
+fn compareValues(runtime: *Runtime, operator: Comparison, left: Value, right: Value) !bool {
+    var roots = [_]Value{ left, right, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    return switch (operator) {
+        .abstract_equal => abstractEqual(runtime, roots[0], roots[1]),
+        .strict_equal => strictEqual(runtime, roots[0], roots[1]),
+        .abstract_not_equal => !try abstractEqual(runtime, roots[0], roots[1]),
+        .strict_not_equal => !try strictEqual(runtime, roots[0], roots[1]),
+        .less, .less_equal, .greater, .greater_equal => blk: {
+            const order = (try relationalOrder(runtime, roots[0], roots[1])) orelse break :blk false;
+            break :blk switch (operator) {
+                .less => order == .lt,
+                .less_equal => order != .gt,
+                .greater => order == .gt,
+                .greater_equal => order != .lt,
+                else => unreachable,
+            };
+        },
+    };
 }
 
 fn numberString(allocator: std.mem.Allocator, number: f64) ![]u8 {
@@ -466,60 +671,29 @@ fn bigIntArithmetic(runtime: *Runtime, operator: BigIntArithmetic, left: Value, 
     return runtime.ownBigInt(result);
 }
 
-fn bigIntComparison(runtime: *Runtime, operator: BigIntComparison, left: Value, right: Value) !bool {
-    const left_is_bigint = left.tag == @intFromEnum(Tag.bigint);
-    const right_is_bigint = right.tag == @intFromEnum(Tag.bigint);
-    if (!left_is_bigint and !right_is_bigint) return error.ExpectedBigInt;
-    const strict = operator == .strict_equal or operator == .strict_not_equal;
-    const equality = operator == .abstract_equal or operator == .strict_equal or operator == .abstract_not_equal or operator == .strict_not_equal;
-    if (equality) {
-        const equal = if (left_is_bigint and right_is_bigint)
-            BigInt.eql(left.object().?.payload.bigint, right.object().?.payload.bigint)
-        else if (strict)
-            false
-        else if (left_is_bigint and isString(right))
-            try bigIntEqualsString(runtime, left.object().?.payload.bigint, right)
-        else if (right_is_bigint and isString(left))
-            try bigIntEqualsString(runtime, right.object().?.payload.bigint, left)
-        else if (left_is_bigint)
-            try bigIntEqualsNumber(runtime, left.object().?.payload.bigint, valueToNumber(right))
-        else
-            try bigIntEqualsNumber(runtime, right.object().?.payload.bigint, valueToNumber(left));
-        return if (operator == .abstract_not_equal or operator == .strict_not_equal) !equal else equal;
-    }
-    const order = if (left_is_bigint and right_is_bigint)
-        BigInt.order(left.object().?.payload.bigint, right.object().?.payload.bigint)
-    else if (left_is_bigint and isString(right))
-        (try compareBigIntString(runtime, left.object().?.payload.bigint, right)) orelse return false
-    else if (right_is_bigint and isString(left))
-        invertOrder((try compareBigIntString(runtime, right.object().?.payload.bigint, left)) orelse return false)
-    else if (left_is_bigint)
-        (try compareBigIntNumber(runtime, left.object().?.payload.bigint, valueToNumber(right))) orelse return false
-    else
-        invertOrder((try compareBigIntNumber(runtime, right.object().?.payload.bigint, valueToNumber(left))) orelse return false);
-    return switch (operator) {
-        .less => order == .lt,
-        .less_equal => order != .gt,
-        .greater => order == .gt,
-        .greater_equal => order != .lt,
-        else => unreachable,
-    };
-}
-
 fn bigIntEqualsString(runtime: *Runtime, bigint: BigInt, string: Value) !bool {
-    const utf8 = try stringUtf8Alloc(runtime, string);
-    defer runtime.allocator.free(utf8);
-    var converted = BigInt.parseString(runtime.allocator, utf8) catch return false;
+    var converted = bigIntFromString(runtime, string) catch return false;
     defer converted.deinit();
     return BigInt.eql(bigint, converted);
 }
 
 fn compareBigIntString(runtime: *Runtime, bigint: BigInt, string: Value) !?std.math.Order {
-    const utf8 = try stringUtf8Alloc(runtime, string);
-    defer runtime.allocator.free(utf8);
-    var converted = BigInt.parseString(runtime.allocator, utf8) catch return null;
+    var converted = bigIntFromString(runtime, string) catch return null;
     defer converted.deinit();
     return BigInt.order(bigint, converted);
+}
+
+fn bigIntFromString(runtime: *Runtime, string: Value) !BigInt {
+    const units = try valueUtf16Alloc(runtime, string);
+    defer runtime.allocator.free(units);
+    const trimmed = string_mod.trimWhitespace(units);
+    const ascii = try runtime.allocator.alloc(u8, trimmed.len);
+    defer runtime.allocator.free(ascii);
+    for (trimmed, 0..) |unit, index| {
+        if (unit > 0x7f) return error.InvalidBigInt;
+        ascii[index] = @intCast(unit);
+    }
+    return BigInt.parseString(runtime.allocator, ascii);
 }
 
 fn shift(runtime: *Runtime, operator: ShiftOperator, left: Value, right: Value) !Value {
@@ -713,13 +887,13 @@ pub export fn lnako_aot_bigint_arithmetic(out: *Value, left: *const Value, right
     out.* = bigIntArithmetic(runtime, operator, left.*, right.*) catch |failure| runtimeFailure(failure);
 }
 
-pub export fn lnako_aot_bigint_compare(out: *Value, left: *const Value, right: *const Value, opcode: u8) callconv(.c) void {
+pub export fn lnako_aot_compare(out: *Value, left: *const Value, right: *const Value, opcode: u8) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*active| active else return;
-    const operator = std.enums.fromInt(BigIntComparison, opcode) orelse runtimeFailure(error.InvalidBigIntComparison);
+    const operator = std.enums.fromInt(Comparison, opcode) orelse runtimeFailure(error.InvalidComparison);
     out.* = .{
         .tag = @intFromEnum(Tag.boolean),
-        .payload = @intFromBool(bigIntComparison(runtime, operator, left.*, right.*) catch |failure| runtimeFailure(failure)),
+        .payload = @intFromBool(compareValues(runtime, operator, left.*, right.*) catch |failure| runtimeFailure(failure)),
     };
 }
 
@@ -812,7 +986,7 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*const Value, *const Value, *const Value) callconv(.c) c_int, @TypeOf(&lnako_aot_index_set));
     try std.testing.expectEqual(*const fn (*Value, *const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_destructure_get));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_bigint_arithmetic));
-    try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_bigint_compare));
+    try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_compare));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_shift));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_concat));
     try std.testing.expectEqual(*const fn (*Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_increment));
@@ -923,9 +1097,34 @@ test "AOT BigInt比較をNumberとの間でも精度を落とさず処理する"
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
     const bigint = try runtime.createBigInt("9007199254740993n");
-    try std.testing.expect(try bigIntComparison(&runtime, .greater, bigint, numberValue(9007199254740992.0)));
-    try std.testing.expect(try bigIntComparison(&runtime, .abstract_equal, try runtime.createBigInt("1n"), numberValue(1)));
-    try std.testing.expect(!(try bigIntComparison(&runtime, .strict_equal, try runtime.createBigInt("1n"), numberValue(1))));
+    try std.testing.expect(try compareValues(&runtime, .greater, bigint, numberValue(9007199254740992.0)));
+    try std.testing.expect(try compareValues(&runtime, .abstract_equal, try runtime.createBigInt("1n"), numberValue(1)));
+    try std.testing.expect(!(try compareValues(&runtime, .strict_equal, try runtime.createBigInt("1n"), numberValue(1))));
+}
+
+test "AOT動的比較は文字列変換と参照同一性を区別する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{
+        try runtime.createArray(&.{numberValue(1)}),
+        try runtime.createArray(&.{numberValue(1)}),
+        try runtime.createString(&.{'1'}),
+        try runtime.createDictionary(&.{}),
+        try runtime.createArray(&.{staticStringValue("[object Object]")}),
+    };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    try std.testing.expect(try compareValues(&runtime, .abstract_equal, roots[0], numberValue(1)));
+    try std.testing.expect(!(try compareValues(&runtime, .strict_equal, roots[0], numberValue(1))));
+    try std.testing.expect(try compareValues(&runtime, .strict_equal, roots[0], roots[0]));
+    try std.testing.expect(!(try compareValues(&runtime, .strict_equal, roots[0], roots[1])));
+    try std.testing.expect(try compareValues(&runtime, .abstract_equal, staticStringValue("1"), roots[2]));
+    try std.testing.expect(!(try compareValues(&runtime, .abstract_equal, roots[3], roots[4])));
+    try std.testing.expect(try compareValues(&runtime, .abstract_equal, .{ .tag = @intFromEnum(Tag.null_value) }, .{}));
+    try std.testing.expect(!(try compareValues(&runtime, .strict_equal, .{ .tag = @intFromEnum(Tag.null_value) }, .{})));
+    try std.testing.expect(try compareValues(&runtime, .greater, staticStringValue("2"), numberValue(1)));
+    try std.testing.expect(!(try compareValues(&runtime, .greater, staticStringValue("A"), numberValue(1))));
 }
 
 test "AOTのNumberとBigIntシフトを公式規則で処理する" {
@@ -945,8 +1144,17 @@ test "AOTのNumberとBigIntシフトを公式規則で処理する" {
 test "AOTの値をUTF-16文字列として連結する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    const bigint = try runtime.createBigInt("12345678901234567890n");
-    const joined = try concat(&runtime, bigint, staticStringValue("個"));
+    var roots = [_]Value{
+        try runtime.createBigInt("12345678901234567890n"),
+        try runtime.createArray(&.{ numberValue(1), numberValue(2) }),
+        try runtime.createDictionary(&.{}),
+        try runtime.createArray(&.{}),
+    };
+    try runtime.indexSet(roots[3], numberValue(0), roots[3]);
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    const joined = try concat(&runtime, roots[0], staticStringValue("個"));
     const utf8 = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, joined.object().?.payload.utf16_string);
     defer std.testing.allocator.free(utf8);
     try std.testing.expectEqualStrings("12345678901234567890個", utf8);
@@ -954,6 +1162,12 @@ test "AOTの値をUTF-16文字列として連結する" {
     const number_utf8 = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, number_joined.object().?.payload.utf16_string);
     defer std.testing.allocator.free(number_utf8);
     try std.testing.expectEqualStrings("3個", number_utf8);
+    const array_joined = try concat(&runtime, roots[1], staticStringValue("個"));
+    try std.testing.expectEqualSlices(u16, &.{ '1', ',', '2', 0x500b }, array_joined.object().?.payload.utf16_string);
+    const dictionary_joined = try concat(&runtime, roots[2], staticStringValue("個"));
+    try std.testing.expectEqualSlices(u16, &.{ '[', 'o', 'b', 'j', 'e', 'c', 't', ' ', 'O', 'b', 'j', 'e', 'c', 't', ']', 0x500b }, dictionary_joined.object().?.payload.utf16_string);
+    const cycle_joined = try concat(&runtime, roots[3], staticStringValue("個"));
+    try std.testing.expectEqualSlices(u16, &.{0x500b}, cycle_joined.object().?.payload.utf16_string);
 }
 
 test "AOT増減は未定義・文字列・BigIntをNumberへ変換する" {
