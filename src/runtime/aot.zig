@@ -1,4 +1,5 @@
 const std = @import("std");
+const aot_builtin = @import("aot_builtin.zig");
 const BigInt = @import("bigint.zig").BigInt;
 const error_message = @import("error_message.zig");
 const string_mod = @import("string.zig");
@@ -1196,6 +1197,32 @@ pub export fn lnako_aot_function_call(out: *Value, callable: *const Value, argum
     out.* = function.callback(@ptrCast(object), call_arguments, function.arity);
 }
 
+pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, len: usize, opcode: u16) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
+        runtime.setFailure(error.UnknownCommand);
+        return;
+    };
+    if (arguments == null or len == 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    switch (command) {
+        .to_string => {
+            const units = valueUtf16Alloc(runtime, arguments.?[0]) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+            defer runtime.allocator.free(units);
+            out.* = runtime.createString(units) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+    }
+}
+
 test "UTF-16文字列をルートから正確にmark-and-sweepする" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -1232,6 +1259,7 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, FunctionCallback, usize, ?[*]const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_function_new));
     try std.testing.expectEqual(*const fn (*Value, *anyopaque, usize) callconv(.c) void, @TypeOf(&lnako_aot_function_capture));
     try std.testing.expectEqual(*const fn (*Value, *const Value, ?[*]const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_function_call));
+    try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16) callconv(.c) void, @TypeOf(&lnako_aot_builtin_call));
     try std.testing.expectEqual(*const fn (*const Value) callconv(.c) void, @TypeOf(&lnako_aot_exception_set));
     try std.testing.expectEqual(*const fn () callconv(.c) c_int, @TypeOf(&lnako_aot_exception_pending));
     try std.testing.expectEqual(*const fn (*Value) callconv(.c) void, @TypeOf(&lnako_aot_exception_take));
@@ -1294,6 +1322,22 @@ test "AOT動的関数の不足引数へ共有システム文脈を追加し超�
     try std.testing.expectEqual(system_context, roots[4].payload);
     lnako_aot_function_call(&roots[4], &roots[0], @ptrCast(&roots[2]), 2);
     try std.testing.expectEqual(roots[2].payload, roots[4].payload);
+}
+
+test "AOT標準命令ディスパッチで値を文字列へ変換する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 }, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.to_string));
+    try std.testing.expectEqualSlices(u16, &.{ 't', 'r', 'u', 'e' }, roots[1].object().?.payload.utf16_string);
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {

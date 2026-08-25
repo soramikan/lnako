@@ -1,6 +1,7 @@
 const std = @import("std");
 const ir = @import("../../ir/nako_ir.zig");
 const ast = @import("../../frontend/ast.zig");
+const aot_builtin = @import("../../runtime/aot_builtin.zig");
 
 pub const GeneratedModule = struct {
     text: []u8,
@@ -59,7 +60,7 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
                     std.mem.eql(u8, instruction.operator, "||") or std.mem.eql(u8, instruction.operator, "or"),
                 .unary => std.mem.eql(u8, instruction.operator, "!") or std.mem.eql(u8, instruction.operator, "not") or
                     std.mem.eql(u8, instruction.operator, "+") or std.mem.eql(u8, instruction.operator, "-"),
-                .call => isDisplayCall(instruction.name) or validDirectCallee(program, instruction) or lookupFunction(program, instruction.name) != null or
+                .call => isDisplayCall(instruction.name) or aot_builtin.lookup(instruction.name) != null or validDirectCallee(program, instruction) or lookupFunction(program, instruction.name) != null or
                     isDynamicNamedCall(function, instruction.name),
                 .call_value => instruction.operands.len > 0,
                 .make_closure => closureSupported(program, function, instruction.name),
@@ -165,6 +166,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_function_new(ptr, ptr, i64, ptr, i64)\n" ++
                 "declare void @lnako_aot_function_capture(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_function_call(ptr, ptr, ptr, i64)\n" ++
+                "declare void @lnako_aot_builtin_call(ptr, ptr, i64, i16)\n" ++
                 "declare i32 @printf(ptr, ...)\n" ++
                 "declare i32 @puts(ptr)\n" ++
                 "declare double @llvm.pow.f64(double, double)\n" ++
@@ -830,6 +832,11 @@ const Emitter = struct {
             try self.debugSuffix(instruction.span, scope);
             return;
         }
+        if (aot_builtin.lookup(instruction.name)) |command| {
+            try self.writeBuiltinCall(function, instruction, scope, aggregate_count, command);
+            try self.writeCallResult(result, instruction.span, scope);
+            return;
+        }
         const callee = if (instruction.direct_callee) |callee_id|
             if (callee_id < self.program.functions.len) self.program.functions[callee_id] else return error.InvalidDirectCallee
         else
@@ -852,6 +859,27 @@ const Emitter = struct {
     fn writeCallValue(self: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
         if (instruction.operands.len == 0) return error.InvalidCall;
         try self.writeDynamicCall(function, &.{}, instruction, .{ .value = instruction.operands[0] }, instruction.operands[1..], scope, aggregate_count);
+    }
+
+    fn writeBuiltinCall(self: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize, command: aot_builtin.Command) !void {
+        const result = instruction.result orelse return error.MissingInstructionResult;
+        if (instruction.operands.len > aggregate_count) return error.InvalidCallScratch;
+        for (instruction.operands, 0..) |argument, index| {
+            try self.output.writer.print("  %builtin.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+            try self.debugSuffix(instruction.span, scope);
+            try self.output.writer.writeAll("  store %lnako.Value ");
+            try self.writeValueRef(function, argument);
+            try self.output.writer.print(", ptr %builtin.{d}.slot.{d}", .{ result, index });
+            try self.debugSuffix(instruction.span, scope);
+        }
+        try self.output.writer.print("  call void @lnako_aot_builtin_call(ptr %root.slot.{d}, ptr ", .{result});
+        if (instruction.operands.len > 0) {
+            try self.output.writer.print("%builtin.{d}.slot.0", .{result});
+        } else try self.output.writer.writeAll("null");
+        try self.output.writer.print(", i64 {d}, i16 {d})", .{ instruction.operands.len, @intFromEnum(command) });
+        try self.debugSuffix(instruction.span, scope);
+        try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+        try self.debugSuffix(instruction.span, scope);
     }
 
     const DynamicCallTarget = union(enum) { name: []const u8, value: ir.ValueId };
