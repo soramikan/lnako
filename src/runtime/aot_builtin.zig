@@ -50,6 +50,9 @@ pub const Command = enum(u16) {
     string_starts,
     string_ends,
     element_count,
+    add_parsed,
+    sum_parsed,
+    sequential_add,
 };
 
 pub fn lookup(name: []const u8) ?Command {
@@ -102,6 +105,9 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "文字始")) return .string_starts;
     if (std.mem.eql(u8, name, "文字終")) return .string_ends;
     if (std.mem.eql(u8, name, "配列要素数") or std.mem.eql(u8, name, "要素数") or std.mem.eql(u8, name, "LEN")) return .element_count;
+    if (std.mem.eql(u8, name, "足")) return .add_parsed;
+    if (std.mem.eql(u8, name, "合計")) return .sum_parsed;
+    if (std.mem.eql(u8, name, "連続加算")) return .sequential_add;
     return null;
 }
 
@@ -167,5 +173,8 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.element_count, lookup("配列要素数").?);
     try std.testing.expectEqual(Command.element_count, lookup("要素数").?);
     try std.testing.expectEqual(Command.element_count, lookup("LEN").?);
+    try std.testing.expectEqual(Command.add_parsed, lookup("足").?);
+    try std.testing.expectEqual(Command.sum_parsed, lookup("合計").?);
+    try std.testing.expectEqual(Command.sequential_add, lookup("連続加算").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }

@@ -66,7 +66,8 @@ fn addParsed(runtime: *Runtime, left: Value, right: Value) !Value {
 }
 
 fn sum(runtime: *Runtime, arguments: []const Value) !Value {
-    const values = if (arguments.len == 1 and arguments[0] == .array) arguments[0].array.items.items else arguments;
+    const values = if (arguments.len >= 1 and arguments[0] == .array) arguments[0].array.items.items else arguments;
+    const skip_nan = arguments.len >= 1 and arguments[0] == .array;
     var has_bigint = false;
     for (values) |value| if (value == .bigint) {
         has_bigint = true;
@@ -74,7 +75,10 @@ fn sum(runtime: *Runtime, arguments: []const Value) !Value {
     };
     if (!has_bigint) {
         var total: f64 = 0;
-        for (values) |value| total += try common.parseFloatValue(runtime, value);
+        for (values) |value| {
+            const number = try common.parseFloatValue(runtime, value);
+            if (!skip_nan or !std.math.isNan(number)) total += number;
+        }
         return .{ .number = total };
     }
     var total = try runtime.bigIntLiteral("0n");
@@ -146,7 +150,7 @@ fn makeRange(runtime: *Runtime, first: Value, last: Value) !Value {
 }
 
 fn sequentialAdd(runtime: *Runtime, arguments: []const Value) !Value {
-    if (arguments.len == 0) return .undefined;
+    if (arguments.len == 0) return runtime.createDictionary();
     var result = if (arguments.len == 1) arguments[0] else arguments[1];
     var roots = runtime.rootFrame();
     defer roots.deinit();
@@ -185,12 +189,14 @@ fn clamp(runtime: *Runtime, value: Value, lower: Value, upper: Value) !Value {
 }
 
 fn toBigInt(runtime: *Runtime, value: Value) !Value {
-    return switch (value) {
-        .bigint => value,
-        .number => runtime.ownBigInt(try value_mod.BigInt.fromF64(runtime.allocator(), value.number)),
-        .string => runtime.bigIntString(value.string),
-        .boolean => runtime.bigIntLiteral(if (value.boolean) "1n" else "0n"),
-        .null_value => runtime.bigIntLiteral("0n"),
+    const primitive = try runtime.valueToPrimitive(value);
+    return switch (primitive) {
+        .bigint => primitive,
+        .number => runtime.ownBigInt(try value_mod.BigInt.fromF64(runtime.allocator(), primitive.number)),
+        .string => runtime.bigIntString(primitive.string),
+        .boolean => runtime.bigIntLiteral(if (primitive.boolean) "1n" else "0n"),
+        .null_value => error.CannotConvertNullToBigInt,
+        .undefined => error.CannotConvertUndefinedToBigInt,
         else => error.InvalidBigIntConversion,
     };
 }
@@ -236,4 +242,17 @@ test "四則・論理・ビット命令を動的値で実行する" {
     const sequential_utf8 = try sequential.string.toUtf8Lossy(std.testing.allocator);
     defer std.testing.allocator.free(sequential_utf8);
     try std.testing.expectEqualStrings("bca", sequential_utf8);
+}
+
+test "合計は先頭配列だけを集計しNaNを飛ばす" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var array = try runtime.createArray();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&array);
+    _ = try array.array.push(.{ .number = 1 });
+    _ = try array.array.push(try runtime.stringUtf8("x"));
+    _ = try array.array.push(.{ .number = 2 });
+    try std.testing.expectEqual(@as(f64, 3), (try call(&runtime, "合計", &.{ array, .{ .number = 100 } })).?.number);
 }

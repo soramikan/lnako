@@ -13,6 +13,8 @@ pub fn forFailure(failure: anyerror) []const u8 {
         error.StartsWithUndefinedReceiver => "Cannot read properties of undefined (reading 'startsWith')",
         error.EndsWithNullReceiver => "Cannot read properties of null (reading 'endsWith')",
         error.EndsWithUndefinedReceiver => "Cannot read properties of undefined (reading 'endsWith')",
+        error.CannotConvertNullToBigInt => "Cannot convert null to a BigInt",
+        error.CannotConvertUndefinedToBigInt => "Cannot convert undefined to a BigInt",
         else => @errorName(failure),
     };
 }
@@ -37,4 +39,5 @@ test "BigInt実行時エラーを公式JavaScriptの文言へ変換する" {
     try std.testing.expectEqualStrings("UnknownFailure", forFailure(error.UnknownFailure));
     try std.testing.expectEqualStrings("s.startsWith is not a function", forFailure(error.StartsWithReceiverExpected));
     try std.testing.expectEqualStrings("Cannot read properties of null (reading 'endsWith')", forFailure(error.EndsWithNullReceiver));
+    try std.testing.expectEqualStrings("Cannot convert null to a BigInt", forFailure(error.CannotConvertNullToBigInt));
 }

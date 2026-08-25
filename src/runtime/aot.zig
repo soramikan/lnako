@@ -1249,7 +1249,7 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -1558,6 +1558,30 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             }));
         },
+        .add_parsed => {
+            if (len < 2) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            out.* = addParsedBuiltin(runtime, arguments.?[0], arguments.?[1]) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .sum_parsed => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = sumParsedBuiltin(runtime, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .sequential_add => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = sequentialAddBuiltin(runtime, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
     }
 }
 
@@ -1721,6 +1745,94 @@ fn elementCountBuiltin(runtime: *Runtime, value: Value) !usize {
         .binding_cell => elementCountBuiltin(runtime, value.object().?.payload.binding_cell),
         else => 1,
     };
+}
+
+fn addParsedBuiltin(runtime: *Runtime, left: Value, right: Value) !Value {
+    var roots = [_]Value{ left, right, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    if (roots[0].tag != @intFromEnum(Tag.bigint) and roots[1].tag != @intFromEnum(Tag.bigint)) {
+        return numberValue(try parseFloatBuiltin(runtime, roots[0]) + try parseFloatBuiltin(runtime, roots[1]));
+    }
+    roots[2] = try toBigIntBuiltin(runtime, roots[0]);
+    roots[3] = try toBigIntBuiltin(runtime, roots[1]);
+    return bigIntArithmetic(runtime, .add, roots[2], roots[3]);
+}
+
+fn sumParsedBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    if (arguments.len > 0 and arguments[0].tag == @intFromEnum(Tag.array)) {
+        var total: f64 = 0;
+        for (arguments[0].object().?.payload.array.items) |item| {
+            const number = try parseFloatBuiltin(runtime, item);
+            if (!std.math.isNan(number)) total += number;
+        }
+        return numberValue(total);
+    }
+    var has_bigint = false;
+    for (arguments) |argument| if (argument.tag == @intFromEnum(Tag.bigint)) {
+        has_bigint = true;
+        break;
+    };
+    if (!has_bigint) {
+        var total: f64 = 0;
+        for (arguments) |argument| total += try parseFloatBuiltin(runtime, argument);
+        return numberValue(total);
+    }
+    var roots = [_]Value{ try runtime.createBigInt("0n"), .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    for (arguments) |argument| {
+        roots[1] = try toBigIntBuiltin(runtime, argument);
+        roots[0] = try bigIntArithmetic(runtime, .add, roots[0], roots[1]);
+    }
+    return roots[0];
+}
+
+fn toBigIntBuiltin(runtime: *Runtime, value: Value) !Value {
+    var roots = [_]Value{ value, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[1] = try valueToPrimitive(runtime, roots[0]);
+    const primitive = roots[1];
+    return switch (@as(Tag, @enumFromInt(primitive.tag))) {
+        .bigint => primitive,
+        .number => runtime.ownBigInt(try BigInt.fromF64(runtime.allocator, @bitCast(primitive.payload))),
+        .static_utf8_string, .utf16_string => blk: {
+            const converted = try bigIntFromString(runtime, primitive);
+            break :blk try runtime.ownBigInt(converted);
+        },
+        .boolean => runtime.ownBigInt(try BigInt.init(runtime.allocator, @as(u1, @intCast(primitive.payload)))),
+        .null_value => error.CannotConvertNullToBigInt,
+        .undefined => error.CannotConvertUndefinedToBigInt,
+        else => error.InvalidBigIntConversion,
+    };
+}
+
+fn jsAdd(runtime: *Runtime, left: Value, right: Value) !Value {
+    var roots = [_]Value{ left, right, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[2] = try valueToPrimitive(runtime, roots[0]);
+    roots[3] = try valueToPrimitive(runtime, roots[1]);
+    if (isString(roots[2]) or isString(roots[3])) return concat(runtime, roots[2], roots[3]);
+    if (roots[2].tag == @intFromEnum(Tag.bigint) or roots[3].tag == @intFromEnum(Tag.bigint)) return bigIntArithmetic(runtime, .add, roots[2], roots[3]);
+    return numberValue(try valueToNumberRuntime(runtime, roots[2]) + try valueToNumberRuntime(runtime, roots[3]));
+}
+
+fn sequentialAddBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    if (arguments.len == 0) return runtime.systemContext();
+    if (arguments.len == 1) return arguments[0];
+    var roots = [_]Value{ arguments[1], .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    for (arguments[2..]) |argument| roots[0] = try jsAdd(runtime, roots[0], argument);
+    roots[1] = try jsAdd(runtime, roots[0], arguments[0]);
+    return roots[1];
 }
 
 test "UTF-16文字列をルートから正確にmark-and-sweepする" {
@@ -2085,6 +2197,43 @@ test "AOT文字長検索と要素数はUnicode scalarとUTF-16を区別する" {
     roots[9] = try active_runtime.?.createArray(&.{ numberValue(1), numberValue(2) });
     lnako_aot_builtin_call(&roots[10], @ptrCast(&roots[9]), 1, @intFromEnum(aot_builtin.Command.element_count));
     try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(roots[10].payload)));
+}
+
+test "AOT加算系命令はparseFloatとBigIntとJavaScript加算を分離する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+    roots[0] = staticStringValue("1.5rest");
+    roots[1] = numberValue(2);
+    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[0]), 2, @intFromEnum(aot_builtin.Command.add_parsed));
+    try std.testing.expectEqual(@as(f64, 3.5), @as(f64, @bitCast(roots[2].payload)));
+    roots[3] = staticStringValue("2");
+    roots[4] = try active_runtime.?.createBigInt("3n");
+    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[3]), 2, @intFromEnum(aot_builtin.Command.add_parsed));
+    const bigint_text = try roots[5].object().?.payload.bigint.toString(std.testing.allocator, 10);
+    defer std.testing.allocator.free(bigint_text);
+    try std.testing.expectEqualStrings("5", bigint_text);
+    const sum_arguments = [_]Value{ numberValue(1), staticStringValue("2.5x"), numberValue(3) };
+    lnako_aot_builtin_call(&roots[6], &sum_arguments, sum_arguments.len, @intFromEnum(aot_builtin.Command.sum_parsed));
+    try std.testing.expectEqual(@as(f64, 6.5), @as(f64, @bitCast(roots[6].payload)));
+    roots[7] = try active_runtime.?.createArray(&.{ numberValue(1), staticStringValue("x"), numberValue(2) });
+    const array_sum_arguments = [_]Value{ roots[7], numberValue(100) };
+    lnako_aot_builtin_call(&roots[8], &array_sum_arguments, array_sum_arguments.len, @intFromEnum(aot_builtin.Command.sum_parsed));
+    try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(roots[8].payload)));
+    const sequential_arguments = [_]Value{ staticStringValue("a"), staticStringValue("b"), staticStringValue("c") };
+    lnako_aot_builtin_call(&roots[9], &sequential_arguments, sequential_arguments.len, @intFromEnum(aot_builtin.Command.sequential_add));
+    try std.testing.expectEqualSlices(u16, &.{ 'b', 'c', 'a' }, roots[9].object().?.payload.utf16_string);
+    lnako_aot_builtin_call(&roots[10], null, 0, @intFromEnum(aot_builtin.Command.sequential_add));
+    lnako_aot_builtin_call(&roots[11], null, 0, @intFromEnum(aot_builtin.Command.sequential_add));
+    try std.testing.expectEqual(roots[10].payload, roots[11].payload);
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {

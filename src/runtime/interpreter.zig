@@ -593,6 +593,7 @@ pub const Interpreter = struct {
     }
 
     fn callBuiltin(self: *Interpreter, name: []const u8, arguments: []const Value) !Value {
+        if (std.mem.eql(u8, name, "連続加算") and arguments.len == 0) return self.systemContext();
         if (std.mem.eql(u8, name, "ください") or std.mem.eql(u8, name, "お願") or std.mem.eql(u8, name, "です")) {
             if (!std.math.isFinite(self.courtesy_level) or self.courtesy_level == 0) self.courtesy_level = 0;
             self.courtesy_level += 1;
@@ -2264,6 +2265,23 @@ test "BigIntの整数除算を公式生成JavaScript同様に拒否する" {
     var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
     defer interpreter.deinit();
     try std.testing.expectError(error.CannotConvertBigIntToNumber, interpreter.run());
+}
+
+test "引数なし連続加算は共有システム文脈を返す" {
+    const source = "A=連続加算()\nB=連続加算()\nAを表示\n(A===B)を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("[object Object]\ntrue\n", host.written());
 }
 
 test "連続する例外監視で直前の捕捉値を再利用しない" {
