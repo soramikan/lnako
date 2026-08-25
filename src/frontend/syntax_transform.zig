@@ -2,7 +2,7 @@ const std = @import("std");
 const lexer_mod = @import("lexer.zig");
 const token_mod = @import("token.zig");
 
-pub const Error = error{ExplicitEndInIndentMode} || std.mem.Allocator.Error;
+pub const Error = lexer_mod.Error || error{ ExplicitEndInIndentMode, UnterminatedStringTemplate };
 const Kind = token_mod.Kind;
 const Token = token_mod.Token;
 
@@ -15,6 +15,7 @@ pub fn apply(stream: *lexer_mod.TokenStream) Error!void {
     }
     const eof = stream.tokens[stream.tokens.len - 1];
 
+    try expandStringTemplates(stream, &tokens, allocator);
     switch (stream.mode) {
         .dncl => try transformDncl(&tokens, allocator, false),
         .dncl2 => try transformDncl(&tokens, allocator, true),
@@ -26,6 +27,125 @@ pub fn apply(stream: *lexer_mod.TokenStream) Error!void {
     try transformInlineIndent(&tokens, allocator);
     try tokens.append(allocator, eof);
     stream.tokens = try tokens.toOwnedSlice(allocator);
+}
+
+fn expandStringTemplates(stream: *lexer_mod.TokenStream, tokens: *std.ArrayList(Token), allocator: std.mem.Allocator) Error!void {
+    var index: usize = 0;
+    while (index < tokens.items.len) {
+        const token = tokens.items[index];
+        if (token.kind != .string_template) {
+            index += 1;
+            continue;
+        }
+
+        const source_base = @intFromPtr(stream.source.text.ptr);
+        const value_base = @intFromPtr(token.value.ptr);
+        if (value_base < source_base or value_base > source_base + stream.source.text.len) return error.UnterminatedStringTemplate;
+        const content_start = value_base - source_base;
+        var replacement: std.ArrayList(Token) = .empty;
+        errdefer replacement.deinit(allocator);
+        try replacement.append(allocator, synthetic(.left_paren, "(", token));
+
+        var cursor: usize = 0;
+        while (findTemplateOpen(token.value, cursor)) |open| {
+            try replacement.append(allocator, templateStringToken(token.value[cursor..open.index], token));
+            try replacement.append(allocator, synthetic(.bit_and, "&", token));
+            try replacement.append(allocator, synthetic(.left_paren, "(", token));
+
+            const expression_start = open.index + open.len;
+            const close = findTemplateClose(token.value, expression_start) orelse return error.UnterminatedStringTemplate;
+            var nested = try lexer_mod.tokenize(allocator, token.value[expression_start..close.index]);
+            defer nested.deinit();
+            for (nested.tokens) |nested_token| {
+                if (nested_token.kind == .eof) continue;
+                try replacement.append(allocator, try cloneTemplateExpressionToken(
+                    stream,
+                    nested,
+                    nested_token,
+                    content_start + expression_start,
+                    token.indent,
+                    allocator,
+                ));
+            }
+            try replacement.append(allocator, synthetic(.right_paren, ")", token));
+            try replacement.append(allocator, synthetic(.bit_and, "&", token));
+            cursor = close.index + close.len;
+        }
+        try replacement.append(allocator, templateStringToken(token.value[cursor..], token));
+        var close = synthetic(.right_paren, ")", token);
+        close.josi = token.josi;
+        close.raw_josi = token.raw_josi;
+        close.span = token.span;
+        try replacement.append(allocator, close);
+
+        const replacement_len = replacement.items.len;
+        try tokens.replaceRange(allocator, index, 1, replacement.items);
+        replacement.deinit(allocator);
+        index += replacement_len;
+    }
+}
+
+const TemplateDelimiter = struct { index: usize, len: usize };
+
+fn findTemplateOpen(value: []const u8, start: usize) ?TemplateDelimiter {
+    const ascii = std.mem.indexOfPos(u8, value, start, "{");
+    const fullwidth = std.mem.indexOfPos(u8, value, start, "｛");
+    if (ascii == null and fullwidth == null) return null;
+    if (fullwidth == null or (ascii != null and ascii.? < fullwidth.?)) return .{ .index = ascii.?, .len = 1 };
+    return .{ .index = fullwidth.?, .len = "｛".len };
+}
+
+fn findTemplateClose(value: []const u8, start: usize) ?TemplateDelimiter {
+    const ascii = std.mem.indexOfPos(u8, value, start, "}");
+    const fullwidth = std.mem.indexOfPos(u8, value, start, "｝");
+    if (ascii == null and fullwidth == null) return null;
+    if (fullwidth == null or (ascii != null and ascii.? < fullwidth.?)) return .{ .index = ascii.?, .len = 1 };
+    return .{ .index = fullwidth.?, .len = "｝".len };
+}
+
+fn templateStringToken(value: []const u8, anchor: Token) Token {
+    var token = synthetic(.string, value, anchor);
+    token.value = value;
+    return token;
+}
+
+fn cloneTemplateExpressionToken(
+    stream: *lexer_mod.TokenStream,
+    nested: lexer_mod.TokenStream,
+    source: Token,
+    expression_start: usize,
+    indent: usize,
+    allocator: std.mem.Allocator,
+) !Token {
+    var result = source;
+    result.lexeme = try allocator.dupe(u8, source.lexeme);
+    result.value = try allocator.dupe(u8, source.value);
+    result.josi = try allocator.dupe(u8, source.josi);
+    result.raw_josi = try allocator.dupe(u8, source.raw_josi);
+    result.indent = indent;
+    result.span.start = expression_start + nested.source.sourceOffset(source.span.start);
+    result.span.end = expression_start + nested.source.sourceOffset(source.span.end);
+    result.span.source_start = stream.source.sourceOffset(result.span.start);
+    result.span.source_end = stream.source.sourceOffset(result.span.end);
+    const position = lineColumnAt(stream.source.text, result.span.start);
+    result.span.line = position.line;
+    result.span.column = position.column;
+    return result;
+}
+
+fn lineColumnAt(source: []const u8, offset: usize) struct { line: usize, column: usize } {
+    var line: usize = 0;
+    var column: usize = 1;
+    var index: usize = 0;
+    while (index < @min(offset, source.len)) {
+        const sequence_length = std.unicode.utf8ByteSequenceLength(source[index]) catch 1;
+        if (source[index] == '\n') {
+            line += 1;
+            column = 1;
+        } else column += 1;
+        index += @min(sequence_length, source.len - index);
+    }
+    return .{ .line = line, .column = column };
 }
 
 fn expandAssignmentJosi(tokens: *std.ArrayList(Token), allocator: std.mem.Allocator) !void {
@@ -562,4 +682,33 @@ test "DNCL2の配列初期化を30要素の式へ変換する" {
     }
     try std.testing.expect(has_multiply);
     try std.testing.expect(has_count);
+}
+
+test "展開あり文字列の埋め込み式を文字列連結へ変換する" {
+    var stream = try lexer_mod.tokenize(std.testing.allocator, "A=30\n「ab{A+1}cd｛A｝」を表示\n");
+    defer stream.deinit();
+    try apply(&stream);
+    var strings: usize = 0;
+    var concats: usize = 0;
+    var additions: usize = 0;
+    var embedded_identifier_column: ?usize = null;
+    for (stream.tokens) |token| {
+        try std.testing.expect(token.kind != .string_template);
+        if (token.kind == .string) strings += 1;
+        if (token.kind == .bit_and) concats += 1;
+        if (token.kind == .plus) additions += 1;
+        if (token.kind == .identifier and std.mem.eql(u8, token.value, "A") and token.span.line == 1 and embedded_identifier_column == null) {
+            embedded_identifier_column = token.span.column;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 3), strings);
+    try std.testing.expectEqual(@as(usize, 4), concats);
+    try std.testing.expectEqual(@as(usize, 1), additions);
+    try std.testing.expectEqual(@as(?usize, 5), embedded_identifier_column);
+}
+
+test "閉じ中括弧のない文字列テンプレートを拒否する" {
+    var stream = try lexer_mod.tokenize(std.testing.allocator, "「A{B」を表示\n");
+    defer stream.deinit();
+    try std.testing.expectError(error.UnterminatedStringTemplate, apply(&stream));
 }

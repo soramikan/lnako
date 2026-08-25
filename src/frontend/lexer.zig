@@ -359,10 +359,11 @@ const Lexer = struct {
             try self.advanceBytes(matched.consumed);
             if (self.offset < self.source.text.len and self.source.text[self.offset] == ',') try self.advanceBytes(1);
         }
-        const kind: Kind = if (delimiter.template and std.mem.indexOfScalar(u8, self.source.text[content_start..content_end], '{') != null) .string_template else .string;
+        const content = self.source.text[content_start..content_end];
+        const kind: Kind = if (delimiter.template and hasTemplateOpen(content)) .string_template else .string;
         self.indent = start_indent;
         self.at_line_start = false;
-        try self.emitAt(kind, start, self.offset, self.source.text[content_start..content_end], value_josi, raw_josi, start_line, start_column);
+        try self.emitAt(kind, start, self.offset, content, value_josi, raw_josi, start_line, start_column);
     }
 
     fn readExtendedWord(self: *Lexer, open: []const u8, close: []const u8) Error!void {
@@ -498,6 +499,10 @@ const Lexer = struct {
         return column;
     }
 };
+
+fn hasTemplateOpen(content: []const u8) bool {
+    return std.mem.indexOfScalar(u8, content, '{') != null or std.mem.indexOf(u8, content, "｛") != null;
+}
 
 const StringDelimiter = struct { open: []const u8, close: []const u8, template: bool };
 

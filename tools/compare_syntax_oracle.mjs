@@ -61,17 +61,13 @@ function normalizeActual(token) {
   };
 }
 
-let failures = 0;
-for (const [index, source] of cases.entries()) {
-  const logger = new NakoLogger();
-  const tokenizer = new NakoTokenizer({
-    getLogger: () => logger,
-    replaceRequireStatements: () => [],
-    removeRequireStatements: () => [],
-  });
-  const official = tokenizer.rawtokenize(source, 0, "oracle.nako3")
+function normalizeOfficialTokens(tokens, tokenizer) {
+  return tokens
     .filter((token) => token.type !== "line_comment" && token.type !== "range_comment" && token.type !== "_eol" && token.type !== "DNCLモード" && token.type !== "DNCL2モード")
     .flatMap((token) => {
+      if (token.type === "code") {
+        return normalizeOfficialTokens(tokenizer.rawtokenize(String(token.value), token.line ?? 0, "oracle.nako3"), tokenizer);
+      }
       if (token.type === "word" && token.josi === "" && String(token.value).endsWith("回") && String(token.value).length > 1) {
         return [
           { kind: "identifier", value: String(token.value).slice(0, -1), josi: "", indent: token.indent ?? 0 },
@@ -80,6 +76,17 @@ for (const [index, source] of cases.entries()) {
       }
       return [normalizeOfficial(token)];
     });
+}
+
+let failures = 0;
+for (const [index, source] of cases.entries()) {
+  const logger = new NakoLogger();
+  const tokenizer = new NakoTokenizer({
+    getLogger: () => logger,
+    replaceRequireStatements: () => [],
+    removeRequireStatements: () => [],
+  });
+  const official = normalizeOfficialTokens(tokenizer.rawtokenize(source, 0, "oracle.nako3"), tokenizer);
   const actual = actualCases[index].filter((token) => token.kind !== "eof").map(normalizeActual);
   if (JSON.stringify(actual) !== JSON.stringify(official)) {
     failures += 1;
