@@ -6,6 +6,7 @@ pub fn forFailure(failure: anyerror) []const u8 {
         error.CannotConvertBigIntToNumber => "Cannot convert a BigInt value to a number",
         error.UnsignedShiftOfBigInt => "BigInts have no unsigned right shift, use >> instead",
         error.NegativeBigIntExponent => "Exponent must be positive",
+        error.InvalidRadix => "toString() radix argument must be between 2 and 36",
         else => @errorName(failure),
     };
 }
@@ -22,6 +23,10 @@ test "BigInt実行時エラーを公式JavaScriptの文言へ変換する" {
     try std.testing.expectEqualStrings(
         "BigInts have no unsigned right shift, use >> instead",
         forFailure(error.UnsignedShiftOfBigInt),
+    );
+    try std.testing.expectEqualStrings(
+        "toString() radix argument must be between 2 and 36",
+        forFailure(error.InvalidRadix),
     );
     try std.testing.expectEqualStrings("UnknownFailure", forFailure(error.UnknownFailure));
 }

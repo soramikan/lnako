@@ -1238,6 +1238,20 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
             const is_nan = value.tag == @intFromEnum(Tag.number) and std.math.isNan(@as(f64, @bitCast(value.payload)));
             out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(is_nan) };
         },
+        .radix16, .radix, .radix2, .radix2_display => {
+            if (command == .radix and len < 2) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            const radix_value = if (command == .radix) arguments.?[1] else numberValue(if (command == .radix16) 16 else 2);
+            const result = radixBuiltin(runtime, value, radix_value) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+            if (command == .radix2_display) {
+                writeUtf16(result.object().?.payload.utf16_string, true);
+            } else out.* = result;
+        },
     }
 }
 
@@ -1270,6 +1284,17 @@ fn parseFloatBuiltin(runtime: *Runtime, value: Value) !f64 {
             break :blk try number_mod.parseFloatPrefix(runtime.allocator, units);
         },
     };
+}
+
+fn radixBuiltin(runtime: *Runtime, value: Value, radix_value: Value) !Value {
+    const number = try parseIntBuiltin(runtime, value);
+    const radix_number: f64 = if (radix_value.tag == @intFromEnum(Tag.undefined)) 10 else try valueToNumberRuntime(runtime, radix_value);
+    const truncated = @trunc(radix_number);
+    if (!std.math.isFinite(radix_number) or truncated < 2 or truncated > 36) return error.InvalidRadix;
+    const text = try number_mod.integerToRadixAlloc(runtime.allocator, number, @intFromFloat(truncated));
+    defer runtime.allocator.free(text);
+    const units = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, text);
+    return runtime.ownString(units);
 }
 
 test "UTF-16文字列をルートから正確にmark-and-sweepする" {
@@ -1442,6 +1467,31 @@ test "AOTのNAN判定と非数判定はNumber変換の有無を区別する" {
     try std.testing.expectEqual(@as(u64, 1), roots[3].payload);
     lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[4]), 1, @intFromEnum(aot_builtin.Command.is_number_nan));
     try std.testing.expectEqual(@as(u64, 0), roots[5].payload);
+}
+
+test "AOT進数変換は小数基数を切り捨てて不正基数を例外にする" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ staticStringValue("31px"), numberValue(16.9), .{}, numberValue(-10.9), .{}, numberValue(31), .{}, .{}, numberValue(31), numberValue(1), .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[0]), 2, @intFromEnum(aot_builtin.Command.radix));
+    try std.testing.expectEqualSlices(u16, &.{ '1', 'f' }, roots[2].object().?.payload.utf16_string);
+    lnako_aot_builtin_call(&roots[4], @ptrCast(&roots[3]), 1, @intFromEnum(aot_builtin.Command.radix2));
+    try std.testing.expectEqualSlices(u16, &.{ '-', '1', '0', '1', '0' }, roots[4].object().?.payload.utf16_string);
+    lnako_aot_builtin_call(&roots[7], @ptrCast(&roots[5]), 2, @intFromEnum(aot_builtin.Command.radix));
+    try std.testing.expectEqualSlices(u16, &.{ '3', '1' }, roots[7].object().?.payload.utf16_string);
+    lnako_aot_builtin_call(&roots[10], @ptrCast(&roots[8]), 2, @intFromEnum(aot_builtin.Command.radix));
+    try std.testing.expect(active_runtime.?.has_pending_exception);
+    const message = try valueUtf16Alloc(&active_runtime.?, active_runtime.?.takeException());
+    defer std.testing.allocator.free(message);
+    try std.testing.expectEqualSlices(u16, &.{ 't', 'o', 'S', 't', 'r', 'i', 'n', 'g', '(', ')', ' ', 'r', 'a', 'd', 'i', 'x', ' ', 'a', 'r', 'g', 'u', 'm', 'e', 'n', 't', ' ', 'm', 'u', 's', 't', ' ', 'b', 'e', ' ', 'b', 'e', 't', 'w', 'e', 'e', 'n', ' ', '2', ' ', 'a', 'n', 'd', ' ', '3', '6' }, message);
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {

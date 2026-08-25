@@ -36,32 +36,9 @@ pub fn parseIntValue(runtime: *Runtime, value: Value, radix_value: ?Value) !f64 
 }
 
 pub fn integerToRadix(runtime: *Runtime, number: f64, radix: u8) !Value {
-    if (radix < 2 or radix > 36) return error.InvalidRadix;
-    if (std.math.isNan(number)) return runtime.stringUtf8("NaN");
-    if (number == std.math.inf(f64)) return runtime.stringUtf8("Infinity");
-    if (number == -std.math.inf(f64)) return runtime.stringUtf8("-Infinity");
-    var magnitude = @abs(@trunc(number));
-    var reversed: [1200]u8 = undefined;
-    var count: usize = 0;
-    if (magnitude == 0) {
-        reversed[0] = '0';
-        count = 1;
-    } else while (magnitude >= 1 and count < reversed.len) {
-        const quotient = @floor(magnitude / @as(f64, @floatFromInt(radix)));
-        const remainder: u8 = @intFromFloat(magnitude - quotient * @as(f64, @floatFromInt(radix)));
-        reversed[count] = if (remainder < 10) '0' + remainder else 'a' + (remainder - 10);
-        count += 1;
-        magnitude = quotient;
-    }
-    var output: std.Io.Writer.Allocating = .init(runtime.allocator());
-    defer output.deinit();
-    if (number < 0) try output.writer.writeByte('-');
-    var index = count;
-    while (index > 0) {
-        index -= 1;
-        try output.writer.writeByte(reversed[index]);
-    }
-    return runtime.stringUtf8(output.written());
+    const output = try number_mod.integerToRadixAlloc(runtime.allocator(), number, radix);
+    defer runtime.allocator().free(output);
+    return runtime.stringUtf8(output);
 }
 
 pub fn arrayFromValues(runtime: *Runtime, values: []const Value) !Value {

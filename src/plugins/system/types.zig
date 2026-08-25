@@ -34,7 +34,7 @@ fn typeOf(value: Value) []const u8 {
 
 fn radix(runtime: *Runtime, value: Value, radix_value: Value) !Value {
     const number = try common.parseIntValue(runtime, value, null);
-    const radix_number = try runtime.valueToNumber(radix_value);
+    const radix_number: f64 = if (radix_value == .undefined) 10 else try runtime.valueToNumber(radix_value);
     if (!std.math.isFinite(radix_number) or @trunc(radix_number) < 2 or @trunc(radix_number) > 36) return error.InvalidRadix;
     return common.integerToRadix(runtime, number, @intFromFloat(@trunc(radix_number)));
 }
@@ -72,4 +72,8 @@ test "型名・数値変換・進数変換を公式命令名で処理する" {
     const binary_utf8 = try binary.string.toUtf8Lossy(std.testing.allocator);
     defer std.testing.allocator.free(binary_utf8);
     try std.testing.expectEqualStrings("1010", binary_utf8);
+    const decimal = (try call(&runtime, "進数変換", &.{ .{ .number = 31 }, .undefined })).?;
+    const decimal_utf8 = try decimal.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(decimal_utf8);
+    try std.testing.expectEqualStrings("31", decimal_utf8);
 }

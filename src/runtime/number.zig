@@ -80,6 +80,31 @@ pub fn parseIntPrefix(source: []const u16, radix_value: ?f64) f64 {
     return if (negative) -result else result;
 }
 
+pub fn integerToRadixAlloc(allocator: std.mem.Allocator, number: f64, radix: u8) ![]u8 {
+    if (radix < 2 or radix > 36) return error.InvalidRadix;
+    if (std.math.isNan(number)) return allocator.dupe(u8, "NaN");
+    if (number == std.math.inf(f64)) return allocator.dupe(u8, "Infinity");
+    if (number == -std.math.inf(f64)) return allocator.dupe(u8, "-Infinity");
+    var magnitude = @abs(@trunc(number));
+    var reversed: [1200]u8 = undefined;
+    var count: usize = 0;
+    if (magnitude == 0) {
+        reversed[0] = '0';
+        count = 1;
+    } else while (magnitude >= 1 and count < reversed.len) {
+        const quotient = @floor(magnitude / @as(f64, @floatFromInt(radix)));
+        const remainder: u8 = @intFromFloat(magnitude - quotient * @as(f64, @floatFromInt(radix)));
+        reversed[count] = if (remainder < 10) '0' + remainder else 'a' + (remainder - 10);
+        count += 1;
+        magnitude = quotient;
+    }
+    const sign_length: usize = @intFromBool(number < 0);
+    const output = try allocator.alloc(u8, sign_length + count);
+    if (number < 0) output[0] = '-';
+    for (0..count) |index| output[sign_length + index] = reversed[count - index - 1];
+    return output;
+}
+
 fn startsWithAscii(units: []const u16, ascii: []const u8) bool {
     if (units.len < ascii.len) return false;
     for (ascii, 0..) |byte, index| if (units[index] != byte) return false;
@@ -146,4 +171,17 @@ test "parseIntとparseFloatのJavaScript接頭辞規則を再現する" {
     try std.testing.expectEqual(@as(f64, 12.5), try parseFloatPrefix(std.testing.allocator, &.{ ' ', '1', '2', '.', '5', 'x' }));
     try std.testing.expectEqual(@as(f64, -16), parseIntPrefix(&.{ ' ', '-', '0', 'x', '1', '0', 'r' }, null));
     try std.testing.expect(std.math.isNan(parseIntPrefix(&.{ 'x', 'y', 'z' }, null)));
+}
+
+test "整数を2進数から36進数の小文字表現へ変換する" {
+    const binary = try integerToRadixAlloc(std.testing.allocator, -10.9, 2);
+    defer std.testing.allocator.free(binary);
+    try std.testing.expectEqualStrings("-1010", binary);
+    const hexadecimal = try integerToRadixAlloc(std.testing.allocator, 255, 16);
+    defer std.testing.allocator.free(hexadecimal);
+    try std.testing.expectEqualStrings("ff", hexadecimal);
+    const base36 = try integerToRadixAlloc(std.testing.allocator, 35, 36);
+    defer std.testing.allocator.free(base36);
+    try std.testing.expectEqualStrings("z", base36);
+    try std.testing.expectError(error.InvalidRadix, integerToRadixAlloc(std.testing.allocator, 1, 1));
 }
