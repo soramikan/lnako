@@ -55,7 +55,10 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
                     std.mem.eql(u8, instruction.operator, "||") or std.mem.eql(u8, instruction.operator, "or"),
                 .unary => std.mem.eql(u8, instruction.operator, "!") or std.mem.eql(u8, instruction.operator, "not") or
                     std.mem.eql(u8, instruction.operator, "+") or std.mem.eql(u8, instruction.operator, "-"),
-                .call => isDisplayCall(instruction.name) or validDirectCallee(program, instruction) or lookupFunction(program, instruction.name) != null,
+                .call => isDisplayCall(instruction.name) or validDirectCallee(program, instruction) or lookupFunction(program, instruction.name) != null or
+                    isDynamicNamedCall(function, instruction.name),
+                .call_value => instruction.operands.len > 0,
+                .make_closure => nonCapturingFunction(program, instruction.name) != null,
                 .iterator_begin => iteratorSourceSupported(function, instruction),
                 else => false,
             };
@@ -149,6 +152,8 @@ const Emitter = struct {
                 "declare void @lnako_aot_iterator_new(ptr, ptr, i64, i1, i8)\n" ++
                 "declare i32 @lnako_aot_iterator_has_next(ptr)\n" ++
                 "declare void @lnako_aot_iterator_next(ptr, ptr, ptr, ptr, ptr, ptr)\n" ++
+                "declare void @lnako_aot_function_new(ptr, ptr, i64)\n" ++
+                "declare void @lnako_aot_function_call(ptr, ptr, ptr, i64)\n" ++
                 "declare i32 @printf(ptr, ...)\n" ++
                 "declare i32 @puts(ptr)\n" ++
                 "declare double @llvm.pow.f64(double, double)\n" ++
@@ -196,6 +201,7 @@ const Emitter = struct {
         if (self.bigints.items.len > 0) try writer.writeByte('\n');
         try self.writeRuntimeHelpers();
         for (self.program.functions) |function| try self.writeFunction(function);
+        for (self.program.functions) |function| try self.writeFunctionWrapper(function);
         try self.writeMain();
         try self.writeDebugMetadata();
     }
@@ -463,7 +469,9 @@ const Emitter = struct {
             .destructure_store => try self.writeDestructure(locals, instruction, scope),
             .binary => try self.writeBinary(function, instruction, scope),
             .unary => try self.writeUnary(function, instruction, scope),
-            .call => try self.writeCall(function, instruction, scope),
+            .call => try self.writeCall(function, locals, instruction, scope, aggregate_count),
+            .call_value => try self.writeCallValue(function, instruction, scope, aggregate_count),
+            .make_closure => try self.writeMakeClosure(instruction, scope),
             .make_array => try self.writeAggregate(function, instruction, scope, aggregate_count, "lnako_aot_array_new"),
             .make_object => try self.writeAggregate(function, instruction, scope, aggregate_count, "lnako_aot_dictionary_new"),
             .array_get, .property_get => try self.writeIndexGet(instruction, scope),
@@ -775,7 +783,7 @@ const Emitter = struct {
         try self.debugSuffix(instruction.span, scope);
     }
 
-    fn writeCall(self: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize) !void {
+    fn writeCall(self: *Emitter, function: ir.Function, locals: []const []const u8, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
         const result = instruction.result orelse return error.MissingInstructionResult;
         if (isDisplayCall(instruction.name)) {
             if (instruction.operands.len == 0) return error.InvalidCall;
@@ -788,8 +796,13 @@ const Emitter = struct {
         const callee = if (instruction.direct_callee) |callee_id|
             if (callee_id < self.program.functions.len) self.program.functions[callee_id] else return error.InvalidDirectCallee
         else
-            self.findFunction(instruction.name) orelse return error.UnsupportedBuiltinCall;
-        try self.output.writer.print("  %v{d} = call %lnako.Value @lnako.fn.{d}(", .{ result, callee.id });
+            self.findFunction(instruction.name);
+        if (callee == null) {
+            try self.writeDynamicCall(function, locals, instruction, .{ .name = instruction.name }, instruction.operands, scope, aggregate_count);
+            try self.writeCallResult(result, instruction.span, scope);
+            return;
+        }
+        try self.output.writer.print("  %v{d} = call %lnako.Value @lnako.fn.{d}(", .{ result, callee.?.id });
         for (instruction.operands, 0..) |operand, index| {
             if (index > 0) try self.output.writer.writeAll(", ");
             try self.output.writer.writeAll("%lnako.Value ");
@@ -798,6 +811,57 @@ const Emitter = struct {
         try self.output.writer.writeByte(')');
         try self.debugSuffix(instruction.span, scope);
         try self.writeCallResult(result, instruction.span, scope);
+    }
+
+    fn writeCallValue(self: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
+        if (instruction.operands.len == 0) return error.InvalidCall;
+        try self.writeDynamicCall(function, &.{}, instruction, .{ .value = instruction.operands[0] }, instruction.operands[1..], scope, aggregate_count);
+    }
+
+    const DynamicCallTarget = union(enum) { name: []const u8, value: ir.ValueId };
+
+    fn writeDynamicCall(
+        self: *Emitter,
+        function: ir.Function,
+        locals: []const []const u8,
+        instruction: ir.Instruction,
+        target: DynamicCallTarget,
+        arguments: []const ir.ValueId,
+        scope: usize,
+        aggregate_count: usize,
+    ) !void {
+        const result = instruction.result orelse return error.MissingInstructionResult;
+        if (arguments.len > aggregate_count) return error.InvalidCallScratch;
+        for (arguments, 0..) |argument, index| {
+            try self.output.writer.print("  %call.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+            try self.debugSuffix(instruction.span, scope);
+            try self.output.writer.writeAll("  store %lnako.Value ");
+            try self.writeValueRef(function, argument);
+            try self.output.writer.print(", ptr %call.{d}.slot.{d}", .{ result, index });
+            try self.debugSuffix(instruction.span, scope);
+        }
+        try self.output.writer.print("  call void @lnako_aot_function_call(ptr %root.slot.{d}, ptr ", .{result});
+        switch (target) {
+            .name => |name| try self.writeRequiredNamedPointer(locals, name),
+            .value => |value| try self.output.writer.print("%root.slot.{d}", .{value}),
+        }
+        try self.output.writer.writeAll(", ptr ");
+        if (arguments.len > 0) {
+            try self.output.writer.print("%call.{d}.slot.0", .{result});
+        } else try self.output.writer.writeAll("null");
+        try self.output.writer.print(", i64 {d})", .{arguments.len});
+        try self.debugSuffix(instruction.span, scope);
+        try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+        try self.debugSuffix(instruction.span, scope);
+    }
+
+    fn writeMakeClosure(self: *Emitter, instruction: ir.Instruction, scope: usize) !void {
+        const result = instruction.result orelse return error.MissingInstructionResult;
+        const function = nonCapturingFunction(self.program, instruction.name) orelse return error.UnsupportedCapturedClosure;
+        try self.output.writer.print("  call void @lnako_aot_function_new(ptr %root.slot.{d}, ptr @lnako.wrapper.{d}, i64 {d})", .{ result, function.id, function.parameters.len });
+        try self.debugSuffix(instruction.span, scope);
+        try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+        try self.debugSuffix(instruction.span, scope);
     }
 
     fn writeCallResult(self: *Emitter, result: ir.ValueId, span: ast.Span, scope: usize) !void {
@@ -833,6 +897,20 @@ const Emitter = struct {
         }
     }
 
+    fn writeFunctionWrapper(self: *Emitter, function: ir.Function) !void {
+        try self.output.writer.print("define internal %lnako.Value @lnako.wrapper.{d}(ptr %context, ptr %arguments, i64 %argument.count) {{\nentry:\n", .{function.id});
+        for (function.parameters, 0..) |_, index| {
+            try self.output.writer.print("  %wrapper.argument.pointer.{d} = getelementptr %lnako.Value, ptr %arguments, i64 {d}\n", .{ index, index });
+            try self.output.writer.print("  %wrapper.argument.{d} = load %lnako.Value, ptr %wrapper.argument.pointer.{d}\n", .{ index, index });
+        }
+        try self.output.writer.print("  %wrapper.result = call %lnako.Value @lnako.fn.{d}(", .{function.id});
+        for (function.parameters, 0..) |_, index| {
+            if (index > 0) try self.output.writer.writeAll(", ");
+            try self.output.writer.print("%lnako.Value %wrapper.argument.{d}", .{index});
+        }
+        try self.output.writer.writeAll(")\n  ret %lnako.Value %wrapper.result\n}\n\n");
+    }
+
     fn writeMain(self: *Emitter) !void {
         const scope = 4 + self.program.functions.len;
         try self.output.writer.print("define i32 @main() !dbg !{d} {{\nentry:\n", .{scope});
@@ -841,6 +919,9 @@ const Emitter = struct {
             try self.output.writer.print("  %global.root.frame.{d} = alloca %lnako.RootFrame\n", .{global_index});
             try self.output.writer.print("  call void @lnako_aot_push_roots(ptr %global.root.frame.{d}, ptr @lnako.global.{d}, i64 1)\n", .{ global_index, global_index });
         }
+        for (self.program.functions) |function| if (self.globalIndex(function.name)) |global_index| {
+            try self.output.writer.print("  call void @lnako_aot_function_new(ptr @lnako.global.{d}, ptr @lnako.wrapper.{d}, i64 {d})\n", .{ global_index, function.id, function.parameters.len });
+        };
         var index = self.program.module_entries.len;
         var call_index: usize = 0;
         while (index > 0) {
@@ -998,6 +1079,38 @@ fn validDirectCallee(program: ir.Program, instruction: ir.Instruction) bool {
     return if (instruction.direct_callee) |callee| callee < program.functions.len else false;
 }
 
+fn isDynamicNamedCall(function: ir.Function, name: []const u8) bool {
+    return isQualifiedGlobal(name) or hasLocalName(function, name);
+}
+
+fn hasLocalName(function: ir.Function, name: []const u8) bool {
+    for (function.parameters) |parameter| if (std.mem.eql(u8, parameter.name, name)) return true;
+    for (function.blocks) |block| for (block.instructions) |instruction| {
+        if ((instruction.opcode == .load_local or instruction.opcode == .store_local or instruction.opcode == .increment) and
+            std.mem.eql(u8, instruction.name, name)) return true;
+        if (instruction.opcode == .destructure_store) for (instruction.names) |local_name| {
+            if (std.mem.eql(u8, local_name, name)) return true;
+        };
+    };
+    return false;
+}
+
+fn nonCapturingFunction(program: ir.Program, name: []const u8) ?ir.Function {
+    const function = lookupFunction(program, name) orelse return null;
+    for (function.blocks) |block| for (block.instructions) |instruction| {
+        if (instruction.opcode == .load_local or instruction.opcode == .store_local or instruction.opcode == .increment) {
+            var parameter = false;
+            for (function.parameters) |candidate| if (std.mem.eql(u8, candidate.name, instruction.name)) {
+                parameter = true;
+                break;
+            };
+            if (!parameter) return null;
+        }
+        if (instruction.opcode == .destructure_store) return null;
+    };
+    return function;
+}
+
 fn isDisplayCall(name: []const u8) bool {
     return std.mem.eql(u8, name, "表示") or std.mem.eql(u8, name, "表示する") or std.mem.eql(u8, name, "連続表示");
 }
@@ -1027,7 +1140,10 @@ fn functionValueCount(function: ir.Function) usize {
 fn maxAggregateOperandCount(function: ir.Function) usize {
     var count: usize = 0;
     for (function.blocks) |block| for (block.instructions) |instruction| switch (instruction.opcode) {
-        .make_array, .make_object, .iterator_begin => count = @max(count, instruction.operands.len),
+        .make_array, .make_object, .iterator_begin, .call => count = @max(count, instruction.operands.len),
+        .call_value => if (instruction.operands.len > 0) {
+            count = @max(count, instruction.operands.len - 1);
+        },
         else => {},
     };
     return count;
@@ -1331,6 +1447,28 @@ test "関数戻り値をシステム変数それへ書き戻す" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "store %lnako.Value %v") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "ret %lnako.Value { i8 0, i64 0 }") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.global.0") != null);
+}
+
+test "非捕捉無名関数を統一ABIの関数値へ変換する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    const source = "F=関数(A)それはA+1;ここまで\nF(3)を表示\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "function-value.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "function-value.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "function_value", "function-value.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    try std.testing.expect(findUnsupported(program) == null);
+    var module = try generate(std.testing.allocator, program, "function-value.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_function_new") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_function_call") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.wrapper.0") != null);
 }
 
 test "O1では証明済み数値と真偽判定をアンボックスしO0のIRを変更しない" {

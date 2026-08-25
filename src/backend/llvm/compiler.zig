@@ -335,12 +335,12 @@ test "LLVM C APIで全最適化レベルのモジュールを検証してIRを�
     }
 }
 
-test "未対応AOT命令をソース位置付きで拒否する" {
+test "捕捉ありクロージャをソース位置付きで拒否する" {
     const parser = @import("../../frontend/parser.zig");
     const semantic = @import("../../semantic/analyzer.zig");
     const hir = @import("../../ir/hir.zig");
     const lower = @import("../../ir/lower_ssa.zig");
-    var parsed = try parser.parse(std.testing.allocator, "F=関数(A)それはA+1;ここまで\nF(1)を表示\n", "unsupported.nako3");
+    var parsed = try parser.parse(std.testing.allocator, "●(Aを)作るとは\nF=関数(B)それはA+B;ここまで\nFで戻る\nここまで\n作る(1)\n", "unsupported.nako3");
     defer parsed.deinit();
     var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "unsupported.nako3");
     defer analyzed.deinit();
@@ -355,5 +355,5 @@ test "未対応AOT命令をソース位置付きで拒否する" {
         .output_path = "/tmp/unused-lnako-output",
     }, &diagnostics.writer));
     try std.testing.expect(std.mem.indexOf(u8, diagnostics.written(), "opcode=make_closure") != null);
-    try std.testing.expect(std.mem.indexOf(u8, diagnostics.written(), "unsupported.nako3:1:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostics.written(), "unsupported.nako3:2:") != null);
 }

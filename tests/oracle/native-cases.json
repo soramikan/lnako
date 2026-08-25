@@ -40,6 +40,10 @@
     "source": "●七とは\n7で戻る\nここまで\n●空とは\nここまで\n●暗黙とは\nそれは8\nここまで\n七()\nA=それ\n空()\nB=それ\n暗黙()\nC=それ\nAを表示\nBを表示\nCを表示\n表示(1)\nそれを表示\n"
   },
   {
+    "id": "native-noncapturing-function-value",
+    "source": "F=関数(A)それはA+1;ここまで\nF(3)を表示\nG=関数()それは7;ここまで\nG()を表示\nF===Fを表示\nF===Gを表示\n"
+  },
+  {
     "id": "native-unary-boolean",
     "source": "(-3)を表示\nもし、!(1>2)ならば\n「否定」を表示\nここまで\n"
   },

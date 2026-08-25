@@ -13,6 +13,7 @@ pub const Tag = enum(u8) {
     dictionary = 7,
     iterator = 8,
     bigint = 9,
+    function = 10,
 };
 
 pub const Value = extern struct {
@@ -22,7 +23,7 @@ pub const Value = extern struct {
     pub fn object(self: Value) ?*Object {
         if (self.payload == 0) return null;
         return switch (@as(Tag, @enumFromInt(self.tag))) {
-            .utf16_string, .array, .dictionary, .iterator, .bigint => @ptrFromInt(self.payload),
+            .utf16_string, .array, .dictionary, .iterator, .bigint, .function => @ptrFromInt(self.payload),
             else => null,
         };
     }
@@ -45,6 +46,9 @@ const Iterator = struct {
     end: f64 = 0,
     step: f64 = 1,
 };
+
+const FunctionCallback = *const fn (*anyopaque, ?[*]const Value, usize) callconv(.c) Value;
+const FunctionObject = struct { callback: FunctionCallback, arity: usize };
 
 const Arithmetic = enum(u8) {
     add,
@@ -79,6 +83,7 @@ const Payload = union(enum) {
     array: std.ArrayList(Value),
     dictionary: std.ArrayList(DictionaryEntry),
     iterator: Iterator,
+    function: FunctionObject,
 };
 
 const Object = struct {
@@ -179,6 +184,11 @@ const Runtime = struct {
         return self.createObject(.{ .iterator = iterator }, .iterator);
     }
 
+    fn createFunction(self: *Runtime, callback: FunctionCallback, arity: usize) !Value {
+        try self.beforeAllocation();
+        return self.createObject(.{ .function = .{ .callback = callback, .arity = arity } }, .function);
+    }
+
     fn createObject(self: *Runtime, payload: Payload, tag: Tag) !Value {
         const object = try self.allocator.create(Object);
         errdefer self.allocator.destroy(object);
@@ -217,7 +227,7 @@ const Runtime = struct {
             self.grey = object.grey_next;
             object.grey_next = null;
             switch (object.payload) {
-                .utf16_string, .bigint => {},
+                .utf16_string, .bigint, .function => {},
                 .array => |items| for (items.items) |value| self.markValue(value),
                 .dictionary => |entries| for (entries.items) |entry| {
                     self.markValue(entry.key);
@@ -256,7 +266,7 @@ const Runtime = struct {
             .bigint => |*value| value.deinit(),
             .array => |*items| items.deinit(self.allocator),
             .dictionary => |*entries| entries.deinit(self.allocator),
-            .iterator => {},
+            .iterator, .function => {},
         }
         self.allocator.destroy(object);
     }
@@ -395,7 +405,7 @@ fn valueToNumberRuntime(runtime: *Runtime, value: Value) !f64 {
         .number => @bitCast(value.payload),
         .static_utf8_string, .utf16_string => parseStringNumber(runtime, value),
         .bigint => error.CannotConvertBigIntToNumber,
-        .array, .dictionary, .iterator => valueToNumberRuntime(runtime, try valueToPrimitive(runtime, value)),
+        .array, .dictionary, .iterator, .function => valueToNumberRuntime(runtime, try valueToPrimitive(runtime, value)),
     };
 }
 
@@ -408,7 +418,7 @@ fn valueToParseFloatRuntime(runtime: *Runtime, value: Value) !f64 {
             break :blk string_mod.parseFloatNumber(runtime.allocator, units);
         },
         .bigint => error.CannotConvertBigIntToNumber,
-        .array, .dictionary, .iterator => valueToParseFloatRuntime(runtime, try valueToPrimitive(runtime, value)),
+        .array, .dictionary, .iterator, .function => valueToParseFloatRuntime(runtime, try valueToPrimitive(runtime, value)),
         .undefined, .null_value, .boolean => std.math.nan(f64),
     };
 }
@@ -484,7 +494,8 @@ fn isString(value: Value) bool {
 }
 
 fn isObject(value: Value) bool {
-    return value.tag == @intFromEnum(Tag.array) or value.tag == @intFromEnum(Tag.dictionary) or value.tag == @intFromEnum(Tag.iterator);
+    return value.tag == @intFromEnum(Tag.array) or value.tag == @intFromEnum(Tag.dictionary) or
+        value.tag == @intFromEnum(Tag.iterator) or value.tag == @intFromEnum(Tag.function);
 }
 
 fn stringUtf8Alloc(runtime: *Runtime, value: Value) ![]u8 {
@@ -510,6 +521,7 @@ fn valueUtf16Alloc(runtime: *Runtime, value: Value) anyerror![]u16 {
         .bigint => try value.object().?.payload.bigint.toString(runtime.allocator, 10),
         .array => return arrayUtf16Alloc(runtime, value.object().?),
         .dictionary, .iterator => try runtime.allocator.dupe(u8, "[object Object]"),
+        .function => try runtime.allocator.dupe(u8, "function () { [native code] }"),
     };
     defer runtime.allocator.free(utf8);
     return std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, utf8);
@@ -539,6 +551,7 @@ fn valueToPrimitive(runtime: *Runtime, value: Value) !Value {
             break :blk try runtime.createString(units);
         },
         .dictionary, .iterator => staticStringValue("[object Object]"),
+        .function => staticStringValue("function () { [native code] }"),
         else => value,
     };
 }
@@ -572,7 +585,7 @@ fn strictEqual(runtime: *Runtime, left: Value, right: Value) !bool {
         },
         .bigint => BigInt.eql(left.object().?.payload.bigint, right.object().?.payload.bigint),
         .static_utf8_string, .utf16_string => unreachable,
-        .array, .dictionary, .iterator => left.payload == right.payload,
+        .array, .dictionary, .iterator, .function => left.payload == right.payload,
     };
 }
 
@@ -584,8 +597,8 @@ fn abstractEqual(runtime: *Runtime, left: Value, right: Value) !bool {
     if (isObject(left) and isObject(right)) return false;
     if (left_tag == .boolean) return abstractEqual(runtime, numberValue(if (left.payload == 0) 0 else 1), right);
     if (right_tag == .boolean) return abstractEqual(runtime, left, numberValue(if (right.payload == 0) 0 else 1));
-    if (left_tag == .array or left_tag == .dictionary or left_tag == .iterator) return abstractEqual(runtime, try valueToPrimitive(runtime, left), right);
-    if (right_tag == .array or right_tag == .dictionary or right_tag == .iterator) return abstractEqual(runtime, left, try valueToPrimitive(runtime, right));
+    if (left_tag == .array or left_tag == .dictionary or left_tag == .iterator or left_tag == .function) return abstractEqual(runtime, try valueToPrimitive(runtime, left), right);
+    if (right_tag == .array or right_tag == .dictionary or right_tag == .iterator or right_tag == .function) return abstractEqual(runtime, left, try valueToPrimitive(runtime, right));
     if (left_tag == .number and isString(right)) return @as(f64, @bitCast(left.payload)) == try valueToNumberRuntime(runtime, right);
     if (isString(left) and right_tag == .number) return try valueToNumberRuntime(runtime, left) == @as(f64, @bitCast(right.payload));
     if (left_tag == .bigint and isString(right)) return bigIntEqualsString(runtime, left.object().?.payload.bigint, right);
@@ -820,7 +833,7 @@ fn sameKey(left: Value, right: Value) bool {
         .static_utf8_string => std.mem.eql(u8, staticUtf8(left), staticUtf8(right)),
         .utf16_string => std.mem.eql(u16, left.object().?.payload.utf16_string, right.object().?.payload.utf16_string),
         .bigint => BigInt.eql(left.object().?.payload.bigint, right.object().?.payload.bigint),
-        .array, .dictionary, .iterator => left.payload == right.payload,
+        .array, .dictionary, .iterator, .function => left.payload == right.payload,
     };
 }
 
@@ -1008,6 +1021,23 @@ pub export fn lnako_aot_iterator_next(out: *Value, iterator: *const Value, repea
     out.* = if (active_runtime) |*runtime| runtime.iteratorNext(iterator.*, repeat_target, value_target, key_target, range_target) else .{};
 }
 
+pub export fn lnako_aot_function_new(out: *Value, callback: FunctionCallback, arity: usize) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*value| value else return;
+    out.* = runtime.createFunction(callback, arity) catch |failure| runtimeFailure(failure);
+}
+
+pub export fn lnako_aot_function_call(out: *Value, callable: *const Value, arguments: ?[*]const Value, len: usize) callconv(.c) void {
+    out.* = .{};
+    if (callable.tag != @intFromEnum(Tag.function)) runtimeFailure(error.NotCallable);
+    const object = callable.object() orelse runtimeFailure(error.NotCallable);
+    if (object.payload != .function) runtimeFailure(error.NotCallable);
+    const function = object.payload.function;
+    if (function.arity != len) runtimeFailure(error.InvalidArgumentCount);
+    if (arguments == null and len != 0) runtimeFailure(error.InvalidArguments);
+    out.* = function.callback(@ptrCast(object), arguments, len);
+}
+
 test "UTF-16文字列をルートから正確にmark-and-sweepする" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -1039,6 +1069,31 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_concat));
     try std.testing.expectEqual(*const fn (*Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_increment));
     try std.testing.expectEqual(*const fn (*const Value, bool) callconv(.c) void, @TypeOf(&lnako_aot_print_collection));
+    try std.testing.expectEqual(*const fn (*Value, FunctionCallback, usize) callconv(.c) void, @TypeOf(&lnako_aot_function_new));
+    try std.testing.expectEqual(*const fn (*Value, *const Value, ?[*]const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_function_call));
+}
+
+fn testAotFunction(_: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) Value {
+    if (arguments == null or len != 1) return .{};
+    return arguments.?[0];
+}
+
+test "AOT関数値を呼び出しGCで回収する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var function: Value = .{};
+    lnako_aot_function_new(&function, testAotFunction, 1);
+    var argument = numberValue(7);
+    var result: Value = .{};
+    lnako_aot_function_call(&result, &function, @ptrCast(&argument), 1);
+    try std.testing.expectEqual(argument.payload, result.payload);
+    try std.testing.expectEqual(@as(usize, 1), active_runtime.?.object_count);
+    try std.testing.expectEqual(@as(usize, 1), lnako_aot_collect());
 }
 
 test "ルートフレームをLIFOで連結する" {
