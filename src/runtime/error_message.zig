@@ -13,6 +13,8 @@ pub fn forFailure(failure: anyerror) []const u8 {
         error.StartsWithUndefinedReceiver => "Cannot read properties of undefined (reading 'startsWith')",
         error.EndsWithNullReceiver => "Cannot read properties of null (reading 'endsWith')",
         error.EndsWithUndefinedReceiver => "Cannot read properties of undefined (reading 'endsWith')",
+        error.CutNullDelimiterLength => "Cannot read properties of null (reading 'length')",
+        error.CutUndefinedDelimiterLength => "Cannot read properties of undefined (reading 'length')",
         error.CannotConvertNullToBigInt => "Cannot convert null to a BigInt",
         error.CannotConvertUndefinedToBigInt => "Cannot convert undefined to a BigInt",
         else => @errorName(failure),

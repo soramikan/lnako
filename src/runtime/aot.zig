@@ -1258,6 +1258,32 @@ pub export fn lnako_aot_function_call(out: *Value, callable: *const Value, argum
     function.callback(out, @ptrCast(object), call_arguments, function.arity);
 }
 
+/// Dedicated ABI for the two commands that update the system `対象` value.
+/// The target is explicit so a local variable named 対象 can never shadow the
+/// command's side effect in generated LLVM.
+pub export fn lnako_aot_cut(out: *Value, target: *Value, arguments: ?[*]const Value, len: usize, mode: u8) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    if (arguments == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const required: usize = if (mode == 0) 2 else if (mode == 1) 3 else 0;
+    if (required == 0 or len < required) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const values = arguments.?;
+    const result = cutBuiltin(runtime, values[0], values[1], if (mode == 1) values[2] else null, mode == 1) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    // cutBuiltin roots both values until this point; assign only after both
+    // allocations and all delayed property accesses have succeeded.
+    out.* = result.result;
+    target.* = result.remainder;
+}
+
 pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, len: usize, opcode: u16) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*active| active else return;
@@ -1682,6 +1708,10 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
             };
             out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(found) };
         },
+        // LLVM lowers these side-effecting commands through lnako_aot_cut,
+        // which receives the mandatory global 対象 pointer.  Keep the generic
+        // dispatcher explicit so an accidental ABI mismatch fails safely.
+        .cut, .cut_range => runtime.setFailure(error.CutRequiresTarget),
         .substring_mid, .substring_left, .substring_right => {
             const required: usize = if (command == .substring_mid) 3 else 2;
             if (len < required) {
@@ -2019,6 +2049,106 @@ fn jsAdd(runtime: *Runtime, left: Value, right: Value) !Value {
     if (isString(roots[2]) or isString(roots[3])) return concat(runtime, roots[2], roots[3]);
     if (roots[2].tag == @intFromEnum(Tag.bigint) or roots[3].tag == @intFromEnum(Tag.bigint)) return bigIntArithmetic(runtime, .add, roots[2], roots[3]);
     return numberValue(try valueToNumberRuntime(runtime, roots[2]) + try valueToNumberRuntime(runtime, roots[3]));
+}
+
+const CutResult = struct { result: Value, remainder: Value };
+
+/// `切取` and `範囲切取` deliberately use two different lengths for a
+/// delimiter: `indexOf` stringifies the argument, but the following
+/// `substring(index + delimiter.length)` reads the original value's property.
+/// Keep this helper in the AOT runtime so the generated executable does not
+/// need a JavaScript compatibility layer.
+fn cutLengthProperty(runtime: *Runtime, value: Value) !Value {
+    return switch (@as(Tag, @enumFromInt(value.tag))) {
+        .undefined => error.CutUndefinedDelimiterLength,
+        .null_value => error.CutNullDelimiterLength,
+        .static_utf8_string, .utf16_string => blk: {
+            const units = try valueUtf16Alloc(runtime, value);
+            defer runtime.allocator.free(units);
+            break :blk numberValue(@floatFromInt(units.len));
+        },
+        .array => numberValue(@floatFromInt(value.object().?.payload.array.items.len)),
+        .function => numberValue(@floatFromInt(value.object().?.payload.function.arity)),
+        .dictionary => dictionaryLengthValue(value),
+        else => .{},
+    };
+}
+
+fn dictionaryLengthValue(value: Value) Value {
+    const entries = value.object().?.payload.dictionary.items;
+    for (entries) |entry| {
+        const is_length = switch (@as(Tag, @enumFromInt(entry.key.tag))) {
+            .static_utf8_string => std.mem.eql(u8, staticUtf8(entry.key), "length"),
+            .utf16_string => std.mem.eql(u16, entry.key.object().?.payload.utf16_string, &.{ 'l', 'e', 'n', 'g', 't', 'h' }),
+            else => false,
+        };
+        if (is_length) return entry.value;
+    }
+    return .{};
+}
+
+fn cutEndIndex(runtime: *Runtime, match_index: usize, delimiter: Value, source_length: usize) !usize {
+    const length = try cutLengthProperty(runtime, delimiter);
+    const sum = try jsAdd(runtime, numberValue(@floatFromInt(match_index)), length);
+    const number = try valueToNumberRuntime(runtime, sum);
+    if (std.math.isNan(number) or number <= 0) return 0;
+    if (!std.math.isFinite(number) or number >= @as(f64, @floatFromInt(source_length))) return source_length;
+    return @intFromFloat(@trunc(number));
+}
+
+fn cutBuiltin(runtime: *Runtime, source: Value, first: Value, last: ?Value, range: bool) !CutResult {
+    var roots = [_]Value{ source, first, last orelse .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    const source_units = try valueUtf16Alloc(runtime, roots[0]);
+    defer runtime.allocator.free(source_units);
+    const first_units = try valueUtf16Alloc(runtime, roots[1]);
+    defer runtime.allocator.free(first_units);
+    const first_index = indexOfUnitsBuiltin(source_units, first_units, 0);
+    if (first_index == null) {
+        if (range) {
+            roots[3] = try runtime.createString(&.{});
+            roots[4] = try runtime.createString(source_units);
+        } else {
+            roots[3] = try runtime.createString(source_units);
+            roots[4] = try runtime.createString(&.{});
+        }
+        return .{ .result = roots[3], .remainder = roots[4] };
+    }
+    const first_start = first_index.?;
+    const middle_start = try cutEndIndex(runtime, first_start, roots[1], source_units.len);
+    if (!range) {
+        roots[3] = try runtime.createString(source_units[0..first_start]);
+        roots[4] = try runtime.createString(source_units[middle_start..]);
+        return .{ .result = roots[3], .remainder = roots[4] };
+    }
+
+    // Delimiter B is converted only after A matched.  In particular, a null
+    // or undefined B is harmless when A is absent, matching String#indexOf.
+    const last_value = roots[2];
+    const last_units = try valueUtf16Alloc(runtime, last_value);
+    defer runtime.allocator.free(last_units);
+    const prefix = source_units[0..first_start];
+    const relative_last = indexOfUnitsBuiltin(source_units[middle_start..], last_units, 0);
+    if (relative_last == null) {
+        roots[3] = try runtime.createString(source_units[middle_start..]);
+        roots[4] = try runtime.createString(prefix);
+        return .{ .result = roots[3], .remainder = roots[4] };
+    }
+    const last_relative = relative_last.?;
+    const last_end = middle_start + try cutEndIndex(runtime, last_relative, last_value, source_units.len - middle_start);
+    roots[3] = try runtime.createString(source_units[middle_start .. middle_start + last_relative]);
+    roots[4] = try runtime.createString(prefix);
+    if (last_end < source_units.len) {
+        const combined_len = std.math.add(usize, prefix.len, source_units.len - last_end) catch return error.StringTooLarge;
+        const combined = try runtime.allocator.alloc(u16, combined_len);
+        @memcpy(combined[0..prefix.len], prefix);
+        @memcpy(combined[prefix.len..], source_units[last_end..]);
+        roots[4] = try runtime.ownString(combined);
+    }
+    return .{ .result = roots[3], .remainder = roots[4] };
 }
 
 fn sequentialAddBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
@@ -2740,11 +2870,111 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, FunctionCallback, usize, ?[*]const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_function_new));
     try std.testing.expectEqual(*const fn (*Value, *anyopaque, usize) callconv(.c) void, @TypeOf(&lnako_aot_function_capture));
     try std.testing.expectEqual(*const fn (*Value, *const Value, ?[*]const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_function_call));
+    try std.testing.expectEqual(*const fn (*Value, *Value, ?[*]const Value, usize, u8) callconv(.c) void, @TypeOf(&lnako_aot_cut));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16) callconv(.c) void, @TypeOf(&lnako_aot_builtin_call));
     try std.testing.expectEqual(*const fn (*const Value, bool) callconv(.c) void, @TypeOf(&lnako_aot_print_number));
     try std.testing.expectEqual(*const fn (*const Value) callconv(.c) void, @TypeOf(&lnako_aot_exception_set));
     try std.testing.expectEqual(*const fn () callconv(.c) c_int, @TypeOf(&lnako_aot_exception_pending));
     try std.testing.expectEqual(*const fn (*Value) callconv(.c) void, @TypeOf(&lnako_aot_exception_take));
+}
+
+test "AOT切取はUTF-16検索と元値lengthの遅延評価を再現する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try active_runtime.?.createString(&.{ 'a', ':', 'b', ':', 'c' });
+    roots[1] = try active_runtime.?.createString(&.{':'});
+    var cut_arguments = [_]Value{ roots[0], roots[1] };
+    roots[2] = try active_runtime.?.createString(&.{ 'k', 'e', 'e', 'p' });
+    lnako_aot_cut(&roots[3], &roots[2], &cut_arguments, cut_arguments.len, 0);
+    try std.testing.expectEqualSlices(u16, &.{'a'}, roots[3].object().?.payload.utf16_string);
+    try std.testing.expectEqualSlices(u16, &.{ 'b', ':', 'c' }, roots[2].object().?.payload.utf16_string);
+
+    roots[4] = try active_runtime.?.createString(&.{ 'a', '[', 'b', ']', 'c', '[', 'd', ']', 'e' });
+    roots[5] = try active_runtime.?.createString(&.{'['});
+    roots[6] = try active_runtime.?.createString(&.{']'});
+    var range_arguments = [_]Value{ roots[4], roots[5], roots[6] };
+    lnako_aot_cut(&roots[7], &roots[2], &range_arguments, range_arguments.len, 1);
+    try std.testing.expectEqualSlices(u16, &.{'b'}, roots[7].object().?.payload.utf16_string);
+    try std.testing.expectEqualSlices(u16, &.{ 'a', 'c', '[', 'd', ']', 'e' }, roots[2].object().?.payload.utf16_string);
+
+    roots[8] = try active_runtime.?.createString(&.{ '1', '2', '3', 'X' });
+    const number_arguments = [_]Value{ roots[8], numberValue(123) };
+    lnako_aot_cut(&roots[9], &roots[2], &number_arguments, number_arguments.len, 0);
+    try std.testing.expectEqualSlices(u16, &.{}, roots[9].object().?.payload.utf16_string);
+    try std.testing.expectEqualSlices(u16, &.{ '1', '2', '3', 'X' }, roots[2].object().?.payload.utf16_string);
+
+    roots[10] = try active_runtime.?.createArray(&.{ numberValue(1), numberValue(2) });
+    roots[11] = try active_runtime.?.createString(&.{ '1', ',', '2', 'X' });
+    const array_arguments = [_]Value{ roots[11], roots[10] };
+    lnako_aot_cut(&roots[12], &roots[2], &array_arguments, array_arguments.len, 0);
+    try std.testing.expectEqualSlices(u16, &.{}, roots[12].object().?.payload.utf16_string);
+    try std.testing.expectEqualSlices(u16, &.{ '2', 'X' }, roots[2].object().?.payload.utf16_string);
+
+    roots[18] = try active_runtime.?.createString(&.{ 't', 'r', 'u', 'e', 'X' });
+    const boolean_arguments = [_]Value{ roots[18], .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 } };
+    lnako_aot_cut(&roots[19], &roots[2], &boolean_arguments, boolean_arguments.len, 0);
+    try std.testing.expectEqualSlices(u16, &.{}, roots[19].object().?.payload.utf16_string);
+    try std.testing.expectEqualSlices(u16, &.{ 't', 'r', 'u', 'e', 'X' }, roots[2].object().?.payload.utf16_string);
+
+    roots[13] = try active_runtime.?.createDictionary(&.{ staticStringValue("length"), numberValue(2) });
+    roots[14] = try active_runtime.?.createString(&.{ '[', 'o', 'b', 'j', 'e', 'c', 't', ' ', 'O', 'b', 'j', 'e', 'c', 't', ']', 'X' });
+    const dictionary_arguments = [_]Value{ roots[14], roots[13] };
+    lnako_aot_cut(&roots[15], &roots[2], &dictionary_arguments, dictionary_arguments.len, 0);
+    try std.testing.expectEqualSlices(u16, &.{}, roots[15].object().?.payload.utf16_string);
+    try std.testing.expectEqualSlices(u16, &.{ 'b', 'j', 'e', 'c', 't', ' ', 'O', 'b', 'j', 'e', 'c', 't', ']', 'X' }, roots[2].object().?.payload.utf16_string);
+
+    lnako_aot_function_new(&roots[10], testAotFunction, 1, null, 0);
+    const function_arguments = [_]Value{ staticStringValue("function () { [native code] }X"), roots[10] };
+    lnako_aot_cut(&roots[11], &roots[2], &function_arguments, function_arguments.len, 0);
+    try std.testing.expectEqualSlices(u16, &.{}, roots[11].object().?.payload.utf16_string);
+    try std.testing.expectEqualSlices(u16, &.{ 'u', 'n', 'c', 't', 'i', 'o', 'n', ' ', '(', ')', ' ', '{', ' ', '[', 'n', 'a', 't', 'i', 'v', 'e', ' ', 'c', 'o', 'd', 'e', ']', ' ', '}', 'X' }, roots[2].object().?.payload.utf16_string);
+
+    roots[16] = try active_runtime.?.createString(&.{ 0xd83d, 0xde00, 0, 0xd800 });
+    roots[17] = try active_runtime.?.createString(&.{ 0xd83d, 0xde00 });
+    const unicode_arguments = [_]Value{ roots[16], roots[17] };
+    try std.testing.expectEqual(@as(?usize, 0), indexOfUnitsBuiltin(roots[16].object().?.payload.utf16_string, roots[17].object().?.payload.utf16_string, 0));
+    try std.testing.expectEqual(@as(usize, 2), try cutEndIndex(&active_runtime.?, 0, roots[17], 4));
+    active_runtime.?.next_collection = active_runtime.?.object_count;
+    lnako_aot_cut(&roots[3], &roots[2], &unicode_arguments, unicode_arguments.len, 0);
+    try std.testing.expectEqualSlices(u16, &.{}, roots[3].object().?.payload.utf16_string);
+    try std.testing.expectEqualSlices(u16, &.{ 0, 0xd800 }, roots[2].object().?.payload.utf16_string);
+
+    const absent_range_arguments = [_]Value{ roots[16], staticStringValue("missing"), .{ .tag = @intFromEnum(Tag.null_value) } };
+    lnako_aot_cut(&roots[3], &roots[2], &absent_range_arguments, absent_range_arguments.len, 1);
+    try std.testing.expect(!active_runtime.?.has_pending_exception);
+    try std.testing.expectEqualSlices(u16, &.{}, roots[3].object().?.payload.utf16_string);
+    try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00, 0, 0xd800 }, roots[2].object().?.payload.utf16_string);
+
+    const undefined_nonmatch_arguments = [_]Value{ staticStringValue("abc"), .{} };
+    lnako_aot_cut(&roots[3], &roots[2], &undefined_nonmatch_arguments, undefined_nonmatch_arguments.len, 0);
+    try std.testing.expect(!active_runtime.?.has_pending_exception);
+    try std.testing.expectEqualSlices(u16, &.{ 'a', 'b', 'c' }, roots[3].object().?.payload.utf16_string);
+    try std.testing.expectEqualSlices(u16, &.{}, roots[2].object().?.payload.utf16_string);
+
+    roots[2] = try active_runtime.?.createString(&.{ 'k', 'e', 'e', 'p' });
+    const null_match_arguments = [_]Value{ staticStringValue("null"), .{ .tag = @intFromEnum(Tag.null_value) } };
+    lnako_aot_cut(&roots[3], &roots[2], &null_match_arguments, null_match_arguments.len, 0);
+    try std.testing.expect(active_runtime.?.has_pending_exception);
+    try std.testing.expectEqualSlices(u16, &.{ 'k', 'e', 'e', 'p' }, roots[2].object().?.payload.utf16_string);
+    lnako_aot_exception_take(&roots[1]);
+    try std.testing.expect(!active_runtime.?.has_pending_exception);
+
+    const undefined_match_arguments = [_]Value{ staticStringValue("undefined"), .{} };
+    lnako_aot_cut(&roots[3], &roots[2], &undefined_match_arguments, undefined_match_arguments.len, 0);
+    try std.testing.expect(active_runtime.?.has_pending_exception);
+    try std.testing.expectEqualSlices(u16, &.{ 'k', 'e', 'e', 'p' }, roots[2].object().?.payload.utf16_string);
+    lnako_aot_exception_take(&roots[1]);
+    try std.testing.expect(!active_runtime.?.has_pending_exception);
 }
 
 fn testAotFunction(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {

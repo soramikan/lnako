@@ -3672,7 +3672,11 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-string-core"
+        "plugin-system-string-core",
+        "native-cut-commands",
+        "native-cut-user-function-name-precedence",
+        "native-cut-global-target-with-local-shadow",
+        "native-cut-empty-and-range-boundaries"
       ],
       "platforms": [
         "macos-aarch64",
@@ -3698,7 +3702,9 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-string-core"
+        "plugin-system-string-core",
+        "native-cut-commands",
+        "native-cut-empty-and-range-boundaries"
       ],
       "platforms": [
         "macos-aarch64",

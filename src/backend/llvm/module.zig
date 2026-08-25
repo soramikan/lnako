@@ -175,6 +175,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_function_new(ptr, ptr, i64, ptr, i64)\n" ++
                 "declare void @lnako_aot_function_capture(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_function_call(ptr, ptr, ptr, i64)\n" ++
+                "declare void @lnako_aot_cut(ptr, ptr, ptr, i64, i8)\n" ++
                 "declare void @lnako_aot_builtin_call(ptr, ptr, i64, i16)\n" ++
                 "declare i32 @printf(ptr, ...)\n" ++
                 "declare i32 @puts(ptr)\n" ++
@@ -257,6 +258,11 @@ const Emitter = struct {
             }
             if (instruction.opcode == .exception_take and self.globalIndex("エラーメッセージ") == null) {
                 try self.globals.append(self.allocator, "エラーメッセージ");
+            }
+            if (instruction.opcode == .call and instruction.direct_callee == null) {
+                if (aot_builtin.lookup(instruction.name)) |command| if (command == .cut or command == .cut_range) {
+                    if (self.globalIndex("対象") == null) try self.globals.append(self.allocator, "対象");
+                };
             }
             if (instruction.opcode == .const_string) {
                 const value_id = instruction.result orelse return error.InvalidStringConstant;
@@ -838,7 +844,7 @@ const Emitter = struct {
 
     fn writeCall(self: *Emitter, function: ir.Function, locals: []const []const u8, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
         const result = instruction.result orelse return error.MissingInstructionResult;
-        if (isDisplayCall(instruction.name)) {
+        if (instruction.direct_callee == null and isDisplayCall(instruction.name)) {
             if (instruction.operands.len == 0) return error.InvalidCall;
             try self.output.writer.print("  %v{d} = call %lnako.Value @lnako.display(%lnako.Value ", .{result});
             try self.writeValueRef(function, instruction.operands[instruction.operands.len - 1]);
@@ -846,11 +852,11 @@ const Emitter = struct {
             try self.debugSuffix(instruction.span, scope);
             return;
         }
-        if (aot_builtin.lookup(instruction.name)) |command| {
+        if (instruction.direct_callee == null) if (aot_builtin.lookup(instruction.name)) |command| {
             try self.writeBuiltinCall(function, instruction, scope, aggregate_count, command);
             try self.writeCallResult(result, instruction.span, scope);
             return;
-        }
+        };
         const callee = if (instruction.direct_callee) |callee_id|
             if (callee_id < self.program.functions.len) self.program.functions[callee_id] else return error.InvalidDirectCallee
         else
@@ -886,11 +892,21 @@ const Emitter = struct {
             try self.output.writer.print(", ptr %builtin.{d}.slot.{d}", .{ result, index });
             try self.debugSuffix(instruction.span, scope);
         }
-        try self.output.writer.print("  call void @lnako_aot_builtin_call(ptr %root.slot.{d}, ptr ", .{result});
-        if (instruction.operands.len > 0) {
-            try self.output.writer.print("%builtin.{d}.slot.0", .{result});
-        } else try self.output.writer.writeAll("null");
-        try self.output.writer.print(", i64 {d}, i16 {d})", .{ instruction.operands.len, @intFromEnum(command) });
+        if (command == .cut or command == .cut_range) {
+            const target_index = self.globalIndex("対象") orelse return error.MissingTargetGlobal;
+            const mode: u8 = if (command == .cut) 0 else 1;
+            try self.output.writer.print("  call void @lnako_aot_cut(ptr %root.slot.{d}, ptr @lnako.global.{d}, ptr ", .{ result, target_index });
+            if (instruction.operands.len > 0) {
+                try self.output.writer.print("%builtin.{d}.slot.0", .{result});
+            } else try self.output.writer.writeAll("null");
+            try self.output.writer.print(", i64 {d}, i8 {d})", .{ instruction.operands.len, mode });
+        } else {
+            try self.output.writer.print("  call void @lnako_aot_builtin_call(ptr %root.slot.{d}, ptr ", .{result});
+            if (instruction.operands.len > 0) {
+                try self.output.writer.print("%builtin.{d}.slot.0", .{result});
+            } else try self.output.writer.writeAll("null");
+            try self.output.writer.print(", i64 {d}, i16 {d})", .{ instruction.operands.len, @intFromEnum(command) });
+        }
         try self.debugSuffix(instruction.span, scope);
         try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try self.debugSuffix(instruction.span, scope);

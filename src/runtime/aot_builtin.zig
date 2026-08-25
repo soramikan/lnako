@@ -64,6 +64,8 @@ pub const Command = enum(u16) {
     refrain,
     occurrence_count,
     occurrence,
+    cut,
+    cut_range,
     substring_mid,
     substring_left,
     substring_right,
@@ -160,6 +162,8 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "リフレイン")) return .refrain;
     if (std.mem.eql(u8, name, "出現回数")) return .occurrence_count;
     if (std.mem.eql(u8, name, "出現")) return .occurrence;
+    if (std.mem.eql(u8, name, "切取")) return .cut;
+    if (std.mem.eql(u8, name, "範囲切取")) return .cut_range;
     if (std.mem.eql(u8, name, "MID") or std.mem.eql(u8, name, "文字抜出")) return .substring_mid;
     if (std.mem.eql(u8, name, "LEFT") or std.mem.eql(u8, name, "文字左部分")) return .substring_left;
     if (std.mem.eql(u8, name, "RIGHT") or std.mem.eql(u8, name, "文字右部分")) return .substring_right;
@@ -204,6 +208,8 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.to_float, lookup("実数変換").?);
     try std.testing.expectEqual(Command.to_float, lookup("TOFLOAT").?);
     try std.testing.expectEqual(Command.to_float, lookup("FLOAT").?);
+    try std.testing.expectEqual(Command.cut, lookup("切取").?);
+    try std.testing.expectEqual(Command.cut_range, lookup("範囲切取").?);
     try std.testing.expectEqual(Command.is_nan, lookup("NAN判定").?);
     try std.testing.expectEqual(Command.is_number_nan, lookup("非数判定").?);
     try std.testing.expectEqual(Command.radix16, lookup("HEX").?);

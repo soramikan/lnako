@@ -2,6 +2,7 @@ const std = @import("std");
 const value_mod = @import("../../runtime/value.zig");
 const string_mod = @import("../../runtime/string.zig");
 const common = @import("common.zig");
+const operators = @import("../../runtime/operators.zig");
 const unicode_case = @import("../../generated/unicode_case.zig");
 
 pub const Value = value_mod.Value;
@@ -168,41 +169,87 @@ fn handles(name: []const u8) bool {
 pub fn cut(runtime: *Runtime, source: Value, delimiter: Value) !CutResult {
     var roots = runtime.rootFrame();
     defer roots.deinit();
-    var source_text = try runtime.valueToString(source);
+    var source_root = source;
+    var delimiter_root = delimiter;
+    try roots.protect(&source_root);
+    try roots.protect(&delimiter_root);
+    var source_text = try runtime.valueToString(source_root);
     try roots.protect(&source_text);
-    var delimiter_text = try runtime.valueToString(delimiter);
+    var delimiter_text = try runtime.valueToString(delimiter_root);
     try roots.protect(&delimiter_text);
     const source_units = source_text.string.units;
     const delimiter_units = delimiter_text.string.units;
     const found = indexOfUnits(source_units, delimiter_units, 0);
-    const result_units = if (found) |index| source_units[0..index] else source_units;
-    const remainder_units = if (found) |index| source_units[index + delimiter_units.len ..] else &.{};
+    if (found == null) return makeCutResult(runtime, source_units, &.{});
+    const index = found.?;
+    const end = try cutEndIndex(runtime, index, delimiter_root, source_units.len);
+    const result_units = source_units[0..index];
+    const remainder_units = source_units[end..];
     return makeCutResult(runtime, result_units, remainder_units);
 }
 
 pub fn cutRange(runtime: *Runtime, source: Value, first: Value, last: Value) !CutResult {
     var roots = runtime.rootFrame();
     defer roots.deinit();
-    var source_text = try runtime.valueToString(source);
+    var source_root = source;
+    var first_root = first;
+    var last_root = last;
+    try roots.protect(&source_root);
+    try roots.protect(&first_root);
+    try roots.protect(&last_root);
+    var source_text = try runtime.valueToString(source_root);
     try roots.protect(&source_text);
-    var first_text = try runtime.valueToString(first);
+    var first_text = try runtime.valueToString(first_root);
     try roots.protect(&first_text);
-    var last_text = try runtime.valueToString(last);
-    try roots.protect(&last_text);
     const source_units = source_text.string.units;
     const first_units = first_text.string.units;
-    const last_units = last_text.string.units;
     const first_index = indexOfUnits(source_units, first_units, 0) orelse return makeCutResult(runtime, &.{}, source_units);
+    const middle_start = try cutEndIndex(runtime, first_index, first_root, source_units.len);
+    // The official implementation does not even String-coerce or inspect the
+    // second delimiter until the first delimiter has matched.
+    var last_text = try runtime.valueToString(last_root);
+    try roots.protect(&last_text);
+    const last_units = last_text.string.units;
     const prefix = source_units[0..first_index];
-    const middle_start = first_index + first_units.len;
     const last_relative = indexOfUnits(source_units[middle_start..], last_units, 0);
     if (last_relative == null) return makeCutResult(runtime, source_units[middle_start..], prefix);
     const last_index = middle_start + last_relative.?;
-    var remainder_units = try runtime.allocator().alloc(u16, prefix.len + source_units.len - last_index - last_units.len);
+    const last_end = middle_start + try cutEndIndex(runtime, last_relative.?, last_root, source_units.len - middle_start);
+    const remainder_length = std.math.add(usize, prefix.len, source_units.len - last_end) catch return error.StringTooLarge;
+    var remainder_units = try runtime.allocator().alloc(u16, remainder_length);
     defer runtime.allocator().free(remainder_units);
     @memcpy(remainder_units[0..prefix.len], prefix);
-    @memcpy(remainder_units[prefix.len..], source_units[last_index + last_units.len ..]);
+    @memcpy(remainder_units[prefix.len..], source_units[last_end..]);
     return makeCutResult(runtime, source_units[middle_start..last_index], remainder_units);
+}
+
+/// `切取` and `範囲切取` search with a String-coerced delimiter, but advance
+/// with the original value's `.length`.  This intentionally keeps the two
+/// operations separate: accessing `.length` on null/undefined throws only
+/// after a match, while primitives such as numbers simply expose undefined.
+fn cutEndIndex(runtime: *Runtime, match_index: usize, delimiter: Value, source_length: usize) !usize {
+    const length = try cutLengthProperty(runtime, delimiter);
+    const sum = try operators.binary(runtime, .add, .{ .number = @floatFromInt(match_index) }, length);
+    const number = try runtime.valueToNumber(sum);
+    if (std.math.isNan(number) or number <= 0) return 0;
+    if (!std.math.isFinite(number) or number >= @as(f64, @floatFromInt(source_length))) return source_length;
+    return @intFromFloat(@trunc(number));
+}
+
+fn cutLengthProperty(runtime: *Runtime, value: Value) !Value {
+    return switch (value) {
+        .undefined => error.CutUndefinedDelimiterLength,
+        .null_value => error.CutNullDelimiterLength,
+        .string => |string| .{ .number = @floatFromInt(string.units.len) },
+        .bytes => |buffer| if (buffer.kind == .array_buffer) .undefined else .{ .number = @floatFromInt(buffer.bytes.len) },
+        .array => |array| .{ .number = @floatFromInt(array.items.items.len) },
+        .function => |function| .{ .number = @floatFromInt(function.arity) },
+        .dictionary => |dictionary| blk: {
+            const key = try runtime.stringUtf8("length");
+            break :blk dictionary.get(key.string) orelse .undefined;
+        },
+        else => .undefined,
+    };
 }
 
 fn makeCutResult(runtime: *Runtime, result_units: []const u16, remainder_units: []const u16) !CutResult {
@@ -958,6 +1005,33 @@ test "指定形式と文字種判定の公式境界を処理する" {
     try std.testing.expect((try call(&runtime, "数列判定", &.{try runtime.createArray()})).?.boolean);
 }
 
+test "切取系命令はUTF-16と遅延length参照を公式どおり処理する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const cut_result = try cut(&runtime, try runtime.stringUtf8("A😀B"), try runtime.stringUtf8("😀"));
+    try std.testing.expectEqualSlices(u16, &.{'A'}, cut_result.result.string.units);
+    try std.testing.expectEqualSlices(u16, &.{'B'}, cut_result.remainder.string.units);
+
+    const range_result = try cutRange(&runtime, try runtime.stringUtf8("a[b]c[d]e"), try runtime.stringUtf8("["), try runtime.stringUtf8("]"));
+    try std.testing.expectEqualSlices(u16, &.{'b'}, range_result.result.string.units);
+    try std.testing.expectEqualSlices(u16, &.{ 'a', 'c', '[', 'd', ']', 'e' }, range_result.remainder.string.units);
+
+    const number_result = try cut(&runtime, try runtime.stringUtf8("123X"), .{ .number = 123 });
+    try std.testing.expectEqualSlices(u16, &.{}, number_result.result.string.units);
+    try std.testing.expectEqualSlices(u16, &.{ '1', '2', '3', 'X' }, number_result.remainder.string.units);
+
+    const dictionary = try runtime.createDictionary();
+    try common.dictionarySetUtf8(&runtime, dictionary.dictionary, "length", .{ .number = 2 });
+    const dictionary_result = try cut(&runtime, try runtime.stringUtf8("[object Object]X"), dictionary);
+    try std.testing.expectEqualSlices(u16, &.{}, dictionary_result.result.string.units);
+    try std.testing.expectEqualSlices(u16, &.{ 'b', 'j', 'e', 'c', 't', ' ', 'O', 'b', 'j', 'e', 'c', 't', ']', 'X' }, dictionary_result.remainder.string.units);
+
+    const absent = try cutRange(&runtime, try runtime.stringUtf8("abc"), try runtime.stringUtf8("x"), .null_value);
+    try std.testing.expectEqualSlices(u16, &.{}, absent.result.string.units);
+    try std.testing.expectEqualSlices(u16, &.{ 'a', 'b', 'c' }, absent.remainder.string.units);
+    try std.testing.expectError(error.CutNullDelimiterLength, cut(&runtime, try runtime.stringUtf8("null"), .null_value));
+}
+
 test "GCストレス中に非文字列引数を安全に文字列命令へ変換する" {
     var runtime = Runtime.init(std.testing.allocator);
     defer runtime.deinit();
@@ -969,5 +1043,7 @@ test "GCストレス中に非文字列引数を安全に文字列命令へ変換
     const cut_result = try cutRange(&runtime, .{ .number = 12345 }, .{ .number = 2 }, .{ .number = 4 });
     const middle = try cut_result.result.string.toUtf8Lossy(std.testing.allocator);
     defer std.testing.allocator.free(middle);
-    try std.testing.expectEqualStrings("3", middle);
+    // The official implementation searches with String(number), then reads
+    // number.length (undefined), so each substring endpoint becomes NaN/0.
+    try std.testing.expectEqualStrings("123", middle);
 }

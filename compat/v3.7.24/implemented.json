@@ -941,14 +941,20 @@
   "切取": {
     "status": "native",
     "tests": [
-      "plugin-system-string-core"
+      "plugin-system-string-core",
+      "native-cut-commands",
+      "native-cut-user-function-name-precedence",
+      "native-cut-global-target-with-local-shadow",
+      "native-cut-empty-and-range-boundaries"
     ],
     "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
   },
   "範囲切取": {
     "status": "native",
     "tests": [
-      "plugin-system-string-core"
+      "plugin-system-string-core",
+      "native-cut-commands",
+      "native-cut-empty-and-range-boundaries"
     ],
     "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
   },
