@@ -1380,35 +1380,49 @@
   "配列複製": {
     "status": "native",
     "tests": [
-      "plugin-system-array-core"
+      "plugin-system-array-core",
+      "native-system-array-copy-reference-commands",
+      "native-system-array-clone-undefined-error",
+      "native-system-array-clone-bigint-error",
+      "native-system-array-clone-circular-error"
     ],
     "reason": "公式と同じJSON規則の深い複製を実装し、公式差分テストに成功"
   },
   "配列範囲コピー": {
     "status": "native",
     "tests": [
-      "plugin-system-array-core"
+      "plugin-system-array-core",
+      "native-system-array-copy-reference-commands",
+      "native-system-array-range-copy-null-error",
+      "native-system-array-range-copy-receiver-error"
     ],
-    "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
+    "reason": "範囲結果のJSON深い複製を実装し、BigInt範囲端の数値化差をTODOとして分離して公式差分テストに成功"
   },
   "参照": {
     "status": "native",
     "tests": [
-      "plugin-system-array-core"
+      "plugin-system-array-core",
+      "native-system-array-copy-reference-commands",
+      "native-system-reference-null-error",
+      "native-system-reference-string-range-error"
     ],
-    "reason": "UTF-16文字列・配列・辞書の参照を実装し、公式差分テストに成功"
+    "reason": "UTF-16文字列・配列・own辞書の参照を実装し、継承プロパティとBigInt範囲端の差をTODOとして分離して公式差分テストに成功"
   },
   "配列参照": {
     "status": "native",
     "tests": [
-      "plugin-system-array-core"
+      "plugin-system-array-core",
+      "native-system-array-copy-reference-commands",
+      "native-system-reference-null-error",
+      "native-system-reference-string-range-error"
     ],
-    "reason": "参照の別名として実装し、公式差分テストに成功"
+    "reason": "参照の別名として実装し、継承プロパティとBigInt範囲端の差をTODOとして分離して公式差分テストに成功"
   },
   "配列足": {
     "status": "native",
     "tests": [
-      "plugin-system-array-core"
+      "plugin-system-array-core",
+      "native-system-array-copy-reference-commands"
     ],
     "reason": "公式のJSON複製を含む挙動を実装し、公式差分テストに成功"
   },

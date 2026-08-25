@@ -59,6 +59,10 @@ pub const Command = enum(u16) {
     array_take,
     array_pop,
     array_push,
+    array_clone,
+    array_range_copy,
+    reference,
+    array_add,
     add_parsed,
     sum_parsed,
     sequential_add,
@@ -166,6 +170,10 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "配列取出")) return .array_take;
     if (std.mem.eql(u8, name, "配列ポップ")) return .array_pop;
     if (std.mem.eql(u8, name, "配列プッシュ") or std.mem.eql(u8, name, "配列追加")) return .array_push;
+    if (std.mem.eql(u8, name, "配列複製")) return .array_clone;
+    if (std.mem.eql(u8, name, "配列範囲コピー")) return .array_range_copy;
+    if (std.mem.eql(u8, name, "参照") or std.mem.eql(u8, name, "配列参照")) return .reference;
+    if (std.mem.eql(u8, name, "配列足")) return .array_add;
     if (std.mem.eql(u8, name, "足")) return .add_parsed;
     if (std.mem.eql(u8, name, "合計")) return .sum_parsed;
     if (std.mem.eql(u8, name, "連続加算")) return .sequential_add;
@@ -290,6 +298,11 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.array_pop, lookup("配列ポップ").?);
     try std.testing.expectEqual(Command.array_push, lookup("配列プッシュ").?);
     try std.testing.expectEqual(Command.array_push, lookup("配列追加").?);
+    try std.testing.expectEqual(Command.array_clone, lookup("配列複製").?);
+    try std.testing.expectEqual(Command.array_range_copy, lookup("配列範囲コピー").?);
+    try std.testing.expectEqual(Command.reference, lookup("参照").?);
+    try std.testing.expectEqual(Command.reference, lookup("配列参照").?);
+    try std.testing.expectEqual(Command.array_add, lookup("配列足").?);
     try std.testing.expectEqual(Command.add_parsed, lookup("足").?);
     try std.testing.expectEqual(Command.sum_parsed, lookup("合計").?);
     try std.testing.expectEqual(Command.sequential_add, lookup("連続加算").?);

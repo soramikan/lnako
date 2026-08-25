@@ -149,7 +149,46 @@
   },
   {
     "id": "native-system-array-mutation-commands",
-    "source": "A=[1,2,3]\n配列挿入(A,-1.5,9)を表示\nAを表示\nB=[1,4]\n配列一括挿入(B,\"1\",[2,3])を表示\nBを表示\nC=[1,2,3]\n配列削除(C,\"-1.9\")を表示\nCを表示\nD=[0,1,2,3]\n配列切取(D,範囲(1,2))を表示\nDを表示\nE=[0,1,2,3]\n配列取出(E,1.9,2.9)を表示\nEを表示\nF=[1,2]\n配列ポップ(F)を表示\nFを表示\nG=[1]\n配列プッシュ(G,2)を表示\nGを表示\nH=[1]\n配列追加(H,2)を表示\nHを表示\nI=[1,2]\n配列取出(I,無限大,無限大)を表示\nIを表示\nK={\"zero\":0,\"yes\":1,\"false\":偽}\n配列切取(K,\"zero\")を表示\nK@\"zero\"を表示\n配列切取(K,\"yes\")を表示\nK@\"yes\"を表示\n配列切取(K,\"false\")を表示\nK@\"false\"を表示\n"
+    "source": "A=[1,2,3]\n配列挿入(A,-1.5,9)を表示\nAを表示\nB=[1,4]\n配列一括挿入(B,\"1\",[2,3])を表示\nBを表示\nC=[1,2,3]\n配列削除(C,\"-1.9\")を表示\nCを表示\nD=[0,1,2,3]\n配列切取(D,範囲(1,2))を表示\nDを表示\nM=[0,1,2,3]\n配列切取(M,{\"先頭\":-2,\"末尾\":-1})を表示\nMを表示\nN=[0,1,2]\n配列切取(N,{\"先頭\":1})を表示\nNを表示\nE=[0,1,2,3]\n配列取出(E,1.9,2.9)を表示\nEを表示\nF=[1,2]\n配列ポップ(F)を表示\nFを表示\nG=[1]\n配列プッシュ(G,2)を表示\nGを表示\nH=[1]\n配列追加(H,2)を表示\nHを表示\nI=[1,2]\n配列取出(I,無限大,無限大)を表示\nIを表示\nK={\"zero\":0,\"yes\":1,\"false\":偽}\n配列切取(K,\"zero\")を表示\nK@\"zero\"を表示\n配列切取(K,\"yes\")を表示\nK@\"yes\"を表示\n配列切取(K,\"false\")を表示\nK@\"false\"を表示\n"
+  },
+  {
+    "id": "native-system-array-copy-reference-commands",
+    "source": "A=[1,[2]]\nB=配列複製(A)\nB[1][0]=9\nAを表示\nBを表示\nC=[0,[1],2,3]\nD=配列範囲コピー(C,範囲(1,2))\nD[0][0]=8\nCを表示\nDを表示\n配列範囲コピー([undefined],範囲(0,0))を表示\n配列範囲コピー([1n],0)を表示\n配列範囲コピー(C,{\"先頭\":1})を表示\n参照(\"A😀B\",0)を表示\n参照(\"ABC\",1.9)を表示\n参照(\"012345\",{\"先頭\":4,\"末尾\":1})を表示\n参照(\"ABC\",{\"先頭\":1e100,\"末尾\":1e100})を表示\n参照(\"0123\",{\"先頭\":2})を表示\n参照(C,1)を表示\n配列参照(C,0)を表示\n参照(C,1.9)を表示\n参照(C,{\"先頭\":2,\"末尾\":-1})を表示\n参照(C,{\"先頭\":1})を表示\n参照(C,範囲(1,2))を表示\nK={\"x\":7}\n参照(K,\"x\")を表示\nE=配列足(C,[4,5])\nEを表示\nF=配列足({\"x\":[1]},9)\nF[\"x\"][0]=2\nFを表示\n"
+  },
+  {
+    "id": "native-system-array-clone-undefined-error",
+    "oracle": "official-generated",
+    "source": "配列複製(undefined)\n"
+  },
+  {
+    "id": "native-system-array-clone-bigint-error",
+    "oracle": "official-generated",
+    "source": "配列複製(1n)\n"
+  },
+  {
+    "id": "native-system-array-clone-circular-error",
+    "oracle": "official-generated",
+    "source": "A=[]\nA[0]=A\n配列複製(A)\n"
+  },
+  {
+    "id": "native-system-array-range-copy-null-error",
+    "oracle": "official-generated",
+    "source": "配列範囲コピー([1],NULL)\n"
+  },
+  {
+    "id": "native-system-array-range-copy-receiver-error",
+    "oracle": "official-generated",
+    "source": "配列範囲コピー(1,0)\n"
+  },
+  {
+    "id": "native-system-reference-null-error",
+    "oracle": "official-generated",
+    "source": "参照(NULL,\"x\")\n"
+  },
+  {
+    "id": "native-system-reference-string-range-error",
+    "oracle": "official-generated",
+    "source": "参照(\"abc\",\"1\")\n"
   },
   {
     "id": "native-system-substring-commands",

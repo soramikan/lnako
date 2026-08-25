@@ -1620,7 +1620,7 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             });
         },
-        .array_insert, .array_insert_many, .array_cut, .array_take, .array_pop, .array_push => {
+        .array_insert, .array_insert_many, .array_cut, .array_take, .array_pop, .array_push, .array_clone, .array_range_copy, .reference, .array_add => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = arrayMutationBuiltin(runtime, command, actual) catch |failure| {
                 runtime.setFailure(failure);
@@ -2612,8 +2612,231 @@ fn arrayMutationBuiltin(runtime: *Runtime, command: aot_builtin.Command, argumen
         .array_take => arrayTakeBuiltin(runtime, source, index, if (arguments.len > 2) arguments[2] else .{}),
         .array_pop => arrayPopBuiltin(runtime, source),
         .array_push => arrayPushBuiltin(runtime, source, index),
+        .array_clone => deepCloneBuiltin(runtime, source),
+        .array_range_copy => arrayRangeCopyBuiltin(runtime, source, index),
+        .reference => referenceBuiltin(runtime, source, index),
+        .array_add => arrayAddBuiltin(runtime, source, index),
         else => error.UnknownCommand,
     };
+}
+
+const CloneState = struct {
+    active: std.ArrayList(*Object) = .empty,
+
+    fn deinit(self: *CloneState, allocator: std.mem.Allocator) void {
+        self.active.deinit(allocator);
+    }
+};
+
+/// `配列複製` is the upstream JSON.stringify/JSON.parse operation.  Keep the
+/// JSON-specific rules here instead of using the general value copier: NaN and
+/// infinities become null, undefined/functions disappear from objects (and
+/// become null in arrays), and cycles/BigInt are errors.
+fn deepCloneBuiltin(runtime: *Runtime, source: Value) !Value {
+    if (source.tag == @intFromEnum(Tag.undefined) or source.tag == @intFromEnum(Tag.function)) return error.InvalidJsonCloneValue;
+    var state: CloneState = .{};
+    defer state.deinit(runtime.allocator);
+    return deepCloneValue(runtime, source, &state);
+}
+
+fn deepCloneValue(runtime: *Runtime, source: Value, state: *CloneState) !Value {
+    return switch (@as(Tag, @enumFromInt(source.tag))) {
+        .undefined, .function => .{},
+        .null_value, .boolean => source,
+        .number => blk: {
+            const number: f64 = @bitCast(source.payload);
+            break :blk if (std.math.isFinite(number)) numberValue(if (number == 0) 0 else number) else .{ .tag = @intFromEnum(Tag.null_value) };
+        },
+        .bigint => error.CannotSerializeBigInt,
+        .static_utf8_string, .utf16_string => blk: {
+            const units = try valueUtf16Alloc(runtime, source);
+            defer runtime.allocator.free(units);
+            break :blk try runtime.createString(units);
+        },
+        .array => {
+            const object = source.object() orelse return error.InvalidArray;
+            if (object.payload != .array) return error.InvalidArray;
+            for (state.active.items) |active| if (active == object) return error.CircularCloneValue;
+            try state.active.append(runtime.allocator, object);
+            defer _ = state.active.pop();
+            const result = try runtime.createArray(&.{});
+            var roots = [_]Value{result};
+            var frame: RootFrame = .{};
+            runtime.pushRoots(&frame, &roots, roots.len);
+            defer runtime.popRoots(&frame);
+            const values = object.payload.array.items;
+            try roots[0].object().?.payload.array.ensureTotalCapacity(runtime.allocator, values.len);
+            for (values) |item| {
+                var cloned = try deepCloneValue(runtime, item, state);
+                if (cloned.tag == @intFromEnum(Tag.undefined) or cloned.tag == @intFromEnum(Tag.function)) cloned = .{ .tag = @intFromEnum(Tag.null_value) };
+                try roots[0].object().?.payload.array.append(runtime.allocator, cloned);
+            }
+            return roots[0];
+        },
+        .dictionary => {
+            const object = source.object() orelse return error.InvalidDictionary;
+            if (object.payload != .dictionary) return error.InvalidDictionary;
+            for (state.active.items) |active| if (active == object) return error.CircularCloneValue;
+            try state.active.append(runtime.allocator, object);
+            defer _ = state.active.pop();
+            const result = try runtime.createDictionary(&.{});
+            var roots = [_]Value{result};
+            var frame: RootFrame = .{};
+            runtime.pushRoots(&frame, &roots, roots.len);
+            defer runtime.popRoots(&frame);
+            for (object.payload.dictionary.items) |entry| {
+                const cloned = try deepCloneValue(runtime, entry.value, state);
+                if (cloned.tag == @intFromEnum(Tag.undefined) or cloned.tag == @intFromEnum(Tag.function)) continue;
+                try runtime.setDictionary(&roots[0].object().?.payload.dictionary, entry.key, cloned);
+            }
+            return roots[0];
+        },
+        .iterator => runtime.createDictionary(&.{}),
+        .binding_cell => unreachable,
+    };
+}
+
+const SliceRange = struct { start: usize, end: usize };
+
+fn sliceIndex(number: f64, length: usize) usize {
+    if (std.math.isNan(number) or number == 0) return 0;
+    if (number == std.math.inf(f64)) return length;
+    if (number == -std.math.inf(f64)) return 0;
+    const integer = @trunc(number);
+    if (integer < 0) {
+        const magnitude = @min(-integer, @as(f64, @floatFromInt(length)));
+        return length - @as(usize, @intFromFloat(magnitude));
+    }
+    if (integer >= @as(f64, @floatFromInt(length))) return length;
+    return @intFromFloat(integer);
+}
+
+fn directIndex(number: f64) ?usize {
+    if (!std.math.isFinite(number) or number < 0 or @trunc(number) != number) return null;
+    if (number >= @as(f64, @floatFromInt(std.math.maxInt(usize)))) return null;
+    return @intFromFloat(number);
+}
+
+fn charAtIndex(number: f64, length: usize) ?usize {
+    if (std.math.isNan(number) or number == 0) return if (length > 0) 0 else null;
+    if (!std.math.isFinite(number)) return null;
+    const integer = @trunc(number);
+    if (integer < 0 or integer >= @as(f64, @floatFromInt(length))) return null;
+    return @intFromFloat(integer);
+}
+
+fn sliceRange(runtime: *Runtime, index: Value, length: usize) !?SliceRange {
+    if (index.tag == @intFromEnum(Tag.null_value)) return error.ArrayCutNullIndex;
+    if (index.tag != @intFromEnum(Tag.dictionary) and index.tag != @intFromEnum(Tag.array)) return null;
+    const first = dictionaryProperty(index, &.{ 0x5148, 0x982d });
+    if (first.tag != @intFromEnum(Tag.number)) return null;
+    const last = dictionaryProperty(index, &.{ 0x672b, 0x5c3e });
+    const start = sliceIndex(@bitCast(first.payload), length);
+    const end_number = try valueToNumberRuntime(runtime, last);
+    const end = sliceIndex(end_number + 1, length);
+    return .{ .start = start, .end = end };
+}
+
+fn substringRange(runtime: *Runtime, index: Value, length: usize) !?SliceRange {
+    if (index.tag == @intFromEnum(Tag.null_value)) return error.ArrayCutNullIndex;
+    if (index.tag != @intFromEnum(Tag.dictionary) and index.tag != @intFromEnum(Tag.array)) return null;
+    const first = dictionaryProperty(index, &.{ 0x5148, 0x982d });
+    if (first.tag != @intFromEnum(Tag.number)) return null;
+    const last = dictionaryProperty(index, &.{ 0x672b, 0x5c3e });
+    const first_number: f64 = @bitCast(first.payload);
+    const last_number = try valueToNumberRuntime(runtime, last) + 1;
+    const normalize = struct {
+        fn apply(number: f64, size: usize) usize {
+            if (std.math.isNan(number) or number <= 0 or number == -std.math.inf(f64)) return 0;
+            if (number == std.math.inf(f64)) return size;
+            if (number >= @as(f64, @floatFromInt(size))) return size;
+            return @intFromFloat(@trunc(number));
+        }
+    }.apply;
+    var start = normalize(first_number, length);
+    var end = normalize(last_number, length);
+    if (start > end) std.mem.swap(usize, &start, &end);
+    return .{ .start = start, .end = end };
+}
+
+fn arrayRangeCopyBuiltin(runtime: *Runtime, source: Value, index: Value) !Value {
+    if (source.tag != @intFromEnum(Tag.array)) return error.ArrayRangeCopyReceiver;
+    const items = try arrayItems(source);
+    if (index.tag == @intFromEnum(Tag.number)) {
+        const position = directIndex(@bitCast(index.payload)) orelse return .{};
+        if (position >= items.items.len) return .{};
+        const item = items.items[position];
+        return switch (@as(Tag, @enumFromInt(item.tag))) {
+            .array, .dictionary, .iterator, .null_value => deepCloneBuiltin(runtime, item),
+            else => item,
+        };
+    }
+    const range = (try sliceRange(runtime, index, items.items.len)) orelse return .{};
+    if (range.end <= range.start) return runtime.createArray(&.{});
+    const result = try runtime.createArray(&.{});
+    var roots = [_]Value{result};
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    const values = items.items[range.start..range.end];
+    try roots[0].object().?.payload.array.ensureTotalCapacity(runtime.allocator, values.len);
+    var state: CloneState = .{};
+    defer state.deinit(runtime.allocator);
+    for (values) |item| {
+        var cloned = try deepCloneValue(runtime, item, &state);
+        if (cloned.tag == @intFromEnum(Tag.undefined) or cloned.tag == @intFromEnum(Tag.function)) cloned = .{ .tag = @intFromEnum(Tag.null_value) };
+        try roots[0].object().?.payload.array.append(runtime.allocator, cloned);
+    }
+    return roots[0];
+}
+
+fn referenceBuiltin(runtime: *Runtime, source: Value, index: Value) !Value {
+    if (isString(source)) {
+        const units = try valueUtf16Alloc(runtime, source);
+        defer runtime.allocator.free(units);
+        if (index.tag == @intFromEnum(Tag.number)) {
+            const position = charAtIndex(@bitCast(index.payload), units.len) orelse return runtime.createString(&.{});
+            return runtime.createString(units[position .. position + 1]);
+        }
+        const range = (try substringRange(runtime, index, units.len)) orelse return error.InvalidStringRange;
+        const start = @min(range.start, units.len);
+        const end = @min(range.end, units.len);
+        return runtime.createString(units[start..end]);
+    }
+    if (source.tag == @intFromEnum(Tag.array)) {
+        const items = try arrayItems(source);
+        if (index.tag == @intFromEnum(Tag.number)) {
+            const position = directIndex(@bitCast(index.payload)) orelse return .{};
+            return if (position < items.items.len) items.items[position] else .{};
+        }
+        const range = (try sliceRange(runtime, index, items.items.len)) orelse return .{};
+        const start = @min(range.start, items.items.len);
+        const end = @min(@max(range.end, start), items.items.len);
+        return runtime.createArray(items.items[start..end]);
+    }
+    if (source.tag == @intFromEnum(Tag.dictionary)) {
+        const key = try valueUtf16Alloc(runtime, index);
+        defer runtime.allocator.free(key);
+        return dictionaryProperty(source, key);
+    }
+    return error.IndexableValueExpected;
+}
+
+fn arrayAddBuiltin(runtime: *Runtime, source: Value, other: Value) !Value {
+    if (source.tag != @intFromEnum(Tag.array)) return deepCloneBuiltin(runtime, source);
+    const source_items = try arrayItems(source);
+    var roots = [_]Value{ source, other, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[2] = try runtime.createArray(&.{});
+    const result = try arrayItems(roots[2]);
+    const extra: usize = if (roots[1].tag == @intFromEnum(Tag.array)) (try arrayItems(roots[1])).items.len else 1;
+    const final_length = std.math.add(usize, source_items.items.len, extra) catch return error.ArrayTooLarge;
+    try result.ensureTotalCapacity(runtime.allocator, final_length);
+    try result.appendSlice(runtime.allocator, source_items.items);
+    if (roots[1].tag == @intFromEnum(Tag.array)) try result.appendSlice(runtime.allocator, (try arrayItems(roots[1])).items) else try result.append(runtime.allocator, roots[1]);
+    return roots[2];
 }
 
 fn explodeBuiltin(runtime: *Runtime, value: Value) !Value {
@@ -3960,6 +4183,55 @@ test "AOT配列変更命令はspliceの数値化と辞書のtruthy規則を保�
     const empty_pop = [_]Value{roots[23]};
     lnako_aot_builtin_call(&roots[24], &empty_pop, empty_pop.len, @intFromEnum(aot_builtin.Command.array_pop));
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[24].tag)));
+}
+
+test "AOT配列複製範囲参照と配列足は深さと参照を公式どおり分ける" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try active_runtime.?.createArray(&.{ numberValue(1), try active_runtime.?.createArray(&.{numberValue(2)}) });
+    roots[1] = try deepCloneBuiltin(&active_runtime.?, roots[0]);
+    try active_runtime.?.indexSet(roots[1], numberValue(1), try active_runtime.?.createArray(&.{numberValue(9)}));
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(roots[0].object().?.payload.array.items[1].object().?.payload.array.items[0]));
+    try std.testing.expectEqual(@as(f64, 9), valueToNumber(roots[1].object().?.payload.array.items[1].object().?.payload.array.items[0]));
+    try std.testing.expectError(error.CannotSerializeBigInt, deepCloneBuiltin(&active_runtime.?, try active_runtime.?.createBigInt("1n")));
+
+    roots[2] = try active_runtime.?.createArray(&.{ numberValue(0), roots[0], numberValue(3) });
+    roots[3] = try arrayRangeCopyBuiltin(&active_runtime.?, roots[2], try active_runtime.?.createDictionary(&.{ staticStringValue("先頭"), numberValue(1), staticStringValue("末尾"), numberValue(1) }));
+    try std.testing.expect(roots[3].object().?.payload.array.items[0].payload != roots[2].object().?.payload.array.items[1].payload);
+    roots[4] = try referenceBuiltin(&active_runtime.?, roots[2], numberValue(1));
+    try std.testing.expectEqual(roots[2].object().?.payload.array.items[1].payload, roots[4].payload);
+    roots[5] = try referenceBuiltin(&active_runtime.?, staticStringValue("A😀B"), numberValue(1));
+    try std.testing.expectEqualSlices(u16, &.{0xd83d}, roots[5].object().?.payload.utf16_string);
+    roots[6] = try referenceBuiltin(&active_runtime.?, roots[2], try active_runtime.?.createDictionary(&.{ staticStringValue("先頭"), numberValue(1), staticStringValue("末尾"), numberValue(2) }));
+    try std.testing.expectEqual(@as(usize, 2), roots[6].object().?.payload.array.items.len);
+    try std.testing.expectEqual(roots[2].object().?.payload.array.items[1].payload, roots[6].object().?.payload.array.items[0].payload);
+    roots[7] = try active_runtime.?.createDictionary(&.{ staticStringValue("x"), numberValue(7) });
+    roots[8] = try referenceBuiltin(&active_runtime.?, roots[7], staticStringValue("x"));
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[8]));
+    roots[9] = try arrayAddBuiltin(&active_runtime.?, roots[0], try active_runtime.?.createArray(&.{ numberValue(3), numberValue(4) }));
+    try std.testing.expectEqual(@as(usize, 4), roots[9].object().?.payload.array.items.len);
+    try std.testing.expect(roots[9].payload != roots[0].payload);
+
+    try std.testing.expectError(error.InvalidJsonCloneValue, deepCloneBuiltin(&active_runtime.?, .{}));
+    roots[10] = try active_runtime.?.createArray(&.{.{}});
+    roots[11] = try active_runtime.?.createDictionary(&.{ staticStringValue("先頭"), numberValue(0), staticStringValue("末尾"), numberValue(0) });
+    roots[12] = try arrayRangeCopyBuiltin(&active_runtime.?, roots[10], roots[11]);
+    try std.testing.expectEqual(Tag.null_value, @as(Tag, @enumFromInt(roots[12].object().?.payload.array.items[0].tag)));
+    roots[13] = try referenceBuiltin(&active_runtime.?, staticStringValue("ABC"), numberValue(1.9));
+    try std.testing.expectEqualSlices(u16, &.{'B'}, roots[13].object().?.payload.utf16_string);
+    roots[14] = try active_runtime.?.createDictionary(&.{ staticStringValue("先頭"), numberValue(1e100), staticStringValue("末尾"), numberValue(1e100) });
+    roots[15] = try referenceBuiltin(&active_runtime.?, staticStringValue("ABC"), roots[14]);
+    try std.testing.expectEqual(@as(usize, 0), roots[15].object().?.payload.utf16_string.len);
 }
 
 test "AOT文字列連結分解反復出現命令は公式の型変換を保つ" {

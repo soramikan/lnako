@@ -262,7 +262,7 @@ fn shuffle(source: Value, context: ?Context) !Value {
 fn cut(runtime: *Runtime, source: Value, index_value: Value) !Value {
     if (source == .array) {
         if (index_value == .number) return source.array.remove(spliceIndex(index_value.number, source.array.len()));
-        if (try rangeBounds(runtime, index_value, source.array.len())) |range| return spliceArray(runtime, source.array, range.start, range.count);
+        if (try spliceRangeBounds(runtime, index_value, source.array.len())) |range| return spliceArray(runtime, source.array, range.start, range.count);
         return .null_value;
     }
     if (source == .dictionary and index_value == .string) {
@@ -304,7 +304,6 @@ fn push(source: Value, value: Value) !Value {
 
 pub fn deepClone(runtime: *Runtime, source: Value) !Value {
     var encoded = (try json.call(runtime, "JSON変換", &.{source})).?;
-    if (encoded == .undefined) return .undefined;
     var roots = runtime.rootFrame();
     defer roots.deinit();
     try roots.protect(&encoded);
@@ -344,31 +343,35 @@ fn cloneValue(runtime: *Runtime, source: Value, arrays: *std.ArrayList(*value_mo
 fn rangeCopy(runtime: *Runtime, source: Value, index_value: Value) !Value {
     if (source != .array) return error.ArrayExpected;
     if (index_value == .number) {
-        const index = directIndex(index_value.number) orelse return .undefined;
+        const index = propertyIndex(index_value.number) orelse return .undefined;
         if (index >= source.array.len()) return .undefined;
-        return deepClone(runtime, source.array.get(index));
+        const item = source.array.get(index);
+        return switch (item) {
+            .array, .dictionary, .bytes, .promise, .null_value => deepClone(runtime, item),
+            else => item,
+        };
     }
     const range = (try rangeBounds(runtime, index_value, source.array.len())) orelse return .undefined;
     var result = try runtime.createArray();
     var roots = runtime.rootFrame();
     defer roots.deinit();
     try roots.protect(&result);
-    for (source.array.items.items[range.start .. range.start + range.count]) |item| _ = try result.array.push(try deepClone(runtime, item));
-    return result;
+    for (source.array.items.items[range.start .. range.start + range.count]) |item| _ = try result.array.push(item);
+    return deepClone(runtime, result);
 }
 
 fn reference(runtime: *Runtime, source: Value, index_value: Value) !Value {
     if (source == .string) {
         if (index_value == .number) {
-            const index = directIndex(index_value.number) orelse return runtime.stringUtf8("");
+            const index = charAtIndex(index_value.number, source.string.len()) orelse return runtime.stringUtf8("");
             if (index >= source.string.len()) return runtime.stringUtf8("");
             return runtime.stringCodeUnits(source.string.units[index .. index + 1]);
         }
-        const range = (try rangeBounds(runtime, index_value, source.string.len())) orelse return error.InvalidStringRange;
+        const range = (try substringBounds(runtime, index_value, source.string.len())) orelse return error.InvalidStringRange;
         return runtime.stringCodeUnits(source.string.units[range.start .. range.start + range.count]);
     }
     if (source == .array) {
-        if (index_value == .number) return source.array.get(directIndex(index_value.number) orelse return .undefined);
+        if (index_value == .number) return source.array.get(propertyIndex(index_value.number) orelse return .undefined);
         const range = (try rangeBounds(runtime, index_value, source.array.len())) orelse return .undefined;
         var result = try runtime.createArray();
         var roots = runtime.rootFrame();
@@ -688,6 +691,7 @@ fn indexed(runtime: *Runtime, source: Value, key: Value) !Value {
 const Range = struct { start: usize, count: usize };
 
 fn rangeBounds(runtime: *Runtime, value: Value, length: usize) !?Range {
+    if (value == .null_value) return error.ArrayCutNullIndex;
     if (value != .dictionary) return null;
     var roots = runtime.rootFrame();
     defer roots.deinit();
@@ -696,13 +700,58 @@ fn rangeBounds(runtime: *Runtime, value: Value, length: usize) !?Range {
     var last_key = try runtime.stringUtf8("末尾");
     try roots.protect(&last_key);
     const first_value = value.dictionary.get(first_key.string) orelse return null;
-    const last_value = value.dictionary.get(last_key.string) orelse return null;
+    const last_value = value.dictionary.get(last_key.string) orelse .undefined;
     if (first_value != .number) return null;
     const first = spliceIndex(first_value.number, length);
     const last_number = try runtime.valueToNumber(last_value);
-    const last = if (last_number < 0) spliceIndex(last_number, length) else @min(directIndex(last_number) orelse 0, length);
-    if (last < first) return .{ .start = first, .count = 0 };
-    return .{ .start = first, .count = @min(last - first + 1, length - first) };
+    const end = spliceIndex(last_number + 1, length);
+    if (end <= first) return .{ .start = first, .count = 0 };
+    return .{ .start = first, .count = end - first };
+}
+
+fn spliceRangeBounds(runtime: *Runtime, value: Value, length: usize) !?Range {
+    if (value == .null_value) return error.ArrayCutNullIndex;
+    if (value != .dictionary) return null;
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var first_key = try runtime.stringUtf8("先頭");
+    try roots.protect(&first_key);
+    var last_key = try runtime.stringUtf8("末尾");
+    try roots.protect(&last_key);
+    const first_value = value.dictionary.get(first_key.string) orelse return null;
+    if (first_value != .number) return null;
+    const last_value = value.dictionary.get(last_key.string) orelse .undefined;
+    const start = spliceIndex(first_value.number, length);
+    const count_number = try runtime.valueToNumber(last_value) - first_value.number + 1;
+    return .{ .start = start, .count = positiveLength(count_number, length - start) };
+}
+
+fn substringBounds(runtime: *Runtime, value: Value, length: usize) !?Range {
+    if (value == .null_value) return error.ArrayCutNullIndex;
+    if (value != .dictionary) return null;
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var first_key = try runtime.stringUtf8("先頭");
+    try roots.protect(&first_key);
+    var last_key = try runtime.stringUtf8("末尾");
+    try roots.protect(&last_key);
+    const first_value = value.dictionary.get(first_key.string) orelse return null;
+    const last_value = value.dictionary.get(last_key.string) orelse .undefined;
+    if (first_value != .number) return null;
+    const first_number = first_value.number;
+    const last_number = try runtime.valueToNumber(last_value) + 1;
+    const normalize = struct {
+        fn apply(number: f64, size: usize) usize {
+            if (std.math.isNan(number) or number <= 0 or number == -std.math.inf(f64)) return 0;
+            if (number == std.math.inf(f64)) return size;
+            if (number >= @as(f64, @floatFromInt(size))) return size;
+            return @intFromFloat(@trunc(number));
+        }
+    }.apply;
+    var start = normalize(first_number, length);
+    var end = normalize(last_number, length);
+    if (start > end) std.mem.swap(usize, &start, &end);
+    return .{ .start = start, .count = end - start };
 }
 
 fn spliceIndex(number: f64, length: usize) usize {
@@ -722,6 +771,20 @@ fn directIndex(number: f64) ?usize {
     if (!std.math.isFinite(number) or number < 0) return null;
     const integer = @trunc(number);
     if (integer > @as(f64, @floatFromInt(std.math.maxInt(usize)))) return null;
+    return @intFromFloat(integer);
+}
+
+fn propertyIndex(number: f64) ?usize {
+    if (!std.math.isFinite(number) or number < 0 or @trunc(number) != number) return null;
+    if (number >= @as(f64, @floatFromInt(std.math.maxInt(usize)))) return null;
+    return @intFromFloat(number);
+}
+
+fn charAtIndex(number: f64, length: usize) ?usize {
+    if (std.math.isNan(number) or number == 0) return if (length > 0) 0 else null;
+    if (!std.math.isFinite(number)) return null;
+    const integer = @trunc(number);
+    if (integer < 0 or integer >= @as(f64, @floatFromInt(length))) return null;
     return @intFromFloat(integer);
 }
 
@@ -768,4 +831,65 @@ test "配列と表の破壊的操作・コピー・検索を処理する" {
     try std.testing.expectEqual(@as(f64, 9), array.array.get(1).number);
     const copy = (try call(&runtime, "配列範囲コピー", &.{ array, .{ .number = 1 } }, null)).?;
     try std.testing.expectEqual(@as(f64, 9), copy.number);
+}
+
+test "配列コピーと参照はJSONとJavaScript添字の境界を保つ" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var clone_failed = false;
+    _ = deepClone(&runtime, .undefined) catch {
+        clone_failed = true;
+    };
+    try std.testing.expect(clone_failed);
+
+    var source = try common.arrayFromValues(&runtime, &.{.undefined});
+    try roots.protect(&source);
+    var range = try runtime.createDictionary();
+    try roots.protect(&range);
+    var first_key = try runtime.stringUtf8("先頭");
+    try roots.protect(&first_key);
+    var last_key = try runtime.stringUtf8("末尾");
+    try roots.protect(&last_key);
+    try range.dictionary.set(first_key.string, .{ .number = 0 });
+    try range.dictionary.set(last_key.string, .{ .number = 0 });
+    var copied = try rangeCopy(&runtime, source, range);
+    try roots.protect(&copied);
+    try std.testing.expectEqual(Value.null_value, copied.array.get(0));
+
+    var text = try runtime.stringUtf8("ABC");
+    try roots.protect(&text);
+    var character = try reference(&runtime, text, .{ .number = 1.9 });
+    try roots.protect(&character);
+    try std.testing.expectEqualSlices(u16, &.{'B'}, character.string.units);
+    try std.testing.expectEqual(Value.undefined, try reference(&runtime, source, .{ .number = 0.9 }));
+
+    try range.dictionary.set(first_key.string, .{ .number = 1e100 });
+    try range.dictionary.set(last_key.string, .{ .number = 1e100 });
+    var empty = try reference(&runtime, text, range);
+    try roots.protect(&empty);
+    try std.testing.expectEqual(@as(usize, 0), empty.string.len());
+
+    var cut_source = try common.arrayFromValues(&runtime, &.{ .{ .number = 0 }, .{ .number = 1 }, .{ .number = 2 }, .{ .number = 3 } });
+    try roots.protect(&cut_source);
+    try range.dictionary.set(first_key.string, .{ .number = -2 });
+    try range.dictionary.set(last_key.string, .{ .number = -1 });
+    var removed = try cut(&runtime, cut_source, range);
+    try roots.protect(&removed);
+    try std.testing.expectEqual(@as(f64, 2), removed.array.get(0).number);
+    try std.testing.expectEqual(@as(f64, 3), removed.array.get(1).number);
+    try std.testing.expectEqual(@as(usize, 2), cut_source.array.len());
+
+    _ = range.dictionary.remove(last_key.string);
+    try range.dictionary.set(first_key.string, .{ .number = 1 });
+    var missing_last_copy = try rangeCopy(&runtime, source, range);
+    try roots.protect(&missing_last_copy);
+    try std.testing.expectEqual(@as(usize, 0), missing_last_copy.array.len());
+    try range.dictionary.set(first_key.string, .{ .number = 2 });
+    var missing_last_text = try reference(&runtime, text, range);
+    try roots.protect(&missing_last_text);
+    try std.testing.expectEqualSlices(u16, &.{ 'A', 'B' }, missing_last_text.string.units);
 }
