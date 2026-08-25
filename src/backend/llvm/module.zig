@@ -58,7 +58,7 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
                 .call => isDisplayCall(instruction.name) or validDirectCallee(program, instruction) or lookupFunction(program, instruction.name) != null or
                     isDynamicNamedCall(function, instruction.name),
                 .call_value => instruction.operands.len > 0,
-                .make_closure => nonCapturingFunction(program, instruction.name) != null,
+                .make_closure => closureSupported(program, function, instruction.name),
                 .iterator_begin => iteratorSourceSupported(function, instruction),
                 else => false,
             };
@@ -152,7 +152,10 @@ const Emitter = struct {
                 "declare void @lnako_aot_iterator_new(ptr, ptr, i64, i1, i8)\n" ++
                 "declare i32 @lnako_aot_iterator_has_next(ptr)\n" ++
                 "declare void @lnako_aot_iterator_next(ptr, ptr, ptr, ptr, ptr, ptr)\n" ++
-                "declare void @lnako_aot_function_new(ptr, ptr, i64)\n" ++
+                "declare void @lnako_aot_binding_cell_new(ptr, ptr)\n" ++
+                "declare ptr @lnako_aot_binding_cell_value(ptr)\n" ++
+                "declare void @lnako_aot_function_new(ptr, ptr, i64, ptr, i64)\n" ++
+                "declare void @lnako_aot_function_capture(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_function_call(ptr, ptr, ptr, i64)\n" ++
                 "declare i32 @printf(ptr, ...)\n" ++
                 "declare i32 @puts(ptr)\n" ++
@@ -361,17 +364,17 @@ const Emitter = struct {
 
     fn writeFunction(self: *Emitter, function: ir.Function) !void {
         const scope = 4 + function.id;
-        try self.output.writer.print("define internal %lnako.Value @lnako.fn.{d}(", .{function.id});
+        try self.output.writer.print("define internal %lnako.Value @lnako.fn.{d}(ptr %context", .{function.id});
         for (function.parameters, 0..) |_, index| {
-            if (index > 0) try self.output.writer.writeAll(", ");
-            try self.output.writer.print("%lnako.Value %arg.{d}", .{index});
+            try self.output.writer.print(", %lnako.Value %arg.{d}", .{index});
         }
         try self.output.writer.print(") !dbg !{d} {{\n", .{scope});
         const locals = try self.localNames(function);
         defer self.allocator.free(locals);
-        const root_count = functionValueCount(function);
+        const value_root_count = functionValueCount(function);
+        const root_count = value_root_count + locals.len;
         const root_storage_count = @max(@as(usize, 1), root_count);
-        const aggregate_count = maxAggregateOperandCount(function);
+        const aggregate_count = @max(maxAggregateOperandCount(function), maxClosureCaptureCount(self.program, function));
         for (function.blocks) |block| {
             try self.output.writer.print("bb{d}:\n", .{block.id});
             if (block.id == function.entry) {
@@ -387,15 +390,21 @@ const Emitter = struct {
                     try self.output.writer.print("  call void @lnako_aot_push_roots(ptr %root.frame, ptr %root.slot.0, i64 {d})\n", .{root_count});
                 } else try self.output.writer.writeAll("  call void @lnako_aot_push_roots(ptr %root.frame, ptr null, i64 0)\n");
                 if (aggregate_count > 0) try self.output.writer.print("  %aggregate.values = alloca [{d} x %lnako.Value]\n", .{aggregate_count});
-                for (locals, 0..) |_, index| {
-                    try self.output.writer.print("  %local.{d} = alloca %lnako.Value\n", .{index});
-                    try self.output.writer.print("  store %lnako.Value {{ i8 0, i64 0 }}, ptr %local.{d}\n", .{index});
-                }
-                for (function.parameters, 0..) |parameter, index| if (nameIndex(locals, parameter.name)) |local_index| {
-                    try self.output.writer.print("  store %lnako.Value %arg.{d}, ptr %local.{d}\n", .{ index, local_index });
-                };
                 for (function.parameters, 0..) |parameter, index| {
                     try self.output.writer.print("  store %lnako.Value %arg.{d}, ptr %root.slot.{d}\n", .{ index, parameter.value });
+                }
+                for (locals, 0..) |name, index| {
+                    const cell_root = value_root_count + index;
+                    if (nameIndex(function.captures, name)) |capture_index| {
+                        try self.output.writer.print("  call void @lnako_aot_function_capture(ptr %root.slot.{d}, ptr %context, i64 {d})\n", .{ cell_root, capture_index });
+                    } else {
+                        try self.output.writer.print("  call void @lnako_aot_binding_cell_new(ptr %root.slot.{d}, ptr ", .{cell_root});
+                        if (parameterIndex(function, name)) |parameter_index| {
+                            try self.output.writer.print("%root.slot.{d}", .{function.parameters[parameter_index].value});
+                        } else try self.output.writer.writeAll("null");
+                        try self.output.writer.writeAll(")\n");
+                    }
+                    try self.output.writer.print("  %local.{d} = call ptr @lnako_aot_binding_cell_value(ptr %root.slot.{d})\n", .{ index, cell_root });
                 }
             }
             var phi_count: usize = 0;
@@ -471,7 +480,7 @@ const Emitter = struct {
             .unary => try self.writeUnary(function, instruction, scope),
             .call => try self.writeCall(function, locals, instruction, scope, aggregate_count),
             .call_value => try self.writeCallValue(function, instruction, scope, aggregate_count),
-            .make_closure => try self.writeMakeClosure(instruction, scope),
+            .make_closure => try self.writeMakeClosure(function, locals, instruction, scope, aggregate_count),
             .make_array => try self.writeAggregate(function, instruction, scope, aggregate_count, "lnako_aot_array_new"),
             .make_object => try self.writeAggregate(function, instruction, scope, aggregate_count, "lnako_aot_dictionary_new"),
             .array_get, .property_get => try self.writeIndexGet(instruction, scope),
@@ -802,10 +811,9 @@ const Emitter = struct {
             try self.writeCallResult(result, instruction.span, scope);
             return;
         }
-        try self.output.writer.print("  %v{d} = call %lnako.Value @lnako.fn.{d}(", .{ result, callee.?.id });
-        for (instruction.operands, 0..) |operand, index| {
-            if (index > 0) try self.output.writer.writeAll(", ");
-            try self.output.writer.writeAll("%lnako.Value ");
+        try self.output.writer.print("  %v{d} = call %lnako.Value @lnako.fn.{d}(ptr null", .{ result, callee.?.id });
+        for (instruction.operands) |operand| {
+            try self.output.writer.writeAll(", %lnako.Value ");
             try self.writeValueRef(function, operand);
         }
         try self.output.writer.writeByte(')');
@@ -855,10 +863,26 @@ const Emitter = struct {
         try self.debugSuffix(instruction.span, scope);
     }
 
-    fn writeMakeClosure(self: *Emitter, instruction: ir.Instruction, scope: usize) !void {
+    fn writeMakeClosure(self: *Emitter, caller: ir.Function, locals: []const []const u8, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
         const result = instruction.result orelse return error.MissingInstructionResult;
-        const function = nonCapturingFunction(self.program, instruction.name) orelse return error.UnsupportedCapturedClosure;
-        try self.output.writer.print("  call void @lnako_aot_function_new(ptr %root.slot.{d}, ptr @lnako.wrapper.{d}, i64 {d})", .{ result, function.id, function.parameters.len });
+        const function = lookupFunction(self.program, instruction.name) orelse return error.UnknownClosureFunction;
+        if (function.captures.len > aggregate_count) return error.InvalidAggregateScratch;
+        const value_root_count = functionValueCount(caller);
+        for (function.captures, 0..) |capture, index| {
+            const local_index = nameIndex(locals, capture) orelse return error.MissingClosureCapture;
+            const cell_root = value_root_count + local_index;
+            try self.output.writer.print("  %closure.capture.{d}.{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, index, cell_root });
+            try self.debugSuffix(instruction.span, scope);
+            try self.output.writer.print("  %closure.capture.slot.{d}.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+            try self.debugSuffix(instruction.span, scope);
+            try self.output.writer.print("  store %lnako.Value %closure.capture.{d}.{d}, ptr %closure.capture.slot.{d}.{d}", .{ result, index, result, index });
+            try self.debugSuffix(instruction.span, scope);
+        }
+        try self.output.writer.print("  call void @lnako_aot_function_new(ptr %root.slot.{d}, ptr @lnako.wrapper.{d}, i64 {d}, ptr ", .{ result, function.id, function.parameters.len });
+        if (function.captures.len > 0) {
+            try self.output.writer.print("%closure.capture.slot.{d}.0", .{result});
+        } else try self.output.writer.writeAll("null");
+        try self.output.writer.print(", i64 {d})", .{function.captures.len});
         try self.debugSuffix(instruction.span, scope);
         try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try self.debugSuffix(instruction.span, scope);
@@ -903,10 +927,9 @@ const Emitter = struct {
             try self.output.writer.print("  %wrapper.argument.pointer.{d} = getelementptr %lnako.Value, ptr %arguments, i64 {d}\n", .{ index, index });
             try self.output.writer.print("  %wrapper.argument.{d} = load %lnako.Value, ptr %wrapper.argument.pointer.{d}\n", .{ index, index });
         }
-        try self.output.writer.print("  %wrapper.result = call %lnako.Value @lnako.fn.{d}(", .{function.id});
+        try self.output.writer.print("  %wrapper.result = call %lnako.Value @lnako.fn.{d}(ptr %context", .{function.id});
         for (function.parameters, 0..) |_, index| {
-            if (index > 0) try self.output.writer.writeAll(", ");
-            try self.output.writer.print("%lnako.Value %wrapper.argument.{d}", .{index});
+            try self.output.writer.print(", %lnako.Value %wrapper.argument.{d}", .{index});
         }
         try self.output.writer.writeAll(")\n  ret %lnako.Value %wrapper.result\n}\n\n");
     }
@@ -920,13 +943,13 @@ const Emitter = struct {
             try self.output.writer.print("  call void @lnako_aot_push_roots(ptr %global.root.frame.{d}, ptr @lnako.global.{d}, i64 1)\n", .{ global_index, global_index });
         }
         for (self.program.functions) |function| if (self.globalIndex(function.name)) |global_index| {
-            try self.output.writer.print("  call void @lnako_aot_function_new(ptr @lnako.global.{d}, ptr @lnako.wrapper.{d}, i64 {d})\n", .{ global_index, function.id, function.parameters.len });
+            try self.output.writer.print("  call void @lnako_aot_function_new(ptr @lnako.global.{d}, ptr @lnako.wrapper.{d}, i64 {d}, ptr null, i64 0)\n", .{ global_index, function.id, function.parameters.len });
         };
         var index = self.program.module_entries.len;
         var call_index: usize = 0;
         while (index > 0) {
             index -= 1;
-            try self.output.writer.print("  %entry.result.{d} = call %lnako.Value @lnako.fn.{d}()", .{ call_index, self.program.module_entries[index] });
+            try self.output.writer.print("  %entry.result.{d} = call %lnako.Value @lnako.fn.{d}(ptr null)", .{ call_index, self.program.module_entries[index] });
             try self.debugSuffix(ast.emptySpan(), scope);
             call_index += 1;
         }
@@ -1036,6 +1059,7 @@ const Emitter = struct {
     fn localNames(self: *Emitter, function: ir.Function) ![][]const u8 {
         var names: std.ArrayList([]const u8) = .empty;
         defer names.deinit(self.allocator);
+        for (function.captures) |capture| if (nameIndex(names.items, capture) == null) try names.append(self.allocator, capture);
         for (function.parameters) |parameter| if (nameIndex(names.items, parameter.name) == null) try names.append(self.allocator, parameter.name);
         for (function.blocks) |block| for (block.instructions) |instruction| {
             if ((instruction.opcode == .load_local or instruction.opcode == .store_local) and nameIndex(names.items, instruction.name) == null) {
@@ -1084,6 +1108,7 @@ fn isDynamicNamedCall(function: ir.Function, name: []const u8) bool {
 }
 
 fn hasLocalName(function: ir.Function, name: []const u8) bool {
+    for (function.captures) |capture| if (std.mem.eql(u8, capture, name)) return true;
     for (function.parameters) |parameter| if (std.mem.eql(u8, parameter.name, name)) return true;
     for (function.blocks) |block| for (block.instructions) |instruction| {
         if ((instruction.opcode == .load_local or instruction.opcode == .store_local or instruction.opcode == .increment) and
@@ -1095,20 +1120,25 @@ fn hasLocalName(function: ir.Function, name: []const u8) bool {
     return false;
 }
 
-fn nonCapturingFunction(program: ir.Program, name: []const u8) ?ir.Function {
-    const function = lookupFunction(program, name) orelse return null;
+fn closureSupported(program: ir.Program, caller: ir.Function, name: []const u8) bool {
+    const function = lookupFunction(program, name) orelse return false;
+    for (function.captures) |capture| if (!hasLocalName(caller, capture)) return false;
+    return true;
+}
+
+fn parameterIndex(function: ir.Function, name: []const u8) ?usize {
+    for (function.parameters, 0..) |parameter, index| if (std.mem.eql(u8, parameter.name, name)) return index;
+    return null;
+}
+
+fn maxClosureCaptureCount(program: ir.Program, function: ir.Function) usize {
+    var count: usize = 0;
     for (function.blocks) |block| for (block.instructions) |instruction| {
-        if (instruction.opcode == .load_local or instruction.opcode == .store_local or instruction.opcode == .increment) {
-            var parameter = false;
-            for (function.parameters) |candidate| if (std.mem.eql(u8, candidate.name, instruction.name)) {
-                parameter = true;
-                break;
-            };
-            if (!parameter) return null;
-        }
-        if (instruction.opcode == .destructure_store) return null;
+        if (instruction.opcode != .make_closure) continue;
+        const closure = lookupFunction(program, instruction.name) orelse continue;
+        count = @max(count, closure.captures.len);
     };
-    return function;
+    return count;
 }
 
 fn isDisplayCall(name: []const u8) bool {

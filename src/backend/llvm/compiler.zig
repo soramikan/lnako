@@ -335,7 +335,7 @@ test "LLVM C APIで全最適化レベルのモジュールを検証してIRを�
     }
 }
 
-test "捕捉ありクロージャをソース位置付きで拒否する" {
+test "捕捉ありクロージャをLLVM生成対象として受理する" {
     const parser = @import("../../frontend/parser.zig");
     const semantic = @import("../../semantic/analyzer.zig");
     const hir = @import("../../ir/hir.zig");
@@ -348,12 +348,9 @@ test "捕捉ありクロージャをソース位置付きで拒否する" {
     defer hir_program.deinit();
     var program = try lower.lower(std.testing.allocator, hir_program);
     defer program.deinit();
-    var diagnostics: std.Io.Writer.Allocating = .init(std.testing.allocator);
-    defer diagnostics.deinit();
-    try std.testing.expectError(error.UnsupportedInstruction, compile(std.testing.allocator, std.testing.io, program, .{
-        .source_path = "unsupported.nako3",
-        .output_path = "/tmp/unused-lnako-output",
-    }, &diagnostics.writer));
-    try std.testing.expect(std.mem.indexOf(u8, diagnostics.written(), "opcode=make_closure") != null);
-    try std.testing.expect(std.mem.indexOf(u8, diagnostics.written(), "unsupported.nako3:2:") != null);
+    try std.testing.expect(module_mod.findUnsupported(program) == null);
+    var generated = try module_mod.generate(std.testing.allocator, program, "closure.nako3", false);
+    defer generated.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, generated.text, "@lnako_aot_function_capture") != null);
+    try std.testing.expect(std.mem.indexOf(u8, generated.text, "closure.capture") != null);
 }

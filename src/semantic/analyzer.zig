@@ -54,12 +54,18 @@ pub const Binding = struct {
     symbol: ?SymbolId,
 };
 
+pub const FunctionScope = struct {
+    node: *ast.Node,
+    scope: ScopeId,
+};
+
 pub const Program = struct {
     arena: std.heap.ArenaAllocator,
     modules: []Module,
     scopes: []Scope,
     symbols: []Symbol,
     bindings: []Binding,
+    function_scopes: []FunctionScope,
     diagnostics: []diagnostic.Diagnostic,
 
     pub fn deinit(self: *Program) void {
@@ -95,6 +101,7 @@ pub fn analyzeModules(backing_allocator: std.mem.Allocator, inputs: []const Modu
         .scopes = try analyzer.scopes.toOwnedSlice(analyzer.allocator),
         .symbols = try analyzer.symbols.toOwnedSlice(analyzer.allocator),
         .bindings = try analyzer.bindings.toOwnedSlice(analyzer.allocator),
+        .function_scopes = try analyzer.function_scopes.toOwnedSlice(analyzer.allocator),
         .diagnostics = try analyzer.diagnostics.toOwnedSlice(analyzer.allocator),
     };
 }
@@ -106,6 +113,7 @@ const Analyzer = struct {
     scopes: std.ArrayList(Scope) = .empty,
     symbols: std.ArrayList(Symbol) = .empty,
     bindings: std.ArrayList(Binding) = .empty,
+    function_scopes: std.ArrayList(FunctionScope) = .empty,
     diagnostics: std.ArrayList(diagnostic.Diagnostic) = .empty,
     builtins: std.StringHashMapUnmanaged(void) = .empty,
     resolution_ambiguous: bool = false,
@@ -141,7 +149,9 @@ const Analyzer = struct {
             _ = try self.declare(module_index, scope, node.name, if (node.is_const) .constant else .variable, node.span, node.is_export, !node.is_const, 0);
         } else if (node.kind == .variable_list_definition) {
             for (node.arguments) |name| _ = try self.declare(module_index, scope, name.name, if (node.is_const) .constant else .variable, name.span, node.is_export, !node.is_const, 0);
-        } else if ((node.kind == .assignment or node.kind == .increment) and self.builtins.get(node.name) == null and self.lookupLexical(scope, node.name) == null) {
+        } else if ((node.kind == .assignment or node.kind == .increment) and self.builtins.get(node.name) == null and
+            self.lookupAssignmentTarget(scope, node.name) == null)
+        {
             _ = try self.declare(module_index, scope, node.name, .variable, node.span, true, true, 0);
         } else if (node.kind == .for_statement and node.name.len > 0 and self.lookupLexical(scope, node.name) == null) {
             _ = try self.declare(module_index, scope, node.name, .loop_variable, node.span, false, true, 0);
@@ -155,6 +165,7 @@ const Analyzer = struct {
             .function_definition, .test_definition => {
                 if (self.lookupLexical(scope, node.name)) |symbol| try self.bind(node, .declaration, node.name, symbol.qualified_name, symbol.id);
                 const function_scope = try self.addScope(scope, module_index, .function);
+                try self.function_scopes.append(self.allocator, .{ .node = node, .scope = function_scope });
                 for (node.arguments) |argument| _ = try self.declare(module_index, function_scope, argument.name, .parameter, argument.span, false, true, 0);
                 for (node.children) |child| try self.predeclareBlock(child, module_index, function_scope, false);
                 for (node.children) |child| try self.resolveBlock(child, module_index, function_scope);
@@ -162,6 +173,7 @@ const Analyzer = struct {
             },
             .anonymous_function => {
                 const function_scope = try self.addScope(scope, module_index, .anonymous_function);
+                try self.function_scopes.append(self.allocator, .{ .node = node, .scope = function_scope });
                 for (node.arguments) |argument| _ = try self.declare(module_index, function_scope, argument.name, .parameter, argument.span, false, true, 0);
                 for (node.children) |child| try self.predeclareBlock(child, module_index, function_scope, false);
                 for (node.children) |child| try self.resolveBlock(child, module_index, function_scope);
@@ -184,7 +196,7 @@ const Analyzer = struct {
     }
 
     fn resolveDeclaration(self: *Analyzer, node: *ast.Node, module_index: u32, scope: ScopeId) !void {
-        const symbol = self.lookupLexical(scope, node.name) orelse self.lookupModule(module_index, node.name) orelse return;
+        const symbol = self.lookupAssignmentTarget(scope, node.name) orelse self.lookupModule(module_index, node.name) orelse return;
         if ((node.kind == .assignment or node.kind == .array_assignment or node.kind == .property_assignment or node.kind == .increment) and !symbol.is_mutable) {
             try self.addDiagnostic(.assign_to_constant, node.span, self.modules.items[module_index].path, "定数へ再代入できません");
         }
@@ -288,6 +300,16 @@ const Analyzer = struct {
         return null;
     }
 
+    fn lookupAssignmentTarget(self: *Analyzer, scope: ScopeId, name: []const u8) ?Symbol {
+        if (self.lookupLexical(scope, name)) |symbol| return symbol;
+        if (self.scopes.items[scope].kind != .anonymous_function) return null;
+        var current = self.scopes.items[scope].parent;
+        while (current) |parent| : (current = self.scopes.items[parent].parent) {
+            if (self.lookupLexical(parent, name)) |symbol| return symbol;
+        }
+        return null;
+    }
+
     fn lookupModule(self: *Analyzer, module_index: u32, name: []const u8) ?Symbol {
         return self.lookupLexical(self.modules.items[module_index].scope, name);
     }
@@ -374,6 +396,25 @@ test "グローバル・引数・組み込み命令を解決する" {
         found_builtin = true;
     };
     try std.testing.expect(found_builtin);
+}
+
+test "無名関数の代入は外側の可変束縛を解決する" {
+    const parser = @import("../frontend/parser.zig");
+    const source = "●(Aを)作るとは\nF=関数()\nA=A+1\nここまで\nFで戻る\nここまで\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "closure.nako3");
+    defer parsed.deinit();
+    var program = try analyze(std.testing.allocator, parsed.root.?, "closure.nako3");
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    try std.testing.expectEqual(@as(usize, 2), program.function_scopes.len);
+    var non_module_a: usize = 0;
+    for (program.symbols) |symbol| {
+        if (!std.mem.eql(u8, symbol.name, "A")) continue;
+        if (program.scopes[symbol.scope].kind == .module) continue;
+        non_module_a += 1;
+        try std.testing.expectEqual(SymbolKind.parameter, symbol.kind);
+    }
+    try std.testing.expectEqual(@as(usize, 1), non_module_a);
 }
 
 test "静的に解決したユーザー関数の引数個数差を拒否する" {

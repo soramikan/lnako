@@ -89,6 +89,7 @@ pub const Function = struct {
     id: FunctionId,
     name: []const u8,
     parameters: []Parameter,
+    captures: []const []const u8 = &.{},
     blocks: []BasicBlock,
     entry: BlockId,
     return_type: Type,
@@ -143,6 +144,7 @@ pub const Program = struct {
             target_function.* = source_function;
             target_function.parameters = try allocator.dupe(Parameter, source_function.parameters);
             for (target_function.parameters) |*parameter| parameter.name = try allocator.dupe(u8, parameter.name);
+            target_function.captures = try cloneStrings(allocator, source_function.captures);
             target_function.name = try allocator.dupe(u8, source_function.name);
             target_function.blocks = blocks;
         }

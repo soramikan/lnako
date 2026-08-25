@@ -70,6 +70,7 @@ pub const Function = struct {
     id: FunctionId,
     name: []const u8,
     parameters: []Parameter,
+    captures: []const []const u8 = &.{},
     body: NodeId,
     return_type: TypeHint = .dynamic,
     is_async: bool = false,
@@ -188,10 +189,12 @@ const Lowerer = struct {
                 .name = try self.allocator.dupe(u8, argument.name),
                 .symbol = self.findArgumentSymbol(module_index, argument),
             };
+            const function_scope = self.functionScope(node) orelse return error.MissingFunctionScope;
             try self.functions.append(self.allocator, .{
                 .id = function_id,
                 .name = function_name,
                 .parameters = parameters,
+                .captures = try self.captureNames(node, function_scope),
                 .body = body,
                 .is_async = node.is_async,
                 .is_test = node.kind == .test_definition,
@@ -304,7 +307,46 @@ const Lowerer = struct {
             symbol.kind == .parameter and std.mem.eql(u8, symbol.name, argument.name) and spanEqual(symbol.span, argument.span)) return symbol.id;
         return null;
     }
+
+    fn functionScope(self: Lowerer, node: *ast.Node) ?semantic.ScopeId {
+        for (self.semantic_program.function_scopes) |owner| if (owner.node == node) return owner.scope;
+        return null;
+    }
+
+    fn captureNames(self: *Lowerer, node: *ast.Node, function_scope: semantic.ScopeId) ![]const []const u8 {
+        var captures: std.ArrayList([]const u8) = .empty;
+        defer captures.deinit(self.allocator);
+        for (self.semantic_program.bindings) |binding| {
+            const symbol_id = binding.symbol orelse continue;
+            const symbol = self.semantic_program.symbols[symbol_id];
+            if (self.semantic_program.scopes[symbol.scope].kind == .module) continue;
+            if (!self.scopeIsAncestor(symbol.scope, function_scope)) continue;
+            if (!nodeContains(node, binding.node)) continue;
+            if (nameIndex(captures.items, symbol.qualified_name) != null) continue;
+            try captures.append(self.allocator, try self.allocator.dupe(u8, symbol.qualified_name));
+        }
+        return captures.toOwnedSlice(self.allocator);
+    }
+
+    fn scopeIsAncestor(self: Lowerer, ancestor: semantic.ScopeId, descendant: semantic.ScopeId) bool {
+        var current = self.semantic_program.scopes[descendant].parent;
+        while (current) |scope| : (current = self.semantic_program.scopes[scope].parent) {
+            if (scope == ancestor) return true;
+        }
+        return false;
+    }
 };
+
+fn nodeContains(root: *ast.Node, candidate: *ast.Node) bool {
+    if (root == candidate) return true;
+    for (root.children) |child| if (nodeContains(child, candidate)) return true;
+    return false;
+}
+
+fn nameIndex(names: []const []const u8, name: []const u8) ?usize {
+    for (names, 0..) |candidate, index| if (std.mem.eql(u8, candidate, name)) return index;
+    return null;
+}
 
 fn spanEqual(left: ast.Span, right: ast.Span) bool {
     return left.source_start == right.source_start and left.source_end == right.source_end and left.line == right.line and left.column == right.column;
@@ -340,6 +382,25 @@ test "名前解決済みASTをHIRへ下げる" {
     const function = program.findFunction("main__F").?;
     try std.testing.expect(function.parameters[0].symbol != null);
     try std.testing.expectEqualStrings("B", analyzed.symbols[function.parameters[0].symbol.?].name);
+}
+
+test "入れ子の無名関数へ自由変数捕捉を中継する" {
+    const parser = @import("../frontend/parser.zig");
+    const source = "●(Aを)作るとは\nF=関数()\nG=関数()それはA\nここまで\nGで戻る\nここまで\nFで戻る\nここまで\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "closure.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "closure.nako3");
+    defer analyzed.deinit();
+    var program = try lowerSingle(std.testing.allocator, parsed.root.?, "closure", "closure.nako3", analyzed);
+    defer program.deinit();
+    var closure_count: usize = 0;
+    for (program.functions) |function| {
+        if (std.mem.indexOf(u8, function.name, "__lambda$") == null) continue;
+        closure_count += 1;
+        try std.testing.expectEqual(@as(usize, 1), function.captures.len);
+        try std.testing.expectEqualStrings("A", function.captures[0]);
+    }
+    try std.testing.expectEqual(@as(usize, 2), closure_count);
 }
 
 test "分割代入と増減とループ属性をHIRへ保持する" {

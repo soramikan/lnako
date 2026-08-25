@@ -44,6 +44,14 @@
     "source": "F=関数(A)それはA+1;ここまで\nF(3)を表示\nG=関数()それは7;ここまで\nG()を表示\nF===Fを表示\nF===Gを表示\n"
   },
   {
+    "id": "native-closure-shared-mutable-binding",
+    "source": "●(Aを)作るとは\nF=関数()\nA=A+1\nAで戻る\nここまで\nH=関数()それはA\nここまで\nA=4\n[F,H]で戻る\nここまで\nP=作る(1)\nG=P[0]\nH=P[1]\nG()を表示\nH()を表示\nG()を表示\n"
+  },
+  {
+    "id": "native-closure-transitive-capture",
+    "source": "●(Aを)作るとは\nF=関数()\nG=関数()それはA\nここまで\nGで戻る\nここまで\nFで戻る\nここまで\nP=作る(7)\nQ=P()\nQ()を表示\n"
+  },
+  {
     "id": "native-unary-boolean",
     "source": "(-3)を表示\nもし、!(1>2)ならば\n「否定」を表示\nここまで\n"
   },

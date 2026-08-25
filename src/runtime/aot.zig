@@ -14,6 +14,7 @@ pub const Tag = enum(u8) {
     iterator = 8,
     bigint = 9,
     function = 10,
+    binding_cell = 11,
 };
 
 pub const Value = extern struct {
@@ -23,7 +24,7 @@ pub const Value = extern struct {
     pub fn object(self: Value) ?*Object {
         if (self.payload == 0) return null;
         return switch (@as(Tag, @enumFromInt(self.tag))) {
-            .utf16_string, .array, .dictionary, .iterator, .bigint, .function => @ptrFromInt(self.payload),
+            .utf16_string, .array, .dictionary, .iterator, .bigint, .function, .binding_cell => @ptrFromInt(self.payload),
             else => null,
         };
     }
@@ -48,7 +49,11 @@ const Iterator = struct {
 };
 
 const FunctionCallback = *const fn (*anyopaque, ?[*]const Value, usize) callconv(.c) Value;
-const FunctionObject = struct { callback: FunctionCallback, arity: usize };
+const FunctionObject = struct {
+    callback: FunctionCallback,
+    arity: usize,
+    captures: []Value,
+};
 
 const Arithmetic = enum(u8) {
     add,
@@ -84,6 +89,7 @@ const Payload = union(enum) {
     dictionary: std.ArrayList(DictionaryEntry),
     iterator: Iterator,
     function: FunctionObject,
+    binding_cell: Value,
 };
 
 const Object = struct {
@@ -184,9 +190,23 @@ const Runtime = struct {
         return self.createObject(.{ .iterator = iterator }, .iterator);
     }
 
-    fn createFunction(self: *Runtime, callback: FunctionCallback, arity: usize) !Value {
+    fn createFunction(self: *Runtime, callback: FunctionCallback, arity: usize, captures: []const Value) !Value {
+        var frame: RootFrame = .{};
+        self.pushRoots(&frame, if (captures.len > 0) @constCast(captures.ptr) else null, captures.len);
+        defer self.popRoots(&frame);
         try self.beforeAllocation();
-        return self.createObject(.{ .function = .{ .callback = callback, .arity = arity } }, .function);
+        const owned_captures = try self.allocator.dupe(Value, captures);
+        errdefer self.allocator.free(owned_captures);
+        return self.createObject(.{ .function = .{ .callback = callback, .arity = arity, .captures = owned_captures } }, .function);
+    }
+
+    fn createBindingCell(self: *Runtime, initial: Value) !Value {
+        var rooted = initial;
+        var frame: RootFrame = .{};
+        self.pushRoots(&frame, @ptrCast(&rooted), 1);
+        defer self.popRoots(&frame);
+        try self.beforeAllocation();
+        return self.createObject(.{ .binding_cell = rooted }, .binding_cell);
     }
 
     fn createObject(self: *Runtime, payload: Payload, tag: Tag) !Value {
@@ -227,7 +247,9 @@ const Runtime = struct {
             self.grey = object.grey_next;
             object.grey_next = null;
             switch (object.payload) {
-                .utf16_string, .bigint, .function => {},
+                .utf16_string, .bigint => {},
+                .function => |function| for (function.captures) |capture| self.markValue(capture),
+                .binding_cell => |value| self.markValue(value),
                 .array => |items| for (items.items) |value| self.markValue(value),
                 .dictionary => |entries| for (entries.items) |entry| {
                     self.markValue(entry.key);
@@ -266,7 +288,8 @@ const Runtime = struct {
             .bigint => |*value| value.deinit(),
             .array => |*items| items.deinit(self.allocator),
             .dictionary => |*entries| entries.deinit(self.allocator),
-            .iterator, .function => {},
+            .function => |function| self.allocator.free(function.captures),
+            .iterator, .binding_cell => {},
         }
         self.allocator.destroy(object);
     }
@@ -406,6 +429,7 @@ fn valueToNumberRuntime(runtime: *Runtime, value: Value) !f64 {
         .static_utf8_string, .utf16_string => parseStringNumber(runtime, value),
         .bigint => error.CannotConvertBigIntToNumber,
         .array, .dictionary, .iterator, .function => valueToNumberRuntime(runtime, try valueToPrimitive(runtime, value)),
+        .binding_cell => unreachable,
     };
 }
 
@@ -419,6 +443,7 @@ fn valueToParseFloatRuntime(runtime: *Runtime, value: Value) !f64 {
         },
         .bigint => error.CannotConvertBigIntToNumber,
         .array, .dictionary, .iterator, .function => valueToParseFloatRuntime(runtime, try valueToPrimitive(runtime, value)),
+        .binding_cell => unreachable,
         .undefined, .null_value, .boolean => std.math.nan(f64),
     };
 }
@@ -522,6 +547,7 @@ fn valueUtf16Alloc(runtime: *Runtime, value: Value) anyerror![]u16 {
         .array => return arrayUtf16Alloc(runtime, value.object().?),
         .dictionary, .iterator => try runtime.allocator.dupe(u8, "[object Object]"),
         .function => try runtime.allocator.dupe(u8, "function () { [native code] }"),
+        .binding_cell => unreachable,
     };
     defer runtime.allocator.free(utf8);
     return std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, utf8);
@@ -586,6 +612,7 @@ fn strictEqual(runtime: *Runtime, left: Value, right: Value) !bool {
         .bigint => BigInt.eql(left.object().?.payload.bigint, right.object().?.payload.bigint),
         .static_utf8_string, .utf16_string => unreachable,
         .array, .dictionary, .iterator, .function => left.payload == right.payload,
+        .binding_cell => unreachable,
     };
 }
 
@@ -834,6 +861,7 @@ fn sameKey(left: Value, right: Value) bool {
         .utf16_string => std.mem.eql(u16, left.object().?.payload.utf16_string, right.object().?.payload.utf16_string),
         .bigint => BigInt.eql(left.object().?.payload.bigint, right.object().?.payload.bigint),
         .array, .dictionary, .iterator, .function => left.payload == right.payload,
+        .binding_cell => unreachable,
     };
 }
 
@@ -1021,10 +1049,31 @@ pub export fn lnako_aot_iterator_next(out: *Value, iterator: *const Value, repea
     out.* = if (active_runtime) |*runtime| runtime.iteratorNext(iterator.*, repeat_target, value_target, key_target, range_target) else .{};
 }
 
-pub export fn lnako_aot_function_new(out: *Value, callback: FunctionCallback, arity: usize) callconv(.c) void {
+pub export fn lnako_aot_binding_cell_new(out: *Value, initial: ?*const Value) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*value| value else return;
-    out.* = runtime.createFunction(callback, arity) catch |failure| runtimeFailure(failure);
+    out.* = runtime.createBindingCell(if (initial) |value| value.* else .{}) catch |failure| runtimeFailure(failure);
+}
+
+pub export fn lnako_aot_binding_cell_value(cell: *Value) callconv(.c) *Value {
+    if (cell.tag != @intFromEnum(Tag.binding_cell)) runtimeFailure(error.InvalidBindingCell);
+    const object = cell.object() orelse runtimeFailure(error.InvalidBindingCell);
+    if (object.payload != .binding_cell) runtimeFailure(error.InvalidBindingCell);
+    return &object.payload.binding_cell;
+}
+
+pub export fn lnako_aot_function_new(out: *Value, callback: FunctionCallback, arity: usize, captures: ?[*]const Value, capture_count: usize) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*value| value else return;
+    const source = if (captures) |pointer| pointer[0..capture_count] else if (capture_count == 0) &.{} else runtimeFailure(error.InvalidCaptures);
+    for (source) |capture| if (capture.tag != @intFromEnum(Tag.binding_cell)) runtimeFailure(error.InvalidBindingCell);
+    out.* = runtime.createFunction(callback, arity, source) catch |failure| runtimeFailure(failure);
+}
+
+pub export fn lnako_aot_function_capture(out: *Value, context: *anyopaque, index: usize) callconv(.c) void {
+    const object: *Object = @ptrCast(@alignCast(context));
+    if (object.payload != .function or index >= object.payload.function.captures.len) runtimeFailure(error.InvalidClosureCapture);
+    out.* = object.payload.function.captures[index];
 }
 
 pub export fn lnako_aot_function_call(out: *Value, callable: *const Value, arguments: ?[*]const Value, len: usize) callconv(.c) void {
@@ -1069,13 +1118,24 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_concat));
     try std.testing.expectEqual(*const fn (*Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_increment));
     try std.testing.expectEqual(*const fn (*const Value, bool) callconv(.c) void, @TypeOf(&lnako_aot_print_collection));
-    try std.testing.expectEqual(*const fn (*Value, FunctionCallback, usize) callconv(.c) void, @TypeOf(&lnako_aot_function_new));
+    try std.testing.expectEqual(*const fn (*Value, ?*const Value) callconv(.c) void, @TypeOf(&lnako_aot_binding_cell_new));
+    try std.testing.expectEqual(*const fn (*Value) callconv(.c) *Value, @TypeOf(&lnako_aot_binding_cell_value));
+    try std.testing.expectEqual(*const fn (*Value, FunctionCallback, usize, ?[*]const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_function_new));
+    try std.testing.expectEqual(*const fn (*Value, *anyopaque, usize) callconv(.c) void, @TypeOf(&lnako_aot_function_capture));
     try std.testing.expectEqual(*const fn (*Value, *const Value, ?[*]const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_function_call));
 }
 
 fn testAotFunction(_: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) Value {
     if (arguments == null or len != 1) return .{};
     return arguments.?[0];
+}
+
+fn testAotCapturedIncrement(context: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) Value {
+    const function: *Object = @ptrCast(@alignCast(context));
+    const cell = function.payload.function.captures[0].object().?;
+    const next = numberValue(valueToNumber(cell.payload.binding_cell) + 1);
+    cell.payload.binding_cell = next;
+    return next;
 }
 
 test "AOT関数値を呼び出しGCで回収する" {
@@ -1087,13 +1147,38 @@ test "AOT関数値を呼び出しGCで回収する" {
         active_runtime = null;
     }
     var function: Value = .{};
-    lnako_aot_function_new(&function, testAotFunction, 1);
+    lnako_aot_function_new(&function, testAotFunction, 1, null, 0);
     var argument = numberValue(7);
     var result: Value = .{};
     lnako_aot_function_call(&result, &function, @ptrCast(&argument), 1);
     try std.testing.expectEqual(argument.payload, result.payload);
     try std.testing.expectEqual(@as(usize, 1), active_runtime.?.object_count);
     try std.testing.expectEqual(@as(usize, 1), lnako_aot_collect());
+}
+
+test "AOTクロージャがGC管理の可変セルを共有する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{} };
+    var frame: RootFrame = .{};
+    active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    var initial = numberValue(4);
+    lnako_aot_binding_cell_new(&roots[0], &initial);
+    lnako_aot_function_new(&roots[1], testAotCapturedIncrement, 0, @ptrCast(&roots[0]), 1);
+    try std.testing.expectEqual(@as(usize, 0), active_runtime.?.collect());
+    var result: Value = .{};
+    lnako_aot_function_call(&result, &roots[1], null, 0);
+    try std.testing.expectEqual(@as(f64, 5), valueToNumber(result));
+    lnako_aot_function_call(&result, &roots[1], null, 0);
+    try std.testing.expectEqual(@as(f64, 6), valueToNumber(result));
+    lnako_aot_binding_cell_value(&roots[0]).* = roots[1];
+    active_runtime.?.popRoots(&frame);
+    try std.testing.expectEqual(@as(usize, 2), active_runtime.?.collect());
 }
 
 test "ルートフレームをLIFOで連結する" {

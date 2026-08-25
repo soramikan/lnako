@@ -1552,17 +1552,16 @@ pub const Interpreter = struct {
         var root = self.runtime.rootFrame();
         defer root.deinit();
         try root.protect(&name_root);
-        const count = frame.locals.count();
+        const count = function.captures.len;
         const captures = try self.allocator.alloc(value_mod.Capture, count);
         defer self.allocator.free(captures);
         const capture_roots = try self.allocator.alloc(Value, count);
         defer self.allocator.free(capture_roots);
-        var iterator = frame.locals.iterator();
-        var index: usize = 0;
-        while (iterator.next()) |entry| : (index += 1) {
-            capture_roots[index] = try self.runtime.stringUtf8(entry.key_ptr.*);
+        for (function.captures, 0..) |capture_name, index| {
+            const cell = frame.locals.get(capture_name) orelse return error.MissingClosureCapture;
+            capture_roots[index] = try self.runtime.stringUtf8(capture_name);
             try root.protect(&capture_roots[index]);
-            captures[index] = .{ .name = capture_roots[index].string, .cell = entry.value_ptr.* };
+            captures[index] = .{ .name = capture_roots[index].string, .cell = cell };
         }
         return self.runtime.createIrFunction(name.string, function.parameters.len, function.id, captures);
     }

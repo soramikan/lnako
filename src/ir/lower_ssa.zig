@@ -71,6 +71,7 @@ const FunctionBuilder = struct {
             .id = self.function.id,
             .name = try self.allocator.dupe(u8, self.function.name),
             .parameters = try self.parameters.toOwnedSlice(self.allocator),
+            .captures = try dupeStrings(self.allocator, self.function.captures),
             .blocks = blocks,
             .entry = 0,
             .return_type = toType(self.function.return_type),
