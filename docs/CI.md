@@ -55,4 +55,45 @@ pushされた場合だけ、進行中の古いrunを取り消します。別ブ�
 4スイートはセットアップを個別に行うため、単一runだけの総runner時間は直列構成より少し増える可能性があります。
 壁時計時間を短縮し、旧run取消によって複数run全体の無駄なrunner時間を抑える設計です。
 
-分割後の実測は、最初に全12ジョブが完走したrunの値をこの文書へ追記します。
+## 分割直後の実測
+
+2026-08-25の[run 32823536056](https://github.com/soramikan/lnako/actions/runs/32823536056)（`8f10340`）は、
+全12ジョブを16分07秒で完了しました。変更前の最長ジョブ43分50秒に対し、最新commitの結果を待つ壁時計時間は
+約63%短縮されています。
+
+| 環境 | `core` | `standard` | `host` | `aot` |
+|---|---:|---:|---:|---:|
+| Linux x86_64 | 2分28秒・成功 | 1分54秒・成功 | 16分03秒・成功 | 4分57秒・成功 |
+| macOS arm64 | 3分00秒・成功 | 2分06秒・成功 | 13分22秒・成功 | 4分34秒・成功 |
+| Windows x86_64 | 3分43秒・成功 | 2分25秒・成功 | 15分42秒・成功 | 3分18秒・既知4差分 |
+
+`standard`は変更前の16〜24分から約2分へ短縮されました。クリティカルパスはNodeホスト差分を含む`host`へ
+移り、検証範囲を維持した状態で16分台です。今後さらに分割する場合はrunner枠とセットアップの重複が増えるため、
+まずこの値を基準とします。
+
+## 初回runに残ったWindows AOT差分
+
+初回runのWindows AOTは、次の4ケースで失敗しました。
+
+- `native-noncapturing-function-value`
+- `native-dynamic-function-arity`
+- `native-closure-shared-mutable-binding`
+- `native-closure-transitive-capture`
+
+これはCI分割による回帰ではありません。変更前の[run 32818778076](https://github.com/soramikan/lnako/actions/runs/32818778076)
+にも同じ4差分がありました。分割後は、従来約36分後だった検出が3分18秒後になっています。
+
+原因は、LLVM生成コールバックが16バイトの動的値をC ABI境界で直接返していたことです。Windows x64の集約値返却
+規則へ依存しないよう、結果を明示的なポインタへ書き込むABIへ変更しました。ローカルでは全56件・O0〜O3のAOT差分、
+256単体テスト、Windows GNU向け通常/QuickJS ReleaseSafeクロスビルドまで確認し、正式なWindows MSVC実行は次の
+12ジョブrunで検証します。
+
+## ActionのNodeバージョン警告
+
+初回runでは、`actions/cache@v4`と`mlugg/setup-zig@v2`がNode 20対象で、runnerがNode 24を強制使用したという
+警告が出ました。製品テストの失敗ではありませんが、次のように扱います。
+
+- `actions/cache`はNode 24を使う公式v6へ更新し、同じcache keyとハッシュ検証を維持します。
+- `mlugg/setup-zig`は2026-08-25時点の最新v2.2.1も`node20`指定です。runner上ではNode 24で正常完了しているため
+  `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION`でNode 20へ戻さず、上流の更新を待ちます。
+- 警告と検証失敗を混同せず、setup失敗またはキャッシュ破損は従来どおりジョブ失敗として扱います。

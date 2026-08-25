@@ -53,6 +53,9 @@ for (const required of [
   "timeout-minutes: 50",
 ]) if (!workflow.includes(required)) throw new Error(`CI安全設定がありません: ${required}`);
 
+const cacheActions = [...workflow.matchAll(/^      - uses: actions\/cache@v6$/gm)];
+if (cacheActions.length !== 2) throw new Error(`actions/cache@v6は2ステップ必要です: actual=${cacheActions.length}`);
+
 console.log(`CI構成検査: ${actualMatrix.size}ジョブ・${stepSuites.size}条件付き検証ステップ成功`);
 
 function assertSetEqual(actual, expected, label) {
