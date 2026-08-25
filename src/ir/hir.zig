@@ -40,6 +40,7 @@ pub const Kind = enum {
     foreach_statement,
     switch_statement,
     try_except,
+    throw_statement,
     return_statement,
     break_statement,
     continue_statement,
@@ -229,7 +230,7 @@ const Lowerer = struct {
             .object_literal => .make_object,
             .binary_operator => .binary,
             .unary_operator => .unary,
-            .function_call => .call,
+            .function_call => if (std.mem.eql(u8, node.name, "エラー発生") and self.bindingIsBuiltin(node)) .throw_statement else .call,
             .call_value => .call_value,
             .array_reference, .array_value_reference => .array_get,
             .property_reference => .property_get,
@@ -285,6 +286,11 @@ const Lowerer = struct {
                 return self.semantic_program.scopes[symbol.scope].kind != .module;
             }
         };
+        return false;
+    }
+
+    fn bindingIsBuiltin(self: Lowerer, node: *ast.Node) bool {
+        for (self.semantic_program.bindings) |binding| if (binding.node == node) return binding.kind == .builtin;
         return false;
     }
 

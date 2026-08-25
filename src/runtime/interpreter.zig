@@ -380,9 +380,9 @@ pub const Interpreter = struct {
                     current_block = if (frame.values[branch.condition].toBoolean()) branch.then_block else branch.else_block;
                 },
                 .return_value => |value| return if (value) |id| frame.values[id] else .undefined,
-                .throw_value => |value| {
-                    self.exception_value = frame.values[value];
-                    if (frame.handlers.pop()) |handler| {
+                .throw_value => |throw_value| {
+                    self.exception_value = frame.values[throw_value.value];
+                    if (frame.handlers.pop() orelse throw_value.target) |handler| {
                         try self.setGlobal("エラーメッセージ", self.exception_value);
                         predecessor = current_block;
                         current_block = handler;

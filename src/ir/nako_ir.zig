@@ -66,13 +66,14 @@ pub const Instruction = struct {
 };
 
 pub const ConditionalBranch = struct { condition: ValueId, then_block: BlockId, else_block: BlockId };
+pub const Throw = struct { value: ValueId, target: ?BlockId = null };
 
 pub const Terminator = union(enum) {
     none,
     branch: BlockId,
     conditional_branch: ConditionalBranch,
     return_value: ?ValueId,
-    throw_value: ValueId,
+    throw_value: Throw,
     unreachable_terminator,
 };
 

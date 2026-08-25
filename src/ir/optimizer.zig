@@ -436,7 +436,7 @@ fn eliminateDeadCode(scratch_allocator: std.mem.Allocator, program: *ir.Program,
                 .return_value => |value| if (value) |id| {
                     uses[id] += 1;
                 },
-                .throw_value => |id| uses[id] += 1,
+                .throw_value => |throw_value| uses[throw_value.value] += 1,
                 else => {},
             }
         }
@@ -512,7 +512,7 @@ fn maxValueId(function: ir.Function) usize {
             .return_value => |value| if (value) |id| {
                 maximum = @max(maximum, id);
             },
-            .throw_value => |id| maximum = @max(maximum, id),
+            .throw_value => |throw_value| maximum = @max(maximum, throw_value.value),
             else => {},
         }
     }

@@ -44,6 +44,8 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
                 .speed_mode_end,
                 .performance_monitor_begin,
                 .performance_monitor_end,
+                .try_begin,
+                .try_end,
                 => true,
                 .const_bigint => true,
                 .destructure_store => destructureSourceSupported(function, instruction),
@@ -71,6 +73,12 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
         }
         switch (block.terminator) {
             .branch, .conditional_branch, .return_value, .unreachable_terminator => {},
+            .throw_value => |throw_value| if (throw_value.target == null) return .{
+                .function_name = function.name,
+                .opcode = "throw_value",
+                .detail = "uncaught",
+                .span = if (block.instructions.len > 0) block.instructions[block.instructions.len - 1].span else ast.emptySpan(),
+            },
             else => return .{
                 .function_name = function.name,
                 .opcode = @tagName(block.terminator),
@@ -489,6 +497,7 @@ const Emitter = struct {
             .iterator_begin => try self.writeIteratorBegin(function, instruction, scope, aggregate_count),
             .iterator_has_next => try self.writeIteratorHasNext(instruction, scope),
             .iterator_next => try self.writeIteratorNext(function, locals, instruction, scope),
+            .try_begin, .try_end => {},
             .phi => {
                 try self.output.writer.print("  %v{d} = phi %lnako.Value ", .{result orelse return error.MissingInstructionResult});
                 for (instruction.phi_incoming, 0..) |incoming, index| {
@@ -911,6 +920,16 @@ const Emitter = struct {
                 try self.output.writer.writeAll("  call void @lnako_aot_pop_roots(ptr %root.frame)\n");
                 try self.output.writer.writeAll("  ret %lnako.Value ");
                 if (value) |operand| try self.writeValueRef(function, operand) else try self.output.writer.writeAll("{ i8 0, i64 0 }");
+                try self.debugSuffix(span, scope);
+            },
+            .throw_value => |throw_value| {
+                const target = throw_value.target orelse return error.UnsupportedUncaughtThrow;
+                const error_index = self.globalIndex("エラーメッセージ") orelse return error.MissingErrorMessageGlobal;
+                try self.output.writer.writeAll("  store %lnako.Value ");
+                try self.writeValueRef(function, throw_value.value);
+                try self.output.writer.print(", ptr @lnako.global.{d}", .{error_index});
+                try self.debugSuffix(span, scope);
+                try self.output.writer.print("  br label %bb{d}", .{target});
                 try self.debugSuffix(span, scope);
             },
             .unreachable_terminator => {
@@ -1499,6 +1518,24 @@ test "非捕捉無名関数を統一ABIの関数値へ変換する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_function_new") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_function_call") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.wrapper.0") != null);
+}
+
+test "監視外のthrowを未対応として事前検出する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "『未捕捉』のエラー発生\n", "uncaught.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "uncaught.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "uncaught", "uncaught.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    const unsupported = findUnsupported(program).?;
+    try std.testing.expectEqualStrings("throw_value", unsupported.opcode);
+    try std.testing.expectEqualStrings("uncaught", unsupported.detail);
 }
 
 test "O1では証明済み数値と真偽判定をアンボックスしO0のIRを変更しない" {

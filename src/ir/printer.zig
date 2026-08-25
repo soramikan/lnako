@@ -59,7 +59,10 @@ fn writeTerminator(terminator: ir.Terminator, writer: *std.Io.Writer) !void {
         .branch => |target| try writer.print("br bb{d}", .{target}),
         .conditional_branch => |branch| try writer.print("br_if %{d} bb{d} bb{d}", .{ branch.condition, branch.then_block, branch.else_block }),
         .return_value => |value| if (value) |operand| try writer.print("return %{d}", .{operand}) else try writer.writeAll("return"),
-        .throw_value => |value| try writer.print("throw %{d}", .{value}),
+        .throw_value => |throw_value| {
+            try writer.print("throw %{d}", .{throw_value.value});
+            if (throw_value.target) |target| try writer.print(" catch bb{d}", .{target});
+        },
         .unreachable_terminator => try writer.writeAll("unreachable"),
     }
     try writer.writeByte('\n');

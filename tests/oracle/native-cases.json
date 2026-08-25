@@ -122,5 +122,13 @@
   {
     "id": "native-switch",
     "source": "2で条件分岐\n1ならば\n「a」を表示\nここまで\n2ならば\n「b」を表示\nここまで\n違えば\n「c」を表示\nここまで\nここまで\n"
+  },
+  {
+    "id": "native-exception-monitor",
+    "source": "エラー監視\n「前」を表示\n「失敗」のエラー発生\n「到達不可」を表示\nエラーならば\nエラーメッセージを表示\nここまで\n「後」を表示\n"
+  },
+  {
+    "id": "native-nested-exception-monitor",
+    "source": "エラー監視\nエラー監視\n「内」のエラー発生\nエラーならば\nエラーメッセージを表示\nここまで\n「継続」を表示\nエラーならば\n「外」を表示\nここまで\n"
   }
 ]

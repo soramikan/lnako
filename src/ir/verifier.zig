@@ -139,7 +139,12 @@ const Checker = struct {
             switch (block.terminator) {
                 .conditional_branch => |branch| try self.verifyUse(function, definitions, dominators, effective_block, block.instructions.len, branch.condition, block.id, null),
                 .return_value => |value| if (value) |operand| try self.verifyUse(function, definitions, dominators, effective_block, block.instructions.len, operand, block.id, null),
-                .throw_value => |operand| try self.verifyUse(function, definitions, dominators, effective_block, block.instructions.len, operand, block.id, null),
+                .throw_value => |throw_value| {
+                    try self.verifyUse(function, definitions, dominators, effective_block, block.instructions.len, throw_value.value, block.id, null);
+                    if (throw_value.target) |target| if (target >= function.blocks.len) {
+                        try self.add(.invalid_exception_target, function, block.id, null, "throw命令の例外分岐先が範囲外です");
+                    };
+                },
                 else => {},
             }
         }

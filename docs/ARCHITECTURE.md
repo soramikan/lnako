@@ -154,6 +154,7 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
 - `backend/llvm/module.zig` はNako SSA IRからタグ付き動的値を使うLLVM IRを生成する。元ソースの
   `DICompileUnit`、`DIFile`、`DISubprogram`、命令単位の `DILocation` も同時に生成する。`-O1`以上では
   `number` / `boolean` と証明された値だけpayloadを直接取り出し、動的な数値変換・truthy判定を省略する。
+  `エラー発生`はthrow値と静的な例外分岐先へ下げ、ハンドラで`エラーメッセージ`を設定する。
 - `backend/llvm/compiler.zig` はIR解析、最適化前後のモジュール検証、PassBuilder、TargetMachineを順に
   実行する。`--emit llvm-ir|obj|exe` は同一の検証済みモジュールを入力とする。
 - 実行ファイル生成では一時オブジェクトを厳密なパスへ出力し、Clang 22.1.8へLLD 22.1.8の絶対パスを

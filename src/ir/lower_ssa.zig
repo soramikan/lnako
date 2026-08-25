@@ -58,6 +58,7 @@ const FunctionBuilder = struct {
     current: ir.BlockId = 0,
     next_value: ir.ValueId,
     loops: std.ArrayList(LoopTargets) = .empty,
+    exception_handlers: std.ArrayList(ir.BlockId) = .empty,
 
     fn finish(self: *FunctionBuilder) !ir.Function {
         var blocks = try self.allocator.alloc(ir.BasicBlock, self.blocks.items.len);
@@ -115,6 +116,7 @@ const FunctionBuilder = struct {
             .continue_statement => self.lowerContinue(node),
             .closure => try self.emitValue(.make_closure, .function, &.{}, node),
             .try_except => self.lowerTry(node),
+            .throw_statement => self.lowerThrow(node),
             .dynamic_execute => try self.lowerVariadic(.dynamic_execute, .dynamic, node),
             .switch_statement => self.lowerSwitch(node),
             .speed_mode => self.lowerScopedMode(.speed_mode_begin, .speed_mode_end, node),
@@ -274,7 +276,9 @@ const FunctionBuilder = struct {
         const merge_block = try self.createBlock("try.end");
         try self.emitVoid(.try_begin, &.{}, node);
         self.currentBlock().instructions.items[self.currentBlock().instructions.items.len - 1].exception_target = handler_block;
+        try self.exception_handlers.append(self.allocator, handler_block);
         if (node.children.len > 0) _ = try self.lowerNode(node.children[0]);
+        _ = self.exception_handlers.pop();
         if (!self.isTerminated()) {
             try self.emitVoid(.try_end, &.{}, node);
             self.terminate(.{ .branch = merge_block });
@@ -284,6 +288,18 @@ const FunctionBuilder = struct {
         if (!self.isTerminated()) self.terminate(.{ .branch = merge_block });
         self.current = merge_block;
         return null;
+    }
+
+    fn lowerThrow(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
+        const value = if (node.children.len > 0)
+            (try self.lowerNode(node.children[node.children.len - 1])) orelse try self.emitUndefined(node)
+        else
+            try self.emitUndefined(node);
+        self.terminate(.{ .throw_value = .{
+            .value = value,
+            .target = if (self.exception_handlers.items.len > 0) self.exception_handlers.items[self.exception_handlers.items.len - 1] else null,
+        } });
+        return value;
     }
 
     fn lowerSwitch(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
@@ -486,6 +502,31 @@ test "条件分岐と例外監視を明示的な制御フローへ変換する" 
     };
     try std.testing.expect(saw_equality);
     try std.testing.expect(saw_exception_edge);
+}
+
+test "エラー発生を最内側の例外分岐先付きthrowへ変換する" {
+    const parser = @import("../frontend/parser.zig");
+    const semantic = @import("../semantic/analyzer.zig");
+    const source = "エラー監視\nエラー監視\n『内』のエラー発生\nエラーならば\nここまで\nエラーならば\nここまで\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "exception.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "exception.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "exception", "exception.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    const entry = program.findFunction("exception__$entry").?;
+    var throw_count: usize = 0;
+    for (entry.blocks) |block| switch (block.terminator) {
+        .throw_value => |throw_value| {
+            throw_count += 1;
+            try std.testing.expect(throw_value.target != null);
+            try std.testing.expect(throw_value.target.? < entry.blocks.len);
+        },
+        else => {},
+    };
+    try std.testing.expectEqual(@as(usize, 1), throw_count);
 }
 
 test "速度優先領域の本体と境界をIRへ保持する" {
