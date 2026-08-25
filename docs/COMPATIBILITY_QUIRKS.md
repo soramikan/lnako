@@ -46,6 +46,13 @@ lnakoは、意図的な非互換として合意した項目を除き、説明文
 根拠は固定オラクルの
 [`core/src/plugin_system_stdio.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_stdio.mts) です。
 
+## BigInt
+
+| 構文 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID |
+|---|---|---|---|
+| BigIntリテラルの`表示` | ソースでは末尾に`n`を付けるが、表示時は10進へ正規化して`n`を出力しない。16進・2進・8進や桁区切りも10進表示になる | 任意精度値のまま保持し、同じ10進文字列を出力する | `AOT BigIntを任意精度で生成して真偽判定する`、`native-bigint-literals-and-truthiness` |
+| `0n`の条件判定 | 通常のオブジェクト値と異なり`0n`だけが偽、他のBigIntは真になる | AOTでもポインタ先の任意精度値を検査し、同じ真偽値にする | `BigInt定数と真偽判定をAOTランタイムへ変換する`、`native-bigint-literals-and-truthiness` |
+
 ## 日時と再現性
 
 日時命令は公式カタログ上で`pure`とされていても、`今`、`今日`、`システム時間`などは実時計を読みます。

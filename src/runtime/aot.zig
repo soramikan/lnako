@@ -1,4 +1,5 @@
 const std = @import("std");
+const BigInt = @import("bigint.zig").BigInt;
 
 pub const Tag = enum(u8) {
     undefined = 0,
@@ -10,6 +11,7 @@ pub const Tag = enum(u8) {
     array = 6,
     dictionary = 7,
     iterator = 8,
+    bigint = 9,
 };
 
 pub const Value = extern struct {
@@ -19,7 +21,7 @@ pub const Value = extern struct {
     pub fn object(self: Value) ?*Object {
         if (self.payload == 0) return null;
         return switch (@as(Tag, @enumFromInt(self.tag))) {
-            .utf16_string, .array, .dictionary, .iterator => @ptrFromInt(self.payload),
+            .utf16_string, .array, .dictionary, .iterator, .bigint => @ptrFromInt(self.payload),
             else => null,
         };
     }
@@ -45,6 +47,7 @@ const Iterator = struct {
 
 const Payload = union(enum) {
     utf16_string: []u16,
+    bigint: BigInt,
     array: std.ArrayList(Value),
     dictionary: std.ArrayList(DictionaryEntry),
     iterator: Iterator,
@@ -80,6 +83,13 @@ const Runtime = struct {
         const owned = try self.allocator.dupe(u16, units);
         errdefer self.allocator.free(owned);
         return self.createObject(.{ .utf16_string = owned }, .utf16_string);
+    }
+
+    fn createBigInt(self: *Runtime, source: []const u8) !Value {
+        try self.beforeAllocation();
+        var value = try BigInt.parseLiteral(self.allocator, source);
+        errdefer value.deinit();
+        return self.createObject(.{ .bigint = value }, .bigint);
     }
 
     fn createArray(self: *Runtime, values: []const Value) !Value {
@@ -164,7 +174,7 @@ const Runtime = struct {
             self.grey = object.grey_next;
             object.grey_next = null;
             switch (object.payload) {
-                .utf16_string => {},
+                .utf16_string, .bigint => {},
                 .array => |items| for (items.items) |value| self.markValue(value),
                 .dictionary => |entries| for (entries.items) |entry| {
                     self.markValue(entry.key);
@@ -200,6 +210,7 @@ const Runtime = struct {
     fn destroyObject(self: *Runtime, object: *Object) void {
         switch (object.payload) {
             .utf16_string => |units| self.allocator.free(units),
+            .bigint => |*value| value.deinit(),
             .array => |*items| items.deinit(self.allocator),
             .dictionary => |*entries| entries.deinit(self.allocator),
             .iterator => {},
@@ -338,6 +349,7 @@ fn sameKey(left: Value, right: Value) bool {
         .boolean, .number => left.payload == right.payload,
         .static_utf8_string => std.mem.eql(u8, staticUtf8(left), staticUtf8(right)),
         .utf16_string => std.mem.eql(u16, left.object().?.payload.utf16_string, right.object().?.payload.utf16_string),
+        .bigint => BigInt.eql(left.object().?.payload.bigint, right.object().?.payload.bigint),
         .array, .dictionary, .iterator => left.payload == right.payload,
     };
 }
@@ -366,6 +378,11 @@ fn writeUtf16(units: []const u16, newline: bool) void {
         const length = std.unicode.utf8Encode(codepoint, &encoded) catch unreachable;
         for (encoded[0..length]) |byte| _ = putchar(byte);
     }
+    if (newline) _ = putchar('\n');
+}
+
+fn writeBytes(bytes: []const u8, newline: bool) void {
+    for (bytes) |byte| _ = putchar(byte);
     if (newline) _ = putchar('\n');
 }
 
@@ -404,6 +421,28 @@ pub export fn lnako_aot_print_utf16(value: *const Value, newline: bool) callconv
     const object = value.object() orelse return;
     if (object.payload != .utf16_string) return;
     writeUtf16(object.payload.utf16_string, newline);
+}
+
+pub export fn lnako_aot_bigint_new(out: *Value, source: ?[*]const u8, len: usize) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*value| value else return;
+    const text = if (source) |pointer| pointer[0..len] else if (len == 0) &.{} else return;
+    out.* = runtime.createBigInt(text) catch return;
+}
+
+pub export fn lnako_aot_print_bigint(value: *const Value, newline: bool) callconv(.c) void {
+    const runtime = if (active_runtime) |*active| active else return;
+    const object = value.object() orelse return;
+    if (object.payload != .bigint) return;
+    const text = object.payload.bigint.toString(runtime.allocator, 10) catch return;
+    defer runtime.allocator.free(text);
+    writeBytes(text, newline);
+}
+
+pub export fn lnako_aot_bigint_truthy(value: *const Value) callconv(.c) c_int {
+    const object = value.object() orelse return 0;
+    if (object.payload != .bigint) return 0;
+    return @intFromBool(!object.payload.bigint.isZero());
 }
 
 pub export fn lnako_aot_array_new(out: *Value, values: ?[*]const Value, len: usize) callconv(.c) void {
@@ -534,6 +573,17 @@ test "UTF-16文字列の添字と反復をコード単位で処理する" {
     try std.testing.expectEqualSlices(u16, &.{0xd83d}, target.object().?.payload.utf16_string);
     try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 1))), key.payload);
     runtime.popRoots(&frame);
+}
+
+test "AOT BigIntを任意精度で生成して真偽判定する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const large = try runtime.createBigInt("123456789012345678901234567890n");
+    const zero = try runtime.createBigInt("0n");
+    try std.testing.expect(!large.object().?.payload.bigint.isZero());
+    try std.testing.expect(zero.object().?.payload.bigint.isZero());
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_bigint_truthy(&large));
+    try std.testing.expectEqual(@as(c_int, 0), lnako_aot_bigint_truthy(&zero));
 }
 
 test "回数・範囲・配列・辞書の反復状態と元コレクションを追跡する" {

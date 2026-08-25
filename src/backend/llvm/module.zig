@@ -44,6 +44,7 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
                 .performance_monitor_begin,
                 .performance_monitor_end,
                 => true,
+                .const_bigint => true,
                 .destructure_store => destructureSourceSupported(function, instruction),
                 .const_string => true,
                 .binary => arithmeticOpcode(instruction.operator) != null or comparisonPredicate(instruction.operator) != null or
@@ -76,6 +77,7 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
 }
 
 const StringConstant = struct { function_id: ir.FunctionId, value_id: ir.ValueId, units: []u16, index: usize };
+const BigIntConstant = struct { function_id: ir.FunctionId, value_id: ir.ValueId, text: []const u8, index: usize };
 const DebugLocation = struct { id: usize, line: usize, column: usize, scope: usize };
 
 pub fn generate(allocator: std.mem.Allocator, program: ir.Program, source_path: []const u8, optimized: bool) !GeneratedModule {
@@ -99,6 +101,7 @@ const Emitter = struct {
     output: std.Io.Writer.Allocating,
     globals: std.ArrayList([]const u8) = .empty,
     strings: std.ArrayList(StringConstant) = .empty,
+    bigints: std.ArrayList(BigIntConstant) = .empty,
     locations: std.ArrayList(DebugLocation) = .empty,
     next_metadata: usize = 4,
 
@@ -106,6 +109,7 @@ const Emitter = struct {
         self.globals.deinit(self.allocator);
         for (self.strings.items) |constant| self.allocator.free(constant.units);
         self.strings.deinit(self.allocator);
+        self.bigints.deinit(self.allocator);
         self.locations.deinit(self.allocator);
         self.output.deinit();
     }
@@ -125,6 +129,9 @@ const Emitter = struct {
                 "declare void @lnako_aot_pop_roots(ptr)\n" ++
                 "declare void @lnako_aot_string_new(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_print_utf16(ptr, i1)\n" ++
+                "declare void @lnako_aot_bigint_new(ptr, ptr, i64)\n" ++
+                "declare void @lnako_aot_print_bigint(ptr, i1)\n" ++
+                "declare i32 @lnako_aot_bigint_truthy(ptr)\n" ++
                 "declare void @lnako_aot_array_new(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_dictionary_new(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_index_get(ptr, ptr, ptr)\n" ++
@@ -159,6 +166,20 @@ const Emitter = struct {
             }
         }
         if (self.strings.items.len > 0) try writer.writeByte('\n');
+        for (self.bigints.items) |constant| {
+            try writer.print("@lnako.bigint.{d} = private unnamed_addr constant [{d} x i8] ", .{ constant.index, constant.text.len });
+            if (constant.text.len == 0) {
+                try writer.writeAll("zeroinitializer\n");
+            } else {
+                try writer.writeByte('[');
+                for (constant.text, 0..) |byte, index| {
+                    if (index > 0) try writer.writeAll(", ");
+                    try writer.print("i8 {d}", .{byte});
+                }
+                try writer.writeAll("]\n");
+            }
+        }
+        if (self.bigints.items.len > 0) try writer.writeByte('\n');
         try self.writeRuntimeHelpers();
         for (self.program.functions) |function| try self.writeFunction(function);
         try self.writeMain();
@@ -167,6 +188,7 @@ const Emitter = struct {
 
     fn collectModuleData(self: *Emitter) !void {
         var string_index: usize = 0;
+        var bigint_index: usize = 0;
         for (self.program.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
             if ((instruction.opcode == .load_global or instruction.opcode == .store_global) and self.globalIndex(instruction.name) == null) {
                 try self.globals.append(self.allocator, instruction.name);
@@ -187,6 +209,15 @@ const Emitter = struct {
                     return failure;
                 };
                 string_index += 1;
+            }
+            if (instruction.opcode == .const_bigint) {
+                try self.bigints.append(self.allocator, .{
+                    .function_id = function.id,
+                    .value_id = instruction.result orelse return error.InvalidBigIntConstant,
+                    .text = instruction.text,
+                    .index = bigint_index,
+                });
+                bigint_index += 1;
             }
         };
     }
@@ -213,8 +244,10 @@ const Emitter = struct {
                 "}\n\n" ++
                 "define internal i1 @lnako.truthy(%lnako.Value %value) {\n" ++
                 "entry:\n" ++
+                "  %truthy.value = alloca %lnako.Value\n" ++
+                "  store %lnako.Value %value, ptr %truthy.value\n" ++
                 "  %tag = extractvalue %lnako.Value %value, 0\n" ++
-                "  switch i8 %tag, label %truthy [ i8 0, label %falsey i8 1, label %falsey i8 2, label %boolean i8 3, label %number ]\n" ++
+                "  switch i8 %tag, label %truthy [ i8 0, label %falsey i8 1, label %falsey i8 2, label %boolean i8 3, label %number i8 9, label %bigint ]\n" ++
                 "boolean:\n" ++
                 "  %bool.bits = extractvalue %lnako.Value %value, 1\n" ++
                 "  %bool = icmp ne i64 %bool.bits, 0\n" ++
@@ -224,6 +257,10 @@ const Emitter = struct {
                 "  %number.value = bitcast i64 %number.bits to double\n" ++
                 "  %number.truthy = fcmp one double %number.value, 0.000000e+00\n" ++
                 "  ret i1 %number.truthy\n" ++
+                "bigint:\n" ++
+                "  %bigint.status = call i32 @lnako_aot_bigint_truthy(ptr %truthy.value)\n" ++
+                "  %bigint.truthy = icmp ne i32 %bigint.status, 0\n" ++
+                "  ret i1 %bigint.truthy\n" ++
                 "falsey:\n" ++
                 "  ret i1 false\n" ++
                 "truthy:\n" ++
@@ -244,7 +281,7 @@ const Emitter = struct {
                 "  %display.value = alloca %lnako.Value\n" ++
                 "  store %lnako.Value %value, ptr %display.value\n" ++
                 "  %tag = extractvalue %lnako.Value %value, 0\n" ++
-                "  switch i8 %tag, label %undefined [ i8 1, label %null i8 2, label %boolean i8 3, label %number i8 4, label %static_string i8 5, label %heap_string ]\n" ++
+                "  switch i8 %tag, label %undefined [ i8 1, label %null i8 2, label %boolean i8 3, label %number i8 4, label %static_string i8 5, label %heap_string i8 9, label %bigint ]\n" ++
                 "undefined:\n" ++
                 "  call void @lnako.print_text(ptr @.lnako.undefined, i1 %newline)\n" ++
                 "  br label %done\n" ++
@@ -270,6 +307,9 @@ const Emitter = struct {
                 "  br label %done\n" ++
                 "heap_string:\n" ++
                 "  call void @lnako_aot_print_utf16(ptr %display.value, i1 %newline)\n" ++
+                "  br label %done\n" ++
+                "bigint:\n" ++
+                "  call void @lnako_aot_print_bigint(ptr %display.value, i1 %newline)\n" ++
                 "  br label %done\n" ++
                 "done:\n" ++
                 "  ret %lnako.Value %value\n" ++
@@ -344,6 +384,14 @@ const Emitter = struct {
             .const_boolean => try self.writeBoxConstant(result orelse return error.MissingInstructionResult, 2, @intFromBool(instruction.boolean_value), instruction.span, scope),
             .const_null => try self.writeBoxConstant(result orelse return error.MissingInstructionResult, 1, 0, instruction.span, scope),
             .const_undefined => try self.writeBoxConstant(result orelse return error.MissingInstructionResult, 0, 0, instruction.span, scope),
+            .const_bigint => {
+                const id = result orelse return error.MissingInstructionResult;
+                const constant = self.bigintConstant(function.id, id) orelse return error.InvalidBigIntConstant;
+                try self.output.writer.print("  call void @lnako_aot_bigint_new(ptr %root.slot.{d}, ptr @lnako.bigint.{d}, i64 {d})", .{ id, constant.index, constant.text.len });
+                try self.debugSuffix(instruction.span, scope);
+                try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ id, id });
+                try self.debugSuffix(instruction.span, scope);
+            },
             .const_string => {
                 const id = result orelse return error.MissingInstructionResult;
                 const constant = self.stringConstant(function.id, id) orelse return error.InvalidStringConstant;
@@ -834,6 +882,11 @@ const Emitter = struct {
         return null;
     }
 
+    fn bigintConstant(self: Emitter, function_id: ir.FunctionId, value_id: ir.ValueId) ?BigIntConstant {
+        for (self.bigints.items) |constant| if (constant.function_id == function_id and constant.value_id == value_id) return constant;
+        return null;
+    }
+
     fn findFunction(self: Emitter, name: []const u8) ?ir.Function {
         return lookupFunction(self.program, name);
     }
@@ -1041,6 +1094,28 @@ test "UTF-16文字列定数と添字と反復をAOTランタイムへ変換す�
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_print_utf16(ptr, i1)") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "[4 x i16] [i16 65, i16 55357, i16 56832, i16 66]") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "[3 x i16] [i16 65, i16 0, i16 66]") != null);
+}
+
+test "BigInt定数と真偽判定をAOTランタイムへ変換する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "123456789012345678901234567890nを表示\nもし0nならば\n『誤』を表示\n違えば\n『正』を表示\nここまで\n", "bigint.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "bigint.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "bigint.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    try std.testing.expect(findUnsupported(program) == null);
+    var module = try generate(std.testing.allocator, program, "bigint.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_bigint_new(ptr, ptr, i64)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_print_bigint(ptr, i1)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare i32 @lnako_aot_bigint_truthy(ptr)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.bigint.") != null);
 }
 
 test "O1では証明済み数値と真偽判定をアンボックスしO0のIRを変更しない" {

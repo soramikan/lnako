@@ -32,6 +32,10 @@
     "source": "(-3)を表示\nもし、!(1>2)ならば\n「否定」を表示\nここまで\n"
   },
   {
+    "id": "native-bigint-literals-and-truthiness",
+    "source": "123456789012345678901234567890nを表示\n0xFFnを表示\n1_000nを表示\nもし0nならば\n「誤」を表示\n違えば\n「ゼロ」を表示\nここまで\nもし1nならば\n「非ゼロ」を表示\nここまで\n"
+  },
+  {
     "id": "native-array-and-dictionary",
     "source": "A=[1,2]\nA[1]=5\nA[1]を表示\nB={\"x\":7}\nB@\"x\"を表示\n"
   },
