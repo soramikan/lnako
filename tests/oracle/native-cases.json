@@ -8,6 +8,10 @@
     "source": "「100%安全%s」を表示\n「連続%」を連続表示\n「表示」を表示\n"
   },
   {
+    "id": "native-utf16-string-index-and-foreach",
+    "source": "S=「A😀B」\nS[0]を表示\nS[1]を表示\nS[2]を表示\nS[3]を表示\n「A😀B」を反復\n対象キーを表示\n対象を表示\nここまで\nD={\"A\":7}\nD@(S[0])を表示\nN=「A\u0000B」\nNを連続表示\n「終」を表示\n"
+  },
+  {
     "id": "native-assignment",
     "source": "Aは1\nBはA+2\nBを表示\n"
   },

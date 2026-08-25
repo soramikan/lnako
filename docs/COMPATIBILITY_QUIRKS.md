@@ -27,6 +27,13 @@ lnakoは、意図的な非互換として合意した項目を除き、説明文
 [`core/src/plugin_system_array.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_array.mts) と
 [`core/src/plugin_system_dict.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_dict.mts) です。
 
+## 文字列
+
+| 構文 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID |
+|---|---|---|---|
+| 補助平面文字の添字と`反復` | 文字列をUnicode文字数ではなくUTF-16コード単位で扱う。`「A😀B」`の添字と反復キーは0〜3になり、1と2の値は高位・低位サロゲート単独になる。CLIが各単独値をUTF-8へ出力するとそれぞれ`�`へ置換される | AOTを含む全経路でUTF-16ヒープ文字列を使い、添字・反復・孤立サロゲートの出力置換を同じ境界にする | `UTF-16文字列の添字と反復をコード単位で処理する`、`native-utf16-string-index-and-foreach` |
+| 文字列中のNUL | `U+0000`は文字列の終端ではなく通常のUTF-16コード単位であり、後続文字も保持・出力する | CのNUL終端文字列として埋め込まず、長さ付き`i16`定数からヒープ値を生成する | `UTF-16文字列定数と添字と反復をAOTランタイムへ変換する`、`native-utf16-string-index-and-foreach` |
+
 ## 標準出力
 
 | 命令 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID |

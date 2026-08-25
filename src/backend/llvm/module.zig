@@ -45,7 +45,7 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
                 .performance_monitor_end,
                 => true,
                 .destructure_store => destructureSourceSupported(function, instruction),
-                .const_string => std.mem.indexOfScalar(u8, instruction.text, 0) == null,
+                .const_string => true,
                 .binary => arithmeticOpcode(instruction.operator) != null or comparisonPredicate(instruction.operator) != null or
                     std.mem.eql(u8, instruction.operator, "&&") or std.mem.eql(u8, instruction.operator, "and") or
                     std.mem.eql(u8, instruction.operator, "||") or std.mem.eql(u8, instruction.operator, "or"),
@@ -75,7 +75,7 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
     return null;
 }
 
-const StringConstant = struct { function_id: ir.FunctionId, value_id: ir.ValueId, text: []const u8, index: usize };
+const StringConstant = struct { function_id: ir.FunctionId, value_id: ir.ValueId, units: []u16, index: usize };
 const DebugLocation = struct { id: usize, line: usize, column: usize, scope: usize };
 
 pub fn generate(allocator: std.mem.Allocator, program: ir.Program, source_path: []const u8, optimized: bool) !GeneratedModule {
@@ -104,6 +104,7 @@ const Emitter = struct {
 
     fn deinit(self: *Emitter) void {
         self.globals.deinit(self.allocator);
+        for (self.strings.items) |constant| self.allocator.free(constant.units);
         self.strings.deinit(self.allocator);
         self.locations.deinit(self.allocator);
         self.output.deinit();
@@ -122,6 +123,8 @@ const Emitter = struct {
                 "declare void @lnako_aot_runtime_deinit()\n" ++
                 "declare void @lnako_aot_push_roots(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_pop_roots(ptr)\n" ++
+                "declare void @lnako_aot_string_new(ptr, ptr, i64)\n" ++
+                "declare void @lnako_aot_print_utf16(ptr, i1)\n" ++
                 "declare void @lnako_aot_array_new(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_dictionary_new(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_index_get(ptr, ptr, ptr)\n" ++
@@ -143,9 +146,17 @@ const Emitter = struct {
         for (self.globals.items, 0..) |_, index| try writer.print("@lnako.global.{d} = internal global %lnako.Value {{ i8 0, i64 0 }}\n", .{index});
         if (self.globals.items.len > 0) try writer.writeByte('\n');
         for (self.strings.items) |constant| {
-            try writer.print("@lnako.string.{d} = private unnamed_addr constant [{d} x i8] c\"", .{ constant.index, constant.text.len + 1 });
-            try writeLlvmString(writer, constant.text);
-            try writer.writeAll("\\00\"\n");
+            try writer.print("@lnako.string.{d} = private unnamed_addr constant [{d} x i16] ", .{ constant.index, constant.units.len });
+            if (constant.units.len == 0) {
+                try writer.writeAll("zeroinitializer\n");
+            } else {
+                try writer.writeByte('[');
+                for (constant.units, 0..) |unit, index| {
+                    if (index > 0) try writer.writeAll(", ");
+                    try writer.print("i16 {d}", .{unit});
+                }
+                try writer.writeAll("]\n");
+            }
         }
         if (self.strings.items.len > 0) try writer.writeByte('\n');
         try self.writeRuntimeHelpers();
@@ -164,12 +175,17 @@ const Emitter = struct {
                 if (isQualifiedGlobal(name) and self.globalIndex(name) == null) try self.globals.append(self.allocator, name);
             };
             if (instruction.opcode == .const_string) {
-                try self.strings.append(self.allocator, .{
+                const value_id = instruction.result orelse return error.InvalidStringConstant;
+                const units = try std.unicode.utf8ToUtf16LeAlloc(self.allocator, instruction.text);
+                self.strings.append(self.allocator, .{
                     .function_id = function.id,
-                    .value_id = instruction.result orelse return error.InvalidStringConstant,
-                    .text = instruction.text,
+                    .value_id = value_id,
+                    .units = units,
                     .index = string_index,
-                });
+                }) catch |failure| {
+                    self.allocator.free(units);
+                    return failure;
+                };
                 string_index += 1;
             }
         };
@@ -225,8 +241,10 @@ const Emitter = struct {
                 "}\n\n" ++
                 "define internal %lnako.Value @lnako.display(%lnako.Value %value, i1 %newline) {\n" ++
                 "entry:\n" ++
+                "  %display.value = alloca %lnako.Value\n" ++
+                "  store %lnako.Value %value, ptr %display.value\n" ++
                 "  %tag = extractvalue %lnako.Value %value, 0\n" ++
-                "  switch i8 %tag, label %undefined [ i8 1, label %null i8 2, label %boolean i8 3, label %number i8 4, label %string ]\n" ++
+                "  switch i8 %tag, label %undefined [ i8 1, label %null i8 2, label %boolean i8 3, label %number i8 4, label %static_string i8 5, label %heap_string ]\n" ++
                 "undefined:\n" ++
                 "  call void @lnako.print_text(ptr @.lnako.undefined, i1 %newline)\n" ++
                 "  br label %done\n" ++
@@ -245,10 +263,13 @@ const Emitter = struct {
                 "  %number.fmt = select i1 %newline, ptr @.lnako.fmt.number, ptr @.lnako.fmt.number.inline\n" ++
                 "  %p = call i32 (ptr, ...) @printf(ptr %number.fmt, double %number.value)\n" ++
                 "  br label %done\n" ++
-                "string:\n" ++
+                "static_string:\n" ++
                 "  %string.bits = extractvalue %lnako.Value %value, 1\n" ++
                 "  %string.ptr = inttoptr i64 %string.bits to ptr\n" ++
                 "  call void @lnako.print_text(ptr %string.ptr, i1 %newline)\n" ++
+                "  br label %done\n" ++
+                "heap_string:\n" ++
+                "  call void @lnako_aot_print_utf16(ptr %display.value, i1 %newline)\n" ++
                 "  br label %done\n" ++
                 "done:\n" ++
                 "  ret %lnako.Value %value\n" ++
@@ -325,10 +346,10 @@ const Emitter = struct {
             .const_undefined => try self.writeBoxConstant(result orelse return error.MissingInstructionResult, 0, 0, instruction.span, scope),
             .const_string => {
                 const id = result orelse return error.MissingInstructionResult;
-                const string_index = self.stringIndex(function.id, id) orelse return error.InvalidStringConstant;
-                try self.output.writer.print("  %string.bits.{d} = ptrtoint ptr @lnako.string.{d} to i64", .{ id, string_index });
+                const constant = self.stringConstant(function.id, id) orelse return error.InvalidStringConstant;
+                try self.output.writer.print("  call void @lnako_aot_string_new(ptr %root.slot.{d}, ptr @lnako.string.{d}, i64 {d})", .{ id, constant.index, constant.units.len });
                 try self.debugSuffix(instruction.span, scope);
-                try self.output.writer.print("  %v{d} = insertvalue %lnako.Value {{ i8 4, i64 0 }}, i64 %string.bits.{d}, 1", .{ id, id });
+                try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ id, id });
                 try self.debugSuffix(instruction.span, scope);
             },
             .load_global => {
@@ -808,8 +829,8 @@ const Emitter = struct {
         return nameIndex(self.globals.items, name);
     }
 
-    fn stringIndex(self: Emitter, function_id: ir.FunctionId, value_id: ir.ValueId) ?usize {
-        for (self.strings.items) |constant| if (constant.function_id == function_id and constant.value_id == value_id) return constant.index;
+    fn stringConstant(self: Emitter, function_id: ir.FunctionId, value_id: ir.ValueId) ?StringConstant {
+        for (self.strings.items) |constant| if (constant.function_id == function_id and constant.value_id == value_id) return constant;
         return null;
     }
 
@@ -873,7 +894,7 @@ fn iteratorSourceSupported(function: ir.Function, instruction: ir.Instruction) b
     if (instruction.operands.len == 0) return false;
     if (instruction.name.len > 0 and instruction.operands.len >= 2) return true;
     return switch (valueType(function, instruction.operands[0])) {
-        .number, .array, .object => true,
+        .number, .string, .array, .object => true,
         else => false,
     };
 }
@@ -912,14 +933,6 @@ fn comparisonPredicate(operator: []const u8) ?[]const u8 {
     };
     for (entries) |entry| if (std.mem.eql(u8, operator, entry.operator)) return entry.predicate;
     return null;
-}
-
-fn writeLlvmString(writer: *std.Io.Writer, text: []const u8) !void {
-    for (text) |byte| {
-        if (byte >= 0x20 and byte <= 0x7e and byte != '"' and byte != '\\') {
-            try writer.writeByte(byte);
-        } else try writer.print("\\{X:0>2}", .{byte});
-    }
 }
 
 fn writeMetadataString(writer: *std.Io.Writer, text: []const u8) !void {
@@ -1008,12 +1021,12 @@ test "回数・範囲・コレクション反復をAOTイテレーターへ変�
     try std.testing.expect(std.mem.indexOf(u8, module.text, "ptr @lnako.global.") != null);
 }
 
-test "未実装の文字列反復をAOT対応として扱わない" {
+test "UTF-16文字列定数と添字と反復をAOTランタイムへ変換する" {
     const parser = @import("../../frontend/parser.zig");
     const semantic = @import("../../semantic/analyzer.zig");
     const hir = @import("../../ir/hir.zig");
     const lower = @import("../../ir/lower_ssa.zig");
-    var parsed = try parser.parse(std.testing.allocator, "「ab」を反復\n対象を表示\nここまで\n", "string-iterator.nako3");
+    var parsed = try parser.parse(std.testing.allocator, "S=「A😀B」\nS[1]を表示\n「A😀B」を反復\n対象を表示\nここまで\nN=「A\x00B」\nNを表示\n", "string-iterator.nako3");
     defer parsed.deinit();
     var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "string-iterator.nako3");
     defer analyzed.deinit();
@@ -1021,8 +1034,13 @@ test "未実装の文字列反復をAOT対応として扱わない" {
     defer hir_program.deinit();
     var program = try lower.lower(std.testing.allocator, hir_program);
     defer program.deinit();
-    const unsupported = findUnsupported(program) orelse return error.ExpectedUnsupportedIterator;
-    try std.testing.expectEqualStrings("iterator_begin", unsupported.opcode);
+    try std.testing.expect(findUnsupported(program) == null);
+    var module = try generate(std.testing.allocator, program, "string-iterator.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_string_new(ptr, ptr, i64)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_print_utf16(ptr, i1)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "[4 x i16] [i16 65, i16 55357, i16 56832, i16 66]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "[3 x i16] [i16 65, i16 0, i16 66]") != null);
 }
 
 test "O1では証明済み数値と真偽判定をアンボックスしO0のIRを変更しない" {

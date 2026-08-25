@@ -32,7 +32,7 @@ pub const RootFrame = extern struct {
 };
 
 const DictionaryEntry = struct { key: Value, value: Value };
-const IteratorKind = enum { repeat, range, array, dictionary };
+const IteratorKind = enum { repeat, range, string, array, dictionary };
 const Iterator = struct {
     kind: IteratorKind,
     source: Value = .{},
@@ -118,6 +118,7 @@ const Runtime = struct {
             break :blk .{ .kind = .range, .current = start, .end = end, .step = step };
         } else switch (@as(Tag, @enumFromInt(values[0].tag))) {
             .number => .{ .kind = .repeat, .count = try repeatCount(valueToNumber(values[0])) },
+            .utf16_string => .{ .kind = .string, .source = values[0], .count = values[0].object().?.payload.utf16_string.len },
             .array => .{ .kind = .array, .source = values[0], .count = values[0].object().?.payload.array.items.len },
             .dictionary => .{ .kind = .dictionary, .source = values[0], .count = values[0].object().?.payload.dictionary.items.len },
             else => return error.NotIterable,
@@ -206,7 +207,11 @@ const Runtime = struct {
         self.allocator.destroy(object);
     }
 
-    fn indexGet(_: *Runtime, container: Value, key: Value) Value {
+    fn indexGet(self: *Runtime, container: Value, key: Value) Value {
+        if (container.tag == @intFromEnum(Tag.utf16_string)) {
+            const index = valueIndex(key) orelse return .{};
+            return self.stringAt(container, index);
+        }
         const object = container.object() orelse return .{};
         return switch (object.payload) {
             .array => |items| if (valueIndex(key)) |index| if (index < items.items.len) items.items[index] else .{} else .{},
@@ -263,6 +268,13 @@ const Runtime = struct {
                 if (range_target) |target| target.* = result;
                 break :blk result;
             },
+            .string => blk: {
+                const result = self.stringAt(iterator.source, iterator.index);
+                if (key_target) |target| target.* = numberValue(@floatFromInt(iterator.index));
+                iterator.index += 1;
+                if (value_target) |target| target.* = result;
+                break :blk result;
+            },
             .array => blk: {
                 const result = iterator.source.object().?.payload.array.items[iterator.index];
                 if (key_target) |target| target.* = numberValue(@floatFromInt(iterator.index));
@@ -278,6 +290,14 @@ const Runtime = struct {
                 break :blk entry.value;
             },
         };
+    }
+
+    fn stringAt(self: *Runtime, source: Value, index: usize) Value {
+        const object = source.object() orelse return .{};
+        if (object.payload != .utf16_string) return .{};
+        const units = object.payload.utf16_string;
+        if (index >= units.len) return .{};
+        return self.createString(units[index .. index + 1]) catch .{};
     }
 
     fn setDictionary(self: *Runtime, entries: *std.ArrayList(DictionaryEntry), key: Value, value: Value) !void {
@@ -327,6 +347,28 @@ fn staticUtf8(value: Value) []const u8 {
     return std.mem.span(pointer);
 }
 
+extern "c" fn putchar(character: c_int) c_int;
+
+fn writeUtf16(units: []const u16, newline: bool) void {
+    var index: usize = 0;
+    while (index < units.len) {
+        const first = units[index];
+        var codepoint: u21 = undefined;
+        if (first >= 0xd800 and first <= 0xdbff and index + 1 < units.len and units[index + 1] >= 0xdc00 and units[index + 1] <= 0xdfff) {
+            const second = units[index + 1];
+            codepoint = @intCast(0x10000 + ((@as(u32, first) - 0xd800) << 10) + (@as(u32, second) - 0xdc00));
+            index += 2;
+        } else {
+            codepoint = if (first >= 0xd800 and first <= 0xdfff) 0xfffd else @intCast(first);
+            index += 1;
+        }
+        var encoded: [4]u8 = undefined;
+        const length = std.unicode.utf8Encode(codepoint, &encoded) catch unreachable;
+        for (encoded[0..length]) |byte| _ = putchar(byte);
+    }
+    if (newline) _ = putchar('\n');
+}
+
 var active_runtime: ?Runtime = null;
 
 pub export fn lnako_aot_runtime_init() callconv(.c) c_int {
@@ -356,6 +398,12 @@ pub export fn lnako_aot_string_new(out: *Value, units: ?[*]const u16, len: usize
     const runtime = if (active_runtime) |*value| value else return;
     const source = if (units) |pointer| pointer[0..len] else if (len == 0) &.{} else return;
     out.* = runtime.createString(source) catch return;
+}
+
+pub export fn lnako_aot_print_utf16(value: *const Value, newline: bool) callconv(.c) void {
+    const object = value.object() orelse return;
+    if (object.payload != .utf16_string) return;
+    writeUtf16(object.payload.utf16_string, newline);
 }
 
 pub export fn lnako_aot_array_new(out: *Value, values: ?[*]const Value, len: usize) callconv(.c) void {
@@ -467,6 +515,25 @@ test "配列の伸長と辞書の挿入位置を保った更新を行う" {
     const entries = dictionary.object().?.payload.dictionary.items;
     try std.testing.expectEqual(@as(usize, 2), entries.len);
     try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 7))), entries[0].value.payload);
+}
+
+test "UTF-16文字列の添字と反復をコード単位で処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var values = [_]Value{try runtime.createString(&.{ 'A', 0xd83d, 0xde00, 'B' })};
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &values, values.len);
+    const high = runtime.indexGet(values[0], numberValue(1));
+    try std.testing.expectEqualSlices(u16, &.{0xd83d}, high.object().?.payload.utf16_string);
+    values[0] = try runtime.createIterator(&.{values[0]}, false, 0);
+    var target: Value = .{};
+    var key: Value = .{};
+    _ = runtime.iteratorNext(values[0], null, &target, &key, null);
+    try std.testing.expectEqualSlices(u16, &.{'A'}, target.object().?.payload.utf16_string);
+    _ = runtime.iteratorNext(values[0], null, &target, &key, null);
+    try std.testing.expectEqualSlices(u16, &.{0xd83d}, target.object().?.payload.utf16_string);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 1))), key.payload);
+    runtime.popRoots(&frame);
 }
 
 test "回数・範囲・配列・辞書の反復状態と元コレクションを追跡する" {
