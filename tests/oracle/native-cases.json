@@ -84,6 +84,10 @@
     "source": "F=関数()それは1;ここまで\n変数型確認(undefined)を表示\nTYPEOF(NULL)を表示\nTYPEOF(はい)を表示\nTYPEOF(1)を表示\nTYPEOF(1n)を表示\nTYPEOF(\"A\")を表示\nTYPEOF([])を表示\nTYPEOF({})を表示\nTYPEOF(F)を表示\n"
   },
   {
+    "id": "native-system-number-conversion-commands",
+    "source": "整数変換(\"16px\")を表示\nTOINT(\" -0x10rest\")を表示\nINT(\"xyz\")を表示\nTOINT(12.9)を表示\nINT(1n)を表示\nTOINT(NULL)を表示\n実数変換(\"12.5xyz\")を表示\nTOFLOAT(\" -Infinityx\")を表示\nFLOAT(\"\")を表示\nTOFLOAT(1n)を表示\nFLOAT([12])を表示\n"
+  },
+  {
     "id": "native-bare-named-function-call",
     "source": "●(Aを)Fとは\nAで戻る\nここまで\nそれは3\nTYPEOF(F)を表示\nそれは4\nFを表示\n●Gとは\n2で戻る\nここまで\nTYPEOF(G)を表示\nGを表示\n"
   },

@@ -1215,6 +1215,18 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
             };
         },
         .type_of => out.* = typeNameValue(value),
+        .to_int => {
+            out.* = numberValue(parseIntBuiltin(runtime, value) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            });
+        },
+        .to_float => {
+            out.* = numberValue(parseFloatBuiltin(runtime, value) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            });
+        },
     }
 }
 
@@ -1228,6 +1240,24 @@ fn typeNameValue(value: Value) Value {
         .bigint => staticStringValue("bigint"),
         .function => staticStringValue("function"),
         .binding_cell => typeNameValue(value.object().?.payload.binding_cell),
+    };
+}
+
+fn parseIntBuiltin(runtime: *Runtime, value: Value) !f64 {
+    const units = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(units);
+    return number_mod.parseIntPrefix(units, null);
+}
+
+fn parseFloatBuiltin(runtime: *Runtime, value: Value) !f64 {
+    return switch (@as(Tag, @enumFromInt(value.tag))) {
+        .number => @bitCast(value.payload),
+        .bigint => value.object().?.payload.bigint.toF64(),
+        else => blk: {
+            const units = try valueUtf16Alloc(runtime, value);
+            defer runtime.allocator.free(units);
+            break :blk try number_mod.parseFloatPrefix(runtime.allocator, units);
+        },
     };
 }
 
@@ -1363,6 +1393,24 @@ test "AOT型確認は動的値をJavaScript型名へ変換する" {
     defer lnako_aot_pop_roots(&frame);
     lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.type_of));
     try std.testing.expectEqualStrings("number", staticUtf8(roots[1]));
+}
+
+test "AOT整数実数変換はJavaScript接頭辞規則を共有する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ staticStringValue(" -0x10rest"), .{}, staticStringValue("12.5xyz"), .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.to_int));
+    try std.testing.expectEqual(@as(f64, -16), @as(f64, @bitCast(roots[1].payload)));
+    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[2]), 1, @intFromEnum(aot_builtin.Command.to_float));
+    try std.testing.expectEqual(@as(f64, 12.5), @as(f64, @bitCast(roots[3].payload)));
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {

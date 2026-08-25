@@ -1,4 +1,5 @@
 const std = @import("std");
+const string_mod = @import("string.zig");
 
 pub fn toStringAlloc(allocator: std.mem.Allocator, value: f64) ![]u8 {
     if (std.math.isNan(value)) return allocator.dupe(u8, "NaN");
@@ -11,6 +12,85 @@ pub fn toStringAlloc(allocator: std.mem.Allocator, value: f64) ![]u8 {
     const magnitude = @abs(value);
     if (magnitude >= 1e21 or magnitude < 1e-6) return fixedToScientific(allocator, fixed_output.written());
     return allocator.dupe(u8, fixed_output.written());
+}
+
+pub fn parseFloatPrefix(allocator: std.mem.Allocator, source: []const u16) !f64 {
+    const units = string_mod.trimWhitespace(source);
+    if (units.len == 0) return std.math.nan(f64);
+    var index: usize = 0;
+    if (units[index] == '+' or units[index] == '-') index += 1;
+    if (startsWithAscii(units[index..], "Infinity")) return if (units[0] == '-') -std.math.inf(f64) else std.math.inf(f64);
+    const integer_start = index;
+    while (index < units.len and units[index] >= '0' and units[index] <= '9') index += 1;
+    var has_digits = index > integer_start;
+    if (index < units.len and units[index] == '.') {
+        index += 1;
+        const fraction_start = index;
+        while (index < units.len and units[index] >= '0' and units[index] <= '9') index += 1;
+        has_digits = has_digits or index > fraction_start;
+    }
+    if (!has_digits) return std.math.nan(f64);
+    if (index < units.len and (units[index] == 'e' or units[index] == 'E')) {
+        const exponent_marker = index;
+        index += 1;
+        if (index < units.len and (units[index] == '+' or units[index] == '-')) index += 1;
+        const exponent_start = index;
+        while (index < units.len and units[index] >= '0' and units[index] <= '9') index += 1;
+        if (index == exponent_start) index = exponent_marker;
+    }
+    var ascii = try allocator.alloc(u8, index);
+    defer allocator.free(ascii);
+    for (units[0..index], 0..) |unit, output_index| ascii[output_index] = @intCast(unit);
+    return std.fmt.parseFloat(f64, ascii) catch std.math.nan(f64);
+}
+
+pub fn parseIntPrefix(source: []const u16, radix_value: ?f64) f64 {
+    const units = string_mod.trimWhitespace(source);
+    if (units.len == 0) return std.math.nan(f64);
+    var index: usize = 0;
+    var negative = false;
+    if (units[index] == '+' or units[index] == '-') {
+        negative = units[index] == '-';
+        index += 1;
+    }
+    var radix: u8 = 0;
+    if (radix_value) |specified| {
+        if (std.math.isFinite(specified)) {
+            const integer = @trunc(specified);
+            if (integer != 0) {
+                if (integer < 2 or integer > 36) return std.math.nan(f64);
+                radix = @intFromFloat(integer);
+            }
+        }
+    }
+    if ((radix == 0 or radix == 16) and index + 1 < units.len and units[index] == '0' and (units[index + 1] == 'x' or units[index + 1] == 'X')) {
+        radix = 16;
+        index += 2;
+    }
+    if (radix == 0) radix = 10;
+    var result: f64 = 0;
+    var digits: usize = 0;
+    while (index < units.len) : (index += 1) {
+        const digit = digitValue(units[index]) orelse break;
+        if (digit >= radix) break;
+        result = result * @as(f64, @floatFromInt(radix)) + @as(f64, @floatFromInt(digit));
+        digits += 1;
+    }
+    if (digits == 0) return std.math.nan(f64);
+    return if (negative) -result else result;
+}
+
+fn startsWithAscii(units: []const u16, ascii: []const u8) bool {
+    if (units.len < ascii.len) return false;
+    for (ascii, 0..) |byte, index| if (units[index] != byte) return false;
+    return true;
+}
+
+fn digitValue(unit: u16) ?u8 {
+    if (unit >= '0' and unit <= '9') return @intCast(unit - '0');
+    if (unit >= 'a' and unit <= 'z') return @intCast(unit - 'a' + 10);
+    if (unit >= 'A' and unit <= 'Z') return @intCast(unit - 'A' + 10);
+    return null;
 }
 
 fn fixedToScientific(allocator: std.mem.Allocator, fixed: []const u8) ![]u8 {
@@ -60,4 +140,10 @@ test "binary64をJavaScript互換の最短文字列へ変換する" {
         defer std.testing.allocator.free(actual);
         try std.testing.expectEqualStrings(case.expected, actual);
     }
+}
+
+test "parseIntとparseFloatのJavaScript接頭辞規則を再現する" {
+    try std.testing.expectEqual(@as(f64, 12.5), try parseFloatPrefix(std.testing.allocator, &.{ ' ', '1', '2', '.', '5', 'x' }));
+    try std.testing.expectEqual(@as(f64, -16), parseIntPrefix(&.{ ' ', '-', '0', 'x', '1', '0', 'r' }, null));
+    try std.testing.expect(std.math.isNan(parseIntPrefix(&.{ 'x', 'y', 'z' }, null)));
 }
