@@ -1252,6 +1252,16 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 writeUtf16(result.object().?.payload.utf16_string, true);
             } else out.* = result;
         },
+        .rgb => {
+            if (len < 3) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            out.* = rgbBuiltin(runtime, arguments.?[0..3]) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
     }
 }
 
@@ -1292,6 +1302,15 @@ fn radixBuiltin(runtime: *Runtime, value: Value, radix_value: Value) !Value {
     const truncated = @trunc(radix_number);
     if (!std.math.isFinite(radix_number) or truncated < 2 or truncated > 36) return error.InvalidRadix;
     const text = try number_mod.integerToRadixAlloc(runtime.allocator, number, @intFromFloat(truncated));
+    defer runtime.allocator.free(text);
+    const units = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, text);
+    return runtime.ownString(units);
+}
+
+fn rgbBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    var components: [3]f64 = undefined;
+    for (0..3) |index| components[index] = try parseIntBuiltin(runtime, arguments[index]);
+    const text = try number_mod.rgbAlloc(runtime.allocator, components);
     defer runtime.allocator.free(text);
     const units = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, text);
     return runtime.ownString(units);
@@ -1492,6 +1511,22 @@ test "AOT進数変換は小数基数を切り捨てて不正基数を例外に�
     const message = try valueUtf16Alloc(&active_runtime.?, active_runtime.?.takeException());
     defer std.testing.allocator.free(message);
     try std.testing.expectEqualSlices(u16, &.{ 't', 'o', 'S', 't', 'r', 'i', 'n', 'g', '(', ')', ' ', 'r', 'a', 'd', 'i', 'x', ' ', 'a', 'r', 'g', 'u', 'm', 'e', 'n', 't', ' ', 'm', 'u', 's', 't', ' ', 'b', 'e', ' ', 'b', 'e', 't', 'w', 'e', 'e', 'n', ' ', '2', ' ', 'a', 'n', 'd', ' ', '3', '6' }, message);
+}
+
+test "AOTのRGBは各16進表現の末尾2文字を連結する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ numberValue(-1), numberValue(std.math.nan(f64)), staticStringValue("Infinity"), .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[0]), 3, @intFromEnum(aot_builtin.Command.rgb));
+    try std.testing.expectEqualSlices(u16, &.{ '#', '-', '1', 'a', 'N', 'a', 'N' }, roots[3].object().?.payload.utf16_string);
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {

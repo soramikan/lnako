@@ -11,6 +11,7 @@ pub const Command = enum(u16) {
     radix,
     radix2,
     radix2_display,
+    rgb,
 };
 
 pub fn lookup(name: []const u8) ?Command {
@@ -24,6 +25,7 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "進数変換")) return .radix;
     if (std.mem.eql(u8, name, "二進")) return .radix2;
     if (std.mem.eql(u8, name, "二進表示")) return .radix2_display;
+    if (std.mem.eql(u8, name, "RGB")) return .rgb;
     return null;
 }
 
@@ -44,5 +46,6 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.radix, lookup("進数変換").?);
     try std.testing.expectEqual(Command.radix2, lookup("二進").?);
     try std.testing.expectEqual(Command.radix2_display, lookup("二進表示").?);
+    try std.testing.expectEqual(Command.rgb, lookup("RGB").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }

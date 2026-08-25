@@ -1,5 +1,6 @@
 const std = @import("std");
 const value_mod = @import("../../runtime/value.zig");
+const number_mod = @import("../../runtime/number.zig");
 const common = @import("common.zig");
 
 pub const Value = value_mod.Value;
@@ -40,19 +41,11 @@ fn radix(runtime: *Runtime, value: Value, radix_value: Value) !Value {
 }
 
 fn rgb(runtime: *Runtime, arguments: []const Value) !Value {
-    var output: [7]u8 = "#000000".*;
-    for (0..3) |index| {
-        const number = try common.parseIntValue(runtime, common.argument(arguments, index), null);
-        const int: i64 = if (std.math.isNan(number) or !std.math.isFinite(number) or number < @as(f64, @floatFromInt(std.math.minInt(i64))) or number > @as(f64, @floatFromInt(std.math.maxInt(i64)))) 0 else @intFromFloat(@trunc(number));
-        const low: u8 = @truncate(@as(u64, @bitCast(int)));
-        output[1 + index * 2] = hexDigit(low >> 4);
-        output[2 + index * 2] = hexDigit(low & 0x0f);
-    }
-    return runtime.stringUtf8(&output);
-}
-
-fn hexDigit(value: u8) u8 {
-    return if (value < 10) '0' + value else 'a' + value - 10;
+    var components: [3]f64 = undefined;
+    for (0..3) |index| components[index] = try common.parseIntValue(runtime, common.argument(arguments, index), null);
+    const output = try number_mod.rgbAlloc(runtime.allocator(), components);
+    defer runtime.allocator().free(output);
+    return runtime.stringUtf8(output);
 }
 
 fn isAny(name: []const u8, candidates: []const []const u8) bool {

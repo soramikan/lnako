@@ -105,6 +105,22 @@ pub fn integerToRadixAlloc(allocator: std.mem.Allocator, number: f64, radix: u8)
     return output;
 }
 
+pub fn rgbAlloc(allocator: std.mem.Allocator, components: [3]f64) ![]u8 {
+    const output = try allocator.dupe(u8, "#000000");
+    errdefer allocator.free(output);
+    for (components, 0..) |component, index| {
+        const text = try integerToRadixAlloc(allocator, component, 16);
+        defer allocator.free(text);
+        if (text.len >= 2) {
+            output[1 + index * 2] = text[text.len - 2];
+            output[2 + index * 2] = text[text.len - 1];
+        } else {
+            output[2 + index * 2] = text[0];
+        }
+    }
+    return output;
+}
+
 fn startsWithAscii(units: []const u16, ascii: []const u8) bool {
     if (units.len < ascii.len) return false;
     for (ascii, 0..) |byte, index| if (units[index] != byte) return false;
@@ -184,4 +200,13 @@ test "整数を2進数から36進数の小文字表現へ変換する" {
     defer std.testing.allocator.free(base36);
     try std.testing.expectEqualStrings("z", base36);
     try std.testing.expectError(error.InvalidRadix, integerToRadixAlloc(std.testing.allocator, 1, 1));
+}
+
+test "RGBは各parseInt結果の16進表現から末尾2文字を取る" {
+    const edge = try rgbAlloc(std.testing.allocator, .{ -1, std.math.nan(f64), std.math.nan(f64) });
+    defer std.testing.allocator.free(edge);
+    try std.testing.expectEqualStrings("#-1aNaN", edge);
+    const wrapped = try rgbAlloc(std.testing.allocator, .{ 256, 257, 15 });
+    defer std.testing.allocator.free(wrapped);
+    try std.testing.expectEqualStrings("#00010f", wrapped);
 }

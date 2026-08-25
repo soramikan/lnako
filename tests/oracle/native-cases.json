@@ -96,6 +96,10 @@
     "source": "HEX(255)を表示\nHEX(-10.9)を表示\nHEX(\"0x10rest\")を表示\nHEX(\"xyz\")を表示\n進数変換(31,16)を表示\n進数変換(31,2.9)を表示\n進数変換(35,36)を表示\n進数変換(31,undefined)を表示\n二進(10)を表示\n二進表示(5)\nエラー監視\n進数変換(31,1)を表示\nエラーならば\nエラーメッセージを表示\nここまで\n"
   },
   {
+    "id": "native-system-rgb-command",
+    "source": "RGB(1,15,255)を表示\nRGB(-1,非数,無限大)を表示\nRGB(256,257,15.9)を表示\nRGB(\"15x\",[16],NULL)を表示\nRGB(1n,2n,3n)を表示\n"
+  },
+  {
     "id": "native-bare-named-function-call",
     "source": "●(Aを)Fとは\nAで戻る\nここまで\nそれは3\nTYPEOF(F)を表示\nそれは4\nFを表示\n●Gとは\n2で戻る\nここまで\nTYPEOF(G)を表示\nGを表示\n"
   },
