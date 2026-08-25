@@ -66,6 +66,9 @@ pub const Command = enum(u16) {
     substring_mid,
     substring_left,
     substring_right,
+    split_all,
+    split_first,
+    string_remove,
 };
 
 pub fn lookup(name: []const u8) ?Command {
@@ -134,6 +137,9 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "MID") or std.mem.eql(u8, name, "文字抜出")) return .substring_mid;
     if (std.mem.eql(u8, name, "LEFT") or std.mem.eql(u8, name, "文字左部分")) return .substring_left;
     if (std.mem.eql(u8, name, "RIGHT") or std.mem.eql(u8, name, "文字右部分")) return .substring_right;
+    if (std.mem.eql(u8, name, "区切")) return .split_all;
+    if (std.mem.eql(u8, name, "文字列分割")) return .split_first;
+    if (std.mem.eql(u8, name, "文字削除")) return .string_remove;
     return null;
 }
 
@@ -219,5 +225,8 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.substring_left, lookup("文字左部分").?);
     try std.testing.expectEqual(Command.substring_right, lookup("RIGHT").?);
     try std.testing.expectEqual(Command.substring_right, lookup("文字右部分").?);
+    try std.testing.expectEqual(Command.split_all, lookup("区切").?);
+    try std.testing.expectEqual(Command.split_first, lookup("文字列分割").?);
+    try std.testing.expectEqual(Command.string_remove, lookup("文字削除").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }

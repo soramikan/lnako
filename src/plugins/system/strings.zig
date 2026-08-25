@@ -388,10 +388,9 @@ fn splitFirst(runtime: *Runtime, source: Value, separator: Value) !Value {
 
 fn remove(runtime: *Runtime, source: Value, start_value: Value, count_value: Value) !Value {
     const units = (try text(runtime, source)).units;
-    const start_number = try common.parseIntValue(runtime, start_value, null);
-    const count_number = try common.parseIntValue(runtime, count_value, null);
-    const start = if (std.math.isNan(start_number) or start_number <= 1) @as(usize, 0) else safeUsize(@trunc(start_number) - 1);
-    const count = if (std.math.isNan(count_number) or count_number <= 0) @as(usize, 0) else safeUsize(@trunc(count_number));
+    const length = codePointCount(units);
+    const start = sliceIndex(try runtime.valueToNumber(start_value) - 1, length);
+    const count = spliceDeleteCount(try runtime.valueToNumber(count_value), length - start);
     const first = codePointOffset(units, start);
     const last = codePointOffset(units, start + count);
     var output = try runtime.allocator().alloc(u16, units.len - (last - first));
@@ -736,6 +735,12 @@ fn sliceIndex(number: f64, length: usize) usize {
     if (number >= length_number) return length;
     if (number <= -length_number) return 0;
     if (number < 0) return length - @as(usize, @intFromFloat(-@trunc(number)));
+    return @intFromFloat(@trunc(number));
+}
+
+fn spliceDeleteCount(number: f64, remaining: usize) usize {
+    if (std.math.isNan(number) or number <= 0) return 0;
+    if (!std.math.isFinite(number) or number >= @as(f64, @floatFromInt(remaining))) return remaining;
     return @intFromFloat(@trunc(number));
 }
 

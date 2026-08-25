@@ -144,6 +144,10 @@
     "source": "MID(\"A😀BCD\",2,2)を表示\n文字抜出(\"A😀BCD\",2.9,2.9)を表示\n文字抜出(\"A😀BCD\",\"2.9\",\"2.9\")を表示\n文字抜出(\"ABCDE\",-2,2)を表示\n文字抜出(\"ABCDE\",-99,2)を表示\n文字抜出(\"ABCDE\",0,2)を表示\nLEFT(\"A😀BCD\",2.9)を表示\n文字左部分(\"A😀BCD\",\"2.9\")を表示\nRIGHT(\"A😀BCD\",2.9)を表示\n文字右部分(\"A😀BCD\",\"2.9\")を表示\nRIGHT(\"ABC\",99)を表示\nRIGHT(\"ABC\",-1)を表示\n"
   },
   {
+    "id": "native-system-string-split-remove-commands",
+    "source": "区切(\"A😀B😀C\",\"😀\")を表示\n区切(\"😀\",\"\")を表示\n区切(\"\",\"\")を表示\n文字列分割(\"a=b=c\",\"=\")を表示\n文字列分割(\"abc\",\"=\")を表示\n文字列分割(\"😀\",\"\")を表示\n文字削除(\"A😀BCD\",2,2)を表示\n文字削除(\"ABCDE\",2.9,2.9)を表示\n文字削除(\"ABCDE\",\"2rest\",\"2rest\")を表示\n文字削除(\"ABCDE\",0,2)を表示\n文字削除(\"ABCDE\",-1,2)を表示\n文字削除(\"ABCDE\",2,-1)を表示\n"
+  },
+  {
     "id": "native-bare-named-function-call",
     "source": "●(Aを)Fとは\nAで戻る\nここまで\nそれは3\nTYPEOF(F)を表示\nそれは4\nFを表示\n●Gとは\n2で戻る\nここまで\nTYPEOF(G)を表示\nGを表示\n"
   },

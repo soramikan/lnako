@@ -2376,6 +2376,26 @@ test "部分文字列命令は数値小数と文字列小数と位置0を区別�
     try std.testing.expectEqualStrings("😀BC\n😀B\n\nA😀\nBCD\n", host.written());
 }
 
+test "文字削除はspliceの負位置と数値化不能削除数を扱う" {
+    const source =
+        "文字削除(\"ABCDE\",\"2rest\",\"2rest\")を表示\n" ++
+        "文字削除(\"ABCDE\",0,2)を表示\n" ++
+        "文字削除(\"ABCDE\",-1,2)を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("ABCDE\nABCD\nABC\n", host.written());
+}
+
 test "連続する例外監視で直前の捕捉値を再利用しない" {
     const source =
         "エラー監視\nA=1n+1\nエラーならば\nエラーメッセージを表示\nここまで\n" ++

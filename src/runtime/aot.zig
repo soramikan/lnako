@@ -1665,6 +1665,23 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             };
         },
+        .split_all, .split_first, .string_remove => {
+            const required: usize = if (command == .string_remove) 3 else 2;
+            if (len < required) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            out.* = if (command == .string_remove)
+                stringRemoveBuiltin(runtime, arguments.?[0], arguments.?[1], arguments.?[2]) catch |failure| {
+                    runtime.setFailure(failure);
+                    return;
+                }
+            else
+                splitBuiltin(runtime, arguments.?[0], arguments.?[1], command == .split_first) catch |failure| {
+                    runtime.setFailure(failure);
+                    return;
+                };
+        },
     }
 }
 
@@ -2137,6 +2154,61 @@ fn sliceIndexBuiltin(number: f64, length: usize) usize {
     if (number >= length_number) return length;
     if (number <= -length_number) return 0;
     if (number < 0) return length - @as(usize, @intFromFloat(-@trunc(number)));
+    return @intFromFloat(@trunc(number));
+}
+
+fn splitBuiltin(runtime: *Runtime, source_value: Value, delimiter_value: Value, first_only: bool) !Value {
+    const source = try valueUtf16Alloc(runtime, source_value);
+    defer runtime.allocator.free(source);
+    const delimiter = try valueUtf16Alloc(runtime, delimiter_value);
+    defer runtime.allocator.free(delimiter);
+    var roots = [_]Value{ .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[0] = try runtime.createArray(&.{});
+    if (first_only) {
+        if (std.mem.indexOf(u16, source, delimiter)) |found| {
+            try appendStringPart(runtime, &roots, source[0..found]);
+            try appendStringPart(runtime, &roots, source[found + delimiter.len ..]);
+        } else try appendStringPart(runtime, &roots, source);
+        return roots[0];
+    }
+    if (delimiter.len == 0) {
+        for (source) |unit| try appendStringPart(runtime, &roots, &.{unit});
+        return roots[0];
+    }
+    var start: usize = 0;
+    while (std.mem.indexOfPos(u16, source, start, delimiter)) |found| {
+        try appendStringPart(runtime, &roots, source[start..found]);
+        start = found + delimiter.len;
+    }
+    try appendStringPart(runtime, &roots, source[start..]);
+    return roots[0];
+}
+
+fn appendStringPart(runtime: *Runtime, roots: *[2]Value, units: []const u16) !void {
+    roots[1] = try runtime.createString(units);
+    try roots[0].object().?.payload.array.append(runtime.allocator, roots[1]);
+}
+
+fn stringRemoveBuiltin(runtime: *Runtime, source_value: Value, start_value: Value, count_value: Value) !Value {
+    const source = try valueUtf16Alloc(runtime, source_value);
+    defer runtime.allocator.free(source);
+    const length = codePointCount(source);
+    const start = sliceIndexBuiltin(try valueToNumberRuntime(runtime, start_value) - 1, length);
+    const count = spliceDeleteCountBuiltin(try valueToNumberRuntime(runtime, count_value), length - start);
+    const unit_start = codePointOffsetBuiltin(source, start);
+    const unit_end = codePointOffsetBuiltin(source, start + count);
+    const output = try runtime.allocator.alloc(u16, source.len - (unit_end - unit_start));
+    @memcpy(output[0..unit_start], source[0..unit_start]);
+    @memcpy(output[unit_start..], source[unit_end..]);
+    return runtime.ownString(output);
+}
+
+fn spliceDeleteCountBuiltin(number: f64, remaining: usize) usize {
+    if (std.math.isNan(number) or number <= 0) return 0;
+    if (!std.math.isFinite(number) or number >= @as(f64, @floatFromInt(remaining))) return remaining;
     return @intFromFloat(@trunc(number));
 }
 
@@ -2683,6 +2755,44 @@ test "AOT部分文字列命令は数値小数と文字列小数を区別する" 
     const right_arguments = [_]Value{ staticStringValue("A😀BCD"), numberValue(2.9) };
     lnako_aot_builtin_call(&roots[4], &right_arguments, right_arguments.len, @intFromEnum(aot_builtin.Command.substring_right));
     try std.testing.expectEqualSlices(u16, &.{ 'B', 'C', 'D' }, roots[4].object().?.payload.utf16_string);
+}
+
+test "AOT文字列分割削除はUTF-16空区切りとsplice位置を扱う" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    const split_arguments = [_]Value{ staticStringValue("A😀B😀C"), staticStringValue("😀") };
+    lnako_aot_builtin_call(&roots[0], &split_arguments, split_arguments.len, @intFromEnum(aot_builtin.Command.split_all));
+    const parts = roots[0].object().?.payload.array.items;
+    try std.testing.expectEqual(@as(usize, 3), parts.len);
+    try std.testing.expectEqualSlices(u16, &.{'A'}, parts[0].object().?.payload.utf16_string);
+    try std.testing.expectEqualSlices(u16, &.{'B'}, parts[1].object().?.payload.utf16_string);
+    try std.testing.expectEqualSlices(u16, &.{'C'}, parts[2].object().?.payload.utf16_string);
+    const empty_split = [_]Value{ staticStringValue("😀"), staticStringValue("") };
+    lnako_aot_builtin_call(&roots[1], &empty_split, empty_split.len, @intFromEnum(aot_builtin.Command.split_all));
+    const units = roots[1].object().?.payload.array.items;
+    try std.testing.expectEqual(@as(usize, 2), units.len);
+    try std.testing.expectEqualSlices(u16, &.{0xd83d}, units[0].object().?.payload.utf16_string);
+    try std.testing.expectEqualSlices(u16, &.{0xde00}, units[1].object().?.payload.utf16_string);
+
+    lnako_aot_builtin_call(&roots[2], &empty_split, empty_split.len, @intFromEnum(aot_builtin.Command.split_first));
+    const first_parts = roots[2].object().?.payload.array.items;
+    try std.testing.expectEqual(@as(usize, 2), first_parts.len);
+    try std.testing.expectEqual(@as(usize, 0), first_parts[0].object().?.payload.utf16_string.len);
+    try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00 }, first_parts[1].object().?.payload.utf16_string);
+
+    const remove_arguments = [_]Value{ staticStringValue("ABCDE"), numberValue(-1), numberValue(2) };
+    lnako_aot_builtin_call(&roots[3], &remove_arguments, remove_arguments.len, @intFromEnum(aot_builtin.Command.string_remove));
+    try std.testing.expectEqualSlices(u16, &.{ 'A', 'B', 'C' }, roots[3].object().?.payload.utf16_string);
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {
