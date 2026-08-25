@@ -9,10 +9,10 @@ pub const Runtime = value_mod.Runtime;
 const max_captures = 64;
 pub const CallResult = struct { value: Value, captures: ?Value = null };
 
-const Flags = struct { global: bool = false, ignore_case: bool = false, multiline: bool = false, dot_all: bool = false };
-const Span = struct { start: usize = 0, end: usize = 0, matched: bool = false };
+pub const Flags = struct { global: bool = false, ignore_case: bool = false, multiline: bool = false, dot_all: bool = false };
+pub const Span = struct { start: usize = 0, end: usize = 0, matched: bool = false };
 const Candidate = struct { position: usize, captures: [max_captures]Span };
-const Match = struct { span: Span, captures: [max_captures]Span };
+pub const Match = struct { span: Span, captures: [max_captures]Span };
 
 const ClassItem = union(enum) {
     literal: u16,
@@ -42,14 +42,14 @@ const Piece = struct { atom: Atom, minimum: usize = 1, maximum: ?usize = 1, lazy
 const Sequence = struct { pieces: []const Piece };
 const Expression = struct { alternatives: []const Sequence };
 
-const Compiled = struct {
+pub const Compiled = struct {
     arena: std.heap.ArenaAllocator,
     expression: *Expression,
     flags: Flags,
     capture_count: usize,
     capture_names: [max_captures]?[]const u16,
 
-    fn deinit(self: *Compiled) void {
+    pub fn deinit(self: *Compiled) void {
         self.arena.deinit();
         self.* = undefined;
     }
@@ -366,10 +366,17 @@ fn compile(allocator: std.mem.Allocator, specification: []const u16, default_glo
             };
         };
     }
-    var parser = Parser{ .allocator = arena.allocator(), .source = pattern };
+    const owned_pattern = try arena.allocator().dupe(u16, pattern);
+    var parser = Parser{ .allocator = arena.allocator(), .source = owned_pattern };
     const expression = try parser.parseExpression();
-    if (parser.index != pattern.len) return error.UnexpectedPatternToken;
+    if (parser.index != owned_pattern.len) return error.UnexpectedPatternToken;
     return .{ .arena = arena, .expression = expression, .flags = flags, .capture_count = parser.capture_count, .capture_names = parser.capture_names };
+}
+
+/// Compile the public `/pattern/flags` specification for execution engines
+/// other than the interpreter. The returned value owns all parser storage.
+pub fn compilePattern(allocator: std.mem.Allocator, specification: []const u16, default_global: bool) !Compiled {
+    return compile(allocator, specification, default_global);
 }
 
 fn findAll(allocator: std.mem.Allocator, source: []const u16, compiled: *const Compiled) ![]Match {
@@ -383,6 +390,12 @@ fn findAll(allocator: std.mem.Allocator, source: []const u16, compiled: *const C
         position = if (found.?.span.end > found.?.span.start) found.?.span.end else found.?.span.end + 1;
     }
     return results.toOwnedSlice(allocator);
+}
+
+/// Return matches in the shared engine's evaluation order. The caller owns
+/// the returned slice and must keep `compiled` alive while reading it.
+pub fn findMatches(allocator: std.mem.Allocator, source: []const u16, compiled: *const Compiled) ![]Match {
+    return findAll(allocator, source, compiled);
 }
 
 fn findOne(allocator: std.mem.Allocator, source: []const u16, compiled: *const Compiled, from: usize) !?Match {
@@ -604,18 +617,26 @@ fn extractCommand(runtime: *Runtime, source: []const u16, compiled: *Compiled) !
 }
 
 fn replaceCommand(runtime: *Runtime, source: []const u16, replacement: []const u16, compiled: *const Compiled) !Value {
-    const matches = try findAll(runtime.allocator(), source, compiled);
-    defer runtime.allocator().free(matches);
+    const output = try replaceUnits(runtime.allocator(), source, replacement, compiled);
+    defer runtime.allocator().free(output);
+    return runtime.stringCodeUnits(output);
+}
+
+/// Apply the regexp replacement expansion and return owned UTF-16 units.
+/// This is shared by the interpreter and AOT runtimes.
+pub fn replaceUnits(allocator: std.mem.Allocator, source: []const u16, replacement: []const u16, compiled: *const Compiled) ![]u16 {
+    const matches = try findAll(allocator, source, compiled);
+    defer allocator.free(matches);
     var output: std.ArrayList(u16) = .empty;
-    defer output.deinit(runtime.allocator());
+    errdefer output.deinit(allocator);
     var cursor: usize = 0;
     for (matches) |match| {
-        try output.appendSlice(runtime.allocator(), source[cursor..match.span.start]);
-        try appendReplacement(runtime.allocator(), &output, source, replacement, match, compiled);
+        try output.appendSlice(allocator, source[cursor..match.span.start]);
+        try appendReplacement(allocator, &output, source, replacement, match, compiled);
         cursor = match.span.end;
     }
-    try output.appendSlice(runtime.allocator(), source[cursor..]);
-    return runtime.stringCodeUnits(output.items);
+    try output.appendSlice(allocator, source[cursor..]);
+    return output.toOwnedSlice(allocator);
 }
 
 fn appendReplacement(allocator: std.mem.Allocator, output: *std.ArrayList(u16), source: []const u16, replacement: []const u16, match: Match, compiled: *const Compiled) !void {

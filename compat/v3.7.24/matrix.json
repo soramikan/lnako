@@ -7749,14 +7749,17 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-regexp"
+        "plugin-system-regexp",
+        "native-system-regexp-commands",
+        "native-system-regexp-boundaries",
+        "native-system-regexp-error-preserves-captures"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "共有Zig正規表現エンジンと抽出副作用をAOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0296",
@@ -7775,14 +7778,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-regexp"
+        "plugin-system-regexp",
+        "native-system-regexp-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "共有Zig正規表現エンジンと名前付き抽出をAOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0297",
@@ -7801,14 +7805,16 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-regexp"
+        "plugin-system-regexp",
+        "native-system-regexp-commands",
+        "native-system-regexp-error-preserves-captures"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "AOTのマッチ・抽出からGCルート付きシステム変数を更新し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0298",
@@ -7827,14 +7833,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-regexp"
+        "plugin-system-regexp",
+        "native-system-regexp-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "共有Zig正規表現エンジンと置換参照をAOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0299",
@@ -7853,14 +7860,16 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-regexp"
+        "plugin-system-regexp",
+        "native-system-regexp-commands",
+        "native-system-regexp-boundaries"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "共有Zig正規表現エンジンとcapture付き分割をAOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0300",

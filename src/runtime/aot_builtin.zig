@@ -133,6 +133,10 @@ pub const Command = enum(u16) {
     katakana_predicate,
     digit_predicate,
     number_sequence_predicate,
+    regexp_match,
+    regexp_extract,
+    regexp_replace,
+    regexp_split,
 };
 
 pub fn lookup(name: []const u8) ?Command {
@@ -268,6 +272,10 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "カタカナ判定")) return .katakana_predicate;
     if (std.mem.eql(u8, name, "数字判定")) return .digit_predicate;
     if (std.mem.eql(u8, name, "数列判定")) return .number_sequence_predicate;
+    if (std.mem.eql(u8, name, "正規表現マッチ")) return .regexp_match;
+    if (std.mem.eql(u8, name, "正規表現抽出")) return .regexp_extract;
+    if (std.mem.eql(u8, name, "正規表現置換")) return .regexp_replace;
+    if (std.mem.eql(u8, name, "正規表現区切")) return .regexp_split;
     return null;
 }
 
@@ -392,6 +400,10 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.trim_left, lookup("左トリム").?);
     try std.testing.expectEqual(Command.replace_all, lookup("置換").?);
     try std.testing.expectEqual(Command.replace_first, lookup("単置換").?);
+    try std.testing.expectEqual(Command.regexp_match, lookup("正規表現マッチ").?);
+    try std.testing.expectEqual(Command.regexp_extract, lookup("正規表現抽出").?);
+    try std.testing.expectEqual(Command.regexp_replace, lookup("正規表現置換").?);
+    try std.testing.expectEqual(Command.regexp_split, lookup("正規表現区切").?);
     try std.testing.expectEqual(Command.uppercase, lookup("大文字変換").?);
     try std.testing.expectEqual(Command.lowercase, lookup("小文字変換").?);
     try std.testing.expectEqual(Command.hiragana, lookup("平仮名変換").?);

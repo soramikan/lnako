@@ -177,6 +177,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_function_call(ptr, ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_cut(ptr, ptr, ptr, i64, i8)\n" ++
                 "declare void @lnako_aot_builtin_call(ptr, ptr, i64, i16)\n" ++
+                "declare void @lnako_aot_regexp_call(ptr, ptr, ptr, i64, i16)\n" ++
                 "declare i32 @printf(ptr, ...)\n" ++
                 "declare i32 @puts(ptr)\n" ++
                 "declare double @llvm.pow.f64(double, double)\n" ++
@@ -262,6 +263,9 @@ const Emitter = struct {
             if (instruction.opcode == .call and instruction.direct_callee == null) {
                 if (aot_builtin.lookup(instruction.name)) |command| if (command == .cut or command == .cut_range) {
                     if (self.globalIndex("対象") == null) try self.globals.append(self.allocator, "対象");
+                };
+                if (aot_builtin.lookup(instruction.name)) |command| if (command == .regexp_match or command == .regexp_extract) {
+                    if (self.globalIndex("抽出文字列") == null) try self.globals.append(self.allocator, "抽出文字列");
                 };
             }
             if (instruction.opcode == .const_string) {
@@ -853,6 +857,11 @@ const Emitter = struct {
             return;
         }
         if (instruction.direct_callee == null) if (aot_builtin.lookup(instruction.name)) |command| {
+            if (command == .regexp_match or command == .regexp_extract or command == .regexp_replace or command == .regexp_split) {
+                try self.writeRegexpCall(function, instruction, scope, aggregate_count, command);
+                try self.writeCallResult(result, instruction.span, scope);
+                return;
+            }
             try self.writeBuiltinCall(function, instruction, scope, aggregate_count, command);
             try self.writeCallResult(result, instruction.span, scope);
             return;
@@ -907,6 +916,30 @@ const Emitter = struct {
             } else try self.output.writer.writeAll("null");
             try self.output.writer.print(", i64 {d}, i16 {d})", .{ instruction.operands.len, @intFromEnum(command) });
         }
+        try self.debugSuffix(instruction.span, scope);
+        try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+        try self.debugSuffix(instruction.span, scope);
+    }
+
+    fn writeRegexpCall(self: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize, command: aot_builtin.Command) !void {
+        const result = instruction.result orelse return error.MissingInstructionResult;
+        if (instruction.operands.len > aggregate_count) return error.InvalidCallScratch;
+        for (instruction.operands, 0..) |argument, index| {
+            try self.output.writer.print("  %regexp.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+            try self.debugSuffix(instruction.span, scope);
+            try self.output.writer.writeAll("  store %lnako.Value ");
+            try self.writeValueRef(function, argument);
+            try self.output.writer.print(", ptr %regexp.{d}.slot.{d}", .{ result, index });
+            try self.debugSuffix(instruction.span, scope);
+        }
+        try self.output.writer.print("  call void @lnako_aot_regexp_call(ptr %root.slot.{d}, ptr ", .{result});
+        if (command == .regexp_match or command == .regexp_extract) {
+            const captures_index = self.globalIndex("抽出文字列") orelse return error.MissingCaptureGlobal;
+            try self.output.writer.print("@lnako.global.{d}", .{captures_index});
+        } else try self.output.writer.writeAll("null");
+        try self.output.writer.writeAll(", ptr ");
+        if (instruction.operands.len > 0) try self.output.writer.print("%regexp.{d}.slot.0", .{result}) else try self.output.writer.writeAll("null");
+        try self.output.writer.print(", i64 {d}, i16 {d})", .{ instruction.operands.len, @intFromEnum(command) });
         try self.debugSuffix(instruction.span, scope);
         try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try self.debugSuffix(instruction.span, scope);
@@ -1526,6 +1559,29 @@ test "参照された配列システム定数を独立したGCオブジェクト
     const entry = std.mem.indexOf(u8, module.text, "%entry.result.0 = call").?;
     try std.testing.expect(first < second);
     try std.testing.expect(second < entry);
+}
+
+test "正規表現マッチは未参照の抽出文字列もAOTグローバルへ確保する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "正規表現マッチ(\"a\",『/(a)/』)\n", "regexp-global.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "regexp-global.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "regexp_global", "regexp-global.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    try std.testing.expect(findUnsupported(program) == null);
+    var module = try generate(std.testing.allocator, program, "regexp-global.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_array_new(ptr @lnako.global.") != null);
+    const call = std.mem.indexOf(u8, module.text, "call void @lnako_aot_regexp_call").?;
+    const capture_pointer = std.mem.indexOfPos(u8, module.text, call, "ptr @lnako.global.").?;
+    const call_end = std.mem.indexOfPos(u8, module.text, call, "\n").?;
+    try std.testing.expect(capture_pointer < call_end);
 }
 
 test "配列と辞書をルート付きAOTランタイム呼び出しへ変換する" {
