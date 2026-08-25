@@ -1429,44 +1429,50 @@
   "配列最大値": {
     "status": "native",
     "tests": [
-      "plugin-system-array-core"
+      "plugin-system-array-core",
+      "native-system-array-aggregate-create-commands"
     ],
-    "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
+    "reason": "単一要素の型保持を含めZig製ランタイムで実装し、公式差分テストとNaN・BigInt・±0境界の単体テストに成功。疎配列はTODO: sparse-array-presence"
   },
   "配列最小値": {
     "status": "native",
     "tests": [
-      "plugin-system-array-core"
+      "plugin-system-array-core",
+      "native-system-array-aggregate-create-commands"
     ],
-    "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
+    "reason": "単一要素の型保持を含めZig製ランタイムで実装し、公式差分テストとNaN・BigInt・±0境界の単体テストに成功。疎配列はTODO: sparse-array-presence"
   },
   "配列合計": {
     "status": "native",
     "tests": [
-      "plugin-system-array-core"
+      "plugin-system-array-core",
+      "native-system-array-aggregate-create-commands"
     ],
     "reason": "JavaScript互換の数値変換で実装し、公式差分テストに成功"
   },
   "配列入替": {
     "status": "native",
     "tests": [
-      "plugin-system-array-core"
+      "plugin-system-array-core",
+      "native-system-array-aggregate-create-commands"
     ],
-    "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
+    "reason": "非負整数添字と範囲外伸長をZig製ランタイムで実装。非indexプロパティと疎配列の巨大伸長はTODO: array-swap-non-index-property / array-swap-dense-length-limit"
   },
   "配列連番作成": {
     "status": "native",
     "tests": [
-      "plugin-system-array-core"
+      "plugin-system-array-core",
+      "native-system-array-aggregate-create-commands"
     ],
-    "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
+    "reason": "開始値の型保持とBigInt列をZig製ランタイムで実装。無限列と100万要素上限はTODO: array-sequence-unbounded-loop-limit"
   },
   "配列要素作成": {
     "status": "native",
     "tests": [
-      "plugin-system-array-core"
+      "plugin-system-array-core",
+      "native-system-array-aggregate-create-commands"
     ],
-    "reason": "多次元配列と要素複製を実装し、公式差分テストに成功"
+    "reason": "多次元配列、空shape、要素複製、総量事前検査を実装。ホスト固有オブジェクトと100万要素上限はTODO: array-fill-dictionary-json-clone / array-fill-total-size-limit"
   },
   "配列挿入": {
     "status": "native",

@@ -63,6 +63,12 @@ pub const Command = enum(u16) {
     array_range_copy,
     reference,
     array_add,
+    array_maximum,
+    array_minimum,
+    array_sum,
+    array_swap,
+    array_sequence,
+    array_fill,
     add_parsed,
     sum_parsed,
     sequential_add,
@@ -174,6 +180,12 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "配列範囲コピー")) return .array_range_copy;
     if (std.mem.eql(u8, name, "参照") or std.mem.eql(u8, name, "配列参照")) return .reference;
     if (std.mem.eql(u8, name, "配列足")) return .array_add;
+    if (std.mem.eql(u8, name, "配列最大値")) return .array_maximum;
+    if (std.mem.eql(u8, name, "配列最小値")) return .array_minimum;
+    if (std.mem.eql(u8, name, "配列合計")) return .array_sum;
+    if (std.mem.eql(u8, name, "配列入替")) return .array_swap;
+    if (std.mem.eql(u8, name, "配列連番作成")) return .array_sequence;
+    if (std.mem.eql(u8, name, "配列要素作成")) return .array_fill;
     if (std.mem.eql(u8, name, "足")) return .add_parsed;
     if (std.mem.eql(u8, name, "合計")) return .sum_parsed;
     if (std.mem.eql(u8, name, "連続加算")) return .sequential_add;
@@ -238,6 +250,12 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.cut_range, lookup("範囲切取").?);
     try std.testing.expectEqual(Command.is_nan, lookup("NAN判定").?);
     try std.testing.expectEqual(Command.is_number_nan, lookup("非数判定").?);
+    try std.testing.expectEqual(Command.array_maximum, lookup("配列最大値").?);
+    try std.testing.expectEqual(Command.array_minimum, lookup("配列最小値").?);
+    try std.testing.expectEqual(Command.array_sum, lookup("配列合計").?);
+    try std.testing.expectEqual(Command.array_swap, lookup("配列入替").?);
+    try std.testing.expectEqual(Command.array_sequence, lookup("配列連番作成").?);
+    try std.testing.expectEqual(Command.array_fill, lookup("配列要素作成").?);
     try std.testing.expectEqual(Command.radix16, lookup("HEX").?);
     try std.testing.expectEqual(Command.radix, lookup("進数変換").?);
     try std.testing.expectEqual(Command.radix2, lookup("二進").?);

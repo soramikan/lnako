@@ -8,6 +8,8 @@ const regexp = @import("regexp.zig");
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
 
+const safe_array_element_limit: usize = 1_000_000;
+
 pub const Context = struct {
     context: *anyopaque,
     randomFn: ?*const fn (context: *anyopaque) anyerror!f64 = null,
@@ -403,13 +405,25 @@ fn arrayAdd(runtime: *Runtime, source: Value, other: Value) !Value {
 }
 
 fn reduceExtremum(runtime: *Runtime, source: Value, maximum: bool) !Value {
-    if (source != .array or source.array.len() == 0) return error.NonEmptyArrayExpected;
+    if (source != .array) return error.ArrayExpected;
+    if (source.array.len() == 0) return error.NonEmptyArrayExpected;
+    if (source.array.len() == 1) return source.array.get(0);
     var result = try runtime.valueToNumber(source.array.get(0));
     for (source.array.items.items[1..]) |item| {
         const number = try runtime.valueToNumber(item);
-        result = if (maximum) @max(result, number) else @min(result, number);
+        if (std.math.isNan(number) or std.math.isNan(result)) {
+            result = std.math.nan(f64);
+        } else if ((maximum and (number > result or (number == result and isNegativeZero(result)))) or
+            (!maximum and (number < result or (number == result and isNegativeZero(number)))))
+        {
+            result = number;
+        }
     }
     return .{ .number = result };
+}
+
+fn isNegativeZero(number: f64) bool {
+    return number == 0 and (@as(u64, @bitCast(number)) >> 63) != 0;
 }
 
 fn sum(runtime: *Runtime, source: Value) !Value {
@@ -426,6 +440,8 @@ fn swap(source: Value, first_value: Value, second_value: Value) !Value {
     if (source != .array) return error.ArrayExpected;
     const first = if (first_value == .number) directIndex(first_value.number) orelse return error.InvalidArrayIndex else return error.InvalidArrayIndex;
     const second = if (second_value == .number) directIndex(second_value.number) orelse return error.InvalidArrayIndex else return error.InvalidArrayIndex;
+    const required_length = std.math.add(usize, @max(first, second), 1) catch return error.ArraySizeLimitExceeded;
+    if (required_length > source.array.len() and required_length > safe_array_element_limit) return error.ArraySizeLimitExceeded;
     const first_item = source.array.get(first);
     const second_item = source.array.get(second);
     try source.array.set(first, second_item);
@@ -434,31 +450,74 @@ fn swap(source: Value, first_value: Value, second_value: Value) !Value {
 }
 
 fn sequence(runtime: *Runtime, first_value: Value, last_value: Value) !Value {
-    const first = try runtime.valueToNumber(first_value);
-    const last = try runtime.valueToNumber(last_value);
-    var result = try runtime.createArray();
+    var current = first_value;
+    var last = last_value;
+    var result: Value = .undefined;
+    var one: Value = .undefined;
     var roots = runtime.rootFrame();
     defer roots.deinit();
+    try roots.protect(&current);
+    try roots.protect(&last);
     try roots.protect(&result);
-    if (!std.math.isFinite(first) or !std.math.isFinite(last)) return result;
-    var current = first;
+    try roots.protect(&one);
+    result = try runtime.createArray();
+    if (std.meta.activeTag(first_value) == .bigint or std.meta.activeTag(last_value) == .bigint) {
+        one = try runtime.bigIntLiteral("1n");
+    }
     var count: usize = 0;
-    while (current <= last) : (current += 1) {
-        if (count >= 10_000_000) return error.ArraySizeLimitExceeded;
-        _ = try result.array.push(.{ .number = current });
+    while (try operators.compare(runtime, current, last)) |order| {
+        if (order == .gt) break;
+        if (count >= safe_array_element_limit) return error.ArraySizeLimitExceeded;
+        if (std.meta.activeTag(last) != .bigint and try runtime.valueToNumber(last) == std.math.inf(f64)) return error.ArraySizeLimitExceeded;
+        _ = try result.array.push(current);
+        if (std.meta.activeTag(current) == .bigint) {
+            current = try operators.binary(runtime, .add, current, one);
+        } else {
+            const current_number = try runtime.valueToNumber(current);
+            const next: Value = .{ .number = current_number + @as(f64, 1) };
+            if (next.number == current_number) {
+                if (try operators.compare(runtime, next, last)) |next_order| {
+                    if (next_order != .gt) return error.ArraySizeLimitExceeded;
+                }
+            }
+            current = next;
+        }
         count += 1;
     }
     return result;
 }
 
 fn fill(runtime: *Runtime, value: Value, shape: Value) !Value {
-    if (shape == .array) return fillDimensions(runtime, value, shape.array.items.items, 0);
-    return fillCount(runtime, value, positiveLength(try runtime.valueToNumber(shape), 10_000_000));
+    var value_root = value;
+    var shape_root = shape;
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&value_root);
+    try roots.protect(&shape_root);
+    if (shape_root == .array) {
+        if (shape_root.array.items.items.len == 0) return runtime.createArray();
+        try validateFillDimensions(runtime, shape_root.array.items.items);
+        return fillDimensions(runtime, value_root, shape_root.array.items.items, 0);
+    }
+    const count = try fillLength(try runtime.valueToNumber(shape_root), safe_array_element_limit - 1);
+    return fillCount(runtime, value_root, count);
+}
+
+fn validateFillDimensions(runtime: *Runtime, dimensions: []const Value) !void {
+    var product: usize = 1;
+    var total: usize = 1;
+    for (dimensions) |dimension| {
+        const count = try fillLength(try runtime.valueToNumber(dimension), safe_array_element_limit);
+        product = std.math.mul(usize, product, count) catch return error.ArraySizeLimitExceeded;
+        total = std.math.add(usize, total, product) catch return error.ArraySizeLimitExceeded;
+        if (total > safe_array_element_limit) return error.ArraySizeLimitExceeded;
+        if (product == 0) break;
+    }
 }
 
 fn fillDimensions(runtime: *Runtime, value: Value, dimensions: []const Value, depth: usize) !Value {
-    if (depth >= dimensions.len) return deepClone(runtime, value);
-    const count = positiveLength(try runtime.valueToNumber(dimensions[depth]), 10_000_000);
+    if (depth >= dimensions.len) return cloneFillValue(runtime, value);
+    const count = try fillLength(try runtime.valueToNumber(dimensions[depth]), safe_array_element_limit);
     var result = try runtime.createArray();
     var roots = runtime.rootFrame();
     defer roots.deinit();
@@ -472,7 +531,19 @@ fn fillCount(runtime: *Runtime, value: Value, count: usize) !Value {
     var roots = runtime.rootFrame();
     defer roots.deinit();
     try roots.protect(&result);
-    for (0..count) |_| _ = try result.array.push(try deepClone(runtime, value));
+    for (0..count) |_| _ = try result.array.push(try cloneFillValue(runtime, value));
+    return result;
+}
+
+fn cloneFillValue(runtime: *Runtime, value: Value) !Value {
+    if (value != .array) return if (value == .dictionary) deepClone(runtime, value) else value;
+    var source = value;
+    var result = try runtime.createArray();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&source);
+    try roots.protect(&result);
+    for (source.array.items.items) |item| _ = try result.array.push(try cloneFillValue(runtime, item));
     return result;
 }
 
@@ -768,10 +839,9 @@ fn spliceIndex(number: f64, length: usize) usize {
 }
 
 fn directIndex(number: f64) ?usize {
-    if (!std.math.isFinite(number) or number < 0) return null;
-    const integer = @trunc(number);
-    if (integer > @as(f64, @floatFromInt(std.math.maxInt(usize)))) return null;
-    return @intFromFloat(integer);
+    if (!std.math.isFinite(number) or number < 0 or @trunc(number) != number) return null;
+    if (number >= @as(f64, @floatFromInt(std.math.maxInt(usize)))) return null;
+    return @intFromFloat(number);
 }
 
 fn propertyIndex(number: f64) ?usize {
@@ -792,6 +862,12 @@ fn positiveLength(number: f64, maximum: usize) usize {
     if (std.math.isNan(number) or number <= 0) return 0;
     if (number == std.math.inf(f64)) return maximum;
     return @min(@as(usize, @intFromFloat(@min(@floor(number), @as(f64, @floatFromInt(maximum))))), maximum);
+}
+
+fn fillLength(number: f64, maximum: usize) !usize {
+    if (std.math.isNan(number) or number <= 0) return 0;
+    if (!std.math.isFinite(number) or number > @as(f64, @floatFromInt(maximum))) return error.ArraySizeLimitExceeded;
+    return @intFromFloat(@floor(number));
 }
 
 fn isAny(name: []const u8, options: []const []const u8) bool {
@@ -892,4 +968,76 @@ test "配列コピーと参照はJSONとJavaScript添字の境界を保つ" {
     var missing_last_text = try reference(&runtime, text, range);
     try roots.protect(&missing_last_text);
     try std.testing.expectEqualSlices(u16, &.{ 'A', 'B' }, missing_last_text.string.units);
+}
+
+test "配列集約・連番・要素生成の型変換と複製境界を保つ" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var singleton_text = try runtime.stringUtf8("9");
+    try roots.protect(&singleton_text);
+    var singleton_array = try common.arrayFromValues(&runtime, &.{singleton_text});
+    try roots.protect(&singleton_array);
+    try std.testing.expectEqual(std.meta.Tag(Value).string, std.meta.activeTag(try reduceExtremum(&runtime, singleton_array, true)));
+    var singleton_bigint = try runtime.bigIntLiteral("1n");
+    try roots.protect(&singleton_bigint);
+    var singleton_bigint_array = try common.arrayFromValues(&runtime, &.{singleton_bigint});
+    try roots.protect(&singleton_bigint_array);
+    try std.testing.expectEqual(singleton_bigint.bigint, (try reduceExtremum(&runtime, singleton_bigint_array, false)).bigint);
+    try std.testing.expectError(error.ArrayExpected, reduceExtremum(&runtime, .{ .number = 1 }, true));
+
+    var zeroes = try common.arrayFromValues(&runtime, &.{ .{ .number = -0.0 }, .{ .number = 0.0 } });
+    try roots.protect(&zeroes);
+    try std.testing.expect(!isNegativeZero((try reduceExtremum(&runtime, zeroes, true)).number));
+    var reverse_zeroes = try common.arrayFromValues(&runtime, &.{ .{ .number = 0.0 }, .{ .number = -0.0 } });
+    try roots.protect(&reverse_zeroes);
+    try std.testing.expect(isNegativeZero((try reduceExtremum(&runtime, reverse_zeroes, false)).number));
+    var with_nan = try common.arrayFromValues(&runtime, &.{ .{ .number = 2 }, .{ .number = std.math.nan(f64) }, .{ .number = 3 } });
+    try roots.protect(&with_nan);
+    try std.testing.expect(std.math.isNan((try reduceExtremum(&runtime, with_nan, true)).number));
+
+    var swap_source = try common.arrayFromValues(&runtime, &.{.{ .number = 0 }});
+    try roots.protect(&swap_source);
+    try std.testing.expectError(error.ArraySizeLimitExceeded, swap(swap_source, .{ .number = 0 }, .{ .number = @floatFromInt(safe_array_element_limit) }));
+
+    var first = try runtime.stringUtf8("2");
+    try roots.protect(&first);
+    var created_sequence = try sequence(&runtime, first, .{ .number = 4 });
+    try roots.protect(&created_sequence);
+    try std.testing.expectEqual(std.meta.Tag(Value).string, std.meta.activeTag(created_sequence.array.get(0)));
+    try std.testing.expectEqual(@as(f64, 3), created_sequence.array.get(1).number);
+    var bigint_first = try runtime.bigIntLiteral("2n");
+    try roots.protect(&bigint_first);
+    var bigint_last = try runtime.bigIntLiteral("4n");
+    try roots.protect(&bigint_last);
+    var bigint_sequence = try sequence(&runtime, bigint_first, bigint_last);
+    try roots.protect(&bigint_sequence);
+    try std.testing.expectEqual(@as(usize, 3), bigint_sequence.array.len());
+    try std.testing.expectEqual(std.meta.Tag(Value).bigint, std.meta.activeTag(bigint_sequence.array.get(2)));
+    try std.testing.expectError(error.ArraySizeLimitExceeded, sequence(&runtime, .{ .number = 0 }, .{ .number = std.math.inf(f64) }));
+    try std.testing.expectError(error.ArraySizeLimitExceeded, sequence(&runtime, .{ .number = -std.math.inf(f64) }, .{ .number = -1 }));
+
+    var empty_shape = try runtime.createArray();
+    try roots.protect(&empty_shape);
+    var empty_fill = try fill(&runtime, .{ .number = 7 }, empty_shape);
+    try roots.protect(&empty_fill);
+    try std.testing.expectEqual(@as(usize, 0), empty_fill.array.len());
+    var undefined_fill = try fill(&runtime, .undefined, .{ .number = 2 });
+    try roots.protect(&undefined_fill);
+    try std.testing.expectEqual(Value.undefined, undefined_fill.array.get(0));
+    try std.testing.expectEqual(Value.undefined, undefined_fill.array.get(1));
+    try std.testing.expectError(error.ArraySizeLimitExceeded, fill(&runtime, .{ .number = 0 }, .{ .number = std.math.inf(f64) }));
+
+    var huge_shape = try common.arrayFromValues(&runtime, &.{ .{ .number = @floatFromInt(safe_array_element_limit) }, .{ .number = 2 } });
+    try roots.protect(&huge_shape);
+    try std.testing.expectError(error.ArraySizeLimitExceeded, fill(&runtime, .{ .number = 0 }, huge_shape));
+    var nested_value = try common.arrayFromValues(&runtime, &.{.{ .number = 1 }});
+    try roots.protect(&nested_value);
+    var independent_fill = try fill(&runtime, nested_value, .{ .number = 2 });
+    try roots.protect(&independent_fill);
+    try independent_fill.array.get(0).array.set(0, .{ .number = 9 });
+    try std.testing.expectEqual(@as(f64, 1), independent_fill.array.get(1).array.get(0).number);
 }

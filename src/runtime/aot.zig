@@ -10,6 +10,8 @@ const system_constant = @import("system_constant.zig");
 
 pub const Tag = aot_abi.Tag;
 
+const safe_array_element_limit: usize = 1_000_000;
+
 pub const Value = extern struct {
     tag: u8 = @intFromEnum(Tag.undefined),
     payload: u64 = 0,
@@ -1620,7 +1622,7 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             });
         },
-        .array_insert, .array_insert_many, .array_cut, .array_take, .array_pop, .array_push, .array_clone, .array_range_copy, .reference, .array_add => {
+        .array_insert, .array_insert_many, .array_cut, .array_take, .array_pop, .array_push, .array_clone, .array_range_copy, .reference, .array_add, .array_maximum, .array_minimum, .array_sum, .array_swap, .array_sequence, .array_fill => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = arrayMutationBuiltin(runtime, command, actual) catch |failure| {
                 runtime.setFailure(failure);
@@ -2616,6 +2618,12 @@ fn arrayMutationBuiltin(runtime: *Runtime, command: aot_builtin.Command, argumen
         .array_range_copy => arrayRangeCopyBuiltin(runtime, source, index),
         .reference => referenceBuiltin(runtime, source, index),
         .array_add => arrayAddBuiltin(runtime, source, index),
+        .array_maximum => arrayExtremumBuiltin(runtime, source, true),
+        .array_minimum => arrayExtremumBuiltin(runtime, source, false),
+        .array_sum => arraySumBuiltin(runtime, source),
+        .array_swap => arraySwapBuiltin(runtime, source, index, item),
+        .array_sequence => arraySequenceBuiltin(runtime, source, index),
+        .array_fill => arrayFillBuiltin(runtime, source, index),
         else => error.UnknownCommand,
     };
 }
@@ -2836,6 +2844,166 @@ fn arrayAddBuiltin(runtime: *Runtime, source: Value, other: Value) !Value {
     try result.ensureTotalCapacity(runtime.allocator, final_length);
     try result.appendSlice(runtime.allocator, source_items.items);
     if (roots[1].tag == @intFromEnum(Tag.array)) try result.appendSlice(runtime.allocator, (try arrayItems(roots[1])).items) else try result.append(runtime.allocator, roots[1]);
+    return roots[2];
+}
+
+fn arrayExtremumBuiltin(runtime: *Runtime, source: Value, maximum: bool) !Value {
+    if (source.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
+    const items = try arrayItems(source);
+    if (items.items.len == 0) return error.NonEmptyArrayExpected;
+    if (items.items.len == 1) return items.items[0];
+    var result = try valueToNumberRuntime(runtime, items.items[0]);
+    for (items.items[1..]) |item| {
+        const number = try valueToNumberRuntime(runtime, item);
+        if (std.math.isNan(number) or std.math.isNan(result)) {
+            result = std.math.nan(f64);
+        } else if ((maximum and (number > result or (number == result and isNegativeZero(result)))) or
+            (!maximum and (number < result or (number == result and isNegativeZero(number)))))
+        {
+            result = number;
+        }
+    }
+    return numberValue(result);
+}
+
+fn isNegativeZero(number: f64) bool {
+    return number == 0 and (@as(u64, @bitCast(number)) >> 63) != 0;
+}
+
+fn arraySumBuiltin(runtime: *Runtime, source: Value) !Value {
+    if (source.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
+    var total: f64 = 0;
+    for ((try arrayItems(source)).items) |item| {
+        const number = try parseFloatBuiltin(runtime, item);
+        if (!std.math.isNan(number)) total += number;
+    }
+    return numberValue(total);
+}
+
+fn arraySwapBuiltin(runtime: *Runtime, source: Value, first_value: Value, second_value: Value) !Value {
+    var roots = [_]Value{ source, first_value, second_value };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    if (roots[0].tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
+    const first = directIndex(try valueToNumberRuntime(runtime, roots[1])) orelse return error.InvalidArrayIndex;
+    const second = directIndex(try valueToNumberRuntime(runtime, roots[2])) orelse return error.InvalidArrayIndex;
+    const items = try arrayItems(roots[0]);
+    const first_item: Value = if (first < items.items.len) items.items[first] else .{};
+    const second_item: Value = if (second < items.items.len) items.items[second] else .{};
+    const required_length = std.math.add(usize, @max(first, second), 1) catch return error.ArraySizeLimitExceeded;
+    if (required_length > items.items.len and required_length > safe_array_element_limit) return error.ArraySizeLimitExceeded;
+    const length = @max(items.items.len, required_length);
+    const old_length = items.items.len;
+    try items.ensureTotalCapacity(runtime.allocator, length);
+    try items.resize(runtime.allocator, length);
+    @memset(items.items[old_length..], .{});
+    items.items[first] = second_item;
+    items.items[second] = first_item;
+    return roots[0];
+}
+
+fn fillArrayLength(number: f64, maximum: usize) !usize {
+    if (std.math.isNan(number) or number <= 0) return 0;
+    if (!std.math.isFinite(number) or number > @as(f64, @floatFromInt(maximum))) return error.ArraySizeLimitExceeded;
+    return @intFromFloat(@floor(number));
+}
+
+fn arraySequenceBuiltin(runtime: *Runtime, first_value: Value, last_value: Value) !Value {
+    var roots = [_]Value{ first_value, last_value, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[2] = try runtime.createArray(&.{});
+    roots[3] = try runtime.createBigInt("1n");
+    const result_items = try arrayItems(roots[2]);
+    var count: usize = 0;
+    const lessEqual = struct {
+        fn check(rt: *Runtime, left: Value, right: Value) !bool {
+            if (left.tag == @intFromEnum(Tag.bigint) and right.tag == @intFromEnum(Tag.bigint)) {
+                return BigInt.order(left.object().?.payload.bigint, right.object().?.payload.bigint) != .gt;
+            }
+            return compareValues(rt, .less_equal, left, right);
+        }
+    }.check;
+    while (try lessEqual(runtime, roots[0], roots[1])) {
+        if (count >= safe_array_element_limit) return error.ArraySizeLimitExceeded;
+        if (roots[1].tag != @intFromEnum(Tag.bigint) and try valueToNumberRuntime(runtime, roots[1]) == std.math.inf(f64)) return error.ArraySizeLimitExceeded;
+        try result_items.append(runtime.allocator, roots[0]);
+        if (roots[0].tag == @intFromEnum(Tag.bigint)) {
+            roots[0] = try bigIntArithmetic(runtime, .add, roots[0], roots[3]);
+        } else {
+            const current_number = try valueToNumberRuntime(runtime, roots[0]);
+            const next = numberValue(current_number + 1);
+            if (@as(f64, @bitCast(next.payload)) == current_number and try lessEqual(runtime, next, roots[1])) return error.ArraySizeLimitExceeded;
+            roots[0] = next;
+        }
+        count += 1;
+    }
+    return roots[2];
+}
+
+fn arrayFillBuiltin(runtime: *Runtime, value: Value, shape: Value) !Value {
+    var roots = [_]Value{ value, shape };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    if (roots[1].tag == @intFromEnum(Tag.array)) try validateFillDimensions(runtime, roots[1]);
+    return arrayFillAtDepth(runtime, roots[0], roots[1], 0);
+}
+
+fn validateFillDimensions(runtime: *Runtime, shape: Value) !void {
+    const dimensions = try arrayItems(shape);
+    var product: usize = 1;
+    var total: usize = 1;
+    for (dimensions.items) |dimension| {
+        const count = try fillArrayLength(try valueToNumberRuntime(runtime, dimension), safe_array_element_limit);
+        product = std.math.mul(usize, product, count) catch return error.ArraySizeLimitExceeded;
+        total = std.math.add(usize, total, product) catch return error.ArraySizeLimitExceeded;
+        if (total > safe_array_element_limit) return error.ArraySizeLimitExceeded;
+        if (product == 0) break;
+    }
+}
+
+fn cloneFillValue(runtime: *Runtime, value: Value) !Value {
+    if (value.tag != @intFromEnum(Tag.array)) return if (value.tag == @intFromEnum(Tag.dictionary)) deepCloneBuiltin(runtime, value) else value;
+    const source = try arrayItems(value);
+    const result = try runtime.createArray(&.{});
+    var roots = [_]Value{ value, result };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    const destination = try arrayItems(roots[1]);
+    try destination.ensureTotalCapacity(runtime.allocator, source.items.len);
+    for (source.items) |item| try destination.append(runtime.allocator, try cloneFillValue(runtime, item));
+    return roots[1];
+}
+
+fn arrayFillAtDepth(runtime: *Runtime, value: Value, shape: Value, depth: usize) !Value {
+    if (shape.tag != @intFromEnum(Tag.array)) {
+        const count = try fillArrayLength(try valueToNumberRuntime(runtime, shape), safe_array_element_limit - 1);
+        const result = try runtime.createArray(&.{});
+        var roots = [_]Value{ value, result };
+        var frame: RootFrame = .{};
+        runtime.pushRoots(&frame, &roots, roots.len);
+        defer runtime.popRoots(&frame);
+        const items = try arrayItems(roots[1]);
+        try items.ensureTotalCapacity(runtime.allocator, count);
+        for (0..count) |_| try items.append(runtime.allocator, try cloneFillValue(runtime, roots[0]));
+        return roots[1];
+    }
+    const dimensions = try arrayItems(shape);
+    if (dimensions.items.len == 0 and depth == 0) return runtime.createArray(&.{});
+    if (depth >= dimensions.items.len) return cloneFillValue(runtime, value);
+    const count = try fillArrayLength(try valueToNumberRuntime(runtime, dimensions.items[depth]), safe_array_element_limit);
+    const result = try runtime.createArray(&.{});
+    var roots = [_]Value{ value, shape, result };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    const items = try arrayItems(roots[2]);
+    try items.ensureTotalCapacity(runtime.allocator, count);
+    for (0..count) |_| try items.append(runtime.allocator, try arrayFillAtDepth(runtime, roots[0], roots[1], depth + 1));
     return roots[2];
 }
 
@@ -4783,6 +4951,73 @@ test "回数・範囲・配列・辞書の反復状態と元コレクション�
     runtime.popRoots(&frame);
     const non_iterable = try runtime.createIterator(&.{try runtime.createBigInt("1n")}, false, 0);
     try std.testing.expect(!runtime.iteratorHasNext(non_iterable));
+}
+
+test "AOT配列の集約・入替・連番・要素生成を公式境界で処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 14;
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createArray(&.{staticStringValue("9")});
+    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @enumFromInt((try arrayExtremumBuiltin(&runtime, roots[0], true)).tag)));
+    roots[3] = try runtime.createBigInt("1n");
+    roots[1] = try runtime.createArray(&.{roots[3]});
+    try std.testing.expectEqual(roots[3].payload, (try arrayExtremumBuiltin(&runtime, roots[1], false)).payload);
+    try std.testing.expectError(error.ArrayExpected, arrayExtremumBuiltin(&runtime, numberValue(1), true));
+
+    roots[0] = try runtime.createArray(&.{ numberValue(-0.0), numberValue(0.0) });
+    const maximum = try arrayExtremumBuiltin(&runtime, roots[0], true);
+    try std.testing.expect(!isNegativeZero(@bitCast(maximum.payload)));
+    roots[1] = try runtime.createArray(&.{ numberValue(0.0), numberValue(-0.0) });
+    const minimum = try arrayExtremumBuiltin(&runtime, roots[1], false);
+    try std.testing.expect(isNegativeZero(@bitCast(minimum.payload)));
+    roots[2] = try runtime.createArray(&.{ numberValue(2), numberValue(std.math.nan(f64)), numberValue(3) });
+    try std.testing.expect(std.math.isNan(@as(f64, @bitCast((try arrayExtremumBuiltin(&runtime, roots[2], true)).payload))));
+    roots[4] = try runtime.createArray(&.{ numberValue(0), roots[3] });
+    try std.testing.expectError(error.CannotConvertBigIntToNumber, arrayExtremumBuiltin(&runtime, roots[4], true));
+
+    roots[5] = try runtime.createArray(&.{ roots[3], staticStringValue("2.5x"), staticStringValue("x") });
+    try std.testing.expectEqual(@as(f64, 3.5), @as(f64, @bitCast((try arraySumBuiltin(&runtime, roots[5])).payload)));
+    roots[6] = try runtime.createArray(&.{ numberValue(0), numberValue(1), numberValue(2) });
+    _ = try arraySwapBuiltin(&runtime, roots[6], numberValue(0), numberValue(4));
+    const swapped = try arrayItems(roots[6]);
+    try std.testing.expectEqual(@as(usize, 5), swapped.items.len);
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(swapped.items[0].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(swapped.items[3].tag)));
+    try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast(swapped.items[4].payload)));
+    try std.testing.expectError(error.ArraySizeLimitExceeded, arraySwapBuiltin(&runtime, roots[6], numberValue(0), numberValue(@floatFromInt(safe_array_element_limit))));
+
+    roots[7] = try arraySequenceBuiltin(&runtime, staticStringValue("2"), numberValue(4));
+    const sequence = try arrayItems(roots[7]);
+    try std.testing.expectEqual(@as(usize, 3), sequence.items.len);
+    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @enumFromInt(sequence.items[0].tag)));
+    try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(sequence.items[1].payload)));
+    roots[8] = try runtime.createBigInt("2n");
+    roots[9] = try runtime.createBigInt("4n");
+    roots[10] = try arraySequenceBuiltin(&runtime, roots[8], roots[9]);
+    try std.testing.expectEqual(@as(usize, 3), (try arrayItems(roots[10])).items.len);
+    try std.testing.expectError(error.ArraySizeLimitExceeded, arraySequenceBuiltin(&runtime, numberValue(0), numberValue(std.math.inf(f64))));
+    try std.testing.expectError(error.ArraySizeLimitExceeded, arraySequenceBuiltin(&runtime, numberValue(-std.math.inf(f64)), numberValue(-1)));
+
+    roots[11] = try runtime.createArray(&.{ numberValue(@floatFromInt(safe_array_element_limit)), numberValue(2) });
+    try std.testing.expectError(error.ArraySizeLimitExceeded, arrayFillBuiltin(&runtime, numberValue(0), roots[11]));
+    roots[11] = try runtime.createArray(&.{});
+    roots[12] = try arrayFillBuiltin(&runtime, numberValue(7), roots[11]);
+    try std.testing.expectEqual(@as(usize, 0), (try arrayItems(roots[12])).items.len);
+    roots[13] = try arrayFillBuiltin(&runtime, .{}, numberValue(2));
+    const undefined_fill = try arrayItems(roots[13]);
+    try std.testing.expectEqual(@as(usize, 2), undefined_fill.items.len);
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(undefined_fill.items[0].tag)));
+    try std.testing.expectError(error.ArraySizeLimitExceeded, arrayFillBuiltin(&runtime, numberValue(0), numberValue(std.math.inf(f64))));
+
+    roots[11] = try runtime.createArray(&.{numberValue(1)});
+    roots[12] = try arrayFillBuiltin(&runtime, roots[11], numberValue(2));
+    const cloned = try arrayItems(roots[12]);
+    try runtime.indexSet(cloned.items[0], numberValue(0), numberValue(9));
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(runtime.indexGet(cloned.items[1], numberValue(0)).payload)));
 }
 
 fn numberValue(number: f64) Value {

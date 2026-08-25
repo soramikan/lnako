@@ -22,6 +22,7 @@ pub fn forFailure(failure: anyerror) []const u8 {
         error.ArrayPopReceiver => "『配列ポップ』で配列以外の処理。",
         error.ArrayPushReceiver => "『配列追加』で配列以外の処理。",
         error.ArrayRangeCopyReceiver => "『配列範囲コピー』で配列以外の値が指定されました。",
+        error.NonEmptyArrayExpected => "Reduce of empty array with no initial value",
         error.CircularCloneValue => "Converting circular structure to JSON",
         error.CannotSerializeBigInt => "Do not know how to serialize a BigInt",
         error.InvalidJsonCloneValue => "Unexpected token 'u', \"undefined\" is not valid JSON",
