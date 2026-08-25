@@ -1514,6 +1514,16 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             };
         },
+        .repeat_multiply => {
+            if (len < 2) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            out.* = repeatMultiplyBuiltin(runtime, arguments.?[0], arguments.?[1]) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
     }
 }
 
@@ -1577,6 +1587,36 @@ fn rangeBuiltin(runtime: *Runtime, first: Value, last: Value) !Value {
     roots[3] = try runtime.createString(&.{ 0x672b, 0x5c3e });
     roots[4] = try runtime.createDictionary(&.{ roots[2], roots[0], roots[3], roots[1] });
     return roots[4];
+}
+
+fn repeatMultiplyBuiltin(runtime: *Runtime, left: Value, right: Value) !Value {
+    var roots = [_]Value{ left, right, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    if (!isString(roots[0]) and roots[0].tag != @intFromEnum(Tag.array)) return arithmetic(runtime, .multiply, roots[0], roots[1]);
+    const count_number = try parseIntBuiltin(runtime, roots[1]);
+    const count: usize = if (std.math.isNan(count_number) or count_number <= 0)
+        0
+    else if (!std.math.isFinite(count_number) or count_number > @as(f64, @floatFromInt(std.math.maxInt(usize))))
+        return error.RepetitionTooLarge
+    else
+        @intFromFloat(@trunc(count_number));
+    if (isString(roots[0])) {
+        const source = try valueUtf16Alloc(runtime, roots[0]);
+        defer runtime.allocator.free(source);
+        const length = std.math.mul(usize, source.len, count) catch return error.RepetitionTooLarge;
+        const units = try runtime.allocator.alloc(u16, length);
+        for (0..count) |index| @memcpy(units[index * source.len ..][0..source.len], source);
+        return runtime.ownString(units);
+    }
+    const source = roots[0].object().?.payload.array.items;
+    const length = std.math.mul(usize, source.len, count) catch return error.RepetitionTooLarge;
+    const values = try runtime.allocator.alloc(Value, length);
+    defer runtime.allocator.free(values);
+    for (0..count) |index| @memcpy(values[index * source.len ..][0..source.len], source);
+    roots[2] = try runtime.createArray(values);
+    return roots[2];
 }
 
 test "UTF-16文字列をルートから正確にmark-and-sweepする" {
@@ -1887,6 +1927,27 @@ test "AOT空コレクション命令は独立値を返し真偽判定は日本�
     roots[6] = try active_runtime.?.createArray(&.{});
     lnako_aot_builtin_call(&roots[7], @ptrCast(&roots[6]), 1, @intFromEnum(aot_builtin.Command.truth_label));
     try std.testing.expectEqualSlices(u16, &.{0x771f}, roots[7].object().?.payload.utf16_string);
+}
+
+test "AOT掛命令は文字列配列反復と数値乗算を切り替える" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ staticStringValue("ab"), staticStringValue("2x"), .{}, .{}, numberValue(2), .{}, numberValue(3), numberValue(4), .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[0]), 2, @intFromEnum(aot_builtin.Command.repeat_multiply));
+    try std.testing.expectEqualSlices(u16, &.{ 'a', 'b', 'a', 'b' }, roots[2].object().?.payload.utf16_string);
+    roots[3] = try active_runtime.?.createArray(&.{ numberValue(1), numberValue(2) });
+    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[3]), 2, @intFromEnum(aot_builtin.Command.repeat_multiply));
+    try std.testing.expectEqual(@as(usize, 4), roots[5].object().?.payload.array.items.len);
+    lnako_aot_builtin_call(&roots[8], @ptrCast(&roots[6]), 2, @intFromEnum(aot_builtin.Command.repeat_multiply));
+    try std.testing.expectEqual(@as(f64, 12), @as(f64, @bitCast(roots[8].payload)));
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {
