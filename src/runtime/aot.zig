@@ -1,23 +1,12 @@
 const std = @import("std");
+const aot_abi = @import("aot_abi.zig");
 const aot_builtin = @import("aot_builtin.zig");
 const BigInt = @import("bigint.zig").BigInt;
 const error_message = @import("error_message.zig");
+const number_mod = @import("number.zig");
 const string_mod = @import("string.zig");
 
-pub const Tag = enum(u8) {
-    undefined = 0,
-    null_value = 1,
-    boolean = 2,
-    number = 3,
-    static_utf8_string = 4,
-    utf16_string = 5,
-    array = 6,
-    dictionary = 7,
-    iterator = 8,
-    bigint = 9,
-    function = 10,
-    binding_cell = 11,
-};
+pub const Tag = aot_abi.Tag;
 
 pub const Value = extern struct {
     tag: u8 = @intFromEnum(Tag.undefined),
@@ -737,11 +726,7 @@ fn compareValues(runtime: *Runtime, operator: Comparison, left: Value, right: Va
 }
 
 fn numberString(allocator: std.mem.Allocator, number: f64) ![]u8 {
-    if (std.math.isNan(number)) return allocator.dupe(u8, "NaN");
-    if (number == std.math.inf(f64)) return allocator.dupe(u8, "Infinity");
-    if (number == -std.math.inf(f64)) return allocator.dupe(u8, "-Infinity");
-    if (number == 0) return allocator.dupe(u8, "0");
-    return std.fmt.allocPrint(allocator, "{d}", .{number});
+    return number_mod.toStringAlloc(allocator, number);
 }
 
 fn concat(runtime: *Runtime, left: Value, right: Value) !Value {
@@ -1004,6 +989,14 @@ pub export fn lnako_aot_print_utf16(value: *const Value, newline: bool) callconv
     writeUtf16(object.payload.utf16_string, newline);
 }
 
+pub export fn lnako_aot_print_number(value: *const Value, newline: bool) callconv(.c) void {
+    const runtime = if (active_runtime) |*active| active else return;
+    if (value.tag != @intFromEnum(Tag.number)) return;
+    const text = numberString(runtime.allocator, @bitCast(value.payload)) catch return;
+    defer runtime.allocator.free(text);
+    writeBytes(text, newline);
+}
+
 pub export fn lnako_aot_bigint_new(out: *Value, source: ?[*]const u8, len: usize) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*value| value else return;
@@ -1260,6 +1253,7 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, *anyopaque, usize) callconv(.c) void, @TypeOf(&lnako_aot_function_capture));
     try std.testing.expectEqual(*const fn (*Value, *const Value, ?[*]const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_function_call));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16) callconv(.c) void, @TypeOf(&lnako_aot_builtin_call));
+    try std.testing.expectEqual(*const fn (*const Value, bool) callconv(.c) void, @TypeOf(&lnako_aot_print_number));
     try std.testing.expectEqual(*const fn (*const Value) callconv(.c) void, @TypeOf(&lnako_aot_exception_set));
     try std.testing.expectEqual(*const fn () callconv(.c) c_int, @TypeOf(&lnako_aot_exception_pending));
     try std.testing.expectEqual(*const fn (*Value) callconv(.c) void, @TypeOf(&lnako_aot_exception_take));

@@ -1,0 +1,14 @@
+pub const Tag = enum(u8) {
+    undefined = 0,
+    null_value = 1,
+    boolean = 2,
+    number = 3,
+    static_utf8_string = 4,
+    utf16_string = 5,
+    array = 6,
+    dictionary = 7,
+    iterator = 8,
+    bigint = 9,
+    function = 10,
+    binding_cell = 11,
+};

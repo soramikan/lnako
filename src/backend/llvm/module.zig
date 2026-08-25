@@ -1,7 +1,9 @@
 const std = @import("std");
 const ir = @import("../../ir/nako_ir.zig");
 const ast = @import("../../frontend/ast.zig");
+const aot_abi = @import("../../runtime/aot_abi.zig");
 const aot_builtin = @import("../../runtime/aot_builtin.zig");
+const system_constant = @import("../../runtime/system_constant.zig");
 
 pub const GeneratedModule = struct {
     text: []u8,
@@ -143,6 +145,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_exception_take(ptr)\n" ++
                 "declare void @lnako_aot_exception_abort()\n" ++
                 "declare void @lnako_aot_string_new(ptr, ptr, i64)\n" ++
+                "declare void @lnako_aot_print_number(ptr, i1)\n" ++
                 "declare void @lnako_aot_print_utf16(ptr, i1)\n" ++
                 "declare void @lnako_aot_bigint_new(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_print_bigint(ptr, i1)\n" ++
@@ -171,18 +174,17 @@ const Emitter = struct {
                 "declare i32 @puts(ptr)\n" ++
                 "declare double @llvm.pow.f64(double, double)\n" ++
                 "declare double @llvm.floor.f64(double)\n\n" ++
-                "@.lnako.fmt.number = private unnamed_addr constant [7 x i8] c\"%.17g\\0A\\00\"\n" ++
-                "@.lnako.fmt.number.inline = private unnamed_addr constant [6 x i8] c\"%.17g\\00\"\n" ++
                 "@.lnako.fmt.text.inline = private unnamed_addr constant [3 x i8] c\"%s\\00\"\n" ++
                 "@.lnako.undefined = private unnamed_addr constant [10 x i8] c\"undefined\\00\"\n" ++
                 "@.lnako.null = private unnamed_addr constant [5 x i8] c\"null\\00\"\n" ++
                 "@.lnako.true = private unnamed_addr constant [5 x i8] c\"true\\00\"\n" ++
-                "@.lnako.false = private unnamed_addr constant [6 x i8] c\"false\\00\"\n" ++
-                "@.lnako.nan = private unnamed_addr constant [4 x i8] c\"NaN\\00\"\n" ++
-                "@.lnako.infinity = private unnamed_addr constant [9 x i8] c\"Infinity\\00\"\n" ++
-                "@.lnako.negative.infinity = private unnamed_addr constant [10 x i8] c\"-Infinity\\00\"\n\n",
+                "@.lnako.false = private unnamed_addr constant [6 x i8] c\"false\\00\"\n\n",
         );
-        for (self.globals.items, 0..) |_, index| try writer.print("@lnako.global.{d} = internal global %lnako.Value {{ i8 0, i64 0 }}\n", .{index});
+        for (self.globals.items, 0..) |name, index| {
+            try writer.print("@lnako.global.{d} = internal global %lnako.Value ", .{index});
+            try writeScalarInitializer(writer, system_constant.lookupScalar(name));
+            try writer.writeByte('\n');
+        }
         if (self.globals.items.len > 0) try writer.writeByte('\n');
         for (self.strings.items) |constant| {
             try writer.print("@lnako.string.{d} = private unnamed_addr constant [{d} x i16] ", .{ constant.index, constant.units.len });
@@ -335,25 +337,7 @@ const Emitter = struct {
                 "  call void @lnako.print_text(ptr %bool.text, i1 %newline)\n" ++
                 "  br label %done\n" ++
                 "number:\n" ++
-                "  %number.bits = extractvalue %lnako.Value %value, 1\n" ++
-                "  %number.value = bitcast i64 %number.bits to double\n" ++
-                "  %number.is_nan = fcmp uno double %number.value, %number.value\n" ++
-                "  br i1 %number.is_nan, label %number_nan, label %number_ordered\n" ++
-                "number_nan:\n" ++
-                "  call void @lnako.print_text(ptr @.lnako.nan, i1 %newline)\n" ++
-                "  br label %done\n" ++
-                "number_ordered:\n" ++
-                "  %number.is_positive_infinity = fcmp oeq double %number.value, 0x7FF0000000000000\n" ++
-                "  %number.is_negative_infinity = fcmp oeq double %number.value, 0xFFF0000000000000\n" ++
-                "  %number.is_infinite = or i1 %number.is_positive_infinity, %number.is_negative_infinity\n" ++
-                "  br i1 %number.is_infinite, label %number_infinite, label %number_finite\n" ++
-                "number_infinite:\n" ++
-                "  %number.infinity_text = select i1 %number.is_positive_infinity, ptr @.lnako.infinity, ptr @.lnako.negative.infinity\n" ++
-                "  call void @lnako.print_text(ptr %number.infinity_text, i1 %newline)\n" ++
-                "  br label %done\n" ++
-                "number_finite:\n" ++
-                "  %number.fmt = select i1 %newline, ptr @.lnako.fmt.number, ptr @.lnako.fmt.number.inline\n" ++
-                "  %p = call i32 (ptr, ...) @printf(ptr %number.fmt, double %number.value)\n" ++
+                "  call void @lnako_aot_print_number(ptr %display.value, i1 %newline)\n" ++
                 "  br label %done\n" ++
                 "static_string:\n" ++
                 "  %string.bits = extractvalue %lnako.Value %value, 1\n" ++
@@ -1373,6 +1357,16 @@ fn writeMetadataString(writer: *std.Io.Writer, text: []const u8) !void {
     };
 }
 
+fn writeScalarInitializer(writer: *std.Io.Writer, scalar: ?system_constant.Scalar) !void {
+    const value = scalar orelse return writer.writeAll("{ i8 0, i64 0 }");
+    switch (value) {
+        .undefined => try writer.print("{{ i8 {d}, i64 0 }}", .{@intFromEnum(aot_abi.Tag.undefined)}),
+        .null_value => try writer.print("{{ i8 {d}, i64 0 }}", .{@intFromEnum(aot_abi.Tag.null_value)}),
+        .boolean => |boolean| try writer.print("{{ i8 {d}, i64 {d} }}", .{ @intFromEnum(aot_abi.Tag.boolean), @intFromBool(boolean) }),
+        .number => |number| try writer.print("{{ i8 {d}, i64 {d} }}", .{ @intFromEnum(aot_abi.Tag.number), @as(u64, @bitCast(number)) }),
+    }
+}
+
 test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     const parser = @import("../../frontend/parser.zig");
     const semantic = @import("../../semantic/analyzer.zig");
@@ -1394,6 +1388,27 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.global.0") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "!llvm.dbg.cu") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "!DILocation(line: 1") != null);
+}
+
+test "参照されたスカラーシステム定数をAOTグローバルへ初期化する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "trueを表示\nfalseを表示\nPIを表示\n非数を表示\n無限大を表示\n未定義を表示\n", "constants.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "constants.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "constants.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    var module = try generate(std.testing.allocator, program, "constants.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "internal global %lnako.Value { i8 2, i64 1 }") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "internal global %lnako.Value { i8 2, i64 0 }") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "internal global %lnako.Value { i8 3, i64 4614256656552045848 }") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "internal global %lnako.Value { i8 0, i64 0 }") != null);
 }
 
 test "配列と辞書をルート付きAOTランタイム呼び出しへ変換する" {
@@ -1518,8 +1533,8 @@ test "動的算術とBigInt比較をAOTランタイムへ接続する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_shift") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_concat") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "binary.has.bigint.") == null);
-    try std.testing.expect(std.mem.indexOf(u8, module.text, "number.is_nan") != null);
-    try std.testing.expect(std.mem.indexOf(u8, module.text, "@.lnako.negative.infinity") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_print_number") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@.lnako.fmt.number") == null);
 }
 
 test "増減文をNumber変換付きAOTランタイムへ接続する" {

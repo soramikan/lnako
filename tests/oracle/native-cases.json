@@ -80,6 +80,10 @@
     "source": "文字列変換(はい)を表示\nTOSTR([1,2])を表示\n文字列変換({\"x\":1})を表示\n文字列変換(1n)を表示\n文字列変換(NULL)を表示\n文字列変換(undefined)を表示\n"
   },
   {
+    "id": "native-scalar-system-constants",
+    "source": "はいを表示\nいいえを表示\n真を表示\n偽を表示\n永遠を表示\nオンを表示\nオフを表示\nOKを表示\nNGを表示\nTRUEを表示\nFALSEを表示\ntrueを表示\nfalseを表示\nキャンセルを表示\nPIを表示\n戻値無を表示\n戻値有を表示\n__DEBUG強制待機を表示\n__DEBUG待機フラグを表示\n非数を表示\n無限大を表示\nNULLを表示\nundefinedを表示\n未定義を表示\n"
+  },
+  {
     "id": "native-string-template",
     "source": "A=30\n「ab{A+1}cd｛A｝」を表示\nB=[2,3]\n「{B[0]}:{B[1]}」を表示\n「A{A}C}D」を表示\n『展開しない{A}』を表示\n●(Nを)整形とは\n「<<{N+1}>>」で戻る\nここまで\n整形(4)を表示\n"
   },

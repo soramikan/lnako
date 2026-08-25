@@ -1,5 +1,6 @@
 const std = @import("std");
 const value_mod = @import("../../runtime/value.zig");
+const system_constant = @import("../../runtime/system_constant.zig");
 
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
@@ -13,47 +14,19 @@ pub const Installer = struct {
     }
 };
 
-const BooleanConstant = struct { name: []const u8, value: bool };
-const NumberConstant = struct { name: []const u8, value: f64 };
 const StringConstant = struct { name: []const u8, value: []const u8 };
 
 pub fn install(runtime: *Runtime, installer: Installer) !void {
-    for (boolean_constants) |constant| try installer.set(constant.name, .{ .boolean = constant.value });
-    for (number_constants) |constant| try installer.set(constant.name, .{ .number = constant.value });
-    try installer.set("非数", .{ .number = std.math.nan(f64) });
-    try installer.set("無限大", .{ .number = std.math.inf(f64) });
-    try installer.set("NULL", .null_value);
-    try installer.set("undefined", .undefined);
-    try installer.set("未定義", .undefined);
+    for (system_constant.scalar_entries) |constant| try installer.set(constant.name, switch (constant.value) {
+        .undefined => .undefined,
+        .null_value => .null_value,
+        .boolean => |value| .{ .boolean = value },
+        .number => |value| .{ .number = value },
+    });
     for (string_constants) |constant| try installer.set(constant.name, try runtime.stringUtf8(constant.value));
     try installer.set("抽出文字列", try runtime.createArray());
     try installer.set("__DEBUGブレイクポイント一覧", try runtime.createArray());
 }
-
-const boolean_constants = [_]BooleanConstant{
-    .{ .name = "はい", .value = true },
-    .{ .name = "いいえ", .value = false },
-    .{ .name = "真", .value = true },
-    .{ .name = "偽", .value = false },
-    .{ .name = "永遠", .value = true },
-    .{ .name = "オン", .value = true },
-    .{ .name = "オフ", .value = false },
-    .{ .name = "OK", .value = true },
-    .{ .name = "NG", .value = false },
-    .{ .name = "TRUE", .value = true },
-    .{ .name = "FALSE", .value = false },
-    .{ .name = "true", .value = true },
-    .{ .name = "false", .value = false },
-};
-
-const number_constants = [_]NumberConstant{
-    .{ .name = "キャンセル", .value = 0 },
-    .{ .name = "PI", .value = std.math.pi },
-    .{ .name = "戻値無", .value = 0 },
-    .{ .name = "戻値有", .value = 1 },
-    .{ .name = "__DEBUG強制待機", .value = 0 },
-    .{ .name = "__DEBUG待機フラグ", .value = 0 },
-};
 
 const string_constants = [_]StringConstant{
     .{ .name = "ナデシコバージョン", .value = "3.7.24" },

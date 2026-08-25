@@ -28,10 +28,13 @@ pub const ir = struct {
 };
 
 pub const runtime = struct {
+    pub const aot_abi = @import("runtime/aot_abi.zig");
     pub const aot_builtin = @import("runtime/aot_builtin.zig");
+    pub const system_constant = @import("runtime/system_constant.zig");
     pub const error_message = @import("runtime/error_message.zig");
     pub const string = @import("runtime/string.zig");
     pub const bigint = @import("runtime/bigint.zig");
+    pub const number = @import("runtime/number.zig");
     pub const value = @import("runtime/value.zig");
     pub const operators = @import("runtime/operators.zig");
     pub const interpreter = @import("runtime/interpreter.zig");
@@ -136,10 +139,13 @@ test {
     std.testing.refAllDecls(ir.verifier);
     std.testing.refAllDecls(ir.optimizer);
     std.testing.refAllDecls(ir.printer);
+    std.testing.refAllDecls(runtime.aot_abi);
     std.testing.refAllDecls(runtime.aot_builtin);
+    std.testing.refAllDecls(runtime.system_constant);
     std.testing.refAllDecls(runtime.error_message);
     std.testing.refAllDecls(runtime.string);
     std.testing.refAllDecls(runtime.bigint);
+    std.testing.refAllDecls(runtime.number);
     std.testing.refAllDecls(runtime.value);
     std.testing.refAllDecls(runtime.operators);
     std.testing.refAllDecls(runtime.interpreter);
