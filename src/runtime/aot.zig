@@ -110,6 +110,7 @@ const Runtime = struct {
     stringifying_arrays: std.ArrayList(*Object) = .empty,
     pending_exception: Value = .{},
     has_pending_exception: bool = false,
+    system_context: Value = .{},
 
     fn deinit(self: *Runtime) void {
         var current = self.objects;
@@ -247,6 +248,7 @@ const Runtime = struct {
             if (current.values) |values| for (values[0..current.len]) |value| self.markValue(value);
         }
         if (self.has_pending_exception) self.markValue(self.pending_exception);
+        self.markValue(self.system_context);
         while (self.grey) |object| {
             self.grey = object.grey_next;
             object.grey_next = null;
@@ -310,6 +312,11 @@ const Runtime = struct {
         const message = std.fmt.allocPrint(self.allocator, "Cannot set properties of {s} (setting '{s}')", .{ container_name, key_utf8 }) catch |failure| runtimeFailure(failure);
         defer self.allocator.free(message);
         self.setFailureText(message);
+    }
+
+    fn systemContext(self: *Runtime) !Value {
+        if (self.system_context.tag == @intFromEnum(Tag.undefined)) self.system_context = try self.createDictionary(&.{});
+        return self.system_context;
     }
 
     fn takeException(self: *Runtime) Value {
@@ -1163,13 +1170,30 @@ pub export fn lnako_aot_function_capture(out: *Value, context: *anyopaque, index
 
 pub export fn lnako_aot_function_call(out: *Value, callable: *const Value, arguments: ?[*]const Value, len: usize) callconv(.c) void {
     out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
     if (callable.tag != @intFromEnum(Tag.function)) runtimeFailure(error.NotCallable);
     const object = callable.object() orelse runtimeFailure(error.NotCallable);
     if (object.payload != .function) runtimeFailure(error.NotCallable);
     const function = object.payload.function;
-    if (function.arity != len) runtimeFailure(error.InvalidArgumentCount);
     if (arguments == null and len != 0) runtimeFailure(error.InvalidArguments);
-    out.* = function.callback(@ptrCast(object), arguments, len);
+    var padded: ?[]Value = null;
+    defer if (padded) |values| runtime.allocator.free(values);
+    var call_arguments = arguments;
+    if (len < function.arity) {
+        const values = runtime.allocator.alloc(Value, function.arity) catch |failure| {
+            runtime.setFailure(failure);
+            return;
+        };
+        padded = values;
+        if (arguments) |source| @memcpy(values[0..len], source[0..len]);
+        values[len] = runtime.systemContext() catch |failure| {
+            runtime.setFailure(failure);
+            return;
+        };
+        @memset(values[len + 1 ..], .{});
+        call_arguments = values.ptr;
+    }
+    out.* = function.callback(@ptrCast(object), call_arguments, function.arity);
 }
 
 test "UTF-16文字列をルートから正確にmark-and-sweepする" {
@@ -1218,6 +1242,11 @@ fn testAotFunction(_: *anyopaque, arguments: ?[*]const Value, len: usize) callco
     return arguments.?[0];
 }
 
+fn testAotSecondArgument(_: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) Value {
+    if (arguments == null or len != 2) return .{};
+    return arguments.?[1];
+}
+
 fn testAotCapturedIncrement(context: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) Value {
     const function: *Object = @ptrCast(@alignCast(context));
     const cell = function.payload.function.captures[0].object().?;
@@ -1242,6 +1271,29 @@ test "AOT関数値を呼び出しGCで回収する" {
     try std.testing.expectEqual(argument.payload, result.payload);
     try std.testing.expectEqual(@as(usize, 1), active_runtime.?.object_count);
     try std.testing.expectEqual(@as(usize, 1), lnako_aot_collect());
+}
+
+test "AOT動的関数の不足引数へ共有システム文脈を追加し超過引数を無視する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, numberValue(3), numberValue(4), .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+    lnako_aot_function_new(&roots[0], testAotFunction, 1, null, 0);
+    lnako_aot_function_new(&roots[1], testAotSecondArgument, 2, null, 0);
+    lnako_aot_function_call(&roots[4], &roots[0], null, 0);
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(roots[4].tag)));
+    const system_context = roots[4].payload;
+    lnako_aot_function_call(&roots[4], &roots[1], @ptrCast(&roots[2]), 1);
+    try std.testing.expectEqual(system_context, roots[4].payload);
+    lnako_aot_function_call(&roots[4], &roots[0], @ptrCast(&roots[2]), 2);
+    try std.testing.expectEqual(roots[2].payload, roots[4].payload);
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {

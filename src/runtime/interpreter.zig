@@ -215,6 +215,7 @@ pub const Interpreter = struct {
     global_names: std.ArrayList([]u8) = .empty,
     active_frame: ?*Frame = null,
     exception_value: Value = .undefined,
+    system_context: Value = .undefined,
     call_depth: usize = 0,
     max_call_depth: usize = 4096,
     dynamic_depth: usize = 0,
@@ -570,8 +571,25 @@ pub const Interpreter = struct {
         if (self.promise_all_handlers.get(function)) |handler| return self.handlePromiseAll(function, handler, arguments);
         return switch (function.kind) {
             .native, .external => self.runtime.call(.{ .function = function }, arguments),
-            .ir => |function_id| self.executeFunction(&self.program.functions[function_id], arguments, function),
+            .ir => |function_id| self.callIrFunctionValue(function_id, function, arguments),
         };
+    }
+
+    fn callIrFunctionValue(self: *Interpreter, function_id: ir.FunctionId, function: *value_mod.Function, arguments: []const Value) !Value {
+        const target = &self.program.functions[function_id];
+        const arity = target.parameters.len;
+        if (arguments.len >= arity) return self.executeFunction(target, arguments, function);
+        const padded = try self.allocator.alloc(Value, arity);
+        defer self.allocator.free(padded);
+        @memcpy(padded[0..arguments.len], arguments);
+        padded[arguments.len] = try self.systemContext();
+        @memset(padded[arguments.len + 1 ..], .undefined);
+        return self.executeFunction(target, padded, function);
+    }
+
+    fn systemContext(self: *Interpreter) !Value {
+        if (self.system_context == .undefined) self.system_context = try self.runtime.createDictionary();
+        return self.system_context;
     }
 
     fn callBuiltin(self: *Interpreter, name: []const u8, arguments: []const Value) !Value {
@@ -1750,6 +1768,7 @@ pub const Interpreter = struct {
         var globals = self.globals.valueIterator();
         while (globals.next()) |value| try runtime.traceExternal(value.*);
         try runtime.traceExternal(self.exception_value);
+        try runtime.traceExternal(self.system_context);
         var frame = self.active_frame;
         while (frame) |active| : (frame = active.parent) {
             for (active.values) |value| try runtime.traceExternal(value);
@@ -2110,6 +2129,29 @@ test "関数の戻り値だけをシステム変数それへ書き戻す" {
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("7\nundefined\n8\n1\n8\n", host.written());
+}
+
+test "動的関数の不足引数へ共有システム文脈を追加し超過引数を無視する" {
+    const source =
+        "F=関数(A,B)\nAを表示\nBを表示\nここまで\n" ++
+        "F()\nF(1)\nF(2,3,4)\n" ++
+        "G=関数(A)それはA;ここまで\nX=G()\nY=G()\nXを表示\nX===Yを表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings(
+        "[object Object]\nundefined\n1\n[object Object]\n2\n3\n[object Object]\ntrue\n",
+        host.written(),
+    );
 }
 
 test "Promiseの成功・失敗・処理・終了コールバックを順に実行する" {
