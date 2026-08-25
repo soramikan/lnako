@@ -73,7 +73,7 @@
   },
   {
     "id": "native-array-destructure",
-    "source": "変数[A,B]=[7,8]\nAを表示\nBを表示\n"
+    "source": "X=[7,8]\n変数[A,B]=X\nAを表示\nBを表示\nY=[9]\n変数[C,D]=Y\nCを表示\nDを表示\n変数[E,F]=10\nEを表示\nFを表示\n変数[G,H]=\"AB\"\nGを表示\nHを表示\n"
   },
   {
     "id": "native-local-and-const-destructure",

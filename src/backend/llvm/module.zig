@@ -144,6 +144,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_dictionary_new(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_index_get(ptr, ptr, ptr)\n" ++
                 "declare i32 @lnako_aot_index_set(ptr, ptr, ptr)\n" ++
+                "declare void @lnako_aot_destructure_get(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_iterator_new(ptr, ptr, i64, i1, i8)\n" ++
                 "declare i32 @lnako_aot_iterator_has_next(ptr)\n" ++
                 "declare void @lnako_aot_iterator_next(ptr, ptr, ptr, ptr, ptr, ptr)\n" ++
@@ -489,12 +490,9 @@ const Emitter = struct {
     fn writeDestructure(self: *Emitter, locals: []const []const u8, instruction: ir.Instruction, scope: usize) !void {
         if (instruction.operands.len != 1) return error.InvalidDestructure;
         for (instruction.names, 0..) |name, index| {
-            const bits: u64 = @bitCast(@as(f64, @floatFromInt(index)));
-            try self.output.writer.print("  store %lnako.Value {{ i8 3, i64 {d} }}, ptr %runtime.scratch", .{bits});
-            try self.debugSuffix(instruction.span, scope);
-            try self.output.writer.writeAll("  call void @lnako_aot_index_get(ptr ");
+            try self.output.writer.writeAll("  call void @lnako_aot_destructure_get(ptr ");
             try self.writeRequiredNamedPointer(locals, name);
-            try self.output.writer.print(", ptr %root.slot.{d}, ptr %runtime.scratch)", .{instruction.operands[0]});
+            try self.output.writer.print(", ptr %root.slot.{d}, i64 {d})", .{ instruction.operands[0], index });
             try self.debugSuffix(instruction.span, scope);
         }
     }
@@ -1088,8 +1086,8 @@ fn iteratorSourceSupported(function: ir.Function, instruction: ir.Instruction) b
     };
 }
 
-fn destructureSourceSupported(function: ir.Function, instruction: ir.Instruction) bool {
-    return instruction.operands.len == 1 and valueType(function, instruction.operands[0]) == .array;
+fn destructureSourceSupported(_: ir.Function, instruction: ir.Instruction) bool {
+    return instruction.operands.len == 1;
 }
 
 fn isQualifiedGlobal(name: []const u8) bool {
@@ -1209,7 +1207,7 @@ test "配列と辞書をルート付きAOTランタイム呼び出しへ変換�
     const semantic = @import("../../semantic/analyzer.zig");
     const hir = @import("../../ir/hir.zig");
     const lower = @import("../../ir/lower_ssa.zig");
-    const source = "A=[1,2]\nA[1]=5\nA[1]を表示\nB={\"x\":7}\nB@\"x\"を表示\n変数[C,D]=[8,9]\nCを表示\n";
+    const source = "A=[1,2]\nA[1]=5\nA[1]を表示\nB={\"x\":7}\nB@\"x\"を表示\nX=[8,9]\n変数[C,D]=X\nCを表示\n変数[E,F]=7\nEを表示\n";
     var parsed = try parser.parse(std.testing.allocator, source, "collections.nako3");
     defer parsed.deinit();
     try std.testing.expect(parsed.succeeded());
@@ -1229,6 +1227,7 @@ test "配列と辞書をルート付きAOTランタイム呼び出しへ変換�
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_dictionary_new") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_index_get") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_index_set") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_destructure_get") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_index_get(ptr, ptr, ptr)") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "ptr %runtime.scratch") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare %lnako.Value @lnako_aot_") == null);

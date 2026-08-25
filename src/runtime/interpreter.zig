@@ -441,7 +441,7 @@ pub const Interpreter = struct {
     fn executeDestructure(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
         const source = self.operand(frame, instruction, 0);
         for (instruction.names, 0..) |name, index| {
-            const value = if (source == .array) source.array.get(index) else .undefined;
+            const value = if (source == .array) source.array.get(index) else if (index == 0) source else .undefined;
             if (std.mem.indexOf(u8, name, "__") != null) {
                 try self.setGlobal(name, value);
             } else try frame.locals.put(self.allocator, name, value);

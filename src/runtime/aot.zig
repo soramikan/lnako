@@ -274,6 +274,14 @@ const Runtime = struct {
         };
     }
 
+    fn destructureGet(_: *Runtime, source: Value, index: usize) Value {
+        if (source.tag == @intFromEnum(Tag.array)) {
+            const items = source.object().?.payload.array.items;
+            return if (index < items.len) items[index] else .{};
+        }
+        return if (index == 0) source else .{};
+    }
+
     fn indexSet(self: *Runtime, container: Value, key: Value, value: Value) !void {
         const object = container.object() orelse return error.InvalidContainer;
         switch (object.payload) {
@@ -759,6 +767,10 @@ pub export fn lnako_aot_index_set(container: *const Value, key: *const Value, va
     return 0;
 }
 
+pub export fn lnako_aot_destructure_get(out: *Value, source: *const Value, index: usize) callconv(.c) void {
+    out.* = if (active_runtime) |*runtime| runtime.destructureGet(source.*, index) else .{};
+}
+
 pub export fn lnako_aot_iterator_new(out: *Value, values: ?[*]const Value, len: usize, is_range: bool, direction: u8) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*value| value else return;
@@ -798,6 +810,7 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_array_new));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_index_get));
     try std.testing.expectEqual(*const fn (*const Value, *const Value, *const Value) callconv(.c) c_int, @TypeOf(&lnako_aot_index_set));
+    try std.testing.expectEqual(*const fn (*Value, *const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_destructure_get));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_bigint_arithmetic));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_bigint_compare));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_shift));
@@ -847,6 +860,16 @@ test "配列の伸長と辞書の挿入位置を保った更新を行う" {
     const entries = dictionary.object().?.payload.dictionary.items;
     try std.testing.expectEqual(@as(usize, 2), entries.len);
     try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 7))), entries[0].value.payload);
+}
+
+test "AOT分割宣言は非配列を1要素の値として扱う" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const scalar = numberValue(7);
+    try std.testing.expectEqual(scalar.payload, runtime.destructureGet(scalar, 0).payload);
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(runtime.destructureGet(scalar, 1).tag)));
+    const array = try runtime.createArray(&.{ numberValue(2), numberValue(3) });
+    try std.testing.expectEqual(numberValue(3).payload, runtime.destructureGet(array, 1).payload);
 }
 
 test "UTF-16文字列の添字と反復をコード単位で処理する" {
