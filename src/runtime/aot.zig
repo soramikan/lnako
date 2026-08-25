@@ -1682,6 +1682,12 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                     return;
                 };
         },
+        .trim_both, .trim_right, .trim_left => {
+            out.* = trimBuiltin(runtime, value, command != .trim_right, command != .trim_left) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
     }
 }
 
@@ -2210,6 +2216,20 @@ fn spliceDeleteCountBuiltin(number: f64, remaining: usize) usize {
     if (std.math.isNan(number) or number <= 0) return 0;
     if (!std.math.isFinite(number) or number >= @as(f64, @floatFromInt(remaining))) return remaining;
     return @intFromFloat(@trunc(number));
+}
+
+fn trimBuiltin(runtime: *Runtime, value: Value, trim_left: bool, trim_right: bool) !Value {
+    const units = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(units);
+    var start: usize = 0;
+    var end = units.len;
+    if (trim_left) {
+        while (start < end and string_mod.isEcmaWhitespace(units[start])) : (start += 1) {}
+    }
+    if (trim_right) {
+        while (end > start and string_mod.isEcmaWhitespace(units[end - 1])) : (end -= 1) {}
+    }
+    return runtime.createString(units[start..end]);
 }
 
 test "UTF-16文字列をルートから正確にmark-and-sweepする" {
@@ -2793,6 +2813,27 @@ test "AOT文字列分割削除はUTF-16空区切りとsplice位置を扱う" {
     const remove_arguments = [_]Value{ staticStringValue("ABCDE"), numberValue(-1), numberValue(2) };
     lnako_aot_builtin_call(&roots[3], &remove_arguments, remove_arguments.len, @intFromEnum(aot_builtin.Command.string_remove));
     try std.testing.expectEqualSlices(u16, &.{ 'A', 'B', 'C' }, roots[3].object().?.payload.utf16_string);
+}
+
+test "AOTトリム命令はECMAScript空白だけを左右別に除去する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+    const source = [_]Value{staticStringValue("﻿　\t A  \u{2029}")};
+    lnako_aot_builtin_call(&roots[0], &source, source.len, @intFromEnum(aot_builtin.Command.trim_both));
+    try std.testing.expectEqualSlices(u16, &.{'A'}, roots[0].object().?.payload.utf16_string);
+    lnako_aot_builtin_call(&roots[1], &source, source.len, @intFromEnum(aot_builtin.Command.trim_right));
+    try std.testing.expectEqualSlices(u16, &.{ 0xfeff, 0x3000, '\t', ' ', 'A' }, roots[1].object().?.payload.utf16_string);
+    lnako_aot_builtin_call(&roots[2], &source, source.len, @intFromEnum(aot_builtin.Command.trim_left));
+    try std.testing.expectEqualSlices(u16, &.{ 'A', ' ', 0x00a0, 0x2029 }, roots[2].object().?.payload.utf16_string);
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {

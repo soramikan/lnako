@@ -69,6 +69,9 @@ pub const Command = enum(u16) {
     split_all,
     split_first,
     string_remove,
+    trim_both,
+    trim_right,
+    trim_left,
 };
 
 pub fn lookup(name: []const u8) ?Command {
@@ -140,6 +143,9 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "区切")) return .split_all;
     if (std.mem.eql(u8, name, "文字列分割")) return .split_first;
     if (std.mem.eql(u8, name, "文字削除")) return .string_remove;
+    if (std.mem.eql(u8, name, "トリム") or std.mem.eql(u8, name, "空白除去")) return .trim_both;
+    if (std.mem.eql(u8, name, "右トリム") or std.mem.eql(u8, name, "末尾空白除去")) return .trim_right;
+    if (std.mem.eql(u8, name, "左トリム")) return .trim_left;
     return null;
 }
 
@@ -228,5 +234,10 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.split_all, lookup("区切").?);
     try std.testing.expectEqual(Command.split_first, lookup("文字列分割").?);
     try std.testing.expectEqual(Command.string_remove, lookup("文字削除").?);
+    try std.testing.expectEqual(Command.trim_both, lookup("トリム").?);
+    try std.testing.expectEqual(Command.trim_both, lookup("空白除去").?);
+    try std.testing.expectEqual(Command.trim_right, lookup("右トリム").?);
+    try std.testing.expectEqual(Command.trim_right, lookup("末尾空白除去").?);
+    try std.testing.expectEqual(Command.trim_left, lookup("左トリム").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }
