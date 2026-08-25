@@ -44,6 +44,10 @@
     "source": "2^3を表示\n3n^20nを表示\n2^3^2を表示\n2**3**2を表示\nA=0xF0>>4\nAを表示\nB=0xF<<4\nBを表示\nC=-1>>>1\nCを表示\n8n<<2nを表示\n8n>>2nを表示\nS=-2n\n8n<<Sを表示\n8n>>Sを表示\n1234567890123456789n<<60nを表示\n"
   },
   {
+    "id": "native-string-concatenation-and-bigint-string-comparison",
+    "source": "\"値=\"&10を表示\n1n&\"個\"を表示\n\"個\"&1nを表示\n\"A\"&\"B\"を表示\n1n==\"1\"を表示\n1n===\"1\"を表示\n2n>\"1\"を表示\n1n<\"1.5\"を表示\n3+\"個\"を表示\n1/0を表示\nA=-1/0\nAを表示\n0/0を表示\n"
+  },
+  {
     "id": "native-array-and-dictionary",
     "source": "A=[1,2]\nA[1]=5\nA[1]を表示\nB={\"x\":7}\nB@\"x\"を表示\n"
   },

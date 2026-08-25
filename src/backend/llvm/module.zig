@@ -49,6 +49,7 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
                 .const_string => true,
                 .binary => arithmeticOpcode(instruction.operator) != null or comparisonPredicate(instruction.operator) != null or
                     shiftOpcode(instruction.operator) != null or
+                    std.mem.eql(u8, instruction.operator, "&") or
                     std.mem.eql(u8, instruction.operator, "&&") or std.mem.eql(u8, instruction.operator, "and") or
                     std.mem.eql(u8, instruction.operator, "||") or std.mem.eql(u8, instruction.operator, "or"),
                 .unary => std.mem.eql(u8, instruction.operator, "!") or std.mem.eql(u8, instruction.operator, "not") or
@@ -136,6 +137,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_bigint_arithmetic(ptr, ptr, ptr, i8)\n" ++
                 "declare void @lnako_aot_bigint_compare(ptr, ptr, ptr, i8)\n" ++
                 "declare void @lnako_aot_shift(ptr, ptr, ptr, i8)\n" ++
+                "declare void @lnako_aot_concat(ptr, ptr, ptr)\n" ++
                 "declare void @lnako_aot_array_new(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_dictionary_new(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_index_get(ptr, ptr, ptr)\n" ++
@@ -153,7 +155,10 @@ const Emitter = struct {
                 "@.lnako.undefined = private unnamed_addr constant [10 x i8] c\"undefined\\00\"\n" ++
                 "@.lnako.null = private unnamed_addr constant [5 x i8] c\"null\\00\"\n" ++
                 "@.lnako.true = private unnamed_addr constant [5 x i8] c\"true\\00\"\n" ++
-                "@.lnako.false = private unnamed_addr constant [6 x i8] c\"false\\00\"\n\n",
+                "@.lnako.false = private unnamed_addr constant [6 x i8] c\"false\\00\"\n" ++
+                "@.lnako.nan = private unnamed_addr constant [4 x i8] c\"NaN\\00\"\n" ++
+                "@.lnako.infinity = private unnamed_addr constant [9 x i8] c\"Infinity\\00\"\n" ++
+                "@.lnako.negative.infinity = private unnamed_addr constant [10 x i8] c\"-Infinity\\00\"\n\n",
         );
         for (self.globals.items, 0..) |_, index| try writer.print("@lnako.global.{d} = internal global %lnako.Value {{ i8 0, i64 0 }}\n", .{index});
         if (self.globals.items.len > 0) try writer.writeByte('\n');
@@ -302,6 +307,21 @@ const Emitter = struct {
                 "number:\n" ++
                 "  %number.bits = extractvalue %lnako.Value %value, 1\n" ++
                 "  %number.value = bitcast i64 %number.bits to double\n" ++
+                "  %number.is_nan = fcmp uno double %number.value, %number.value\n" ++
+                "  br i1 %number.is_nan, label %number_nan, label %number_ordered\n" ++
+                "number_nan:\n" ++
+                "  call void @lnako.print_text(ptr @.lnako.nan, i1 %newline)\n" ++
+                "  br label %done\n" ++
+                "number_ordered:\n" ++
+                "  %number.is_positive_infinity = fcmp oeq double %number.value, 0x7FF0000000000000\n" ++
+                "  %number.is_negative_infinity = fcmp oeq double %number.value, 0xFFF0000000000000\n" ++
+                "  %number.is_infinite = or i1 %number.is_positive_infinity, %number.is_negative_infinity\n" ++
+                "  br i1 %number.is_infinite, label %number_infinite, label %number_finite\n" ++
+                "number_infinite:\n" ++
+                "  %number.infinity_text = select i1 %number.is_positive_infinity, ptr @.lnako.infinity, ptr @.lnako.negative.infinity\n" ++
+                "  call void @lnako.print_text(ptr %number.infinity_text, i1 %newline)\n" ++
+                "  br label %done\n" ++
+                "number_finite:\n" ++
                 "  %number.fmt = select i1 %newline, ptr @.lnako.fmt.number, ptr @.lnako.fmt.number.inline\n" ++
                 "  %p = call i32 (ptr, ...) @printf(ptr %number.fmt, double %number.value)\n" ++
                 "  br label %done\n" ++
@@ -634,6 +654,7 @@ const Emitter = struct {
             try self.debugSuffix(instruction.span, scope);
             return;
         }
+        if (std.mem.eql(u8, instruction.operator, "&")) return self.writeConcat(instruction, scope);
         if (bigIntArithmeticOpcode(instruction.operator)) |opcode| {
             return self.writeBigIntAwareArithmetic(function, instruction, scope, opcode);
         }
@@ -723,6 +744,15 @@ const Emitter = struct {
         const result = instruction.result orelse return error.MissingInstructionResult;
         if (instruction.operands.len < 2) return error.InvalidBinaryInstruction;
         try self.output.writer.print("  call void @lnako_aot_shift(ptr %root.slot.{d}, ptr %root.slot.{d}, ptr %root.slot.{d}, i8 {d})", .{ result, instruction.operands[0], instruction.operands[1], opcode });
+        try self.debugSuffix(instruction.span, scope);
+        try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+        try self.debugSuffix(instruction.span, scope);
+    }
+
+    fn writeConcat(self: *Emitter, instruction: ir.Instruction, scope: usize) !void {
+        const result = instruction.result orelse return error.MissingInstructionResult;
+        if (instruction.operands.len < 2) return error.InvalidBinaryInstruction;
+        try self.output.writer.print("  call void @lnako_aot_concat(ptr %root.slot.{d}, ptr %root.slot.{d}, ptr %root.slot.{d})", .{ result, instruction.operands[0], instruction.operands[1] });
         try self.debugSuffix(instruction.span, scope);
         try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try self.debugSuffix(instruction.span, scope);
@@ -1261,7 +1291,7 @@ test "BigInt算術と比較を型タグでAOTランタイムへ分岐する" {
     const semantic = @import("../../semantic/analyzer.zig");
     const hir = @import("../../ir/hir.zig");
     const lower = @import("../../ir/lower_ssa.zig");
-    var parsed = try parser.parse(std.testing.allocator, "A=12345678901234567890n\nB=10n\nA+Bを表示\nA>Bを表示\n8n<<2nを表示\n", "bigint-operators.nako3");
+    var parsed = try parser.parse(std.testing.allocator, "A=12345678901234567890n\nB=10n\nA+Bを表示\nA>Bを表示\nA==\"12345678901234567890\"を表示\nA&\"個\"を表示\n8n<<2nを表示\n", "bigint-operators.nako3");
     defer parsed.deinit();
     var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "bigint-operators.nako3");
     defer analyzed.deinit();
@@ -1275,7 +1305,10 @@ test "BigInt算術と比較を型タグでAOTランタイムへ分岐する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_bigint_arithmetic") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_bigint_compare") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_shift") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_concat") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "binary.has.bigint.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "number.is_nan") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@.lnako.negative.infinity") != null);
 }
 
 test "O1では証明済み数値と真偽判定をアンボックスしO0のIRを変更しない" {

@@ -59,6 +59,9 @@ lnakoは、意図的な非互換として合意した項目を除き、説明文
 | `^`と`**` | `^`はXORではなく冪乗である。またJavaScriptの`**`と異なり、両方とも左結合なので`2^3^2`と`2**3**2`は`64`になる | `^`を`**`へ正規化したうえで、両構文を左結合としてNumberとBigIntの冪乗へ下げる | `冪乗演算子を公式同様に左結合として構文解析する`、`native-number-and-bigint-shifts` |
 | 負のBigIntシフト量 | `S=-2n`のとき`8n<<S`は右へ2ビット移動した`2`、`8n>>S`は左へ2ビット移動した`32`になる | シフト量の符号で方向を反転し、任意精度のまま処理する | `AOTのNumberとBigIntシフトを公式規則で処理する`、`native-number-and-bigint-shifts` |
 | BigIntの`>>>` | 符号なし右シフトはBigIntに定義されず、実行時エラーになる | 値を生成せず`UnsignedShiftOfBigInt`として拒否する | `AOTのNumberとBigIntシフトを公式規則で処理する` |
+| `+`と`&`の文字列 | なでしこ式の`+`はJavaScriptの`+`と異なり文字列連結を行わない。`3+「個」`は`NaN`、`1n+「個」`はBigInt型混在エラーになる。連結は`&`を使い、`1n&「個」`は`1個`になる | インタプリタとAOTの`+`を数値加算に限定し、`&`は値をUTF-16文字列へ変換して連結する | `なでしこ式の加算は文字列を連結せず数値へ変換する`、`AOTの値をUTF-16文字列として連結する`、`native-string-concatenation-and-bigint-string-comparison` |
+| BigIntと文字列の比較 | 算術では型混在エラーだが、抽象等価・関係比較では整数として解釈可能な文字列をBigIntへ変換する。`1n==「1」`は真、`1n===「1」`は偽 | UTF-16文字列を整数として厳密に解析し、変換不能時は比較を偽にする | `AOT BigInt比較をNumberとの間でも精度を落とさず処理する`、`native-string-concatenation-and-bigint-string-comparison` |
+| NaNとInfinityの表示 | Cの`printf`では環境により`nan`や`inf`になるが、公式は`NaN`、`Infinity`、`-Infinity`と大文字小文字を固定して表示する | 特殊値をLLVM上で先に判定し、固定文字列を出力する | `native-string-concatenation-and-bigint-string-comparison` |
 
 ## 日時と再現性
 

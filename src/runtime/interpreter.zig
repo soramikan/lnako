@@ -451,7 +451,7 @@ pub const Interpreter = struct {
     fn executeBinary(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
         const left = self.operand(frame, instruction, 0);
         const right = self.operand(frame, instruction, 1);
-        if (std.mem.eql(u8, instruction.operator, "+")) return operators.binary(self.runtime, .add, left, right);
+        if (std.mem.eql(u8, instruction.operator, "+")) return operators.nadesikoAdd(self.runtime, left, right);
         if (std.mem.eql(u8, instruction.operator, "-")) return operators.binary(self.runtime, .subtract, left, right);
         if (std.mem.eql(u8, instruction.operator, "*")) return operators.binary(self.runtime, .multiply, left, right);
         if (std.mem.eql(u8, instruction.operator, "/") or std.mem.eql(u8, instruction.operator, "÷")) return operators.binary(self.runtime, .divide, left, right);

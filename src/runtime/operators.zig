@@ -56,6 +56,23 @@ pub fn binary(runtime: *Runtime, operator: Binary, left: Value, right: Value) !V
     } };
 }
 
+/// なでしこ式の`+`は文字列連結ではなく数値加算。連結は`&`が担う。
+pub fn nadesikoAdd(runtime: *Runtime, left: Value, right: Value) !Value {
+    var left_root = left;
+    var right_root = right;
+    var frame = runtime.rootFrame();
+    defer frame.deinit();
+    try frame.protect(&left_root);
+    try frame.protect(&right_root);
+    const left_primitive = try runtime.valueToPrimitive(left_root);
+    const right_primitive = try runtime.valueToPrimitive(right_root);
+    if (left_primitive == .bigint or right_primitive == .bigint) {
+        if (left_primitive != .bigint or right_primitive != .bigint) return error.CannotMixBigIntAndNumber;
+        return bigIntBinary(runtime, .add, left_primitive.bigint.*, right_primitive.bigint.*);
+    }
+    return .{ .number = try left_primitive.toNumber(runtime.allocator()) + try right_primitive.toNumber(runtime.allocator()) };
+}
+
 fn bigIntBinary(runtime: *Runtime, operator: Binary, left: BigInt, right: BigInt) !Value {
     const allocator = runtime.allocator();
     const result = switch (operator) {
@@ -183,6 +200,14 @@ test "動的な加算とBigInt混在エラーを処理する" {
     const sum_text = try sum.bigint.toString(std.testing.allocator, 10);
     defer std.testing.allocator.free(sum_text);
     try std.testing.expectEqualStrings("12", sum_text);
+}
+
+test "なでしこ式の加算は文字列を連結せず数値へ変換する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const text = try runtime.stringUtf8("個");
+    try std.testing.expect(std.math.isNan((try nadesikoAdd(&runtime, .{ .number = 3 }, text)).number));
+    try std.testing.expectError(error.CannotMixBigIntAndNumber, nadesikoAdd(&runtime, try runtime.bigIntLiteral("1n"), text));
 }
 
 test "Numberビット演算を32bitへ正規化する" {

@@ -112,6 +112,12 @@ const Runtime = struct {
         return self.createObject(.{ .utf16_string = owned }, .utf16_string);
     }
 
+    fn ownString(self: *Runtime, source: []u16) !Value {
+        errdefer self.allocator.free(source);
+        try self.beforeAllocation();
+        return self.createObject(.{ .utf16_string = source }, .utf16_string);
+    }
+
     fn createBigInt(self: *Runtime, source: []const u8) !Value {
         try self.beforeAllocation();
         var value = try BigInt.parseLiteral(self.allocator, source);
@@ -370,6 +376,52 @@ fn valueToNumber(value: Value) f64 {
     };
 }
 
+fn isString(value: Value) bool {
+    return value.tag == @intFromEnum(Tag.static_utf8_string) or value.tag == @intFromEnum(Tag.utf16_string);
+}
+
+fn stringUtf8Alloc(runtime: *Runtime, value: Value) ![]u8 {
+    return switch (@as(Tag, @enumFromInt(value.tag))) {
+        .static_utf8_string => runtime.allocator.dupe(u8, staticUtf8(value)),
+        .utf16_string => std.unicode.utf16LeToUtf8Alloc(runtime.allocator, value.object().?.payload.utf16_string),
+        else => error.ExpectedString,
+    };
+}
+
+fn valueUtf16Alloc(runtime: *Runtime, value: Value) ![]u16 {
+    if (value.tag == @intFromEnum(Tag.utf16_string)) return runtime.allocator.dupe(u16, value.object().?.payload.utf16_string);
+    const utf8 = switch (@as(Tag, @enumFromInt(value.tag))) {
+        .undefined => try runtime.allocator.dupe(u8, "undefined"),
+        .null_value => try runtime.allocator.dupe(u8, "null"),
+        .boolean => try runtime.allocator.dupe(u8, if (value.payload == 0) "false" else "true"),
+        .number => try numberString(runtime.allocator, @bitCast(value.payload)),
+        .static_utf8_string => try runtime.allocator.dupe(u8, staticUtf8(value)),
+        .bigint => try value.object().?.payload.bigint.toString(runtime.allocator, 10),
+        else => return error.CannotConvertValueToString,
+    };
+    defer runtime.allocator.free(utf8);
+    return std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, utf8);
+}
+
+fn numberString(allocator: std.mem.Allocator, number: f64) ![]u8 {
+    if (std.math.isNan(number)) return allocator.dupe(u8, "NaN");
+    if (number == std.math.inf(f64)) return allocator.dupe(u8, "Infinity");
+    if (number == -std.math.inf(f64)) return allocator.dupe(u8, "-Infinity");
+    if (number == 0) return allocator.dupe(u8, "0");
+    return std.fmt.allocPrint(allocator, "{d}", .{number});
+}
+
+fn concat(runtime: *Runtime, left: Value, right: Value) !Value {
+    const left_units = try valueUtf16Alloc(runtime, left);
+    defer runtime.allocator.free(left_units);
+    const right_units = try valueUtf16Alloc(runtime, right);
+    defer runtime.allocator.free(right_units);
+    const combined = try runtime.allocator.alloc(u16, left_units.len + right_units.len);
+    @memcpy(combined[0..left_units.len], left_units);
+    @memcpy(combined[left_units.len..], right_units);
+    return runtime.ownString(combined);
+}
+
 fn bigIntArithmetic(runtime: *Runtime, operator: BigIntArithmetic, left: Value, right: Value) !Value {
     if (left.tag != @intFromEnum(Tag.bigint) or right.tag != @intFromEnum(Tag.bigint)) return error.CannotMixBigIntAndNumber;
     const left_bigint = left.object().?.payload.bigint;
@@ -400,6 +452,10 @@ fn bigIntComparison(runtime: *Runtime, operator: BigIntComparison, left: Value, 
             BigInt.eql(left.object().?.payload.bigint, right.object().?.payload.bigint)
         else if (strict)
             false
+        else if (left_is_bigint and isString(right))
+            try bigIntEqualsString(runtime, left.object().?.payload.bigint, right)
+        else if (right_is_bigint and isString(left))
+            try bigIntEqualsString(runtime, right.object().?.payload.bigint, left)
         else if (left_is_bigint)
             try bigIntEqualsNumber(runtime, left.object().?.payload.bigint, valueToNumber(right))
         else
@@ -408,6 +464,10 @@ fn bigIntComparison(runtime: *Runtime, operator: BigIntComparison, left: Value, 
     }
     const order = if (left_is_bigint and right_is_bigint)
         BigInt.order(left.object().?.payload.bigint, right.object().?.payload.bigint)
+    else if (left_is_bigint and isString(right))
+        (try compareBigIntString(runtime, left.object().?.payload.bigint, right)) orelse return false
+    else if (right_is_bigint and isString(left))
+        invertOrder((try compareBigIntString(runtime, right.object().?.payload.bigint, left)) orelse return false)
     else if (left_is_bigint)
         (try compareBigIntNumber(runtime, left.object().?.payload.bigint, valueToNumber(right))) orelse return false
     else
@@ -419,6 +479,22 @@ fn bigIntComparison(runtime: *Runtime, operator: BigIntComparison, left: Value, 
         .greater_equal => order != .lt,
         else => unreachable,
     };
+}
+
+fn bigIntEqualsString(runtime: *Runtime, bigint: BigInt, string: Value) !bool {
+    const utf8 = try stringUtf8Alloc(runtime, string);
+    defer runtime.allocator.free(utf8);
+    var converted = BigInt.parseString(runtime.allocator, utf8) catch return false;
+    defer converted.deinit();
+    return BigInt.eql(bigint, converted);
+}
+
+fn compareBigIntString(runtime: *Runtime, bigint: BigInt, string: Value) !?std.math.Order {
+    const utf8 = try stringUtf8Alloc(runtime, string);
+    defer runtime.allocator.free(utf8);
+    var converted = BigInt.parseString(runtime.allocator, utf8) catch return null;
+    defer converted.deinit();
+    return BigInt.order(bigint, converted);
 }
 
 fn shift(runtime: *Runtime, operator: ShiftOperator, left: Value, right: Value) !Value {
@@ -629,6 +705,12 @@ pub export fn lnako_aot_shift(out: *Value, left: *const Value, right: *const Val
     out.* = shift(runtime, operator, left.*, right.*) catch |failure| runtimeFailure(failure);
 }
 
+pub export fn lnako_aot_concat(out: *Value, left: *const Value, right: *const Value) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    out.* = concat(runtime, left.*, right.*) catch |failure| runtimeFailure(failure);
+}
+
 pub export fn lnako_aot_array_new(out: *Value, values: ?[*]const Value, len: usize) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*value| value else return;
@@ -697,6 +779,7 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_bigint_arithmetic));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_bigint_compare));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_shift));
+    try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_concat));
 }
 
 test "ルートフレームをLIFOで連結する" {
@@ -811,6 +894,20 @@ test "AOTのNumberとBigIntシフトを公式規則で処理する" {
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings("2", text);
     try std.testing.expectError(error.UnsignedShiftOfBigInt, shift(&runtime, .right_unsigned, value, try runtime.createBigInt("1n")));
+}
+
+test "AOTの値をUTF-16文字列として連結する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const bigint = try runtime.createBigInt("12345678901234567890n");
+    const joined = try concat(&runtime, bigint, staticStringValue("個"));
+    const utf8 = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, joined.object().?.payload.utf16_string);
+    defer std.testing.allocator.free(utf8);
+    try std.testing.expectEqualStrings("12345678901234567890個", utf8);
+    const number_joined = try concat(&runtime, numberValue(3), staticStringValue("個"));
+    const number_utf8 = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, number_joined.object().?.payload.utf16_string);
+    defer std.testing.allocator.free(number_utf8);
+    try std.testing.expectEqualStrings("3個", number_utf8);
 }
 
 test "回数・範囲・配列・辞書の反復状態と元コレクションを追跡する" {
