@@ -2330,10 +2330,21 @@ fn kanaOffsetBuiltin(runtime: *Runtime, value: Value, to_katakana: bool) !Value 
 fn replaceBuiltin(runtime: *Runtime, source_value: Value, needle_value: Value, replacement_value: Value, all: bool) !Value {
     const source = try valueUtf16Alloc(runtime, source_value);
     defer runtime.allocator.free(source);
+    // split(undefined) returns the source as its sole element, so join never
+    // observes the replacement separator. replace(undefined, ...) still
+    // searches for the literal string "undefined" and must use the path below.
+    if (all and needle_value.tag == @intFromEnum(Tag.undefined)) return runtime.createString(source);
     const needle = try valueUtf16Alloc(runtime, needle_value);
     defer runtime.allocator.free(needle);
-    const replacement = try valueUtf16Alloc(runtime, replacement_value);
-    defer runtime.allocator.free(replacement);
+    var allocated_replacement: ?[]u16 = null;
+    const replacement: []const u16 = if (all and replacement_value.tag == @intFromEnum(Tag.undefined))
+        // Array.prototype.join(undefined) uses its default comma separator.
+        &.{','}
+    else blk: {
+        allocated_replacement = try valueUtf16Alloc(runtime, replacement_value);
+        break :blk allocated_replacement.?;
+    };
+    defer if (allocated_replacement) |allocated| runtime.allocator.free(allocated);
     var output: std.ArrayList(u16) = .empty;
     errdefer output.deinit(runtime.allocator);
     if (!all) {
@@ -2995,7 +3006,7 @@ test "AOT置換命令は全置換の空検索と単置換の置換パターン�
         runtime = active_runtime.?;
         active_runtime = null;
     }
-    var roots = [_]Value{ .{}, .{}, .{} };
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{} };
     var frame: RootFrame = .{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
@@ -3010,6 +3021,15 @@ test "AOT置換命令は全置換の空検索と単置換の置換パターン�
     const literal_all = [_]Value{ staticStringValue("abc"), staticStringValue("b"), staticStringValue("[$&]") };
     lnako_aot_builtin_call(&roots[2], &literal_all, literal_all.len, @intFromEnum(aot_builtin.Command.replace_all));
     try std.testing.expectEqualSlices(u16, &.{ 'a', '[', '$', '&', ']', 'c' }, roots[2].object().?.payload.utf16_string);
+    const undefined_separator = [_]Value{ staticStringValue("xundefinedy"), .{}, staticStringValue("z") };
+    lnako_aot_builtin_call(&roots[3], &undefined_separator, undefined_separator.len, @intFromEnum(aot_builtin.Command.replace_all));
+    try std.testing.expectEqualSlices(u16, &.{ 'x', 'u', 'n', 'd', 'e', 'f', 'i', 'n', 'e', 'd', 'y' }, roots[3].object().?.payload.utf16_string);
+    const undefined_join = [_]Value{ staticStringValue("a-a"), staticStringValue("a"), .{} };
+    lnako_aot_builtin_call(&roots[4], &undefined_join, undefined_join.len, @intFromEnum(aot_builtin.Command.replace_all));
+    try std.testing.expectEqualSlices(u16, &.{ ',', '-', ',' }, roots[4].object().?.payload.utf16_string);
+    const undefined_first_replacement = [_]Value{ staticStringValue("x-x"), staticStringValue("x"), .{} };
+    lnako_aot_builtin_call(&roots[5], &undefined_first_replacement, undefined_first_replacement.len, @intFromEnum(aot_builtin.Command.replace_first));
+    try std.testing.expectEqualSlices(u16, &.{ 'u', 'n', 'd', 'e', 'f', 'i', 'n', 'e', 'd', '-', 'x' }, roots[5].object().?.payload.utf16_string);
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {

@@ -53,8 +53,8 @@ pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Val
     if (eql(name, "文字始")) return .{ .boolean = startsWith(a_text.string.units, b_text.string.units) };
     if (eql(name, "文字終")) return .{ .boolean = endsWith(a_text.string.units, b_text.string.units) };
     if (eql(name, "出現")) return .{ .boolean = if (a == .array) try includes(runtime, a, b) else indexOfUnits(a_text.string.units, b_text.string.units, 0) != null };
-    if (eql(name, "置換")) return try replace(runtime, a_text, b_text, c_text, true);
-    if (eql(name, "単置換")) return try replace(runtime, a_text, b_text, c_text, false);
+    if (eql(name, "置換")) return try replace(runtime, a, b, c, true);
+    if (eql(name, "単置換")) return try replace(runtime, a, b, c, false);
     if (eql(name, "トリム") or eql(name, "空白除去")) return try trim(runtime, a_text, true, true);
     if (eql(name, "右トリム") or eql(name, "末尾空白除去")) return try trim(runtime, a_text, false, true);
     if (eql(name, "左トリム")) return try trim(runtime, a_text, true, false);
@@ -409,9 +409,26 @@ fn includes(runtime: *Runtime, source: Value, needle: Value) !bool {
 }
 
 fn replace(runtime: *Runtime, source: Value, search: Value, replacement: Value, all: bool) !Value {
-    const units = (try text(runtime, source)).units;
-    const needle = (try text(runtime, search)).units;
-    const replacement_units = (try text(runtime, replacement)).units;
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var source_text = try runtime.valueToString(source);
+    try roots.protect(&source_text);
+    const units = source_text.string.units;
+    // String.prototype.split(undefined) does not split, whereas
+    // String.prototype.replace(undefined, ...) searches for "undefined".
+    if (all and search == .undefined) return runtime.stringCodeUnits(units);
+    var search_text = try runtime.valueToString(search);
+    try roots.protect(&search_text);
+    const needle = search_text.string.units;
+    var replacement_text: Value = .undefined;
+    const replacement_units: []const u16 = if (all and replacement == .undefined)
+        // Array.prototype.join(undefined) uses its default comma separator.
+        &.{','}
+    else blk: {
+        replacement_text = try runtime.valueToString(replacement);
+        try roots.protect(&replacement_text);
+        break :blk replacement_text.string.units;
+    };
     if (needle.len == 0) {
         if (!all) return replaceFirst(runtime, units, 0, 0, replacement_units);
         var output: std.ArrayList(u16) = .empty;
@@ -830,6 +847,30 @@ test "置換・幅変換・かな変換を処理する" {
     const converted_utf8 = try converted.string.toUtf8Lossy(std.testing.allocator);
     defer std.testing.allocator.free(converted_utf8);
     try std.testing.expectEqualStrings("ＡＢＣ　ガ", converted_utf8);
+}
+
+test "置換はsplitとjoinのundefined型強制を再現する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const unchanged = (try call(&runtime, "置換", &.{ try runtime.stringUtf8("xundefinedy"), .undefined, try runtime.stringUtf8("z") })).?;
+    const unchanged_utf8 = try unchanged.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(unchanged_utf8);
+    try std.testing.expectEqualStrings("xundefinedy", unchanged_utf8);
+
+    const comma_joined = (try call(&runtime, "置換", &.{ try runtime.stringUtf8("a-a"), try runtime.stringUtf8("a"), .undefined })).?;
+    const comma_joined_utf8 = try comma_joined.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(comma_joined_utf8);
+    try std.testing.expectEqualStrings(",-,", comma_joined_utf8);
+
+    const replaced_once = (try call(&runtime, "単置換", &.{ try runtime.stringUtf8("xundefinedy"), .undefined, try runtime.stringUtf8("z") })).?;
+    const replaced_once_utf8 = try replaced_once.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(replaced_once_utf8);
+    try std.testing.expectEqualStrings("xzy", replaced_once_utf8);
+
+    const undefined_replacement = (try call(&runtime, "単置換", &.{ try runtime.stringUtf8("x-x"), try runtime.stringUtf8("x"), .undefined })).?;
+    const undefined_replacement_utf8 = try undefined_replacement.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(undefined_replacement_utf8);
+    try std.testing.expectEqualStrings("undefined-x", undefined_replacement_utf8);
 }
 
 test "ECMAScriptのUnicode大小文字変換と文脈依存シグマを処理する" {
