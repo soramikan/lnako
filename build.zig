@@ -34,16 +34,23 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(exe);
 
+    const unicode_case = b.createModule(.{
+        .root_source_file = b.path("src/generated/unicode_case.zig"),
+        .target = target,
+        .optimize = .ReleaseSafe,
+    });
+    const aot_module = b.createModule(.{
+        .root_source_file = b.path("src/runtime/aot.zig"),
+        .target = target,
+        .optimize = .ReleaseSafe,
+        .strip = true,
+        .link_libc = true,
+    });
+    aot_module.addImport("unicode_case", unicode_case);
     const aot_runtime = b.addLibrary(.{
         .name = "lnako_runtime",
         .linkage = .static,
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/runtime/aot.zig"),
-            .target = target,
-            .optimize = .ReleaseSafe,
-            .strip = true,
-            .link_libc = true,
-        }),
+        .root_module = aot_module,
     });
     aot_runtime.bundle_compiler_rt = true;
     b.installArtifact(aot_runtime);

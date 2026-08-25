@@ -74,6 +74,10 @@ pub const Command = enum(u16) {
     trim_left,
     replace_all,
     replace_first,
+    uppercase,
+    lowercase,
+    hiragana,
+    katakana,
 };
 
 pub fn lookup(name: []const u8) ?Command {
@@ -150,6 +154,10 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "左トリム")) return .trim_left;
     if (std.mem.eql(u8, name, "置換")) return .replace_all;
     if (std.mem.eql(u8, name, "単置換")) return .replace_first;
+    if (std.mem.eql(u8, name, "大文字変換")) return .uppercase;
+    if (std.mem.eql(u8, name, "小文字変換")) return .lowercase;
+    if (std.mem.eql(u8, name, "平仮名変換")) return .hiragana;
+    if (std.mem.eql(u8, name, "カタカナ変換")) return .katakana;
     return null;
 }
 
@@ -245,5 +253,9 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.trim_left, lookup("左トリム").?);
     try std.testing.expectEqual(Command.replace_all, lookup("置換").?);
     try std.testing.expectEqual(Command.replace_first, lookup("単置換").?);
+    try std.testing.expectEqual(Command.uppercase, lookup("大文字変換").?);
+    try std.testing.expectEqual(Command.lowercase, lookup("小文字変換").?);
+    try std.testing.expectEqual(Command.hiragana, lookup("平仮名変換").?);
+    try std.testing.expectEqual(Command.katakana, lookup("カタカナ変換").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }

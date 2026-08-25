@@ -3,6 +3,7 @@ const aot_abi = @import("aot_abi.zig");
 const aot_builtin = @import("aot_builtin.zig");
 const BigInt = @import("bigint.zig").BigInt;
 const error_message = @import("error_message.zig");
+const unicode_case = @import("unicode_case");
 const number_mod = @import("number.zig");
 const string_mod = @import("string.zig");
 
@@ -1698,6 +1699,18 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             };
         },
+        .uppercase, .lowercase => {
+            out.* = unicodeCaseBuiltin(runtime, value, command == .uppercase) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .hiragana, .katakana => {
+            out.* = kanaOffsetBuiltin(runtime, value, command == .katakana) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
     }
 }
 
@@ -2240,6 +2253,78 @@ fn trimBuiltin(runtime: *Runtime, value: Value, trim_left: bool, trim_right: boo
         while (end > start and string_mod.isEcmaWhitespace(units[end - 1])) : (end -= 1) {}
     }
     return runtime.createString(units[start..end]);
+}
+
+fn unicodeCaseBuiltin(runtime: *Runtime, value: Value, uppercase: bool) !Value {
+    const units = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(units);
+    var codepoints: std.ArrayList(u21) = .empty;
+    defer codepoints.deinit(runtime.allocator);
+    var unit_index: usize = 0;
+    while (unit_index < units.len) {
+        const length = codePointLength(units, unit_index);
+        const codepoint: u21 = if (length == 2)
+            @intCast(0x10000 + ((@as(u32, units[unit_index]) - 0xd800) << 10) + (@as(u32, units[unit_index + 1]) - 0xdc00))
+        else
+            @intCast(units[unit_index]);
+        try codepoints.append(runtime.allocator, codepoint);
+        unit_index += length;
+    }
+
+    var output: std.ArrayList(u16) = .empty;
+    errdefer output.deinit(runtime.allocator);
+    for (codepoints.items, 0..) |codepoint, index| {
+        if (!uppercase and codepoint == 0x03a3 and isFinalSigmaBuiltin(codepoints.items, index)) {
+            try output.append(runtime.allocator, 0x03c2);
+            continue;
+        }
+        const mapped = if (uppercase) unicode_case.upper(codepoint) else unicode_case.lower(codepoint);
+        if (mapped) |values| {
+            for (values) |mapped_codepoint| try appendCodePointBuiltin(runtime.allocator, &output, mapped_codepoint);
+        } else {
+            try appendCodePointBuiltin(runtime.allocator, &output, codepoint);
+        }
+    }
+    return runtime.ownString(try output.toOwnedSlice(runtime.allocator));
+}
+
+fn isFinalSigmaBuiltin(codepoints: []const u21, index: usize) bool {
+    var before = index;
+    var has_cased_before = false;
+    while (before > 0) {
+        before -= 1;
+        if (unicode_case.isCaseIgnorable(codepoints[before])) continue;
+        has_cased_before = unicode_case.isCased(codepoints[before]);
+        break;
+    }
+    if (!has_cased_before) return false;
+    var after = index + 1;
+    while (after < codepoints.len) : (after += 1) {
+        if (unicode_case.isCaseIgnorable(codepoints[after])) continue;
+        return !unicode_case.isCased(codepoints[after]);
+    }
+    return true;
+}
+
+fn appendCodePointBuiltin(allocator: std.mem.Allocator, output: *std.ArrayList(u16), codepoint: u21) !void {
+    if (codepoint <= 0xffff) return output.append(allocator, @intCast(codepoint));
+    const offset: u32 = codepoint - 0x10000;
+    try output.append(allocator, @intCast(0xd800 + (offset >> 10)));
+    try output.append(allocator, @intCast(0xdc00 + (offset & 0x3ff)));
+}
+
+fn kanaOffsetBuiltin(runtime: *Runtime, value: Value, to_katakana: bool) !Value {
+    const units = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(units);
+    const output = try runtime.allocator.dupe(u16, units);
+    errdefer runtime.allocator.free(output);
+    const first: u16 = if (to_katakana) 0x3041 else 0x30a1;
+    const last: u16 = if (to_katakana) 0x3096 else 0x30f6;
+    const offset: i32 = if (to_katakana) 0x60 else -0x60;
+    for (output) |*unit| {
+        if (unit.* >= first and unit.* <= last) unit.* = @intCast(@as(i32, unit.*) + offset);
+    }
+    return runtime.ownString(output);
 }
 
 fn replaceBuiltin(runtime: *Runtime, source_value: Value, needle_value: Value, replacement_value: Value, all: bool) !Value {
