@@ -918,7 +918,15 @@ const Emitter = struct {
 
     fn writeCallResult(self: *Emitter, result: ir.ValueId, span: ast.Span, scope: usize) !void {
         const global_index = self.globalIndex("それ") orelse return error.MissingResultGlobal;
-        try self.output.writer.print("  store %lnako.Value %v{d}, ptr @lnako.global.{d}", .{ result, global_index });
+        try self.output.writer.print("  %call.result.pending.{d} = call i32 @lnako_aot_exception_pending()", .{result});
+        try self.debugSuffix(span, scope);
+        try self.output.writer.print("  %call.result.is-pending.{d} = icmp ne i32 %call.result.pending.{d}, 0", .{ result, result });
+        try self.debugSuffix(span, scope);
+        try self.output.writer.print("  %call.result.previous.{d} = load %lnako.Value, ptr @lnako.global.{d}", .{ result, global_index });
+        try self.debugSuffix(span, scope);
+        try self.output.writer.print("  %call.result.selected.{d} = select i1 %call.result.is-pending.{d}, %lnako.Value %call.result.previous.{d}, %lnako.Value %v{d}", .{ result, result, result, result });
+        try self.debugSuffix(span, scope);
+        try self.output.writer.print("  store %lnako.Value %call.result.selected.{d}, ptr @lnako.global.{d}", .{ result, global_index });
         try self.debugSuffix(span, scope);
     }
 

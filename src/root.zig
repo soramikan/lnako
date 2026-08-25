@@ -28,6 +28,7 @@ pub const ir = struct {
 };
 
 pub const runtime = struct {
+    pub const error_message = @import("runtime/error_message.zig");
     pub const string = @import("runtime/string.zig");
     pub const bigint = @import("runtime/bigint.zig");
     pub const value = @import("runtime/value.zig");
@@ -134,6 +135,7 @@ test {
     std.testing.refAllDecls(ir.verifier);
     std.testing.refAllDecls(ir.optimizer);
     std.testing.refAllDecls(ir.printer);
+    std.testing.refAllDecls(runtime.error_message);
     std.testing.refAllDecls(runtime.string);
     std.testing.refAllDecls(runtime.bigint);
     std.testing.refAllDecls(runtime.value);

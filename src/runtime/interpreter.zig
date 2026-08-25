@@ -10,6 +10,7 @@ const builtin_catalog = @import("../semantic/builtin_catalog.zig");
 const hir = @import("../ir/hir.zig");
 const lower_ssa = @import("../ir/lower_ssa.zig");
 const verifier = @import("../ir/verifier.zig");
+const error_message = @import("error_message.zig");
 const value_mod = @import("value.zig");
 const operators = @import("operators.zig");
 const plugin_system = @import("../plugins/system.zig");
@@ -356,8 +357,9 @@ pub const Interpreter = struct {
                 try self.handleNodeInterrupt();
                 self.executeInstruction(&frame, instruction, predecessor) catch |failure| {
                     if (frame.handlers.pop()) |handler| {
-                        if (self.exception_value == .undefined) self.exception_value = self.runtime.stringUtf8(@errorName(failure)) catch return failure;
+                        if (self.exception_value == .undefined) self.exception_value = self.runtime.stringUtf8(error_message.forFailure(failure)) catch return failure;
                         try self.setGlobal("エラーメッセージ", self.exception_value);
+                        self.exception_value = .undefined;
                         exceptional_target = handler;
                         break;
                     }
@@ -384,6 +386,7 @@ pub const Interpreter = struct {
                     self.exception_value = frame.values[throw_value.value];
                     if (frame.handlers.pop() orelse throw_value.target) |handler| {
                         try self.setGlobal("エラーメッセージ", self.exception_value);
+                        self.exception_value = .undefined;
                         predecessor = current_block;
                         current_block = handler;
                     } else return error.NakoException;
@@ -2207,6 +2210,31 @@ test "BigIntの整数除算を公式生成JavaScript同様に拒否する" {
     var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
     defer interpreter.deinit();
     try std.testing.expectError(error.CannotConvertBigIntToNumber, interpreter.run());
+}
+
+test "連続する例外監視で直前の捕捉値を再利用しない" {
+    const source =
+        "エラー監視\nA=1n+1\nエラーならば\nエラーメッセージを表示\nここまで\n" ++
+        "エラー監視\nB=5n÷÷2n\nエラーならば\nエラーメッセージを表示\nここまで\n" ++
+        "エラー監視\nC=1n>>>1n\nエラーならば\nエラーメッセージを表示\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings(
+        "Cannot mix BigInt and other types, use explicit conversions\n" ++
+            "Cannot convert a BigInt value to a number\n" ++
+            "BigInts have no unsigned right shift, use >> instead\n",
+        host.written(),
+    );
 }
 
 test "GCストレス中も実行フレームと反復対象をルートとして保持する" {

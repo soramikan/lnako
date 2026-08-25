@@ -136,6 +136,10 @@
     "source": "●奥とは\n「関数失敗」のエラー発生\nここまで\n●中とは\n奥()\n「到達不可」で戻る\nここまで\nエラー監視\n中()\n「到達不可」を表示\nエラーならば\nエラーメッセージを表示\nここまで\n「後」を表示\n"
   },
   {
+    "id": "native-bigint-runtime-exception-monitor",
+    "source": "●算術失敗とは\n1n+1で戻る\nここまで\nそれ=99\nエラー監視\n算術失敗()\n「到達不可」を表示\nエラーならば\nエラーメッセージを表示\nそれを表示\nここまで\nエラー監視\nA=5n÷÷2n\nエラーならば\nエラーメッセージを表示\nここまで\nエラー監視\nB=1n>>>1n\nエラーならば\nエラーメッセージを表示\nここまで\n「後」を表示\n"
+  },
+  {
     "id": "native-uncaught-exception",
     "oracle": "official-generated",
     "source": "「未捕捉」のエラー発生\n"

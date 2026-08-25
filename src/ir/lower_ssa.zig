@@ -96,7 +96,7 @@ const FunctionBuilder = struct {
             .store_global => try self.lowerStore(.store_global, node),
             .store_local => try self.lowerStore(.store_local, node),
             .destructure_store => try self.lowerVariadic(.destructure_store, .void, node),
-            .binary => if (isLogicalOperator(node.operator)) try self.lowerLogical(node) else try self.lowerVariadic(.binary, toType(node.type_hint), node),
+            .binary => if (isLogicalOperator(node.operator)) try self.lowerLogical(node) else try self.lowerFallible(.binary, toType(node.type_hint), node),
             .unary => try self.lowerVariadic(.unary, toType(node.type_hint), node),
             .call => try self.lowerCall(.call, node),
             .call_value => try self.lowerCall(.call_value, node),
@@ -151,19 +151,29 @@ const FunctionBuilder = struct {
 
     fn lowerCall(self: *FunctionBuilder, opcode: ir.Opcode, node: hir.Node) !ir.ValueId {
         const result = (try self.lowerVariadic(opcode, toType(node.type_hint), node)) orelse return error.InvalidCallResult;
+        try self.lowerExceptionCheck(node);
+        return result;
+    }
+
+    fn lowerFallible(self: *FunctionBuilder, opcode: ir.Opcode, result_type: ir.Type, node: hir.Node) !ir.ValueId {
+        const result = (try self.lowerVariadic(opcode, result_type, node)) orelse return error.InvalidFallibleResult;
+        try self.lowerExceptionCheck(node);
+        return result;
+    }
+
+    fn lowerExceptionCheck(self: *FunctionBuilder, node: hir.Node) !void {
         const pending = try self.emitValue(.exception_pending, .boolean, &.{}, node);
         const exception_block = if (self.exception_handlers.items.len > 0)
             self.exception_handlers.items[self.exception_handlers.items.len - 1]
         else
-            try self.createBlock("call.propagate");
-        const continue_block = try self.createBlock("call.continue");
+            try self.createBlock("exception.propagate");
+        const continue_block = try self.createBlock("exception.continue");
         self.terminate(.{ .conditional_branch = .{ .condition = pending, .then_block = exception_block, .else_block = continue_block } });
         if (self.exception_handlers.items.len == 0) {
             self.current = exception_block;
             self.terminate(.propagate_exception);
         }
         self.current = continue_block;
-        return result;
     }
 
     fn lowerLogical(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
@@ -545,6 +555,30 @@ test "エラー発生を最内側の例外分岐先付きthrowへ変換する" {
         else => {},
     };
     try std.testing.expectEqual(@as(usize, 1), throw_count);
+}
+
+test "失敗し得る二項演算の直後に例外分岐を生成する" {
+    const parser = @import("../frontend/parser.zig");
+    const semantic = @import("../semantic/analyzer.zig");
+    const source = "エラー監視\nA=1n+1\nエラーならば\nエラーメッセージを表示\nここまで\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "arithmetic-exception.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "arithmetic-exception.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "arithmetic_exception", "arithmetic-exception.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    const entry = program.findFunction("arithmetic_exception__$entry").?;
+    var saw_checked_binary = false;
+    for (entry.blocks) |block| for (block.instructions, 0..) |instruction, index| {
+        if (instruction.opcode != .binary) continue;
+        try std.testing.expect(index + 1 < block.instructions.len);
+        try std.testing.expectEqual(ir.Opcode.exception_pending, block.instructions[index + 1].opcode);
+        try std.testing.expect(block.terminator == .conditional_branch);
+        saw_checked_binary = true;
+    };
+    try std.testing.expect(saw_checked_binary);
 }
 
 test "速度優先領域の本体と境界をIRへ保持する" {

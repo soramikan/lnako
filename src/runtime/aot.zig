@@ -1,5 +1,6 @@
 const std = @import("std");
 const BigInt = @import("bigint.zig").BigInt;
+const error_message = @import("error_message.zig");
 const string_mod = @import("string.zig");
 
 pub const Tag = enum(u8) {
@@ -288,6 +289,12 @@ const Runtime = struct {
     fn setException(self: *Runtime, value: Value) void {
         self.pending_exception = value;
         self.has_pending_exception = true;
+    }
+
+    fn setFailure(self: *Runtime, failure: anyerror) void {
+        const units = std.unicode.utf8ToUtf16LeAlloc(self.allocator, error_message.forFailure(failure)) catch |allocation_failure| runtimeFailure(allocation_failure);
+        defer self.allocator.free(units);
+        self.setException(self.createString(units) catch |allocation_failure| runtimeFailure(allocation_failure));
     }
 
     fn takeException(self: *Runtime) Value {
@@ -990,7 +997,10 @@ pub export fn lnako_aot_print_bigint(value: *const Value, newline: bool) callcon
 pub export fn lnako_aot_print_collection(value: *const Value, newline: bool) callconv(.c) void {
     const runtime = if (active_runtime) |*active| active else return;
     if (value.tag != @intFromEnum(Tag.array) and value.tag != @intFromEnum(Tag.dictionary)) return;
-    const units = valueUtf16Alloc(runtime, value.*) catch |failure| runtimeFailure(failure);
+    const units = valueUtf16Alloc(runtime, value.*) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
     defer runtime.allocator.free(units);
     writeUtf16(units, newline);
 }
@@ -1004,31 +1014,52 @@ pub export fn lnako_aot_bigint_truthy(value: *const Value) callconv(.c) c_int {
 pub export fn lnako_aot_arithmetic(out: *Value, left: *const Value, right: *const Value, opcode: u8) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*active| active else return;
-    const operator = std.enums.fromInt(Arithmetic, opcode) orelse runtimeFailure(error.InvalidArithmeticOperator);
-    out.* = arithmetic(runtime, operator, left.*, right.*) catch |failure| runtimeFailure(failure);
+    const operator = std.enums.fromInt(Arithmetic, opcode) orelse {
+        runtime.setFailure(error.InvalidArithmeticOperator);
+        return;
+    };
+    out.* = arithmetic(runtime, operator, left.*, right.*) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
 }
 
 pub export fn lnako_aot_compare(out: *Value, left: *const Value, right: *const Value, opcode: u8) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*active| active else return;
-    const operator = std.enums.fromInt(Comparison, opcode) orelse runtimeFailure(error.InvalidComparison);
+    const operator = std.enums.fromInt(Comparison, opcode) orelse {
+        runtime.setFailure(error.InvalidComparison);
+        return;
+    };
     out.* = .{
         .tag = @intFromEnum(Tag.boolean),
-        .payload = @intFromBool(compareValues(runtime, operator, left.*, right.*) catch |failure| runtimeFailure(failure)),
+        .payload = @intFromBool(compareValues(runtime, operator, left.*, right.*) catch |failure| {
+            runtime.setFailure(failure);
+            return;
+        }),
     };
 }
 
 pub export fn lnako_aot_shift(out: *Value, left: *const Value, right: *const Value, opcode: u8) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*active| active else return;
-    const operator = std.enums.fromInt(ShiftOperator, opcode) orelse runtimeFailure(error.InvalidShiftOperator);
-    out.* = shift(runtime, operator, left.*, right.*) catch |failure| runtimeFailure(failure);
+    const operator = std.enums.fromInt(ShiftOperator, opcode) orelse {
+        runtime.setFailure(error.InvalidShiftOperator);
+        return;
+    };
+    out.* = shift(runtime, operator, left.*, right.*) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
 }
 
 pub export fn lnako_aot_concat(out: *Value, left: *const Value, right: *const Value) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*active| active else return;
-    out.* = concat(runtime, left.*, right.*) catch |failure| runtimeFailure(failure);
+    out.* = concat(runtime, left.*, right.*) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
 }
 
 pub export fn lnako_aot_increment(target: *Value, amount: *const Value) callconv(.c) void {
@@ -1233,6 +1264,27 @@ test "保留例外をGCルートとして保持し一度だけ取り出す" {
     try std.testing.expectEqual(message.payload, taken.payload);
     try std.testing.expectEqual(@as(c_int, 0), lnako_aot_exception_pending());
     try std.testing.expectEqual(@as(usize, 1), active_runtime.?.collect());
+}
+
+test "AOT算術失敗を公式文言の保留例外へ変換する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var values = [_]Value{ try active_runtime.?.createBigInt("1n"), numberValue(1), .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &values, values.len);
+    defer lnako_aot_pop_roots(&frame);
+    lnako_aot_arithmetic(&values[2], &values[0], &values[1], @intFromEnum(Arithmetic.add));
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    var taken: Value = .{};
+    lnako_aot_exception_take(&taken);
+    const utf8 = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, taken.object().?.payload.utf16_string);
+    defer std.testing.allocator.free(utf8);
+    try std.testing.expectEqualStrings("Cannot mix BigInt and other types, use explicit conversions", utf8);
 }
 
 test "ルートフレームをLIFOで連結する" {
