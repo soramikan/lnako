@@ -772,7 +772,8 @@ const Parser = struct {
     }
 
     fn parseUnary(self: *Parser) ParseFailure!*ast.Node {
-        if (self.at(.not) or self.at(.minus) or self.at(.plus)) {
+        if (self.at(.plus)) return self.fail(.unexpected_token, "単項『+』は使用できません", self.peek());
+        if (self.at(.not) or self.at(.minus)) {
             const operator_token = self.advance();
             const operand = try self.parseUnary();
             if (operator_token.kind == .minus) {
@@ -1381,6 +1382,17 @@ test "公式同様に辞書リテラルの数値キーを拒否する" {
     try std.testing.expect(!result.succeeded());
     try std.testing.expectEqual(diagnostic.Code.expected_name, result.diagnostics[0].code);
     try std.testing.expectEqual(@as(usize, 0), result.diagnostics[0].span.line);
+}
+
+test "公式同様に単項プラスを拒否する" {
+    const cases = [_][]const u8{ "(+1)を表示\n", "A=1\n(+A)を表示\n", "(+\"1\")を表示\n" };
+    for (cases) |source| {
+        var result = try parse(std.testing.allocator, source, "unary-plus.nako3");
+        defer result.deinit();
+        try std.testing.expect(!result.succeeded());
+        try std.testing.expectEqual(diagnostic.Code.unexpected_token, result.diagnostics[0].code);
+        try std.testing.expectEqualStrings("単項『+』は使用できません", result.diagnostics[0].message);
+    }
 }
 
 test "変数と定数の角括弧分割宣言を構文解析する" {
