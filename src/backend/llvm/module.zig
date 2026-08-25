@@ -1017,7 +1017,7 @@ const Emitter = struct {
     }
 
     fn writeFunctionWrapper(self: *Emitter, function: ir.Function) !void {
-        try self.output.writer.print("define internal %lnako.Value @lnako.wrapper.{d}(ptr %context, ptr %arguments, i64 %argument.count) {{\nentry:\n", .{function.id});
+        try self.output.writer.print("define internal void @lnako.wrapper.{d}(ptr %result.out, ptr %context, ptr %arguments, i64 %argument.count) {{\nentry:\n", .{function.id});
         for (function.parameters, 0..) |_, index| {
             try self.output.writer.print("  %wrapper.argument.pointer.{d} = getelementptr %lnako.Value, ptr %arguments, i64 {d}\n", .{ index, index });
             try self.output.writer.print("  %wrapper.argument.{d} = load %lnako.Value, ptr %wrapper.argument.pointer.{d}\n", .{ index, index });
@@ -1026,7 +1026,7 @@ const Emitter = struct {
         for (function.parameters, 0..) |_, index| {
             try self.output.writer.print(", %lnako.Value %wrapper.argument.{d}", .{index});
         }
-        try self.output.writer.writeAll(")\n  ret %lnako.Value %wrapper.result\n}\n\n");
+        try self.output.writer.writeAll(")\n  store %lnako.Value %wrapper.result, ptr %result.out\n  ret void\n}\n\n");
     }
 
     fn writeMain(self: *Emitter) !void {
@@ -1700,6 +1700,8 @@ test "非捕捉無名関数を統一ABIの関数値へ変換する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_function_new") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_function_call") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.wrapper.0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "define internal void @lnako.wrapper.0(ptr %result.out") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "store %lnako.Value %wrapper.result, ptr %result.out") != null);
 }
 
 test "監視外のthrowを保留例外としてmainまで伝播する" {

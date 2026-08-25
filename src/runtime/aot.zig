@@ -39,7 +39,10 @@ const Iterator = struct {
     step: f64 = 1,
 };
 
-const FunctionCallback = *const fn (*anyopaque, ?[*]const Value, usize) callconv(.c) Value;
+/// Generated callbacks cross the Zig/LLVM boundary. Returning the 16-byte
+/// Value aggregate directly is not portable to the Windows x64 C ABI, so the
+/// result is always written through an explicit pointer.
+const FunctionCallback = *const fn (*Value, *anyopaque, ?[*]const Value, usize) callconv(.c) void;
 const FunctionObject = struct {
     callback: FunctionCallback,
     arity: usize,
@@ -1235,7 +1238,7 @@ pub export fn lnako_aot_function_call(out: *Value, callable: *const Value, argum
         @memset(values[len + 1 ..], .{});
         call_arguments = values.ptr;
     }
-    out.* = function.callback(@ptrCast(object), call_arguments, function.arity);
+    function.callback(out, @ptrCast(object), call_arguments, function.arity);
 }
 
 pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, len: usize, opcode: u16) callconv(.c) void {
@@ -1856,6 +1859,7 @@ test "LLVM側の値ABIと同じ16バイト配置を保つ" {
 }
 
 test "公開AOT ABIは動的値をポインタで受け渡す" {
+    try std.testing.expectEqual(*const fn (*Value, *anyopaque, ?[*]const Value, usize) callconv(.c) void, FunctionCallback);
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_array_new));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_index_get));
     try std.testing.expectEqual(*const fn (*const Value, *const Value, *const Value) callconv(.c) c_int, @TypeOf(&lnako_aot_index_set));
@@ -1878,22 +1882,20 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value) callconv(.c) void, @TypeOf(&lnako_aot_exception_take));
 }
 
-fn testAotFunction(_: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) Value {
-    if (arguments == null or len != 1) return .{};
-    return arguments.?[0];
+fn testAotFunction(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
+    out.* = if (arguments == null or len != 1) .{} else arguments.?[0];
 }
 
-fn testAotSecondArgument(_: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) Value {
-    if (arguments == null or len != 2) return .{};
-    return arguments.?[1];
+fn testAotSecondArgument(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
+    out.* = if (arguments == null or len != 2) .{} else arguments.?[1];
 }
 
-fn testAotCapturedIncrement(context: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) Value {
+fn testAotCapturedIncrement(out: *Value, context: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
     const function: *Object = @ptrCast(@alignCast(context));
     const cell = function.payload.function.captures[0].object().?;
     const next = numberValue(valueToNumber(cell.payload.binding_cell) + 1);
     cell.payload.binding_cell = next;
-    return next;
+    out.* = next;
 }
 
 test "AOT関数値を呼び出しGCで回収する" {
