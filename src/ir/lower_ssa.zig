@@ -104,8 +104,8 @@ const FunctionBuilder = struct {
             .make_object => try self.lowerVariadic(.make_object, .object, node),
             .array_get => try self.lowerVariadic(.array_get, .dynamic, node),
             .property_get => try self.lowerVariadic(.property_get, .dynamic, node),
-            .array_set => try self.lowerVariadic(.array_set, .void, node),
-            .property_set => try self.lowerVariadic(.property_set, .void, node),
+            .array_set => try self.lowerFallibleVoid(.array_set, node),
+            .property_set => try self.lowerFallibleVoid(.property_set, node),
             .increment => try self.lowerVariadic(.increment, .void, node),
             .if_statement => self.lowerIf(node),
             .while_statement => self.lowerWhile(node, false),
@@ -159,6 +159,12 @@ const FunctionBuilder = struct {
         const result = (try self.lowerVariadic(opcode, result_type, node)) orelse return error.InvalidFallibleResult;
         try self.lowerExceptionCheck(node);
         return result;
+    }
+
+    fn lowerFallibleVoid(self: *FunctionBuilder, opcode: ir.Opcode, node: hir.Node) !?ir.ValueId {
+        _ = try self.lowerVariadic(opcode, .void, node);
+        try self.lowerExceptionCheck(node);
+        return null;
     }
 
     fn lowerExceptionCheck(self: *FunctionBuilder, node: hir.Node) !void {
@@ -579,6 +585,30 @@ test "失敗し得る二項演算の直後に例外分岐を生成する" {
         saw_checked_binary = true;
     };
     try std.testing.expect(saw_checked_binary);
+}
+
+test "失敗し得る添字代入の直後に例外分岐を生成する" {
+    const parser = @import("../frontend/parser.zig");
+    const semantic = @import("../semantic/analyzer.zig");
+    const source = "エラー監視\nNULL[0]=2\nエラーならば\nエラーメッセージを表示\nここまで\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "assignment-exception.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "assignment-exception.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "assignment_exception", "assignment-exception.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    const entry = program.findFunction("assignment_exception__$entry").?;
+    var saw_checked_assignment = false;
+    for (entry.blocks) |block| for (block.instructions, 0..) |instruction, index| {
+        if (instruction.opcode != .array_set) continue;
+        try std.testing.expect(index + 1 < block.instructions.len);
+        try std.testing.expectEqual(ir.Opcode.exception_pending, block.instructions[index + 1].opcode);
+        try std.testing.expect(block.terminator == .conditional_branch);
+        saw_checked_assignment = true;
+    };
+    try std.testing.expect(saw_checked_assignment);
 }
 
 test "速度優先領域の本体と境界をIRへ保持する" {

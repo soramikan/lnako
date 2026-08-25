@@ -1540,10 +1540,19 @@ pub const Interpreter = struct {
             const text = try self.runtime.valueToString(key);
             return container.dictionary.set(text.string, value);
         }
-        return switch (container) {
-            .undefined, .null_value => error.InvalidAssignment,
-            else => {},
-        };
+        switch (container) {
+            .undefined, .null_value => {
+                const key_text = try self.runtime.valueToString(key);
+                const key_utf8 = try key_text.string.toUtf8Lossy(self.allocator);
+                defer self.allocator.free(key_utf8);
+                const container_name: []const u8 = if (container == .null_value) "null" else "undefined";
+                const message = try std.fmt.allocPrint(self.allocator, "Cannot set properties of {s} (setting '{s}')", .{ container_name, key_utf8 });
+                defer self.allocator.free(message);
+                self.exception_value = try self.runtime.stringUtf8(message);
+                return error.NakoException;
+            },
+            else => return,
+        }
     }
 
     fn increment(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
@@ -2260,6 +2269,29 @@ test "プリミティブへの添字代入と反復を公式同様に無操作�
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("1\nabc\n後\n", host.written());
+}
+
+test "nullとundefinedへの添字代入をキー付き例外として監視する" {
+    const source =
+        "エラー監視\nNULL[0]=2\nエラーならば\nエラーメッセージを表示\nここまで\n" ++
+        "A=undefined\nエラー監視\nA[「x」]=2\nエラーならば\nエラーメッセージを表示\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings(
+        "Cannot set properties of null (setting '0')\n" ++
+            "Cannot set properties of undefined (setting 'x')\n",
+        host.written(),
+    );
 }
 
 test "GCストレス中も実行フレームと反復対象をルートとして保持する" {

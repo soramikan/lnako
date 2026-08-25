@@ -292,9 +292,24 @@ const Runtime = struct {
     }
 
     fn setFailure(self: *Runtime, failure: anyerror) void {
-        const units = std.unicode.utf8ToUtf16LeAlloc(self.allocator, error_message.forFailure(failure)) catch |allocation_failure| runtimeFailure(allocation_failure);
+        self.setFailureText(error_message.forFailure(failure));
+    }
+
+    fn setFailureText(self: *Runtime, text: []const u8) void {
+        const units = std.unicode.utf8ToUtf16LeAlloc(self.allocator, text) catch |allocation_failure| runtimeFailure(allocation_failure);
         defer self.allocator.free(units);
         self.setException(self.createString(units) catch |allocation_failure| runtimeFailure(allocation_failure));
+    }
+
+    fn setIndexAssignmentFailure(self: *Runtime, container: Value, key: Value) void {
+        const key_units = valueUtf16Alloc(self, key) catch |failure| runtimeFailure(failure);
+        defer self.allocator.free(key_units);
+        const key_utf8 = std.unicode.utf16LeToUtf8Alloc(self.allocator, key_units) catch |failure| runtimeFailure(failure);
+        defer self.allocator.free(key_utf8);
+        const container_name: []const u8 = if (container.tag == @intFromEnum(Tag.null_value)) "null" else "undefined";
+        const message = std.fmt.allocPrint(self.allocator, "Cannot set properties of {s} (setting '{s}')", .{ container_name, key_utf8 }) catch |failure| runtimeFailure(failure);
+        defer self.allocator.free(message);
+        self.setFailureText(message);
     }
 
     fn takeException(self: *Runtime) Value {
@@ -1092,6 +1107,10 @@ pub export fn lnako_aot_index_get(out: *Value, container: *const Value, key: *co
 
 pub export fn lnako_aot_index_set(container: *const Value, key: *const Value, value: *const Value) callconv(.c) c_int {
     const runtime = if (active_runtime) |*active| active else return -1;
+    if (container.tag == @intFromEnum(Tag.undefined) or container.tag == @intFromEnum(Tag.null_value)) {
+        runtime.setIndexAssignmentFailure(container.*, key.*);
+        return -1;
+    }
     runtime.indexSet(container.*, key.*, value.*) catch return -1;
     return 0;
 }
@@ -1288,6 +1307,27 @@ test "AOT算術失敗を公式文言の保留例外へ変換する" {
     const utf8 = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, taken.object().?.payload.utf16_string);
     defer std.testing.allocator.free(utf8);
     try std.testing.expectEqualStrings("Cannot mix BigInt and other types, use explicit conversions", utf8);
+}
+
+test "AOTのnull添字代入をキー付きの保留例外へ変換する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var values = [_]Value{ .{ .tag = @intFromEnum(Tag.null_value) }, numberValue(0), numberValue(2) };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &values, values.len);
+    defer lnako_aot_pop_roots(&frame);
+    try std.testing.expectEqual(@as(c_int, -1), lnako_aot_index_set(&values[0], &values[1], &values[2]));
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    var taken: Value = .{};
+    lnako_aot_exception_take(&taken);
+    const utf8 = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, taken.object().?.payload.utf16_string);
+    defer std.testing.allocator.free(utf8);
+    try std.testing.expectEqualStrings("Cannot set properties of null (setting '0')", utf8);
 }
 
 test "ルートフレームをLIFOで連結する" {

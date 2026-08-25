@@ -93,6 +93,10 @@
     "source": "A=1\nA[0]=2\nAを表示\nB=はい\nB[0]=2\nBを表示\nC=「abc」\nC[0]=「x」\nCを表示\nD=1n\nD[0]=2\nDを表示\nNULLを反復\n「到達不可」を表示\nここまで\nはいを反復\n「到達不可」を表示\nここまで\n1nを反復\n「到達不可」を表示\nここまで\nF=関数()それは1;ここまで\nFを反復\n「到達不可」を表示\nここまで\n「後」を表示\n"
   },
   {
+    "id": "native-nullish-index-assignment-exception",
+    "source": "エラー監視\nNULL[0]=2\n「到達不可」を表示\nエラーならば\nエラーメッセージを表示\nここまで\nA=undefined\nエラー監視\nA[「x」]=2\n「到達不可」を表示\nエラーならば\nエラーメッセージを表示\nここまで\n「後」を表示\n"
+  },
+  {
     "id": "native-repeat-break",
     "source": "5回\n回数を表示\nもし、回数=3ならば、抜ける\nここまで\n"
   },

@@ -588,35 +588,35 @@ const Emitter = struct {
     fn writeIndexSet(self: *Emitter, locals: []const []const u8, instruction: ir.Instruction, scope: usize) !void {
         if (instruction.operands.len < 2) return error.InvalidIndexAssignment;
         const temporary = self.next_metadata;
+        const literal_tag: ?u8 = if (std.mem.eql(u8, instruction.name, "NULL")) 1 else if (std.mem.eql(u8, instruction.name, "undefined")) 0 else null;
+        if (literal_tag) |tag| {
+            try self.output.writer.print("  store %lnako.Value {{ i8 {d}, i64 0 }}, ptr %runtime.scratch", .{tag});
+            try self.debugSuffix(instruction.span, scope);
+        }
         try self.output.writer.print("  %set.container.{d} = load %lnako.Value, ptr ", .{temporary});
-        if (nameIndex(locals, instruction.name)) |index| {
-            try self.output.writer.print("%local.{d}", .{index});
-        } else if (self.globalIndex(instruction.name)) |index| {
-            try self.output.writer.print("@lnako.global.{d}", .{index});
-        } else return error.UnknownAssignmentContainer;
+        try self.writeAssignmentContainerPointer(locals, instruction.name, literal_tag != null);
         try self.debugSuffix(instruction.span, scope);
         for (instruction.operands[1 .. instruction.operands.len - 1], 0..) |key, index| {
             try self.output.writer.writeAll("  call void @lnako_aot_index_get(ptr %runtime.scratch, ptr ");
             if (index == 0) {
-                if (nameIndex(locals, instruction.name)) |local_index| {
-                    try self.output.writer.print("%local.{d}", .{local_index});
-                } else if (self.globalIndex(instruction.name)) |global_index| {
-                    try self.output.writer.print("@lnako.global.{d}", .{global_index});
-                } else return error.UnknownAssignmentContainer;
+                try self.writeAssignmentContainerPointer(locals, instruction.name, literal_tag != null);
             } else try self.output.writer.writeAll("%runtime.scratch");
             try self.output.writer.print(", ptr %root.slot.{d})", .{key});
             try self.debugSuffix(instruction.span, scope);
         }
         try self.output.writer.print("  %set.status.{d} = call i32 @lnako_aot_index_set(ptr ", .{temporary});
         if (instruction.operands.len == 2) {
-            if (nameIndex(locals, instruction.name)) |local_index| {
-                try self.output.writer.print("%local.{d}", .{local_index});
-            } else if (self.globalIndex(instruction.name)) |global_index| {
-                try self.output.writer.print("@lnako.global.{d}", .{global_index});
-            } else return error.UnknownAssignmentContainer;
+            try self.writeAssignmentContainerPointer(locals, instruction.name, literal_tag != null);
         } else try self.output.writer.writeAll("%runtime.scratch");
         try self.output.writer.print(", ptr %root.slot.{d}, ptr %root.slot.{d})", .{ instruction.operands[instruction.operands.len - 1], instruction.operands[0] });
         try self.debugSuffix(instruction.span, scope);
+    }
+
+    fn writeAssignmentContainerPointer(self: *Emitter, locals: []const []const u8, name: []const u8, literal: bool) !void {
+        if (literal) return self.output.writer.writeAll("%runtime.scratch");
+        if (nameIndex(locals, name)) |index| return self.output.writer.print("%local.{d}", .{index});
+        if (self.globalIndex(name)) |index| return self.output.writer.print("@lnako.global.{d}", .{index});
+        return error.UnknownAssignmentContainer;
     }
 
     fn writeIteratorBegin(self: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
