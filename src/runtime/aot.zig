@@ -1332,6 +1332,87 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             };
         },
+        .subtract, .multiply, .divide, .remainder => {
+            if (len < 2) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            const operator: Arithmetic = switch (command) {
+                .subtract => .subtract,
+                .multiply => .multiply,
+                .divide => .divide,
+                .remainder => .remainder,
+                else => unreachable,
+            };
+            out.* = arithmetic(runtime, operator, arguments.?[0], arguments.?[1]) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .square => {
+            out.* = arithmetic(runtime, .multiply, value, value) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .power_number => {
+            if (len < 2) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            const left = valueToNumberRuntime(runtime, arguments.?[0]) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+            const right = valueToNumberRuntime(runtime, arguments.?[1]) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+            out.* = numberValue(std.math.pow(f64, left, right));
+        },
+        .is_even, .is_odd => {
+            const integer = parseIntBuiltin(runtime, value) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+            const expected: f64 = if (command == .is_even) 0 else 1;
+            out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(@rem(integer, 2) == expected) };
+        },
+        .greater_equal, .less_equal, .less, .greater, .strict_equal, .strict_not_equal => {
+            if (len < 2) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            const comparison: Comparison = switch (command) {
+                .greater_equal => .greater_equal,
+                .less_equal => .less_equal,
+                .less => .less,
+                .greater => .greater,
+                .strict_equal => .strict_equal,
+                .strict_not_equal => .strict_not_equal,
+                else => unreachable,
+            };
+            const result = compareValues(runtime, comparison, arguments.?[0], arguments.?[1]) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+            out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(result) };
+        },
+        .in_range => {
+            if (len < 3) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            const lower = compareValues(runtime, .greater_equal, arguments.?[0], arguments.?[1]) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+            const upper = compareValues(runtime, .less_equal, arguments.?[0], arguments.?[2]) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+            out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(lower and upper) };
+        },
     }
 }
 
@@ -1620,6 +1701,30 @@ test "AOTビット命令はNumberの32bit化とBigInt演算を区別する" {
     const bigint_text = try roots[7].object().?.payload.bigint.toString(std.testing.allocator, 10);
     defer std.testing.allocator.free(bigint_text);
     try std.testing.expectEqualStrings("-1", bigint_text);
+}
+
+test "AOT算術比較命令は奇数の符号とNumber限定べき乗を保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ numberValue(-3), .{}, numberValue(2), numberValue(8), .{}, numberValue(2), numberValue(1), numberValue(3), .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.is_odd));
+    try std.testing.expectEqual(@as(u64, 0), roots[1].payload);
+    lnako_aot_builtin_call(&roots[4], @ptrCast(&roots[2]), 2, @intFromEnum(aot_builtin.Command.power_number));
+    try std.testing.expectEqual(@as(f64, 256), @as(f64, @bitCast(roots[4].payload)));
+    lnako_aot_builtin_call(&roots[8], @ptrCast(&roots[5]), 3, @intFromEnum(aot_builtin.Command.in_range));
+    try std.testing.expectEqual(@as(u64, 1), roots[8].payload);
+    roots[9] = try active_runtime.?.createBigInt("2n");
+    roots[10] = try active_runtime.?.createBigInt("3n");
+    lnako_aot_builtin_call(&roots[8], @ptrCast(&roots[9]), 2, @intFromEnum(aot_builtin.Command.power_number));
+    try std.testing.expect(active_runtime.?.has_pending_exception);
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {

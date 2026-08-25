@@ -19,6 +19,21 @@ pub const Command = enum(u16) {
     shift_left,
     shift_right,
     shift_right_unsigned,
+    subtract,
+    multiply,
+    divide,
+    remainder,
+    is_even,
+    is_odd,
+    square,
+    power_number,
+    greater_equal,
+    less_equal,
+    less,
+    greater,
+    strict_equal,
+    strict_not_equal,
+    in_range,
 };
 
 pub fn lookup(name: []const u8) ?Command {
@@ -40,6 +55,21 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "SHIFT_L")) return .shift_left;
     if (std.mem.eql(u8, name, "SHIFT_R")) return .shift_right;
     if (std.mem.eql(u8, name, "SHIFT_UR")) return .shift_right_unsigned;
+    if (std.mem.eql(u8, name, "引")) return .subtract;
+    if (std.mem.eql(u8, name, "倍")) return .multiply;
+    if (std.mem.eql(u8, name, "割")) return .divide;
+    if (std.mem.eql(u8, name, "割余")) return .remainder;
+    if (std.mem.eql(u8, name, "偶数")) return .is_even;
+    if (std.mem.eql(u8, name, "奇数")) return .is_odd;
+    if (std.mem.eql(u8, name, "二乗")) return .square;
+    if (std.mem.eql(u8, name, "べき乗")) return .power_number;
+    if (std.mem.eql(u8, name, "以上")) return .greater_equal;
+    if (std.mem.eql(u8, name, "以下")) return .less_equal;
+    if (std.mem.eql(u8, name, "未満")) return .less;
+    if (std.mem.eql(u8, name, "超")) return .greater;
+    if (std.mem.eql(u8, name, "等")) return .strict_equal;
+    if (std.mem.eql(u8, name, "等無")) return .strict_not_equal;
+    if (std.mem.eql(u8, name, "範囲内")) return .in_range;
     return null;
 }
 
@@ -68,5 +98,20 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.shift_left, lookup("SHIFT_L").?);
     try std.testing.expectEqual(Command.shift_right, lookup("SHIFT_R").?);
     try std.testing.expectEqual(Command.shift_right_unsigned, lookup("SHIFT_UR").?);
+    try std.testing.expectEqual(Command.subtract, lookup("引").?);
+    try std.testing.expectEqual(Command.multiply, lookup("倍").?);
+    try std.testing.expectEqual(Command.divide, lookup("割").?);
+    try std.testing.expectEqual(Command.remainder, lookup("割余").?);
+    try std.testing.expectEqual(Command.is_even, lookup("偶数").?);
+    try std.testing.expectEqual(Command.is_odd, lookup("奇数").?);
+    try std.testing.expectEqual(Command.square, lookup("二乗").?);
+    try std.testing.expectEqual(Command.power_number, lookup("べき乗").?);
+    try std.testing.expectEqual(Command.greater_equal, lookup("以上").?);
+    try std.testing.expectEqual(Command.less_equal, lookup("以下").?);
+    try std.testing.expectEqual(Command.less, lookup("未満").?);
+    try std.testing.expectEqual(Command.greater, lookup("超").?);
+    try std.testing.expectEqual(Command.strict_equal, lookup("等").?);
+    try std.testing.expectEqual(Command.strict_not_equal, lookup("等無").?);
+    try std.testing.expectEqual(Command.in_range, lookup("範囲内").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }

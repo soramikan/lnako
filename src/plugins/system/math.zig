@@ -19,7 +19,7 @@ pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Val
     if (eql(name, "偶数")) return .{ .boolean = @rem(try common.parseIntValue(runtime, a, null), 2) == 0 };
     if (eql(name, "奇数")) return .{ .boolean = @rem(try common.parseIntValue(runtime, a, null), 2) == 1 };
     if (eql(name, "二乗")) return try operators.binary(runtime, .multiply, a, a);
-    if (eql(name, "べき乗")) return try operators.binary(runtime, .power, a, b);
+    if (eql(name, "べき乗")) return .{ .number = std.math.pow(f64, try runtime.valueToNumber(a), try runtime.valueToNumber(b)) };
     if (eql(name, "以上")) return try relation(runtime, a, b, .gte);
     if (eql(name, "以下")) return try relation(runtime, a, b, .lte);
     if (eql(name, "未満")) return try relation(runtime, a, b, .lt);
@@ -226,6 +226,8 @@ test "四則・論理・ビット命令を動的値で実行する" {
     try std.testing.expectEqualStrings("あああ", utf8);
     try std.testing.expect((try call(&runtime, "範囲内", &.{ .{ .number = 2 }, .{ .number = 1 }, .{ .number = 3 } })).?.boolean);
     try std.testing.expectEqual(@as(f64, 2147483647), (try call(&runtime, "SHIFT_UR", &.{ .{ .number = -1 }, .{ .number = 1 } })).?.number);
+    try std.testing.expect(!(try call(&runtime, "奇数", &.{.{ .number = -3 }})).?.boolean);
+    try std.testing.expectError(error.CannotConvertBigIntToNumber, call(&runtime, "べき乗", &.{ try runtime.bigIntLiteral("2n"), try runtime.bigIntLiteral("3n") }));
     const sequential = (try call(&runtime, "連続加算", &.{ try runtime.stringUtf8("a"), try runtime.stringUtf8("b"), try runtime.stringUtf8("c") })).?;
     const sequential_utf8 = try sequential.string.toUtf8Lossy(std.testing.allocator);
     defer std.testing.allocator.free(sequential_utf8);
