@@ -41,6 +41,9 @@ pub const Command = enum(u16) {
     logical_and,
     logical_not,
     range,
+    empty_array,
+    empty_dictionary,
+    truth_label,
 };
 
 pub fn lookup(name: []const u8) ?Command {
@@ -84,6 +87,9 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "論理AND")) return .logical_and;
     if (std.mem.eql(u8, name, "論理NOT")) return .logical_not;
     if (std.mem.eql(u8, name, "範囲")) return .range;
+    if (std.mem.eql(u8, name, "空配列")) return .empty_array;
+    if (std.mem.eql(u8, name, "空辞書") or std.mem.eql(u8, name, "空ハッシュ") or std.mem.eql(u8, name, "空オブジェクト")) return .empty_dictionary;
+    if (std.mem.eql(u8, name, "真偽判定")) return .truth_label;
     return null;
 }
 
@@ -136,5 +142,10 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.logical_and, lookup("論理AND").?);
     try std.testing.expectEqual(Command.logical_not, lookup("論理NOT").?);
     try std.testing.expectEqual(Command.range, lookup("範囲").?);
+    try std.testing.expectEqual(Command.empty_array, lookup("空配列").?);
+    try std.testing.expectEqual(Command.empty_dictionary, lookup("空辞書").?);
+    try std.testing.expectEqual(Command.empty_dictionary, lookup("空ハッシュ").?);
+    try std.testing.expectEqual(Command.empty_dictionary, lookup("空オブジェクト").?);
+    try std.testing.expectEqual(Command.truth_label, lookup("真偽判定").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }

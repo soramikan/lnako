@@ -1245,11 +1245,15 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
         runtime.setFailure(error.UnknownCommand);
         return;
     };
-    if (arguments == null or len == 0) {
+    if (arguments == null and len != 0) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    const value = arguments.?[0];
+    if (len == 0 and command != .empty_array and command != .empty_dictionary) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const value = if (len > 0) arguments.?[0] else Value{};
     switch (command) {
         .to_string => {
             const units = valueUtf16Alloc(runtime, value) catch |failure| {
@@ -1488,6 +1492,24 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             }
             out.* = rangeBuiltin(runtime, arguments.?[0], arguments.?[1]) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .empty_array => {
+            out.* = runtime.createArray(&.{}) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .empty_dictionary => {
+            out.* = runtime.createDictionary(&.{}) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .truth_label => {
+            out.* = runtime.createString(if (valueTruthy(value)) &.{0x771f} else &.{0x507d}) catch |failure| {
                 runtime.setFailure(failure);
                 return;
             };
@@ -1840,6 +1862,31 @@ test "AOT集約論理範囲命令は動的値と辞書を返す" {
     try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(active_runtime.?.indexGet(roots[9], roots[11]).payload)));
     lnako_aot_builtin_call(&roots[14], @ptrCast(&roots[12]), 2, @intFromEnum(aot_builtin.Command.maximum));
     try std.testing.expect(std.math.isNan(@as(f64, @bitCast(roots[14].payload))));
+}
+
+test "AOT空コレクション命令は独立値を返し真偽判定は日本語ラベルにする" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, numberValue(0), .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+    lnako_aot_builtin_call(&roots[0], null, 0, @intFromEnum(aot_builtin.Command.empty_array));
+    lnako_aot_builtin_call(&roots[1], null, 0, @intFromEnum(aot_builtin.Command.empty_array));
+    try std.testing.expect(roots[0].payload != roots[1].payload);
+    lnako_aot_builtin_call(&roots[2], null, 0, @intFromEnum(aot_builtin.Command.empty_dictionary));
+    lnako_aot_builtin_call(&roots[3], null, 0, @intFromEnum(aot_builtin.Command.empty_dictionary));
+    try std.testing.expect(roots[2].payload != roots[3].payload);
+    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[4]), 1, @intFromEnum(aot_builtin.Command.truth_label));
+    try std.testing.expectEqualSlices(u16, &.{0x507d}, roots[5].object().?.payload.utf16_string);
+    roots[6] = try active_runtime.?.createArray(&.{});
+    lnako_aot_builtin_call(&roots[7], @ptrCast(&roots[6]), 1, @intFromEnum(aot_builtin.Command.truth_label));
+    try std.testing.expectEqualSlices(u16, &.{0x771f}, roots[7].object().?.payload.utf16_string);
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {
