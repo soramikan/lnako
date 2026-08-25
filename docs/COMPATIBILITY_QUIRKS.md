@@ -61,6 +61,12 @@ lnakoは、意図的な非互換として合意した項目を除き、説明文
 根拠は固定オラクルの
 [`core/src/plugin_system_stdio.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_stdio.mts) です。
 
+## 関数呼び出し
+
+| 構文 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID |
+|---|---|---|---|
+| 静的に解決するユーザー関数の引数個数差 | JavaScriptの通常の関数呼び出しと異なり、不足引数を`undefined`で補ったり余分な引数を無視したりしない。定義と呼び出しの個数が違うと、公式コンパイラが実行前に文法エラーとして拒否する | 関数シンボルの形式引数数を意味解析で保持し、直接呼び出しの実引数数が異なる場合は`invalid_argument_count`診断でIR生成前に拒否する | `静的に解決したユーザー関数の引数個数差を拒否する`、`semantic-diagnostic-function-arity-missing`、`semantic-diagnostic-function-arity-extra` |
+
 ## BigInt
 
 | 構文 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID |

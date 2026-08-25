@@ -59,6 +59,8 @@ jobs:
         run: node tools/compare_parser_diagnostics_oracle.mjs
       - name: Differential semantic test
         run: node tools/compare_semantic_oracle.mjs
+      - name: Differential semantic diagnostic test
+        run: node tools/compare_semantic_diagnostics_oracle.mjs
       - name: Differential dynamic value test
         run: node tools/compare_value_oracle.mjs
       - name: Differential interpreter test

@@ -196,6 +196,10 @@ const Analyzer = struct {
         if (name.len == 0) return;
         self.resolution_ambiguous = false;
         if (self.resolveSymbol(module_index, scope, name)) |symbol| {
+            if (callable and (symbol.kind == .function or symbol.kind == .test_function) and node.children.len != symbol.argument_count) {
+                const message = try std.fmt.allocPrint(self.allocator, "関数『{s}』は引数{d}個を必要としますが、{d}個が指定されました", .{ name, symbol.argument_count, node.children.len });
+                try self.addDiagnostic(.invalid_argument_count, node.span, self.modules.items[module_index].path, message);
+            }
             try self.bind(node, if (callable) .call else .reference, name, symbol.qualified_name, symbol.id);
             return;
         }
@@ -370,6 +374,21 @@ test "グローバル・引数・組み込み命令を解決する" {
         found_builtin = true;
     };
     try std.testing.expect(found_builtin);
+}
+
+test "静的に解決したユーザー関数の引数個数差を拒否する" {
+    const parser = @import("../frontend/parser.zig");
+    const source = "●(AとBを)Fとは\nA+Bで戻る\nここまで\nF(1)\nF(1,2,3)\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "arity.nako3");
+    defer parsed.deinit();
+    var program = try analyze(std.testing.allocator, parsed.root.?, "arity.nako3");
+    defer program.deinit();
+    try std.testing.expect(!program.succeeded());
+    var count: usize = 0;
+    for (program.diagnostics) |item| {
+        if (item.code == .invalid_argument_count) count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), count);
 }
 
 test "未定義変数への増減を暗黙のモジュール変数宣言として解決する" {

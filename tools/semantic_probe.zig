@@ -36,6 +36,14 @@ pub fn main(init: std.process.Init) !void {
         }
         try stdout.writeAll("],\"diagnosticCount\":");
         try stdout.print("{d}", .{program.diagnostics.len});
+        if (program.diagnostics.len > 0) {
+            const item = program.diagnostics[0];
+            try stdout.writeAll(",\"firstDiagnostic\":{\"code\":");
+            try std.json.Stringify.value(@tagName(item.code), .{}, stdout);
+            try stdout.writeAll(",\"line\":");
+            try stdout.print("{d}", .{item.span.line});
+            try stdout.writeByte('}');
+        }
         try stdout.writeAll("}\n");
     }
 }

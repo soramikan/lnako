@@ -14,6 +14,7 @@ pub const Code = enum {
     invalid_control_statement,
     duplicate_symbol,
     undefined_symbol,
+    invalid_argument_count,
     assign_to_constant,
     invalid_import,
     import_not_found,

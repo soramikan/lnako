@@ -1,0 +1,10 @@
+[
+  {
+    "id": "semantic-diagnostic-function-arity-missing",
+    "source": "●(AとBを)Fとは\nA+Bで戻る\nここまで\nF(1)\n"
+  },
+  {
+    "id": "semantic-diagnostic-function-arity-extra",
+    "source": "●(AとBを)Fとは\nA+Bで戻る\nここまで\nF(1,2,3)\n"
+  }
+]
