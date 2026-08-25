@@ -6,6 +6,7 @@ const error_message = @import("error_message.zig");
 const unicode_case = @import("unicode_case");
 const number_mod = @import("number.zig");
 const string_mod = @import("string.zig");
+const system_constant = @import("system_constant.zig");
 
 pub const Tag = aot_abi.Tag;
 
@@ -1711,6 +1712,26 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             };
         },
+        .ascii_full_width, .ascii_half_width, .ascii_symbol_full_width, .ascii_symbol_half_width => {
+            const to_full = command == .ascii_full_width or command == .ascii_symbol_full_width;
+            const symbols = command == .ascii_symbol_full_width or command == .ascii_symbol_half_width;
+            out.* = asciiWidthBuiltin(runtime, value, to_full, symbols) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .katakana_full_width, .katakana_half_width => {
+            out.* = kanaWidthBuiltin(runtime, value, command == .katakana_full_width) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .full_width, .half_width => {
+            out.* = widthBuiltin(runtime, value, command == .full_width) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
     }
 }
 
@@ -2325,6 +2346,112 @@ fn kanaOffsetBuiltin(runtime: *Runtime, value: Value, to_katakana: bool) !Value 
         if (unit.* >= first and unit.* <= last) unit.* = @intCast(@as(i32, unit.*) + offset);
     }
     return runtime.ownString(output);
+}
+
+fn asciiWidthBuiltin(runtime: *Runtime, value: Value, to_full: bool, symbols: bool) !Value {
+    const units = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(units);
+    const output = try runtime.allocator.dupe(u16, units);
+    errdefer runtime.allocator.free(output);
+    for (output) |*unit| {
+        if (to_full) {
+            if (symbols and unit.* == 0x20) {
+                unit.* = 0x3000;
+            } else if ((symbols and unit.* >= 0x21 and unit.* <= 0x7e) or
+                (!symbols and ((unit.* >= 'A' and unit.* <= 'Z') or
+                    (unit.* >= 'a' and unit.* <= 'z') or
+                    (unit.* >= '0' and unit.* <= '9'))))
+            {
+                unit.* += 0xfee0;
+            }
+        } else if (symbols and unit.* == 0x3000) {
+            unit.* = 0x20;
+        } else if ((symbols and unit.* >= 0xff00 and unit.* <= 0xff5f) or
+            (!symbols and ((unit.* >= 0xff21 and unit.* <= 0xff3a) or
+                (unit.* >= 0xff41 and unit.* <= 0xff5a) or
+                (unit.* >= 0xff10 and unit.* <= 0xff19))))
+        {
+            unit.* -= 0xfee0;
+        }
+    }
+    return runtime.ownString(output);
+}
+
+fn kanaWidthBuiltin(runtime: *Runtime, value: Value, to_full: bool) !Value {
+    return kanaMapBuiltin(runtime, value, to_full);
+}
+
+fn widthBuiltin(runtime: *Runtime, value: Value, to_full: bool) !Value {
+    // 公式実装と同じく、全角化はカナ→英数記号、半角化もカナ→英数記号の順に行う。
+    var roots = [_]Value{.{}};
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[0] = try kanaMapBuiltin(runtime, value, to_full);
+    return asciiWidthBuiltin(runtime, roots[0], to_full, true);
+}
+
+fn kanaMapBuiltin(runtime: *Runtime, value: Value, to_full: bool) !Value {
+    const source = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(source);
+    const full_utf8 = system_constant.lookupString("全角カナ一覧").?;
+    const full_voiced_utf8 = system_constant.lookupString("全角カナ濁音一覧").?;
+    const half_utf8 = system_constant.lookupString("半角カナ一覧").?;
+    const half_voiced_utf8 = system_constant.lookupString("半角カナ濁音一覧").?;
+    const full = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, full_utf8);
+    defer runtime.allocator.free(full);
+    const half = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, half_utf8);
+    defer runtime.allocator.free(half);
+    const full_voiced = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, full_voiced_utf8);
+    defer runtime.allocator.free(full_voiced);
+    const half_voiced = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, half_voiced_utf8);
+    defer runtime.allocator.free(half_voiced);
+
+    var output: std.ArrayList(u16) = .empty;
+    errdefer output.deinit(runtime.allocator);
+    var index: usize = 0;
+    while (index < source.len) {
+        if (to_full) {
+            const candidate_end = @min(source.len, index + 2);
+            // The official implementation searches the half-width voiced table
+            // with the two-unit candidate. This intentionally also maps a lone
+            // dakuten/handakuten to the first matching voiced kana entry.
+            if (indexOfUnitsBuiltin(half_voiced, source[index..candidate_end], 0)) |position| {
+                try output.append(runtime.allocator, full_voiced[position / 2]);
+                index = candidate_end;
+                continue;
+            }
+            if (unitIndexBuiltin(half, source[index])) |half_index| {
+                if (half_index < full.len) try output.append(runtime.allocator, full[half_index]);
+            } else {
+                try output.append(runtime.allocator, source[index]);
+            }
+        } else if (unitIndexBuiltin(full, source[index])) |full_index| {
+            try output.append(runtime.allocator, half[full_index]);
+        } else if (unitIndexBuiltin(full_voiced, source[index])) |voiced_index| {
+            try output.append(runtime.allocator, half_voiced[voiced_index * 2]);
+            try output.append(runtime.allocator, half_voiced[voiced_index * 2 + 1]);
+        } else {
+            try output.append(runtime.allocator, source[index]);
+        }
+        index += 1;
+    }
+    return runtime.ownString(try output.toOwnedSlice(runtime.allocator));
+}
+
+fn unitIndexBuiltin(units: []const u16, needle: u16) ?usize {
+    for (units, 0..) |unit, index| if (unit == needle) return index;
+    return null;
+}
+
+fn indexOfUnitsBuiltin(haystack: []const u16, needle: []const u16, start: usize) ?usize {
+    if (needle.len == 0) return @min(start, haystack.len);
+    if (start > haystack.len or needle.len > haystack.len - start) return null;
+    var index = start;
+    while (index + needle.len <= haystack.len) : (index += 1) {
+        if (std.mem.eql(u16, haystack[index .. index + needle.len], needle)) return index;
+    }
+    return null;
 }
 
 fn replaceBuiltin(runtime: *Runtime, source_value: Value, needle_value: Value, replacement_value: Value, all: bool) !Value {
@@ -3030,6 +3157,47 @@ test "AOT置換命令は全置換の空検索と単置換の置換パターン�
     const undefined_first_replacement = [_]Value{ staticStringValue("x-x"), staticStringValue("x"), .{} };
     lnako_aot_builtin_call(&roots[5], &undefined_first_replacement, undefined_first_replacement.len, @intFromEnum(aot_builtin.Command.replace_first));
     try std.testing.expectEqualSlices(u16, &.{ 'u', 'n', 'd', 'e', 'f', 'i', 'n', 'e', 'd', '-', 'x' }, roots[5].object().?.payload.utf16_string);
+}
+
+test "AOT幅変換は英数記号とカナの合成順序および公式の濁点端挙動を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    const ascii_full = [_]Value{staticStringValue("Az09!")};
+    lnako_aot_builtin_call(&roots[0], &ascii_full, ascii_full.len, @intFromEnum(aot_builtin.Command.ascii_full_width));
+    try std.testing.expectEqualSlices(u16, &.{ 0xff21, 0xff5a, 0xff10, 0xff19, '!' }, roots[0].object().?.payload.utf16_string);
+    const symbols_full = [_]Value{staticStringValue("A 1!")};
+    lnako_aot_builtin_call(&roots[1], &symbols_full, symbols_full.len, @intFromEnum(aot_builtin.Command.ascii_symbol_full_width));
+    try std.testing.expectEqualSlices(u16, &.{ 0xff21, 0x3000, 0xff11, 0xff01 }, roots[1].object().?.payload.utf16_string);
+    const symbols_half = [_]Value{staticStringValue("Ａ　１！")};
+    lnako_aot_builtin_call(&roots[2], &symbols_half, symbols_half.len, @intFromEnum(aot_builtin.Command.ascii_symbol_half_width));
+    try std.testing.expectEqualSlices(u16, &.{ 'A', ' ', '1', '!' }, roots[2].object().?.payload.utf16_string);
+
+    const kana_full = [_]Value{staticStringValue("ｶﾞｯﾂ")};
+    lnako_aot_builtin_call(&roots[3], &kana_full, kana_full.len, @intFromEnum(aot_builtin.Command.katakana_full_width));
+    try std.testing.expectEqualSlices(u16, &.{ 0x30ac, 0x30c3, 0x30c5 }, roots[3].object().?.payload.utf16_string);
+    const kana_half = [_]Value{staticStringValue("ガッツ")};
+    lnako_aot_builtin_call(&roots[4], &kana_half, kana_half.len, @intFromEnum(aot_builtin.Command.katakana_half_width));
+    try std.testing.expectEqualSlices(u16, &.{ 0xff76, 0xff9e, 0xff6f, 0xff82 }, roots[4].object().?.payload.utf16_string);
+    const odd_voiced = [_]Value{staticStringValue("ｶﾞﾊﾟﾞﾟ")};
+    lnako_aot_builtin_call(&roots[5], &odd_voiced, odd_voiced.len, @intFromEnum(aot_builtin.Command.katakana_full_width));
+    try std.testing.expectEqualSlices(u16, &.{ 0x30ac, 0x30d1, 0x30d1 }, roots[5].object().?.payload.utf16_string);
+
+    const full = [_]Value{staticStringValue("A ｶﾞ!")};
+    lnako_aot_builtin_call(&roots[6], &full, full.len, @intFromEnum(aot_builtin.Command.full_width));
+    try std.testing.expectEqualSlices(u16, &.{ 0xff21, 0x3000, 0x30ac, 0xff01 }, roots[6].object().?.payload.utf16_string);
+    const half = [_]Value{staticStringValue("Ａ　ガ！")};
+    lnako_aot_builtin_call(&roots[7], &half, half.len, @intFromEnum(aot_builtin.Command.half_width));
+    try std.testing.expectEqualSlices(u16, &.{ 'A', ' ', 0xff76, 0xff9e, '!' }, roots[7].object().?.payload.utf16_string);
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {

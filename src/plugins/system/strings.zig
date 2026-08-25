@@ -622,7 +622,9 @@ fn mapKana(runtime: *Runtime, source: Value, to_full: bool) !Value {
         }
         const unit = source_units[index];
         if (to_full) {
-            if (unitIndex(half, unit)) |position| try output.append(runtime.allocator(), full[position]) else try output.append(runtime.allocator(), unit);
+            if (unitIndex(half, unit)) |position| {
+                if (position < full.len) try output.append(runtime.allocator(), full[position]);
+            } else try output.append(runtime.allocator(), unit);
         } else if (unitIndex(full, unit)) |position| {
             try output.append(runtime.allocator(), half[position]);
         } else if (unitIndex(full_voiced, unit)) |position| {

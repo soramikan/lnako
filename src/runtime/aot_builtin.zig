@@ -78,6 +78,14 @@ pub const Command = enum(u16) {
     lowercase,
     hiragana,
     katakana,
+    ascii_full_width,
+    ascii_half_width,
+    ascii_symbol_full_width,
+    ascii_symbol_half_width,
+    katakana_full_width,
+    katakana_half_width,
+    full_width,
+    half_width,
 };
 
 pub fn lookup(name: []const u8) ?Command {
@@ -158,6 +166,14 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "小文字変換")) return .lowercase;
     if (std.mem.eql(u8, name, "平仮名変換")) return .hiragana;
     if (std.mem.eql(u8, name, "カタカナ変換")) return .katakana;
+    if (std.mem.eql(u8, name, "英数全角変換")) return .ascii_full_width;
+    if (std.mem.eql(u8, name, "英数半角変換")) return .ascii_half_width;
+    if (std.mem.eql(u8, name, "英数記号全角変換")) return .ascii_symbol_full_width;
+    if (std.mem.eql(u8, name, "英数記号半角変換")) return .ascii_symbol_half_width;
+    if (std.mem.eql(u8, name, "カタカナ全角変換")) return .katakana_full_width;
+    if (std.mem.eql(u8, name, "カタカナ半角変換")) return .katakana_half_width;
+    if (std.mem.eql(u8, name, "全角変換")) return .full_width;
+    if (std.mem.eql(u8, name, "半角変換")) return .half_width;
     return null;
 }
 
@@ -257,5 +273,13 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.lowercase, lookup("小文字変換").?);
     try std.testing.expectEqual(Command.hiragana, lookup("平仮名変換").?);
     try std.testing.expectEqual(Command.katakana, lookup("カタカナ変換").?);
+    try std.testing.expectEqual(Command.ascii_full_width, lookup("英数全角変換").?);
+    try std.testing.expectEqual(Command.ascii_half_width, lookup("英数半角変換").?);
+    try std.testing.expectEqual(Command.ascii_symbol_full_width, lookup("英数記号全角変換").?);
+    try std.testing.expectEqual(Command.ascii_symbol_half_width, lookup("英数記号半角変換").?);
+    try std.testing.expectEqual(Command.katakana_full_width, lookup("カタカナ全角変換").?);
+    try std.testing.expectEqual(Command.katakana_half_width, lookup("カタカナ半角変換").?);
+    try std.testing.expectEqual(Command.full_width, lookup("全角変換").?);
+    try std.testing.expectEqual(Command.half_width, lookup("半角変換").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }
