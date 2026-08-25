@@ -2354,6 +2354,28 @@ test "文字列連結反復出現は公式のnullと小数と空区切りを扱�
     try std.testing.expectEqualStrings("a1\nxxx\n\n1\n-1\n", host.written());
 }
 
+test "部分文字列命令は数値小数と文字列小数と位置0を区別する" {
+    const source =
+        "文字抜出(\"A😀BCD\",2.9,2.9)を表示\n" ++
+        "文字抜出(\"A😀BCD\",\"2.9\",\"2.9\")を表示\n" ++
+        "文字抜出(\"ABCDE\",0,2)を表示\n" ++
+        "LEFT(\"A😀BCD\",2.9)を表示\n" ++
+        "RIGHT(\"A😀BCD\",2.9)を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("😀BC\n😀B\n\nA😀\nBCD\n", host.written());
+}
+
 test "連続する例外監視で直前の捕捉値を再利用しない" {
     const source =
         "エラー監視\nA=1n+1\nエラーならば\nエラーメッセージを表示\nここまで\n" ++

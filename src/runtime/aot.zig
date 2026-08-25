@@ -1654,6 +1654,17 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 }));
             }
         },
+        .substring_mid, .substring_left, .substring_right => {
+            const required: usize = if (command == .substring_mid) 3 else 2;
+            if (len < required) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            out.* = substringBuiltin(runtime, command, arguments.?[0..required]) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
     }
 }
 
@@ -2084,6 +2095,49 @@ fn occurrenceCountBuiltin(runtime: *Runtime, source_value: Value, needle_value: 
         start = found + needle.len;
     }
     return count;
+}
+
+fn substringBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    const source = try valueUtf16Alloc(runtime, arguments[0]);
+    defer runtime.allocator.free(source);
+    const length = codePointCount(source);
+    var start: usize = 0;
+    var end: usize = length;
+    switch (command) {
+        .substring_mid => {
+            var start_number = try substringNumberBuiltin(runtime, arguments[1]);
+            const count_number = try substringNumberBuiltin(runtime, arguments[2]);
+            if (count_number <= 0) return runtime.createString(&.{});
+            if (start_number < 0) {
+                start_number = @as(f64, @floatFromInt(length)) + start_number + 1;
+                if (start_number < 0) start_number = 1;
+            }
+            start = sliceIndexBuiltin(start_number - 1, length);
+            end = sliceIndexBuiltin(start_number + count_number - 1, length);
+            if (end <= start) return runtime.createString(&.{});
+        },
+        .substring_left => end = sliceIndexBuiltin(try valueToNumberRuntime(runtime, arguments[1]), length),
+        .substring_right => {
+            var index_number = @as(f64, @floatFromInt(length)) - try valueToNumberRuntime(runtime, arguments[1]);
+            if (index_number < 0) index_number = 0;
+            start = sliceIndexBuiltin(index_number, length);
+        },
+        else => unreachable,
+    }
+    return runtime.createString(source[codePointOffsetBuiltin(source, start)..codePointOffsetBuiltin(source, end)]);
+}
+
+fn substringNumberBuiltin(runtime: *Runtime, value: Value) !f64 {
+    return if (isString(value)) parseIntBuiltin(runtime, value) else valueToNumberRuntime(runtime, value);
+}
+
+fn sliceIndexBuiltin(number: f64, length: usize) usize {
+    if (std.math.isNan(number) or number == 0) return 0;
+    const length_number: f64 = @floatFromInt(length);
+    if (number >= length_number) return length;
+    if (number <= -length_number) return 0;
+    if (number < 0) return length - @as(usize, @intFromFloat(-@trunc(number)));
+    return @intFromFloat(@trunc(number));
 }
 
 test "UTF-16文字列をルートから正確にmark-and-sweepする" {
@@ -2599,6 +2653,36 @@ test "AOT文字列連結分解反復出現命令は公式の型変換を保つ" 
     const emoji_count_arguments = [_]Value{ staticStringValue("😀"), staticStringValue("") };
     lnako_aot_builtin_call(&roots[7], &emoji_count_arguments, emoji_count_arguments.len, @intFromEnum(aot_builtin.Command.occurrence_count));
     try std.testing.expectEqual(@as(f64, 1), valueToNumber(roots[7]));
+}
+
+test "AOT部分文字列命令は数値小数と文字列小数を区別する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    const numeric_mid = [_]Value{ staticStringValue("A😀BCD"), numberValue(2.9), numberValue(2.9) };
+    lnako_aot_builtin_call(&roots[0], &numeric_mid, numeric_mid.len, @intFromEnum(aot_builtin.Command.substring_mid));
+    try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00, 'B', 'C' }, roots[0].object().?.payload.utf16_string);
+    const string_mid = [_]Value{ staticStringValue("A😀BCD"), staticStringValue("2.9"), staticStringValue("2.9") };
+    lnako_aot_builtin_call(&roots[1], &string_mid, string_mid.len, @intFromEnum(aot_builtin.Command.substring_mid));
+    try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00, 'B' }, roots[1].object().?.payload.utf16_string);
+    const zero_mid = [_]Value{ staticStringValue("ABCDE"), numberValue(0), numberValue(2) };
+    lnako_aot_builtin_call(&roots[2], &zero_mid, zero_mid.len, @intFromEnum(aot_builtin.Command.substring_mid));
+    try std.testing.expectEqual(@as(usize, 0), roots[2].object().?.payload.utf16_string.len);
+    const left_arguments = [_]Value{ staticStringValue("A😀BCD"), numberValue(2.9) };
+    lnako_aot_builtin_call(&roots[3], &left_arguments, left_arguments.len, @intFromEnum(aot_builtin.Command.substring_left));
+    try std.testing.expectEqualSlices(u16, &.{ 'A', 0xd83d, 0xde00 }, roots[3].object().?.payload.utf16_string);
+    const right_arguments = [_]Value{ staticStringValue("A😀BCD"), numberValue(2.9) };
+    lnako_aot_builtin_call(&roots[4], &right_arguments, right_arguments.len, @intFromEnum(aot_builtin.Command.substring_right));
+    try std.testing.expectEqualSlices(u16, &.{ 'B', 'C', 'D' }, roots[4].object().?.payload.utf16_string);
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {

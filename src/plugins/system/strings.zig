@@ -329,29 +329,33 @@ fn repeat(runtime: *Runtime, value: Value, count_value: Value) !Value {
 
 fn mid(runtime: *Runtime, source: Value, start_value: Value, count_value: Value) !Value {
     const units = (try text(runtime, source)).units;
-    const count_number = try common.parseIntValue(runtime, count_value, null);
-    if (std.math.isNan(count_number) or count_number <= 0) return runtime.stringUtf8("");
-    var start_number = try common.parseIntValue(runtime, start_value, null);
+    const count_number = try substringNumber(runtime, count_value);
+    if (count_number <= 0) return runtime.stringUtf8("");
+    var start_number = try substringNumber(runtime, start_value);
     const length = codePointCount(units);
-    if (start_number < 0) start_number = @as(f64, @floatFromInt(length)) + start_number + 1;
-    const start = if (std.math.isNan(start_number) or start_number <= 1) @as(usize, 0) else safeUsize(@trunc(start_number) - 1);
-    const end = @min(length, start + safeUsize(@trunc(count_number)));
+    if (start_number < 0) {
+        start_number = @as(f64, @floatFromInt(length)) + start_number + 1;
+        if (start_number < 0) start_number = 1;
+    }
+    const start = sliceIndex(start_number - 1, length);
+    const end = sliceIndex(start_number + count_number - 1, length);
+    if (end <= start) return runtime.stringUtf8("");
     return runtime.stringCodeUnits(units[codePointOffset(units, start)..codePointOffset(units, end)]);
 }
 
 fn left(runtime: *Runtime, source: Value, count_value: Value) !Value {
     const units = (try text(runtime, source)).units;
-    const count_number = try common.parseIntValue(runtime, count_value, null);
-    const count = if (std.math.isNan(count_number) or count_number <= 0) @as(usize, 0) else safeUsize(@trunc(count_number));
+    const count = sliceIndex(try runtime.valueToNumber(count_value), codePointCount(units));
     return runtime.stringCodeUnits(units[0..codePointOffset(units, count)]);
 }
 
 fn right(runtime: *Runtime, source: Value, count_value: Value) !Value {
     const units = (try text(runtime, source)).units;
-    const count_number = try common.parseIntValue(runtime, count_value, null);
-    const count = if (std.math.isNan(count_number) or count_number <= 0) @as(usize, 0) else safeUsize(@trunc(count_number));
     const length = codePointCount(units);
-    return runtime.stringCodeUnits(units[codePointOffset(units, length -| count)..]);
+    var index_number = @as(f64, @floatFromInt(length)) - try runtime.valueToNumber(count_value);
+    if (index_number < 0) index_number = 0;
+    const index = sliceIndex(index_number, length);
+    return runtime.stringCodeUnits(units[codePointOffset(units, index)..]);
 }
 
 fn splitAll(runtime: *Runtime, source: Value, separator: Value) !Value {
@@ -719,6 +723,19 @@ fn safeUsize(number: f64) usize {
 fn collectionIndex(number: f64, length: usize) usize {
     if (std.math.isNan(number) or number <= 0) return 0;
     if (!std.math.isFinite(number) or number >= @as(f64, @floatFromInt(length))) return length;
+    return @intFromFloat(@trunc(number));
+}
+
+fn substringNumber(runtime: *Runtime, value: Value) !f64 {
+    return if (value == .string) common.parseIntValue(runtime, value, null) else runtime.valueToNumber(value);
+}
+
+fn sliceIndex(number: f64, length: usize) usize {
+    if (std.math.isNan(number) or number == 0) return 0;
+    const length_number: f64 = @floatFromInt(length);
+    if (number >= length_number) return length;
+    if (number <= -length_number) return 0;
+    if (number < 0) return length - @as(usize, @intFromFloat(-@trunc(number)));
     return @intFromFloat(@trunc(number));
 }
 
