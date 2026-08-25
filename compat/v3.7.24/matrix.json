@@ -5731,7 +5731,9 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-table"
+        "plugin-system-table",
+        "native-system-table-transform-commands",
+        "native-system-table-transpose-null-row-error"
       ],
       "platforms": [
         "macos-aarch64",
@@ -5757,7 +5759,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-table"
+        "plugin-system-table",
+        "native-system-table-transform-commands"
       ],
       "platforms": [
         "macos-aarch64",
@@ -5783,7 +5786,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-table"
+        "plugin-system-table",
+        "native-system-table-transform-commands"
       ],
       "platforms": [
         "macos-aarch64",
@@ -5837,7 +5841,9 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-table"
+        "plugin-system-table",
+        "native-system-table-transform-commands",
+        "native-system-table-insert-bigint-index-error"
       ],
       "platforms": [
         "macos-aarch64",
@@ -5863,7 +5869,9 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-table"
+        "plugin-system-table",
+        "native-system-table-transform-commands",
+        "native-system-table-delete-bigint-index-error"
       ],
       "platforms": [
         "macos-aarch64",
@@ -5889,7 +5897,9 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-table"
+        "plugin-system-table",
+        "native-system-table-transform-commands",
+        "native-system-table-column-sum-bigint-error"
       ],
       "platforms": [
         "macos-aarch64",

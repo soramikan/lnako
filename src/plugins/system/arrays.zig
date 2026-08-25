@@ -799,7 +799,7 @@ fn tableRowCount(source: Value) !Value {
 
 fn transpose(runtime: *Runtime, source: Value, rotate: bool) !Value {
     if (source != .array) return error.ArrayExpected;
-    var rooted = [3]Value{ source, .undefined, .undefined };
+    var rooted = [4]Value{ source, .undefined, .undefined, .undefined };
     var roots = runtime.rootFrame();
     defer roots.deinit();
     for (&rooted) |*root| try roots.protect(root);
@@ -814,8 +814,9 @@ fn transpose(runtime: *Runtime, source: Value, rotate: bool) !Value {
         for (0..rooted[0].array.len()) |offset| {
             const row_index = if (rotate) rooted[0].array.len() - offset - 1 else offset;
             const row = rooted[0].array.get(row_index);
-            const cell = if (row == .array and column < row.array.len()) row.array.get(column) else if (rotate) .undefined else try runtime.stringUtf8("");
-            _ = try row_result.array.push(cell);
+            rooted[3] = try indexed(runtime, row, .{ .number = @floatFromInt(column) });
+            if (!rotate and rooted[3] == .undefined) rooted[3] = try runtime.stringUtf8("");
+            _ = try row_result.array.push(rooted[3]);
         }
         _ = try rooted[2].array.push(row_result);
     }
@@ -831,20 +832,20 @@ fn tableIterationCount(runtime: *Runtime, value: Value) !usize {
 
 fn tableUnique(runtime: *Runtime, source: Value, column: Value) !Value {
     if (source != .array) return error.ArrayExpected;
-    var result = try runtime.createArray();
-    var seen = try runtime.createDictionary();
+    var rooted = [5]Value{ source, column, .undefined, .undefined, .undefined };
     var roots = runtime.rootFrame();
     defer roots.deinit();
-    try roots.protect(&result);
-    try roots.protect(&seen);
-    for (source.array.items.items) |row| {
-        const key = try runtime.valueToString(try indexed(runtime, row, column));
-        if (!seen.dictionary.has(key.string)) {
-            try seen.dictionary.set(key.string, .{ .boolean = true });
-            _ = try result.array.push(row);
+    for (&rooted) |*root| try roots.protect(root);
+    rooted[2] = try runtime.createArray();
+    rooted[3] = try runtime.createDictionary();
+    for (rooted[0].array.items.items) |row| {
+        rooted[4] = try runtime.valueToString(try indexed(runtime, row, rooted[1]));
+        if (!isObjectPrototypeKey(rooted[4].string.units) and !rooted[3].dictionary.has(rooted[4].string)) {
+            try rooted[3].dictionary.set(rooted[4].string, .{ .boolean = true });
+            _ = try rooted[2].array.push(row);
         }
     }
-    return result;
+    return rooted[2];
 }
 
 fn tableColumn(runtime: *Runtime, source: Value, column: Value) !Value {
@@ -859,49 +860,100 @@ fn tableColumn(runtime: *Runtime, source: Value, column: Value) !Value {
 }
 
 fn tableInsertColumn(runtime: *Runtime, source: Value, column_value: Value, values: Value) !Value {
-    if (source != .array or values != .array) return error.ArrayExpected;
-    const column = spliceIndex(try runtime.valueToNumber(column_value), std.math.maxInt(usize));
-    var result = try runtime.createArray();
+    if (source != .array) return error.ArrayExpected;
+    var rooted = [6]Value{ source, column_value, values, .undefined, .undefined, .undefined };
     var roots = runtime.rootFrame();
     defer roots.deinit();
-    try roots.protect(&result);
-    for (source.array.items.items, 0..) |row, index| {
-        if (row != .array) return error.ArrayExpected;
-        var new_row = try runtime.createArray();
-        try roots.protect(&new_row);
-        const insertion = @min(column, row.array.len());
-        for (row.array.items.items[0..insertion]) |item| _ = try new_row.array.push(item);
-        _ = try new_row.array.push(values.array.get(index));
-        for (row.array.items.items[insertion..]) |item| _ = try new_row.array.push(item);
-        _ = try result.array.push(new_row);
+    for (&rooted) |*root| try roots.protect(root);
+    rooted[3] = try runtime.createArray();
+    if (rooted[0].array.len() == 0) return rooted[3];
+    const positive_order = try operators.compare(runtime, rooted[1], .{ .number = 0 });
+    const positive = positive_order != null and positive_order.? == .gt;
+    for (rooted[0].array.items.items, 0..) |row, index| {
+        rooted[4] = try runtime.createArray();
+        if (row == .array) {
+            if (positive) {
+                const prefix = spliceIndex(try runtime.valueToNumber(rooted[1]), row.array.len());
+                for (row.array.items.items[0..prefix]) |item| _ = try rooted[4].array.push(item);
+            }
+            rooted[5] = if (rooted[2] == .array) rooted[2].array.get(index) else try indexed(runtime, rooted[2], .{ .number = @floatFromInt(index) });
+            _ = try rooted[4].array.push(rooted[5]);
+            const suffix = spliceIndex(try runtime.valueToNumber(rooted[1]), row.array.len());
+            for (row.array.items.items[suffix..]) |item| _ = try rooted[4].array.push(item);
+        } else if (row == .string) {
+            if (positive) {
+                const prefix = spliceIndex(try runtime.valueToNumber(rooted[1]), row.string.len());
+                rooted[5] = try runtime.stringCodeUnits(row.string.units[0..prefix]);
+                _ = try rooted[4].array.push(rooted[5]);
+            }
+            rooted[5] = if (rooted[2] == .array) rooted[2].array.get(index) else try indexed(runtime, rooted[2], .{ .number = @floatFromInt(index) });
+            _ = try rooted[4].array.push(rooted[5]);
+            const suffix = spliceIndex(try runtime.valueToNumber(rooted[1]), row.string.len());
+            rooted[5] = try runtime.stringCodeUnits(row.string.units[suffix..]);
+            _ = try rooted[4].array.push(rooted[5]);
+        } else return error.ArrayExpected;
+        _ = try rooted[3].array.push(rooted[4]);
     }
-    return result;
+    return rooted[3];
+}
+
+fn isObjectPrototypeKey(units: []const u16) bool {
+    const keys = [_][]const u8{
+        "constructor",
+        "__defineGetter__",
+        "__defineSetter__",
+        "hasOwnProperty",
+        "__lookupGetter__",
+        "__lookupSetter__",
+        "isPrototypeOf",
+        "propertyIsEnumerable",
+        "toString",
+        "valueOf",
+        "__proto__",
+        "toLocaleString",
+    };
+    for (keys) |key| {
+        if (units.len != key.len) continue;
+        var matches = true;
+        for (units, key) |unit, byte| if (unit != byte) {
+            matches = false;
+            break;
+        };
+        if (matches) return true;
+    }
+    return false;
 }
 
 fn tableDeleteColumn(runtime: *Runtime, source: Value, column_value: Value) !Value {
     if (source != .array) return error.ArrayExpected;
-    var result = try runtime.createArray();
+    var rooted = [4]Value{ source, column_value, .undefined, .undefined };
     var roots = runtime.rootFrame();
     defer roots.deinit();
-    try roots.protect(&result);
-    for (source.array.items.items) |row| {
+    for (&rooted) |*root| try roots.protect(root);
+    rooted[2] = try runtime.createArray();
+    for (rooted[0].array.items.items) |row| {
         if (row != .array) return error.ArrayExpected;
-        var new_row = try runtime.createArray();
-        try roots.protect(&new_row);
-        const column = spliceIndex(try runtime.valueToNumber(column_value), row.array.len());
+        rooted[3] = try runtime.createArray();
+        const column = spliceIndex(try runtime.valueToNumber(rooted[1]), row.array.len());
         for (row.array.items.items, 0..) |item, index| {
-            if (index != column) _ = try new_row.array.push(item);
+            if (index != column) _ = try rooted[3].array.push(item);
         }
-        _ = try result.array.push(new_row);
+        _ = try rooted[2].array.push(rooted[3]);
     }
-    return result;
+    return rooted[2];
 }
 
 fn tableColumnSum(runtime: *Runtime, source: Value, column: Value) !Value {
     if (source != .array) return error.ArrayExpected;
-    var result: Value = .{ .number = 0 };
-    for (source.array.items.items) |row| result = try operators.binary(runtime, .add, result, try indexed(runtime, row, column));
-    return result;
+    var rooted = [4]Value{ source, column, .{ .number = 0 }, .undefined };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    for (&rooted) |*root| try roots.protect(root);
+    for (rooted[0].array.items.items) |row| {
+        rooted[3] = try indexed(runtime, row, rooted[1]);
+        rooted[2] = try operators.binary(runtime, .add, rooted[2], rooted[3]);
+    }
+    return rooted[2];
 }
 
 fn tableRegexpSearch(runtime: *Runtime, source: Value, row_value: Value, column: Value, pattern: Value) !Value {
@@ -1256,6 +1308,66 @@ test "表検索系はlengthとraw開始値の型を保持する" {
     var array_buffer = try runtime.createArrayBuffer(&.{ 85, 9 });
     try roots.protect(&array_buffer);
     try std.testing.expect((try indexed(&runtime, array_buffer, length_key)) == .undefined);
+}
+
+test "表変換系はGCストレス下で文字列行とJSキー規則を保持する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var text_row = try runtime.stringUtf8("abc");
+    try roots.protect(&text_row);
+    var table = try common.arrayFromValues(&runtime, &.{text_row});
+    try roots.protect(&table);
+    var values = try runtime.stringUtf8("Z");
+    try roots.protect(&values);
+    var inserted = try tableInsertColumn(&runtime, table, .{ .number = 1 }, values);
+    try roots.protect(&inserted);
+    try std.testing.expectEqual(@as(usize, 3), inserted.array.get(0).array.len());
+    try std.testing.expectEqualSlices(u16, &.{'a'}, inserted.array.get(0).array.get(0).string.units);
+    try std.testing.expectEqualSlices(u16, &.{'Z'}, inserted.array.get(0).array.get(1).string.units);
+    try std.testing.expectEqualSlices(u16, &.{ 'b', 'c' }, inserted.array.get(0).array.get(2).string.units);
+
+    var prototype = try runtime.stringUtf8("__proto__");
+    try roots.protect(&prototype);
+    var ordinary = try runtime.stringUtf8("a");
+    try roots.protect(&ordinary);
+    var prototype_row = try common.arrayFromValues(&runtime, &.{prototype});
+    try roots.protect(&prototype_row);
+    var ordinary_row = try common.arrayFromValues(&runtime, &.{ordinary});
+    try roots.protect(&ordinary_row);
+    var duplicate_row = try common.arrayFromValues(&runtime, &.{ordinary});
+    try roots.protect(&duplicate_row);
+    var duplicate_table = try common.arrayFromValues(&runtime, &.{ prototype_row, ordinary_row, duplicate_row });
+    try roots.protect(&duplicate_table);
+    var unique = try tableUnique(&runtime, duplicate_table, .{ .number = 0 });
+    try roots.protect(&unique);
+    try std.testing.expectEqual(@as(usize, 1), unique.array.len());
+    try std.testing.expect(unique.array.get(0).array == ordinary_row.array);
+
+    var x = try runtime.stringUtf8("x");
+    try roots.protect(&x);
+    var y = try runtime.stringUtf8("y");
+    try roots.protect(&y);
+    var x_row = try common.arrayFromValues(&runtime, &.{x});
+    try roots.protect(&x_row);
+    var y_row = try common.arrayFromValues(&runtime, &.{y});
+    try roots.protect(&y_row);
+    var sum_table = try common.arrayFromValues(&runtime, &.{ x_row, y_row });
+    try roots.protect(&sum_table);
+    var column_sum = try tableColumnSum(&runtime, sum_table, .{ .number = 0 });
+    try roots.protect(&column_sum);
+    try std.testing.expectEqualSlices(u16, &.{ '0', 'x', 'y' }, column_sum.string.units);
+
+    var empty = try runtime.createArray();
+    try roots.protect(&empty);
+    var bigint_index = try runtime.bigIntLiteral("1n");
+    try roots.protect(&bigint_index);
+    var empty_insert = try tableInsertColumn(&runtime, empty, bigint_index, .null_value);
+    try roots.protect(&empty_insert);
+    try std.testing.expectEqual(@as(usize, 0), empty_insert.array.len());
 }
 
 test "配列コピーと参照はJSONとJavaScript添字の境界を保つ" {

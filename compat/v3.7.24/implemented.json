@@ -1628,21 +1628,25 @@
   "表行列交換": {
     "status": "native",
     "tests": [
-      "plugin-system-table"
+      "plugin-system-table",
+      "native-system-table-transform-commands",
+      "native-system-table-transpose-null-row-error"
     ],
     "reason": "欠損列を空文字列で補う公式挙動を実装し、公式差分テストに成功"
   },
   "表右回転": {
     "status": "native",
     "tests": [
-      "plugin-system-table"
+      "plugin-system-table",
+      "native-system-table-transform-commands"
     ],
     "reason": "欠損列をundefinedにする公式挙動を実装し、公式差分テストに成功"
   },
   "表重複削除": {
     "status": "native",
     "tests": [
-      "plugin-system-table"
+      "plugin-system-table",
+      "native-system-table-transform-commands"
     ],
     "reason": "挿入順を保持して実装し、公式差分テストに成功"
   },
@@ -1658,21 +1662,27 @@
   "表列挿入": {
     "status": "native",
     "tests": [
-      "plugin-system-table"
+      "plugin-system-table",
+      "native-system-table-transform-commands",
+      "native-system-table-insert-bigint-index-error"
     ],
     "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
   },
   "表列削除": {
     "status": "native",
     "tests": [
-      "plugin-system-table"
+      "plugin-system-table",
+      "native-system-table-transform-commands",
+      "native-system-table-delete-bigint-index-error"
     ],
     "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
   },
   "表列合計": {
     "status": "native",
     "tests": [
-      "plugin-system-table"
+      "plugin-system-table",
+      "native-system-table-transform-commands",
+      "native-system-table-column-sum-bigint-error"
     ],
     "reason": "JavaScript互換加算で実装し、公式差分テストに成功"
   },

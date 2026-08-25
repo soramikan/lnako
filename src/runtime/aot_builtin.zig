@@ -79,6 +79,12 @@ pub const Command = enum(u16) {
     table_column_count,
     table_row_count,
     table_column,
+    table_transpose,
+    table_rotate,
+    table_unique,
+    table_insert_column,
+    table_delete_column,
+    table_column_sum,
     add_parsed,
     sum_parsed,
     sequential_add,
@@ -206,6 +212,12 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "表列数")) return .table_column_count;
     if (std.mem.eql(u8, name, "表行数")) return .table_row_count;
     if (std.mem.eql(u8, name, "表列取得")) return .table_column;
+    if (std.mem.eql(u8, name, "表行列交換")) return .table_transpose;
+    if (std.mem.eql(u8, name, "表右回転")) return .table_rotate;
+    if (std.mem.eql(u8, name, "表重複削除")) return .table_unique;
+    if (std.mem.eql(u8, name, "表列挿入")) return .table_insert_column;
+    if (std.mem.eql(u8, name, "表列削除")) return .table_delete_column;
+    if (std.mem.eql(u8, name, "表列合計")) return .table_column_sum;
     if (std.mem.eql(u8, name, "足")) return .add_parsed;
     if (std.mem.eql(u8, name, "合計")) return .sum_parsed;
     if (std.mem.eql(u8, name, "連続加算")) return .sequential_add;

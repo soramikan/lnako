@@ -1636,7 +1636,7 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             };
         },
-        .table_pickup, .table_exact_pickup, .table_search, .table_column_count, .table_row_count, .table_column => {
+        .table_pickup, .table_exact_pickup, .table_search, .table_column_count, .table_row_count, .table_column, .table_transpose, .table_rotate, .table_unique, .table_insert_column, .table_delete_column, .table_column_sum => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = tableBuiltin(runtime, command, actual) catch |failure| {
                 runtime.setFailure(failure);
@@ -2841,6 +2841,187 @@ fn tableSearchBuiltin(runtime: *Runtime, source: Value, column: Value, row_value
     return numberValue(-1);
 }
 
+fn tableColumnIterationCount(runtime: *Runtime, value: Value) !usize {
+    const number = if (value.tag == @intFromEnum(Tag.bigint))
+        value.object().?.payload.bigint.toF64()
+    else
+        try valueToNumberRuntime(runtime, value);
+    if (std.math.isNan(number) or number <= 0) return 0;
+    if (!std.math.isFinite(number) or number > @as(f64, @floatFromInt(safe_array_element_limit))) return error.ArraySizeLimitExceeded;
+    return @intFromFloat(@ceil(number));
+}
+
+fn tableTransposeBuiltin(runtime: *Runtime, source: Value, rotate: bool) !Value {
+    var roots = [_]Value{ source, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    const rows = try arrayItems(roots[0]);
+    roots[1] = try tableColumnCountBuiltin(runtime, roots[0]);
+    const columns = try tableColumnIterationCount(runtime, roots[1]);
+    const cells = std.math.mul(usize, columns, rows.items.len) catch return error.ArraySizeLimitExceeded;
+    if (cells > safe_array_element_limit) return error.ArraySizeLimitExceeded;
+    roots[2] = try runtime.createArray(&.{});
+    const result = try arrayItems(roots[2]);
+    try result.ensureTotalCapacity(runtime.allocator, columns);
+    for (0..columns) |column| {
+        roots[3] = try runtime.createArray(&.{});
+        const row_result = try arrayItems(roots[3]);
+        try row_result.ensureTotalCapacity(runtime.allocator, rows.items.len);
+        for (0..rows.items.len) |offset| {
+            const row_index = if (rotate) rows.items.len - offset - 1 else offset;
+            roots[4] = try tableRowProperty(runtime, rows.items[row_index], numberValue(@floatFromInt(column)));
+            if (!rotate and roots[4].tag == @intFromEnum(Tag.undefined)) roots[4] = staticStringValue("");
+            try row_result.append(runtime.allocator, roots[4]);
+        }
+        try result.append(runtime.allocator, roots[3]);
+    }
+    return roots[2];
+}
+
+fn tableDictionaryHasKey(runtime: *Runtime, dictionary: Value, key: Value) !bool {
+    const entries = &dictionary.object().?.payload.dictionary;
+    for (entries.items) |entry| if (try strictEqual(runtime, entry.key, key)) return true;
+    return false;
+}
+
+fn tableIsObjectPrototypeKey(units: []const u16) bool {
+    const keys = [_][]const u8{
+        "constructor",
+        "__defineGetter__",
+        "__defineSetter__",
+        "hasOwnProperty",
+        "__lookupGetter__",
+        "__lookupSetter__",
+        "isPrototypeOf",
+        "propertyIsEnumerable",
+        "toString",
+        "valueOf",
+        "__proto__",
+        "toLocaleString",
+    };
+    for (keys) |key| {
+        if (units.len != key.len) continue;
+        var matches = true;
+        for (units, key) |unit, byte| if (unit != byte) {
+            matches = false;
+            break;
+        };
+        if (matches) return true;
+    }
+    return false;
+}
+
+fn tableUniqueBuiltin(runtime: *Runtime, source: Value, column: Value) !Value {
+    var roots = [_]Value{ source, column, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    const rows = try arrayItems(roots[0]);
+    roots[2] = try runtime.createArray(&.{});
+    roots[3] = try runtime.createDictionary(&.{});
+    const result = try arrayItems(roots[2]);
+    for (rows.items) |row| {
+        roots[4] = try tableRowProperty(runtime, row, roots[1]);
+        const units = try valueUtf16Alloc(runtime, roots[4]);
+        defer runtime.allocator.free(units);
+        if (tableIsObjectPrototypeKey(units)) continue;
+        roots[5] = try runtime.createString(units);
+        if (try tableDictionaryHasKey(runtime, roots[3], roots[5])) continue;
+        try roots[3].object().?.payload.dictionary.append(runtime.allocator, .{ .key = roots[5], .value = numberValue(1) });
+        try result.append(runtime.allocator, row);
+    }
+    return roots[2];
+}
+
+fn tableInsertColumnBuiltin(runtime: *Runtime, source: Value, column: Value, values: Value) !Value {
+    var roots = [_]Value{ source, column, values, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    const rows = try arrayItems(roots[0]);
+    roots[3] = try runtime.createArray(&.{});
+    if (rows.items.len == 0) return roots[3];
+    const result = try arrayItems(roots[3]);
+    const positive = try compareValues(runtime, .greater, roots[1], numberValue(0));
+    for (rows.items, 0..) |row, row_index| {
+        roots[4] = try runtime.createArray(&.{});
+        const new_row = try arrayItems(roots[4]);
+        const row_tag = @as(Tag, @enumFromInt(row.tag));
+        if (row_tag == .array) {
+            const row_items = try arrayItems(row);
+            const total = std.math.add(usize, row_items.items.len, 1) catch return error.ArraySizeLimitExceeded;
+            if (total > safe_array_element_limit) return error.ArraySizeLimitExceeded;
+            try new_row.ensureTotalCapacity(runtime.allocator, total);
+            if (positive) {
+                const prefix = try spliceIndexRuntime(runtime, roots[1], row_items.items.len);
+                try new_row.appendSlice(runtime.allocator, row_items.items[0..prefix]);
+            }
+        } else if (isString(row)) {
+            const row_units = try valueUtf16Alloc(runtime, row);
+            defer runtime.allocator.free(row_units);
+            try new_row.ensureTotalCapacity(runtime.allocator, 3);
+            if (positive) {
+                const prefix = try spliceIndexRuntime(runtime, roots[1], row_units.len);
+                roots[5] = try runtime.createString(row_units[0..prefix]);
+                try new_row.append(runtime.allocator, roots[5]);
+            }
+        } else return error.ArrayExpected;
+        if (roots[2].tag == @intFromEnum(Tag.array)) {
+            const value_items = try arrayItems(roots[2]);
+            roots[6] = if (row_index < value_items.items.len) value_items.items[row_index] else .{};
+        } else {
+            roots[6] = try tableRowProperty(runtime, roots[2], numberValue(@floatFromInt(row_index)));
+        }
+        try new_row.append(runtime.allocator, roots[6]);
+        if (row_tag == .array) {
+            const row_items = try arrayItems(row);
+            const suffix = try spliceIndexRuntime(runtime, roots[1], row_items.items.len);
+            try new_row.appendSlice(runtime.allocator, row_items.items[suffix..]);
+        } else {
+            const row_units = try valueUtf16Alloc(runtime, row);
+            defer runtime.allocator.free(row_units);
+            const suffix = try spliceIndexRuntime(runtime, roots[1], row_units.len);
+            roots[5] = try runtime.createString(row_units[suffix..]);
+            try new_row.append(runtime.allocator, roots[5]);
+        }
+        try result.append(runtime.allocator, roots[4]);
+    }
+    return roots[3];
+}
+
+fn tableDeleteColumnBuiltin(runtime: *Runtime, source: Value, column: Value) !Value {
+    var roots = [_]Value{ source, column, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    const rows = try arrayItems(roots[0]);
+    roots[2] = try runtime.createArray(&.{});
+    const result = try arrayItems(roots[2]);
+    for (rows.items) |row| {
+        const row_items = try arrayItems(row);
+        const index = try spliceIndexRuntime(runtime, roots[1], row_items.items.len);
+        roots[3] = try runtime.createArray(&.{});
+        const new_row = try arrayItems(roots[3]);
+        try new_row.ensureTotalCapacity(runtime.allocator, row_items.items.len - @intFromBool(index < row_items.items.len));
+        for (row_items.items, 0..) |item, item_index| if (item_index != index) try new_row.append(runtime.allocator, item);
+        try result.append(runtime.allocator, roots[3]);
+    }
+    return roots[2];
+}
+
+fn tableColumnSumBuiltin(runtime: *Runtime, source: Value, column: Value) !Value {
+    var roots = [_]Value{ source, column, numberValue(0), .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    for ((try arrayItems(roots[0])).items) |row| {
+        roots[3] = try tableRowProperty(runtime, row, roots[1]);
+        roots[2] = try jsAdd(runtime, roots[2], roots[3]);
+    }
+    return roots[2];
+}
+
 fn incrementTableSearchRow(runtime: *Runtime, row: Value) !Value {
     if (row.tag == @intFromEnum(Tag.bigint)) {
         var one = try BigInt.init(runtime.allocator, 1);
@@ -2893,6 +3074,23 @@ fn tableBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []co
         .table_search => {
             if (arguments.len < 4) return error.InvalidArgumentCount;
             return tableSearchBuiltin(runtime, source, arguments[1], arguments[2], arguments[3]);
+        },
+        .table_transpose, .table_rotate => return tableTransposeBuiltin(runtime, source, command == .table_rotate),
+        .table_unique => {
+            if (arguments.len < 2) return error.InvalidArgumentCount;
+            return tableUniqueBuiltin(runtime, source, arguments[1]);
+        },
+        .table_insert_column => {
+            if (arguments.len < 3) return error.InvalidArgumentCount;
+            return tableInsertColumnBuiltin(runtime, source, arguments[1], arguments[2]);
+        },
+        .table_delete_column => {
+            if (arguments.len < 2) return error.InvalidArgumentCount;
+            return tableDeleteColumnBuiltin(runtime, source, arguments[1]);
+        },
+        .table_column_sum => {
+            if (arguments.len < 2) return error.InvalidArgumentCount;
+            return tableColumnSumBuiltin(runtime, source, arguments[1]);
         },
         else => return error.UnknownCommand,
     }
@@ -5385,6 +5583,51 @@ test "AOT表検索系は行プロパティとraw開始値を公式どおり処�
     try std.testing.expectEqual(@as(i64, 2), bigint_columns.object().?.payload.bigint.toI64());
     roots[17] = try runtime.createFunction(testAotFunction, 2, &.{});
     try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast((try tableRowProperty(&runtime, roots[17], staticStringValue("length"))).payload)));
+}
+
+test "AOT表変換系は欠損列・負位置・JS加算を公式どおり処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 18;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createArray(&.{ numberValue(1), numberValue(2), numberValue(3) });
+    roots[1] = try runtime.createArray(&.{ numberValue(4), numberValue(5), numberValue(6) });
+    roots[2] = try runtime.createArray(&.{ roots[0], roots[1] });
+    roots[3] = try tableBuiltin(&runtime, .table_transpose, &.{roots[2]});
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast((try arrayItems(roots[3])).items[0].object().?.payload.array.items[0].payload)));
+    try std.testing.expectEqual(@as(f64, 4), @as(f64, @bitCast((try arrayItems(roots[3])).items[0].object().?.payload.array.items[1].payload)));
+    roots[4] = try tableBuiltin(&runtime, .table_rotate, &.{roots[2]});
+    try std.testing.expectEqual(@as(f64, 4), @as(f64, @bitCast((try arrayItems(roots[4])).items[0].object().?.payload.array.items[0].payload)));
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast((try arrayItems(roots[4])).items[0].object().?.payload.array.items[1].payload)));
+
+    roots[5] = try runtime.createArray(&.{ staticStringValue("a"), numberValue(1) });
+    roots[6] = try runtime.createArray(&.{ staticStringValue("a"), numberValue(2) });
+    roots[7] = try runtime.createArray(&.{ staticStringValue("b"), numberValue(3) });
+    roots[8] = try runtime.createArray(&.{ roots[5], roots[6], roots[7] });
+    roots[9] = try tableBuiltin(&runtime, .table_unique, &.{ roots[8], numberValue(0) });
+    try std.testing.expectEqual(@as(usize, 2), (try arrayItems(roots[9])).items.len);
+    try std.testing.expectEqual(roots[5].payload, (try arrayItems(roots[9])).items[0].payload);
+
+    roots[10] = try tableBuiltin(&runtime, .table_insert_column, &.{ roots[2], numberValue(-1), roots[0] });
+    try std.testing.expectEqual(@as(usize, 2), (try arrayItems(roots[10])).items[0].object().?.payload.array.items.len);
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast((try arrayItems(roots[10])).items[0].object().?.payload.array.items[0].payload)));
+    try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast((try arrayItems(roots[10])).items[0].object().?.payload.array.items[1].payload)));
+    roots[11] = try tableBuiltin(&runtime, .table_delete_column, &.{ roots[2], numberValue(-1) });
+    try std.testing.expectEqual(@as(usize, 2), (try arrayItems(roots[11])).items[0].object().?.payload.array.items.len);
+    try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast((try arrayItems(roots[11])).items[0].object().?.payload.array.items[1].payload)));
+
+    roots[12] = try tableBuiltin(&runtime, .table_column_sum, &.{ roots[2], numberValue(1) });
+    try std.testing.expectEqual(@as(f64, 7), @as(f64, @bitCast(roots[12].payload)));
+    roots[13] = try runtime.createArray(&.{ staticStringValue("x"), numberValue(1) });
+    roots[14] = try runtime.createArray(&.{ staticStringValue("y"), numberValue(2) });
+    roots[15] = try runtime.createArray(&.{ roots[13], roots[14] });
+    roots[16] = try tableBuiltin(&runtime, .table_column_sum, &.{ roots[15], numberValue(0) });
+    const sum_text = try valueUtf16Alloc(&runtime, roots[16]);
+    defer runtime.allocator.free(sum_text);
+    try std.testing.expectEqualSlices(u16, &.{ '0', 'x', 'y' }, sum_text);
 }
 
 fn numberValue(number: f64) Value {
