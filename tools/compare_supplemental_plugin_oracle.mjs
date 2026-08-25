@@ -17,7 +17,7 @@ const replacements = {
   "${PLUGIN_KANSUJI}": relative(temporary, resolve(oracleRoot, "src/plugin_kansuji.mjs")).replaceAll("\\", "/"),
   "${PLUGIN_CANIUSE}": relative(temporary, resolve(oracleRoot, "src/plugin_caniuse.mjs")).replaceAll("\\", "/"),
 };
-const suites = [...cases, kansujiCorpus()];
+const suites = [...cases, ...kansujiCorpus()];
 
 try {
   buildLnako();
@@ -71,11 +71,20 @@ function kansujiCorpus() {
     "１２３", ".5", "-.5", "1.", "+0.", "000.50", " 1 ", "　1　", " 1 ", "",
     "Infinity", "-Infinity", "0x10", "0b10", "0o10",
   ];
-  const lines = [`!"${replacements["${PLUGIN_KANSUJI}"]}"を取り込む`];
+  const statements = [];
   for (const value of values) {
-    lines.push(`漢数字(${JSON.stringify(value)})を表示`);
-    if (/^[0-9]+$/.test(value)) lines.push(`算用数字(漢数字(${JSON.stringify(value)}))を表示`);
+    statements.push(`漢数字(${JSON.stringify(value)})を表示`);
+    if (/^[0-9]+$/.test(value)) statements.push(`算用数字(漢数字(${JSON.stringify(value)}))を表示`);
   }
-  for (const value of ["一二", "一二万", "二三四万", "一二十", "十百", "万", "𥝱", "一𥝱", "無量大数", "一無量大数"]) lines.push(`算用数字(${JSON.stringify(value)})を表示`);
-  return { id: "plugin-kansuji-generated", commands: [], source: `${lines.join("\n")}\n` };
+  for (const value of ["一二", "一二万", "二三四万", "一二十", "十百", "万", "𥝱", "一𥝱", "無量大数", "一無量大数"]) statements.push(`算用数字(${JSON.stringify(value)})を表示`);
+  const importLine = `!"${replacements["${PLUGIN_KANSUJI}"]}"を取り込む`;
+  const statementLimit = 96;
+  const result = [];
+  for (let offset = 0; offset < statements.length; offset += statementLimit) {
+    const index = String(result.length + 1).padStart(2, "0");
+    const chunk = statements.slice(offset, offset + statementLimit);
+    result.push({ id: `plugin-kansuji-generated-${index}`, commands: [], source: `${[importLine, ...chunk].join("\n")}\n` });
+  }
+  if (result.length === 0 || result.some((testCase) => testCase.source.split("\n").length - 2 > statementLimit)) throw new Error("漢数字生成コーパスの分割に失敗しました");
+  return result;
 }
