@@ -373,7 +373,7 @@ pub const Interpreter = struct {
                     predecessor = current_block;
                     current_block = if (frame.values[branch.condition].toBoolean()) branch.then_block else branch.else_block;
                 },
-                .return_value => |value| return if (value) |id| frame.values[id] else self.globals.get("それ") orelse .undefined,
+                .return_value => |value| return if (value) |id| frame.values[id] else .undefined,
                 .throw_value => |value| {
                     self.exception_value = frame.values[value];
                     if (frame.handlers.pop()) |handler| {
@@ -499,17 +499,27 @@ pub const Interpreter = struct {
         var arguments = try self.allocator.alloc(Value, instruction.operands.len);
         defer self.allocator.free(arguments);
         for (instruction.operands, 0..) |operand_id, index| arguments[index] = frame.values[operand_id];
-        const result = if (instruction.direct_callee) |callee_id|
-            if (callee_id < self.program.functions.len) try self.executeFunction(&self.program.functions[callee_id], arguments, null) else return error.InvalidDirectCallee
-        else if (self.findFunction(instruction.name)) |function|
-            try self.executeFunction(function, arguments, null)
-        else if (frame.locals.get(instruction.name)) |callable|
-            if (callable == .function) try self.callFunctionValue(callable.function, arguments) else return error.NotCallable
-        else if (self.globals.get(instruction.name)) |callable|
-            if (callable == .function) try self.callFunctionValue(callable.function, arguments) else return error.NotCallable
-        else
-            try self.callBuiltin(instruction.name, arguments);
-        try self.setGlobal("それ", result);
+        var writes_result = false;
+        const result = if (instruction.direct_callee) |callee_id| blk: {
+            if (callee_id >= self.program.functions.len) return error.InvalidDirectCallee;
+            writes_result = true;
+            break :blk try self.executeFunction(&self.program.functions[callee_id], arguments, null);
+        } else if (self.findFunction(instruction.name)) |function| blk: {
+            writes_result = true;
+            break :blk try self.executeFunction(function, arguments, null);
+        } else if (frame.locals.get(instruction.name)) |callable| blk: {
+            if (callable != .function) return error.NotCallable;
+            writes_result = callable.function.kind == .ir;
+            break :blk try self.callFunctionValue(callable.function, arguments);
+        } else if (self.globals.get(instruction.name)) |callable| blk: {
+            if (callable != .function) return error.NotCallable;
+            writes_result = callable.function.kind == .ir;
+            break :blk try self.callFunctionValue(callable.function, arguments);
+        } else blk: {
+            writes_result = !preservesResultVariable(instruction.name);
+            break :blk try self.callBuiltin(instruction.name, arguments);
+        };
+        if (writes_result) try self.setGlobal("それ", result);
         return result;
     }
 
@@ -1740,6 +1750,19 @@ pub const Interpreter = struct {
     }
 };
 
+fn preservesResultVariable(name: []const u8) bool {
+    return std.mem.eql(u8, name, "表示") or
+        std.mem.eql(u8, name, "表示する") or
+        std.mem.eql(u8, name, "継続表示") or
+        std.mem.eql(u8, name, "連続表示") or
+        std.mem.eql(u8, name, "連続無改行表示") or
+        std.mem.eql(u8, name, "表示ログクリア") or
+        std.mem.eql(u8, name, "言") or
+        std.mem.eql(u8, name, "コンソール表示") or
+        std.mem.eql(u8, name, "デバッグ表示") or
+        std.mem.eql(u8, name, "二進表示");
+}
+
 fn promiseResolverSentinel(_: *Runtime, _: []const Value) anyerror!Value {
     return .undefined;
 }
@@ -2000,6 +2023,23 @@ test "無名関数がローカル変数を捕捉する" {
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("15\n", host.written());
+}
+
+test "関数の戻り値だけをシステム変数それへ書き戻す" {
+    const source = "●七とは\n7で戻る\nここまで\n●空とは\nここまで\n●暗黙とは\nそれは8\nここまで\n七()\nA=それ\n空()\nB=それ\n暗黙()\nC=それ\nAを表示\nBを表示\nCを表示\n表示(1)\nそれを表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("7\nundefined\n8\n1\n8\n", host.written());
 }
 
 test "Promiseの成功・失敗・処理・終了コールバックを順に実行する" {

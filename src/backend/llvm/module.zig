@@ -203,6 +203,7 @@ const Emitter = struct {
     fn collectModuleData(self: *Emitter) !void {
         var string_index: usize = 0;
         var bigint_index: usize = 0;
+        try self.globals.append(self.allocator, "それ");
         for (self.program.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
             if ((instruction.opcode == .load_global or instruction.opcode == .store_global) and self.globalIndex(instruction.name) == null) {
                 try self.globals.append(self.allocator, instruction.name);
@@ -796,6 +797,13 @@ const Emitter = struct {
         }
         try self.output.writer.writeByte(')');
         try self.debugSuffix(instruction.span, scope);
+        try self.writeCallResult(result, instruction.span, scope);
+    }
+
+    fn writeCallResult(self: *Emitter, result: ir.ValueId, span: ast.Span, scope: usize) !void {
+        const global_index = self.globalIndex("それ") orelse return error.MissingResultGlobal;
+        try self.output.writer.print("  store %lnako.Value %v{d}, ptr @lnako.global.{d}", .{ result, global_index });
+        try self.debugSuffix(span, scope);
     }
 
     fn writeTerminator(self: *Emitter, function: ir.Function, terminator: ir.Terminator, span: ast.Span, scope: usize) !void {
@@ -1300,6 +1308,29 @@ test "増減文をNumber変換付きAOTランタイムへ接続する" {
     var module = try generate(std.testing.allocator, program, "increment.nako3", false);
     defer module.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_increment") != null);
+}
+
+test "関数戻り値をシステム変数それへ書き戻す" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    const source = "●七とは\n7で戻る\nここまで\n●空とは\nここまで\n七()\nA=それ\n空()\nB=それ\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "result.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "result.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "result", "result.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    var module = try generate(std.testing.allocator, program, "result.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "store %lnako.Value %v") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "ret %lnako.Value { i8 0, i64 0 }") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.global.0") != null);
 }
 
 test "O1では証明済み数値と真偽判定をアンボックスしO0のIRを変更しない" {

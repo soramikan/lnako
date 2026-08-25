@@ -20,7 +20,7 @@ pub fn lower(backing_allocator: std.mem.Allocator, hir_program: hir.Program) !ir
             .value = @intCast(index),
         });
         _ = try builder.lowerNode(function.body);
-        if (!builder.isTerminated()) builder.terminate(.{ .return_value = null });
+        if (!builder.isTerminated()) builder.terminate(.{ .return_value = builder.implicitResult() });
         try functions.append(allocator, try builder.finish());
     }
     const module_entries = try allocator.alloc(ir.FunctionId, hir_program.modules.len);
@@ -368,6 +368,14 @@ const FunctionBuilder = struct {
 
     fn isTerminated(self: *FunctionBuilder) bool {
         return self.currentBlock().terminator != .none;
+    }
+
+    fn implicitResult(self: *FunctionBuilder) ?ir.ValueId {
+        const instructions = self.currentBlock().instructions.items;
+        if (instructions.len == 0) return null;
+        const last = instructions[instructions.len - 1];
+        if (last.opcode != .store_global or !std.mem.eql(u8, last.name, "それ") or last.operands.len != 1) return null;
+        return last.operands[0];
     }
 
     fn terminate(self: *FunctionBuilder, terminator: ir.Terminator) void {

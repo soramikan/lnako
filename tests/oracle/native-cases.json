@@ -36,6 +36,10 @@
     "source": "●(AとBを)加算とは\nA+Bで戻る\nここまで\n加算(4,5)を表示\n"
   },
   {
+    "id": "native-function-result-variable",
+    "source": "●七とは\n7で戻る\nここまで\n●空とは\nここまで\n●暗黙とは\nそれは8\nここまで\n七()\nA=それ\n空()\nB=それ\n暗黙()\nC=それ\nAを表示\nBを表示\nCを表示\n表示(1)\nそれを表示\n"
+  },
+  {
     "id": "native-unary-boolean",
     "source": "(-3)を表示\nもし、!(1>2)ならば\n「否定」を表示\nここまで\n"
   },
