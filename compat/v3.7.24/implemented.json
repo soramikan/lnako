@@ -1587,35 +1587,41 @@
   "表ピックアップ": {
     "status": "native",
     "tests": [
-      "plugin-system-table"
+      "plugin-system-table",
+      "native-system-table-query-commands"
     ],
     "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
   },
   "表完全一致ピックアップ": {
     "status": "native",
     "tests": [
-      "plugin-system-table"
+      "plugin-system-table",
+      "native-system-table-query-commands"
     ],
     "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
   },
   "表検索": {
     "status": "native",
     "tests": [
-      "plugin-system-table"
+      "plugin-system-table",
+      "native-system-table-query-commands",
+      "native-system-table-search-negative-row-error"
     ],
     "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
   },
   "表列数": {
     "status": "native",
     "tests": [
-      "plugin-system-table"
+      "plugin-system-table",
+      "native-system-table-query-commands"
     ],
     "reason": "空表で1を返す公式挙動を含めて実装し、公式差分テストに成功"
   },
   "表行数": {
     "status": "native",
     "tests": [
-      "plugin-system-table"
+      "plugin-system-table",
+      "native-system-table-query-commands"
     ],
     "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
   },
@@ -1643,7 +1649,9 @@
   "表列取得": {
     "status": "native",
     "tests": [
-      "plugin-system-table"
+      "plugin-system-table",
+      "native-system-table-query-commands",
+      "native-system-table-column-null-row-error"
     ],
     "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
   },

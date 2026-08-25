@@ -1636,6 +1636,13 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             };
         },
+        .table_pickup, .table_exact_pickup, .table_search, .table_column_count, .table_row_count, .table_column => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = tableBuiltin(runtime, command, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .add_parsed => {
             if (len < 2) {
                 runtime.setFailure(error.InvalidArgumentCount);
@@ -2734,6 +2741,161 @@ fn arrayMutationBuiltin(runtime: *Runtime, command: aot_builtin.Command, argumen
         .array_fill => arrayFillBuiltin(runtime, source, index),
         else => error.UnknownCommand,
     };
+}
+
+const table_length_key = [_]u16{ 'l', 'e', 'n', 'g', 't', 'h' };
+
+/// Read a row property using the same useful subset of JavaScript's
+/// `row[column]` semantics used by the official table commands.  In
+/// particular, strings expose UTF-16 code units and dictionaries only expose
+/// own properties.  Accessing a missing row is deliberately an error: the
+/// upstream implementation evaluates `a[i][col]`, so null/undefined rows do
+/// not silently produce undefined.
+fn tableRowProperty(runtime: *Runtime, row: Value, column: Value) !Value {
+    const row_tag: Tag = @enumFromInt(row.tag);
+    if (row_tag == .undefined) return error.TableRowMissing;
+    if (row_tag == .null_value) return error.TableRowMissing;
+    const key_units = try valueUtf16Alloc(runtime, column);
+    defer runtime.allocator.free(key_units);
+    if (row_tag == .array) {
+        const object = row.object() orelse return error.InvalidArray;
+        if (object.payload != .array) return error.InvalidArray;
+        if (std.mem.eql(u16, key_units, &table_length_key)) return numberValue(@floatFromInt(object.payload.array.items.len));
+        const index = tablePropertyIndex(key_units) orelse return .{};
+        return if (index < object.payload.array.items.len) object.payload.array.items[index] else .{};
+    }
+    if (row_tag == .dictionary) {
+        const object = row.object() orelse return error.InvalidDictionary;
+        if (object.payload != .dictionary) return error.InvalidDictionary;
+        for (object.payload.dictionary.items) |entry| {
+            if (try tablePropertyKeyEqual(runtime, entry.key, key_units)) return entry.value;
+        }
+        return .{};
+    }
+    if (isString(row)) {
+        const units = try valueUtf16Alloc(runtime, row);
+        defer runtime.allocator.free(units);
+        if (std.mem.eql(u16, key_units, &table_length_key)) return numberValue(@floatFromInt(units.len));
+        const index = tablePropertyIndex(key_units) orelse return .{};
+        if (index >= units.len) return .{};
+        return try runtime.createString(&.{units[index]});
+    }
+    if (row_tag == .function and std.mem.eql(u16, key_units, &table_length_key)) {
+        // The official compiler exposes Nadesiko functions through a
+        // rest-argument wrapper, so Function.length is zero regardless of the
+        // language-level arity used by lnako's call dispatcher.
+        return numberValue(0);
+    }
+    // Number, boolean, bigint, etc. have no relevant own indexed properties
+    // in this runtime; JavaScript returns undefined here.
+    return .{};
+}
+
+fn tablePropertyKeyEqual(runtime: *Runtime, key: Value, units: []const u16) !bool {
+    const key_units = try valueUtf16Alloc(runtime, key);
+    defer runtime.allocator.free(key_units);
+    return std.mem.eql(u16, key_units, units);
+}
+
+/// Parse only canonical array-index property names.  Number("01") is 1, but
+/// JavaScript's property key "01" is not an array index, so using Number here
+/// would incorrectly read row[1].
+fn tablePropertyIndex(units: []const u16) ?usize {
+    if (units.len == 0) return null;
+    if (units.len > 1 and units[0] == '0') return null;
+    var result: usize = 0;
+    for (units) |unit| {
+        if (unit < '0' or unit > '9') return null;
+        const digit: usize = unit - '0';
+        result = std.math.mul(usize, result, 10) catch return null;
+        result = std.math.add(usize, result, digit) catch return null;
+    }
+    return result;
+}
+
+fn tableColumnCountBuiltin(runtime: *Runtime, source: Value) !Value {
+    var roots = [_]Value{ source, numberValue(1) };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    const rows = try arrayItems(roots[0]);
+    for (rows.items) |row| {
+        const length = try tableRowProperty(runtime, row, staticStringValue("length"));
+        if (try compareValues(runtime, .greater, length, roots[1])) roots[1] = length;
+    }
+    return roots[1];
+}
+
+fn tableSearchBuiltin(runtime: *Runtime, source: Value, column: Value, row_value: Value, needle: Value) !Value {
+    var roots = [_]Value{ source, column, row_value, needle, row_value, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    const rows = try arrayItems(roots[0]);
+    while (try compareValues(runtime, .less, roots[4], numberValue(@floatFromInt(rows.items.len)))) {
+        roots[5] = try tableRowProperty(runtime, roots[0], roots[4]);
+        const cell = try tableRowProperty(runtime, roots[5], roots[1]);
+        if (try strictEqual(runtime, cell, roots[3])) return roots[4];
+        roots[4] = try incrementTableSearchRow(runtime, roots[4]);
+    }
+    return numberValue(-1);
+}
+
+fn incrementTableSearchRow(runtime: *Runtime, row: Value) !Value {
+    if (row.tag == @intFromEnum(Tag.bigint)) {
+        var one = try BigInt.init(runtime.allocator, 1);
+        defer one.deinit();
+        return runtime.ownBigInt(try row.object().?.payload.bigint.add(runtime.allocator, one));
+    }
+    return numberValue(try valueToNumberRuntime(runtime, row) + 1);
+}
+
+fn tableBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    const source: Value = if (arguments.len > 0) arguments[0] else .{};
+    if (source.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
+    switch (command) {
+        .table_row_count => return numberValue(@floatFromInt((try arrayItems(source)).items.len)),
+        .table_column_count => return tableColumnCountBuiltin(runtime, source),
+        .table_column => {
+            if (arguments.len < 2) return error.InvalidArgumentCount;
+            var roots = [_]Value{ source, arguments[1], .{} };
+            var frame = RootFrame{};
+            runtime.pushRoots(&frame, &roots, roots.len);
+            defer runtime.popRoots(&frame);
+            roots[2] = try runtime.createArray(&.{});
+            const result = try arrayItems(roots[2]);
+            for ((try arrayItems(roots[0])).items) |row| try result.append(runtime.allocator, try tableRowProperty(runtime, row, roots[1]));
+            return roots[2];
+        },
+        .table_pickup, .table_exact_pickup => {
+            if (arguments.len < 3) return error.InvalidArgumentCount;
+            var roots = [_]Value{ source, arguments[1], arguments[2], .{} };
+            var frame = RootFrame{};
+            runtime.pushRoots(&frame, &roots, roots.len);
+            defer runtime.popRoots(&frame);
+            roots[3] = try runtime.createArray(&.{});
+            const result = try arrayItems(roots[3]);
+            for ((try arrayItems(roots[0])).items) |row| {
+                const cell = try tableRowProperty(runtime, row, roots[1]);
+                const matches = if (command == .table_exact_pickup)
+                    try strictEqual(runtime, cell, roots[2])
+                else blk: {
+                    const cell_units = try valueUtf16Alloc(runtime, cell);
+                    defer runtime.allocator.free(cell_units);
+                    const needle_units = try valueUtf16Alloc(runtime, roots[2]);
+                    defer runtime.allocator.free(needle_units);
+                    break :blk std.mem.indexOf(u16, cell_units, needle_units) != null;
+                };
+                if (matches) try result.append(runtime.allocator, row);
+            }
+            return roots[3];
+        },
+        .table_search => {
+            if (arguments.len < 4) return error.InvalidArgumentCount;
+            return tableSearchBuiltin(runtime, source, arguments[1], arguments[2], arguments[3]);
+        },
+        else => return error.UnknownCommand,
+    }
 }
 
 const CloneState = struct {
@@ -5164,6 +5326,65 @@ test "AOT配列ソート系は安定mergeとundefined末尾と同一配列を保
     try std.testing.expect(std.math.isNan(valueToNumber((try arrayItems(roots[3])).items[5])));
     try std.testing.expectEqual(roots[3].payload, (try arrayOrderingBuiltin(&runtime, .array_reverse, roots[3])).payload);
     try std.testing.expect(std.math.isNan(valueToNumber((try arrayItems(roots[3])).items[0])));
+}
+
+test "AOT表検索系は行プロパティとraw開始値を公式どおり処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 20;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createArray(&.{ staticStringValue("alice"), numberValue(10) });
+    roots[1] = try runtime.createArray(&.{ staticStringValue("bob"), numberValue(20) });
+    roots[2] = try runtime.createArray(&.{ roots[0], roots[1] });
+    roots[3] = try runtime.createDictionary(&.{});
+    roots[4] = try runtime.createString(&.{ 'a', 0xd83d, 0xde00 });
+    roots[5] = try runtime.createString(&.{ 'l', 'e', 'n', 'g', 't', 'h' });
+    roots[6] = try runtime.createString(&.{'3'});
+    try roots[3].object().?.payload.dictionary.append(runtime.allocator, .{ .key = roots[5], .value = roots[6] });
+    roots[9] = try runtime.createArray(&.{});
+    roots[7] = try runtime.createArray(&.{ roots[9], roots[4], roots[3] });
+    const columns = try tableBuiltin(&runtime, .table_column_count, roots[7..8]);
+    try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(columns.payload)));
+
+    const picked = try tableBuiltin(&runtime, .table_pickup, &.{ roots[2], numberValue(0), staticStringValue("ali") });
+    try std.testing.expectEqual(@as(usize, 1), picked.object().?.payload.array.items.len);
+    try std.testing.expectEqual(roots[0].payload, picked.object().?.payload.array.items[0].payload);
+    const exact = try tableBuiltin(&runtime, .table_exact_pickup, &.{ roots[2], numberValue(0), staticStringValue("alice") });
+    try std.testing.expectEqual(@as(usize, 1), exact.object().?.payload.array.items.len);
+    const found = try tableBuiltin(&runtime, .table_search, &.{ roots[2], numberValue(0), numberValue(1), staticStringValue("bob") });
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(found.payload)));
+    const not_found = try tableBuiltin(&runtime, .table_search, &.{ roots[2], numberValue(0), .{}, staticStringValue("alice") });
+    try std.testing.expectEqual(@as(f64, -1), @as(f64, @bitCast(not_found.payload)));
+    try std.testing.expectError(error.TableRowMissing, tableBuiltin(&runtime, .table_search, &.{ roots[2], numberValue(0), numberValue(-1), staticStringValue("alice") }));
+    roots[8] = try runtime.createBigInt("1n");
+    const bigint_found = try tableBuiltin(&runtime, .table_search, &.{ roots[2], numberValue(0), roots[8], staticStringValue("bob") });
+    try std.testing.expectEqual(Tag.bigint, @as(Tag, @enumFromInt(bigint_found.tag)));
+    try std.testing.expectEqual(@as(i64, 1), bigint_found.object().?.payload.bigint.toI64());
+    const string_found = try tableBuiltin(&runtime, .table_search, &.{ roots[2], numberValue(0), staticStringValue("1"), staticStringValue("bob") });
+    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @enumFromInt(string_found.tag)));
+    const incremented_found = try tableBuiltin(&runtime, .table_search, &.{ roots[2], numberValue(0), staticStringValue("0"), staticStringValue("bob") });
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(incremented_found.payload)));
+    const object_start = try tableBuiltin(&runtime, .table_search, &.{ roots[2], numberValue(0), roots[3], staticStringValue("alice") });
+    try std.testing.expectEqual(@as(f64, -1), @as(f64, @bitCast(object_start.payload)));
+    roots[10] = try runtime.createArray(&.{.{}});
+    try std.testing.expectError(error.TableRowMissing, tableBuiltin(&runtime, .table_column, &.{ roots[10], numberValue(0) }));
+    roots[11] = try runtime.createArray(&.{.{ .tag = @intFromEnum(Tag.null_value), .payload = 0 }});
+    try std.testing.expectError(error.TableRowMissing, tableBuiltin(&runtime, .table_column, &.{ roots[11], numberValue(0) }));
+    roots[12] = try runtime.createDictionary(&.{ staticStringValue("length"), staticStringValue("7") });
+    roots[13] = try runtime.createArray(&.{roots[12]});
+    const text_columns = try tableBuiltin(&runtime, .table_column_count, roots[13..14]);
+    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @enumFromInt(text_columns.tag)));
+    roots[14] = try runtime.createBigInt("2n");
+    roots[15] = try runtime.createDictionary(&.{ staticStringValue("length"), roots[14] });
+    roots[16] = try runtime.createArray(&.{roots[15]});
+    const bigint_columns = try tableBuiltin(&runtime, .table_column_count, roots[16..17]);
+    try std.testing.expectEqual(Tag.bigint, @as(Tag, @enumFromInt(bigint_columns.tag)));
+    try std.testing.expectEqual(@as(i64, 2), bigint_columns.object().?.payload.bigint.toI64());
+    roots[17] = try runtime.createFunction(testAotFunction, 2, &.{});
+    try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast((try tableRowProperty(&runtime, roots[17], staticStringValue("length"))).payload)));
 }
 
 fn numberValue(number: f64) Value {

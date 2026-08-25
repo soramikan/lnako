@@ -344,5 +344,19 @@
   {
     "id": "native-cut-empty-and-range-boundaries",
     "source": "切取(\"abc\",\"\")を表示\n対象を表示\n範囲切取(\"abc\",\"\",\"b\")を表示\n対象を表示\n範囲切取(\"abc\",\"a\",\"x\")を表示\n対象を表示\n切取(\"123X\",123n)を表示\n対象を表示\nD={\"length\":\"2\"}\n切取(\"Z[object Object]X\",D)を表示\n対象を表示\n"
+  },
+  {
+    "id": "native-system-table-query-commands",
+    "source": "T=[[\"alice\",10],[\"bob\",20],[\"al\",30]]\nP=表ピックアップ(T,0,\"al\")\nP[0][0]を表示\nP[1][1]を表示\nE=表完全一致ピックアップ(T,0,\"al\")\nE[0][0]を表示\n表検索(T,0,1,\"al\")を表示\n表検索(T,0,undefined,\"alice\")を表示\n表検索(T,0,無限大,\"alice\")を表示\nS1=表検索(T,0,\"1\",\"bob\")\nS1を表示\nTYPEOF(S1)を表示\nS2=表検索(T,0,\"1\",\"al\")\nS2を表示\nTYPEOF(S2)を表示\nS3=表検索(T,0,1n,\"bob\")\nS3を表示\nTYPEOF(S3)を表示\nS4=表検索(T,0,1n,\"al\")\nS4を表示\nTYPEOF(S4)を表示\n表検索(T,0,{},\"alice\")を表示\nX=表列数([{\"length\":\"7\"}])\nXを表示\nTYPEOF(X)を表示\nY=表列数([{\"length\":2.5}])\nYを表示\nTYPEOF(Y)を表示\nZ=表列数([{\"length\":2n}])\nZを表示\nTYPEOF(Z)を表示\n表列数([[],\"😀\",{\"length\":\"3\"}])を表示\n表行数(T)を表示\nC=表列取得([[1,2],{\"0\":3},\"ab\",7],0)\nC[0]を表示\nC[1]を表示\nC[2]を表示\nC[3]を表示\nL=表列取得([[1,2],{\"0\":3},\"ab\",7],\"length\")\nL[0]を表示\nL[1]を表示\nL[2]を表示\nL[3]を表示\nQ=表ピックアップ([[1],[\"10\"],[2n],[非数]],0,\"1\")\nQ[0][0]を表示\nQ[1][0]を表示\nR=表完全一致ピックアップ([[1],[\"1\"],[2n]],0,1)\nR[0][0]を表示\nF=関数(A,B)それはA;ここまで\n表列数([F])を表示\nFC=表列取得([F],\"length\")\nFC[0]を表示\n表行数(表ピックアップ([F],\"length\",\"2\"))を表示\n"
+  },
+  {
+    "id": "native-system-table-column-null-row-error",
+    "oracle": "official-generated",
+    "source": "表列取得([[1],NULL],0)を表示\n"
+  },
+  {
+    "id": "native-system-table-search-negative-row-error",
+    "oracle": "official-generated",
+    "source": "表検索([[\"zero\"]],0,-1,\"zero\")を表示\n"
   }
 ]

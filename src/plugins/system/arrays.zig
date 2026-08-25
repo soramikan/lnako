@@ -78,7 +78,7 @@ pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value, conte
     if (eql(name, "表ピックアップ")) return try tablePickup(runtime, a, b, c, false);
     if (eql(name, "表完全一致ピックアップ")) return try tablePickup(runtime, a, b, c, true);
     if (eql(name, "表検索")) return try tableSearch(runtime, a, b, c, common.argument(arguments, 3));
-    if (eql(name, "表列数")) return try tableColumnCount(a);
+    if (eql(name, "表列数")) return try tableColumnCount(runtime, a);
     if (eql(name, "表行数")) return try tableRowCount(a);
     if (eql(name, "表行列交換")) return try transpose(runtime, a, false);
     if (eql(name, "表右回転")) return try transpose(runtime, a, true);
@@ -720,36 +720,76 @@ fn tableSort(runtime: *Runtime, source: Value, column: Value, numeric: bool) !Va
 
 fn tablePickup(runtime: *Runtime, source: Value, column: Value, needle: Value, exact: bool) !Value {
     if (source != .array) return error.ArrayExpected;
-    var result = try runtime.createArray();
+    var rooted = [7]Value{ source, column, needle, .undefined, .undefined, .undefined, .undefined };
     var roots = runtime.rootFrame();
     defer roots.deinit();
-    try roots.protect(&result);
-    const needle_text = if (!exact) try runtime.valueToString(needle) else .undefined;
-    for (source.array.items.items) |row| {
-        const cell = try indexed(runtime, row, column);
-        const matches = if (exact) Value.strictEqual(cell, needle) else blk: {
-            const text = try runtime.valueToString(cell);
-            break :blk std.mem.indexOf(u16, text.string.units, needle_text.string.units) != null;
+    for (&rooted) |*root| try roots.protect(root);
+    rooted[3] = try runtime.createArray();
+    if (!exact) rooted[4] = try runtime.valueToString(rooted[2]);
+    for (rooted[0].array.items.items) |row| {
+        rooted[5] = try indexed(runtime, row, rooted[1]);
+        const matches = if (exact) Value.strictEqual(rooted[5], rooted[2]) else blk: {
+            rooted[6] = try runtime.valueToString(rooted[5]);
+            break :blk std.mem.indexOf(u16, rooted[6].string.units, rooted[4].string.units) != null;
         };
-        if (matches) _ = try result.array.push(row);
+        if (matches) _ = try rooted[3].array.push(row);
     }
-    return result;
+    return rooted[3];
 }
 
 fn tableSearch(runtime: *Runtime, source: Value, column: Value, row_value: Value, needle: Value) !Value {
     if (source != .array) return error.ArrayExpected;
-    const start = spliceIndex(try runtime.valueToNumber(row_value), source.array.len());
-    for (source.array.items.items[start..], start..) |row, index| if (Value.strictEqual(try indexed(runtime, row, column), needle)) return .{ .number = @floatFromInt(index) };
+    var rooted = [6]Value{ source, column, row_value, needle, row_value, .undefined };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    for (&rooted) |*root| try roots.protect(root);
+    while ((try operators.compare(runtime, rooted[4], .{ .number = @floatFromInt(rooted[0].array.len()) })) == .lt) {
+        rooted[5] = try indexed(runtime, rooted[0], rooted[4]);
+        const cell = try indexed(runtime, rooted[5], rooted[1]);
+        if (Value.strictEqual(cell, rooted[3])) return rooted[4];
+        rooted[4] = try incrementTableSearchRow(runtime, rooted[4]);
+    }
     return .{ .number = -1 };
 }
 
-fn tableColumnCount(source: Value) !Value {
+fn incrementTableSearchRow(runtime: *Runtime, row: Value) !Value {
+    if (row == .bigint) {
+        var one = try value_mod.BigInt.init(runtime.allocator(), 1);
+        defer one.deinit();
+        return runtime.ownBigInt(try row.bigint.add(runtime.allocator(), one));
+    }
+    return .{ .number = try runtime.valueToNumber(row) + 1 };
+}
+
+fn tableColumnCount(runtime: *Runtime, source: Value) !Value {
     if (source != .array) return error.ArrayExpected;
-    var columns: usize = 1;
-    for (source.array.items.items) |row| if (row == .array and row.array.len() > columns) {
-        columns = row.array.len();
+    var rooted = [2]Value{ source, .{ .number = 1 } };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    for (&rooted) |*root| try roots.protect(root);
+    for (rooted[0].array.items.items) |row| {
+        const length = try rowLengthValue(row);
+        if ((try operators.compare(runtime, length, rooted[1])) == .gt) rooted[1] = length;
+    }
+    return rooted[1];
+}
+
+fn rowLengthValue(row: Value) !Value {
+    return switch (row) {
+        .array => |array| .{ .number = @floatFromInt(array.len()) },
+        .string => |string| .{ .number = @floatFromInt(string.len()) },
+        .bytes => |buffer| if (buffer.kind == .array_buffer) .undefined else .{ .number = @floatFromInt(buffer.bytes.len) },
+        .null_value, .undefined => error.TableRowMissing,
+        .dictionary => |dictionary| blk: {
+            var units = [_]u16{ 'l', 'e', 'n', 'g', 't', 'h' };
+            var key = value_mod.String{ .allocator = dictionary.allocator, .units = &units };
+            break :blk dictionary.get(&key) orelse .undefined;
+        },
+        // The official compiler wraps Nadesiko functions in a rest-argument
+        // closure, whose JavaScript Function.length is always zero.
+        .function => .{ .number = 0 },
+        else => .undefined,
     };
-    return .{ .number = @floatFromInt(columns) };
 }
 
 fn tableRowCount(source: Value) !Value {
@@ -759,23 +799,34 @@ fn tableRowCount(source: Value) !Value {
 
 fn transpose(runtime: *Runtime, source: Value, rotate: bool) !Value {
     if (source != .array) return error.ArrayExpected;
-    const columns: usize = @intFromFloat((try tableColumnCount(source)).number);
-    var result = try runtime.createArray();
+    var rooted = [3]Value{ source, .undefined, .undefined };
     var roots = runtime.rootFrame();
     defer roots.deinit();
-    try roots.protect(&result);
+    for (&rooted) |*root| try roots.protect(root);
+    rooted[1] = try tableColumnCount(runtime, rooted[0]);
+    const columns = try tableIterationCount(runtime, rooted[1]);
+    const cells = std.math.mul(usize, columns, rooted[0].array.len()) catch return error.ArraySizeLimitExceeded;
+    if (cells > safe_array_element_limit) return error.ArraySizeLimitExceeded;
+    rooted[2] = try runtime.createArray();
     for (0..columns) |column| {
         var row_result = try runtime.createArray();
         try roots.protect(&row_result);
-        for (0..source.array.len()) |offset| {
-            const row_index = if (rotate) source.array.len() - offset - 1 else offset;
-            const row = source.array.get(row_index);
+        for (0..rooted[0].array.len()) |offset| {
+            const row_index = if (rotate) rooted[0].array.len() - offset - 1 else offset;
+            const row = rooted[0].array.get(row_index);
             const cell = if (row == .array and column < row.array.len()) row.array.get(column) else if (rotate) .undefined else try runtime.stringUtf8("");
             _ = try row_result.array.push(cell);
         }
-        _ = try result.array.push(row_result);
+        _ = try rooted[2].array.push(row_result);
     }
-    return result;
+    return rooted[2];
+}
+
+fn tableIterationCount(runtime: *Runtime, value: Value) !usize {
+    const number = if (value == .bigint) value.bigint.toF64() else try runtime.valueToNumber(value);
+    if (std.math.isNan(number) or number <= 0) return 0;
+    if (!std.math.isFinite(number) or number > safe_array_element_limit) return error.ArraySizeLimitExceeded;
+    return @intFromFloat(@ceil(number));
 }
 
 fn tableUnique(runtime: *Runtime, source: Value, column: Value) !Value {
@@ -798,12 +849,13 @@ fn tableUnique(runtime: *Runtime, source: Value, column: Value) !Value {
 
 fn tableColumn(runtime: *Runtime, source: Value, column: Value) !Value {
     if (source != .array) return error.ArrayExpected;
-    var result = try runtime.createArray();
+    var rooted = [3]Value{ source, column, .undefined };
     var roots = runtime.rootFrame();
     defer roots.deinit();
-    try roots.protect(&result);
-    for (source.array.items.items) |row| _ = try result.array.push(try indexed(runtime, row, column));
-    return result;
+    for (&rooted) |*root| try roots.protect(root);
+    rooted[2] = try runtime.createArray();
+    for (rooted[0].array.items.items) |row| _ = try rooted[2].array.push(try indexed(runtime, row, rooted[1]));
+    return rooted[2];
 }
 
 fn tableInsertColumn(runtime: *Runtime, source: Value, column_value: Value, values: Value) !Value {
@@ -881,15 +933,43 @@ fn regexpMatches(runtime: *Runtime, source: Value, pattern: Value) !bool {
 }
 
 fn indexed(runtime: *Runtime, source: Value, key: Value) !Value {
-    if (source == .array) {
-        const number = try runtime.valueToNumber(key);
-        return source.array.get(directIndex(number) orelse return .undefined);
+    var rooted = [3]Value{ source, key, .undefined };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    for (&rooted) |*root| try roots.protect(root);
+    if (rooted[0] == .null_value or rooted[0] == .undefined) return error.TableRowMissing;
+    rooted[2] = try runtime.valueToString(rooted[1]);
+    if (rooted[0] == .array) {
+        if (std.mem.eql(u16, rooted[2].string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return .{ .number = @floatFromInt(rooted[0].array.len()) };
+        const index = propertyIndexUnits(rooted[2].string.units) orelse return .undefined;
+        return rooted[0].array.get(index);
     }
-    if (source == .dictionary) {
-        const text = try runtime.valueToString(key);
-        return source.dictionary.get(text.string) orelse .undefined;
+    if (rooted[0] == .dictionary) return rooted[0].dictionary.get(rooted[2].string) orelse .undefined;
+    if (rooted[0] == .string) {
+        if (std.mem.eql(u16, rooted[2].string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return .{ .number = @floatFromInt(rooted[0].string.len()) };
+        const index = propertyIndexUnits(rooted[2].string.units) orelse return .undefined;
+        if (index >= rooted[0].string.len()) return .undefined;
+        return try runtime.stringCodeUnits(&.{rooted[0].string.units[index]});
     }
+    if (rooted[0] == .bytes) {
+        if (rooted[0].bytes.kind == .array_buffer) return .undefined;
+        if (std.mem.eql(u16, rooted[2].string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return .{ .number = @floatFromInt(rooted[0].bytes.bytes.len) };
+        const index = propertyIndexUnits(rooted[2].string.units) orelse return .undefined;
+        return rooted[0].bytes.get(index);
+    }
+    if (rooted[0] == .function and std.mem.eql(u16, rooted[2].string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return .{ .number = 0 };
     return .undefined;
+}
+
+fn propertyIndexUnits(units: []const u16) ?usize {
+    if (units.len == 0 or (units.len > 1 and units[0] == '0')) return null;
+    var result: usize = 0;
+    for (units) |unit| {
+        if (unit < '0' or unit > '9') return null;
+        result = std.math.mul(usize, result, 10) catch return null;
+        result = std.math.add(usize, result, unit - '0') catch return null;
+    }
+    return result;
 }
 
 const Range = struct { start: usize, count: usize };
@@ -1109,6 +1189,73 @@ test "配列ソート系は安定な破壊的操作とundefined末尾を保つ" 
     const reversed = (try call(&runtime, "配列逆順", &.{numeric}, null)).?;
     try std.testing.expectEqual(numeric.array, reversed.array);
     try std.testing.expect(std.math.isNan(numeric.array.get(0).number));
+}
+
+test "表検索系はlengthとraw開始値の型を保持する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var length_key = try runtime.stringUtf8("length");
+    try roots.protect(&length_key);
+    var text_length = try runtime.stringUtf8("7");
+    try roots.protect(&text_length);
+    var dictionary = try runtime.createDictionary();
+    try roots.protect(&dictionary);
+    try dictionary.dictionary.set(length_key.string, text_length);
+    var dictionary_table = try common.arrayFromValues(&runtime, &.{dictionary});
+    try roots.protect(&dictionary_table);
+    try std.testing.expectEqual(text_length.string, (try tableColumnCount(&runtime, dictionary_table)).string);
+
+    var function_name = try runtime.stringUtf8("二引数");
+    try roots.protect(&function_name);
+    var function = try runtime.createNativeFunction(function_name.string, 2, testElementCountFunction, &.{});
+    try roots.protect(&function);
+    try std.testing.expectEqual(@as(f64, 0), (try indexed(&runtime, function, length_key)).number);
+
+    var zero_text = try runtime.stringUtf8("zero");
+    try roots.protect(&zero_text);
+    var one_value_text = try runtime.stringUtf8("one");
+    try roots.protect(&one_value_text);
+    var two_value_text = try runtime.stringUtf8("two");
+    try roots.protect(&two_value_text);
+    var zero = try common.arrayFromValues(&runtime, &.{zero_text});
+    try roots.protect(&zero);
+    var one = try common.arrayFromValues(&runtime, &.{one_value_text});
+    try roots.protect(&one);
+    var two = try common.arrayFromValues(&runtime, &.{two_value_text});
+    try roots.protect(&two);
+    var table = try common.arrayFromValues(&runtime, &.{ zero, one, two });
+    try roots.protect(&table);
+    var one_text = try runtime.stringUtf8("1");
+    try roots.protect(&one_text);
+    var one_needle = try runtime.stringUtf8("one");
+    try roots.protect(&one_needle);
+    var two_needle = try runtime.stringUtf8("two");
+    try roots.protect(&two_needle);
+    try std.testing.expectEqual(one_text.string, (try tableSearch(&runtime, table, .{ .number = 0 }, one_text, one_needle)).string);
+    try std.testing.expectEqual(@as(f64, 2), (try tableSearch(&runtime, table, .{ .number = 0 }, one_text, two_needle)).number);
+    var one_bigint = try runtime.bigIntLiteral("1n");
+    try roots.protect(&one_bigint);
+    try std.testing.expectEqual(@as(i64, 1), (try tableSearch(&runtime, table, .{ .number = 0 }, one_bigint, one_needle)).bigint.toI64());
+    try std.testing.expectEqual(@as(i64, 2), (try tableSearch(&runtime, table, .{ .number = 0 }, one_bigint, two_needle)).bigint.toI64());
+    var object_start = try runtime.createDictionary();
+    try roots.protect(&object_start);
+    try std.testing.expectEqual(@as(f64, -1), (try tableSearch(&runtime, table, .{ .number = 0 }, object_start, one_needle)).number);
+
+    var buffer = try runtime.createBytes(&.{ 85, 9 });
+    try roots.protect(&buffer);
+    var buffer_table = try common.arrayFromValues(&runtime, &.{buffer});
+    try roots.protect(&buffer_table);
+    try std.testing.expectEqual(@as(f64, 2), (try tableColumnCount(&runtime, buffer_table)).number);
+    try std.testing.expectEqual(@as(f64, 85), (try indexed(&runtime, buffer, .{ .number = 0 })).number);
+    try std.testing.expectEqual(@as(f64, 0), (try tableSearch(&runtime, buffer_table, .{ .number = 0 }, .{ .number = 0 }, .{ .number = 85 })).number);
+
+    var array_buffer = try runtime.createArrayBuffer(&.{ 85, 9 });
+    try roots.protect(&array_buffer);
+    try std.testing.expect((try indexed(&runtime, array_buffer, length_key)) == .undefined);
 }
 
 test "配列コピーと参照はJSONとJavaScript添字の境界を保つ" {

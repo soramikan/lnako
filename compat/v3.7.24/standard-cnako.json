@@ -5595,7 +5595,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-table"
+        "plugin-system-table",
+        "native-system-table-query-commands"
       ],
       "platforms": [
         "macos-aarch64",
@@ -5621,7 +5622,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-table"
+        "plugin-system-table",
+        "native-system-table-query-commands"
       ],
       "platforms": [
         "macos-aarch64",
@@ -5647,7 +5649,9 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-table"
+        "plugin-system-table",
+        "native-system-table-query-commands",
+        "native-system-table-search-negative-row-error"
       ],
       "platforms": [
         "macos-aarch64",
@@ -5673,7 +5677,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-table"
+        "plugin-system-table",
+        "native-system-table-query-commands"
       ],
       "platforms": [
         "macos-aarch64",
@@ -5699,7 +5704,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-table"
+        "plugin-system-table",
+        "native-system-table-query-commands"
       ],
       "platforms": [
         "macos-aarch64",
@@ -5803,7 +5809,9 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-table"
+        "plugin-system-table",
+        "native-system-table-query-commands",
+        "native-system-table-column-null-row-error"
       ],
       "platforms": [
         "macos-aarch64",

@@ -73,6 +73,12 @@ pub const Command = enum(u16) {
     array_swap,
     array_sequence,
     array_fill,
+    table_pickup,
+    table_exact_pickup,
+    table_search,
+    table_column_count,
+    table_row_count,
+    table_column,
     add_parsed,
     sum_parsed,
     sequential_add,
@@ -194,6 +200,12 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "配列入替")) return .array_swap;
     if (std.mem.eql(u8, name, "配列連番作成")) return .array_sequence;
     if (std.mem.eql(u8, name, "配列要素作成")) return .array_fill;
+    if (std.mem.eql(u8, name, "表ピックアップ")) return .table_pickup;
+    if (std.mem.eql(u8, name, "表完全一致ピックアップ")) return .table_exact_pickup;
+    if (std.mem.eql(u8, name, "表検索")) return .table_search;
+    if (std.mem.eql(u8, name, "表列数")) return .table_column_count;
+    if (std.mem.eql(u8, name, "表行数")) return .table_row_count;
+    if (std.mem.eql(u8, name, "表列取得")) return .table_column;
     if (std.mem.eql(u8, name, "足")) return .add_parsed;
     if (std.mem.eql(u8, name, "合計")) return .sum_parsed;
     if (std.mem.eql(u8, name, "連続加算")) return .sequential_add;
