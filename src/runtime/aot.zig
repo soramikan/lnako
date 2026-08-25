@@ -741,7 +741,7 @@ pub export fn lnako_aot_iterator_new(out: *Value, values: ?[*]const Value, len: 
     out.* = .{};
     const runtime = if (active_runtime) |*value| value else return;
     const source = if (values) |pointer| pointer[0..len] else if (len == 0) &.{} else return;
-    out.* = runtime.createIterator(source, is_range, direction) catch return;
+    out.* = runtime.createIterator(source, is_range, direction) catch |failure| runtimeFailure(failure);
 }
 
 pub export fn lnako_aot_iterator_has_next(iterator: *const Value) callconv(.c) c_int {
@@ -935,6 +935,7 @@ test "回数・範囲・配列・辞書の反復状態と元コレクション�
     _ = runtime.iteratorNext(repeat, &repeat_target, null, null, null);
     try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 1))), repeat_target.payload);
     runtime.popRoots(&frame);
+    try std.testing.expectError(error.NotIterable, runtime.createIterator(&.{try runtime.createBigInt("1n")}, false, 0));
 }
 
 fn numberValue(number: f64) Value {

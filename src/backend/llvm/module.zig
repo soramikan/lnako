@@ -1066,7 +1066,7 @@ fn iteratorSourceSupported(function: ir.Function, instruction: ir.Instruction) b
     if (instruction.operands.len == 0) return false;
     if (instruction.name.len > 0 and instruction.operands.len >= 2) return true;
     return switch (valueType(function, instruction.operands[0])) {
-        .number, .string, .array, .object => true,
+        .dynamic, .number, .string, .array, .object => true,
         else => false,
     };
 }
@@ -1222,7 +1222,7 @@ test "回数・範囲・コレクション反復をAOTイテレーターへ変�
     const semantic = @import("../../semantic/analyzer.zig");
     const hir = @import("../../ir/hir.zig");
     const lower = @import("../../ir/lower_ssa.zig");
-    const source = "2回\n回数を表示\nここまで\nNを1から2まで繰り返す\nNを表示\nここまで\n[3,4]を反復\n対象を表示\nここまで\n";
+    const source = "C=2\nC回\n回数を表示\nここまで\nNを1から2まで繰り返す\nNを表示\nここまで\nA=[3,4]\nAを反復\n対象を表示\nここまで\nS=\"AB\"\nSを反復\n対象を表示\nここまで\n";
     var parsed = try parser.parse(std.testing.allocator, source, "iterators.nako3");
     defer parsed.deinit();
     try std.testing.expect(parsed.succeeded());

@@ -65,7 +65,7 @@
   },
   {
     "id": "native-collection-foreach",
-    "source": "[3,4]を反復\n対象を表示\nここまで\n{\"a\":1,\"b\":2}を反復\n対象キーを表示\nここまで\n"
+    "source": "C=2\nC回\n回数を表示\nここまで\nA=[3,4]\nAを反復\n対象を表示\nここまで\nD={\"a\":1,\"b\":2}\nDを反復\n対象キーを表示\nここまで\nS=\"A😀B\"\nSを反復\n対象キーを表示\n対象を表示\nここまで\n"
   },
   {
     "id": "native-array-destructure",
