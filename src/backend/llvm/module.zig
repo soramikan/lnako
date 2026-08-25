@@ -347,7 +347,7 @@ const Emitter = struct {
                 "  call void @lnako_aot_print_bigint(ptr %display.value, i1 %newline)\n" ++
                 "  br label %done\n" ++
                 "done:\n" ++
-                "  ret %lnako.Value %value\n" ++
+                "  ret %lnako.Value { i8 0, i64 0 }\n" ++
                 "}\n\n",
         );
     }

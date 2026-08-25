@@ -94,7 +94,7 @@ const FunctionBuilder = struct {
             .store_global => try self.lowerStore(.store_global, node),
             .store_local => try self.lowerStore(.store_local, node),
             .destructure_store => try self.lowerVariadic(.destructure_store, .void, node),
-            .binary => try self.lowerVariadic(.binary, toType(node.type_hint), node),
+            .binary => if (isLogicalOperator(node.operator)) try self.lowerLogical(node) else try self.lowerVariadic(.binary, toType(node.type_hint), node),
             .unary => try self.lowerVariadic(.unary, toType(node.type_hint), node),
             .call => try self.lowerVariadic(.call, toType(node.type_hint), node),
             .call_value => try self.lowerVariadic(.call_value, toType(node.type_hint), node),
@@ -144,6 +144,43 @@ const FunctionBuilder = struct {
             return null;
         }
         return try self.emitValue(opcode, result_type, operands.items, node);
+    }
+
+    fn lowerLogical(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
+        if (node.children.len != 2) return error.InvalidHir;
+        const left = (try self.lowerNode(node.children[0])) orelse try self.emitUndefined(node);
+        const left_predecessor = self.current;
+        const right_block = try self.createBlock("logical.right");
+        const merge_block = try self.createBlock("logical.end");
+        const is_and = std.mem.eql(u8, node.operator, "&&") or std.mem.eql(u8, node.operator, "and");
+        self.terminate(.{ .conditional_branch = .{
+            .condition = left,
+            .then_block = if (is_and) right_block else merge_block,
+            .else_block = if (is_and) merge_block else right_block,
+        } });
+
+        self.current = right_block;
+        const right = (try self.lowerNode(node.children[1])) orelse try self.emitUndefined(node);
+        const right_predecessor = self.current;
+        var incoming: std.ArrayList(ir.PhiIncoming) = .empty;
+        try incoming.append(self.allocator, .{ .predecessor = left_predecessor, .value = left });
+        if (!self.isTerminated()) {
+            self.terminate(.{ .branch = merge_block });
+            try incoming.append(self.allocator, .{ .predecessor = right_predecessor, .value = right });
+        }
+
+        self.current = merge_block;
+        const result = self.next_value;
+        self.next_value += 1;
+        try self.currentBlock().instructions.append(self.allocator, .{
+            .result = result,
+            .opcode = .phi,
+            .type = toType(node.type_hint),
+            .phi_incoming = try incoming.toOwnedSlice(self.allocator),
+            .operator = try self.allocator.dupe(u8, node.operator),
+            .span = node.span,
+        });
+        return result;
     }
 
     fn lowerIf(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
@@ -361,6 +398,11 @@ fn toLoopDirection(value: @import("../frontend/ast.zig").LoopDirection) ir.LoopD
     };
 }
 
+fn isLogicalOperator(operator: []const u8) bool {
+    return std.mem.eql(u8, operator, "&&") or std.mem.eql(u8, operator, "and") or
+        std.mem.eql(u8, operator, "||") or std.mem.eql(u8, operator, "or");
+}
+
 fn dupeStrings(allocator: std.mem.Allocator, strings: []const []const u8) ![]const []const u8 {
     const result = try allocator.alloc([]const u8, strings.len);
     for (strings, 0..) |value, index| result[index] = try allocator.dupe(u8, value);
@@ -381,6 +423,37 @@ test "HIRから分岐とループを含むSSA IRを生成する" {
     const entry = program.findFunction("main__$entry").?;
     try std.testing.expect(entry.blocks.len >= 7);
     try std.testing.expect(entry.blocks[0].terminator == .branch);
+}
+
+test "論理演算の右辺を短絡分岐とPHIへ変換する" {
+    const parser = @import("../frontend/parser.zig");
+    const semantic = @import("../semantic/analyzer.zig");
+    var parsed = try parser.parse(std.testing.allocator, "A=0かつ表示(\"NG\")\nB=1または表示(\"NG\")\n", "logical.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "logical.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "logical", "logical.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    const entry = program.findFunction("logical__$entry").?;
+    var phi_count: usize = 0;
+    var logical_binary_count: usize = 0;
+    var display_blocks: usize = 0;
+    for (entry.blocks) |block| {
+        var has_display = false;
+        for (block.instructions) |instruction| {
+            if (instruction.opcode == .phi) phi_count += 1;
+            if (instruction.opcode == .binary and isLogicalOperator(instruction.operator)) logical_binary_count += 1;
+            if (instruction.opcode == .call and std.mem.eql(u8, instruction.name, "表示")) has_display = true;
+        }
+        if (has_display) display_blocks += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), phi_count);
+    try std.testing.expectEqual(@as(usize, 0), logical_binary_count);
+    try std.testing.expectEqual(@as(usize, 2), display_blocks);
 }
 
 test "条件分岐と例外監視を明示的な制御フローへ変換する" {

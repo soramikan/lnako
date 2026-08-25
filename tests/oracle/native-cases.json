@@ -24,6 +24,10 @@
     "source": "もし、3>2ならば\n「真」を表示\n違えば\n「偽」を表示\nここまで\n"
   },
   {
+    "id": "native-logical-short-circuit",
+    "source": "(0かつ表示(\"NG-and\"))を表示\n(1または表示(\"NG-or\"))を表示\n(1かつ表示(\"右-and\"))を表示\n(0または表示(\"右-or\"))を表示\n"
+  },
+  {
     "id": "native-while",
     "source": "N=3\n(N>0)の間、繰り返す\nNを表示\nN=N-1\nここまで\n"
   },
