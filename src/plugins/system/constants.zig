@@ -22,8 +22,7 @@ pub fn install(runtime: *Runtime, installer: Installer) !void {
         .number => |value| .{ .number = value },
     });
     for (system_constant.string_entries) |constant| try installer.set(constant.name, try runtime.stringUtf8(constant.value));
-    try installer.set("抽出文字列", try runtime.createArray());
-    try installer.set("__DEBUGブレイクポイント一覧", try runtime.createArray());
+    for (system_constant.array_names) |name| try installer.set(name, try runtime.createArray());
 }
 
 test "v3.7.24のシステム定数を実体化する" {

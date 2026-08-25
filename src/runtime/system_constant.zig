@@ -71,6 +71,11 @@ pub const string_entries = [_]StringEntry{
     .{ .name = "名前空間", .value = "" },
 };
 
+pub const array_names = [_][]const u8{
+    "抽出文字列",
+    "__DEBUGブレイクポイント一覧",
+};
+
 pub fn lookupScalar(name: []const u8) ?Scalar {
     for (scalar_entries) |entry| {
         if (std.mem.eql(u8, name, entry.name)) return entry.value;
@@ -85,6 +90,13 @@ pub fn lookupString(name: []const u8) ?[]const u8 {
     return null;
 }
 
+pub fn isArray(name: []const u8) bool {
+    for (array_names) |entry| {
+        if (std.mem.eql(u8, name, entry)) return true;
+    }
+    return false;
+}
+
 test "v3.7.24のスカラーシステム定数を解決する" {
     try std.testing.expect(lookupScalar("true").?.boolean);
     try std.testing.expect(!lookupScalar("FALSE").?.boolean);
@@ -96,4 +108,7 @@ test "v3.7.24のスカラーシステム定数を解決する" {
     try std.testing.expectEqualStrings("3.7.24", lookupString("ナデシコバージョン").?);
     try std.testing.expectEqualStrings("\n", lookupString("改行").?);
     try std.testing.expect(lookupString("PI") == null);
+    try std.testing.expect(isArray("抽出文字列"));
+    try std.testing.expect(isArray("__DEBUGブレイクポイント一覧"));
+    try std.testing.expect(!isArray("空"));
 }

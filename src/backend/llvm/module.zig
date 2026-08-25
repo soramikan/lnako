@@ -116,6 +116,7 @@ const Emitter = struct {
     globals: std.ArrayList([]const u8) = .empty,
     strings: std.ArrayList(StringConstant) = .empty,
     system_strings: std.ArrayList(SystemStringConstant) = .empty,
+    system_arrays: std.ArrayList(usize) = .empty,
     bigints: std.ArrayList(BigIntConstant) = .empty,
     locations: std.ArrayList(DebugLocation) = .empty,
     next_metadata: usize = 4,
@@ -126,6 +127,7 @@ const Emitter = struct {
         self.strings.deinit(self.allocator);
         for (self.system_strings.items) |constant| self.allocator.free(constant.units);
         self.system_strings.deinit(self.allocator);
+        self.system_arrays.deinit(self.allocator);
         self.bigints.deinit(self.allocator);
         self.locations.deinit(self.allocator);
         self.output.deinit();
@@ -287,6 +289,9 @@ const Emitter = struct {
                 return failure;
             };
         };
+        for (self.globals.items, 0..) |name, global_index| {
+            if (system_constant.isArray(name)) try self.system_arrays.append(self.allocator, global_index);
+        }
     }
 
     fn writeRuntimeHelpers(self: *Emitter) !void {
@@ -1039,6 +1044,9 @@ const Emitter = struct {
             } else try self.output.writer.print("@lnako.system.string.{d}", .{index});
             try self.output.writer.print(", i64 {d})\n", .{constant.units.len});
         }
+        for (self.system_arrays.items) |global_index| {
+            try self.output.writer.print("  call void @lnako_aot_array_new(ptr @lnako.global.{d}, ptr null, i64 0)\n", .{global_index});
+        }
         for (self.program.functions) |function| if (self.globalIndex(function.name)) |global_index| {
             try self.output.writer.print("  call void @lnako_aot_function_new(ptr @lnako.global.{d}, ptr @lnako.wrapper.{d}, i64 {d}, ptr null, i64 0)\n", .{ global_index, function.id, function.parameters.len });
         };
@@ -1480,6 +1488,28 @@ test "参照された文字列システム定数をGCルート登録後に初期
     try std.testing.expect(push < initialize);
     try std.testing.expect(initialize < entry);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "[4 x i16] [i16 109, i16 97, i16 105, i16 110]") != null);
+}
+
+test "参照された配列システム定数を独立したGCオブジェクトへ初期化する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "抽出文字列[0]=\"A\"\n__DEBUGブレイクポイント一覧[0]=\"B\"\n抽出文字列を表示\n__DEBUGブレイクポイント一覧を表示\n", "array-constants.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "array-constants.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "array-constants.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    var module = try generate(std.testing.allocator, program, "array-constants.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    const first = std.mem.indexOf(u8, module.text, "call void @lnako_aot_array_new(ptr @lnako.global.").?;
+    const second = std.mem.indexOfPos(u8, module.text, first + 1, "call void @lnako_aot_array_new(ptr @lnako.global.").?;
+    const entry = std.mem.indexOf(u8, module.text, "%entry.result.0 = call").?;
+    try std.testing.expect(first < second);
+    try std.testing.expect(second < entry);
 }
 
 test "配列と辞書をルート付きAOTランタイム呼び出しへ変換する" {
