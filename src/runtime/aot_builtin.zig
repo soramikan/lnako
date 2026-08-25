@@ -12,6 +12,13 @@ pub const Command = enum(u16) {
     radix2,
     radix2_display,
     rgb,
+    bit_or,
+    bit_and,
+    bit_xor,
+    bit_not,
+    shift_left,
+    shift_right,
+    shift_right_unsigned,
 };
 
 pub fn lookup(name: []const u8) ?Command {
@@ -26,6 +33,13 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "二進")) return .radix2;
     if (std.mem.eql(u8, name, "二進表示")) return .radix2_display;
     if (std.mem.eql(u8, name, "RGB")) return .rgb;
+    if (std.mem.eql(u8, name, "OR")) return .bit_or;
+    if (std.mem.eql(u8, name, "AND")) return .bit_and;
+    if (std.mem.eql(u8, name, "XOR")) return .bit_xor;
+    if (std.mem.eql(u8, name, "NOT")) return .bit_not;
+    if (std.mem.eql(u8, name, "SHIFT_L")) return .shift_left;
+    if (std.mem.eql(u8, name, "SHIFT_R")) return .shift_right;
+    if (std.mem.eql(u8, name, "SHIFT_UR")) return .shift_right_unsigned;
     return null;
 }
 
@@ -47,5 +61,12 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.radix2, lookup("二進").?);
     try std.testing.expectEqual(Command.radix2_display, lookup("二進表示").?);
     try std.testing.expectEqual(Command.rgb, lookup("RGB").?);
+    try std.testing.expectEqual(Command.bit_or, lookup("OR").?);
+    try std.testing.expectEqual(Command.bit_and, lookup("AND").?);
+    try std.testing.expectEqual(Command.bit_xor, lookup("XOR").?);
+    try std.testing.expectEqual(Command.bit_not, lookup("NOT").?);
+    try std.testing.expectEqual(Command.shift_left, lookup("SHIFT_L").?);
+    try std.testing.expectEqual(Command.shift_right, lookup("SHIFT_R").?);
+    try std.testing.expectEqual(Command.shift_right_unsigned, lookup("SHIFT_UR").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }

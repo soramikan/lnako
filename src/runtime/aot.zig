@@ -54,6 +54,9 @@ const Arithmetic = enum(u8) {
     remainder,
     power,
     integer_divide,
+    bit_and,
+    bit_or,
+    bit_xor,
 };
 
 const Comparison = enum(u8) {
@@ -755,6 +758,9 @@ fn bigIntArithmetic(runtime: *Runtime, operator: Arithmetic, left: Value, right:
             break :blk try left_bigint.pow(runtime.allocator, right_bigint.toU32() catch return error.BigIntExponentTooLarge);
         },
         .integer_divide => return error.CannotConvertBigIntToNumber,
+        .bit_and => try left_bigint.bitAnd(runtime.allocator, right_bigint),
+        .bit_or => try left_bigint.bitOr(runtime.allocator, right_bigint),
+        .bit_xor => try left_bigint.bitXor(runtime.allocator, right_bigint),
     };
     return runtime.ownBigInt(result);
 }
@@ -773,7 +779,7 @@ fn arithmetic(runtime: *Runtime, operator: Arithmetic, left: Value, right: Value
     }
     const left_number = if (operator == .add) try valueToParseFloatRuntime(runtime, left_primitive) else try valueToNumberRuntime(runtime, left_primitive);
     const right_number = if (operator == .add) try valueToParseFloatRuntime(runtime, right_primitive) else try valueToNumberRuntime(runtime, right_primitive);
-    const result = switch (operator) {
+    const result: f64 = switch (operator) {
         .add => left_number + right_number,
         .subtract => left_number - right_number,
         .multiply => left_number * right_number,
@@ -781,6 +787,9 @@ fn arithmetic(runtime: *Runtime, operator: Arithmetic, left: Value, right: Value
         .remainder => @rem(left_number, right_number),
         .power => std.math.pow(f64, left_number, right_number),
         .integer_divide => @floor(left_number / right_number),
+        .bit_and => @floatFromInt(toInt32(left_number) & toInt32(right_number)),
+        .bit_or => @floatFromInt(toInt32(left_number) | toInt32(right_number)),
+        .bit_xor => @floatFromInt(toInt32(left_number) ^ toInt32(right_number)),
     };
     return numberValue(result);
 }
@@ -811,13 +820,21 @@ fn bigIntFromString(runtime: *Runtime, string: Value) !BigInt {
 }
 
 fn shift(runtime: *Runtime, operator: ShiftOperator, left: Value, right: Value) !Value {
-    const left_is_bigint = left.tag == @intFromEnum(Tag.bigint);
-    const right_is_bigint = right.tag == @intFromEnum(Tag.bigint);
+    var roots = [_]Value{ left, right, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[2] = try valueToPrimitive(runtime, roots[0]);
+    roots[3] = try valueToPrimitive(runtime, roots[1]);
+    const left_primitive = roots[2];
+    const right_primitive = roots[3];
+    const left_is_bigint = left_primitive.tag == @intFromEnum(Tag.bigint);
+    const right_is_bigint = right_primitive.tag == @intFromEnum(Tag.bigint);
     if (left_is_bigint or right_is_bigint) {
         if (!left_is_bigint or !right_is_bigint) return error.CannotMixBigIntAndNumber;
         if (operator == .right_unsigned) return error.UnsignedShiftOfBigInt;
-        const left_bigint = left.object().?.payload.bigint;
-        const amount = right.object().?.payload.bigint.toI64() catch return error.BigIntShiftTooLarge;
+        const left_bigint = left_primitive.object().?.payload.bigint;
+        const amount = right_primitive.object().?.payload.bigint.toI64() catch return error.BigIntShiftTooLarge;
         const magnitude = if (amount < 0) @as(u64, @intCast(-(amount + 1))) + 1 else @as(u64, @intCast(amount));
         const shift_amount: usize = std.math.cast(usize, magnitude) orelse return error.BigIntShiftTooLarge;
         const shift_left = (operator == .left) != (amount < 0);
@@ -827,13 +844,28 @@ fn shift(runtime: *Runtime, operator: ShiftOperator, left: Value, right: Value) 
             try left_bigint.shiftRight(runtime.allocator, shift_amount);
         return runtime.ownBigInt(result);
     }
-    const amount: u5 = @truncate(toUint32(valueToNumber(right)) & 31);
+    const amount: u5 = @truncate(toUint32(try valueToNumberRuntime(runtime, right_primitive)) & 31);
+    const left_number = try valueToNumberRuntime(runtime, left_primitive);
     const shifted: f64 = switch (operator) {
-        .left => @floatFromInt(toInt32(valueToNumber(left)) << amount),
-        .right => @floatFromInt(toInt32(valueToNumber(left)) >> amount),
-        .right_unsigned => @floatFromInt(toUint32(valueToNumber(left)) >> amount),
+        .left => @floatFromInt(toInt32(left_number) << amount),
+        .right => @floatFromInt(toInt32(left_number) >> amount),
+        .right_unsigned => @floatFromInt(toUint32(left_number) >> amount),
     };
     return numberValue(shifted);
+}
+
+fn bitNot(runtime: *Runtime, value: Value) !Value {
+    var roots = [_]Value{ value, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[1] = try valueToPrimitive(runtime, roots[0]);
+    const primitive = roots[1];
+    if (primitive.tag == @intFromEnum(Tag.bigint)) {
+        const result = try primitive.object().?.payload.bigint.bitNot(runtime.allocator);
+        return runtime.ownBigInt(result);
+    }
+    return numberValue(@floatFromInt(~toInt32(try valueToNumberRuntime(runtime, primitive))));
 }
 
 fn toInt32(number: f64) i32 {
@@ -1262,6 +1294,44 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             };
         },
+        .bit_or, .bit_and, .bit_xor => {
+            if (len < 2) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            const operator: Arithmetic = switch (command) {
+                .bit_or => .bit_or,
+                .bit_and => .bit_and,
+                .bit_xor => .bit_xor,
+                else => unreachable,
+            };
+            out.* = arithmetic(runtime, operator, arguments.?[0], arguments.?[1]) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .bit_not => {
+            out.* = bitNot(runtime, value) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .shift_left, .shift_right, .shift_right_unsigned => {
+            if (len < 2) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            const operator: ShiftOperator = switch (command) {
+                .shift_left => .left,
+                .shift_right => .right,
+                .shift_right_unsigned => .right_unsigned,
+                else => unreachable,
+            };
+            out.* = shift(runtime, operator, arguments.?[0], arguments.?[1]) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
     }
 }
 
@@ -1527,6 +1597,29 @@ test "AOTのRGBは各16進表現の末尾2文字を連結する" {
     defer lnako_aot_pop_roots(&frame);
     lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[0]), 3, @intFromEnum(aot_builtin.Command.rgb));
     try std.testing.expectEqualSlices(u16, &.{ '#', '-', '1', 'a', 'N', 'a', 'N' }, roots[3].object().?.payload.utf16_string);
+}
+
+test "AOTビット命令はNumberの32bit化とBigInt演算を区別する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ staticStringValue("5"), numberValue(3), .{}, staticStringValue("3"), numberValue(2), .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[0]), 2, @intFromEnum(aot_builtin.Command.bit_and));
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(roots[2].payload)));
+    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[3]), 2, @intFromEnum(aot_builtin.Command.shift_left));
+    try std.testing.expectEqual(@as(f64, 12), @as(f64, @bitCast(roots[5].payload)));
+    roots[6] = try active_runtime.?.createBigInt("0n");
+    lnako_aot_builtin_call(&roots[7], @ptrCast(&roots[6]), 1, @intFromEnum(aot_builtin.Command.bit_not));
+    const bigint_text = try roots[7].object().?.payload.bigint.toString(std.testing.allocator, 10);
+    defer std.testing.allocator.free(bigint_text);
+    try std.testing.expectEqualStrings("-1", bigint_text);
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {

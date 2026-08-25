@@ -100,6 +100,10 @@
     "source": "RGB(1,15,255)を表示\nRGB(-1,非数,無限大)を表示\nRGB(256,257,15.9)を表示\nRGB(\"15x\",[16],NULL)を表示\nRGB(1n,2n,3n)を表示\n"
   },
   {
+    "id": "native-system-bitwise-commands",
+    "source": "OR(5,2)を表示\nAND(\"5\",3)を表示\nXOR([5],3)を表示\nNOT(0)を表示\nOR(4294967296,1)を表示\nSHIFT_L(\"3\",2)を表示\nSHIFT_R(-8,\"2\")を表示\nSHIFT_UR(-1,1)を表示\nOR(5n,2n)を表示\nNEG=-1n\nAND(NEG,6n)を表示\nXOR(5n,3n)を表示\nNOT(0n)を表示\nSHIFT_L(3n,2n)を表示\nNEG8=-8n\nSHIFT_R(NEG8,2n)を表示\nエラー監視\nOR(1n,1)を表示\nエラーならば\nエラーメッセージを表示\nここまで\nエラー監視\nSHIFT_UR(1n,1n)を表示\nエラーならば\nエラーメッセージを表示\nここまで\n"
+  },
+  {
     "id": "native-bare-named-function-call",
     "source": "●(Aを)Fとは\nAで戻る\nここまで\nそれは3\nTYPEOF(F)を表示\nそれは4\nFを表示\n●Gとは\n2で戻る\nここまで\nTYPEOF(G)を表示\nGを表示\n"
   },
