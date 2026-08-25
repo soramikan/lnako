@@ -1158,7 +1158,7 @@ fn operatorInfo(kind: Kind) ?OperatorInfo {
         .less_equal => .{ .precedence = 20, .name = "lteq" },
         .range => .{ .precedence = 25, .name = "…" },
         .bit_and => .{ .precedence = 30, .name = "&" },
-        .bit_xor => .{ .precedence = 30, .name = "^" },
+        .bit_xor => .{ .precedence = 60, .name = "**" },
         .plus => .{ .precedence = 40, .name = "+" },
         .minus => .{ .precedence = 40, .name = "-" },
         .shift_left => .{ .precedence = 40, .name = "shift_l" },
@@ -1168,7 +1168,7 @@ fn operatorInfo(kind: Kind) ?OperatorInfo {
         .divide => .{ .precedence = 50, .name = "÷" },
         .integer_divide => .{ .precedence = 50, .name = "÷÷" },
         .modulo => .{ .precedence = 50, .name = "%" },
-        .power => .{ .precedence = 60, .right_associative = true, .name = "**" },
+        .power => .{ .precedence = 60, .name = "**" },
         else => null,
     };
 }
@@ -1293,6 +1293,20 @@ test "行頭の等価比較を代入文と誤認しない" {
     try std.testing.expectEqual(ast.Kind.function_call, call.kind);
     try std.testing.expectEqual(ast.Kind.binary_operator, call.children[0].kind);
     try std.testing.expectEqualStrings("eq", call.children[0].operator);
+}
+
+test "冪乗演算子を公式同様に左結合として構文解析する" {
+    var result = try parse(std.testing.allocator, "2^3^2を表示\n2**3**2を表示\n", "power.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const outer = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.binary_operator, outer.kind);
+    try std.testing.expectEqualStrings("**", outer.operator);
+    try std.testing.expectEqual(ast.Kind.binary_operator, outer.children[0].kind);
+    try std.testing.expectEqualStrings("**", outer.children[0].operator);
+    const stars = result.root.?.children[2].children[0];
+    try std.testing.expectEqual(ast.Kind.binary_operator, stars.children[0].kind);
+    try std.testing.expectEqualStrings("**", stars.children[0].operator);
 }
 
 test "もし文とソース位置を構文解析する" {

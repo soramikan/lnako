@@ -66,6 +66,12 @@ const BigIntComparison = enum(u8) {
     greater_equal,
 };
 
+const ShiftOperator = enum(u8) {
+    left,
+    right,
+    right_unsigned,
+};
+
 const Payload = union(enum) {
     utf16_string: []u16,
     bigint: BigInt,
@@ -415,6 +421,47 @@ fn bigIntComparison(runtime: *Runtime, operator: BigIntComparison, left: Value, 
     };
 }
 
+fn shift(runtime: *Runtime, operator: ShiftOperator, left: Value, right: Value) !Value {
+    const left_is_bigint = left.tag == @intFromEnum(Tag.bigint);
+    const right_is_bigint = right.tag == @intFromEnum(Tag.bigint);
+    if (left_is_bigint or right_is_bigint) {
+        if (!left_is_bigint or !right_is_bigint) return error.CannotMixBigIntAndNumber;
+        if (operator == .right_unsigned) return error.UnsignedShiftOfBigInt;
+        const left_bigint = left.object().?.payload.bigint;
+        const amount = right.object().?.payload.bigint.toI64() catch return error.BigIntShiftTooLarge;
+        const magnitude = if (amount < 0) @as(u64, @intCast(-(amount + 1))) + 1 else @as(u64, @intCast(amount));
+        const shift_amount: usize = std.math.cast(usize, magnitude) orelse return error.BigIntShiftTooLarge;
+        const shift_left = (operator == .left) != (amount < 0);
+        const result = if (shift_left)
+            try left_bigint.shiftLeft(runtime.allocator, shift_amount)
+        else
+            try left_bigint.shiftRight(runtime.allocator, shift_amount);
+        return runtime.ownBigInt(result);
+    }
+    const amount: u5 = @truncate(toUint32(valueToNumber(right)) & 31);
+    const shifted: f64 = switch (operator) {
+        .left => @floatFromInt(toInt32(valueToNumber(left)) << amount),
+        .right => @floatFromInt(toInt32(valueToNumber(left)) >> amount),
+        .right_unsigned => @floatFromInt(toUint32(valueToNumber(left)) >> amount),
+    };
+    return numberValue(shifted);
+}
+
+fn toInt32(number: f64) i32 {
+    if (!std.math.isFinite(number) or number == 0) return 0;
+    var value = @mod(@trunc(number), 4294967296.0);
+    if (value < 0) value += 4294967296.0;
+    if (value >= 2147483648.0) value -= 4294967296.0;
+    return @intFromFloat(value);
+}
+
+fn toUint32(number: f64) u32 {
+    if (!std.math.isFinite(number) or number == 0) return 0;
+    var value = @mod(@trunc(number), 4294967296.0);
+    if (value < 0) value += 4294967296.0;
+    return @intFromFloat(value);
+}
+
 fn bigIntEqualsNumber(runtime: *Runtime, bigint: BigInt, number: f64) !bool {
     if (!std.math.isFinite(number) or @trunc(number) != number) return false;
     var converted = try BigInt.fromF64(runtime.allocator, number);
@@ -575,6 +622,13 @@ pub export fn lnako_aot_bigint_compare(out: *Value, left: *const Value, right: *
     };
 }
 
+pub export fn lnako_aot_shift(out: *Value, left: *const Value, right: *const Value, opcode: u8) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    const operator = std.enums.fromInt(ShiftOperator, opcode) orelse runtimeFailure(error.InvalidShiftOperator);
+    out.* = shift(runtime, operator, left.*, right.*) catch |failure| runtimeFailure(failure);
+}
+
 pub export fn lnako_aot_array_new(out: *Value, values: ?[*]const Value, len: usize) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*value| value else return;
@@ -642,6 +696,7 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*const Value, *const Value, *const Value) callconv(.c) c_int, @TypeOf(&lnako_aot_index_set));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_bigint_arithmetic));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_bigint_compare));
+    try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_shift));
 }
 
 test "ルートフレームをLIFOで連結する" {
@@ -742,6 +797,20 @@ test "AOT BigInt比較をNumberとの間でも精度を落とさず処理する"
     try std.testing.expect(try bigIntComparison(&runtime, .greater, bigint, numberValue(9007199254740992.0)));
     try std.testing.expect(try bigIntComparison(&runtime, .abstract_equal, try runtime.createBigInt("1n"), numberValue(1)));
     try std.testing.expect(!(try bigIntComparison(&runtime, .strict_equal, try runtime.createBigInt("1n"), numberValue(1))));
+}
+
+test "AOTのNumberとBigIntシフトを公式規則で処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 240))), (try shift(&runtime, .left, numberValue(15), numberValue(4))).payload);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 2147483647))), (try shift(&runtime, .right_unsigned, numberValue(-1), numberValue(1))).payload);
+    const value = try runtime.createBigInt("8n");
+    const negative = try runtime.createBigInt("-2n");
+    const shifted = try shift(&runtime, .left, value, negative);
+    const text = try shifted.object().?.payload.bigint.toString(std.testing.allocator, 10);
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("2", text);
+    try std.testing.expectError(error.UnsignedShiftOfBigInt, shift(&runtime, .right_unsigned, value, try runtime.createBigInt("1n")));
 }
 
 test "回数・範囲・配列・辞書の反復状態と元コレクションを追跡する" {

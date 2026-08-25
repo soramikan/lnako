@@ -48,6 +48,7 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
                 .destructure_store => destructureSourceSupported(function, instruction),
                 .const_string => true,
                 .binary => arithmeticOpcode(instruction.operator) != null or comparisonPredicate(instruction.operator) != null or
+                    shiftOpcode(instruction.operator) != null or
                     std.mem.eql(u8, instruction.operator, "&&") or std.mem.eql(u8, instruction.operator, "and") or
                     std.mem.eql(u8, instruction.operator, "||") or std.mem.eql(u8, instruction.operator, "or"),
                 .unary => std.mem.eql(u8, instruction.operator, "!") or std.mem.eql(u8, instruction.operator, "not") or
@@ -134,6 +135,7 @@ const Emitter = struct {
                 "declare i32 @lnako_aot_bigint_truthy(ptr)\n" ++
                 "declare void @lnako_aot_bigint_arithmetic(ptr, ptr, ptr, i8)\n" ++
                 "declare void @lnako_aot_bigint_compare(ptr, ptr, ptr, i8)\n" ++
+                "declare void @lnako_aot_shift(ptr, ptr, ptr, i8)\n" ++
                 "declare void @lnako_aot_array_new(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_dictionary_new(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_index_get(ptr, ptr, ptr)\n" ++
@@ -635,6 +637,9 @@ const Emitter = struct {
         if (bigIntArithmeticOpcode(instruction.operator)) |opcode| {
             return self.writeBigIntAwareArithmetic(function, instruction, scope, opcode);
         }
+        if (shiftOpcode(instruction.operator)) |opcode| {
+            return self.writeShift(instruction, scope, opcode);
+        }
         if (bigIntComparisonOpcode(instruction.operator)) |opcode| {
             return self.writeBigIntAwareComparison(function, instruction, scope, opcode);
         }
@@ -711,6 +716,15 @@ const Emitter = struct {
         try self.debugSuffix(instruction.span, scope);
         try self.output.writer.print("compare.done.{d}:\n", .{result});
         try self.output.writer.print("  %v{d} = phi %lnako.Value [ %compare.bigint.value.{d}, %binary.bigint.path.{d} ], [ %compare.number.value.{d}, %binary.numeric.path.{d} ]", .{ result, result, result, result, result });
+        try self.debugSuffix(instruction.span, scope);
+    }
+
+    fn writeShift(self: *Emitter, instruction: ir.Instruction, scope: usize, opcode: u8) !void {
+        const result = instruction.result orelse return error.MissingInstructionResult;
+        if (instruction.operands.len < 2) return error.InvalidBinaryInstruction;
+        try self.output.writer.print("  call void @lnako_aot_shift(ptr %root.slot.{d}, ptr %root.slot.{d}, ptr %root.slot.{d}, i8 {d})", .{ result, instruction.operands[0], instruction.operands[1], opcode });
+        try self.debugSuffix(instruction.span, scope);
+        try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try self.debugSuffix(instruction.span, scope);
     }
 
@@ -1088,6 +1102,16 @@ fn bigIntComparisonOpcode(operator: []const u8) ?u8 {
     return null;
 }
 
+fn shiftOpcode(operator: []const u8) ?u8 {
+    const entries = [_]struct { operator: []const u8, opcode: u8 }{
+        .{ .operator = "shift_l", .opcode = 0 },
+        .{ .operator = "shift_r", .opcode = 1 },
+        .{ .operator = "shift_r0", .opcode = 2 },
+    };
+    for (entries) |entry| if (std.mem.eql(u8, operator, entry.operator)) return entry.opcode;
+    return null;
+}
+
 fn comparisonPredicate(operator: []const u8) ?[]const u8 {
     const entries = [_]struct { operator: []const u8, predicate: []const u8 }{
         .{ .operator = "==", .predicate = "oeq" },    .{ .operator = "=", .predicate = "oeq" },   .{ .operator = "eq", .predicate = "oeq" },
@@ -1237,7 +1261,7 @@ test "BigInt算術と比較を型タグでAOTランタイムへ分岐する" {
     const semantic = @import("../../semantic/analyzer.zig");
     const hir = @import("../../ir/hir.zig");
     const lower = @import("../../ir/lower_ssa.zig");
-    var parsed = try parser.parse(std.testing.allocator, "A=12345678901234567890n\nB=10n\nA+Bを表示\nA>Bを表示\n", "bigint-operators.nako3");
+    var parsed = try parser.parse(std.testing.allocator, "A=12345678901234567890n\nB=10n\nA+Bを表示\nA>Bを表示\n8n<<2nを表示\n", "bigint-operators.nako3");
     defer parsed.deinit();
     var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "bigint-operators.nako3");
     defer analyzed.deinit();
@@ -1250,6 +1274,7 @@ test "BigInt算術と比較を型タグでAOTランタイムへ分岐する" {
     defer module.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_bigint_arithmetic") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_bigint_compare") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_shift") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "binary.has.bigint.") != null);
 }
 

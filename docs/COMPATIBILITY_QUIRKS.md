@@ -56,6 +56,9 @@ lnakoは、意図的な非互換として合意した項目を除き、説明文
 | BigIntの`÷÷` | 固定した公式v3.7.24でも経路により異なる。`cnako3 source.nako3`はエラー文を標準出力へ出して終了コード0、公式生成JavaScript＋Nodeは`Cannot convert a BigInt value to a number`例外で終了コード1になる | 値を誤生成せず、公式生成JavaScriptと同じ実行時エラーとして拒否する。公式2経路が一致しないため成功差分テストから分離する | `AOT BigInt算術とNumber混在エラーを処理する` |
 | 負のBigInt | `-5n`は負のBigIntリテラルとして動作する。一方、変数`A`に対する`-A`は内部的にNumberの`-1`との乗算になり、BigIntとの型混在エラーになる | リテラルだけ符号を値へ取り込み、変数への単項マイナスは公式と同じ乗算形式を保持して型混在を拒否する | `負のBigIntリテラルと変数への単項マイナスを区別する`、`AOT BigInt算術とNumber混在エラーを処理する` |
 | BigIntとNumberの比較 | 算術演算では型混在エラーだが、`>`などの関係比較と`==`は許可される。`1n==1`は真、`1n===1`は偽 | 比較時だけNumberを精度損失なく整数と照合し、厳格比較では型を区別する | `AOT BigInt比較をNumberとの間でも精度を落とさず処理する`、`native-bigint-arithmetic-and-comparison` |
+| `^`と`**` | `^`はXORではなく冪乗である。またJavaScriptの`**`と異なり、両方とも左結合なので`2^3^2`と`2**3**2`は`64`になる | `^`を`**`へ正規化したうえで、両構文を左結合としてNumberとBigIntの冪乗へ下げる | `冪乗演算子を公式同様に左結合として構文解析する`、`native-number-and-bigint-shifts` |
+| 負のBigIntシフト量 | `S=-2n`のとき`8n<<S`は右へ2ビット移動した`2`、`8n>>S`は左へ2ビット移動した`32`になる | シフト量の符号で方向を反転し、任意精度のまま処理する | `AOTのNumberとBigIntシフトを公式規則で処理する`、`native-number-and-bigint-shifts` |
+| BigIntの`>>>` | 符号なし右シフトはBigIntに定義されず、実行時エラーになる | 値を生成せず`UnsignedShiftOfBigInt`として拒否する | `AOTのNumberとBigIntシフトを公式規則で処理する` |
 
 ## 日時と再現性
 
