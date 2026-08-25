@@ -84,7 +84,12 @@ pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Val
     if (eql(name, "かなか判定")) return .{ .boolean = firstUnit(a_text.string) >= 0x3041 and firstUnit(a_text.string) <= 0x309f };
     if (eql(name, "カタカナ判定")) return .{ .boolean = firstUnit(a_text.string) >= 0x30a1 and firstUnit(a_text.string) <= 0x30fa };
     if (eql(name, "数字判定")) return .{ .boolean = isDigit(firstUnit(a_text.string)) };
-    if (eql(name, "数列判定")) return .{ .boolean = numberSequence(a_text.string.units) };
+    if (eql(name, "数列判定")) {
+        // 公式はString化より前に元引数との厳密比較を行うため、空文字列だけfalse。
+        // 空配列など、String化すると空になる別型は正規表現へ進みtrueになる。
+        if (a == .string and a.string.units.len == 0) return .{ .boolean = false };
+        return .{ .boolean = numberSequence(a_text.string.units) };
+    }
     return null;
 }
 
@@ -637,54 +642,97 @@ fn mapKana(runtime: *Runtime, source: Value, to_full: bool) !Value {
 
 fn currency(runtime: *Runtime, value: Value) !Value {
     const units = (try text(runtime, value)).units;
-    var decimal = units.len;
-    for (units, 0..) |unit, index| if (unit == '.') {
-        decimal = index;
-        break;
-    };
-    var first_digit: usize = 0;
-    while (first_digit < decimal and (units[first_digit] < '0' or units[first_digit] > '9')) first_digit += 1;
     var output: std.ArrayList(u16) = .empty;
     defer output.deinit(runtime.allocator());
-    for (units, 0..) |unit, index| {
-        if (index > first_digit and index < decimal and (decimal - index) % 3 == 0 and unit >= '0' and unit <= '9') try output.append(runtime.allocator(), ',');
-        try output.append(runtime.allocator(), unit);
+    var index: usize = 0;
+    while (index < units.len) {
+        if (!isAsciiDigit(units[index])) {
+            try output.append(runtime.allocator(), units[index]);
+            index += 1;
+            continue;
+        }
+        const start = index;
+        while (index < units.len and isAsciiDigit(units[index])) : (index += 1) {}
+        const end = index;
+        if (start > 0 and units[start - 1] == '.') {
+            try output.appendSlice(runtime.allocator(), units[start..end]);
+            continue;
+        }
+        var group = (end - start) % 3;
+        if (group == 0) group = 3;
+        var cursor = start;
+        while (cursor < end) {
+            const next = std.math.add(usize, cursor, @min(end - cursor, group)) catch return error.StringTooLarge;
+            try output.appendSlice(runtime.allocator(), units[cursor..next]);
+            cursor = next;
+            if (cursor < end) try output.append(runtime.allocator(), ',');
+            group = 3;
+        }
     }
     return runtime.stringCodeUnits(output.items);
 }
 
 fn pad(runtime: *Runtime, value: Value, width_value: Value, fill: u16) !Value {
     const units = (try text(runtime, value)).units;
+    const original_number = switch (width_value) {
+        .bigint => |bigint| bigint.toF64(),
+        else => try runtime.valueToNumber(width_value),
+    };
     const width_number = try common.parseIntValue(runtime, width_value, null);
-    const width = if (std.math.isNan(width_number) or width_number <= 0) units.len else @max(units.len, safeUsize(@trunc(width_number)));
-    var output = try runtime.allocator().alloc(u16, width);
+    const fill_count = if (std.math.isNan(original_number) or original_number <= 0) @as(usize, 1) else blk: {
+        if (!std.math.isFinite(original_number) or original_number >= @as(f64, @floatFromInt(std.math.maxInt(usize) - 1))) return error.OutOfMemory;
+        break :blk @as(usize, @intFromFloat(@ceil(original_number))) + 1;
+    };
+    if (std.math.isNan(width_number)) {
+        const source_len = std.math.add(usize, fill_count, units.len) catch return error.OutOfMemory;
+        var output = try runtime.allocator().alloc(u16, source_len);
+        @memset(output[0..fill_count], fill);
+        @memcpy(output[fill_count..], units);
+        defer runtime.allocator().free(output);
+        return runtime.stringCodeUnits(output);
+    }
+    const requested = if (width_number <= 0) 0 else blk: {
+        if (!std.math.isFinite(width_number) or width_number >= @as(f64, @floatFromInt(std.math.maxInt(usize)))) return error.OutOfMemory;
+        break :blk safeUsize(@trunc(width_number));
+    };
+    const width = @max(units.len, requested);
+    const source_len = std.math.add(usize, fill_count, units.len) catch return error.OutOfMemory;
+    const result_len = @min(width, source_len);
+    const output = try runtime.allocator().alloc(u16, result_len);
     defer runtime.allocator().free(output);
-    @memset(output[0 .. width - units.len], fill);
-    @memcpy(output[width - units.len ..], units);
+    const result_fill_count = result_len - units.len;
+    @memset(output[0..result_fill_count], fill);
+    @memcpy(output[result_fill_count..], units);
     return runtime.stringCodeUnits(output);
 }
 
 fn numberSequence(units: []const u16) bool {
-    if (units.len == 0) return false;
     var index: usize = 0;
-    if (isSign(units[index])) index += 1;
-    var integer_digits: usize = 0;
-    while (index < units.len and isDigit(units[index])) : (index += 1) integer_digits += 1;
-    var fraction_digits: usize = 0;
+    if (index < units.len and isSign(units[index])) index += 1;
+    while (index < units.len and isDigit(units[index])) : (index += 1) {}
+    var has_fraction = false;
     if (index < units.len and (units[index] == '.' or units[index] == 0xff0e)) {
         index += 1;
-        while (index < units.len and isDigit(units[index])) : (index += 1) fraction_digits += 1;
-        if (fraction_digits == 0) return false;
+        const fraction_start = index;
+        while (index < units.len and isDigit(units[index])) : (index += 1) {}
+        if (index == fraction_start) return false;
+        has_fraction = true;
     }
     if (index < units.len and (units[index] == 'e' or units[index] == 'E' or units[index] == 0xff45 or units[index] == 0xff25)) {
-        if (fraction_digits == 0) return false;
+        // 指数表記は小数部がある場合だけを受理する（公式正規表現と同じ）。
+        if (!has_fraction) return false;
         index += 1;
         if (index < units.len and isSign(units[index])) index += 1;
         const exponent_start = index;
         while (index < units.len and isDigit(units[index])) : (index += 1) {}
         if (index == exponent_start) return false;
     }
-    return index == units.len and (integer_digits > 0 or fraction_digits > 0);
+    // 空文字列だけを明示的に除外し、符号単独は公式正規表現の結果どおりtrue。
+    return index == units.len;
+}
+
+fn isAsciiDigit(unit: u16) bool {
+    return unit >= '0' and unit <= '9';
 }
 
 fn codePointCount(units: []const u16) usize {
@@ -886,6 +934,28 @@ test "ECMAScriptのUnicode大小文字変換と文脈依存シグマを処理す
     const lowercase_utf8 = try lowercase.string.toUtf8Lossy(std.testing.allocator);
     defer std.testing.allocator.free(lowercase_utf8);
     try std.testing.expectEqualStrings("ος σα", lowercase_utf8);
+}
+
+test "指定形式と文字種判定の公式境界を処理する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const formatted = (try call(&runtime, "通貨形式", &.{try runtime.stringUtf8("abc1234567.89 xyz1234")})).?;
+    const expected_formatted = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "abc1,234,567.89 xyz1,234");
+    defer std.testing.allocator.free(expected_formatted);
+    try std.testing.expectEqualSlices(u16, expected_formatted, formatted.string.units);
+    const zero_pad = (try call(&runtime, "ゼロ埋", &.{ try runtime.stringUtf8("x"), try runtime.stringUtf8("2rest") })).?;
+    try std.testing.expectEqualSlices(u16, &.{ '0', 'x' }, zero_pad.string.units);
+    const bigint_pad = (try call(&runtime, "ゼロ埋", &.{ try runtime.stringUtf8("x"), try runtime.bigIntLiteral("3n") })).?;
+    try std.testing.expectEqualSlices(u16, &.{ '0', '0', 'x' }, bigint_pad.string.units);
+    const nan_pad = (try call(&runtime, "空白埋", &.{ try runtime.stringUtf8("x"), .{ .number = std.math.nan(f64) } })).?;
+    try std.testing.expectEqualSlices(u16, &.{ ' ', 'x' }, nan_pad.string.units);
+    try std.testing.expect((try call(&runtime, "かなか判定", &.{try runtime.stringUtf8("あX")})).?.boolean);
+    try std.testing.expect((try call(&runtime, "カタカナ判定", &.{try runtime.stringUtf8("アX")})).?.boolean);
+    try std.testing.expect((try call(&runtime, "数字判定", &.{try runtime.stringUtf8("９X")})).?.boolean);
+    try std.testing.expect((try call(&runtime, "数列判定", &.{try runtime.stringUtf8("＋．５ｅ－２")})).?.boolean);
+    try std.testing.expect((try call(&runtime, "数列判定", &.{try runtime.stringUtf8("+")})).?.boolean);
+    try std.testing.expect(!(try call(&runtime, "数列判定", &.{try runtime.stringUtf8("")})).?.boolean);
+    try std.testing.expect((try call(&runtime, "数列判定", &.{try runtime.createArray()})).?.boolean);
 }
 
 test "GCストレス中に非文字列引数を安全に文字列命令へ変換する" {

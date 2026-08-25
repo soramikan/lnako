@@ -1732,6 +1732,28 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             };
         },
+        .currency_format => {
+            out.* = currencyBuiltin(runtime, value) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .zero_pad, .space_pad => {
+            if (len < 2) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            out.* = padBuiltin(runtime, arguments.?[0], arguments.?[1], if (command == .zero_pad) '0' else ' ') catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .hiragana_predicate, .katakana_predicate, .digit_predicate, .number_sequence_predicate => {
+            out.* = stringPredicateBuiltin(runtime, value, command) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
     }
 }
 
@@ -2389,6 +2411,126 @@ fn widthBuiltin(runtime: *Runtime, value: Value, to_full: bool) !Value {
     defer runtime.popRoots(&frame);
     roots[0] = try kanaMapBuiltin(runtime, value, to_full);
     return asciiWidthBuiltin(runtime, roots[0], to_full, true);
+}
+
+fn currencyBuiltin(runtime: *Runtime, value: Value) !Value {
+    const units = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(units);
+    var output: std.ArrayList(u16) = .empty;
+    errdefer output.deinit(runtime.allocator);
+    var index: usize = 0;
+    while (index < units.len) {
+        if (!isAsciiDigitBuiltin(units[index])) {
+            try output.append(runtime.allocator, units[index]);
+            index += 1;
+            continue;
+        }
+        const start = index;
+        while (index < units.len and isAsciiDigitBuiltin(units[index])) : (index += 1) {}
+        const end = index;
+        // 公式の可変長後読みは、ドット直後の数字run全体を除外する。
+        if (start > 0 and units[start - 1] == '.') {
+            try output.appendSlice(runtime.allocator, units[start..end]);
+            continue;
+        }
+        var group = (end - start) % 3;
+        if (group == 0) group = 3;
+        var cursor = start;
+        while (cursor < end) {
+            const next = std.math.add(usize, cursor, @min(end - cursor, group)) catch return error.StringTooLarge;
+            try output.appendSlice(runtime.allocator, units[cursor..next]);
+            cursor = next;
+            if (cursor < end) try output.append(runtime.allocator, ',');
+            group = 3;
+        }
+    }
+    return runtime.ownString(try output.toOwnedSlice(runtime.allocator));
+}
+
+fn padBuiltin(runtime: *Runtime, value: Value, width_value: Value, fill: u16) !Value {
+    const units = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(units);
+    const original_number = switch (@as(Tag, @enumFromInt(width_value.tag))) {
+        .bigint => width_value.object().?.payload.bigint.toF64(),
+        else => try valueToNumberRuntime(runtime, width_value),
+    };
+    const parsed = try parseIntBuiltin(runtime, width_value);
+    // 公式はparseInt前に `for (i = 0; i < A; i++)` で埋め文字を作る。
+    // したがってAが数値化不能でも、parseInt後の幅とは別に1文字が残る。
+    const fill_count = if (std.math.isNan(original_number) or original_number <= 0) @as(usize, 1) else blk: {
+        // Infinityでは公式のループが終了しないため、AOTでは安全に拒否する。
+        if (!std.math.isFinite(original_number) or original_number >= @as(f64, @floatFromInt(std.math.maxInt(usize) - 1))) return error.OutOfMemory;
+        const iterations: usize = @intFromFloat(@ceil(original_number));
+        break :blk iterations + 1;
+    };
+    if (std.math.isNan(parsed)) {
+        const source_len = std.math.add(usize, fill_count, units.len) catch return error.OutOfMemory;
+        const output = try runtime.allocator.alloc(u16, source_len);
+        errdefer runtime.allocator.free(output);
+        @memset(output[0..fill_count], fill);
+        @memcpy(output[fill_count..], units);
+        return runtime.ownString(output);
+    }
+    const requested: usize = if (parsed <= 0) 0 else blk: {
+        if (!std.math.isFinite(parsed) or parsed >= @as(f64, @floatFromInt(std.math.maxInt(usize)))) return error.OutOfMemory;
+        break :blk @intFromFloat(@trunc(parsed));
+    };
+    const target = @max(units.len, requested);
+    const source_len = std.math.add(usize, fill_count, units.len) catch return error.OutOfMemory;
+    const result_len = @min(target, source_len);
+    const output = try runtime.allocator.alloc(u16, result_len);
+    errdefer runtime.allocator.free(output);
+    const result_fill_count = result_len - units.len;
+    @memset(output[0..result_fill_count], fill);
+    @memcpy(output[result_fill_count..], units);
+    return runtime.ownString(output);
+}
+
+fn stringPredicateBuiltin(runtime: *Runtime, value: Value, command: aot_builtin.Command) !Value {
+    const units = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(units);
+    const first = if (units.len == 0) 0 else units[0];
+    const result = switch (command) {
+        .hiragana_predicate => first >= 0x3041 and first <= 0x309f,
+        .katakana_predicate => first >= 0x30a1 and first <= 0x30fa,
+        .digit_predicate => isSequenceDigitBuiltin(first),
+        .number_sequence_predicate => if (isString(value) and units.len == 0) false else numberSequenceBuiltin(units),
+        else => unreachable,
+    };
+    return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(result) };
+}
+
+fn numberSequenceBuiltin(units: []const u16) bool {
+    var index: usize = 0;
+    if (index < units.len and isSequenceSignBuiltin(units[index])) index += 1;
+    while (index < units.len and isSequenceDigitBuiltin(units[index])) : (index += 1) {}
+    if (index < units.len and (units[index] == '.' or units[index] == 0xff0e)) {
+        index += 1;
+        const fraction_start = index;
+        while (index < units.len and isSequenceDigitBuiltin(units[index])) : (index += 1) {}
+        if (index == fraction_start) return false;
+        if (index < units.len and (units[index] == 'e' or units[index] == 'E' or units[index] == 0xff45 or units[index] == 0xff25)) {
+            index += 1;
+            if (index < units.len and isSequenceSignBuiltin(units[index])) index += 1;
+            const exponent_start = index;
+            while (index < units.len and isSequenceDigitBuiltin(units[index])) : (index += 1) {}
+            if (index == exponent_start) return false;
+        }
+    }
+    // 公式正規表現は空文字列だけを別扱いにし、符号単独も受理する。
+    return index == units.len;
+}
+
+fn isAsciiDigitBuiltin(unit: u16) bool {
+    return unit >= '0' and unit <= '9';
+}
+
+fn isSequenceDigitBuiltin(unit: u16) bool {
+    return isAsciiDigitBuiltin(unit) or (unit >= 0xff10 and unit <= 0xff19);
+}
+
+fn isSequenceSignBuiltin(unit: u16) bool {
+    return unit == '+' or unit == '-' or unit == 0xff0b or unit == 0xff0d;
 }
 
 fn kanaMapBuiltin(runtime: *Runtime, value: Value, to_full: bool) !Value {

@@ -4426,7 +4426,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-string-conversion"
+        "plugin-system-string-conversion",
+        "native-system-format-and-character-predicate-commands"
       ],
       "platforms": [
         "macos-aarch64",
@@ -4452,7 +4453,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-string-conversion"
+        "plugin-system-string-conversion",
+        "native-system-format-and-character-predicate-commands"
       ],
       "platforms": [
         "macos-aarch64",
@@ -4478,7 +4480,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-string-conversion"
+        "plugin-system-string-conversion",
+        "native-system-format-and-character-predicate-commands"
       ],
       "platforms": [
         "macos-aarch64",
@@ -4504,7 +4507,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-string-conversion"
+        "plugin-system-string-conversion",
+        "native-system-format-and-character-predicate-commands"
       ],
       "platforms": [
         "macos-aarch64",
@@ -4530,7 +4534,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-string-conversion"
+        "plugin-system-string-conversion",
+        "native-system-format-and-character-predicate-commands"
       ],
       "platforms": [
         "macos-aarch64",
@@ -4556,7 +4561,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-string-conversion"
+        "plugin-system-string-conversion",
+        "native-system-format-and-character-predicate-commands"
       ],
       "platforms": [
         "macos-aarch64",
@@ -4582,7 +4588,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-string-conversion"
+        "plugin-system-string-conversion",
+        "native-system-format-and-character-predicate-commands"
       ],
       "platforms": [
         "macos-aarch64",

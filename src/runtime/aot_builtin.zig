@@ -86,6 +86,13 @@ pub const Command = enum(u16) {
     katakana_half_width,
     full_width,
     half_width,
+    currency_format,
+    zero_pad,
+    space_pad,
+    hiragana_predicate,
+    katakana_predicate,
+    digit_predicate,
+    number_sequence_predicate,
 };
 
 pub fn lookup(name: []const u8) ?Command {
@@ -174,6 +181,13 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "カタカナ半角変換")) return .katakana_half_width;
     if (std.mem.eql(u8, name, "全角変換")) return .full_width;
     if (std.mem.eql(u8, name, "半角変換")) return .half_width;
+    if (std.mem.eql(u8, name, "通貨形式")) return .currency_format;
+    if (std.mem.eql(u8, name, "ゼロ埋")) return .zero_pad;
+    if (std.mem.eql(u8, name, "空白埋")) return .space_pad;
+    if (std.mem.eql(u8, name, "かなか判定")) return .hiragana_predicate;
+    if (std.mem.eql(u8, name, "カタカナ判定")) return .katakana_predicate;
+    if (std.mem.eql(u8, name, "数字判定")) return .digit_predicate;
+    if (std.mem.eql(u8, name, "数列判定")) return .number_sequence_predicate;
     return null;
 }
 
@@ -281,5 +295,12 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.katakana_half_width, lookup("カタカナ半角変換").?);
     try std.testing.expectEqual(Command.full_width, lookup("全角変換").?);
     try std.testing.expectEqual(Command.half_width, lookup("半角変換").?);
+    try std.testing.expectEqual(Command.currency_format, lookup("通貨形式").?);
+    try std.testing.expectEqual(Command.zero_pad, lookup("ゼロ埋").?);
+    try std.testing.expectEqual(Command.space_pad, lookup("空白埋").?);
+    try std.testing.expectEqual(Command.hiragana_predicate, lookup("かなか判定").?);
+    try std.testing.expectEqual(Command.katakana_predicate, lookup("カタカナ判定").?);
+    try std.testing.expectEqual(Command.digit_predicate, lookup("数字判定").?);
+    try std.testing.expectEqual(Command.number_sequence_predicate, lookup("数列判定").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }

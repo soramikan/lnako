@@ -1144,49 +1144,56 @@
   "通貨形式": {
     "status": "native",
     "tests": [
-      "plugin-system-string-conversion"
+      "plugin-system-string-conversion",
+      "native-system-format-and-character-predicate-commands"
     ],
     "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
   },
   "ゼロ埋": {
     "status": "native",
     "tests": [
-      "plugin-system-string-conversion"
+      "plugin-system-string-conversion",
+      "native-system-format-and-character-predicate-commands"
     ],
     "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
   },
   "空白埋": {
     "status": "native",
     "tests": [
-      "plugin-system-string-conversion"
+      "plugin-system-string-conversion",
+      "native-system-format-and-character-predicate-commands"
     ],
     "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
   },
   "かなか判定": {
     "status": "native",
     "tests": [
-      "plugin-system-string-conversion"
+      "plugin-system-string-conversion",
+      "native-system-format-and-character-predicate-commands"
     ],
     "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
   },
   "カタカナ判定": {
     "status": "native",
     "tests": [
-      "plugin-system-string-conversion"
+      "plugin-system-string-conversion",
+      "native-system-format-and-character-predicate-commands"
     ],
     "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
   },
   "数字判定": {
     "status": "native",
     "tests": [
-      "plugin-system-string-conversion"
+      "plugin-system-string-conversion",
+      "native-system-format-and-character-predicate-commands"
     ],
     "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
   },
   "数列判定": {
     "status": "native",
     "tests": [
-      "plugin-system-string-conversion"
+      "plugin-system-string-conversion",
+      "native-system-format-and-character-predicate-commands"
     ],
     "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
   },
