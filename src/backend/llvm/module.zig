@@ -90,6 +90,7 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
 }
 
 const StringConstant = struct { function_id: ir.FunctionId, value_id: ir.ValueId, units: []u16, index: usize };
+const SystemStringConstant = struct { global_index: usize, units: []u16 };
 const BigIntConstant = struct { function_id: ir.FunctionId, value_id: ir.ValueId, text: []const u8, index: usize };
 const DebugLocation = struct { id: usize, line: usize, column: usize, scope: usize };
 
@@ -114,6 +115,7 @@ const Emitter = struct {
     output: std.Io.Writer.Allocating,
     globals: std.ArrayList([]const u8) = .empty,
     strings: std.ArrayList(StringConstant) = .empty,
+    system_strings: std.ArrayList(SystemStringConstant) = .empty,
     bigints: std.ArrayList(BigIntConstant) = .empty,
     locations: std.ArrayList(DebugLocation) = .empty,
     next_metadata: usize = 4,
@@ -122,6 +124,8 @@ const Emitter = struct {
         self.globals.deinit(self.allocator);
         for (self.strings.items) |constant| self.allocator.free(constant.units);
         self.strings.deinit(self.allocator);
+        for (self.system_strings.items) |constant| self.allocator.free(constant.units);
+        self.system_strings.deinit(self.allocator);
         self.bigints.deinit(self.allocator);
         self.locations.deinit(self.allocator);
         self.output.deinit();
@@ -200,6 +204,20 @@ const Emitter = struct {
             }
         }
         if (self.strings.items.len > 0) try writer.writeByte('\n');
+        for (self.system_strings.items, 0..) |constant, index| {
+            try writer.print("@lnako.system.string.{d} = private unnamed_addr constant [{d} x i16] ", .{ index, constant.units.len });
+            if (constant.units.len == 0) {
+                try writer.writeAll("zeroinitializer\n");
+            } else {
+                try writer.writeByte('[');
+                for (constant.units, 0..) |unit, unit_index| {
+                    if (unit_index > 0) try writer.writeAll(", ");
+                    try writer.print("i16 {d}", .{unit});
+                }
+                try writer.writeAll("]\n");
+            }
+        }
+        if (self.system_strings.items.len > 0) try writer.writeByte('\n');
         for (self.bigints.items) |constant| {
             try writer.print("@lnako.bigint.{d} = private unnamed_addr constant [{d} x i8] ", .{ constant.index, constant.text.len });
             if (constant.text.len == 0) {
@@ -261,6 +279,13 @@ const Emitter = struct {
                 });
                 bigint_index += 1;
             }
+        };
+        for (self.globals.items, 0..) |name, global_index| if (self.systemStringValue(name)) |value| {
+            const units = try std.unicode.utf8ToUtf16LeAlloc(self.allocator, value);
+            self.system_strings.append(self.allocator, .{ .global_index = global_index, .units = units }) catch |failure| {
+                self.allocator.free(units);
+                return failure;
+            };
         };
     }
 
@@ -1007,6 +1032,13 @@ const Emitter = struct {
             try self.output.writer.print("  %global.root.frame.{d} = alloca %lnako.RootFrame\n", .{global_index});
             try self.output.writer.print("  call void @lnako_aot_push_roots(ptr %global.root.frame.{d}, ptr @lnako.global.{d}, i64 1)\n", .{ global_index, global_index });
         }
+        for (self.system_strings.items, 0..) |constant, index| {
+            try self.output.writer.print("  call void @lnako_aot_string_new(ptr @lnako.global.{d}, ptr ", .{constant.global_index});
+            if (constant.units.len == 0) {
+                try self.output.writer.writeAll("null");
+            } else try self.output.writer.print("@lnako.system.string.{d}", .{index});
+            try self.output.writer.print(", i64 {d})\n", .{constant.units.len});
+        }
         for (self.program.functions) |function| if (self.globalIndex(function.name)) |global_index| {
             try self.output.writer.print("  call void @lnako_aot_function_new(ptr @lnako.global.{d}, ptr @lnako.wrapper.{d}, i64 {d}, ptr null, i64 0)\n", .{ global_index, function.id, function.parameters.len });
         };
@@ -1148,6 +1180,11 @@ const Emitter = struct {
         return nameIndex(self.globals.items, name);
     }
 
+    fn systemStringValue(self: Emitter, name: []const u8) ?[]const u8 {
+        if (std.mem.eql(u8, name, "名前空間")) return primaryModuleName(self.program);
+        return system_constant.lookupString(name);
+    }
+
     fn stringConstant(self: Emitter, function_id: ir.FunctionId, value_id: ir.ValueId) ?StringConstant {
         for (self.strings.items) |constant| if (constant.function_id == function_id and constant.value_id == value_id) return constant;
         return null;
@@ -1166,6 +1203,16 @@ const Emitter = struct {
 fn lookupFunction(program: ir.Program, name: []const u8) ?ir.Function {
     for (program.functions) |function| if (std.mem.eql(u8, function.name, name)) return function;
     return null;
+}
+
+fn primaryModuleName(program: ir.Program) []const u8 {
+    if (program.module_entries.len == 0) return "";
+    const function_id = program.module_entries[0];
+    if (function_id >= program.functions.len) return "";
+    const name = program.functions[function_id].name;
+    const suffix = "__$entry";
+    if (!std.mem.endsWith(u8, name, suffix)) return "";
+    return name[0 .. name.len - suffix.len];
 }
 
 fn validDirectCallee(program: ir.Program, instruction: ir.Instruction) bool {
@@ -1409,6 +1456,30 @@ test "参照されたスカラーシステム定数をAOTグローバルへ初�
     try std.testing.expect(std.mem.indexOf(u8, module.text, "internal global %lnako.Value { i8 2, i64 0 }") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "internal global %lnako.Value { i8 3, i64 4614256656552045848 }") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "internal global %lnako.Value { i8 0, i64 0 }") != null);
+}
+
+test "参照された文字列システム定数をGCルート登録後に初期化する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "ナデシコバージョンを表示\n改行を表示\n空を表示\n名前空間を表示\n", "string-constants.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "string-constants.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "string-constants.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    var module = try generate(std.testing.allocator, program, "string-constants.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.system.string.") != null);
+    const push = std.mem.indexOf(u8, module.text, "call void @lnako_aot_push_roots").?;
+    const initialize = std.mem.indexOf(u8, module.text, "call void @lnako_aot_string_new(ptr @lnako.global.").?;
+    const entry = std.mem.indexOf(u8, module.text, "%entry.result.0 = call").?;
+    try std.testing.expect(push < initialize);
+    try std.testing.expect(initialize < entry);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "[4 x i16] [i16 109, i16 97, i16 105, i16 110]") != null);
 }
 
 test "配列と辞書をルート付きAOTランタイム呼び出しへ変換する" {

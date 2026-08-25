@@ -14,8 +14,6 @@ pub const Installer = struct {
     }
 };
 
-const StringConstant = struct { name: []const u8, value: []const u8 };
-
 pub fn install(runtime: *Runtime, installer: Installer) !void {
     for (system_constant.scalar_entries) |constant| try installer.set(constant.name, switch (constant.value) {
         .undefined => .undefined,
@@ -23,37 +21,10 @@ pub fn install(runtime: *Runtime, installer: Installer) !void {
         .boolean => |value| .{ .boolean = value },
         .number => |value| .{ .number = value },
     });
-    for (string_constants) |constant| try installer.set(constant.name, try runtime.stringUtf8(constant.value));
+    for (system_constant.string_entries) |constant| try installer.set(constant.name, try runtime.stringUtf8(constant.value));
     try installer.set("抽出文字列", try runtime.createArray());
     try installer.set("__DEBUGブレイクポイント一覧", try runtime.createArray());
 }
-
-const string_constants = [_]StringConstant{
-    .{ .name = "ナデシコバージョン", .value = "3.7.24" },
-    .{ .name = "ナデシコ言語バージョン", .value = "3.7.24" },
-    .{ .name = "ナデシコエンジン", .value = "nadesi.com/v3" },
-    .{ .name = "ナデシコ種類", .value = "cnako3" },
-    .{ .name = "改行", .value = "\n" },
-    .{ .name = "タブ", .value = "\t" },
-    .{ .name = "カッコ", .value = "「" },
-    .{ .name = "カッコ閉", .value = "」" },
-    .{ .name = "波カッコ", .value = "{" },
-    .{ .name = "波カッコ閉", .value = "}" },
-    .{ .name = "空", .value = "" },
-    .{ .name = "エラーメッセージ", .value = "" },
-    .{ .name = "対象", .value = "" },
-    .{ .name = "対象キー", .value = "" },
-    .{ .name = "回数", .value = "" },
-    .{ .name = "CR", .value = "\r" },
-    .{ .name = "LF", .value = "\n" },
-    .{ .name = "全角カナ一覧", .value = "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲンァィゥェォャュョッ、。ー「」" },
-    .{ .name = "全角カナ濁音一覧", .value = "ガギグゲゴザジズゼゾダヂヅデドバビブベボパピプペポ" },
-    .{ .name = "半角カナ一覧", .value = "ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜｦﾝｧｨｩｪｫｬｭｮｯ､｡ｰ｢｣ﾞﾟ" },
-    .{ .name = "半角カナ濁音一覧", .value = "ｶﾞｷﾞｸﾞｹﾞｺﾞｻﾞｼﾞｽﾞｾﾞｿﾞﾀﾞﾁﾞﾂﾞﾃﾞﾄﾞﾊﾞﾋﾞﾌﾞﾍﾞﾎﾞﾊﾟﾋﾟﾌﾟﾍﾟﾎﾟ" },
-    .{ .name = "表示ログ", .value = "" },
-    .{ .name = "プラグイン名", .value = "メイン" },
-    .{ .name = "名前空間", .value = "" },
-};
 
 test "v3.7.24のシステム定数を実体化する" {
     const Context = struct {

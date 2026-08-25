@@ -12,6 +12,11 @@ pub const Entry = struct {
     value: Scalar,
 };
 
+pub const StringEntry = struct {
+    name: []const u8,
+    value: []const u8,
+};
+
 pub const scalar_entries = [_]Entry{
     .{ .name = "はい", .value = .{ .boolean = true } },
     .{ .name = "いいえ", .value = .{ .boolean = false } },
@@ -39,8 +44,42 @@ pub const scalar_entries = [_]Entry{
     .{ .name = "未定義", .value = .undefined },
 };
 
+pub const string_entries = [_]StringEntry{
+    .{ .name = "ナデシコバージョン", .value = "3.7.24" },
+    .{ .name = "ナデシコ言語バージョン", .value = "3.7.24" },
+    .{ .name = "ナデシコエンジン", .value = "nadesi.com/v3" },
+    .{ .name = "ナデシコ種類", .value = "cnako3" },
+    .{ .name = "改行", .value = "\n" },
+    .{ .name = "タブ", .value = "\t" },
+    .{ .name = "カッコ", .value = "「" },
+    .{ .name = "カッコ閉", .value = "」" },
+    .{ .name = "波カッコ", .value = "{" },
+    .{ .name = "波カッコ閉", .value = "}" },
+    .{ .name = "空", .value = "" },
+    .{ .name = "エラーメッセージ", .value = "" },
+    .{ .name = "対象", .value = "" },
+    .{ .name = "対象キー", .value = "" },
+    .{ .name = "回数", .value = "" },
+    .{ .name = "CR", .value = "\r" },
+    .{ .name = "LF", .value = "\n" },
+    .{ .name = "全角カナ一覧", .value = "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲンァィゥェォャュョッ、。ー「」" },
+    .{ .name = "全角カナ濁音一覧", .value = "ガギグゲゴザジズゼゾダヂヅデドバビブベボパピプペポ" },
+    .{ .name = "半角カナ一覧", .value = "ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜｦﾝｧｨｩｪｫｬｭｮｯ､｡ｰ｢｣ﾞﾟ" },
+    .{ .name = "半角カナ濁音一覧", .value = "ｶﾞｷﾞｸﾞｹﾞｺﾞｻﾞｼﾞｽﾞｾﾞｿﾞﾀﾞﾁﾞﾂﾞﾃﾞﾄﾞﾊﾞﾋﾞﾌﾞﾍﾞﾎﾞﾊﾟﾋﾟﾌﾟﾍﾟﾎﾟ" },
+    .{ .name = "表示ログ", .value = "" },
+    .{ .name = "プラグイン名", .value = "メイン" },
+    .{ .name = "名前空間", .value = "" },
+};
+
 pub fn lookupScalar(name: []const u8) ?Scalar {
     for (scalar_entries) |entry| {
+        if (std.mem.eql(u8, name, entry.name)) return entry.value;
+    }
+    return null;
+}
+
+pub fn lookupString(name: []const u8) ?[]const u8 {
+    for (string_entries) |entry| {
         if (std.mem.eql(u8, name, entry.name)) return entry.value;
     }
     return null;
@@ -54,4 +93,7 @@ test "v3.7.24のスカラーシステム定数を解決する" {
     try std.testing.expect(lookupScalar("NULL").? == .null_value);
     try std.testing.expect(lookupScalar("未定義").? == .undefined);
     try std.testing.expect(lookupScalar("ナデシコバージョン") == null);
+    try std.testing.expectEqualStrings("3.7.24", lookupString("ナデシコバージョン").?);
+    try std.testing.expectEqualStrings("\n", lookupString("改行").?);
+    try std.testing.expect(lookupString("PI") == null);
 }
