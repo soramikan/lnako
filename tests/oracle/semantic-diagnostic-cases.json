@@ -6,5 +6,9 @@
   {
     "id": "semantic-diagnostic-function-arity-extra",
     "source": "●(AとBを)Fとは\nA+Bで戻る\nここまで\nF(1,2,3)\n"
+  },
+  {
+    "id": "semantic-diagnostic-bare-function-arity",
+    "source": "●(AとBを)Fとは\nA+Bで戻る\nここまで\nTYPEOF(F)を表示\n"
   }
 ]

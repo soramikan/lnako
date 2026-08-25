@@ -208,11 +208,16 @@ const Analyzer = struct {
         if (name.len == 0) return;
         self.resolution_ambiguous = false;
         if (self.resolveSymbol(module_index, scope, name)) |symbol| {
+            const implicit_call = !callable and node.kind == .word and (symbol.kind == .function or symbol.kind == .test_function);
             if (callable and (symbol.kind == .function or symbol.kind == .test_function) and node.children.len != symbol.argument_count) {
                 const message = try std.fmt.allocPrint(self.allocator, "関数『{s}』は引数{d}個を必要としますが、{d}個が指定されました", .{ name, symbol.argument_count, node.children.len });
                 try self.addDiagnostic(.invalid_argument_count, node.span, self.modules.items[module_index].path, message);
             }
-            try self.bind(node, if (callable) .call else .reference, name, symbol.qualified_name, symbol.id);
+            if (implicit_call and symbol.argument_count > 1) {
+                const message = try std.fmt.allocPrint(self.allocator, "関数『{s}』を引数なしで使うには、引数が1個以下である必要があります", .{name});
+                try self.addDiagnostic(.invalid_argument_count, node.span, self.modules.items[module_index].path, message);
+            }
+            try self.bind(node, if (callable or implicit_call) .call else .reference, name, symbol.qualified_name, symbol.id);
             return;
         }
         if (self.resolution_ambiguous) {
@@ -430,6 +435,25 @@ test "静的に解決したユーザー関数の引数個数差を拒否する" 
         if (item.code == .invalid_argument_count) count += 1;
     }
     try std.testing.expectEqual(@as(usize, 2), count);
+}
+
+test "裸の名前付き関数は1引数以下だけ暗黙呼び出しとして解決する" {
+    const parser = @import("../frontend/parser.zig");
+    const source = "●(Aを)Fとは\nAで戻る\nここまで\n●(AとBを)Gとは\nA+Bで戻る\nここまで\nTYPEOF(F)を表示\nTYPEOF(G)を表示\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "implicit-call.nako3");
+    defer parsed.deinit();
+    var program = try analyze(std.testing.allocator, parsed.root.?, "implicit-call.nako3");
+    defer program.deinit();
+    var implicit_f = false;
+    var invalid_count: usize = 0;
+    for (program.bindings) |binding| {
+        if (binding.kind == .call and std.mem.eql(u8, binding.resolved_name, "implicit-call__F")) implicit_f = true;
+    }
+    for (program.diagnostics) |item| if (item.code == .invalid_argument_count) {
+        invalid_count += 1;
+    };
+    try std.testing.expect(implicit_f);
+    try std.testing.expectEqual(@as(usize, 1), invalid_count);
 }
 
 test "未定義変数への増減を暗黙のモジュール変数宣言として解決する" {

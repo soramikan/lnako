@@ -207,8 +207,20 @@ const Lowerer = struct {
     }
 
     fn lowerNode(self: *Lowerer, node: *ast.Node, module_index: u32) !NodeId {
-        var child_ids = try self.allocator.alloc(NodeId, node.children.len);
-        for (node.children, 0..) |child, index| child_ids[index] = try self.lowerNode(child, module_index);
+        const implicit_function = self.implicitFunction(node);
+        var child_ids = if (implicit_function) |function|
+            try self.allocator.alloc(NodeId, function.argument_count)
+        else
+            try self.allocator.alloc(NodeId, node.children.len);
+        if (implicit_function) |function| {
+            if (function.argument_count > 1) return error.InvalidImplicitFunctionArity;
+            if (function.argument_count == 1) {
+                child_ids[0] = try self.addNode(.load_global, node.span, &.{});
+                const argument = &self.nodes.items[child_ids[0]];
+                argument.name = try self.allocator.dupe(u8, "それ");
+                argument.text = try self.allocator.dupe(u8, "それ");
+            }
+        } else for (node.children, 0..) |child, index| child_ids[index] = try self.lowerNode(child, module_index);
         const kind: Kind = switch (node.kind) {
             .nop, .eol, .import, .run_mode, .function_definition, .test_definition => .nop,
             .speed_mode => .speed_mode,
@@ -220,7 +232,7 @@ const Lowerer = struct {
             .null_value => .null_value,
             .string => .string,
             .string_template => .string_template,
-            .word => if (self.bindingIsLocal(node)) .load_local else .load_global,
+            .word => if (implicit_function != null) .call else if (self.bindingIsLocal(node)) .load_local else .load_global,
             .assignment, .variable_definition => if (self.bindingIsLocal(node)) .store_local else .store_global,
             .variable_list_definition => .destructure_store,
             .array_assignment => .array_set,
@@ -292,6 +304,16 @@ const Lowerer = struct {
     fn bindingIsBuiltin(self: Lowerer, node: *ast.Node) bool {
         for (self.semantic_program.bindings) |binding| if (binding.node == node) return binding.kind == .builtin;
         return false;
+    }
+
+    fn implicitFunction(self: Lowerer, node: *ast.Node) ?semantic.Symbol {
+        if (node.kind != .word) return null;
+        for (self.semantic_program.bindings) |binding| if (binding.node == node and binding.kind == .call) {
+            const symbol_id = binding.symbol orelse return null;
+            const symbol = self.semantic_program.symbols[symbol_id];
+            if (symbol.kind == .function or symbol.kind == .test_function) return symbol;
+        };
+        return null;
     }
 
     fn resolvedArgumentNames(self: *Lowerer, node: *ast.Node) ![]const []const u8 {
@@ -388,6 +410,28 @@ test "名前解決済みASTをHIRへ下げる" {
     const function = program.findFunction("main__F").?;
     try std.testing.expect(function.parameters[0].symbol != null);
     try std.testing.expectEqualStrings("B", analyzed.symbols[function.parameters[0].symbol.?].name);
+}
+
+test "裸の1引数関数をそれ付き暗黙呼び出しへ下げる" {
+    const parser = @import("../frontend/parser.zig");
+    const source = "●(Aを)Fとは\nAで戻る\nここまで\nそれは4\nTYPEOF(F)を表示\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "implicit-call.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "implicit-call.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var program = try lowerSingle(std.testing.allocator, parsed.root.?, "implicit-call", "implicit-call.nako3", analyzed);
+    defer program.deinit();
+    var found = false;
+    for (program.nodes) |node| {
+        if (node.kind != .call or !std.mem.eql(u8, node.name, "implicit-call__F")) continue;
+        try std.testing.expectEqual(@as(usize, 1), node.children.len);
+        const argument = program.node(node.children[0]);
+        try std.testing.expectEqual(Kind.load_global, argument.kind);
+        try std.testing.expectEqualStrings("それ", argument.name);
+        found = true;
+    }
+    try std.testing.expect(found);
 }
 
 test "入れ子の無名関数へ自由変数捕捉を中継する" {
