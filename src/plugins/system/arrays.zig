@@ -149,14 +149,25 @@ fn insertOne(runtime: *Runtime, source: Value, index_value: Value, item: Value) 
 
 fn insertMany(runtime: *Runtime, source: Value, index_value: Value, items: Value) !Value {
     if (source != .array or items != .array) return error.ArrayExpected;
-    var index = spliceIndex(try runtime.valueToNumber(index_value), source.array.len());
+    var source_root = source;
+    var index_root = index_value;
+    var items_root = items;
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&source_root);
+    try roots.protect(&index_root);
+    try roots.protect(&items_root);
     const copy = try runtime.allocator().dupe(Value, items.array.items.items);
     defer runtime.allocator().free(copy);
-    for (copy) |item| {
-        try source.array.insert(index, item);
-        index += 1;
+    for (copy, 0..) |item, offset| {
+        // The official implementation evaluates i + j on every iteration,
+        // so a string index concatenates ("1" + 0 -> "10") while a numeric
+        // index is added arithmetically.  Keep that coercion before splice.
+        const offset_value = try operators.binary(runtime, .add, index_root, .{ .number = @floatFromInt(offset) });
+        const index = spliceIndex(try runtime.valueToNumber(offset_value), source_root.array.len());
+        try source_root.array.insert(index, item);
     }
-    return source;
+    return source_root;
 }
 
 fn sortDefault(runtime: *Runtime, source: Value) !Value {

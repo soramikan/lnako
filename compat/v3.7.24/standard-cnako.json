@@ -4783,7 +4783,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-array-mutation-quirks"
+        "plugin-system-array-mutation-quirks",
+        "native-system-array-mutation-commands"
       ],
       "platforms": [
         "macos-aarch64",
@@ -4809,14 +4810,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-array-mutation-quirks"
+        "plugin-system-array-mutation-quirks",
+        "native-system-array-mutation-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "元配列を更新して元配列を返す公式挙動を実装し、公式差分テストに成功"
+      "reason": "元配列を更新して元配列を返す公式挙動を実装し、自己一括挿入の安全差をTODOとして分離して公式差分テストに成功"
     },
     {
       "id": "command-0185",
@@ -4991,7 +4993,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-array-mutation-quirks"
+        "plugin-system-array-mutation-quirks",
+        "native-system-array-mutation-commands"
       ],
       "platforms": [
         "macos-aarch64",
@@ -5017,14 +5020,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-array-mutation-quirks"
+        "plugin-system-array-mutation-quirks",
+        "native-system-array-mutation-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "辞書のtruthy判定を含む公式挙動を実装し、公式差分テストに成功"
+      "reason": "辞書のtruthy判定を実装し、JavaScript継承プロパティ差をTODOとして分離して公式差分テストに成功"
     },
     {
       "id": "command-0193",
@@ -5043,7 +5047,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-array-mutation-quirks"
+        "plugin-system-array-mutation-quirks",
+        "native-system-array-mutation-commands"
       ],
       "platforms": [
         "macos-aarch64",
@@ -5069,7 +5074,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-array-mutation-quirks"
+        "plugin-system-array-mutation-quirks",
+        "native-system-array-mutation-commands"
       ],
       "platforms": [
         "macos-aarch64",
@@ -5095,7 +5101,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-array-mutation-quirks"
+        "plugin-system-array-mutation-quirks",
+        "native-system-array-mutation-commands"
       ],
       "platforms": [
         "macos-aarch64",
@@ -5121,7 +5128,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-array-mutation-quirks"
+        "plugin-system-array-mutation-quirks",
+        "native-system-array-mutation-commands"
       ],
       "platforms": [
         "macos-aarch64",

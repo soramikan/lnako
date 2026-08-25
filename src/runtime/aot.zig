@@ -1620,6 +1620,13 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             });
         },
+        .array_insert, .array_insert_many, .array_cut, .array_take, .array_pop, .array_push => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = arrayMutationBuiltin(runtime, command, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .add_parsed => {
             if (len < 2) {
                 runtime.setFailure(error.InvalidArgumentCount);
@@ -2366,6 +2373,247 @@ fn arraySearchBuiltin(runtime: *Runtime, source: Value, needle: Value) !f64 {
         if (try strictEqual(runtime, item, needle)) return @floatFromInt(index);
     }
     return -1;
+}
+
+const ArrayRange = struct { start: usize, count: usize };
+
+fn arrayItems(value: Value) !*std.ArrayList(Value) {
+    if (value.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
+    const object = value.object() orelse return error.InvalidArray;
+    if (object.payload != .array) return error.InvalidArray;
+    return &object.payload.array;
+}
+
+/// JavaScript's Array splice uses ToIntegerOrInfinity for the start argument.
+/// In particular, strings are converted with Number (not parseInt), NaN and
+/// -Infinity become zero, and +Infinity becomes the current array length.
+fn spliceIndexRuntime(runtime: *Runtime, value: Value, length: usize) !usize {
+    return spliceIndexNumber(try valueToNumberRuntime(runtime, value), length);
+}
+
+fn spliceIndexNumber(number: f64, length: usize) usize {
+    if (std.math.isNan(number) or number == -std.math.inf(f64)) return 0;
+    if (number == std.math.inf(f64)) return length;
+    const integer = @trunc(number);
+    if (integer < 0) {
+        const magnitude = @min(-integer, @as(f64, @floatFromInt(length)));
+        return length - @as(usize, @intFromFloat(magnitude));
+    }
+    if (integer >= @as(f64, @floatFromInt(length))) return length;
+    return @intFromFloat(integer);
+}
+
+fn spliceCountRuntime(runtime: *Runtime, value: Value, maximum: usize) !usize {
+    return spliceCountNumber(try valueToNumberRuntime(runtime, value), maximum);
+}
+
+fn spliceCountNumber(number: f64, maximum: usize) usize {
+    if (std.math.isNan(number) or number <= 0) return 0;
+    if (number == std.math.inf(f64)) return maximum;
+    return @min(@as(usize, @intFromFloat(@min(@floor(number), @as(f64, @floatFromInt(maximum))))), maximum);
+}
+
+fn dictionaryProperty(value: Value, key: []const u16) Value {
+    if (value.tag != @intFromEnum(Tag.dictionary)) return .{};
+    const object = value.object() orelse return .{};
+    if (object.payload != .dictionary) return .{};
+    for (object.payload.dictionary.items) |entry| {
+        const matches = switch (@as(Tag, @enumFromInt(entry.key.tag))) {
+            .static_utf8_string => blk: {
+                var units: [64]u16 = undefined;
+                const utf8 = staticUtf8(entry.key);
+                if (utf8.len > units.len) break :blk false;
+                const converted = std.unicode.utf8ToUtf16Le(&units, utf8) catch break :blk false;
+                break :blk std.mem.eql(u16, units[0..converted], key);
+            },
+            .utf16_string => std.mem.eql(u16, entry.key.object().?.payload.utf16_string, key),
+            else => false,
+        };
+        if (matches) return entry.value;
+    }
+    return .{};
+}
+
+fn stringValuesEqual(runtime: *Runtime, left: Value, right: Value) !bool {
+    if (!isString(left) or !isString(right)) return false;
+    return stringEqual(runtime, left, right);
+}
+
+fn arrayRange(runtime: *Runtime, index: Value, length: usize) !?ArrayRange {
+    // The official implementation checks `typeof i === 'object'` before
+    // reading i['先頭'].  Accessing a null value therefore throws, while an
+    // array or dictionary without a numeric 先頭 simply falls through to the
+    // null return value.
+    if (index.tag == @intFromEnum(Tag.null_value)) return error.ArrayCutNullIndex;
+    const tag: Tag = @enumFromInt(index.tag);
+    if (tag != .array and tag != .dictionary) return null;
+    const first_value = dictionaryProperty(index, &.{ 0x5148, 0x982d });
+    if (first_value.tag != @intFromEnum(Tag.number)) return null;
+    const first_number: f64 = @bitCast(first_value.payload);
+    const last_value = dictionaryProperty(index, &.{ 0x672b, 0x5c3e });
+    // `last - first + 1` is a JavaScript subtraction expression.  A BigInt
+    // on either side would throw instead of silently converting to f64.
+    if (last_value.tag == @intFromEnum(Tag.bigint)) return error.CannotMixBigIntAndNumber;
+    const last_number = try valueToNumberRuntime(runtime, last_value);
+    const count_number = last_number - first_number + 1;
+    return .{
+        .start = spliceIndexNumber(first_number, length),
+        .count = spliceCountNumber(count_number, length - spliceIndexNumber(first_number, length)),
+    };
+}
+
+fn spliceArrayBuiltin(runtime: *Runtime, source: Value, start: usize, count: usize) !Value {
+    var roots = [_]Value{ source, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    const items = try arrayItems(roots[0]);
+    const old_length = items.items.len;
+    const actual = @min(count, old_length - start);
+    roots[1] = try runtime.createArray(&.{});
+    const removed = try arrayItems(roots[1]);
+    try removed.ensureTotalCapacity(runtime.allocator, actual);
+    removed.items.len = actual;
+    if (actual > 0) @memcpy(removed.items, items.items[start .. start + actual]);
+    if (actual > 0) {
+        @memmove(items.items[start .. old_length - actual], items.items[start + actual .. old_length]);
+        items.items.len = old_length - actual;
+    }
+    return roots[1];
+}
+
+fn insertValuesAssumeCapacity(items: *std.ArrayList(Value), start: usize, values: []const Value) void {
+    const old_length = items.items.len;
+    _ = items.addManyAtAssumeCapacity(start, values.len);
+    @memcpy(items.items[start .. start + values.len], values);
+    // Keep this assertion next to the low-level mutation: all callers reserve
+    // capacity before entering this function, so OOM cannot leave a partial
+    // array update behind.
+    std.debug.assert(items.items.len == old_length + values.len);
+}
+
+fn arrayInsertBuiltin(runtime: *Runtime, source: Value, index: Value, item: Value) !Value {
+    var roots = [_]Value{ source, index, item, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    if (roots[0].tag != @intFromEnum(Tag.array)) return error.ArrayInsertReceiver;
+    const items = try arrayItems(roots[0]);
+    const start = try spliceIndexRuntime(runtime, roots[1], items.items.len);
+    roots[3] = try runtime.createArray(&.{});
+    const old_length = items.items.len;
+    try items.ensureTotalCapacity(runtime.allocator, std.math.add(usize, old_length, 1) catch return error.ArrayTooLarge);
+    insertValuesAssumeCapacity(items, start, roots[2..3]);
+    return roots[3];
+}
+
+fn arrayInsertManyBuiltin(runtime: *Runtime, source: Value, index: Value, values: Value) !Value {
+    var roots = [_]Value{ source, index, values, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    if (roots[0].tag != @intFromEnum(Tag.array) or roots[2].tag != @intFromEnum(Tag.array)) return error.ArrayInsertManyReceiver;
+    const target = try arrayItems(roots[0]);
+    const insertion = try arrayItems(roots[2]);
+    // The official loop reads b[j] while mutating a.  Copying first is
+    // intentional here: for a === b the upstream loop grows forever.  AOT
+    // keeps the useful, finite value semantics and documents this safety
+    // boundary in COMPATIBILITY_QUIRKS.md.
+    const copy = try runtime.allocator.dupe(Value, insertion.items);
+    defer runtime.allocator.free(copy);
+    const positions = try runtime.allocator.alloc(usize, copy.len);
+    defer runtime.allocator.free(positions);
+    const old_length = target.items.len;
+    for (copy, 0..) |_, offset| {
+        // `i + j` is evaluated before splice.  This deliberately preserves
+        // JavaScript's string concatenation and BigInt mixed-type errors.
+        roots[3] = try jsAdd(runtime, roots[1], numberValue(@floatFromInt(offset)));
+        positions[offset] = try spliceIndexRuntime(runtime, roots[3], std.math.add(usize, old_length, offset) catch return error.ArrayTooLarge);
+    }
+    const final_length = std.math.add(usize, old_length, copy.len) catch return error.ArrayTooLarge;
+    try target.ensureTotalCapacity(runtime.allocator, final_length);
+    for (positions, 0..) |start, offset| {
+        insertValuesAssumeCapacity(target, start, copy[offset .. offset + 1]);
+    }
+    return roots[0];
+}
+
+fn arrayCutBuiltin(runtime: *Runtime, source: Value, index: Value) !Value {
+    var roots = [_]Value{ source, index, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    if (roots[0].tag == @intFromEnum(Tag.array)) {
+        const items = try arrayItems(roots[0]);
+        if (roots[1].tag == @intFromEnum(Tag.number)) {
+            const start = try spliceIndexRuntime(runtime, roots[1], items.items.len);
+            roots[2] = try spliceArrayBuiltin(runtime, roots[0], start, 1);
+            const removed = try arrayItems(roots[2]);
+            return if (removed.items.len == 0) .{} else removed.items[0];
+        }
+        if (try arrayRange(runtime, roots[1], items.items.len)) |range| {
+            return spliceArrayBuiltin(runtime, roots[0], range.start, range.count);
+        }
+        return .{ .tag = @intFromEnum(Tag.null_value) };
+    }
+    if (roots[0].tag == @intFromEnum(Tag.dictionary) and isString(roots[1])) {
+        const object = roots[0].object() orelse return error.InvalidDictionary;
+        if (object.payload != .dictionary) return error.InvalidDictionary;
+        const entries = &object.payload.dictionary;
+        for (entries.items, 0..) |entry, entry_index| {
+            if (!try stringValuesEqual(runtime, entry.key, roots[1])) continue;
+            if (!valueTruthy(entry.value)) return .{};
+            const old = entries.orderedRemove(entry_index);
+            return old.value;
+        }
+        return .{};
+    }
+    return error.ArrayCutReceiver;
+}
+
+fn arrayTakeBuiltin(runtime: *Runtime, source: Value, index: Value, count: Value) !Value {
+    var roots = [_]Value{ source, index, count };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    if (roots[0].tag != @intFromEnum(Tag.array)) return error.ArrayTakeReceiver;
+    const items = try arrayItems(roots[0]);
+    const start = try spliceIndexRuntime(runtime, roots[1], items.items.len);
+    const delete_count = try spliceCountRuntime(runtime, roots[2], items.items.len - start);
+    return spliceArrayBuiltin(runtime, roots[0], start, delete_count);
+}
+
+fn arrayPopBuiltin(_: *Runtime, source: Value) !Value {
+    if (source.tag != @intFromEnum(Tag.array)) return error.ArrayPopReceiver;
+    const object = source.object() orelse return error.InvalidArray;
+    if (object.payload != .array) return error.InvalidArray;
+    return object.payload.array.pop() orelse .{};
+}
+
+fn arrayPushBuiltin(runtime: *Runtime, source: Value, item: Value) !Value {
+    if (source.tag != @intFromEnum(Tag.array)) return error.ArrayPushReceiver;
+    const object = source.object() orelse return error.InvalidArray;
+    if (object.payload != .array) return error.InvalidArray;
+    const items = &object.payload.array;
+    try items.ensureTotalCapacity(runtime.allocator, std.math.add(usize, items.items.len, 1) catch return error.ArrayTooLarge);
+    items.appendAssumeCapacity(item);
+    return source;
+}
+
+fn arrayMutationBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    const source: Value = if (arguments.len > 0) arguments[0] else .{};
+    const index: Value = if (arguments.len > 1) arguments[1] else .{};
+    const item: Value = if (arguments.len > 2) arguments[2] else .{};
+    return switch (command) {
+        .array_insert => arrayInsertBuiltin(runtime, source, index, item),
+        .array_insert_many => arrayInsertManyBuiltin(runtime, source, index, item),
+        .array_cut => arrayCutBuiltin(runtime, source, index),
+        .array_take => arrayTakeBuiltin(runtime, source, index, if (arguments.len > 2) arguments[2] else .{}),
+        .array_pop => arrayPopBuiltin(runtime, source),
+        .array_push => arrayPushBuiltin(runtime, source, index),
+        else => error.UnknownCommand,
+    };
 }
 
 fn explodeBuiltin(runtime: *Runtime, value: Value) !Value {
@@ -3614,6 +3862,104 @@ test "AOT配列結合と配列検索は公式のArray境界とGCを保つ" {
     const non_array_search = [_]Value{ staticStringValue("abc"), staticStringValue("a") };
     lnako_aot_builtin_call(&roots[16], &non_array_search, non_array_search.len, @intFromEnum(aot_builtin.Command.array_search));
     try std.testing.expectEqual(@as(f64, -1), valueToNumber(roots[16]));
+}
+
+test "AOT配列変更命令はspliceの数値化と辞書のtruthy規則を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    active_runtime = runtime;
+    active_runtime.?.next_collection = 1;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+        runtime.deinit();
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try active_runtime.?.createArray(&.{ numberValue(1), numberValue(2), numberValue(3) });
+    const insert_arguments = [_]Value{ roots[0], numberValue(-1.5), numberValue(9) };
+    lnako_aot_builtin_call(&roots[1], &insert_arguments, insert_arguments.len, @intFromEnum(aot_builtin.Command.array_insert));
+    try std.testing.expectEqual(@as(usize, 0), roots[1].object().?.payload.array.items.len);
+    try std.testing.expectEqualSlices(Value, &.{ numberValue(1), numberValue(2), numberValue(9), numberValue(3) }, roots[0].object().?.payload.array.items);
+
+    roots[2] = try active_runtime.?.createArray(&.{ numberValue(1), numberValue(4) });
+    roots[3] = try active_runtime.?.createArray(&.{ numberValue(2), numberValue(3) });
+    const many_arguments = [_]Value{ roots[2], numberValue(1), roots[3] };
+    lnako_aot_builtin_call(&roots[4], &many_arguments, many_arguments.len, @intFromEnum(aot_builtin.Command.array_insert_many));
+    try std.testing.expectEqual(roots[2].payload, roots[4].payload);
+    try std.testing.expectEqualSlices(Value, &.{ numberValue(1), numberValue(2), numberValue(3), numberValue(4) }, roots[2].object().?.payload.array.items);
+
+    // The upstream loop would never terminate when a and b are the same
+    // array.  The native runtime copies b before mutating a.
+    roots[5] = try active_runtime.?.createArray(&.{ numberValue(1), numberValue(2) });
+    const self_arguments = [_]Value{ roots[5], numberValue(1), roots[5] };
+    lnako_aot_builtin_call(&roots[6], &self_arguments, self_arguments.len, @intFromEnum(aot_builtin.Command.array_insert_many));
+    try std.testing.expectEqualSlices(Value, &.{ numberValue(1), numberValue(1), numberValue(2), numberValue(2) }, roots[5].object().?.payload.array.items);
+
+    roots[7] = try active_runtime.?.createArray(&.{ numberValue(0), numberValue(1), numberValue(2), numberValue(3) });
+    const take_arguments = [_]Value{ roots[7], staticStringValue("1.9"), staticStringValue("2.9") };
+    lnako_aot_builtin_call(&roots[8], &take_arguments, take_arguments.len, @intFromEnum(aot_builtin.Command.array_take));
+    try std.testing.expectEqualSlices(Value, &.{ numberValue(1), numberValue(2) }, roots[8].object().?.payload.array.items);
+    try std.testing.expectEqualSlices(Value, &.{ numberValue(0), numberValue(3) }, roots[7].object().?.payload.array.items);
+
+    roots[9] = try active_runtime.?.createArray(&.{ numberValue(0), numberValue(1), numberValue(2), numberValue(3) });
+    roots[10] = try active_runtime.?.createDictionary(&.{ staticStringValue("先頭"), numberValue(1), staticStringValue("末尾"), numberValue(2) });
+    const range_arguments = [_]Value{ roots[9], roots[10] };
+    lnako_aot_builtin_call(&roots[11], &range_arguments, range_arguments.len, @intFromEnum(aot_builtin.Command.array_cut));
+    try std.testing.expectEqualSlices(Value, &.{ numberValue(1), numberValue(2) }, roots[11].object().?.payload.array.items);
+    try std.testing.expectEqualSlices(Value, &.{ numberValue(0), numberValue(3) }, roots[9].object().?.payload.array.items);
+
+    roots[12] = try active_runtime.?.createDictionary(&.{
+        staticStringValue("zero"),  numberValue(0),
+        staticStringValue("yes"),   numberValue(7),
+        staticStringValue("false"), .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 },
+    });
+    const zero_key = [_]Value{ roots[12], staticStringValue("zero") };
+    lnako_aot_builtin_call(&roots[13], &zero_key, zero_key.len, @intFromEnum(aot_builtin.Command.array_cut));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[13].tag)));
+    try std.testing.expectEqual(@as(usize, 3), roots[12].object().?.payload.dictionary.items.len);
+    const yes_key = [_]Value{ roots[12], staticStringValue("yes") };
+    lnako_aot_builtin_call(&roots[14], &yes_key, yes_key.len, @intFromEnum(aot_builtin.Command.array_cut));
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[14]));
+    try std.testing.expectEqual(@as(usize, 2), roots[12].object().?.payload.dictionary.items.len);
+
+    roots[15] = try active_runtime.?.createArray(&.{ numberValue(1), numberValue(2) });
+    const pop_arguments = [_]Value{roots[15]};
+    lnako_aot_builtin_call(&roots[16], &pop_arguments, pop_arguments.len, @intFromEnum(aot_builtin.Command.array_pop));
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(roots[16]));
+    const push_arguments = [_]Value{ roots[15], numberValue(3) };
+    lnako_aot_builtin_call(&roots[17], &push_arguments, push_arguments.len, @intFromEnum(aot_builtin.Command.array_push));
+    try std.testing.expectEqual(roots[15].payload, roots[17].payload);
+    try std.testing.expectEqualSlices(Value, &.{ numberValue(1), numberValue(3) }, roots[15].object().?.payload.array.items);
+    lnako_aot_builtin_call(&roots[18], &push_arguments, push_arguments.len, @intFromEnum(aot_builtin.Command.array_push));
+    try std.testing.expectEqualSlices(Value, &.{ numberValue(1), numberValue(3), numberValue(3) }, roots[15].object().?.payload.array.items);
+
+    roots[19] = try active_runtime.?.createArray(&.{ numberValue(1), numberValue(2) });
+    roots[20] = try active_runtime.?.createBigInt("1n");
+    const bigint_insert = [_]Value{ roots[19], roots[20], numberValue(9) };
+    lnako_aot_builtin_call(&roots[21], &bigint_insert, bigint_insert.len, @intFromEnum(aot_builtin.Command.array_insert));
+    try std.testing.expect(active_runtime.?.has_pending_exception);
+    try std.testing.expectEqualSlices(Value, &.{ numberValue(1), numberValue(2) }, roots[19].object().?.payload.array.items);
+    lnako_aot_exception_take(&roots[22]);
+    const bigint_take = [_]Value{ roots[19], numberValue(0), roots[20] };
+    lnako_aot_builtin_call(&roots[21], &bigint_take, bigint_take.len, @intFromEnum(aot_builtin.Command.array_take));
+    try std.testing.expect(active_runtime.?.has_pending_exception);
+    try std.testing.expectEqualSlices(Value, &.{ numberValue(1), numberValue(2) }, roots[19].object().?.payload.array.items);
+    lnako_aot_exception_take(&roots[22]);
+
+    const null_index: Value = .{ .tag = @intFromEnum(Tag.null_value) };
+    const null_cut = [_]Value{ roots[19], null_index };
+    lnako_aot_builtin_call(&roots[21], &null_cut, null_cut.len, @intFromEnum(aot_builtin.Command.array_cut));
+    try std.testing.expect(active_runtime.?.has_pending_exception);
+    try std.testing.expectEqualSlices(Value, &.{ numberValue(1), numberValue(2) }, roots[19].object().?.payload.array.items);
+    lnako_aot_exception_take(&roots[22]);
+
+    roots[23] = try active_runtime.?.createArray(&.{});
+    const empty_pop = [_]Value{roots[23]};
+    lnako_aot_builtin_call(&roots[24], &empty_pop, empty_pop.len, @intFromEnum(aot_builtin.Command.array_pop));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[24].tag)));
 }
 
 test "AOT文字列連結分解反復出現命令は公式の型変換を保つ" {

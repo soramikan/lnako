@@ -53,6 +53,12 @@ pub const Command = enum(u16) {
     array_join,
     array_join_only,
     array_search,
+    array_insert,
+    array_insert_many,
+    array_cut,
+    array_take,
+    array_pop,
+    array_push,
     add_parsed,
     sum_parsed,
     sequential_add,
@@ -154,6 +160,12 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "配列結合")) return .array_join;
     if (std.mem.eql(u8, name, "配列只結合")) return .array_join_only;
     if (std.mem.eql(u8, name, "配列検索")) return .array_search;
+    if (std.mem.eql(u8, name, "配列挿入")) return .array_insert;
+    if (std.mem.eql(u8, name, "配列一括挿入")) return .array_insert_many;
+    if (std.mem.eql(u8, name, "配列削除") or std.mem.eql(u8, name, "配列切取")) return .array_cut;
+    if (std.mem.eql(u8, name, "配列取出")) return .array_take;
+    if (std.mem.eql(u8, name, "配列ポップ")) return .array_pop;
+    if (std.mem.eql(u8, name, "配列プッシュ") or std.mem.eql(u8, name, "配列追加")) return .array_push;
     if (std.mem.eql(u8, name, "足")) return .add_parsed;
     if (std.mem.eql(u8, name, "合計")) return .sum_parsed;
     if (std.mem.eql(u8, name, "連続加算")) return .sequential_add;
@@ -270,6 +282,14 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.array_join, lookup("配列結合").?);
     try std.testing.expectEqual(Command.array_join_only, lookup("配列只結合").?);
     try std.testing.expectEqual(Command.array_search, lookup("配列検索").?);
+    try std.testing.expectEqual(Command.array_insert, lookup("配列挿入").?);
+    try std.testing.expectEqual(Command.array_insert_many, lookup("配列一括挿入").?);
+    try std.testing.expectEqual(Command.array_cut, lookup("配列削除").?);
+    try std.testing.expectEqual(Command.array_cut, lookup("配列切取").?);
+    try std.testing.expectEqual(Command.array_take, lookup("配列取出").?);
+    try std.testing.expectEqual(Command.array_pop, lookup("配列ポップ").?);
+    try std.testing.expectEqual(Command.array_push, lookup("配列プッシュ").?);
+    try std.testing.expectEqual(Command.array_push, lookup("配列追加").?);
     try std.testing.expectEqual(Command.add_parsed, lookup("足").?);
     try std.testing.expectEqual(Command.sum_parsed, lookup("合計").?);
     try std.testing.expectEqual(Command.sequential_add, lookup("連続加算").?);

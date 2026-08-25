@@ -1457,56 +1457,64 @@
   "配列挿入": {
     "status": "native",
     "tests": [
-      "plugin-system-array-mutation-quirks"
+      "plugin-system-array-mutation-quirks",
+      "native-system-array-mutation-commands"
     ],
     "reason": "元配列を更新し空配列を返す公式挙動を実装し、公式差分テストに成功"
   },
   "配列一括挿入": {
     "status": "native",
     "tests": [
-      "plugin-system-array-mutation-quirks"
+      "plugin-system-array-mutation-quirks",
+      "native-system-array-mutation-commands"
     ],
-    "reason": "元配列を更新して元配列を返す公式挙動を実装し、公式差分テストに成功"
+    "reason": "元配列を更新して元配列を返す公式挙動を実装し、自己一括挿入の安全差をTODOとして分離して公式差分テストに成功"
   },
   "配列削除": {
     "status": "native",
     "tests": [
-      "plugin-system-array-mutation-quirks"
+      "plugin-system-array-mutation-quirks",
+      "native-system-array-mutation-commands"
     ],
     "reason": "配列切取の別名として実装し、公式差分テストに成功"
   },
   "配列切取": {
     "status": "native",
     "tests": [
-      "plugin-system-array-mutation-quirks"
+      "plugin-system-array-mutation-quirks",
+      "native-system-array-mutation-commands"
     ],
-    "reason": "辞書のtruthy判定を含む公式挙動を実装し、公式差分テストに成功"
+    "reason": "辞書のtruthy判定を実装し、JavaScript継承プロパティ差をTODOとして分離して公式差分テストに成功"
   },
   "配列取出": {
     "status": "native",
     "tests": [
-      "plugin-system-array-mutation-quirks"
+      "plugin-system-array-mutation-quirks",
+      "native-system-array-mutation-commands"
     ],
     "reason": "破壊的な範囲取り出しを実装し、公式差分テストに成功"
   },
   "配列ポップ": {
     "status": "native",
     "tests": [
-      "plugin-system-array-mutation-quirks"
+      "plugin-system-array-mutation-quirks",
+      "native-system-array-mutation-commands"
     ],
     "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
   },
   "配列プッシュ": {
     "status": "native",
     "tests": [
-      "plugin-system-array-mutation-quirks"
+      "plugin-system-array-mutation-quirks",
+      "native-system-array-mutation-commands"
     ],
     "reason": "更新後配列を返す公式挙動を実装し、公式差分テストに成功"
   },
   "配列追加": {
     "status": "native",
     "tests": [
-      "plugin-system-array-mutation-quirks"
+      "plugin-system-array-mutation-quirks",
+      "native-system-array-mutation-commands"
     ],
     "reason": "配列プッシュの別名として実装し、公式差分テストに成功"
   },
