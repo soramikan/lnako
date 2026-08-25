@@ -1585,6 +1585,18 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             };
         },
+        .chr => {
+            out.* = chrBuiltin(runtime, value) catch |failure| {
+                if (!runtime.has_pending_exception) runtime.setFailure(failure);
+                return;
+            };
+        },
+        .asc => {
+            out.* = ascBuiltin(runtime, value) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
     }
 }
 
@@ -1836,6 +1848,58 @@ fn sequentialAddBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     for (arguments[2..]) |argument| roots[0] = try jsAdd(runtime, roots[0], argument);
     roots[1] = try jsAdd(runtime, roots[0], arguments[0]);
     return roots[1];
+}
+
+fn chrBuiltin(runtime: *Runtime, value: Value) !Value {
+    if (value.tag != @intFromEnum(Tag.array)) return codePointStringBuiltin(runtime, try valueToNumberRuntime(runtime, value));
+    var roots = [_]Value{ value, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[1] = try runtime.createArray(&.{});
+    for (roots[0].object().?.payload.array.items) |item| {
+        roots[2] = try codePointStringBuiltin(runtime, try valueToNumberRuntime(runtime, item));
+        try roots[1].object().?.payload.array.append(runtime.allocator, roots[2]);
+    }
+    return roots[1];
+}
+
+fn codePointStringBuiltin(runtime: *Runtime, number: f64) !Value {
+    if (!std.math.isFinite(number) or @trunc(number) != number or number < 0 or number > 0x10ffff) {
+        const number_text = try number_mod.toStringAlloc(runtime.allocator, number);
+        defer runtime.allocator.free(number_text);
+        const message = try std.fmt.allocPrint(runtime.allocator, "Invalid code point {s}", .{number_text});
+        defer runtime.allocator.free(message);
+        runtime.setFailureText(message);
+        return error.NakoException;
+    }
+    const codepoint: u21 = @intFromFloat(number);
+    if (codepoint <= 0xffff) return runtime.createString(&.{@intCast(codepoint)});
+    const offset: u32 = codepoint - 0x10000;
+    return runtime.createString(&.{ @intCast(0xd800 + (offset >> 10)), @intCast(0xdc00 + (offset & 0x3ff)) });
+}
+
+fn ascBuiltin(runtime: *Runtime, value: Value) !Value {
+    if (value.tag != @intFromEnum(Tag.array)) return numberValue(@floatFromInt(try firstCodePointBuiltin(runtime, value)));
+    var roots = [_]Value{ value, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[1] = try runtime.createArray(&.{});
+    for (roots[0].object().?.payload.array.items) |item| {
+        try roots[1].object().?.payload.array.append(runtime.allocator, numberValue(@floatFromInt(try firstCodePointBuiltin(runtime, item))));
+    }
+    return roots[1];
+}
+
+fn firstCodePointBuiltin(runtime: *Runtime, value: Value) !u21 {
+    const units = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(units);
+    if (units.len == 0) return 0;
+    if (units[0] >= 0xd800 and units[0] <= 0xdbff and units.len > 1 and units[1] >= 0xdc00 and units[1] <= 0xdfff) {
+        return @intCast(0x10000 + ((@as(u32, units[0]) - 0xd800) << 10) + (@as(u32, units[1]) - 0xdc00));
+    }
+    return @intCast(units[0]);
 }
 
 test "UTF-16文字列をルートから正確にmark-and-sweepする" {
@@ -2236,6 +2300,50 @@ test "AOT加算系命令はparseFloatとBigIntとJavaScript加算を分離する
     lnako_aot_builtin_call(&roots[10], null, 0, @intFromEnum(aot_builtin.Command.sequential_add));
     lnako_aot_builtin_call(&roots[11], null, 0, @intFromEnum(aot_builtin.Command.sequential_add));
     try std.testing.expectEqual(roots[10].payload, roots[11].payload);
+}
+
+test "AOT文字コード命令は補助平面と配列と動的例外文言を扱う" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = numberValue(0x1f600);
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.chr));
+    try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00 }, roots[1].object().?.payload.utf16_string);
+
+    roots[2] = try active_runtime.?.createArray(&.{ numberValue(65), numberValue(0x1f600), numberValue(66) });
+    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[2]), 1, @intFromEnum(aot_builtin.Command.chr));
+    const characters = roots[3].object().?.payload.array.items;
+    try std.testing.expectEqual(@as(usize, 3), characters.len);
+    try std.testing.expectEqualSlices(u16, &.{'A'}, characters[0].object().?.payload.utf16_string);
+    try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00 }, characters[1].object().?.payload.utf16_string);
+    try std.testing.expectEqualSlices(u16, &.{'B'}, characters[2].object().?.payload.utf16_string);
+
+    roots[4] = staticStringValue("😀");
+    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[4]), 1, @intFromEnum(aot_builtin.Command.asc));
+    try std.testing.expectEqual(@as(f64, 0x1f600), @as(f64, @bitCast(roots[5].payload)));
+    roots[6] = try active_runtime.?.createArray(&.{ staticStringValue("A"), staticStringValue("😀"), staticStringValue(""), .{ .tag = @intFromEnum(Tag.null_value) }, numberValue(12) });
+    lnako_aot_builtin_call(&roots[7], @ptrCast(&roots[6]), 1, @intFromEnum(aot_builtin.Command.asc));
+    const codes = roots[7].object().?.payload.array.items;
+    try std.testing.expectEqual(@as(usize, 5), codes.len);
+    try std.testing.expectEqualSlices(f64, &.{ 65, 0x1f600, 0, 110, 49 }, &.{ valueToNumber(codes[0]), valueToNumber(codes[1]), valueToNumber(codes[2]), valueToNumber(codes[3]), valueToNumber(codes[4]) });
+
+    roots[8] = numberValue(-1);
+    lnako_aot_builtin_call(&roots[9], @ptrCast(&roots[8]), 1, @intFromEnum(aot_builtin.Command.chr));
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    var taken: Value = .{};
+    lnako_aot_exception_take(&taken);
+    const message = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, taken.object().?.payload.utf16_string);
+    defer std.testing.allocator.free(message);
+    try std.testing.expectEqualStrings("Invalid code point -1", message);
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {

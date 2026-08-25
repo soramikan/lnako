@@ -379,6 +379,7 @@ pub const Runtime = struct {
     root_providers: std.ArrayList(RootProvider) = .empty,
     promise_tasks: std.ArrayList(PromiseTask) = .empty,
     stringifying_arrays: std.ArrayList(*Array) = .empty,
+    custom_failure_message: std.ArrayList(u8) = .empty,
     next_collection: usize = 64,
     stress_collection: bool = false,
 
@@ -394,11 +395,26 @@ pub const Runtime = struct {
         self.root_providers.deinit(self.backing_allocator);
         self.promise_tasks.deinit(self.backing_allocator);
         self.stringifying_arrays.deinit(self.backing_allocator);
+        self.custom_failure_message.deinit(self.backing_allocator);
         self.* = undefined;
     }
 
     pub fn allocator(self: *Runtime) std.mem.Allocator {
         return self.backing_allocator;
+    }
+
+    /// 命令固有の動的な例外文言を、汎用error setとは別に保持する。
+    pub fn setFailureMessage(self: *Runtime, message: []const u8) !void {
+        self.custom_failure_message.clearRetainingCapacity();
+        try self.custom_failure_message.appendSlice(self.backing_allocator, message);
+    }
+
+    pub fn failureMessage(self: Runtime) ?[]const u8 {
+        return if (self.custom_failure_message.items.len > 0) self.custom_failure_message.items else null;
+    }
+
+    pub fn clearFailureMessage(self: *Runtime) void {
+        self.custom_failure_message.clearRetainingCapacity();
     }
 
     pub fn rootFrame(self: *Runtime) RootFrame {

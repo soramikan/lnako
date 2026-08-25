@@ -59,7 +59,7 @@ pub fn main(init: std.process.Init) !void {
                 try stderr.flush();
                 std.process.exit(interpreter.requestedExitCode() orelse 0);
             }
-            try stderr.print("実行時エラー: {s}\n", .{@errorName(err)});
+            try stderr.print("実行時エラー: {s}\n", .{runtime.failureMessage() orelse @errorName(err)});
             try stderr.flush();
             std.process.exit(1);
         };
@@ -182,7 +182,7 @@ pub fn main(init: std.process.Init) !void {
                     try stderr.flush();
                     std.process.exit(interpreter.requestedExitCode() orelse 0);
                 }
-                try stderr.print("実行時エラー: {s}\n", .{@errorName(err)});
+                try stderr.print("実行時エラー: {s}\n", .{runtime.failureMessage() orelse @errorName(err)});
                 try stderr.flush();
                 std.process.exit(1);
             };
@@ -1373,7 +1373,7 @@ fn runTestFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8, stdou
     var interpreter = lnako.runtime.interpreter.Interpreter.init(allocator, &runtime, ir_program, cli_host.host());
     defer interpreter.deinit();
     _ = interpreter.run() catch |err| {
-        try stderr.print("{s}: テスト初期化エラー: {s}\n", .{ path, @errorName(err) });
+        try stderr.print("{s}: テスト初期化エラー: {s}\n", .{ path, runtime.failureMessage() orelse @errorName(err) });
         return false;
     };
     const results = try interpreter.runTests();

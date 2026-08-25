@@ -297,11 +297,13 @@ pub const Interpreter = struct {
                 try self.drainEventLoop();
                 try self.test_results.append(self.allocator, .{ .name = try self.allocator.dupe(u8, function.name), .passed = true });
             } else |failure| {
+                const message = self.runtime.failureMessage() orelse @errorName(failure);
                 try self.test_results.append(self.allocator, .{
                     .name = try self.allocator.dupe(u8, function.name),
                     .passed = false,
-                    .message = try self.allocator.dupe(u8, @errorName(failure)),
+                    .message = try self.allocator.dupe(u8, message),
                 });
+                self.runtime.clearFailureMessage();
             }
         }
         return self.test_results.items;
@@ -358,7 +360,11 @@ pub const Interpreter = struct {
                 try self.handleNodeInterrupt();
                 self.executeInstruction(&frame, instruction, predecessor) catch |failure| {
                     if (frame.handlers.pop()) |handler| {
-                        if (self.exception_value == .undefined) self.exception_value = self.runtime.stringUtf8(error_message.forFailure(failure)) catch return failure;
+                        if (self.exception_value == .undefined) {
+                            const message = self.runtime.failureMessage() orelse error_message.forFailure(failure);
+                            self.exception_value = self.runtime.stringUtf8(message) catch return failure;
+                        }
+                        self.runtime.clearFailureMessage();
                         try self.setGlobal("エラーメッセージ", self.exception_value);
                         self.exception_value = .undefined;
                         exceptional_target = handler;
@@ -2282,6 +2288,25 @@ test "引数なし連続加算は共有システム文脈を返す" {
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("[object Object]\ntrue\n", host.written());
+}
+
+test "CHRの不正コードポイントを値付き公式文言で監視する" {
+    const source =
+        "エラー監視\nCHR(-1)を表示\nエラーならば\nエラーメッセージを表示\nここまで\n" ++
+        "エラー監視\nCHR(1.5)を表示\nエラーならば\nエラーメッセージを表示\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("Invalid code point -1\nInvalid code point 1.5\n", host.written());
 }
 
 test "連続する例外監視で直前の捕捉値を再利用しない" {

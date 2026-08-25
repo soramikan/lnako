@@ -231,7 +231,14 @@ fn chr(runtime: *Runtime, value: Value) !Value {
 }
 
 fn codePointString(runtime: *Runtime, number: f64) !Value {
-    if (!std.math.isFinite(number) or @trunc(number) != number or number < 0 or number > 0x10ffff) return error.InvalidCodePoint;
+    if (!std.math.isFinite(number) or @trunc(number) != number or number < 0 or number > 0x10ffff) {
+        const number_text = try value_mod.numberToStringAlloc(runtime.allocator(), number);
+        defer runtime.allocator().free(number_text);
+        const message = try std.fmt.allocPrint(runtime.allocator(), "Invalid code point {s}", .{number_text});
+        defer runtime.allocator().free(message);
+        try runtime.setFailureMessage(message);
+        return error.InvalidCodePoint;
+    }
     const codepoint: u21 = @intFromFloat(number);
     if (codepoint <= 0xffff) return runtime.stringCodeUnits(&.{@intCast(codepoint)});
     const offset: u32 = codepoint - 0x10000;
