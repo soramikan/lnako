@@ -73,6 +73,18 @@ pub fn nadesikoAdd(runtime: *Runtime, left: Value, right: Value) !Value {
     return .{ .number = try left_primitive.toNumber(runtime.allocator()) + try right_primitive.toNumber(runtime.allocator()) };
 }
 
+/// 増減文は両辺を明示的にNumberへ変換し、未定義の対象を0として扱う。
+pub fn increment(runtime: *Runtime, old: Value, amount: Value) !Value {
+    const old_number: f64 = if (old == .undefined) 0 else try incrementNumber(runtime, old);
+    return .{ .number = old_number + try incrementNumber(runtime, amount) };
+}
+
+fn incrementNumber(runtime: *Runtime, value: Value) !f64 {
+    const primitive = try runtime.valueToPrimitive(value);
+    if (primitive == .bigint) return primitive.bigint.toF64();
+    return primitive.toNumber(runtime.allocator());
+}
+
 fn bigIntBinary(runtime: *Runtime, operator: Binary, left: BigInt, right: BigInt) !Value {
     const allocator = runtime.allocator();
     const result = switch (operator) {
@@ -208,6 +220,14 @@ test "なでしこ式の加算は文字列を連結せず数値へ変換する" 
     const text = try runtime.stringUtf8("個");
     try std.testing.expect(std.math.isNan((try nadesikoAdd(&runtime, .{ .number = 3 }, text)).number));
     try std.testing.expectError(error.CannotMixBigIntAndNumber, nadesikoAdd(&runtime, try runtime.bigIntLiteral("1n"), text));
+}
+
+test "増減文は未定義・文字列・BigIntをNumberへ変換する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    try std.testing.expectEqual(@as(f64, 1), (try increment(&runtime, .undefined, .{ .number = 1 })).number);
+    try std.testing.expectEqual(@as(f64, 7), (try increment(&runtime, try runtime.stringUtf8("5"), .{ .number = 2 })).number);
+    try std.testing.expectEqual(@as(f64, 7), (try increment(&runtime, try runtime.bigIntLiteral("5n"), .{ .number = 2 })).number);
 }
 
 test "Numberビット演算を32bitへ正規化する" {

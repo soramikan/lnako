@@ -141,7 +141,7 @@ const Analyzer = struct {
             _ = try self.declare(module_index, scope, node.name, if (node.is_const) .constant else .variable, node.span, node.is_export, !node.is_const, 0);
         } else if (node.kind == .variable_list_definition) {
             for (node.arguments) |name| _ = try self.declare(module_index, scope, name.name, if (node.is_const) .constant else .variable, name.span, node.is_export, !node.is_const, 0);
-        } else if (node.kind == .assignment and self.builtins.get(node.name) == null and self.lookupLexical(scope, node.name) == null) {
+        } else if ((node.kind == .assignment or node.kind == .increment) and self.builtins.get(node.name) == null and self.lookupLexical(scope, node.name) == null) {
             _ = try self.declare(module_index, scope, node.name, .variable, node.span, true, true, 0);
         } else if (node.kind == .for_statement and node.name.len > 0 and self.lookupLexical(scope, node.name) == null) {
             _ = try self.declare(module_index, scope, node.name, .loop_variable, node.span, false, true, 0);
@@ -370,6 +370,21 @@ test "グローバル・引数・組み込み命令を解決する" {
         found_builtin = true;
     };
     try std.testing.expect(found_builtin);
+}
+
+test "未定義変数への増減を暗黙のモジュール変数宣言として解決する" {
+    const parser = @import("../frontend/parser.zig");
+    var parsed = try parser.parse(std.testing.allocator, "Aを1増\nAを表示\n", "increment.nako3");
+    defer parsed.deinit();
+    var program = try analyze(std.testing.allocator, parsed.root.?, "increment.nako3");
+    defer program.deinit();
+    try std.testing.expect(program.succeeded());
+    try std.testing.expect(program.findSymbol("increment__A") != null);
+    var declaration_bound = false;
+    for (program.bindings) |binding| if (binding.kind == .declaration and std.mem.eql(u8, binding.name, "A") and std.mem.eql(u8, binding.resolved_name, "increment__A")) {
+        declaration_bound = true;
+    };
+    try std.testing.expect(declaration_bound);
 }
 
 test "同名の公開シンボルは名前空間で曖昧さを解消する" {

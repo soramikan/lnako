@@ -38,6 +38,7 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
                 .property_set,
                 .iterator_next,
                 .iterator_has_next,
+                .increment,
                 .phi,
                 .speed_mode_begin,
                 .speed_mode_end,
@@ -138,6 +139,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_bigint_compare(ptr, ptr, ptr, i8)\n" ++
                 "declare void @lnako_aot_shift(ptr, ptr, ptr, i8)\n" ++
                 "declare void @lnako_aot_concat(ptr, ptr, ptr)\n" ++
+                "declare void @lnako_aot_increment(ptr, ptr)\n" ++
                 "declare void @lnako_aot_array_new(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_dictionary_new(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_index_get(ptr, ptr, ptr)\n" ++
@@ -206,6 +208,9 @@ const Emitter = struct {
             if (instruction.opcode == .destructure_store) for (instruction.names) |name| {
                 if (isQualifiedGlobal(name) and self.globalIndex(name) == null) try self.globals.append(self.allocator, name);
             };
+            if (instruction.opcode == .increment and isQualifiedGlobal(instruction.name) and self.globalIndex(instruction.name) == null) {
+                try self.globals.append(self.allocator, instruction.name);
+            }
             if (instruction.opcode == .const_string) {
                 const value_id = instruction.result orelse return error.InvalidStringConstant;
                 const units = try std.unicode.utf8ToUtf16LeAlloc(self.allocator, instruction.text);
@@ -457,6 +462,7 @@ const Emitter = struct {
             .make_object => try self.writeAggregate(function, instruction, scope, aggregate_count, "lnako_aot_dictionary_new"),
             .array_get, .property_get => try self.writeIndexGet(instruction, scope),
             .array_set, .property_set => try self.writeIndexSet(locals, instruction, scope),
+            .increment => try self.writeIncrement(locals, instruction, scope),
             .iterator_begin => try self.writeIteratorBegin(function, instruction, scope, aggregate_count),
             .iterator_has_next => try self.writeIteratorHasNext(instruction, scope),
             .iterator_next => try self.writeIteratorNext(function, locals, instruction, scope),
@@ -758,6 +764,14 @@ const Emitter = struct {
         try self.debugSuffix(instruction.span, scope);
     }
 
+    fn writeIncrement(self: *Emitter, locals: []const []const u8, instruction: ir.Instruction, scope: usize) !void {
+        if (instruction.operands.len != 1) return error.InvalidIncrement;
+        try self.output.writer.writeAll("  call void @lnako_aot_increment(ptr ");
+        try self.writeRequiredNamedPointer(locals, instruction.name);
+        try self.output.writer.print(", ptr %root.slot.{d})", .{instruction.operands[0]});
+        try self.debugSuffix(instruction.span, scope);
+    }
+
     fn writeBigIntBranch(self: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize) !void {
         const result = instruction.result orelse return error.MissingInstructionResult;
         try self.output.writer.print("  %binary.left.tag.{d} = extractvalue %lnako.Value ", .{result});
@@ -988,6 +1002,9 @@ const Emitter = struct {
             if (instruction.opcode == .destructure_store) for (instruction.names) |name| {
                 if (!isQualifiedGlobal(name) and nameIndex(names.items, name) == null) try names.append(self.allocator, name);
             };
+            if (instruction.opcode == .increment and !isQualifiedGlobal(instruction.name) and nameIndex(names.items, instruction.name) == null) {
+                try names.append(self.allocator, instruction.name);
+            }
         };
         return self.allocator.dupe([]const u8, names.items);
     }
@@ -1309,6 +1326,25 @@ test "BigInt算術と比較を型タグでAOTランタイムへ分岐する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "binary.has.bigint.") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "number.is_nan") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@.lnako.negative.infinity") != null);
+}
+
+test "増減文をNumber変換付きAOTランタイムへ接続する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "Aを1増\nAを表示\nB=\"5\"\nBを2増\nBを表示\n", "increment.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "increment.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "increment.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    try std.testing.expect(findUnsupported(program) == null);
+    var module = try generate(std.testing.allocator, program, "increment.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_increment") != null);
 }
 
 test "O1では証明済み数値と真偽判定をアンボックスしO0のIRを変更しない" {

@@ -60,6 +60,10 @@
     "source": "5回\n回数を表示\nもし、回数=3ならば、抜ける\nここまで\n"
   },
   {
+    "id": "native-increment-and-decrement",
+    "source": "Aを1増\nAを表示\nAを2増\nAを1減\nAを表示\nB=\"5\"\nBを2増\nBを表示\nC=5n\nCを2増\nCを表示\nC===7を表示\nC===7nを表示\n"
+  },
+  {
     "id": "native-range-break-and-continue",
     "source": "S=0\nIを1から5まで繰り返す\nもしI=2ならば、続ける\nもしI=4ならば、抜ける\nS=S+I\nここまで\nSを表示\n"
   },

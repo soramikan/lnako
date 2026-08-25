@@ -376,6 +376,23 @@ fn valueToNumber(value: Value) f64 {
     };
 }
 
+fn incrementNumber(runtime: *Runtime, value: Value) f64 {
+    if (value.tag == @intFromEnum(Tag.bigint)) return value.object().?.payload.bigint.toF64();
+    if (isString(value)) {
+        const utf8 = stringUtf8Alloc(runtime, value) catch return std.math.nan(f64);
+        defer runtime.allocator.free(utf8);
+        const trimmed = std.mem.trim(u8, utf8, " \t\r\n\x0b\x0c");
+        if (trimmed.len == 0) return 0;
+        return std.fmt.parseFloat(f64, trimmed) catch std.math.nan(f64);
+    }
+    return valueToNumber(value);
+}
+
+fn incrementValue(runtime: *Runtime, old: Value, amount: Value) Value {
+    const old_number: f64 = if (old.tag == @intFromEnum(Tag.undefined)) 0 else incrementNumber(runtime, old);
+    return numberValue(old_number + incrementNumber(runtime, amount));
+}
+
 fn isString(value: Value) bool {
     return value.tag == @intFromEnum(Tag.static_utf8_string) or value.tag == @intFromEnum(Tag.utf16_string);
 }
@@ -711,6 +728,11 @@ pub export fn lnako_aot_concat(out: *Value, left: *const Value, right: *const Va
     out.* = concat(runtime, left.*, right.*) catch |failure| runtimeFailure(failure);
 }
 
+pub export fn lnako_aot_increment(target: *Value, amount: *const Value) callconv(.c) void {
+    const runtime = if (active_runtime) |*active| active else return;
+    target.* = incrementValue(runtime, target.*, amount.*);
+}
+
 pub export fn lnako_aot_array_new(out: *Value, values: ?[*]const Value, len: usize) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*value| value else return;
@@ -780,6 +802,7 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_bigint_compare));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_shift));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_concat));
+    try std.testing.expectEqual(*const fn (*Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_increment));
 }
 
 test "ルートフレームをLIFOで連結する" {
@@ -908,6 +931,17 @@ test "AOTの値をUTF-16文字列として連結する" {
     const number_utf8 = try std.unicode.utf16LeToUtf8Alloc(std.testing.allocator, number_joined.object().?.payload.utf16_string);
     defer std.testing.allocator.free(number_utf8);
     try std.testing.expectEqualStrings("3個", number_utf8);
+}
+
+test "AOT増減は未定義・文字列・BigIntをNumberへ変換する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const value = incrementValue(&runtime, .{}, numberValue(1));
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 1))), value.payload);
+    const bigint = try runtime.createBigInt("5n");
+    try std.testing.expectEqual(@as(f64, 7), incrementNumber(&runtime, bigint) + incrementNumber(&runtime, numberValue(2)));
+    const string = try runtime.createString(&.{'5'});
+    try std.testing.expectEqual(@as(f64, 7), incrementNumber(&runtime, string) + incrementNumber(&runtime, numberValue(2)));
 }
 
 test "回数・範囲・配列・辞書の反復状態と元コレクションを追跡する" {

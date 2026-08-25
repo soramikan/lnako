@@ -1510,7 +1510,7 @@ pub const Interpreter = struct {
 
     fn increment(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
         const old = frame.locals.get(instruction.name) orelse self.globals.get(instruction.name) orelse Value{ .number = 0 };
-        const updated = try operators.binary(self.runtime, .add, old, self.operand(frame, instruction, 0));
+        const updated = try operators.increment(self.runtime, old, self.operand(frame, instruction, 0));
         if (frame.locals.contains(instruction.name)) {
             try frame.locals.put(self.allocator, instruction.name, updated);
         } else try self.setGlobal(instruction.name, updated);

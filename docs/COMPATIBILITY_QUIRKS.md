@@ -62,6 +62,7 @@ lnakoは、意図的な非互換として合意した項目を除き、説明文
 | `+`と`&`の文字列 | なでしこ式の`+`はJavaScriptの`+`と異なり文字列連結を行わない。`3+「個」`は`NaN`、`1n+「個」`はBigInt型混在エラーになる。連結は`&`を使い、`1n&「個」`は`1個`になる | インタプリタとAOTの`+`を数値加算に限定し、`&`は値をUTF-16文字列へ変換して連結する | `なでしこ式の加算は文字列を連結せず数値へ変換する`、`AOTの値をUTF-16文字列として連結する`、`native-string-concatenation-and-bigint-string-comparison` |
 | BigIntと文字列の比較 | 算術では型混在エラーだが、抽象等価・関係比較では整数として解釈可能な文字列をBigIntへ変換する。`1n==「1」`は真、`1n===「1」`は偽 | UTF-16文字列を整数として厳密に解析し、変換不能時は比較を偽にする | `AOT BigInt比較をNumberとの間でも精度を落とさず処理する`、`native-string-concatenation-and-bigint-string-comparison` |
 | NaNとInfinityの表示 | Cの`printf`では環境により`nan`や`inf`になるが、公式は`NaN`、`Infinity`、`-Infinity`と大文字小文字を固定して表示する | 特殊値をLLVM上で先に判定し、固定文字列を出力する | `native-string-concatenation-and-bigint-string-comparison` |
+| `増`・`減`の型変換 | 通常の`+`と異なり、未定義の対象は0から開始し、文字列やBigIntもNumberへ変換する。`A=5n; Aを2増`の結果はBigIntではなくNumberの`7`になる | 専用の増減経路で対象と増減量をNumberへ変換し、常にNumberを書き戻す | `増減文は未定義・文字列・BigIntをNumberへ変換する`、`AOT増減は未定義・文字列・BigIntをNumberへ変換する`、`native-increment-and-decrement` |
 
 ## 日時と再現性
 
