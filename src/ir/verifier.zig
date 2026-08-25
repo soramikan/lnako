@@ -105,6 +105,7 @@ const Checker = struct {
                     try self.recordEdge(function, predecessors, effective_block, branch.then_block);
                     try self.recordEdge(function, predecessors, effective_block, branch.else_block);
                 },
+                .throw_value => |throw_value| if (throw_value.target) |target| try self.recordEdge(function, predecessors, effective_block, target),
                 else => {},
             }
         }
@@ -197,7 +198,7 @@ const Checker = struct {
 
 fn producesValue(opcode: ir.Opcode) bool {
     return switch (opcode) {
-        .store_global, .store_local, .destructure_store, .array_set, .property_set, .increment, .try_begin, .try_end, .speed_mode_begin, .speed_mode_end, .performance_monitor_begin, .performance_monitor_end => false,
+        .store_global, .store_local, .destructure_store, .array_set, .property_set, .increment, .try_begin, .try_end, .exception_take, .speed_mode_begin, .speed_mode_end, .performance_monitor_begin, .performance_monitor_end => false,
         else => true,
     };
 }

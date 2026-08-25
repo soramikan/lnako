@@ -46,6 +46,8 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
                 .performance_monitor_end,
                 .try_begin,
                 .try_end,
+                .exception_pending,
+                .exception_take,
                 => true,
                 .const_bigint => true,
                 .destructure_store => destructureSourceSupported(function, instruction),
@@ -72,13 +74,7 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
             };
         }
         switch (block.terminator) {
-            .branch, .conditional_branch, .return_value, .unreachable_terminator => {},
-            .throw_value => |throw_value| if (throw_value.target == null) return .{
-                .function_name = function.name,
-                .opcode = "throw_value",
-                .detail = "uncaught",
-                .span = if (block.instructions.len > 0) block.instructions[block.instructions.len - 1].span else ast.emptySpan(),
-            },
+            .branch, .conditional_branch, .return_value, .throw_value, .propagate_exception, .unreachable_terminator => {},
             else => return .{
                 .function_name = function.name,
                 .opcode = @tagName(block.terminator),
@@ -141,6 +137,10 @@ const Emitter = struct {
                 "declare void @lnako_aot_runtime_deinit()\n" ++
                 "declare void @lnako_aot_push_roots(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_pop_roots(ptr)\n" ++
+                "declare void @lnako_aot_exception_set(ptr)\n" ++
+                "declare i32 @lnako_aot_exception_pending()\n" ++
+                "declare void @lnako_aot_exception_take(ptr)\n" ++
+                "declare void @lnako_aot_exception_abort()\n" ++
                 "declare void @lnako_aot_string_new(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_print_utf16(ptr, i1)\n" ++
                 "declare void @lnako_aot_bigint_new(ptr, ptr, i64)\n" ++
@@ -230,6 +230,9 @@ const Emitter = struct {
             };
             if (instruction.opcode == .increment and isQualifiedGlobal(instruction.name) and self.globalIndex(instruction.name) == null) {
                 try self.globals.append(self.allocator, instruction.name);
+            }
+            if (instruction.opcode == .exception_take and self.globalIndex("エラーメッセージ") == null) {
+                try self.globals.append(self.allocator, "エラーメッセージ");
             }
             if (instruction.opcode == .const_string) {
                 const value_id = instruction.result orelse return error.InvalidStringConstant;
@@ -498,6 +501,22 @@ const Emitter = struct {
             .iterator_has_next => try self.writeIteratorHasNext(instruction, scope),
             .iterator_next => try self.writeIteratorNext(function, locals, instruction, scope),
             .try_begin, .try_end => {},
+            .exception_pending => {
+                const id = result orelse return error.MissingInstructionResult;
+                try self.output.writer.print("  %exception.pending.i32.{d} = call i32 @lnako_aot_exception_pending()", .{id});
+                try self.debugSuffix(instruction.span, scope);
+                try self.output.writer.print("  %exception.pending.i1.{d} = icmp ne i32 %exception.pending.i32.{d}, 0", .{ id, id });
+                try self.debugSuffix(instruction.span, scope);
+                try self.output.writer.print("  %exception.pending.bits.{d} = zext i1 %exception.pending.i1.{d} to i64", .{ id, id });
+                try self.debugSuffix(instruction.span, scope);
+                try self.output.writer.print("  %v{d} = insertvalue %lnako.Value {{ i8 2, i64 0 }}, i64 %exception.pending.bits.{d}, 1", .{ id, id });
+                try self.debugSuffix(instruction.span, scope);
+            },
+            .exception_take => {
+                const error_index = self.globalIndex("エラーメッセージ") orelse return error.MissingErrorMessageGlobal;
+                try self.output.writer.print("  call void @lnako_aot_exception_take(ptr @lnako.global.{d})", .{error_index});
+                try self.debugSuffix(instruction.span, scope);
+            },
             .phi => {
                 try self.output.writer.print("  %v{d} = phi %lnako.Value ", .{result orelse return error.MissingInstructionResult});
                 for (instruction.phi_incoming, 0..) |incoming, index| {
@@ -910,10 +929,10 @@ const Emitter = struct {
                 try self.debugSuffix(span, scope);
             },
             .conditional_branch => |branch| {
-                const condition_label = try std.fmt.allocPrint(self.allocator, "branch.condition.bb{d}", .{branch.then_block});
+                const condition_label = try std.fmt.allocPrint(self.allocator, "branch.condition.v{d}", .{branch.condition});
                 defer self.allocator.free(condition_label);
                 try self.writeTruthyOperand(function, branch.condition, condition_label, span, scope);
-                try self.output.writer.print("  br i1 %branch.condition.bb{d}, label %bb{d}, label %bb{d}", .{ branch.then_block, branch.then_block, branch.else_block });
+                try self.output.writer.print("  br i1 %branch.condition.v{d}, label %bb{d}, label %bb{d}", .{ branch.condition, branch.then_block, branch.else_block });
                 try self.debugSuffix(span, scope);
             },
             .return_value => |value| {
@@ -923,13 +942,20 @@ const Emitter = struct {
                 try self.debugSuffix(span, scope);
             },
             .throw_value => |throw_value| {
-                const target = throw_value.target orelse return error.UnsupportedUncaughtThrow;
-                const error_index = self.globalIndex("エラーメッセージ") orelse return error.MissingErrorMessageGlobal;
-                try self.output.writer.writeAll("  store %lnako.Value ");
-                try self.writeValueRef(function, throw_value.value);
-                try self.output.writer.print(", ptr @lnako.global.{d}", .{error_index});
+                try self.output.writer.print("  call void @lnako_aot_exception_set(ptr %root.slot.{d})", .{throw_value.value});
                 try self.debugSuffix(span, scope);
-                try self.output.writer.print("  br label %bb{d}", .{target});
+                if (throw_value.target) |target| {
+                    try self.output.writer.print("  br label %bb{d}", .{target});
+                    try self.debugSuffix(span, scope);
+                } else {
+                    try self.output.writer.writeAll("  call void @lnako_aot_pop_roots(ptr %root.frame)\n");
+                    try self.output.writer.writeAll("  ret %lnako.Value { i8 0, i64 0 }");
+                    try self.debugSuffix(span, scope);
+                }
+            },
+            .propagate_exception => {
+                try self.output.writer.writeAll("  call void @lnako_aot_pop_roots(ptr %root.frame)\n");
+                try self.output.writer.writeAll("  ret %lnako.Value { i8 0, i64 0 }");
                 try self.debugSuffix(span, scope);
             },
             .unreachable_terminator => {
@@ -970,6 +996,10 @@ const Emitter = struct {
             index -= 1;
             try self.output.writer.print("  %entry.result.{d} = call %lnako.Value @lnako.fn.{d}(ptr null)", .{ call_index, self.program.module_entries[index] });
             try self.debugSuffix(ast.emptySpan(), scope);
+            try self.output.writer.print("  %entry.exception.pending.{d} = call i32 @lnako_aot_exception_pending()\n", .{call_index});
+            try self.output.writer.print("  %entry.exception.is-pending.{d} = icmp ne i32 %entry.exception.pending.{d}, 0\n", .{ call_index, call_index });
+            try self.output.writer.print("  br i1 %entry.exception.is-pending.{d}, label %entry.exception.abort.{d}, label %entry.continue.{d}\n", .{ call_index, call_index, call_index });
+            try self.output.writer.print("entry.exception.abort.{d}:\n  call void @lnako_aot_exception_abort()\n  unreachable\nentry.continue.{d}:\n", .{ call_index, call_index });
             call_index += 1;
         }
         var global_index = self.globals.items.len;
@@ -1520,7 +1550,7 @@ test "非捕捉無名関数を統一ABIの関数値へ変換する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.wrapper.0") != null);
 }
 
-test "監視外のthrowを未対応として事前検出する" {
+test "監視外のthrowを保留例外としてmainまで伝播する" {
     const parser = @import("../../frontend/parser.zig");
     const semantic = @import("../../semantic/analyzer.zig");
     const hir = @import("../../ir/hir.zig");
@@ -1533,9 +1563,11 @@ test "監視外のthrowを未対応として事前検出する" {
     defer hir_program.deinit();
     var program = try lower.lower(std.testing.allocator, hir_program);
     defer program.deinit();
-    const unsupported = findUnsupported(program).?;
-    try std.testing.expectEqualStrings("throw_value", unsupported.opcode);
-    try std.testing.expectEqualStrings("uncaught", unsupported.detail);
+    try std.testing.expect(findUnsupported(program) == null);
+    var module = try generate(std.testing.allocator, program, "uncaught.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_exception_set") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_exception_abort") != null);
 }
 
 test "O1では証明済み数値と真偽判定をアンボックスしO0のIRを変更しない" {

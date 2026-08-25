@@ -107,6 +107,8 @@ const Runtime = struct {
     object_count: usize = 0,
     next_collection: usize = 64,
     stringifying_arrays: std.ArrayList(*Object) = .empty,
+    pending_exception: Value = .{},
+    has_pending_exception: bool = false,
 
     fn deinit(self: *Runtime) void {
         var current = self.objects;
@@ -243,6 +245,7 @@ const Runtime = struct {
         while (frame) |current| : (frame = current.previous) {
             if (current.values) |values| for (values[0..current.len]) |value| self.markValue(value);
         }
+        if (self.has_pending_exception) self.markValue(self.pending_exception);
         while (self.grey) |object| {
             self.grey = object.grey_next;
             object.grey_next = null;
@@ -280,6 +283,19 @@ const Runtime = struct {
         object.marked = true;
         object.grey_next = self.grey;
         self.grey = object;
+    }
+
+    fn setException(self: *Runtime, value: Value) void {
+        self.pending_exception = value;
+        self.has_pending_exception = true;
+    }
+
+    fn takeException(self: *Runtime) Value {
+        if (!self.has_pending_exception) return .{};
+        const result = self.pending_exception;
+        self.pending_exception = .{};
+        self.has_pending_exception = false;
+        return result;
     }
 
     fn destroyObject(self: *Runtime, object: *Object) void {
@@ -926,6 +942,22 @@ pub export fn lnako_aot_collect() callconv(.c) usize {
     return if (active_runtime) |*runtime| runtime.collect() else 0;
 }
 
+pub export fn lnako_aot_exception_set(value: *const Value) callconv(.c) void {
+    if (active_runtime) |*runtime| runtime.setException(value.*);
+}
+
+pub export fn lnako_aot_exception_pending() callconv(.c) c_int {
+    return if (active_runtime) |runtime| @intFromBool(runtime.has_pending_exception) else 0;
+}
+
+pub export fn lnako_aot_exception_take(out: *Value) callconv(.c) void {
+    out.* = if (active_runtime) |*runtime| runtime.takeException() else .{};
+}
+
+pub export fn lnako_aot_exception_abort() callconv(.c) noreturn {
+    runtimeFailure(error.NakoException);
+}
+
 pub export fn lnako_aot_string_new(out: *Value, units: ?[*]const u16, len: usize) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*value| value else return;
@@ -1123,6 +1155,9 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, FunctionCallback, usize, ?[*]const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_function_new));
     try std.testing.expectEqual(*const fn (*Value, *anyopaque, usize) callconv(.c) void, @TypeOf(&lnako_aot_function_capture));
     try std.testing.expectEqual(*const fn (*Value, *const Value, ?[*]const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_function_call));
+    try std.testing.expectEqual(*const fn (*const Value) callconv(.c) void, @TypeOf(&lnako_aot_exception_set));
+    try std.testing.expectEqual(*const fn () callconv(.c) c_int, @TypeOf(&lnako_aot_exception_pending));
+    try std.testing.expectEqual(*const fn (*Value) callconv(.c) void, @TypeOf(&lnako_aot_exception_take));
 }
 
 fn testAotFunction(_: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) Value {
@@ -1179,6 +1214,25 @@ test "AOTクロージャがGC管理の可変セルを共有する" {
     lnako_aot_binding_cell_value(&roots[0]).* = roots[1];
     active_runtime.?.popRoots(&frame);
     try std.testing.expectEqual(@as(usize, 2), active_runtime.?.collect());
+}
+
+test "保留例外をGCルートとして保持し一度だけ取り出す" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    const message = try active_runtime.?.createString(&.{ '失', '敗' });
+    lnako_aot_exception_set(&message);
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    try std.testing.expectEqual(@as(usize, 0), active_runtime.?.collect());
+    var taken: Value = .{};
+    lnako_aot_exception_take(&taken);
+    try std.testing.expectEqual(message.payload, taken.payload);
+    try std.testing.expectEqual(@as(c_int, 0), lnako_aot_exception_pending());
+    try std.testing.expectEqual(@as(usize, 1), active_runtime.?.collect());
 }
 
 test "ルートフレームをLIFOで連結する" {

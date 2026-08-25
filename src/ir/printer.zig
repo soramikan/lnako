@@ -63,6 +63,7 @@ fn writeTerminator(terminator: ir.Terminator, writer: *std.Io.Writer) !void {
             try writer.print("throw %{d}", .{throw_value.value});
             if (throw_value.target) |target| try writer.print(" catch bb{d}", .{target});
         },
+        .propagate_exception => try writer.writeAll("propagate_exception"),
         .unreachable_terminator => try writer.writeAll("unreachable"),
     }
     try writer.writeByte('\n');

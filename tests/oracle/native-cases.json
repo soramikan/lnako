@@ -130,5 +130,14 @@
   {
     "id": "native-nested-exception-monitor",
     "source": "エラー監視\nエラー監視\n「内」のエラー発生\nエラーならば\nエラーメッセージを表示\nここまで\n「継続」を表示\nエラーならば\n「外」を表示\nここまで\n"
+  },
+  {
+    "id": "native-cross-function-exception",
+    "source": "●奥とは\n「関数失敗」のエラー発生\nここまで\n●中とは\n奥()\n「到達不可」で戻る\nここまで\nエラー監視\n中()\n「到達不可」を表示\nエラーならば\nエラーメッセージを表示\nここまで\n「後」を表示\n"
+  },
+  {
+    "id": "native-uncaught-exception",
+    "oracle": "official-generated",
+    "source": "「未捕捉」のエラー発生\n"
   }
 ]

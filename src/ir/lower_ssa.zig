@@ -98,8 +98,8 @@ const FunctionBuilder = struct {
             .destructure_store => try self.lowerVariadic(.destructure_store, .void, node),
             .binary => if (isLogicalOperator(node.operator)) try self.lowerLogical(node) else try self.lowerVariadic(.binary, toType(node.type_hint), node),
             .unary => try self.lowerVariadic(.unary, toType(node.type_hint), node),
-            .call => try self.lowerVariadic(.call, toType(node.type_hint), node),
-            .call_value => try self.lowerVariadic(.call_value, toType(node.type_hint), node),
+            .call => try self.lowerCall(.call, node),
+            .call_value => try self.lowerCall(.call_value, node),
             .make_array => try self.lowerVariadic(.make_array, .array, node),
             .make_object => try self.lowerVariadic(.make_object, .object, node),
             .array_get => try self.lowerVariadic(.array_get, .dynamic, node),
@@ -147,6 +147,23 @@ const FunctionBuilder = struct {
             return null;
         }
         return try self.emitValue(opcode, result_type, operands.items, node);
+    }
+
+    fn lowerCall(self: *FunctionBuilder, opcode: ir.Opcode, node: hir.Node) !ir.ValueId {
+        const result = (try self.lowerVariadic(opcode, toType(node.type_hint), node)) orelse return error.InvalidCallResult;
+        const pending = try self.emitValue(.exception_pending, .boolean, &.{}, node);
+        const exception_block = if (self.exception_handlers.items.len > 0)
+            self.exception_handlers.items[self.exception_handlers.items.len - 1]
+        else
+            try self.createBlock("call.propagate");
+        const continue_block = try self.createBlock("call.continue");
+        self.terminate(.{ .conditional_branch = .{ .condition = pending, .then_block = exception_block, .else_block = continue_block } });
+        if (self.exception_handlers.items.len == 0) {
+            self.current = exception_block;
+            self.terminate(.propagate_exception);
+        }
+        self.current = continue_block;
+        return result;
     }
 
     fn lowerLogical(self: *FunctionBuilder, node: hir.Node) !?ir.ValueId {
@@ -284,6 +301,7 @@ const FunctionBuilder = struct {
             self.terminate(.{ .branch = merge_block });
         }
         self.current = handler_block;
+        try self.emitVoid(.exception_take, &.{}, node);
         _ = try self.lowerNode(node.children[1]);
         if (!self.isTerminated()) self.terminate(.{ .branch = merge_block });
         self.current = merge_block;

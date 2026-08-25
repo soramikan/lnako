@@ -36,6 +36,8 @@ pub const Opcode = enum {
     iterator_has_next,
     try_begin,
     try_end,
+    exception_pending,
+    exception_take,
     dynamic_execute,
     speed_mode_begin,
     speed_mode_end,
@@ -74,6 +76,7 @@ pub const Terminator = union(enum) {
     conditional_branch: ConditionalBranch,
     return_value: ?ValueId,
     throw_value: Throw,
+    propagate_exception,
     unreachable_terminator,
 };
 

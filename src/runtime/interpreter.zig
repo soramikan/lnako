@@ -388,6 +388,7 @@ pub const Interpreter = struct {
                         current_block = handler;
                     } else return error.NakoException;
                 },
+                .propagate_exception => return error.NakoException,
                 .unreachable_terminator => return error.ReachedUnreachable,
             }
         }
@@ -425,6 +426,8 @@ pub const Interpreter = struct {
             .iterator_next => result = try self.iteratorNext(frame, instruction),
             .try_begin => try frame.handlers.append(self.allocator, instruction.exception_target orelse return error.MissingExceptionTarget),
             .try_end => _ = frame.handlers.pop(),
+            .exception_pending => result = .{ .boolean = false },
+            .exception_take => {},
             .dynamic_execute => result = try self.executeDynamicValue(self.operand(frame, instruction, 0)),
             .phi => {
                 const source = predecessor orelse return error.InvalidPhiPredecessor;

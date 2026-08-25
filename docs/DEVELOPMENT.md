@@ -57,6 +57,10 @@ AOT差分ケースは `tests/oracle/native-cases.json` に置きます。公式C
 `toolchain.lock.json` のURLとSHA-256から構築し、CIでは `LNAKO_LLVM_DIR` とアーカイブ内で検出した
 `LNAKO_LLVM_LIBRARY` を自動設定します。
 
+原則は公式CLI直接実行をオラクルにします。公式CLIと公式生成JavaScriptの挙動が既知の理由で異なり、後者へ
+合わせるケースだけ `"oracle": "official-generated"` を指定します。この指定を使った差異は
+`docs/COMPATIBILITY_QUIRKS.md` に公式2経路の実測結果と採用理由を記録し、ハーネスの成功表示にも件数を出します。
+
 標準命令を実装して個別の公式差分テストを追加したら `compat/v3.7.24/implemented.json` にテストIDと理由を記録し、
 `node tools/sync_compat.mjs --generate` で分類表と集計を再生成します。固定した公式スナップショット自体を再取得する
 `--refresh` とは分離されているため、通常の進捗更新ではネットワークを使用しません。

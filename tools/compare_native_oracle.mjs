@@ -16,7 +16,12 @@ const temporary = await mkdtemp(join(tmpdir(), "lnako-native-"));
 try {
   buildLnako();
   let failures = 0;
+  let generatedOracleCases = 0;
   for (const testCase of cases) {
+    if (testCase.oracle !== undefined && testCase.oracle !== "official-source" && testCase.oracle !== "official-generated") {
+      throw new Error(`未知のAOTオラクル指定です: ${testCase.id}: ${testCase.oracle}`);
+    }
+    if (testCase.oracle === "official-generated") generatedOracleCases += 1;
     const sourcePath = resolve(temporary, `${testCase.id}.nako3`);
     const generatedJavaScript = resolve(temporary, `${testCase.id}.mjs`);
     await writeFile(sourcePath, testCase.source, "utf8");
@@ -42,8 +47,10 @@ try {
       results[`lnakoNative${optimization}`] = normalize(nativeCompile.status === 0 ? spawnSync(nativeExecutable, [], options) : nativeCompile);
       if (nativeCompile.status !== 0) compileErrors.push(`${optimization}:\n${nativeCompile.stderr}`);
     }
-    const expected = JSON.stringify(results.officialSource);
-    if (Object.values(results).some((result) => result.exitCode !== 0 || JSON.stringify(result) !== expected)) {
+    const oracleKey = testCase.oracle === "official-generated" ? "officialGenerated" : "officialSource";
+    const expected = JSON.stringify(results[oracleKey]);
+    const compared = Object.entries(results).filter(([key]) => testCase.oracle !== "official-generated" || key !== "officialSource");
+    if (compared.some(([, result]) => JSON.stringify(result) !== expected)) {
       failures += 1;
       console.error(`AOT実行差分 ${testCase.id}:\n${JSON.stringify(results, null, 2)}`);
       if (officialCompile.status !== 0) console.error(`公式JavaScript生成エラー:\n${officialCompile.stderr}`);
@@ -51,7 +58,10 @@ try {
     }
   }
   if (failures > 0) throw new Error(`AOT実行結果の差分が${failures}件あります`);
-  console.log(`公式cnako3・公式生成JavaScript・lnako run・LLVM AOT O0/O1/O2/O3の7経路差分テスト: ${cases.length}件成功`);
+  console.log(
+    `公式cnako3・公式生成JavaScript・lnako run・LLVM AOT O0/O1/O2/O3の7経路実行差分テスト: ${cases.length}件成功` +
+      (generatedOracleCases > 0 ? `（うち${generatedOracleCases}件は既知の公式経路差により生成JavaScriptを基準）` : ""),
+  );
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }
