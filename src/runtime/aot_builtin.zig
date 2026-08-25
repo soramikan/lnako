@@ -85,6 +85,8 @@ pub const Command = enum(u16) {
     table_insert_column,
     table_delete_column,
     table_column_sum,
+    table_regexp_search,
+    table_regexp_pickup,
     add_parsed,
     sum_parsed,
     sequential_add,
@@ -218,6 +220,8 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "表列挿入")) return .table_insert_column;
     if (std.mem.eql(u8, name, "表列削除")) return .table_delete_column;
     if (std.mem.eql(u8, name, "表列合計")) return .table_column_sum;
+    if (std.mem.eql(u8, name, "表曖昧検索")) return .table_regexp_search;
+    if (std.mem.eql(u8, name, "表正規表現ピックアップ")) return .table_regexp_pickup;
     if (std.mem.eql(u8, name, "足")) return .add_parsed;
     if (std.mem.eql(u8, name, "合計")) return .sum_parsed;
     if (std.mem.eql(u8, name, "連続加算")) return .sequential_add;

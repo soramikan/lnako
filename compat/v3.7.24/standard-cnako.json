@@ -5925,14 +5925,16 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-table"
+        "plugin-system-table",
+        "native-system-table-regexp-commands",
+        "native-system-table-regexp-invalid-pattern-error"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "生の正規表現文字列で実装し、公式差分テストに成功"
+      "reason": "生patternの事前コンパイル、raw開始値と返却型、GCルートをAOTとインタプリタへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0226",
@@ -5951,14 +5953,16 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-table"
+        "plugin-system-table",
+        "native-system-table-regexp-commands",
+        "native-system-table-regexp-null-row-error"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "生の正規表現文字列で実装し、公式差分テストに成功"
+      "reason": "生patternの事前コンパイル、配列・文字列行のrow.slice(0)相当、GCルートをAOTとインタプリタへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0227",

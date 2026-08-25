@@ -1,7 +1,7 @@
 const std = @import("std");
 const value_mod = @import("../../runtime/value.zig");
 const common = @import("common.zig");
-const unicode_case = @import("../../generated/unicode_case.zig");
+const unicode_case = @import("unicode_case");
 
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
@@ -299,20 +299,43 @@ pub fn callWithEffects(runtime: *Runtime, name: []const u8, arguments: []const V
     return .{ .value = try splitCommand(runtime, source_string.units, &compiled) };
 }
 
+pub const RawPattern = struct {
+    allocator: std.mem.Allocator,
+    compiled: Compiled,
+
+    pub fn init(allocator: std.mem.Allocator, pattern: []const u16, ignore_case: bool) !RawPattern {
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        errdefer arena.deinit();
+        const owned_pattern = try arena.allocator().dupe(u16, pattern);
+        var parser = Parser{ .allocator = arena.allocator(), .source = owned_pattern };
+        const expression = try parser.parseExpression();
+        if (parser.index != owned_pattern.len) return error.UnexpectedPatternToken;
+        return .{
+            .allocator = allocator,
+            .compiled = .{
+                .arena = arena,
+                .expression = expression,
+                .flags = .{ .ignore_case = ignore_case },
+                .capture_count = parser.capture_count,
+                .capture_names = parser.capture_names,
+            },
+        };
+    }
+
+    pub fn deinit(self: *RawPattern) void {
+        self.compiled.deinit();
+        self.* = undefined;
+    }
+
+    pub fn matches(self: *const RawPattern, source: []const u16) !bool {
+        return try findOne(self.allocator, source, &self.compiled, 0) != null;
+    }
+};
+
 pub fn testRaw(allocator: std.mem.Allocator, pattern: []const u16, source: []const u16, ignore_case: bool) !bool {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    var parser = Parser{ .allocator = arena.allocator(), .source = pattern };
-    const expression = try parser.parseExpression();
-    if (parser.index != pattern.len) return error.UnexpectedPatternToken;
-    const compiled = Compiled{
-        .arena = undefined,
-        .expression = expression,
-        .flags = .{ .ignore_case = ignore_case },
-        .capture_count = parser.capture_count,
-        .capture_names = parser.capture_names,
-    };
-    return try findOne(allocator, source, &compiled, 0) != null;
+    var compiled = try RawPattern.init(allocator, pattern, ignore_case);
+    defer compiled.deinit();
+    return compiled.matches(source);
 }
 
 fn compile(allocator: std.mem.Allocator, specification: []const u16, default_global: bool) !Compiled {

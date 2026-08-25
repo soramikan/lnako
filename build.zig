@@ -8,6 +8,12 @@ pub fn build(b: *std.Build) void {
     build_options.addOption(bool, "quickjs_enabled", compat_js);
     build_options.addOption([]const u8, "compat_summary_json", @embedFile("compat/v3.7.24/summary.json"));
 
+    const unicode_case = b.createModule(.{
+        .root_source_file = b.path("src/generated/unicode_case.zig"),
+        .target = target,
+        .optimize = .ReleaseSafe,
+    });
+
     const lnako = b.addModule("lnako", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -15,6 +21,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = compat_js or target.result.os.tag == .linux,
     });
     lnako.addOptions("build_options", build_options);
+    lnako.addImport("unicode_case", unicode_case);
     if (compat_js) {
         configureQuickJs(b, lnako, target.result.os.tag);
     } else {
@@ -34,13 +41,8 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(exe);
 
-    const unicode_case = b.createModule(.{
-        .root_source_file = b.path("src/generated/unicode_case.zig"),
-        .target = target,
-        .optimize = .ReleaseSafe,
-    });
     const aot_module = b.createModule(.{
-        .root_source_file = b.path("src/runtime/aot.zig"),
+        .root_source_file = b.path("src/root_aot.zig"),
         .target = target,
         .optimize = .ReleaseSafe,
         .strip = true,

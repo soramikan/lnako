@@ -7,6 +7,7 @@ const unicode_case = @import("unicode_case");
 const number_mod = @import("number.zig");
 const string_mod = @import("string.zig");
 const system_constant = @import("system_constant.zig");
+const regexp = @import("../plugins/system/regexp.zig");
 
 pub const Tag = aot_abi.Tag;
 
@@ -1636,7 +1637,7 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             };
         },
-        .table_pickup, .table_exact_pickup, .table_search, .table_column_count, .table_row_count, .table_column, .table_transpose, .table_rotate, .table_unique, .table_insert_column, .table_delete_column, .table_column_sum => {
+        .table_pickup, .table_exact_pickup, .table_search, .table_column_count, .table_row_count, .table_column, .table_transpose, .table_rotate, .table_unique, .table_insert_column, .table_delete_column, .table_column_sum, .table_regexp_search, .table_regexp_pickup => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = tableBuiltin(runtime, command, actual) catch |failure| {
                 runtime.setFailure(failure);
@@ -3022,6 +3023,69 @@ fn tableColumnSumBuiltin(runtime: *Runtime, source: Value, column: Value) !Value
     return roots[2];
 }
 
+/// The table regex commands use `new RegExp(s)`, unlike the general regexp
+/// commands whose `/pattern/flags` notation is part of their public API.
+/// Keep this validation outside the row loop so an invalid pattern fails even
+/// for an empty table or an already-out-of-range start row.
+fn tableRegexpPatternUnitsAlloc(runtime: *Runtime, pattern: Value) ![]u16 {
+    if (pattern.tag == @intFromEnum(Tag.undefined)) return runtime.allocator.alloc(u16, 0);
+    return valueUtf16Alloc(runtime, pattern);
+}
+
+fn tableRegexpSearchBuiltin(runtime: *Runtime, source: Value, row_value: Value, column: Value, pattern: Value) !Value {
+    var roots = [_]Value{ source, column, row_value, pattern, row_value, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    const pattern_units = try tableRegexpPatternUnitsAlloc(runtime, roots[3]);
+    defer runtime.allocator.free(pattern_units);
+    var compiled = try regexp.RawPattern.init(runtime.allocator, pattern_units, false);
+    defer compiled.deinit();
+    const rows = try arrayItems(roots[0]);
+    while (try compareValues(runtime, .less, roots[4], numberValue(@floatFromInt(rows.items.len)))) {
+        roots[5] = try tableRowProperty(runtime, roots[0], roots[4]);
+        roots[6] = try tableRowProperty(runtime, roots[5], roots[1]);
+        const source_units = try valueUtf16Alloc(runtime, roots[6]);
+        defer runtime.allocator.free(source_units);
+        if (try compiled.matches(source_units)) return roots[4];
+        roots[4] = try incrementTableSearchRow(runtime, roots[4]);
+    }
+    return numberValue(-1);
+}
+
+fn tableRegexpPickupBuiltin(runtime: *Runtime, source: Value, column: Value, pattern: Value) !Value {
+    var roots = [_]Value{ source, column, pattern, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    const pattern_units = try tableRegexpPatternUnitsAlloc(runtime, roots[2]);
+    defer runtime.allocator.free(pattern_units);
+    var compiled = try regexp.RawPattern.init(runtime.allocator, pattern_units, false);
+    defer compiled.deinit();
+    roots[3] = try runtime.createArray(&.{});
+    const result = try arrayItems(roots[3]);
+    for ((try arrayItems(roots[0])).items) |row| {
+        roots[4] = try tableRowProperty(runtime, row, roots[1]);
+        const source_units = try valueUtf16Alloc(runtime, roots[4]);
+        defer runtime.allocator.free(source_units);
+        if (!(try compiled.matches(source_units))) continue;
+        // Upstream uses row.slice(0): create a new shallow array and retain
+        // each element's identity. String.slice(0) returns the same immutable
+        // string value; rows without slice fail only after they match.
+        if (row.tag == @intFromEnum(Tag.array)) {
+            roots[5] = try runtime.createArray(&.{});
+            const copy = try arrayItems(roots[5]);
+            const row_items = try arrayItems(row);
+            try copy.ensureTotalCapacity(runtime.allocator, row_items.items.len);
+            try copy.appendSlice(runtime.allocator, row_items.items);
+        } else if (isString(row)) {
+            roots[5] = row;
+        } else return error.ArrayExpected;
+        try result.append(runtime.allocator, roots[5]);
+    }
+    return roots[3];
+}
+
 fn incrementTableSearchRow(runtime: *Runtime, row: Value) !Value {
     if (row.tag == @intFromEnum(Tag.bigint)) {
         var one = try BigInt.init(runtime.allocator, 1);
@@ -3074,6 +3138,14 @@ fn tableBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []co
         .table_search => {
             if (arguments.len < 4) return error.InvalidArgumentCount;
             return tableSearchBuiltin(runtime, source, arguments[1], arguments[2], arguments[3]);
+        },
+        .table_regexp_search => {
+            if (arguments.len < 4) return error.InvalidArgumentCount;
+            return tableRegexpSearchBuiltin(runtime, source, arguments[1], arguments[2], arguments[3]);
+        },
+        .table_regexp_pickup => {
+            if (arguments.len < 3) return error.InvalidArgumentCount;
+            return tableRegexpPickupBuiltin(runtime, source, arguments[1], arguments[2]);
         },
         .table_transpose, .table_rotate => return tableTransposeBuiltin(runtime, source, command == .table_rotate),
         .table_unique => {
@@ -5583,6 +5655,48 @@ test "AOT表検索系は行プロパティとraw開始値を公式どおり処�
     try std.testing.expectEqual(@as(i64, 2), bigint_columns.object().?.payload.bigint.toI64());
     roots[17] = try runtime.createFunction(testAotFunction, 2, &.{});
     try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast((try tableRowProperty(&runtime, roots[17], staticStringValue("length"))).payload)));
+}
+
+test "AOT表正規表現系はraw RegExpと浅いコピーを保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    runtime.next_collection = 1;
+    var roots = [_]Value{.{}} ** 16;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createArray(&.{ staticStringValue("alice"), staticStringValue("payload") });
+    roots[1] = try runtime.createArray(&.{staticStringValue("bob")});
+    roots[2] = try runtime.createArray(&.{ roots[0], roots[1] });
+    const raw = staticStringValue("^ali");
+    const found = try tableBuiltin(&runtime, .table_regexp_search, &.{ roots[2], numberValue(0), numberValue(0), raw });
+    try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast(found.payload)));
+    const slash = try tableBuiltin(&runtime, .table_regexp_search, &.{ roots[2], numberValue(0), numberValue(0), staticStringValue("/^ali/i") });
+    try std.testing.expectEqual(@as(f64, -1), @as(f64, @bitCast(slash.payload)));
+
+    roots[3] = try runtime.createBigInt("1n");
+    const bigint_found = try tableBuiltin(&runtime, .table_regexp_search, &.{ roots[2], roots[3], numberValue(0), staticStringValue("bob") });
+    try std.testing.expectEqual(Tag.bigint, @as(Tag, @enumFromInt(bigint_found.tag)));
+    try std.testing.expectEqual(@as(i64, 1), bigint_found.object().?.payload.bigint.toI64());
+
+    roots[4] = try tableBuiltin(&runtime, .table_regexp_pickup, &.{ roots[2], numberValue(0), raw });
+    try std.testing.expect(roots[4].object() != roots[2].object());
+    try std.testing.expect(roots[4].object().?.payload.array.items[0].object() != roots[0].object());
+    try std.testing.expectEqual(roots[0].object().?.payload.array.items[1].payload, roots[4].object().?.payload.array.items[0].object().?.payload.array.items[1].payload);
+
+    roots[7] = try tableBuiltin(&runtime, .table_regexp_pickup, &.{ roots[2], numberValue(0), .{} });
+    try std.testing.expectEqual(@as(usize, 2), roots[7].object().?.payload.array.items.len);
+    roots[8] = try runtime.createArray(&.{staticStringValue("alice")});
+    roots[9] = try tableBuiltin(&runtime, .table_regexp_pickup, &.{ roots[8], numberValue(0), staticStringValue("^a") });
+    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @enumFromInt(roots[9].object().?.payload.array.items[0].tag)));
+
+    roots[5] = try runtime.createArray(&.{.{ .tag = @intFromEnum(Tag.null_value), .payload = 0 }});
+    try std.testing.expectError(error.TableRowMissing, tableBuiltin(&runtime, .table_regexp_search, &.{ roots[5], numberValue(0), numberValue(0), raw }));
+    try std.testing.expectError(error.TableRowMissing, tableBuiltin(&runtime, .table_regexp_pickup, &.{ roots[5], numberValue(0), raw }));
+    roots[6] = try runtime.createArray(&.{});
+    try std.testing.expectError(error.UnclosedCharacterClass, tableBuiltin(&runtime, .table_regexp_search, &.{ roots[6], numberValue(0), numberValue(0), staticStringValue("[") }));
+    try std.testing.expectError(error.UnclosedCharacterClass, tableBuiltin(&runtime, .table_regexp_pickup, &.{ roots[6], numberValue(0), staticStringValue("[") }));
 }
 
 test "AOT表変換系は欠損列・負位置・JS加算を公式どおり処理する" {

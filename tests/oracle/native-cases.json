@@ -355,6 +355,20 @@
     "source": "表列取得([[1],NULL],0)を表示\n"
   },
   {
+    "id": "native-system-table-regexp-commands",
+    "source": "T=[[\"alice\",10],[\"bob\",20]]\n表曖昧検索(T,0,0,\"^ali\")を表示\n表曖昧検索(T,0,0,\"/^ali/i\")を表示\nS=表曖昧検索(T,\"1\",0,\"bob\")\nSを表示\nTYPEOF(S)を表示\nB=表曖昧検索(T,1n,0,\"bob\")\nBを表示\nTYPEOF(B)を表示\nP=表正規表現ピックアップ(T,0,\"^a\")\nP[0][0]を表示\n表行数(表正規表現ピックアップ(T,0,undefined))を表示\nQ=表正規表現ピックアップ([\"alice\"],0,\"^a\")\nQ[0]を表示\n"
+  },
+  {
+    "id": "native-system-table-regexp-invalid-pattern-error",
+    "oracle": "official-generated",
+    "source": "表曖昧検索([],0,0,\"[\")を表示\n"
+  },
+  {
+    "id": "native-system-table-regexp-null-row-error",
+    "oracle": "official-generated",
+    "source": "表正規表現ピックアップ([NULL],0,\"a\")を表示\n"
+  },
+  {
     "id": "native-system-table-search-negative-row-error",
     "oracle": "official-generated",
     "source": "表検索([[\"zero\"]],0,-1,\"zero\")を表示\n"

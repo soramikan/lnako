@@ -3,7 +3,7 @@ const value_mod = @import("../../runtime/value.zig");
 const string_mod = @import("../../runtime/string.zig");
 const common = @import("common.zig");
 const operators = @import("../../runtime/operators.zig");
-const unicode_case = @import("../../generated/unicode_case.zig");
+const unicode_case = @import("unicode_case");
 
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;

@@ -958,30 +958,58 @@ fn tableColumnSum(runtime: *Runtime, source: Value, column: Value) !Value {
 
 fn tableRegexpSearch(runtime: *Runtime, source: Value, row_value: Value, column: Value, pattern: Value) !Value {
     if (source != .array) return error.ArrayExpected;
-    const start = spliceIndex(try runtime.valueToNumber(row_value), source.array.len());
-    for (source.array.items.items[start..], start..) |row, index| if (try regexpMatches(runtime, try indexed(runtime, row, column), pattern)) return .{ .number = @floatFromInt(index) };
+    var rooted = [8]Value{ source, row_value, column, pattern, row_value, .undefined, .undefined, .undefined };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    for (&rooted) |*root| try roots.protect(root);
+    // The upstream command constructs RegExp before entering the loop.  This
+    // makes an invalid pattern fail even when the table is empty or the raw
+    // start value is already out of range.
+    rooted[7] = if (rooted[3] == .undefined) try runtime.stringCodeUnits(&.{}) else try runtime.valueToString(rooted[3]);
+    var compiled = try regexp.RawPattern.init(runtime.allocator(), rooted[7].string.units, false);
+    defer compiled.deinit();
+    while ((try operators.compare(runtime, rooted[4], .{ .number = @floatFromInt(rooted[0].array.len()) })) == .lt) {
+        rooted[5] = try indexed(runtime, rooted[0], rooted[4]);
+        rooted[6] = try indexed(runtime, rooted[5], rooted[2]);
+        rooted[6] = try runtime.valueToString(rooted[6]);
+        if (try compiled.matches(rooted[6].string.units)) return rooted[4];
+        rooted[4] = try incrementTableSearchRow(runtime, rooted[4]);
+    }
     return .{ .number = -1 };
 }
 
 fn tableRegexpPickup(runtime: *Runtime, source: Value, column: Value, pattern: Value) !Value {
     if (source != .array) return error.ArrayExpected;
-    var result = try runtime.createArray();
+    var rooted = [8]Value{ source, column, pattern, .undefined, .undefined, .undefined, .undefined, .undefined };
     var roots = runtime.rootFrame();
     defer roots.deinit();
-    try roots.protect(&result);
-    for (source.array.items.items) |row| if (try regexpMatches(runtime, try indexed(runtime, row, column), pattern)) {
-        if (row != .array) return error.ArrayExpected;
-        var copy = try runtime.createArray();
-        try roots.protect(&copy);
-        for (row.array.items.items) |item| _ = try copy.array.push(item);
-        _ = try result.array.push(copy);
-    };
-    return result;
-}
-
-fn regexpMatches(runtime: *Runtime, source: Value, pattern: Value) !bool {
-    const result = (try regexp.callWithEffects(runtime, "正規表現マッチ", &.{ source, pattern })).?;
-    return result.value != .null_value;
+    for (&rooted) |*root| try roots.protect(root);
+    rooted[6] = if (rooted[2] == .undefined) try runtime.stringCodeUnits(&.{}) else try runtime.valueToString(rooted[2]);
+    var compiled = try regexp.RawPattern.init(runtime.allocator(), rooted[6].string.units, false);
+    defer compiled.deinit();
+    rooted[3] = try runtime.createArray();
+    for (rooted[0].array.items.items) |row| {
+        rooted[4] = try indexed(runtime, row, rooted[1]);
+        rooted[7] = try runtime.valueToString(rooted[4]);
+        if (!(try compiled.matches(rooted[7].string.units))) continue;
+        rooted[5] = switch (row) {
+            .array => blk: {
+                const copy = try runtime.createArray();
+                rooted[5] = copy;
+                for (row.array.items.items) |item| _ = try rooted[5].array.push(item);
+                break :blk rooted[5];
+            },
+            .string => row,
+            .bytes => |buffer| switch (buffer.kind) {
+                .buffer => try runtime.createBytes(buffer.bytes),
+                .uint8_array => try runtime.createUint8Array(buffer.bytes),
+                .array_buffer => try runtime.createArrayBuffer(buffer.bytes),
+            },
+            else => return error.ArrayExpected,
+        };
+        _ = try rooted[3].array.push(rooted[5]);
+    }
+    return rooted[3];
 }
 
 fn indexed(runtime: *Runtime, source: Value, key: Value) !Value {
@@ -1308,6 +1336,75 @@ test "表検索系はlengthとraw開始値の型を保持する" {
     var array_buffer = try runtime.createArrayBuffer(&.{ 85, 9 });
     try roots.protect(&array_buffer);
     try std.testing.expect((try indexed(&runtime, array_buffer, length_key)) == .undefined);
+}
+
+test "表正規表現系はraw RegExpと浅いコピーとGCを保つ" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var first_text = try runtime.stringUtf8("alice");
+    try roots.protect(&first_text);
+    var marker = try runtime.createDictionary();
+    try roots.protect(&marker);
+    var first = try common.arrayFromValues(&runtime, &.{ first_text, marker });
+    try roots.protect(&first);
+    var second_text = try runtime.stringUtf8("bob");
+    try roots.protect(&second_text);
+    var second = try common.arrayFromValues(&runtime, &.{second_text});
+    try roots.protect(&second);
+    var table = try common.arrayFromValues(&runtime, &.{ first, second });
+    try roots.protect(&table);
+    var raw_pattern = try runtime.stringUtf8("^ali");
+    try roots.protect(&raw_pattern);
+    const found = try tableRegexpSearch(&runtime, table, .{ .number = 0 }, .{ .number = 0 }, raw_pattern);
+    try std.testing.expectEqual(@as(f64, 0), found.number);
+
+    var slash_pattern = try runtime.stringUtf8("/^ali/i");
+    try roots.protect(&slash_pattern);
+    try std.testing.expectEqual(@as(f64, -1), (try tableRegexpSearch(&runtime, table, .{ .number = 0 }, .{ .number = 0 }, slash_pattern)).number);
+
+    var start_text = try runtime.stringUtf8("1");
+    try roots.protect(&start_text);
+    var bob_pattern = try runtime.stringUtf8("bob");
+    try roots.protect(&bob_pattern);
+    const string_start = try tableRegexpSearch(&runtime, table, start_text, .{ .number = 0 }, bob_pattern);
+    try std.testing.expectEqual(start_text.string, string_start.string);
+    var start_bigint = try runtime.bigIntLiteral("1n");
+    try roots.protect(&start_bigint);
+    const bigint_start = try tableRegexpSearch(&runtime, table, start_bigint, .{ .number = 0 }, bob_pattern);
+    try std.testing.expectEqual(@as(i64, 1), bigint_start.bigint.toI64());
+
+    var picked = try tableRegexpPickup(&runtime, table, .{ .number = 0 }, raw_pattern);
+    try roots.protect(&picked);
+    try std.testing.expect(picked.array != table.array);
+    try std.testing.expect(picked.array.get(0).array != first.array);
+    try std.testing.expectEqual(marker.dictionary, picked.array.get(0).array.get(1).dictionary);
+
+    var empty_pattern_pickup = try tableRegexpPickup(&runtime, table, .{ .number = 0 }, .undefined);
+    try roots.protect(&empty_pattern_pickup);
+    try std.testing.expectEqual(@as(usize, 2), empty_pattern_pickup.array.len());
+    var string_table = try common.arrayFromValues(&runtime, &.{first_text});
+    try roots.protect(&string_table);
+    var first_unit_pattern = try runtime.stringUtf8("^a");
+    try roots.protect(&first_unit_pattern);
+    var string_pickup = try tableRegexpPickup(&runtime, string_table, .{ .number = 0 }, first_unit_pattern);
+    try roots.protect(&string_pickup);
+    try std.testing.expectEqual(first_text.string, string_pickup.array.get(0).string);
+
+    var invalid = try runtime.stringUtf8("[");
+    try roots.protect(&invalid);
+    var empty = try runtime.createArray();
+    try roots.protect(&empty);
+    try std.testing.expectError(error.UnclosedCharacterClass, tableRegexpSearch(&runtime, empty, .{ .number = 0 }, .{ .number = 0 }, invalid));
+    try std.testing.expectError(error.UnclosedCharacterClass, tableRegexpPickup(&runtime, empty, .{ .number = 0 }, invalid));
+
+    var null_row = try common.arrayFromValues(&runtime, &.{Value.null_value});
+    try roots.protect(&null_row);
+    try std.testing.expectError(error.TableRowMissing, tableRegexpSearch(&runtime, null_row, .{ .number = 0 }, .{ .number = 0 }, raw_pattern));
+    try std.testing.expectError(error.TableRowMissing, tableRegexpPickup(&runtime, null_row, .{ .number = 0 }, raw_pattern));
 }
 
 test "表変換系はGCストレス下で文字列行とJSキー規則を保持する" {

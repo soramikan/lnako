@@ -1689,16 +1689,20 @@
   "表曖昧検索": {
     "status": "native",
     "tests": [
-      "plugin-system-table"
+      "plugin-system-table",
+      "native-system-table-regexp-commands",
+      "native-system-table-regexp-invalid-pattern-error"
     ],
-    "reason": "生の正規表現文字列で実装し、公式差分テストに成功"
+    "reason": "生patternの事前コンパイル、raw開始値と返却型、GCルートをAOTとインタプリタへ実装し、公式差分テストに成功"
   },
   "表正規表現ピックアップ": {
     "status": "native",
     "tests": [
-      "plugin-system-table"
+      "plugin-system-table",
+      "native-system-table-regexp-commands",
+      "native-system-table-regexp-null-row-error"
     ],
-    "reason": "生の正規表現文字列で実装し、公式差分テストに成功"
+    "reason": "生patternの事前コンパイル、配列・文字列行のrow.slice(0)相当、GCルートをAOTとインタプリタへ実装し、公式差分テストに成功"
   },
   "辞書キー列挙": {
     "status": "native",
