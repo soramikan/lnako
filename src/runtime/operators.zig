@@ -1,5 +1,6 @@
 const std = @import("std");
 const value_mod = @import("value.zig");
+const string_mod = @import("string.zig");
 
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
@@ -70,7 +71,16 @@ pub fn nadesikoAdd(runtime: *Runtime, left: Value, right: Value) !Value {
         if (left_primitive != .bigint or right_primitive != .bigint) return error.CannotMixBigIntAndNumber;
         return bigIntBinary(runtime, .add, left_primitive.bigint.*, right_primitive.bigint.*);
     }
-    return .{ .number = try left_primitive.toNumber(runtime.allocator()) + try right_primitive.toNumber(runtime.allocator()) };
+    return .{ .number = try nadesikoAddNumber(runtime, left_primitive) + try nadesikoAddNumber(runtime, right_primitive) };
+}
+
+fn nadesikoAddNumber(runtime: *Runtime, value: Value) !f64 {
+    return switch (value) {
+        .number => |number| number,
+        .string => |string| string_mod.parseFloatNumber(runtime.allocator(), string.units),
+        .bigint => error.CannotConvertBigIntToNumber,
+        else => std.math.nan(f64),
+    };
 }
 
 /// 増減文は両辺を明示的にNumberへ変換し、未定義の対象を0として扱う。
@@ -219,6 +229,8 @@ test "なでしこ式の加算は文字列を連結せず数値へ変換する" 
     defer runtime.deinit();
     const text = try runtime.stringUtf8("個");
     try std.testing.expect(std.math.isNan((try nadesikoAdd(&runtime, .{ .number = 3 }, text)).number));
+    try std.testing.expectEqual(@as(f64, 7), (try nadesikoAdd(&runtime, try runtime.stringUtf8("5x"), .{ .number = 2 })).number);
+    try std.testing.expect(std.math.isNan((try nadesikoAdd(&runtime, try runtime.createArray(), .{ .number = 1 })).number));
     try std.testing.expectError(error.CannotMixBigIntAndNumber, nadesikoAdd(&runtime, try runtime.bigIntLiteral("1n"), text));
 }
 

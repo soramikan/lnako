@@ -246,6 +246,50 @@ pub fn trimWhitespace(units: []const u16) []const u16 {
     return units[start..end];
 }
 
+/// ECMAScript `parseFloat`相当。先頭空白後の最長の10進浮動小数点接頭辞だけを読み取る。
+pub fn parseFloatNumber(allocator: std.mem.Allocator, units: []const u16) !f64 {
+    var start: usize = 0;
+    while (start < units.len and isEcmaWhitespace(units[start])) start += 1;
+    if (start == units.len) return std.math.nan(f64);
+
+    const ascii = try allocator.alloc(u8, units.len - start);
+    defer allocator.free(ascii);
+    var ascii_len: usize = 0;
+    for (units[start..]) |unit| {
+        if (unit > 0x7f) break;
+        ascii[ascii_len] = @intCast(unit);
+        ascii_len += 1;
+    }
+    const text = ascii[0..ascii_len];
+    if (text.len == 0) return std.math.nan(f64);
+
+    var index: usize = 0;
+    var negative = false;
+    if (text[index] == '+' or text[index] == '-') {
+        negative = text[index] == '-';
+        index += 1;
+        if (index == text.len) return std.math.nan(f64);
+    }
+    if (std.mem.startsWith(u8, text[index..], "Infinity")) return if (negative) -std.math.inf(f64) else std.math.inf(f64);
+
+    var digits: usize = 0;
+    while (index < text.len and std.ascii.isDigit(text[index])) : (index += 1) digits += 1;
+    if (index < text.len and text[index] == '.') {
+        index += 1;
+        while (index < text.len and std.ascii.isDigit(text[index])) : (index += 1) digits += 1;
+    }
+    if (digits == 0) return std.math.nan(f64);
+    var number_end = index;
+    if (index < text.len and (text[index] == 'e' or text[index] == 'E')) {
+        var exponent_index = index + 1;
+        if (exponent_index < text.len and (text[exponent_index] == '+' or text[exponent_index] == '-')) exponent_index += 1;
+        const exponent_start = exponent_index;
+        while (exponent_index < text.len and std.ascii.isDigit(text[exponent_index])) : (exponent_index += 1) {}
+        if (exponent_index > exponent_start) number_end = exponent_index;
+    }
+    return std.fmt.parseFloat(f64, text[0..number_end]) catch std.math.nan(f64);
+}
+
 fn normalizeSliceIndex(value: i64, length: usize) usize {
     if (value < 0) {
         const magnitude = @as(u64, @intCast(-(value + 1))) + 1;

@@ -46,7 +46,7 @@ const Iterator = struct {
     step: f64 = 1,
 };
 
-const BigIntArithmetic = enum(u8) {
+const Arithmetic = enum(u8) {
     add,
     subtract,
     multiply,
@@ -399,6 +399,20 @@ fn valueToNumberRuntime(runtime: *Runtime, value: Value) !f64 {
     };
 }
 
+fn valueToParseFloatRuntime(runtime: *Runtime, value: Value) !f64 {
+    return switch (@as(Tag, @enumFromInt(value.tag))) {
+        .number => @bitCast(value.payload),
+        .static_utf8_string, .utf16_string => blk: {
+            const units = try valueUtf16Alloc(runtime, value);
+            defer runtime.allocator.free(units);
+            break :blk string_mod.parseFloatNumber(runtime.allocator, units);
+        },
+        .bigint => error.CannotConvertBigIntToNumber,
+        .array, .dictionary, .iterator => valueToParseFloatRuntime(runtime, try valueToPrimitive(runtime, value)),
+        .undefined, .null_value, .boolean => std.math.nan(f64),
+    };
+}
+
 fn parseStringNumber(runtime: *Runtime, value: Value) !f64 {
     const units = try valueUtf16Alloc(runtime, value);
     defer runtime.allocator.free(units);
@@ -652,7 +666,7 @@ fn concat(runtime: *Runtime, left: Value, right: Value) !Value {
     return runtime.ownString(combined);
 }
 
-fn bigIntArithmetic(runtime: *Runtime, operator: BigIntArithmetic, left: Value, right: Value) !Value {
+fn bigIntArithmetic(runtime: *Runtime, operator: Arithmetic, left: Value, right: Value) !Value {
     if (left.tag != @intFromEnum(Tag.bigint) or right.tag != @intFromEnum(Tag.bigint)) return error.CannotMixBigIntAndNumber;
     const left_bigint = left.object().?.payload.bigint;
     const right_bigint = right.object().?.payload.bigint;
@@ -669,6 +683,32 @@ fn bigIntArithmetic(runtime: *Runtime, operator: BigIntArithmetic, left: Value, 
         .integer_divide => return error.CannotConvertBigIntToNumber,
     };
     return runtime.ownBigInt(result);
+}
+
+fn arithmetic(runtime: *Runtime, operator: Arithmetic, left: Value, right: Value) !Value {
+    var roots = [_]Value{ left, right, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[2] = try valueToPrimitive(runtime, roots[0]);
+    roots[3] = try valueToPrimitive(runtime, roots[1]);
+    const left_primitive = roots[2];
+    const right_primitive = roots[3];
+    if (left_primitive.tag == @intFromEnum(Tag.bigint) or right_primitive.tag == @intFromEnum(Tag.bigint)) {
+        return bigIntArithmetic(runtime, operator, left_primitive, right_primitive);
+    }
+    const left_number = if (operator == .add) try valueToParseFloatRuntime(runtime, left_primitive) else try valueToNumberRuntime(runtime, left_primitive);
+    const right_number = if (operator == .add) try valueToParseFloatRuntime(runtime, right_primitive) else try valueToNumberRuntime(runtime, right_primitive);
+    const result = switch (operator) {
+        .add => left_number + right_number,
+        .subtract => left_number - right_number,
+        .multiply => left_number * right_number,
+        .divide => left_number / right_number,
+        .remainder => @rem(left_number, right_number),
+        .power => std.math.pow(f64, left_number, right_number),
+        .integer_divide => @floor(left_number / right_number),
+    };
+    return numberValue(result);
 }
 
 fn bigIntEqualsString(runtime: *Runtime, bigint: BigInt, string: Value) !bool {
@@ -888,11 +928,11 @@ pub export fn lnako_aot_bigint_truthy(value: *const Value) callconv(.c) c_int {
     return @intFromBool(!object.payload.bigint.isZero());
 }
 
-pub export fn lnako_aot_bigint_arithmetic(out: *Value, left: *const Value, right: *const Value, opcode: u8) callconv(.c) void {
+pub export fn lnako_aot_arithmetic(out: *Value, left: *const Value, right: *const Value, opcode: u8) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*active| active else return;
-    const operator = std.enums.fromInt(BigIntArithmetic, opcode) orelse runtimeFailure(error.InvalidBigIntOperator);
-    out.* = bigIntArithmetic(runtime, operator, left.*, right.*) catch |failure| runtimeFailure(failure);
+    const operator = std.enums.fromInt(Arithmetic, opcode) orelse runtimeFailure(error.InvalidArithmeticOperator);
+    out.* = arithmetic(runtime, operator, left.*, right.*) catch |failure| runtimeFailure(failure);
 }
 
 pub export fn lnako_aot_compare(out: *Value, left: *const Value, right: *const Value, opcode: u8) callconv(.c) void {
@@ -993,7 +1033,7 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_index_get));
     try std.testing.expectEqual(*const fn (*const Value, *const Value, *const Value) callconv(.c) c_int, @TypeOf(&lnako_aot_index_set));
     try std.testing.expectEqual(*const fn (*Value, *const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_destructure_get));
-    try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_bigint_arithmetic));
+    try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_arithmetic));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_compare));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_shift));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_concat));
@@ -1100,6 +1140,34 @@ test "AOT BigInt算術とNumber混在エラーを処理する" {
     try std.testing.expectError(error.CannotMixBigIntAndNumber, bigIntArithmetic(&runtime, .add, roots[0], numberValue(1)));
     try std.testing.expectError(error.CannotConvertBigIntToNumber, bigIntArithmetic(&runtime, .integer_divide, roots[0], roots[1]));
     runtime.popRoots(&frame);
+}
+
+test "AOT動的数値演算は文字列・配列・辞書を公式規則で変換する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[0] = try runtime.createString(&.{'5'});
+    roots[1] = try runtime.createArray(&.{numberValue(5)});
+    roots[2] = try runtime.createArray(&.{});
+    roots[3] = try runtime.createDictionary(&.{});
+
+    const string_result = try arithmetic(&runtime, .subtract, roots[0], numberValue(2));
+    try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(string_result.payload)));
+    const singleton_result = try arithmetic(&runtime, .multiply, roots[1], numberValue(2));
+    try std.testing.expectEqual(@as(f64, 10), @as(f64, @bitCast(singleton_result.payload)));
+    const empty_result = try arithmetic(&runtime, .add, roots[2], numberValue(1));
+    try std.testing.expect(std.math.isNan(@as(f64, @bitCast(empty_result.payload))));
+    const dictionary_result = try arithmetic(&runtime, .add, roots[3], numberValue(1));
+    try std.testing.expect(std.math.isNan(@as(f64, @bitCast(dictionary_result.payload))));
+    const whitespace_result = try arithmetic(&runtime, .power, try runtime.createString(&.{ 0x3000, '2', 0x3000 }), numberValue(3));
+    try std.testing.expectEqual(@as(f64, 8), @as(f64, @bitCast(whitespace_result.payload)));
+    const prefix_result = try arithmetic(&runtime, .add, try runtime.createString(&.{ '5', 'x' }), numberValue(2));
+    try std.testing.expectEqual(@as(f64, 7), @as(f64, @bitCast(prefix_result.payload)));
+    const floor_result = try arithmetic(&runtime, .integer_divide, numberValue(-5), numberValue(2));
+    try std.testing.expectEqual(@as(f64, -3), @as(f64, @bitCast(floor_result.payload)));
 }
 
 test "AOT BigInt比較をNumberとの間でも精度を落とさず処理する" {

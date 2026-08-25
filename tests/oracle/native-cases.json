@@ -4,6 +4,10 @@
     "source": "(1+2*3)を表示\n(9-4)/2を表示\n"
   },
   {
+    "id": "native-dynamic-arithmetic",
+    "source": "A=\"5\"\nA-2を表示\nB=[5]\nB*2を表示\nC=[]\nC+1を表示\nC-1を表示\nD={}\nD+1を表示\nE=\"　2　\"\nE**3を表示\nF=[8]\nF/2を表示\nG=[5,6]\nG-1を表示\nH=\"5x\"\nH+2を表示\nH-2を表示\n(-5)÷÷2を表示\n"
+  },
+  {
     "id": "native-string-format",
     "source": "「100%安全%s」を表示\n「連続%」を連続表示\n「表示」を表示\n"
   },

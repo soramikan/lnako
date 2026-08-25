@@ -457,7 +457,7 @@ pub const Interpreter = struct {
         if (std.mem.eql(u8, instruction.operator, "/") or std.mem.eql(u8, instruction.operator, "÷")) return operators.binary(self.runtime, .divide, left, right);
         if (std.mem.eql(u8, instruction.operator, "÷÷")) {
             const quotient = try operators.binary(self.runtime, .divide, left, right);
-            if (quotient == .number) return .{ .number = @trunc(quotient.number) };
+            if (quotient == .number) return .{ .number = @floor(quotient.number) };
             return error.CannotConvertBigIntToNumber;
         }
         if (std.mem.eql(u8, instruction.operator, "%")) return operators.binary(self.runtime, .remainder, left, right);
