@@ -1201,9 +1201,10 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
+    const value = arguments.?[0];
     switch (command) {
         .to_string => {
-            const units = valueUtf16Alloc(runtime, arguments.?[0]) catch |failure| {
+            const units = valueUtf16Alloc(runtime, value) catch |failure| {
                 runtime.setFailure(failure);
                 return;
             };
@@ -1213,7 +1214,21 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             };
         },
+        .type_of => out.* = typeNameValue(value),
     }
+}
+
+fn typeNameValue(value: Value) Value {
+    return switch (@as(Tag, @enumFromInt(value.tag))) {
+        .undefined => staticStringValue("undefined"),
+        .null_value, .array, .dictionary, .iterator => staticStringValue("object"),
+        .boolean => staticStringValue("boolean"),
+        .number => staticStringValue("number"),
+        .static_utf8_string, .utf16_string => staticStringValue("string"),
+        .bigint => staticStringValue("bigint"),
+        .function => staticStringValue("function"),
+        .binding_cell => typeNameValue(value.object().?.payload.binding_cell),
+    };
 }
 
 test "UTF-16文字列をルートから正確にmark-and-sweepする" {
@@ -1332,6 +1347,22 @@ test "AOT標準命令ディスパッチで値を文字列へ変換する" {
     defer lnako_aot_pop_roots(&frame);
     lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.to_string));
     try std.testing.expectEqualSlices(u16, &.{ 't', 'r', 'u', 'e' }, roots[1].object().?.payload.utf16_string);
+}
+
+test "AOT型確認は動的値をJavaScript型名へ変換する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ numberValue(1), .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.type_of));
+    try std.testing.expectEqualStrings("number", staticUtf8(roots[1]));
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {
