@@ -184,7 +184,7 @@ const Frame = struct {
     parent: ?*Frame,
     function: *const ir.Function,
     values: []Value,
-    locals: std.StringHashMapUnmanaged(Value) = .empty,
+    locals: std.StringHashMapUnmanaged(*value_mod.BindingCell) = .empty,
     owned_names: std.ArrayList([]u8) = .empty,
     iterators: std.AutoHashMapUnmanaged(ir.ValueId, IteratorState) = .empty,
     handlers: std.ArrayList(ir.BlockId) = .empty,
@@ -199,6 +199,11 @@ const Frame = struct {
         self.* = undefined;
     }
 };
+
+fn localValue(frame: *const Frame, name: []const u8) ?Value {
+    const cell = frame.locals.get(name) orelse return null;
+    return cell.value;
+}
 
 pub const Interpreter = struct {
     allocator: std.mem.Allocator,
@@ -332,12 +337,13 @@ pub const Interpreter = struct {
         if (closure) |function_value| for (function_value.captures) |capture| {
             const name = try capture.name.toUtf8Lossy(self.allocator);
             try frame.owned_names.append(self.allocator, name);
-            try frame.locals.put(self.allocator, name, capture.value);
+            const cell = capture.cell orelse try self.runtime.createBindingCell(capture.value);
+            try frame.locals.put(self.allocator, name, cell);
         };
         for (function.parameters, 0..) |parameter, index| {
             const argument = if (index < arguments.len) arguments[index] else Value.undefined;
             frame.values[parameter.value] = argument;
-            try frame.locals.put(self.allocator, parameter.name, argument);
+            try self.bindLocal(&frame, parameter.name, argument);
         }
 
         var current_block = function.entry;
@@ -400,9 +406,9 @@ pub const Interpreter = struct {
             .const_string => result = try self.runtime.stringUtf8(instruction.text),
             .const_undefined => result = .undefined,
             .load_global => result = self.globals.get(instruction.name) orelse .undefined,
-            .load_local => result = frame.locals.get(instruction.name) orelse self.globals.get(instruction.name) orelse .undefined,
+            .load_local => result = localValue(frame, instruction.name) orelse self.globals.get(instruction.name) orelse .undefined,
             .store_global => try self.setGlobal(instruction.name, self.operand(frame, instruction, 0)),
-            .store_local => try frame.locals.put(self.allocator, instruction.name, self.operand(frame, instruction, 0)),
+            .store_local => try self.storeLocal(frame, instruction.name, self.operand(frame, instruction, 0)),
             .destructure_store => try self.executeDestructure(frame, instruction),
             .binary => result = try self.executeBinary(frame, instruction),
             .unary => result = try self.executeUnary(frame, instruction),
@@ -438,13 +444,26 @@ pub const Interpreter = struct {
         return frame.values[instruction.operands[index]];
     }
 
+    fn bindLocal(self: *Interpreter, frame: *Frame, name: []const u8, value: Value) !void {
+        const cell = try self.runtime.createBindingCell(value);
+        try frame.locals.put(self.allocator, name, cell);
+    }
+
+    fn storeLocal(self: *Interpreter, frame: *Frame, name: []const u8, value: Value) !void {
+        if (frame.locals.get(name)) |cell| {
+            cell.value = value;
+            return;
+        }
+        try self.bindLocal(frame, name, value);
+    }
+
     fn executeDestructure(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
         const source = self.operand(frame, instruction, 0);
         for (instruction.names, 0..) |name, index| {
             const value = if (source == .array) source.array.get(index) else if (index == 0) source else .undefined;
             if (std.mem.indexOf(u8, name, "__") != null) {
                 try self.setGlobal(name, value);
-            } else try frame.locals.put(self.allocator, name, value);
+            } else try self.storeLocal(frame, name, value);
         }
     }
 
@@ -507,7 +526,7 @@ pub const Interpreter = struct {
         } else if (self.findFunction(instruction.name)) |function| blk: {
             writes_result = true;
             break :blk try self.executeFunction(function, arguments, null);
-        } else if (frame.locals.get(instruction.name)) |callable| blk: {
+        } else if (localValue(frame, instruction.name)) |callable| blk: {
             if (callable != .function) return error.NotCallable;
             writes_result = callable.function.kind == .ir;
             break :blk try self.callFunctionValue(callable.function, arguments);
@@ -1113,7 +1132,7 @@ pub const Interpreter = struct {
         const self: *Interpreter = @ptrCast(@alignCast(context));
         var frame = self.active_frame;
         while (frame) |current| : (frame = current.parent) {
-            if (current.locals.get(name)) |value| return value;
+            if (localValue(current, name)) |value| return value;
         }
         if (self.globals.get(name)) |value| return value;
 
@@ -1495,7 +1514,7 @@ pub const Interpreter = struct {
 
     fn setIndexed(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
         if (instruction.operands.len < 2) return error.InvalidAssignment;
-        var container = frame.locals.get(instruction.name) orelse self.globals.get(instruction.name) orelse return error.InvalidAssignment;
+        var container = localValue(frame, instruction.name) orelse self.globals.get(instruction.name) orelse return error.InvalidAssignment;
         const value = self.operand(frame, instruction, 0);
         const keys = instruction.operands[1..];
         var index: usize = 0;
@@ -1519,10 +1538,10 @@ pub const Interpreter = struct {
     }
 
     fn increment(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
-        const old = frame.locals.get(instruction.name) orelse self.globals.get(instruction.name) orelse Value{ .number = 0 };
+        const old = localValue(frame, instruction.name) orelse self.globals.get(instruction.name) orelse Value{ .number = 0 };
         const updated = try operators.increment(self.runtime, old, self.operand(frame, instruction, 0));
         if (frame.locals.contains(instruction.name)) {
-            try frame.locals.put(self.allocator, instruction.name, updated);
+            try self.storeLocal(frame, instruction.name, updated);
         } else try self.setGlobal(instruction.name, updated);
     }
 
@@ -1543,7 +1562,7 @@ pub const Interpreter = struct {
         while (iterator.next()) |entry| : (index += 1) {
             capture_roots[index] = try self.runtime.stringUtf8(entry.key_ptr.*);
             try root.protect(&capture_roots[index]);
-            captures[index] = .{ .name = capture_roots[index].string, .value = entry.value_ptr.* };
+            captures[index] = .{ .name = capture_roots[index].string, .cell = entry.value_ptr.* };
         }
         return self.runtime.createIrFunction(name.string, function.parameters.len, function.id, captures);
     }
@@ -1601,7 +1620,7 @@ pub const Interpreter = struct {
                 result = .{ .number = state.current };
                 state.current += state.step;
                 if (frame.locals.contains(state.variable_name)) {
-                    try frame.locals.put(self.allocator, state.variable_name, result);
+                    try self.storeLocal(frame, state.variable_name, result);
                 } else try self.setGlobal(state.variable_name, result);
             },
             .bytes => {
@@ -1718,7 +1737,7 @@ pub const Interpreter = struct {
         while (frame) |active| : (frame = active.parent) {
             for (active.values) |value| try runtime.traceExternal(value);
             var locals = active.locals.valueIterator();
-            while (locals.next()) |value| try runtime.traceExternal(value.*);
+            while (locals.next()) |cell| try runtime.traceExternalBindingCell(cell.*);
             var iterators = active.iterators.valueIterator();
             while (iterators.next()) |iterator| try runtime.traceExternal(iterator.source);
         }
@@ -2023,6 +2042,40 @@ test "無名関数がローカル変数を捕捉する" {
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("15\n", host.written());
+}
+
+test "クロージャが外側の可変束縛を共有する" {
+    const source =
+        "●(Aを)作るとは\n" ++
+        "F=関数()\n" ++
+        "A=A+1\n" ++
+        "Aで戻る\n" ++
+        "ここまで\n" ++
+        "H=関数()それはA\n" ++
+        "ここまで\n" ++
+        "A=4\n" ++
+        "[F,H]で戻る\n" ++
+        "ここまで\n" ++
+        "P=作る(1)\n" ++
+        "G=P[0]\n" ++
+        "H=P[1]\n" ++
+        "G()を表示\n" ++
+        "H()を表示\n" ++
+        "G()を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("5\n5\n6\n", host.written());
 }
 
 test "関数の戻り値だけをシステム変数それへ書き戻す" {

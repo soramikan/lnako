@@ -68,6 +68,10 @@
     "source": "●(Aを)加算器作成とは\nF=関数(B)それはA+B\nここまで\nFで戻る\nここまで\nG=加算器作成(10)\nG(5)を表示\n"
   },
   {
+    "id": "closure-shared-mutable-binding",
+    "source": "●(Aを)作るとは\nF=関数()\nA=A+1\nAで戻る\nここまで\nH=関数()それはA\nここまで\nA=4\n[F,H]で戻る\nここまで\nP=作る(1)\nG=P[0]\nH=P[1]\nG()を表示\nH()を表示\nG()を表示\n"
+  },
+  {
     "id": "assignment-josi",
     "source": "Aは1\nBはA+2\nBを表示\n"
   },

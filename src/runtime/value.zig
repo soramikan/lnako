@@ -154,7 +154,24 @@ pub const Dictionary = struct {
     }
 };
 
-pub const Capture = struct { name: *String, value: Value };
+/// Lexical bindings live in GC-managed cells so closures created from the same
+/// frame observe and update one shared value.
+pub const BindingCell = struct {
+    gc_marked: bool = false,
+    value: Value,
+
+    pub fn deinit(self: *BindingCell) void {
+        self.* = undefined;
+    }
+};
+
+/// Native callbacks may retain an immutable value directly. IR closures use a
+/// binding cell, which preserves JavaScript/Nadesiko mutable-capture semantics.
+pub const Capture = struct {
+    name: *String,
+    value: Value = .undefined,
+    cell: ?*BindingCell = null,
+};
 pub const NativeCallback = *const fn (runtime: *Runtime, arguments: []const Value) anyerror!Value;
 pub const ExternalFunction = struct {
     binding: ExternalHandle,
@@ -179,7 +196,8 @@ pub const Function = struct {
     }
 
     pub fn captured(self: Function, name: *String) ?Value {
-        for (self.captures) |capture| if (String.eql(capture.name.*, name.*)) return capture.value;
+        for (self.captures) |capture| if (String.eql(capture.name.*, name.*))
+            return if (capture.cell) |cell| cell.value else capture.value;
         return null;
     }
 };
@@ -323,6 +341,7 @@ const HeapObject = union(enum) {
     string: *String,
     bigint: *BigInt,
     bytes: *ByteBuffer,
+    binding_cell: *BindingCell,
     array: *Array,
     dictionary: *Dictionary,
     function: *Function,
@@ -406,6 +425,10 @@ pub const Runtime = struct {
 
     pub fn traceExternal(self: *Runtime, value: Value) !void {
         try self.markValue(value);
+    }
+
+    pub fn traceExternalBindingCell(self: *Runtime, cell: *BindingCell) !void {
+        try self.markComposite(.{ .binding_cell = cell });
     }
 
     pub fn setGcStress(self: *Runtime, enabled: bool) void {
@@ -621,6 +644,15 @@ pub const Runtime = struct {
         return self.createFunction(name, arity, .{ .ir = function_id }, captures);
     }
 
+    pub fn createBindingCell(self: *Runtime, value: Value) !*BindingCell {
+        try self.beforeAllocationPreserving(&.{value});
+        const result = try self.allocator().create(BindingCell);
+        errdefer self.allocator().destroy(result);
+        result.* = .{ .value = value };
+        try self.objects.append(self.allocator(), .{ .binding_cell = result });
+        return result;
+    }
+
     pub fn createNativeFunction(self: *Runtime, name: *String, arity: usize, callback: NativeCallback, captures: []const Capture) !Value {
         return self.createFunction(name, arity, .{ .native = callback }, captures);
     }
@@ -635,7 +667,10 @@ pub const Runtime = struct {
             try self.markValue(.{ .string = name });
             for (captures) |capture| {
                 try self.markValue(.{ .string = capture.name });
-                try self.markValue(capture.value);
+                if (capture.cell) |cell|
+                    try self.markComposite(.{ .binding_cell = cell })
+                else
+                    try self.markValue(capture.value);
             }
             _ = try self.collect();
         }
@@ -822,6 +857,7 @@ pub const Runtime = struct {
 
     fn traceGreyObjects(self: *Runtime) !void {
         while (self.grey_objects.pop()) |object| switch (object) {
+            .binding_cell => |cell| try self.markValue(cell.value),
             .array => |array| for (array.items.items) |item| try self.markValue(item),
             .dictionary => |dictionary| {
                 for (dictionary.keys()) |key| try self.markValue(.{ .string = key });
@@ -831,7 +867,10 @@ pub const Runtime = struct {
                 try self.markValue(.{ .string = function.name });
                 for (function.captures) |capture| {
                     try self.markValue(.{ .string = capture.name });
-                    try self.markValue(capture.value);
+                    if (capture.cell) |cell|
+                        try self.markComposite(.{ .binding_cell = cell })
+                    else
+                        try self.markValue(capture.value);
                 }
             },
             .promise => |promise| {
