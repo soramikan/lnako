@@ -8,6 +8,9 @@ lnakoは、意図的な非互換として合意した項目を除き、説明文
 
 | 命令 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID |
 |---|---|---|---|
+| 配列命令の助詞省略 | C風呼び出しの引数不足は文法エラーだが、助詞構文では`[1,2]を配列結合`の区切り値と`[1,2]から配列検索`の検索値が`undefined`として渡され、前者は`1undefined2`、後者は`-1`になる | AOTは1引数の静的呼び出しへ`undefined`を補い、C風呼び出しの引数数診断は共通の`TODO: builtin-arity-diagnostics`として分離する | `native-system-array-particle-omission`、`TODO: builtin-arity-diagnostics` |
+| `配列結合`・`配列只結合` | 配列では`Array.join`相当で、`null`・`undefined`・疎配列の要素を空文字列として扱い、入れ子配列はカンマ区切りの文字列化、循環参照は空文字列になる。区切り文字は`''+S`で文字列化される。配列以外は`String(A).split('\\n').join(S)`となるため、改行前後の空要素も区切り文字で結ばれる。`配列只結合`の区切り文字は空文字列 | AOTもUTF-16コード単位の値文字列化、nullish・疎配列・循環配列・非配列の改行分割を共有する。辞書のカスタム`valueOf` / `toString`を伴うDefault ToPrimitiveの完全互換は`TODO: aot-object-to-primitive`、関数の名前を含む`Function.prototype.toString`完全互換は`TODO: aot-function-string-name`として完成扱いにしない | `native-system-array-join-search-commands`、`plugin-system-array-core` |
+| `配列検索` | 配列に対する`Array.indexOf`相当で、0始まりの最初の一致か`-1`を返す。比較はstrict equalityなのでNaNは一致せず、±0は一致し、数値と文字列、`null`と`undefined`、同内容の別オブジェクトは一致しないが同じ参照は一致する。疎配列のholeはスキップされるため、明示的な`undefined`とは一致しない。配列以外は常に`-1` | AOT・インタプリタとも既存のstrict equalityと配列参照同一性を使う。現行の配列格納は伸長時のholeと明示的`undefined`を区別できないため、lnakoの疎配列に対する`indexOf(undefined)`は`TODO: sparse-array-presence`として完成扱いにせず、差分fixtureでは値のある要素を検索する | `native-system-array-join-search-commands`、`plugin-system-array-core`、`TODO: sparse-array-presence` |
 | `配列要素数`・`要素数`・`LEN` | 文字列はUTF-16コード単位数を返すため`LEN("A😀B")`は4になる。配列は要素数、辞書は列挙可能なキー数、関数とPromiseは`Object.keys`相当の0、その他のプリミティブは1になる | インタープリタとAOTで値タグごとの同じ規則を使い、Unicode scalar数を返す`文字数`と分離する | `関数とPromiseの要素数はObject.keysと同じ0にする`、`AOT文字長検索と要素数はUnicode scalarとUTF-16を区別する`、`native-system-string-length-search-boundary-commands` |
 | `配列挿入` | 元配列へ要素を挿入するが、戻り値は変更後配列ではなく、削除要素0件を表す空配列。内部で `splice(i, 0, s)` の戻り値をそのまま返す | 同じく元配列を変更し、空配列を返す | `plugin-system-array-mutation-quirks` |
 | `配列一括挿入` | 元配列を変更し、こちらは変更後の元配列を返す | 同じ | `plugin-system-array-mutation-quirks` |

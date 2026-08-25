@@ -1298,21 +1298,26 @@
   "配列結合": {
     "status": "native",
     "tests": [
-      "plugin-system-array-core"
+      "plugin-system-array-core",
+      "native-system-array-join-search-commands",
+      "native-system-array-particle-omission"
     ],
     "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
   },
   "配列只結合": {
     "status": "native",
     "tests": [
-      "plugin-system-array-core"
+      "plugin-system-array-core",
+      "native-system-array-join-search-commands"
     ],
     "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
   },
   "配列検索": {
     "status": "native",
     "tests": [
-      "plugin-system-array-core"
+      "plugin-system-array-core",
+      "native-system-array-join-search-commands",
+      "native-system-array-particle-omission"
     ],
     "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
   },

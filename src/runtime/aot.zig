@@ -1604,6 +1604,22 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             }));
         },
+        .array_join, .array_join_only => {
+            const source: Value = if (len > 0) arguments.?[0] else .{};
+            const separator: Value = if (len > 1) arguments.?[1] else .{};
+            out.* = arrayJoinBuiltin(runtime, source, separator, command == .array_join_only) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .array_search => {
+            const source: Value = if (len > 0) arguments.?[0] else .{};
+            const needle: Value = if (len > 1) arguments.?[1] else .{};
+            out.* = numberValue(arraySearchBuiltin(runtime, source, needle) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            });
+        },
         .add_parsed => {
             if (len < 2) {
                 runtime.setFailure(error.InvalidArgumentCount);
@@ -2294,6 +2310,62 @@ fn joinBuiltin(runtime: *Runtime, values: []const Value) !Value {
         },
     };
     return runtime.ownString(try units.toOwnedSlice(runtime.allocator));
+}
+
+/// `配列結合` is intentionally separate from `連結`.  The former delegates
+/// to JavaScript's Array.join when its first value is an array, while the
+/// official plugin also accepts other values by splitting their String form
+/// at LF before joining.  `配列只結合` is the same operation with an empty
+/// separator.
+fn arrayJoinBuiltin(runtime: *Runtime, source: Value, separator: Value, only: bool) !Value {
+    var separator_units: []const u16 = &.{};
+    var allocated_separator: ?[]u16 = null;
+    defer if (allocated_separator) |units| runtime.allocator.free(units);
+    if (!only) {
+        allocated_separator = try valueUtf16Alloc(runtime, separator);
+        separator_units = allocated_separator.?;
+    }
+
+    var output: std.ArrayList(u16) = .empty;
+    errdefer output.deinit(runtime.allocator);
+    if (source.tag == @intFromEnum(Tag.array)) {
+        const object = source.object() orelse return error.InvalidArray;
+        if (object.payload != .array) return error.InvalidArray;
+        for (object.payload.array.items, 0..) |item, index| {
+            if (index > 0) try output.appendSlice(runtime.allocator, separator_units);
+            if (item.tag == @intFromEnum(Tag.undefined) or item.tag == @intFromEnum(Tag.null_value)) continue;
+            const item_units = try valueUtf16Alloc(runtime, item);
+            defer runtime.allocator.free(item_units);
+            try output.appendSlice(runtime.allocator, item_units);
+        }
+    } else {
+        const source_units = try valueUtf16Alloc(runtime, source);
+        defer runtime.allocator.free(source_units);
+        // String(a).split("\n").join(separator) preserves empty pieces at
+        // both ends, including the trailing piece after a final LF.
+        var start: usize = 0;
+        var first = true;
+        for (source_units, 0..) |unit, index| {
+            if (unit != '\n') continue;
+            if (!first) try output.appendSlice(runtime.allocator, separator_units);
+            try output.appendSlice(runtime.allocator, source_units[start..index]);
+            start = index + 1;
+            first = false;
+        }
+        if (!first) try output.appendSlice(runtime.allocator, separator_units);
+        try output.appendSlice(runtime.allocator, source_units[start..]);
+    }
+    return runtime.ownString(try output.toOwnedSlice(runtime.allocator));
+}
+
+fn arraySearchBuiltin(runtime: *Runtime, source: Value, needle: Value) !f64 {
+    if (source.tag != @intFromEnum(Tag.array)) return -1;
+    const object = source.object() orelse return error.InvalidArray;
+    if (object.payload != .array) return error.InvalidArray;
+    for (object.payload.array.items, 0..) |item, index| {
+        if (try strictEqual(runtime, item, needle)) return @floatFromInt(index);
+    }
+    return -1;
 }
 
 fn explodeBuiltin(runtime: *Runtime, value: Value) !Value {
@@ -3456,6 +3528,92 @@ test "AOT出現命令は文字列検索と配列のSameValueZeroを保持する"
         lnako_aot_builtin_call(&roots[6], &arguments, arguments.len, @intFromEnum(aot_builtin.Command.occurrence));
         try std.testing.expectEqual(case.expected, roots[6].payload != 0);
     }
+}
+
+test "AOT配列結合と配列検索は公式のArray境界とGCを保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    active_runtime = runtime;
+    active_runtime.?.next_collection = 1;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+        runtime.deinit();
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[1] = try active_runtime.?.createArray(&.{ numberValue(4), numberValue(5) });
+    roots[2] = try active_runtime.?.createArray(&.{});
+    try active_runtime.?.indexSet(roots[2], numberValue(0), roots[2]);
+    roots[0] = try active_runtime.?.createArray(&.{
+        numberValue(1),
+        .{ .tag = @intFromEnum(Tag.null_value) },
+        .{},
+        numberValue(3),
+        roots[1],
+        roots[2],
+    });
+    const join_arguments = [_]Value{ roots[0], staticStringValue("|") };
+    lnako_aot_builtin_call(&roots[3], &join_arguments, join_arguments.len, @intFromEnum(aot_builtin.Command.array_join));
+    try std.testing.expectEqualSlices(u16, &.{ '1', '|', '|', '|', '3', '|', '4', ',', '5', '|' }, roots[3].object().?.payload.utf16_string);
+    const only_join_arguments = [_]Value{roots[0]};
+    lnako_aot_builtin_call(&roots[4], &only_join_arguments, only_join_arguments.len, @intFromEnum(aot_builtin.Command.array_join_only));
+    try std.testing.expectEqualSlices(u16, &.{ '1', '3', '4', ',', '5' }, roots[4].object().?.payload.utf16_string);
+
+    const non_array_arguments = [_]Value{ staticStringValue("A\n😀\n"), staticStringValue("-") };
+    lnako_aot_builtin_call(&roots[5], &non_array_arguments, non_array_arguments.len, @intFromEnum(aot_builtin.Command.array_join));
+    try std.testing.expectEqualSlices(u16, &.{ 'A', '-', 0xd83d, 0xde00, '-' }, roots[5].object().?.payload.utf16_string);
+    roots[6] = try active_runtime.?.createString(&.{ 'A', 0xd800, 0, 'B' });
+    const lone_surrogate_arguments = [_]Value{ roots[6], staticStringValue("-") };
+    lnako_aot_builtin_call(&roots[7], &lone_surrogate_arguments, lone_surrogate_arguments.len, @intFromEnum(aot_builtin.Command.array_join));
+    try std.testing.expectEqualSlices(u16, roots[6].object().?.payload.utf16_string, roots[7].object().?.payload.utf16_string);
+
+    roots[8] = try active_runtime.?.createBigInt("12n");
+    roots[9] = try active_runtime.?.createDictionary(&.{});
+    roots[10] = try active_runtime.?.createArray(&.{ roots[8], roots[9], .{ .tag = @intFromEnum(Tag.null_value) }, .{} });
+    const object_values_arguments = [_]Value{ roots[10], staticStringValue("|") };
+    lnako_aot_builtin_call(&roots[11], &object_values_arguments, object_values_arguments.len, @intFromEnum(aot_builtin.Command.array_join));
+    try std.testing.expectEqualSlices(u16, &.{ '1', '2', '|', '[', 'o', 'b', 'j', 'e', 'c', 't', ' ', 'O', 'b', 'j', 'e', 'c', 't', ']', '|', '|' }, roots[11].object().?.payload.utf16_string);
+    const bigint_separator_arguments = [_]Value{ roots[1], roots[8] };
+    lnako_aot_builtin_call(&roots[12], &bigint_separator_arguments, bigint_separator_arguments.len, @intFromEnum(aot_builtin.Command.array_join));
+    try std.testing.expectEqualSlices(u16, &.{ '4', '1', '2', '5' }, roots[12].object().?.payload.utf16_string);
+    lnako_aot_function_new(&roots[18], testAotFunction, 1, null, 0);
+    roots[19] = try active_runtime.?.createArray(&.{roots[18]});
+    const function_value_arguments = [_]Value{ roots[19], staticStringValue("|") };
+    lnako_aot_builtin_call(&roots[12], &function_value_arguments, function_value_arguments.len, @intFromEnum(aot_builtin.Command.array_join));
+    try std.testing.expectEqualSlices(u16, &.{ 'f', 'u', 'n', 'c', 't', 'i', 'o', 'n', ' ', '(', ')', ' ', '{', ' ', '[', 'n', 'a', 't', 'i', 'v', 'e', ' ', 'c', 'o', 'd', 'e', ']', ' ', '}' }, roots[12].object().?.payload.utf16_string);
+
+    const sparse = try active_runtime.?.createArray(&.{});
+    roots[13] = sparse;
+    try active_runtime.?.indexSet(sparse, numberValue(2), numberValue(3));
+    const sparse_join_arguments = [_]Value{ roots[13], staticStringValue("|") };
+    lnako_aot_builtin_call(&roots[14], &sparse_join_arguments, sparse_join_arguments.len, @intFromEnum(aot_builtin.Command.array_join));
+    try std.testing.expectEqualSlices(u16, &.{ '|', '|', '3' }, roots[14].object().?.payload.utf16_string);
+
+    const nan = numberValue(std.math.nan(f64));
+    roots[15] = try active_runtime.?.createArray(&.{ nan, numberValue(0), staticStringValue("1"), numberValue(1), .{ .tag = @intFromEnum(Tag.null_value) }, .{}, roots[1] });
+    roots[17] = try active_runtime.?.createArray(&.{ numberValue(4), numberValue(5) });
+    const search_cases = [_]struct { needle: Value, expected: f64 }{
+        .{ .needle = nan, .expected = -1 },
+        .{ .needle = numberValue(-0.0), .expected = 1 },
+        .{ .needle = staticStringValue("1"), .expected = 2 },
+        .{ .needle = numberValue(1), .expected = 3 },
+        .{ .needle = .{ .tag = @intFromEnum(Tag.null_value) }, .expected = 4 },
+        .{ .needle = .{}, .expected = 5 },
+        .{ .needle = roots[1], .expected = 6 },
+        .{ .needle = roots[17], .expected = -1 },
+    };
+    var search_result: Value = .{};
+    for (search_cases) |case| {
+        const arguments = [_]Value{ roots[15], case.needle };
+        lnako_aot_builtin_call(&search_result, &arguments, arguments.len, @intFromEnum(aot_builtin.Command.array_search));
+        try std.testing.expectEqual(case.expected, valueToNumber(search_result));
+    }
+    const non_array_search = [_]Value{ staticStringValue("abc"), staticStringValue("a") };
+    lnako_aot_builtin_call(&roots[16], &non_array_search, non_array_search.len, @intFromEnum(aot_builtin.Command.array_search));
+    try std.testing.expectEqual(@as(f64, -1), valueToNumber(roots[16]));
 }
 
 test "AOT文字列連結分解反復出現命令は公式の型変換を保つ" {

@@ -50,6 +50,9 @@ pub const Command = enum(u16) {
     string_starts,
     string_ends,
     element_count,
+    array_join,
+    array_join_only,
+    array_search,
     add_parsed,
     sum_parsed,
     sequential_add,
@@ -148,6 +151,9 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "文字始")) return .string_starts;
     if (std.mem.eql(u8, name, "文字終")) return .string_ends;
     if (std.mem.eql(u8, name, "配列要素数") or std.mem.eql(u8, name, "要素数") or std.mem.eql(u8, name, "LEN")) return .element_count;
+    if (std.mem.eql(u8, name, "配列結合")) return .array_join;
+    if (std.mem.eql(u8, name, "配列只結合")) return .array_join_only;
+    if (std.mem.eql(u8, name, "配列検索")) return .array_search;
     if (std.mem.eql(u8, name, "足")) return .add_parsed;
     if (std.mem.eql(u8, name, "合計")) return .sum_parsed;
     if (std.mem.eql(u8, name, "連続加算")) return .sequential_add;
@@ -261,6 +267,9 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.element_count, lookup("配列要素数").?);
     try std.testing.expectEqual(Command.element_count, lookup("要素数").?);
     try std.testing.expectEqual(Command.element_count, lookup("LEN").?);
+    try std.testing.expectEqual(Command.array_join, lookup("配列結合").?);
+    try std.testing.expectEqual(Command.array_join_only, lookup("配列只結合").?);
+    try std.testing.expectEqual(Command.array_search, lookup("配列検索").?);
     try std.testing.expectEqual(Command.add_parsed, lookup("足").?);
     try std.testing.expectEqual(Command.sum_parsed, lookup("合計").?);
     try std.testing.expectEqual(Command.sequential_add, lookup("連続加算").?);

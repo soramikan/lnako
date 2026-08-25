@@ -4622,7 +4622,9 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-array-core"
+        "plugin-system-array-core",
+        "native-system-array-join-search-commands",
+        "native-system-array-particle-omission"
       ],
       "platforms": [
         "macos-aarch64",
@@ -4648,7 +4650,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-array-core"
+        "plugin-system-array-core",
+        "native-system-array-join-search-commands"
       ],
       "platforms": [
         "macos-aarch64",
@@ -4674,7 +4677,9 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-array-core"
+        "plugin-system-array-core",
+        "native-system-array-join-search-commands",
+        "native-system-array-particle-omission"
       ],
       "platforms": [
         "macos-aarch64",
