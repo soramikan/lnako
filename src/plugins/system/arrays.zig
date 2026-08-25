@@ -132,8 +132,13 @@ fn elementCount(value: Value) usize {
         .array => |array| array.len(),
         .dictionary => |dictionary| dictionary.len(),
         .string => |string| string.len(),
+        .function, .promise => 0,
         else => 1,
     };
+}
+
+fn testElementCountFunction(_: *Runtime, _: []const Value) !Value {
+    return .undefined;
 }
 
 fn insertOne(runtime: *Runtime, source: Value, index_value: Value, item: Value) !Value {
@@ -722,6 +727,21 @@ fn isAny(name: []const u8, options: []const []const u8) bool {
 
 fn eql(left: []const u8, right: []const u8) bool {
     return std.mem.eql(u8, left, right);
+}
+
+test "関数とPromiseの要素数はObject.keysと同じ0にする" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var name = try runtime.stringUtf8("F");
+    try roots.protect(&name);
+    var function = try runtime.createNativeFunction(name.string, 0, testElementCountFunction, &.{});
+    try roots.protect(&function);
+    var promise = try runtime.createPromise();
+    try roots.protect(&promise);
+    try std.testing.expectEqual(@as(f64, 0), (try call(&runtime, "配列要素数", &.{function}, null)).?.number);
+    try std.testing.expectEqual(@as(f64, 0), (try call(&runtime, "LEN", &.{promise}, null)).?.number);
 }
 
 test "配列と表の破壊的操作・コピー・検索を処理する" {

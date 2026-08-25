@@ -1524,6 +1524,40 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             };
         },
+        .unicode_length => {
+            const units = valueUtf16Alloc(runtime, value) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+            defer runtime.allocator.free(units);
+            out.* = numberValue(@floatFromInt(codePointCount(units)));
+        },
+        .codepoint_find => {
+            if (len < 2) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            out.* = numberValue(@floatFromInt(codePointFindBuiltin(runtime, arguments.?[0], arguments.?[1]) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            }));
+        },
+        .string_starts, .string_ends => {
+            if (len < 2) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            out.* = stringBoundaryBuiltin(runtime, arguments.?[0], arguments.?[1], command == .string_starts) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .element_count => {
+            out.* = numberValue(@floatFromInt(elementCountBuiltin(runtime, value) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            }));
+        },
     }
 }
 
@@ -1617,6 +1651,76 @@ fn repeatMultiplyBuiltin(runtime: *Runtime, left: Value, right: Value) !Value {
     for (0..count) |index| @memcpy(values[index * source.len ..][0..source.len], source);
     roots[2] = try runtime.createArray(values);
     return roots[2];
+}
+
+fn codePointCount(units: []const u16) usize {
+    var count: usize = 0;
+    var index: usize = 0;
+    while (index < units.len) : (count += 1) index += codePointLength(units, index);
+    return count;
+}
+
+fn codePointLength(units: []const u16, index: usize) usize {
+    return if (index + 1 < units.len and units[index] >= 0xd800 and units[index] <= 0xdbff and units[index + 1] >= 0xdc00 and units[index + 1] <= 0xdfff) 2 else 1;
+}
+
+fn codePointFindBuiltin(runtime: *Runtime, source: Value, needle: Value) !usize {
+    const source_units = try valueUtf16Alloc(runtime, source);
+    defer runtime.allocator.free(source_units);
+    const needle_units = try valueUtf16Alloc(runtime, needle);
+    defer runtime.allocator.free(needle_units);
+    if (source_units.len == 0) return 0;
+    var codepoint_index: usize = 0;
+    var unit_index: usize = 0;
+    while (unit_index < source_units.len) {
+        if (needle_units.len <= source_units.len - unit_index and std.mem.eql(u16, source_units[unit_index..][0..needle_units.len], needle_units)) return codepoint_index + 1;
+        unit_index += codePointLength(source_units, unit_index);
+        codepoint_index += 1;
+    }
+    return 0;
+}
+
+fn stringBoundaryBuiltin(runtime: *Runtime, source: Value, needle: Value, starts: bool) !Value {
+    try requireStringReceiver(source, starts);
+    const source_units = try valueUtf16Alloc(runtime, source);
+    defer runtime.allocator.free(source_units);
+    const needle_units = try valueUtf16Alloc(runtime, needle);
+    defer runtime.allocator.free(needle_units);
+    const matches = if (starts)
+        source_units.len >= needle_units.len and std.mem.eql(u16, source_units[0..needle_units.len], needle_units)
+    else
+        source_units.len >= needle_units.len and std.mem.eql(u16, source_units[source_units.len - needle_units.len ..], needle_units);
+    return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(matches) };
+}
+
+fn requireStringReceiver(value: Value, starts: bool) !void {
+    if (isString(value)) return;
+    const tag: Tag = @enumFromInt(value.tag);
+    if (starts) return switch (tag) {
+        .null_value => error.StartsWithNullReceiver,
+        .undefined => error.StartsWithUndefinedReceiver,
+        else => error.StartsWithReceiverExpected,
+    };
+    return switch (tag) {
+        .null_value => error.EndsWithNullReceiver,
+        .undefined => error.EndsWithUndefinedReceiver,
+        else => error.EndsWithReceiverExpected,
+    };
+}
+
+fn elementCountBuiltin(runtime: *Runtime, value: Value) !usize {
+    return switch (@as(Tag, @enumFromInt(value.tag))) {
+        .array => value.object().?.payload.array.items.len,
+        .dictionary => value.object().?.payload.dictionary.items.len,
+        .static_utf8_string, .utf16_string => blk: {
+            const units = try valueUtf16Alloc(runtime, value);
+            defer runtime.allocator.free(units);
+            break :blk units.len;
+        },
+        .function, .iterator => 0,
+        .binding_cell => elementCountBuiltin(runtime, value.object().?.payload.binding_cell),
+        else => 1,
+    };
 }
 
 test "UTF-16文字列をルートから正確にmark-and-sweepする" {
@@ -1948,6 +2052,39 @@ test "AOT掛命令は文字列配列反復と数値乗算を切り替える" {
     try std.testing.expectEqual(@as(usize, 4), roots[5].object().?.payload.array.items.len);
     lnako_aot_builtin_call(&roots[8], @ptrCast(&roots[6]), 2, @intFromEnum(aot_builtin.Command.repeat_multiply));
     try std.testing.expectEqual(@as(f64, 12), @as(f64, @bitCast(roots[8].payload)));
+}
+
+test "AOT文字長検索と要素数はUnicode scalarとUTF-16を区別する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+    roots[0] = try active_runtime.?.createString(&.{ 'A', 0xd83d, 0xde00, 'B' });
+    roots[1] = try active_runtime.?.createString(&.{ 0xd83d, 0xde00, 'B' });
+    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.unicode_length));
+    try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(roots[2].payload)));
+    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[0]), 2, @intFromEnum(aot_builtin.Command.codepoint_find));
+    try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(roots[3].payload)));
+    lnako_aot_builtin_call(&roots[4], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.element_count));
+    try std.testing.expectEqual(@as(f64, 4), @as(f64, @bitCast(roots[4].payload)));
+    roots[5] = staticStringValue("A");
+    const starts_arguments = [_]Value{ roots[0], roots[5] };
+    lnako_aot_builtin_call(&roots[6], &starts_arguments, starts_arguments.len, @intFromEnum(aot_builtin.Command.string_starts));
+    try std.testing.expect(roots[6].payload != 0);
+    roots[7] = staticStringValue("B");
+    const ends_arguments = [_]Value{ roots[0], roots[7] };
+    lnako_aot_builtin_call(&roots[8], &ends_arguments, ends_arguments.len, @intFromEnum(aot_builtin.Command.string_ends));
+    try std.testing.expect(roots[8].payload != 0);
+    roots[9] = try active_runtime.?.createArray(&.{ numberValue(1), numberValue(2) });
+    lnako_aot_builtin_call(&roots[10], @ptrCast(&roots[9]), 1, @intFromEnum(aot_builtin.Command.element_count));
+    try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(roots[10].payload)));
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {

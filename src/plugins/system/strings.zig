@@ -16,6 +16,7 @@ pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Val
     const a = common.argument(arguments, 0);
     const b = common.argument(arguments, 1);
     const c = common.argument(arguments, 2);
+    if (eql(name, "文字始") or eql(name, "文字終")) try requireStringReceiver(a, eql(name, "文字始"));
     var text_roots = runtime.rootFrame();
     defer text_roots.deinit();
     var a_root = a;
@@ -87,6 +88,20 @@ pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Val
     if (eql(name, "数字判定")) return .{ .boolean = isDigit(firstUnit(a_text.string)) };
     if (eql(name, "数列判定")) return .{ .boolean = numberSequence(a_text.string.units) };
     return null;
+}
+
+fn requireStringReceiver(value: Value, starts: bool) !void {
+    if (value == .string) return;
+    if (starts) return switch (value) {
+        .null_value => error.StartsWithNullReceiver,
+        .undefined => error.StartsWithUndefinedReceiver,
+        else => error.StartsWithReceiverExpected,
+    };
+    return switch (value) {
+        .null_value => error.EndsWithNullReceiver,
+        .undefined => error.EndsWithUndefinedReceiver,
+        else => error.EndsWithReceiverExpected,
+    };
 }
 
 fn handles(name: []const u8) bool {
@@ -622,9 +637,14 @@ fn codePointOffset(units: []const u16, target: usize) usize {
 }
 
 fn findCodePoints(haystack: []const u16, needle: []const u16, from_codepoint: usize) ?usize {
-    const start = codePointOffset(haystack, from_codepoint);
-    const found = indexOfUnits(haystack, needle, start) orelse return null;
-    return codePointCount(haystack[0..found]) + 1;
+    var codepoint_index = from_codepoint;
+    var unit_index = codePointOffset(haystack, from_codepoint);
+    while (unit_index < haystack.len) {
+        if (needle.len <= haystack.len - unit_index and std.mem.eql(u16, haystack[unit_index..][0..needle.len], needle)) return codepoint_index + 1;
+        unit_index += codePointLength(haystack, unit_index);
+        codepoint_index += 1;
+    }
+    return null;
 }
 
 fn indexOfUnits(haystack: []const u16, needle: []const u16, start: usize) ?usize {
@@ -700,6 +720,13 @@ test "Unicode文字列命令をコードポイント単位で処理する" {
     const utf8 = try middle.string.toUtf8Lossy(std.testing.allocator);
     defer std.testing.allocator.free(utf8);
     try std.testing.expectEqualStrings("😀B", utf8);
+}
+
+test "文字始と文字終は非文字列レシーバを公式文言で拒否する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    try std.testing.expectError(error.StartsWithReceiverExpected, call(&runtime, "文字始", &.{ .{ .number = 123 }, .{ .number = 12 } }));
+    try std.testing.expectError(error.EndsWithNullReceiver, call(&runtime, "文字終", &.{ .null_value, try runtime.stringUtf8("x") }));
 }
 
 test "置換・幅変換・かな変換を処理する" {

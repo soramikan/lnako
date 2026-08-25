@@ -45,6 +45,11 @@ pub const Command = enum(u16) {
     empty_dictionary,
     truth_label,
     repeat_multiply,
+    unicode_length,
+    codepoint_find,
+    string_starts,
+    string_ends,
+    element_count,
 };
 
 pub fn lookup(name: []const u8) ?Command {
@@ -92,6 +97,11 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "空辞書") or std.mem.eql(u8, name, "空ハッシュ") or std.mem.eql(u8, name, "空オブジェクト")) return .empty_dictionary;
     if (std.mem.eql(u8, name, "真偽判定")) return .truth_label;
     if (std.mem.eql(u8, name, "掛")) return .repeat_multiply;
+    if (std.mem.eql(u8, name, "文字数")) return .unicode_length;
+    if (std.mem.eql(u8, name, "何文字目")) return .codepoint_find;
+    if (std.mem.eql(u8, name, "文字始")) return .string_starts;
+    if (std.mem.eql(u8, name, "文字終")) return .string_ends;
+    if (std.mem.eql(u8, name, "配列要素数") or std.mem.eql(u8, name, "要素数") or std.mem.eql(u8, name, "LEN")) return .element_count;
     return null;
 }
 
@@ -150,5 +160,12 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.empty_dictionary, lookup("空オブジェクト").?);
     try std.testing.expectEqual(Command.truth_label, lookup("真偽判定").?);
     try std.testing.expectEqual(Command.repeat_multiply, lookup("掛").?);
+    try std.testing.expectEqual(Command.unicode_length, lookup("文字数").?);
+    try std.testing.expectEqual(Command.codepoint_find, lookup("何文字目").?);
+    try std.testing.expectEqual(Command.string_starts, lookup("文字始").?);
+    try std.testing.expectEqual(Command.string_ends, lookup("文字終").?);
+    try std.testing.expectEqual(Command.element_count, lookup("配列要素数").?);
+    try std.testing.expectEqual(Command.element_count, lookup("要素数").?);
+    try std.testing.expectEqual(Command.element_count, lookup("LEN").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }
