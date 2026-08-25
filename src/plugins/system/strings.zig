@@ -407,7 +407,7 @@ fn remove(runtime: *Runtime, source: Value, start_value: Value, count_value: Val
 
 fn includes(runtime: *Runtime, source: Value, needle: Value) !bool {
     if (source == .array) {
-        for (source.array.items.items) |item| if (Value.strictEqual(item, needle)) return true;
+        for (source.array.items.items) |item| if (Value.sameValueZero(item, needle)) return true;
         return false;
     }
     return indexOfUnits((try text(runtime, source)).units, (try text(runtime, needle)).units, 0) != null;

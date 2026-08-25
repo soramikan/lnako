@@ -976,7 +976,8 @@
   "出現": {
     "status": "native",
     "tests": [
-      "plugin-system-string-core"
+      "plugin-system-string-core",
+      "native-system-occurrence-command"
     ],
     "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
   },

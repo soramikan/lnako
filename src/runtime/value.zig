@@ -301,6 +301,15 @@ pub const Value = union(enum) {
         };
     }
 
+    /// ECMAScript SameValueZero, used by Array.prototype.includes.
+    pub fn sameValueZero(left: Value, right: Value) bool {
+        if (std.meta.activeTag(left) != std.meta.activeTag(right)) return false;
+        return switch (left) {
+            .number => |value| (std.math.isNan(value) and std.math.isNan(right.number)) or value == right.number,
+            else => strictEqual(left, right),
+        };
+    }
+
     pub fn abstractEqual(left: Value, scratch_allocator: std.mem.Allocator, right: Value) !bool {
         const left_tag = std.meta.activeTag(left);
         const right_tag = std.meta.activeTag(right);
@@ -1008,6 +1017,20 @@ test "動的値の真偽変換と同値性をJS規則で扱う" {
     try std.testing.expect(!Value.strictEqual(.{ .number = std.math.nan(f64) }, .{ .number = std.math.nan(f64) }));
     try std.testing.expect(Value.sameValue(.{ .number = std.math.nan(f64) }, .{ .number = std.math.nan(f64) }));
     try std.testing.expect(!Value.sameValue(.{ .number = 0.0 }, .{ .number = -0.0 }));
+}
+
+test "配列includes用SameValueZeroは型と参照同一性を保持する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const same_array = try runtime.createArray();
+    const different_array = try runtime.createArray();
+    const one_string = try runtime.stringUtf8("1");
+    try std.testing.expect(Value.sameValueZero(.{ .number = std.math.nan(f64) }, .{ .number = std.math.nan(f64) }));
+    try std.testing.expect(Value.sameValueZero(.{ .number = 0.0 }, .{ .number = -0.0 }));
+    try std.testing.expect(!Value.sameValueZero(.{ .number = 1.0 }, one_string));
+    try std.testing.expect(Value.sameValueZero(same_array, same_array));
+    try std.testing.expect(!Value.sameValueZero(same_array, different_array));
+    try std.testing.expect(!Value.sameValueZero(.null_value, .undefined));
 }
 
 test "文字列数値変換と抽象等価をJS規則で扱う" {

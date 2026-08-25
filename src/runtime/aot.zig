@@ -662,6 +662,21 @@ fn strictEqual(runtime: *Runtime, left: Value, right: Value) !bool {
     };
 }
 
+/// Array.prototype.includes uses SameValueZero: NaN matches NaN and signed
+/// zeroes compare equal, while objects retain reference identity.
+fn sameValueZero(runtime: *Runtime, left: Value, right: Value) !bool {
+    if (isString(left) and isString(right)) return stringEqual(runtime, left, right);
+    if (left.tag != right.tag) return false;
+    return switch (@as(Tag, @enumFromInt(left.tag))) {
+        .number => blk: {
+            const left_number: f64 = @bitCast(left.payload);
+            const right_number: f64 = @bitCast(right.payload);
+            break :blk (std.math.isNan(left_number) and std.math.isNan(right_number)) or left_number == right_number;
+        },
+        else => strictEqual(runtime, left, right),
+    };
+}
+
 fn abstractEqual(runtime: *Runtime, left: Value, right: Value) !bool {
     if ((isString(left) and isString(right)) or left.tag == right.tag) return strictEqual(runtime, left, right);
     const left_tag: Tag = @enumFromInt(left.tag);
@@ -1656,6 +1671,17 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 }));
             }
         },
+        .occurrence => {
+            if (len < 2) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            const found = occurrenceBuiltin(runtime, arguments.?[0], arguments.?[1]) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+            out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(found) };
+        },
         .substring_mid, .substring_left, .substring_right => {
             const required: usize = if (command == .substring_mid) 3 else 2;
             if (len < required) {
@@ -2169,6 +2195,20 @@ fn refrainBuiltin(runtime: *Runtime, value: Value, count_value: Value) !Value {
     const output = try runtime.allocator.alloc(u16, length);
     for (0..count) |index| @memcpy(output[index * units.len ..][0..units.len], units);
     return runtime.ownString(output);
+}
+
+fn occurrenceBuiltin(runtime: *Runtime, source: Value, needle: Value) !bool {
+    if (source.tag == @intFromEnum(Tag.array)) {
+        for (source.object().?.payload.array.items) |item| {
+            if (try sameValueZero(runtime, item, needle)) return true;
+        }
+        return false;
+    }
+    const source_units = try valueUtf16Alloc(runtime, source);
+    defer runtime.allocator.free(source_units);
+    const needle_units = try valueUtf16Alloc(runtime, needle);
+    defer runtime.allocator.free(needle_units);
+    return indexOfUnitsBuiltin(source_units, needle_units, 0) != null;
 }
 
 fn occurrenceCountBuiltin(runtime: *Runtime, source_value: Value, needle_value: Value) !i64 {
@@ -3133,6 +3173,59 @@ test "AOT文字列挿入検索はUnicode scalar位置と小数開始値を保持
     const nan_search = [_]Value{ staticStringValue("A😀B😀"), staticStringValue("2rest"), staticStringValue("😀") };
     lnako_aot_builtin_call(&roots[3], &nan_search, nan_search.len, @intFromEnum(aot_builtin.Command.string_search));
     try std.testing.expectEqual(@as(f64, 0), valueToNumber(roots[3]));
+}
+
+test "AOT出現命令は文字列検索と配列のSameValueZeroを保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    active_runtime = runtime;
+    active_runtime.?.next_collection = 1;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+        runtime.deinit();
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    const nan = numberValue(std.math.nan(f64));
+    const minus_zero = numberValue(-0.0);
+    const undefined_value: Value = .{};
+    const null_value: Value = .{ .tag = @intFromEnum(Tag.null_value) };
+    roots[0] = try active_runtime.?.createArray(&.{ nan, numberValue(0), undefined_value, null_value, staticStringValue("1") });
+    const array_cases = [_]struct { needle: Value, expected: bool }{
+        .{ .needle = numberValue(std.math.nan(f64)), .expected = true },
+        .{ .needle = minus_zero, .expected = true },
+        .{ .needle = undefined_value, .expected = true },
+        .{ .needle = null_value, .expected = true },
+        .{ .needle = numberValue(1), .expected = false },
+        .{ .needle = staticStringValue("1"), .expected = true },
+    };
+    for (array_cases, 1..) |case, index| {
+        const arguments = [_]Value{ roots[0], case.needle };
+        lnako_aot_builtin_call(&roots[index], &arguments, arguments.len, @intFromEnum(aot_builtin.Command.occurrence));
+        try std.testing.expectEqual(case.expected, roots[index].payload != 0);
+    }
+
+    roots[8] = try active_runtime.?.createArray(&.{numberValue(1)});
+    roots[9] = try active_runtime.?.createArray(&.{roots[8]});
+    const same_array_arguments = [_]Value{ roots[9], roots[8] };
+    lnako_aot_builtin_call(&roots[7], &same_array_arguments, same_array_arguments.len, @intFromEnum(aot_builtin.Command.occurrence));
+    try std.testing.expect(roots[7].payload != 0);
+
+    const string_cases = [_]struct { source: Value, needle: Value, expected: bool }{
+        .{ .source = staticStringValue("A😀B"), .needle = staticStringValue("😀"), .expected = true },
+        .{ .source = staticStringValue("A😀B"), .needle = staticStringValue(""), .expected = true },
+        .{ .source = staticStringValue("A\x00B"), .needle = staticStringValue("\x00"), .expected = true },
+        .{ .source = .{ .tag = @intFromEnum(Tag.null_value) }, .needle = staticStringValue("null"), .expected = true },
+        .{ .source = .{}, .needle = staticStringValue("undefined"), .expected = true },
+    };
+    for (string_cases) |case| {
+        const arguments = [_]Value{ case.source, case.needle };
+        lnako_aot_builtin_call(&roots[6], &arguments, arguments.len, @intFromEnum(aot_builtin.Command.occurrence));
+        try std.testing.expectEqual(case.expected, roots[6].payload != 0);
+    }
 }
 
 test "AOT文字列連結分解反復出現命令は公式の型変換を保つ" {

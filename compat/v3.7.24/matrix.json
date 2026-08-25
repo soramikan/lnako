@@ -3802,7 +3802,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-string-core"
+        "plugin-system-string-core",
+        "native-system-occurrence-command"
       ],
       "platforms": [
         "macos-aarch64",

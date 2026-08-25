@@ -34,6 +34,7 @@ lnakoは、意図的な非互換として合意した項目を除き、説明文
 
 | 構文 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID |
 |---|---|---|---|
+| `出現`の検索対象と配列比較 | 文字列の検索対象はUTF-16コード単位で、空needleは真、needleは文字列化する。配列は`Array.includes`相当のSameValueZeroで、NaN同士と±0を一致させるが、数値1と文字列`"1"`、nullとundefined、内容が同じ別配列は一致せず、同じ配列参照だけ一致する。配列以外の対象は`String(S).includes(A)`になる | AOT・インタプリタとも文字列検索と配列のSameValueZeroを分離し、配列要素の型・参照同一性とUTF-16境界を保持する | `出現の文字列検索と配列SameValueZeroを公式互換にする`、`native-system-occurrence-command` |
 | `文字数`と`LEN` | `文字数`は`Array.from`によるUnicode scalar数なので`文字数("A😀B")`は3だが、`LEN`はUTF-16コード単位数なので4になる | 同じ文字列表現から数え方だけを分け、AOTでも両方を個別の標準命令IDへ下げる | `Unicode文字列命令をコードポイント単位で処理する`、`AOT文字長検索と要素数はUnicode scalarとUTF-16を区別する`、`native-system-string-length-search-boundary-commands` |
 | `何文字目`の空検索語 | 空検索語は常に1ではない。公式実装が元文字列の各Unicode scalar位置だけを走査するため、`何文字目("abc","")`は1だが、走査位置が一つもない`何文字目("","")`は0になる | UTF-16の生の`indexOf`へ置き換えず、scalar境界だけを先頭から走査する | `Unicode文字列命令をコードポイント単位で処理する`、`native-system-string-length-search-boundary-commands` |
 | `何文字目`の非文字列入力 | 型注釈は文字列だが、実体は両引数へ`Array.from`を適用する。配列は要素列のまま検索し、Number・Boolean・BigIntは空列になるため`何文字目("abc",12)`は1、`何文字目(123,12)`は0になる。`null`は反復不能例外になる | v1の文字列入力は一致済み。型注釈外の配列・プリミティブ・nullを含む`Array.from`完全互換は未実装で、完成扱いにせず後続回帰IDへ分離する | `TODO: system-string-array-from-coercion` |
