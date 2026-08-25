@@ -196,7 +196,7 @@ ABI値の所有権と非同期スレッド制約は[`NATIVE_PLUGIN_ABI.md`](NATI
 | 境界 | 分かりにくい挙動 | lnakoの扱い | テストID |
 |---|---|---|---|
 | AOTの`-O0`〜`-O3`とランタイム静的ライブラリ | CLIの最適化指定はNako SSA IRと生成LLVMモジュールに対する指定であり、別にリンクするZigランタイムまで同じモードにするとDebug版だけがZigの診断用OS依存を持つ | 生成コードは指定レベルを維持し、配布ランタイムはReleaseSafe・strip・compiler-rt同梱で固定する。WindowsではZigの安全検査経路が使うNT APIを`ntdll.lib`で解決する | `Differential native AOT test`、GitHub Actions `Windows x86_64` |
-| 16バイト動的値のWindows ABI | `%lnako.Value`をC関数の引数・戻り値として値渡しすると、Windows x64とSystem Vで集約値の呼出規約が異なる。macOS/Linuxで動いてもWindows生成物だけが配列生成時にアクセス違反になり得る | Zig製AOTランタイムとの公開境界では動的値をすべてポインタ渡しにし、集約値のC ABI分類へ依存しない | `公開AOT ABIは動的値をポインタで受け渡す`、`Differential native AOT test`、GitHub Actions `Windows x86_64` |
+| 16バイト動的値のWindows ABI | `%lnako.Value`をC関数の引数・戻り値として値渡しすると、Windows x64とSystem Vで集約値の呼出規約が異なる。macOS/Linuxで動いてもWindows生成物だけで配列生成時のアクセス違反や、関数コールバックの戻り値欠落が起こり得る | Zig製AOTランタイムとの公開境界では動的値をすべてポインタ渡しにする。LLVM生成コールバックも明示的な結果ポインタへ書き込み、集約値のC ABI分類へ依存しない | `公開AOT ABIは動的値をポインタで受け渡す`、`native-noncapturing-function-value`、`native-dynamic-function-arity`、`native-closure-shared-mutable-binding`、`native-closure-transitive-capture`、GitHub Actions `Windows x86_64 / aot` |
 | binary64の表示桁数 | Cの`printf("%.17g")`は値の往復に十分でも、`PI`を`3.1415926535897931`と表示し、JavaScriptの最短表記`3.141592653589793`と一致しない | インタープリタとAOTで同じ最短表記変換を共有し、`NaN`・無限大・指数表記境界・負のゼロもJavaScript規則へ合わせる | `binary64をJavaScript互換の最短文字列へ変換する`、`native-scalar-system-constants` |
 | `check_compat_report.mjs`をQuickJSビルド後に実行 | 検査スクリプト自身が通常版を再ビルドすると、直前に生成したQuickJS対応`lnako`を同じ`zig-out/bin`上で置き換える | 単独実行は従来どおりビルドしてから検査し、既存配布物を検査するCIでは`--no-build`を指定してバイナリを変更しない | `check_compat_report.mjs --no-build`、GitHub Actions `Smoke test` |
 
