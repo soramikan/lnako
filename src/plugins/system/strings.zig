@@ -413,15 +413,18 @@ fn replace(runtime: *Runtime, source: Value, search: Value, replacement: Value, 
     const needle = (try text(runtime, search)).units;
     const replacement_units = (try text(runtime, replacement)).units;
     if (needle.len == 0) {
-        if (!all) return insertUnits(runtime, units, 0, replacement_units);
+        if (!all) return replaceFirst(runtime, units, 0, 0, replacement_units);
         var output: std.ArrayList(u16) = .empty;
         defer output.deinit(runtime.allocator());
-        try output.appendSlice(runtime.allocator(), replacement_units);
-        for (units) |unit| {
+        for (units, 0..) |unit, index| {
+            if (index > 0) try output.appendSlice(runtime.allocator(), replacement_units);
             try output.append(runtime.allocator(), unit);
-            try output.appendSlice(runtime.allocator(), replacement_units);
         }
         return runtime.stringCodeUnits(output.items);
+    }
+    if (!all) {
+        const found = indexOfUnits(units, needle, 0) orelse return runtime.stringCodeUnits(units);
+        return replaceFirst(runtime, units, found, found + needle.len, replacement_units);
     }
     var output: std.ArrayList(u16) = .empty;
     defer output.deinit(runtime.allocator());
@@ -430,9 +433,36 @@ fn replace(runtime: *Runtime, source: Value, search: Value, replacement: Value, 
         try output.appendSlice(runtime.allocator(), units[start..found]);
         try output.appendSlice(runtime.allocator(), replacement_units);
         start = found + needle.len;
-        if (!all) break;
     }
     try output.appendSlice(runtime.allocator(), units[start..]);
+    return runtime.stringCodeUnits(output.items);
+}
+
+fn replaceFirst(runtime: *Runtime, source: []const u16, match_start: usize, match_end: usize, replacement: []const u16) !Value {
+    var output: std.ArrayList(u16) = .empty;
+    defer output.deinit(runtime.allocator());
+    try output.appendSlice(runtime.allocator(), source[0..match_start]);
+    var index: usize = 0;
+    while (index < replacement.len) {
+        if (replacement[index] != '$' or index + 1 >= replacement.len) {
+            try output.append(runtime.allocator(), replacement[index]);
+            index += 1;
+            continue;
+        }
+        switch (replacement[index + 1]) {
+            '$' => try output.append(runtime.allocator(), '$'),
+            '&' => try output.appendSlice(runtime.allocator(), source[match_start..match_end]),
+            '`' => try output.appendSlice(runtime.allocator(), source[0..match_start]),
+            '\'' => try output.appendSlice(runtime.allocator(), source[match_end..]),
+            else => {
+                try output.append(runtime.allocator(), '$');
+                index += 1;
+                continue;
+            },
+        }
+        index += 2;
+    }
+    try output.appendSlice(runtime.allocator(), source[match_end..]);
     return runtime.stringCodeUnits(output.items);
 }
 

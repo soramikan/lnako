@@ -2396,6 +2396,26 @@ test "文字削除はspliceの負位置と数値化不能削除数を扱う" {
     try std.testing.expectEqualStrings("ABCDE\nABCD\nABC\n", host.written());
 }
 
+test "単置換の置換パターンと全置換の空検索語を公式通り処理する" {
+    const source =
+        "置換(\"abc\",\"\",\"-\")を表示\n" ++
+        "置換(\"abc\",\"b\",\"[$&]\")を表示\n" ++
+        "単置換(\"abc\",\"b\",\"[$$][$&][$`][$']\")を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("a-b-c\na[$&]c\na[$][b][a][c]c\n", host.written());
+}
+
 test "連続する例外監視で直前の捕捉値を再利用しない" {
     const source =
         "エラー監視\nA=1n+1\nエラーならば\nエラーメッセージを表示\nここまで\n" ++

@@ -72,6 +72,8 @@ pub const Command = enum(u16) {
     trim_both,
     trim_right,
     trim_left,
+    replace_all,
+    replace_first,
 };
 
 pub fn lookup(name: []const u8) ?Command {
@@ -146,6 +148,8 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "トリム") or std.mem.eql(u8, name, "空白除去")) return .trim_both;
     if (std.mem.eql(u8, name, "右トリム") or std.mem.eql(u8, name, "末尾空白除去")) return .trim_right;
     if (std.mem.eql(u8, name, "左トリム")) return .trim_left;
+    if (std.mem.eql(u8, name, "置換")) return .replace_all;
+    if (std.mem.eql(u8, name, "単置換")) return .replace_first;
     return null;
 }
 
@@ -239,5 +243,7 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.trim_right, lookup("右トリム").?);
     try std.testing.expectEqual(Command.trim_right, lookup("末尾空白除去").?);
     try std.testing.expectEqual(Command.trim_left, lookup("左トリム").?);
+    try std.testing.expectEqual(Command.replace_all, lookup("置換").?);
+    try std.testing.expectEqual(Command.replace_first, lookup("単置換").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }

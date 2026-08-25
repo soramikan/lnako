@@ -1688,6 +1688,16 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             };
         },
+        .replace_all, .replace_first => {
+            if (len < 3) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            out.* = replaceBuiltin(runtime, arguments.?[0], arguments.?[1], arguments.?[2], command == .replace_all) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
     }
 }
 
@@ -2230,6 +2240,62 @@ fn trimBuiltin(runtime: *Runtime, value: Value, trim_left: bool, trim_right: boo
         while (end > start and string_mod.isEcmaWhitespace(units[end - 1])) : (end -= 1) {}
     }
     return runtime.createString(units[start..end]);
+}
+
+fn replaceBuiltin(runtime: *Runtime, source_value: Value, needle_value: Value, replacement_value: Value, all: bool) !Value {
+    const source = try valueUtf16Alloc(runtime, source_value);
+    defer runtime.allocator.free(source);
+    const needle = try valueUtf16Alloc(runtime, needle_value);
+    defer runtime.allocator.free(needle);
+    const replacement = try valueUtf16Alloc(runtime, replacement_value);
+    defer runtime.allocator.free(replacement);
+    var output: std.ArrayList(u16) = .empty;
+    errdefer output.deinit(runtime.allocator);
+    if (!all) {
+        const found = std.mem.indexOf(u16, source, needle) orelse return runtime.createString(source);
+        try output.appendSlice(runtime.allocator, source[0..found]);
+        try appendFirstReplacementBuiltin(runtime, &output, source, found, found + needle.len, replacement);
+        try output.appendSlice(runtime.allocator, source[found + needle.len ..]);
+        return runtime.ownString(try output.toOwnedSlice(runtime.allocator));
+    }
+    if (needle.len == 0) {
+        for (source, 0..) |unit, index| {
+            if (index > 0) try output.appendSlice(runtime.allocator, replacement);
+            try output.append(runtime.allocator, unit);
+        }
+        return runtime.ownString(try output.toOwnedSlice(runtime.allocator));
+    }
+    var start: usize = 0;
+    while (std.mem.indexOfPos(u16, source, start, needle)) |found| {
+        try output.appendSlice(runtime.allocator, source[start..found]);
+        try output.appendSlice(runtime.allocator, replacement);
+        start = found + needle.len;
+    }
+    try output.appendSlice(runtime.allocator, source[start..]);
+    return runtime.ownString(try output.toOwnedSlice(runtime.allocator));
+}
+
+fn appendFirstReplacementBuiltin(runtime: *Runtime, output: *std.ArrayList(u16), source: []const u16, match_start: usize, match_end: usize, replacement: []const u16) !void {
+    var index: usize = 0;
+    while (index < replacement.len) {
+        if (replacement[index] != '$' or index + 1 >= replacement.len) {
+            try output.append(runtime.allocator, replacement[index]);
+            index += 1;
+            continue;
+        }
+        switch (replacement[index + 1]) {
+            '$' => try output.append(runtime.allocator, '$'),
+            '&' => try output.appendSlice(runtime.allocator, source[match_start..match_end]),
+            '`' => try output.appendSlice(runtime.allocator, source[0..match_start]),
+            '\'' => try output.appendSlice(runtime.allocator, source[match_end..]),
+            else => {
+                try output.append(runtime.allocator, '$');
+                index += 1;
+                continue;
+            },
+        }
+        index += 2;
+    }
 }
 
 test "UTF-16文字列をルートから正確にmark-and-sweepする" {
@@ -2834,6 +2900,31 @@ test "AOTトリム命令はECMAScript空白だけを左右別に除去する" {
     try std.testing.expectEqualSlices(u16, &.{ 0xfeff, 0x3000, '\t', ' ', 'A' }, roots[1].object().?.payload.utf16_string);
     lnako_aot_builtin_call(&roots[2], &source, source.len, @intFromEnum(aot_builtin.Command.trim_left));
     try std.testing.expectEqualSlices(u16, &.{ 'A', ' ', 0x00a0, 0x2029 }, roots[2].object().?.payload.utf16_string);
+}
+
+test "AOT置換命令は全置換の空検索と単置換の置換パターンを分ける" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+    const empty_all = [_]Value{ staticStringValue("abc"), staticStringValue(""), staticStringValue("-") };
+    lnako_aot_builtin_call(&roots[0], &empty_all, empty_all.len, @intFromEnum(aot_builtin.Command.replace_all));
+    try std.testing.expectEqualSlices(u16, &.{ 'a', '-', 'b', '-', 'c' }, roots[0].object().?.payload.utf16_string);
+    const special_first = [_]Value{ staticStringValue("abc"), staticStringValue("b"), staticStringValue("[$$][$&][$`][$']") };
+    lnako_aot_builtin_call(&roots[1], &special_first, special_first.len, @intFromEnum(aot_builtin.Command.replace_first));
+    const expected = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, "a[$][b][a][c]c");
+    defer std.testing.allocator.free(expected);
+    try std.testing.expectEqualSlices(u16, expected, roots[1].object().?.payload.utf16_string);
+    const literal_all = [_]Value{ staticStringValue("abc"), staticStringValue("b"), staticStringValue("[$&]") };
+    lnako_aot_builtin_call(&roots[2], &literal_all, literal_all.len, @intFromEnum(aot_builtin.Command.replace_all));
+    try std.testing.expectEqualSlices(u16, &.{ 'a', '[', '$', '&', ']', 'c' }, roots[2].object().?.payload.utf16_string);
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {
