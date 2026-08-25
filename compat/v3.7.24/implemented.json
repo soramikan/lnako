@@ -1345,28 +1345,32 @@
   "配列ソート": {
     "status": "native",
     "tests": [
-      "plugin-system-array-core"
+      "plugin-system-array-core",
+      "native-system-array-sort-commands"
     ],
     "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
   },
   "配列数値変換": {
     "status": "native",
     "tests": [
-      "plugin-system-array-core"
+      "plugin-system-array-core",
+      "native-system-array-sort-commands"
     ],
     "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
   },
   "配列数値ソート": {
     "status": "native",
     "tests": [
-      "plugin-system-array-core"
+      "plugin-system-array-core",
+      "native-system-array-sort-commands"
     ],
     "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
   },
   "配列逆順": {
     "status": "native",
     "tests": [
-      "plugin-system-array-core"
+      "plugin-system-array-core",
+      "native-system-array-sort-commands"
     ],
     "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
   },

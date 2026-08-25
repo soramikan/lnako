@@ -1622,6 +1622,13 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             });
         },
+        .array_sort, .array_numeric_convert, .array_numeric_sort, .array_reverse => {
+            const source: Value = if (len > 0) arguments.?[0] else .{};
+            out.* = arrayOrderingBuiltin(runtime, command, source) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .array_insert, .array_insert_many, .array_cut, .array_take, .array_pop, .array_push, .array_clone, .array_range_copy, .reference, .array_add, .array_maximum, .array_minimum, .array_sum, .array_swap, .array_sequence, .array_fill => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = arrayMutationBuiltin(runtime, command, actual) catch |failure| {
@@ -2375,6 +2382,107 @@ fn arraySearchBuiltin(runtime: *Runtime, source: Value, needle: Value) !f64 {
         if (try strictEqual(runtime, item, needle)) return @floatFromInt(index);
     }
     return -1;
+}
+
+fn arrayOrderingBuiltin(runtime: *Runtime, command: aot_builtin.Command, source: Value) !Value {
+    if (source.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
+    const object = source.object() orelse return error.InvalidArray;
+    if (object.payload != .array) return error.InvalidArray;
+    const items = &object.payload.array;
+    switch (command) {
+        .array_reverse => {
+            std.mem.reverse(Value, items.items);
+            return source;
+        },
+        .array_numeric_convert => {
+            var source_root = source;
+            var roots = RootFrame{};
+            runtime.pushRoots(&roots, @ptrCast(&source_root), 1);
+            defer runtime.popRoots(&roots);
+            for (items.items) |*item| item.* = numberValue(try parseFloatBuiltin(runtime, item.*));
+            return source_root;
+        },
+        .array_sort, .array_numeric_sort => return try stableArraySort(runtime, source, command == .array_numeric_sort),
+        else => unreachable,
+    }
+}
+
+fn stableArraySort(runtime: *Runtime, source: Value, numeric: bool) !Value {
+    const items = &source.object().?.payload.array;
+    if (items.items.len < 2) return source;
+
+    // Keep the live array unchanged until the merge completes. The contiguous
+    // root storage protects both the source object and every temporary value
+    // while ToString/parseFloat allocate and may trigger collection.
+    const allocator = runtime.allocator;
+    const root_count = std.math.add(usize, items.items.len, 1) catch return error.ArrayTooLarge;
+    const root_values = try allocator.alloc(Value, root_count);
+    defer allocator.free(root_values);
+    root_values[0] = source;
+    std.mem.copyForwards(Value, root_values[1..], items.items);
+    var roots = RootFrame{};
+    runtime.pushRoots(&roots, root_values.ptr, root_values.len);
+    defer runtime.popRoots(&roots);
+    const temporary = root_values[1..];
+
+    var width: usize = 1;
+    var from_source = true;
+    while (width < items.items.len) : (width = std.math.mul(usize, width, 2) catch items.items.len) {
+        const input = if (from_source) items.items else temporary;
+        const output = if (from_source) temporary else items.items;
+        var start: usize = 0;
+        while (start < input.len) {
+            const middle = @min(std.math.add(usize, start, width) catch input.len, input.len);
+            const end = @min(std.math.add(usize, middle, width) catch input.len, input.len);
+            var left = start;
+            var right = middle;
+            var destination = start;
+            while (left < middle and right < end) {
+                const order = try compareArraySortValues(runtime, input[left], input[right], numeric);
+                if (order == .gt) {
+                    output[destination] = input[right];
+                    right += 1;
+                } else {
+                    output[destination] = input[left];
+                    left += 1;
+                }
+                destination += 1;
+            }
+            while (left < middle) : ({
+                left += 1;
+                destination += 1;
+            }) output[destination] = input[left];
+            while (right < end) : ({
+                right += 1;
+                destination += 1;
+            }) output[destination] = input[right];
+            start = end;
+        }
+        from_source = !from_source;
+    }
+    if (!from_source) std.mem.copyForwards(Value, items.items, temporary);
+    return source;
+}
+
+fn compareArraySortValues(runtime: *Runtime, left: Value, right: Value, numeric: bool) !std.math.Order {
+    if (left.tag == @intFromEnum(Tag.undefined)) return if (right.tag == @intFromEnum(Tag.undefined)) .eq else .gt;
+    if (right.tag == @intFromEnum(Tag.undefined)) return .lt;
+    if (numeric) {
+        const left_number = try parseFloatBuiltin(runtime, left);
+        const right_number = try parseFloatBuiltin(runtime, right);
+        if (std.math.isNan(left_number) or std.math.isNan(right_number)) return .eq;
+        return std.math.order(left_number, right_number);
+    }
+
+    const left_text = try valueUtf16Alloc(runtime, left);
+    defer runtime.allocator.free(left_text);
+    const right_text = try valueUtf16Alloc(runtime, right);
+    defer runtime.allocator.free(right_text);
+    return utf16Order(left_text, right_text);
+}
+
+fn utf16Order(left: []const u16, right: []const u16) std.math.Order {
+    return std.mem.order(u16, left, right);
 }
 
 const ArrayRange = struct { start: usize, count: usize };
@@ -5018,6 +5126,44 @@ test "AOT配列の集約・入替・連番・要素生成を公式境界で処�
     const cloned = try arrayItems(roots[12]);
     try runtime.indexSet(cloned.items[0], numberValue(0), numberValue(9));
     try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(runtime.indexGet(cloned.items[1], numberValue(0)).payload)));
+}
+
+test "AOT配列ソート系は安定mergeとundefined末尾と同一配列を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 8;
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createString(&.{0xe000});
+    roots[1] = try runtime.createArray(&.{ roots[0], .{}, staticStringValue("😀"), staticStringValue("A") });
+    const identity = roots[1].payload;
+    try std.testing.expectEqual(identity, (try arrayOrderingBuiltin(&runtime, .array_sort, roots[1])).payload);
+    const sorted = (try arrayItems(roots[1])).items;
+    const first = try valueUtf16Alloc(&runtime, sorted[0]);
+    defer runtime.allocator.free(first);
+    try std.testing.expectEqualSlices(u16, &.{'A'}, first);
+    const second = try valueUtf16Alloc(&runtime, sorted[1]);
+    defer runtime.allocator.free(second);
+    try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00 }, second);
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(sorted[3].tag)));
+
+    roots[2] = try runtime.createBigInt("2n");
+    roots[3] = try runtime.createArray(&.{ staticStringValue("10"), .{}, roots[2], numberValue(std.math.nan(f64)), numberValue(-0.0), numberValue(0.0) });
+    try std.testing.expectEqual(roots[3].payload, (try arrayOrderingBuiltin(&runtime, .array_numeric_sort, roots[3])).payload);
+    const numeric = (try arrayItems(roots[3])).items;
+    try std.testing.expect(isNegativeZero(valueToNumber(numeric[0])));
+    try std.testing.expect(!isNegativeZero(valueToNumber(numeric[1])));
+    try std.testing.expectEqual(Tag.bigint, @as(Tag, @enumFromInt(numeric[2].tag)));
+    try std.testing.expectEqual(Tag.static_utf8_string, @as(Tag, @enumFromInt(numeric[3].tag)));
+    try std.testing.expect(std.math.isNan(valueToNumber(numeric[4])));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(numeric[5].tag)));
+    _ = try arrayOrderingBuiltin(&runtime, .array_numeric_convert, roots[3]);
+    try std.testing.expectEqual(Tag.number, @as(Tag, @enumFromInt((try arrayItems(roots[3])).items[2].tag)));
+    try std.testing.expect(std.math.isNan(valueToNumber((try arrayItems(roots[3])).items[5])));
+    try std.testing.expectEqual(roots[3].payload, (try arrayOrderingBuiltin(&runtime, .array_reverse, roots[3])).payload);
+    try std.testing.expect(std.math.isNan(valueToNumber((try arrayItems(roots[3])).items[0])));
 }
 
 fn numberValue(number: f64) Value {

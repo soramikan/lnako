@@ -4837,7 +4837,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-array-core"
+        "plugin-system-array-core",
+        "native-system-array-sort-commands"
       ],
       "platforms": [
         "macos-aarch64",
@@ -4863,7 +4864,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-array-core"
+        "plugin-system-array-core",
+        "native-system-array-sort-commands"
       ],
       "platforms": [
         "macos-aarch64",
@@ -4889,7 +4891,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-array-core"
+        "plugin-system-array-core",
+        "native-system-array-sort-commands"
       ],
       "platforms": [
         "macos-aarch64",
@@ -4941,7 +4944,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-array-core"
+        "plugin-system-array-core",
+        "native-system-array-sort-commands"
       ],
       "platforms": [
         "macos-aarch64",

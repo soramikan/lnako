@@ -53,6 +53,10 @@ pub const Command = enum(u16) {
     array_join,
     array_join_only,
     array_search,
+    array_sort,
+    array_numeric_convert,
+    array_numeric_sort,
+    array_reverse,
     array_insert,
     array_insert_many,
     array_cut,
@@ -170,6 +174,10 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "配列結合")) return .array_join;
     if (std.mem.eql(u8, name, "配列只結合")) return .array_join_only;
     if (std.mem.eql(u8, name, "配列検索")) return .array_search;
+    if (std.mem.eql(u8, name, "配列ソート")) return .array_sort;
+    if (std.mem.eql(u8, name, "配列数値変換")) return .array_numeric_convert;
+    if (std.mem.eql(u8, name, "配列数値ソート")) return .array_numeric_sort;
+    if (std.mem.eql(u8, name, "配列逆順")) return .array_reverse;
     if (std.mem.eql(u8, name, "配列挿入")) return .array_insert;
     if (std.mem.eql(u8, name, "配列一括挿入")) return .array_insert_many;
     if (std.mem.eql(u8, name, "配列削除") or std.mem.eql(u8, name, "配列切取")) return .array_cut;
@@ -308,6 +316,10 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.array_join, lookup("配列結合").?);
     try std.testing.expectEqual(Command.array_join_only, lookup("配列只結合").?);
     try std.testing.expectEqual(Command.array_search, lookup("配列検索").?);
+    try std.testing.expectEqual(Command.array_sort, lookup("配列ソート").?);
+    try std.testing.expectEqual(Command.array_numeric_convert, lookup("配列数値変換").?);
+    try std.testing.expectEqual(Command.array_numeric_sort, lookup("配列数値ソート").?);
+    try std.testing.expectEqual(Command.array_reverse, lookup("配列逆順").?);
     try std.testing.expectEqual(Command.array_insert, lookup("配列挿入").?);
     try std.testing.expectEqual(Command.array_insert_many, lookup("配列一括挿入").?);
     try std.testing.expectEqual(Command.array_cut, lookup("配列削除").?);

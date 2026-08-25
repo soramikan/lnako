@@ -143,6 +143,20 @@ fn testElementCountFunction(_: *Runtime, _: []const Value) !Value {
     return .undefined;
 }
 
+const TestMutatingSortContext = struct {
+    target: *value_mod.Array,
+    mutated: bool = false,
+
+    fn invoke(raw: *anyopaque, _: Value, arguments: []const Value) anyerror!Value {
+        const self: *@This() = @ptrCast(@alignCast(raw));
+        if (!self.mutated) {
+            self.target.items.clearRetainingCapacity();
+            self.mutated = true;
+        }
+        return .{ .number = arguments[0].number - arguments[1].number };
+    }
+};
+
 fn insertOne(runtime: *Runtime, source: Value, index_value: Value, item: Value) !Value {
     if (source != .array) return error.ArrayExpected;
     try source.array.insert(spliceIndex(try runtime.valueToNumber(index_value), source.array.len()), item);
@@ -174,58 +188,177 @@ fn insertMany(runtime: *Runtime, source: Value, index_value: Value, items: Value
 
 fn sortDefault(runtime: *Runtime, source: Value) !Value {
     if (source != .array) return error.ArrayExpected;
-    try stableSort(runtime, source.array, .string, null);
+    try stableSort(runtime, source, .string, null);
     return source;
 }
 
 fn numericConvert(runtime: *Runtime, source: Value) !Value {
     if (source != .array) return error.ArrayExpected;
-    for (source.array.items.items) |*item| {
+    var source_root = source;
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&source_root);
+    for (source_root.array.items.items) |*item| {
         const original = item.*;
         const number = try common.parseFloatValue(runtime, original);
         item.* = .{ .number = number };
     }
-    return source;
+    return source_root;
 }
 
 fn sortNumeric(runtime: *Runtime, source: Value) !Value {
     if (source != .array) return error.ArrayExpected;
-    try stableSort(runtime, source.array, .number, null);
+    try stableSort(runtime, source, .number, null);
     return source;
 }
 
 fn sortCustom(runtime: *Runtime, function_value: Value, source: Value, context: ?Context) !Value {
     if (source != .array) return error.ArrayExpected;
-    var callable = try Context.resolve(context, runtime, function_value);
+    var source_root = source;
+    var function_root = function_value;
+    var callable: Value = .undefined;
     var roots = runtime.rootFrame();
     defer roots.deinit();
+    try roots.protect(&source_root);
+    try roots.protect(&function_root);
     try roots.protect(&callable);
-    try stableSort(runtime, source.array, .callback, .{ .context = context, .callable = callable });
-    return source;
+    callable = try Context.resolve(context, runtime, function_root);
+    try stableSort(runtime, source_root, .callback, .{ .context = context, .callable = callable });
+    return source_root;
 }
 
 const SortMode = enum { string, number, relational, callback };
 const SortCallback = struct { context: ?Context, callable: Value };
 
-fn stableSort(runtime: *Runtime, array: *value_mod.Array, mode: SortMode, callback: ?SortCallback) !void {
-    var index: usize = 1;
-    while (index < array.len()) : (index += 1) {
-        const value = array.items.items[index];
-        var cursor = index;
-        while (cursor > 0 and try compareForSort(runtime, array.items.items[cursor - 1], value, mode, callback) == .gt) {
-            array.items.items[cursor] = array.items.items[cursor - 1];
-            cursor -= 1;
+fn stableSort(runtime: *Runtime, source: Value, mode: SortMode, callback: ?SortCallback) !void {
+    const array = source.array;
+    if (array.items.items.len < 2) return;
+    if (mode == .callback) return stableCallbackSort(runtime, array, callback.?);
+
+    // Allocate initialized scratch storage before sorting. This avoids O(n^2)
+    // behavior and prevents OOM from exposing an uninitialized array slot.
+    var source_root = source;
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&source_root);
+    const temporary = try runtime.allocator().dupe(Value, array.items.items);
+    defer runtime.allocator().free(temporary);
+    for (temporary) |*item| try roots.protect(item);
+
+    var width: usize = 1;
+    var from_source = true;
+    while (width < array.items.items.len) : (width = std.math.mul(usize, width, 2) catch array.items.items.len) {
+        const input = if (from_source) array.items.items else temporary;
+        const output = if (from_source) temporary else array.items.items;
+        var start: usize = 0;
+        while (start < input.len) {
+            const middle = @min(std.math.add(usize, start, width) catch input.len, input.len);
+            const end = @min(std.math.add(usize, middle, width) catch input.len, input.len);
+            var left = start;
+            var right = middle;
+            var destination = start;
+            while (left < middle and right < end) {
+                const order = try compareForSort(runtime, input[left], input[right], mode, callback);
+                if (order == .gt) {
+                    output[destination] = input[right];
+                    right += 1;
+                } else {
+                    output[destination] = input[left];
+                    left += 1;
+                }
+                destination += 1;
+            }
+            while (left < middle) : ({
+                left += 1;
+                destination += 1;
+            }) output[destination] = input[left];
+            while (right < end) : ({
+                right += 1;
+                destination += 1;
+            }) output[destination] = input[right];
+            start = end;
         }
-        array.items.items[cursor] = value;
+        from_source = !from_source;
     }
+    if (!from_source) std.mem.copyForwards(Value, array.items.items, temporary);
+}
+
+fn stableCallbackSort(runtime: *Runtime, array: *value_mod.Array, callback: SortCallback) !void {
+    // ECMAScript collects the indexed values before invoking the comparator.
+    // Keep both merge buffers detached from the live array so a callback may
+    // resize or reallocate that array without invalidating an active slice.
+    const original_length = array.len();
+    const first = try runtime.allocator().dupe(Value, array.items.items);
+    defer runtime.allocator().free(first);
+    const second = try runtime.allocator().dupe(Value, first);
+    defer runtime.allocator().free(second);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    for (first) |*item| try roots.protect(item);
+    for (second) |*item| try roots.protect(item);
+
+    var width: usize = 1;
+    var from_first = true;
+    while (width < original_length) : (width = std.math.mul(usize, width, 2) catch original_length) {
+        const input = if (from_first) first else second;
+        const output = if (from_first) second else first;
+        var start: usize = 0;
+        while (start < original_length) {
+            const middle = @min(std.math.add(usize, start, width) catch original_length, original_length);
+            const end = @min(std.math.add(usize, middle, width) catch original_length, original_length);
+            var left = start;
+            var right = middle;
+            var destination = start;
+            while (left < middle and right < end) {
+                const order = try compareForSort(runtime, input[left], input[right], .callback, callback);
+                if (order == .gt) {
+                    output[destination] = input[right];
+                    right += 1;
+                } else {
+                    output[destination] = input[left];
+                    left += 1;
+                }
+                destination += 1;
+            }
+            while (left < middle) : ({
+                left += 1;
+                destination += 1;
+            }) output[destination] = input[left];
+            while (right < end) : ({
+                right += 1;
+                destination += 1;
+            }) output[destination] = input[right];
+            start = end;
+        }
+        from_first = !from_first;
+    }
+
+    if (array.len() < original_length) {
+        const old_length = array.len();
+        try array.items.resize(runtime.allocator(), original_length);
+        @memset(array.items.items[old_length..], .undefined);
+    }
+    const sorted = if (from_first) first else second;
+    std.mem.copyForwards(Value, array.items.items[0..original_length], sorted);
 }
 
 fn compareForSort(runtime: *Runtime, left: Value, right: Value, mode: SortMode, callback: ?SortCallback) !std.math.Order {
+    // ECMAScript Array#sort places undefined (including dense stand-ins for
+    // holes) after all defined values without invoking the comparator.
+    if (left == .undefined) return if (right == .undefined) .eq else .gt;
+    if (right == .undefined) return .lt;
     return switch (mode) {
         .string => blk: {
-            const left_text = try runtime.valueToString(left);
-            const right_text = try runtime.valueToString(right);
-            break :blk value_mod.String.order(left_text.string.*, right_text.string.*);
+            var converted = [2]Value{ .undefined, .undefined };
+            var roots = runtime.rootFrame();
+            defer roots.deinit();
+            try roots.protect(&converted[0]);
+            try roots.protect(&converted[1]);
+            converted[0] = try runtime.valueToString(left);
+            converted[1] = try runtime.valueToString(right);
+            const rooted_left = converted[0];
+            const rooted_right = converted[1];
+            break :blk value_mod.String.order(rooted_left.string.*, rooted_right.string.*);
         },
         .number => blk: {
             const left_number = try common.parseFloatValue(runtime, left);
@@ -907,6 +1040,75 @@ test "配列と表の破壊的操作・コピー・検索を処理する" {
     try std.testing.expectEqual(@as(f64, 9), array.array.get(1).number);
     const copy = (try call(&runtime, "配列範囲コピー", &.{ array, .{ .number = 1 } }, null)).?;
     try std.testing.expectEqual(@as(f64, 9), copy.number);
+}
+
+test "カスタムソート中に元配列が短縮されても収集済み要素を安全に書き戻す" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var array = try common.arrayFromValues(&runtime, &.{ .{ .number = 3 }, .{ .number = 1 }, .{ .number = 2 } });
+    try roots.protect(&array);
+    var name = try runtime.stringUtf8("配列短縮比較");
+    try roots.protect(&name);
+    var function = try runtime.createNativeFunction(name.string, 2, testElementCountFunction, &.{});
+    try roots.protect(&function);
+    var test_context = TestMutatingSortContext{ .target = array.array };
+
+    const result = (try call(&runtime, "配列カスタムソート", &.{ function, array }, .{
+        .context = &test_context,
+        .callFn = TestMutatingSortContext.invoke,
+    })).?;
+
+    try std.testing.expect(result.array == array.array);
+    try std.testing.expect(test_context.mutated);
+    try std.testing.expectEqual(@as(usize, 3), array.array.len());
+    try std.testing.expectEqual(@as(f64, 1), array.array.get(0).number);
+    try std.testing.expectEqual(@as(f64, 2), array.array.get(1).number);
+    try std.testing.expectEqual(@as(f64, 3), array.array.get(2).number);
+}
+
+test "配列ソート系は安定な破壊的操作とundefined末尾を保つ" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var astral = try runtime.stringUtf8("😀");
+    try roots.protect(&astral);
+    var private_use = try runtime.stringCodeUnits(&.{0xe000});
+    try roots.protect(&private_use);
+    var ascii = try runtime.stringUtf8("A");
+    try roots.protect(&ascii);
+    var values = try common.arrayFromValues(&runtime, &.{ private_use, .undefined, astral, ascii });
+    try roots.protect(&values);
+    const sorted = (try call(&runtime, "配列ソート", &.{values}, null)).?;
+    try std.testing.expectEqual(values.array, sorted.array);
+    try std.testing.expectEqualSlices(u16, &.{'A'}, values.array.get(0).string.units);
+    try std.testing.expectEqual(astral.string, values.array.get(1).string);
+    try std.testing.expectEqual(private_use.string, values.array.get(2).string);
+    try std.testing.expectEqual(Value.undefined, values.array.get(3));
+
+    var numeric_text = try runtime.stringUtf8("2x");
+    try roots.protect(&numeric_text);
+    var numeric = try common.arrayFromValues(&runtime, &.{ numeric_text, .undefined, .{ .number = 10 }, .{ .number = std.math.nan(f64) }, .{ .number = -0.0 }, .{ .number = 0.0 } });
+    try roots.protect(&numeric);
+    const numeric_sorted = (try call(&runtime, "配列数値ソート", &.{numeric}, null)).?;
+    try std.testing.expectEqual(numeric.array, numeric_sorted.array);
+    try std.testing.expect(isNegativeZero(numeric.array.get(0).number));
+    try std.testing.expect(!isNegativeZero(numeric.array.get(1).number));
+    try std.testing.expectEqual(numeric_text.string, numeric.array.get(2).string);
+    try std.testing.expectEqual(@as(f64, 10), numeric.array.get(3).number);
+    try std.testing.expect(std.math.isNan(numeric.array.get(4).number));
+    try std.testing.expectEqual(Value.undefined, numeric.array.get(5));
+
+    const converted = (try call(&runtime, "配列数値変換", &.{numeric}, null)).?;
+    try std.testing.expectEqual(numeric.array, converted.array);
+    try std.testing.expectEqual(std.meta.Tag(Value).number, std.meta.activeTag(numeric.array.get(2)));
+    const reversed = (try call(&runtime, "配列逆順", &.{numeric}, null)).?;
+    try std.testing.expectEqual(numeric.array, reversed.array);
+    try std.testing.expect(std.math.isNan(numeric.array.get(0).number));
 }
 
 test "配列コピーと参照はJSONとJavaScript添字の境界を保つ" {
