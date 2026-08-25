@@ -165,12 +165,16 @@ fn sequentialAdd(runtime: *Runtime, arguments: []const Value) !Value {
 fn extremum(runtime: *Runtime, arguments: []const Value, maximum: bool) !Value {
     if (arguments.len == 0) return .{ .number = if (maximum) -std.math.inf(f64) else std.math.inf(f64) };
     var result = try runtime.valueToNumber(arguments[0]);
+    var has_nan = std.math.isNan(result);
     for (arguments[1..]) |value| {
         const number = try runtime.valueToNumber(value);
-        if (std.math.isNan(number)) return .{ .number = number };
-        result = if (maximum) @max(result, number) else @min(result, number);
+        if (std.math.isNan(number)) {
+            has_nan = true;
+        } else if (!has_nan) {
+            result = if (maximum) @max(result, number) else @min(result, number);
+        }
     }
-    return .{ .number = result };
+    return .{ .number = if (has_nan) std.math.nan(f64) else result };
 }
 
 fn clamp(runtime: *Runtime, value: Value, lower: Value, upper: Value) !Value {

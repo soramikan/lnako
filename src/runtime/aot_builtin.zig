@@ -34,6 +34,13 @@ pub const Command = enum(u16) {
     strict_equal,
     strict_not_equal,
     in_range,
+    maximum,
+    minimum,
+    clamp,
+    logical_or,
+    logical_and,
+    logical_not,
+    range,
 };
 
 pub fn lookup(name: []const u8) ?Command {
@@ -70,6 +77,13 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "等")) return .strict_equal;
     if (std.mem.eql(u8, name, "等無")) return .strict_not_equal;
     if (std.mem.eql(u8, name, "範囲内")) return .in_range;
+    if (std.mem.eql(u8, name, "MAX") or std.mem.eql(u8, name, "最大値")) return .maximum;
+    if (std.mem.eql(u8, name, "MIN") or std.mem.eql(u8, name, "最小値")) return .minimum;
+    if (std.mem.eql(u8, name, "CLAMP")) return .clamp;
+    if (std.mem.eql(u8, name, "論理OR")) return .logical_or;
+    if (std.mem.eql(u8, name, "論理AND")) return .logical_and;
+    if (std.mem.eql(u8, name, "論理NOT")) return .logical_not;
+    if (std.mem.eql(u8, name, "範囲")) return .range;
     return null;
 }
 
@@ -113,5 +127,14 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.strict_equal, lookup("等").?);
     try std.testing.expectEqual(Command.strict_not_equal, lookup("等無").?);
     try std.testing.expectEqual(Command.in_range, lookup("範囲内").?);
+    try std.testing.expectEqual(Command.maximum, lookup("MAX").?);
+    try std.testing.expectEqual(Command.maximum, lookup("最大値").?);
+    try std.testing.expectEqual(Command.minimum, lookup("MIN").?);
+    try std.testing.expectEqual(Command.minimum, lookup("最小値").?);
+    try std.testing.expectEqual(Command.clamp, lookup("CLAMP").?);
+    try std.testing.expectEqual(Command.logical_or, lookup("論理OR").?);
+    try std.testing.expectEqual(Command.logical_and, lookup("論理AND").?);
+    try std.testing.expectEqual(Command.logical_not, lookup("論理NOT").?);
+    try std.testing.expectEqual(Command.range, lookup("範囲").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }

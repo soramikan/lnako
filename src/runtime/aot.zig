@@ -868,6 +868,22 @@ fn bitNot(runtime: *Runtime, value: Value) !Value {
     return numberValue(@floatFromInt(~toInt32(try valueToNumberRuntime(runtime, primitive))));
 }
 
+fn valueTruthy(value: Value) bool {
+    return switch (@as(Tag, @enumFromInt(value.tag))) {
+        .undefined, .null_value => false,
+        .boolean => value.payload != 0,
+        .number => blk: {
+            const number: f64 = @bitCast(value.payload);
+            break :blk number != 0 and !std.math.isNan(number);
+        },
+        .static_utf8_string => staticUtf8(value).len != 0,
+        .utf16_string => value.object().?.payload.utf16_string.len != 0,
+        .bigint => !value.object().?.payload.bigint.isZero(),
+        .array, .dictionary, .iterator, .function => true,
+        .binding_cell => valueTruthy(value.object().?.payload.binding_cell),
+    };
+}
+
 fn toInt32(number: f64) i32 {
     if (!std.math.isFinite(number) or number == 0) return 0;
     var value = @mod(@trunc(number), 4294967296.0);
@@ -1413,6 +1429,69 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
             };
             out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(lower and upper) };
         },
+        .maximum, .minimum => {
+            var result = valueToNumberRuntime(runtime, value) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+            var has_nan = std.math.isNan(result);
+            for (arguments.?[1..len]) |argument| {
+                const number = valueToNumberRuntime(runtime, argument) catch |failure| {
+                    runtime.setFailure(failure);
+                    return;
+                };
+                if (std.math.isNan(number)) {
+                    has_nan = true;
+                } else if (!has_nan) {
+                    result = if (command == .maximum) @max(result, number) else @min(result, number);
+                }
+            }
+            out.* = numberValue(if (has_nan) std.math.nan(f64) else result);
+        },
+        .clamp => {
+            if (len < 3) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            const number = valueToNumberRuntime(runtime, arguments.?[0]) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+            const minimum = valueToNumberRuntime(runtime, arguments.?[1]) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+            const maximum = valueToNumberRuntime(runtime, arguments.?[2]) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+            out.* = numberValue(@min(@max(number, minimum), maximum));
+        },
+        .logical_or => {
+            if (len < 2) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            out.* = if (valueTruthy(arguments.?[0])) arguments.?[0] else arguments.?[1];
+        },
+        .logical_and => {
+            if (len < 2) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            out.* = if (valueTruthy(arguments.?[0])) arguments.?[1] else arguments.?[0];
+        },
+        .logical_not => out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(!valueTruthy(value)) },
+        .range => {
+            if (len < 2) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            out.* = rangeBuiltin(runtime, arguments.?[0], arguments.?[1]) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
     }
 }
 
@@ -1465,6 +1544,17 @@ fn rgbBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     defer runtime.allocator.free(text);
     const units = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, text);
     return runtime.ownString(units);
+}
+
+fn rangeBuiltin(runtime: *Runtime, first: Value, last: Value) !Value {
+    var roots = [_]Value{ first, last, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[2] = try runtime.createString(&.{ 0x5148, 0x982d });
+    roots[3] = try runtime.createString(&.{ 0x672b, 0x5c3e });
+    roots[4] = try runtime.createDictionary(&.{ roots[2], roots[0], roots[3], roots[1] });
+    return roots[4];
 }
 
 test "UTF-16文字列をルートから正確にmark-and-sweepする" {
@@ -1725,6 +1815,31 @@ test "AOT算術比較命令は奇数の符号とNumber限定べき乗を保持�
     roots[10] = try active_runtime.?.createBigInt("3n");
     lnako_aot_builtin_call(&roots[8], @ptrCast(&roots[9]), 2, @intFromEnum(aot_builtin.Command.power_number));
     try std.testing.expect(active_runtime.?.has_pending_exception);
+}
+
+test "AOT集約論理範囲命令は動的値と辞書を返す" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ numberValue(1), numberValue(9), numberValue(3), .{}, numberValue(0), staticStringValue("右"), .{}, numberValue(1), numberValue(3), .{}, .{}, .{}, numberValue(std.math.nan(f64)), numberValue(1), .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[0]), 3, @intFromEnum(aot_builtin.Command.maximum));
+    try std.testing.expectEqual(@as(f64, 9), @as(f64, @bitCast(roots[3].payload)));
+    lnako_aot_builtin_call(&roots[6], @ptrCast(&roots[4]), 2, @intFromEnum(aot_builtin.Command.logical_or));
+    try std.testing.expectEqualStrings("右", staticUtf8(roots[6]));
+    lnako_aot_builtin_call(&roots[9], @ptrCast(&roots[7]), 2, @intFromEnum(aot_builtin.Command.range));
+    roots[10] = try active_runtime.?.createString(&.{ 0x5148, 0x982d });
+    roots[11] = try active_runtime.?.createString(&.{ 0x672b, 0x5c3e });
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(active_runtime.?.indexGet(roots[9], roots[10]).payload)));
+    try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(active_runtime.?.indexGet(roots[9], roots[11]).payload)));
+    lnako_aot_builtin_call(&roots[14], @ptrCast(&roots[12]), 2, @intFromEnum(aot_builtin.Command.maximum));
+    try std.testing.expect(std.math.isNan(@as(f64, @bitCast(roots[14].payload))));
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {
