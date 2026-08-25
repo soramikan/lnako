@@ -5,6 +5,8 @@ pub const Command = enum(u16) {
     type_of,
     to_int,
     to_float,
+    is_nan,
+    is_number_nan,
 };
 
 pub fn lookup(name: []const u8) ?Command {
@@ -12,6 +14,8 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "変数型確認") or std.mem.eql(u8, name, "TYPEOF")) return .type_of;
     if (std.mem.eql(u8, name, "整数変換") or std.mem.eql(u8, name, "TOINT") or std.mem.eql(u8, name, "INT")) return .to_int;
     if (std.mem.eql(u8, name, "実数変換") or std.mem.eql(u8, name, "TOFLOAT") or std.mem.eql(u8, name, "FLOAT")) return .to_float;
+    if (std.mem.eql(u8, name, "NAN判定")) return .is_nan;
+    if (std.mem.eql(u8, name, "非数判定")) return .is_number_nan;
     return null;
 }
 
@@ -26,5 +30,7 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.to_float, lookup("実数変換").?);
     try std.testing.expectEqual(Command.to_float, lookup("TOFLOAT").?);
     try std.testing.expectEqual(Command.to_float, lookup("FLOAT").?);
+    try std.testing.expectEqual(Command.is_nan, lookup("NAN判定").?);
+    try std.testing.expectEqual(Command.is_number_nan, lookup("非数判定").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }

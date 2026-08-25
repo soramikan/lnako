@@ -88,6 +88,10 @@
     "source": "整数変換(\"16px\")を表示\nTOINT(\" -0x10rest\")を表示\nINT(\"xyz\")を表示\nTOINT(12.9)を表示\nINT(1n)を表示\nTOINT(NULL)を表示\n実数変換(\"12.5xyz\")を表示\nTOFLOAT(\" -Infinityx\")を表示\nFLOAT(\"\")を表示\nTOFLOAT(1n)を表示\nFLOAT([12])を表示\n"
   },
   {
+    "id": "native-system-nan-predicates",
+    "source": "NAN判定(undefined)を表示\nNAN判定(NULL)を表示\nNAN判定(\"12x\")を表示\nNAN判定(\"\")を表示\nNAN判定([])を表示\nNAN判定([1,2])を表示\n非数判定(0/0)を表示\n非数判定(\"NaN\")を表示\n非数判定(undefined)を表示\nエラー監視\nNAN判定(1n)を表示\nエラーならば\nエラーメッセージを表示\nここまで\n"
+  },
+  {
     "id": "native-bare-named-function-call",
     "source": "●(Aを)Fとは\nAで戻る\nここまで\nそれは3\nTYPEOF(F)を表示\nそれは4\nFを表示\n●Gとは\n2で戻る\nここまで\nTYPEOF(G)を表示\nGを表示\n"
   },

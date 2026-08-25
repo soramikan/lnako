@@ -1227,6 +1227,17 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             });
         },
+        .is_nan => {
+            const number = valueToNumberRuntime(runtime, value) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+            out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(std.math.isNan(number)) };
+        },
+        .is_number_nan => {
+            const is_nan = value.tag == @intFromEnum(Tag.number) and std.math.isNan(@as(f64, @bitCast(value.payload)));
+            out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(is_nan) };
+        },
     }
 }
 
@@ -1411,6 +1422,26 @@ test "AOT整数実数変換はJavaScript接頭辞規則を共有する" {
     try std.testing.expectEqual(@as(f64, -16), @as(f64, @bitCast(roots[1].payload)));
     lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[2]), 1, @intFromEnum(aot_builtin.Command.to_float));
     try std.testing.expectEqual(@as(f64, 12.5), @as(f64, @bitCast(roots[3].payload)));
+}
+
+test "AOTのNAN判定と非数判定はNumber変換の有無を区別する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ staticStringValue("12x"), .{}, numberValue(std.math.nan(f64)), .{}, staticStringValue("NaN"), .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.is_nan));
+    try std.testing.expectEqual(@as(u64, 1), roots[1].payload);
+    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[2]), 1, @intFromEnum(aot_builtin.Command.is_number_nan));
+    try std.testing.expectEqual(@as(u64, 1), roots[3].payload);
+    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[4]), 1, @intFromEnum(aot_builtin.Command.is_number_nan));
+    try std.testing.expectEqual(@as(u64, 0), roots[5].payload);
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {
