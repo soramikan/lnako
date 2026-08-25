@@ -52,6 +52,10 @@ lnakoは、意図的な非互換として合意した項目を除き、説明文
 |---|---|---|---|
 | BigIntリテラルの`表示` | ソースでは末尾に`n`を付けるが、表示時は10進へ正規化して`n`を出力しない。16進・2進・8進や桁区切りも10進表示になる | 任意精度値のまま保持し、同じ10進文字列を出力する | `AOT BigIntを任意精度で生成して真偽判定する`、`native-bigint-literals-and-truthiness` |
 | `0n`の条件判定 | 通常のオブジェクト値と異なり`0n`だけが偽、他のBigIntは真になる | AOTでもポインタ先の任意精度値を検査し、同じ真偽値にする | `BigInt定数と真偽判定をAOTランタイムへ変換する`、`native-bigint-literals-and-truthiness` |
+| BigIntの除算・剰余 | `/`は0方向へ整数化し、`%`の余りは被除数と同じ符号になる。例えば`-5n/2n`は`-2`、`-5n%2n`は`-1` | 浮動小数点数へ変換せず、任意精度整数の0方向除算を行う | `AOT BigInt算術とNumber混在エラーを処理する`、`native-bigint-arithmetic-and-comparison` |
+| BigIntの`÷÷` | 固定した公式v3.7.24でも経路により異なる。`cnako3 source.nako3`はエラー文を標準出力へ出して終了コード0、公式生成JavaScript＋Nodeは`Cannot convert a BigInt value to a number`例外で終了コード1になる | 値を誤生成せず、公式生成JavaScriptと同じ実行時エラーとして拒否する。公式2経路が一致しないため成功差分テストから分離する | `AOT BigInt算術とNumber混在エラーを処理する` |
+| 負のBigInt | `-5n`は負のBigIntリテラルとして動作する。一方、変数`A`に対する`-A`は内部的にNumberの`-1`との乗算になり、BigIntとの型混在エラーになる | リテラルだけ符号を値へ取り込み、変数への単項マイナスは公式と同じ乗算形式を保持して型混在を拒否する | `負のBigIntリテラルと変数への単項マイナスを区別する`、`AOT BigInt算術とNumber混在エラーを処理する` |
+| BigIntとNumberの比較 | 算術演算では型混在エラーだが、`>`などの関係比較と`==`は許可される。`1n==1`は真、`1n===1`は偽 | 比較時だけNumberを精度損失なく整数と照合し、厳格比較では型を区別する | `AOT BigInt比較をNumberとの間でも精度を落とさず処理する`、`native-bigint-arithmetic-and-comparison` |
 
 ## 日時と再現性
 

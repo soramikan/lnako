@@ -45,6 +45,27 @@ const Iterator = struct {
     step: f64 = 1,
 };
 
+const BigIntArithmetic = enum(u8) {
+    add,
+    subtract,
+    multiply,
+    divide,
+    remainder,
+    power,
+    integer_divide,
+};
+
+const BigIntComparison = enum(u8) {
+    abstract_equal,
+    strict_equal,
+    abstract_not_equal,
+    strict_not_equal,
+    less,
+    less_equal,
+    greater,
+    greater_equal,
+};
+
 const Payload = union(enum) {
     utf16_string: []u16,
     bigint: BigInt,
@@ -89,6 +110,13 @@ const Runtime = struct {
         try self.beforeAllocation();
         var value = try BigInt.parseLiteral(self.allocator, source);
         errdefer value.deinit();
+        return self.createObject(.{ .bigint = value }, .bigint);
+    }
+
+    fn ownBigInt(self: *Runtime, source: BigInt) !Value {
+        var value = source;
+        errdefer value.deinit();
+        try self.beforeAllocation();
         return self.createObject(.{ .bigint = value }, .bigint);
     }
 
@@ -336,6 +364,86 @@ fn valueToNumber(value: Value) f64 {
     };
 }
 
+fn bigIntArithmetic(runtime: *Runtime, operator: BigIntArithmetic, left: Value, right: Value) !Value {
+    if (left.tag != @intFromEnum(Tag.bigint) or right.tag != @intFromEnum(Tag.bigint)) return error.CannotMixBigIntAndNumber;
+    const left_bigint = left.object().?.payload.bigint;
+    const right_bigint = right.object().?.payload.bigint;
+    const result = switch (operator) {
+        .add => try left_bigint.add(runtime.allocator, right_bigint),
+        .subtract => try left_bigint.sub(runtime.allocator, right_bigint),
+        .multiply => try left_bigint.mul(runtime.allocator, right_bigint),
+        .divide => try left_bigint.divTrunc(runtime.allocator, right_bigint),
+        .remainder => try left_bigint.rem(runtime.allocator, right_bigint),
+        .power => blk: {
+            if (right_bigint.isNegative()) return error.NegativeBigIntExponent;
+            break :blk try left_bigint.pow(runtime.allocator, right_bigint.toU32() catch return error.BigIntExponentTooLarge);
+        },
+        .integer_divide => return error.CannotConvertBigIntToNumber,
+    };
+    return runtime.ownBigInt(result);
+}
+
+fn bigIntComparison(runtime: *Runtime, operator: BigIntComparison, left: Value, right: Value) !bool {
+    const left_is_bigint = left.tag == @intFromEnum(Tag.bigint);
+    const right_is_bigint = right.tag == @intFromEnum(Tag.bigint);
+    if (!left_is_bigint and !right_is_bigint) return error.ExpectedBigInt;
+    const strict = operator == .strict_equal or operator == .strict_not_equal;
+    const equality = operator == .abstract_equal or operator == .strict_equal or operator == .abstract_not_equal or operator == .strict_not_equal;
+    if (equality) {
+        const equal = if (left_is_bigint and right_is_bigint)
+            BigInt.eql(left.object().?.payload.bigint, right.object().?.payload.bigint)
+        else if (strict)
+            false
+        else if (left_is_bigint)
+            try bigIntEqualsNumber(runtime, left.object().?.payload.bigint, valueToNumber(right))
+        else
+            try bigIntEqualsNumber(runtime, right.object().?.payload.bigint, valueToNumber(left));
+        return if (operator == .abstract_not_equal or operator == .strict_not_equal) !equal else equal;
+    }
+    const order = if (left_is_bigint and right_is_bigint)
+        BigInt.order(left.object().?.payload.bigint, right.object().?.payload.bigint)
+    else if (left_is_bigint)
+        (try compareBigIntNumber(runtime, left.object().?.payload.bigint, valueToNumber(right))) orelse return false
+    else
+        invertOrder((try compareBigIntNumber(runtime, right.object().?.payload.bigint, valueToNumber(left))) orelse return false);
+    return switch (operator) {
+        .less => order == .lt,
+        .less_equal => order != .gt,
+        .greater => order == .gt,
+        .greater_equal => order != .lt,
+        else => unreachable,
+    };
+}
+
+fn bigIntEqualsNumber(runtime: *Runtime, bigint: BigInt, number: f64) !bool {
+    if (!std.math.isFinite(number) or @trunc(number) != number) return false;
+    var converted = try BigInt.fromF64(runtime.allocator, number);
+    defer converted.deinit();
+    return BigInt.eql(bigint, converted);
+}
+
+fn compareBigIntNumber(runtime: *Runtime, bigint: BigInt, number: f64) !?std.math.Order {
+    if (std.math.isNan(number)) return null;
+    if (number == std.math.inf(f64)) return .lt;
+    if (number == -std.math.inf(f64)) return .gt;
+    var integer = try BigInt.fromF64(runtime.allocator, @trunc(number));
+    defer integer.deinit();
+    const integer_order = BigInt.order(bigint, integer);
+    if (integer_order != .eq) return integer_order;
+    const fraction = number - @trunc(number);
+    if (fraction > 0) return .lt;
+    if (fraction < 0) return .gt;
+    return .eq;
+}
+
+fn invertOrder(order: std.math.Order) std.math.Order {
+    return switch (order) {
+        .lt => .gt,
+        .eq => .eq,
+        .gt => .lt,
+    };
+}
+
 fn repeatCount(number: f64) !usize {
     if (std.math.isNan(number) or number <= 0) return 0;
     if (!std.math.isFinite(number) or number >= @as(f64, @floatFromInt(std.math.maxInt(usize)))) return error.IteratorCountTooLarge;
@@ -384,6 +492,11 @@ fn writeUtf16(units: []const u16, newline: bool) void {
 fn writeBytes(bytes: []const u8, newline: bool) void {
     for (bytes) |byte| _ = putchar(byte);
     if (newline) _ = putchar('\n');
+}
+
+fn runtimeFailure(failure: anyerror) noreturn {
+    std.debug.print("[実行時エラー] {s}\n", .{@errorName(failure)});
+    std.process.exit(1);
 }
 
 var active_runtime: ?Runtime = null;
@@ -443,6 +556,23 @@ pub export fn lnako_aot_bigint_truthy(value: *const Value) callconv(.c) c_int {
     const object = value.object() orelse return 0;
     if (object.payload != .bigint) return 0;
     return @intFromBool(!object.payload.bigint.isZero());
+}
+
+pub export fn lnako_aot_bigint_arithmetic(out: *Value, left: *const Value, right: *const Value, opcode: u8) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    const operator = std.enums.fromInt(BigIntArithmetic, opcode) orelse runtimeFailure(error.InvalidBigIntOperator);
+    out.* = bigIntArithmetic(runtime, operator, left.*, right.*) catch |failure| runtimeFailure(failure);
+}
+
+pub export fn lnako_aot_bigint_compare(out: *Value, left: *const Value, right: *const Value, opcode: u8) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    const operator = std.enums.fromInt(BigIntComparison, opcode) orelse runtimeFailure(error.InvalidBigIntComparison);
+    out.* = .{
+        .tag = @intFromEnum(Tag.boolean),
+        .payload = @intFromBool(bigIntComparison(runtime, operator, left.*, right.*) catch |failure| runtimeFailure(failure)),
+    };
 }
 
 pub export fn lnako_aot_array_new(out: *Value, values: ?[*]const Value, len: usize) callconv(.c) void {
@@ -510,6 +640,8 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_array_new));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_index_get));
     try std.testing.expectEqual(*const fn (*const Value, *const Value, *const Value) callconv(.c) c_int, @TypeOf(&lnako_aot_index_set));
+    try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_bigint_arithmetic));
+    try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_bigint_compare));
 }
 
 test "ルートフレームをLIFOで連結する" {
@@ -584,6 +716,32 @@ test "AOT BigIntを任意精度で生成して真偽判定する" {
     try std.testing.expect(zero.object().?.payload.bigint.isZero());
     try std.testing.expectEqual(@as(c_int, 1), lnako_aot_bigint_truthy(&large));
     try std.testing.expectEqual(@as(c_int, 0), lnako_aot_bigint_truthy(&zero));
+}
+
+test "AOT BigInt算術とNumber混在エラーを処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const left = try runtime.createBigInt("123456789012345678901234567890n");
+    const right = try runtime.createBigInt("10n");
+    var roots = [_]Value{ left, right, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    roots[2] = try bigIntArithmetic(&runtime, .add, roots[0], roots[1]);
+    const text = try roots[2].object().?.payload.bigint.toString(std.testing.allocator, 10);
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("123456789012345678901234567900", text);
+    try std.testing.expectError(error.CannotMixBigIntAndNumber, bigIntArithmetic(&runtime, .add, roots[0], numberValue(1)));
+    try std.testing.expectError(error.CannotConvertBigIntToNumber, bigIntArithmetic(&runtime, .integer_divide, roots[0], roots[1]));
+    runtime.popRoots(&frame);
+}
+
+test "AOT BigInt比較をNumberとの間でも精度を落とさず処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const bigint = try runtime.createBigInt("9007199254740993n");
+    try std.testing.expect(try bigIntComparison(&runtime, .greater, bigint, numberValue(9007199254740992.0)));
+    try std.testing.expect(try bigIntComparison(&runtime, .abstract_equal, try runtime.createBigInt("1n"), numberValue(1)));
+    try std.testing.expect(!(try bigIntComparison(&runtime, .strict_equal, try runtime.createBigInt("1n"), numberValue(1))));
 }
 
 test "回数・範囲・配列・辞書の反復状態と元コレクションを追跡する" {

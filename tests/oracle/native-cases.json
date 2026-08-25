@@ -36,6 +36,10 @@
     "source": "123456789012345678901234567890nを表示\n0xFFnを表示\n1_000nを表示\nもし0nならば\n「誤」を表示\n違えば\n「ゼロ」を表示\nここまで\nもし1nならば\n「非ゼロ」を表示\nここまで\n"
   },
   {
+    "id": "native-bigint-arithmetic-and-comparison",
+    "source": "A=123456789012345678901234567890n\nB=10n\nA+Bを表示\nA-Bを表示\nA*Bを表示\nA/Bを表示\nA%Bを表示\n3n**20nを表示\nC=-5n\nC/2nを表示\nC%2nを表示\nA>9007199254740992を表示\n1n==1を表示\n1n===1を表示\n1n!=2nを表示\n"
+  },
+  {
     "id": "native-array-and-dictionary",
     "source": "A=[1,2]\nA[1]=5\nA[1]を表示\nB={\"x\":7}\nB@\"x\"を表示\n"
   },

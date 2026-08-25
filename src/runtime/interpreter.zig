@@ -458,7 +458,7 @@ pub const Interpreter = struct {
         if (std.mem.eql(u8, instruction.operator, "÷÷")) {
             const quotient = try operators.binary(self.runtime, .divide, left, right);
             if (quotient == .number) return .{ .number = @trunc(quotient.number) };
-            return quotient;
+            return error.CannotConvertBigIntToNumber;
         }
         if (std.mem.eql(u8, instruction.operator, "%")) return operators.binary(self.runtime, .remainder, left, right);
         if (std.mem.eql(u8, instruction.operator, "**")) return operators.binary(self.runtime, .power, left, right);
@@ -2097,6 +2097,21 @@ test "決定的時計でタイマーの順序・停止・待機を処理する" 
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("一\n三\n毎\n待\n", host.written());
     try std.testing.expectEqual(@as(u64, 5), host.elapsed_milliseconds);
+}
+
+test "BigIntの整数除算を公式生成JavaScript同様に拒否する" {
+    var fixture = try compileForTest(std.testing.allocator, "10n÷÷3nを表示\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    try std.testing.expectError(error.CannotConvertBigIntToNumber, interpreter.run());
 }
 
 test "GCストレス中も実行フレームと反復対象をルートとして保持する" {

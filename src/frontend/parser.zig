@@ -349,7 +349,7 @@ const Parser = struct {
                 .right_paren, .right_bracket, .right_brace => if (nesting > 0) {
                     nesting -= 1;
                 },
-                .equal => if (nesting == 0) return true,
+                .equal => if (nesting == 0 and !std.mem.eql(u8, token.lexeme, "==")) return true,
                 else => {},
             }
         }
@@ -776,6 +776,14 @@ const Parser = struct {
             const operator_token = self.advance();
             const operand = try self.parseUnary();
             if (operator_token.kind == .minus) {
+                if (operand.kind == .bigint) {
+                    operand.value = if (std.mem.startsWith(u8, operand.value, "-"))
+                        try self.allocator.dupe(u8, operand.value[1..])
+                    else
+                        try std.fmt.allocPrint(self.allocator, "-{s}", .{operand.value});
+                    operand.span = operator_token.span;
+                    return operand;
+                }
                 const minus_one = try self.makeNode(.number, operator_token);
                 minus_one.value = "-1";
                 minus_one.number_value = -1;
@@ -1277,6 +1285,16 @@ test "助詞はを代入演算子として構文解析する" {
     try std.testing.expectEqualStrings("それ", assignment.children[0].value);
 }
 
+test "行頭の等価比較を代入文と誤認しない" {
+    var result = try parse(std.testing.allocator, "1n==1を表示\n", "equality.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const call = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.function_call, call.kind);
+    try std.testing.expectEqual(ast.Kind.binary_operator, call.children[0].kind);
+    try std.testing.expectEqualStrings("eq", call.children[0].operator);
+}
+
 test "もし文とソース位置を構文解析する" {
     var result = try parse(std.testing.allocator, "もしA=1ならば\nB=1\n違えば\nB=2\nここまで\n", "条件.nako3");
     defer result.deinit();
@@ -1371,6 +1389,20 @@ test "公式同様に宣言なしの角括弧分割代入を拒否する" {
     try std.testing.expect(!result.succeeded());
     try std.testing.expectEqual(diagnostic.Code.expected_token, result.diagnostics[0].code);
     try std.testing.expectEqual(@as(usize, 0), result.diagnostics[0].span.line);
+}
+
+test "負のBigIntリテラルと変数への単項マイナスを区別する" {
+    var result = try parse(std.testing.allocator, "A=-5n\nB=-A\n", "bigint-minus.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const literal = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.bigint, literal.kind);
+    try std.testing.expectEqualStrings("-5n", literal.value);
+    const variable_negation = result.root.?.children[2].children[0];
+    try std.testing.expectEqual(ast.Kind.binary_operator, variable_negation.kind);
+    try std.testing.expectEqualStrings("*", variable_negation.operator);
+    try std.testing.expectEqualStrings("-1", variable_negation.children[0].value);
+    try std.testing.expectEqualStrings("A", variable_negation.children[1].value);
 }
 
 test "閉じていないブロックを位置付き診断にする" {
