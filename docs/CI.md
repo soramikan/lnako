@@ -250,6 +250,29 @@ compat smokeに絞って診断できる。片方のsuiteが成功しても他方
 `comparisonSucceeded`とfixtureの`equivalent`は、成功終了だけを表す値ではない。意図した失敗を含め、終了コード・signal・
 正規化stdout/stderrが採用した公式経路と等価であったことを表す。
 
+### dispatch evidenceの外部attestation
+
+`aot` suiteは同じ検証runで`${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json`も生成し、OS別artifactへ保存する。dispatch JSONは
+引数・値・source本文・ローカルパス・標準出力を含まない。main pushまたはmainへのworkflow_dispatchだけが、専用の
+`attest-dispatch-evidence` job（`contents/actions: read`、`id-token: write`、`attestations/artifact-metadata: write`）へ進む。
+
+専用jobは3 artifactを取得し、公式`actions/attest@v4.2.2`（commit SHA固定）でmulti-subject SLSA provenanceを作成する。その後、生成直後の
+Sigstore bundleを明示入力として公式GitHub CLIの
+`gh attestation verify`を各JSONへ実行し、`--repo soramikan/lnako`、`--signer-workflow soramikan/lnako/.github/workflows/ci.yml`、`--signer-digest $GITHUB_SHA`、
+`--source-digest $GITHUB_SHA`、`--source-ref refs/heads/main`、GitHub OIDC issuer、`--deny-self-hosted-runners`を強制する。
+検証器はさらに3正式OS（darwin-arm64、linux-x64、win32-x64）のsubject digestとJSONのSHA-256を照合し、成功時だけ一時catalog
+evidenceを生成する。catalog evidence、検証metadata、署名bundleは同じCI artifactへ保存する。`sync_compat_evidence.mjs`もbundleのSHA-256と
+署名を独立に再検証するため、metadata JSONだけを偽造しても`verified`へ昇格できない。fork PRや権限不足ではattest job自体をskipし、
+追跡中の`trace-confirmed-unattested`を変更しない。
+CIが使用するcheckout、Zig/Node setup、cache、artifact upload/download、attestation actionはすべて40桁commit SHAへ固定し、
+`check_ci_workflow.mjs`が移動tagの再混入を拒否する。
+core suiteはmetadataだけの昇格と偽造bundleを拒否する回帰検査も実行する。
+
+2026-08-26の[run 32978416580](https://github.com/soramikan/lnako/actions/runs/32978416580)（`3971aef`）は新oracle v4のcold cacheで
+3環境15ジョブ全成功、壁時計6分05秒（14:08:20Z〜14:14:25Z）、合計runner時間45分47秒だった。これはattestation job追加前の
+比較基準である。attestation導入後もこのAOT比較を
+追加実行せず、attestationは保存済みdispatch JSONだけを対象にする。
+
 分離後の初回[run 32934552628](https://github.com/soramikan/lnako/actions/runs/32934552628)（`cd65d5e`）は、
 3正式環境の全15ジョブが6分29秒で成功した。分離前run 32932078383の9分50秒から3分21秒（約34.1%）短縮した。
 新設した`compat-aot`のZig cache keyは初回利用であったが、それを含めても20分以内という従来基準を維持した。

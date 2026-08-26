@@ -58,6 +58,13 @@ node tools/sync_compat_evidence.mjs --check
 node tools/check_compat_report.mjs
 ```
 
+CIのmain実行で生成したdispatch evidenceを昇格する場合は、GitHub CLIの署名検証を省略せず、3正式OS artifactをまとめて次で検証します。
+`--catalog-evidence`の出力はCI一時artifactであり、追跡中の`compat/v3.7.24/evidence.json`は変更しません。fork PRやattest権限のない実行は昇格対象外です。
+
+```sh
+node tools/verify_dispatch_attestation.mjs --directory /absolute/path/dispatch-evidence --bundle /absolute/path/attestation-bundle.json --output /absolute/path/dispatch-attestation.json --catalog-evidence /absolute/path/evidence-verified.json --repository soramikan/lnako --commit <40-hex-commit> --source-ref refs/heads/main --workflow soramikan/lnako/.github/workflows/ci.yml
+```
+
 AST差分テストは公式の `core/test/fixtures/parser_corpus.mjs` を直接読み、コメント・空行の保持方式に
 左右されない構文フィンガープリントを比較します。ローカル追加ケースは
 `tests/oracle/parser-cases.json`、拒否ケースは `tests/oracle/parser-diagnostic-cases.json` に置きます。

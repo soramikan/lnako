@@ -2,13 +2,13 @@
 
 `compat/v3.7.24/evidence.json`は、標準cnako 527 entryをカタログID単位で
 既存fixtureへ関連付ける台帳です。通常のfixture関連付けは実行結果やdispatch接続を証明しません。
-現在は、macOS arm64の単一実行環境で、明示fixture `native-cut-commands`についてcompile manifest、Interpreter/AOT trace、公式差分を
-同一fixture・siteで突き合わせられた一意名4 entryが`trace-confirmed-unattested`です。外部attestationを
-まだ導入していないため`verified`は0件で、残り523 entryも`unverified`です。
+追跡中の証拠は、macOS arm64の単一実行環境で、明示fixture `native-cut-commands`についてcompile manifest、Interpreter/AOT trace、公式差分を
+同一fixture・siteで突き合わせられた一意名4 entryが`trace-confirmed-unattested`です。追跡中のJSONにはattestationを記録しないため、ローカルの`verified`は0件で、残り523 entryも`unverified`です。
 
-AOT差分artifactとdispatch証拠は入力・実行物・結果のSHA-256を内包しますが、artifact自身の署名や外部attestationはまだありません。
-そのため`trace-confirmed-unattested`は機械検証済みでも、単体のJSONを`verified`証拠とは扱いません。将来verifiedへ移す前に、
-CIのcommit・OS別runへ結び付く外部hashまたはartifact attestationを導入し、JSON全体の改変を検出できることを必須とします。
+AOT差分artifactとdispatch証拠は入力・実行物・結果のSHA-256を内包します。CIのmain push/workflow_dispatchでは、3正式OSのdispatch JSONを
+公式`actions/attest`のmulti-subject artifact attestationへ結び付け、公式`gh attestation verify`で署名、SLSA predicate、workflow identity、
+OIDC issuer、対象commit、3 OSのdigestを検証します。検証成功時だけCI一時出力のcatalog evidenceを`verified`として生成し、追跡中のmacOS単体JSONは変更しません。
+未attest、fork PR、権限不足、対象commit・workflow・digest不一致では`trace-confirmed-unattested`のまま昇格しません。
 
 ## 生成と検証
 
@@ -18,6 +18,8 @@ node tools/sync_compat_evidence.mjs --check
 # 公式差分を含む最小dispatch証拠を一度だけ生成（絶対パス、既存ファイル不可）。
 # NADESIKO3_ORACLEを指定する場合もmarker・CLI・実行treeの固定SHA-256がlockと一致する必要がある
 node tools/check_dispatch_trace.mjs --evidence-output /absolute/path/dispatch-evidence.json
+# CIで生成された3 OS artifactを公式GitHub CLIで検証し、一時catalog evidenceを生成
+node tools/verify_dispatch_attestation.mjs --directory /absolute/path/dispatch-evidence --bundle /absolute/path/attestation-bundle.json --output /absolute/path/dispatch-attestation.json --catalog-evidence /absolute/path/evidence-verified.json --repository soramikan/lnako --commit <40-hex-commit> --source-ref refs/heads/main --workflow soramikan/lnako/.github/workflows/ci.yml
 ```
 
 生成元は次の固定資料です。
@@ -97,8 +99,10 @@ traceのschemaは2です。
 `ファイル名抽出`・`パス抽出`を固定fixtureで検証します。
 通常実行は作業ツリーを変更せず、`--evidence-output`を指定した場合だけ公式source・生成JavaScriptとの
 差分を追加確認し、絶対パスへ新規証拠を生成します。`sync_compat_evidence.mjs --check`はその証拠の
-baseline、fixture source hash、catalog identity、site、runtime成否を再検証します。ただし外部attestationは生成しないため、
-結果は`trace-confirmed-unattested`に留まります。未実行のNode route、
+baseline、fixture source hash、catalog identity、site、runtime成否を再検証します。`--attestation`を併用する場合は`--attestation-bundle`も必須で、
+metadataのschema、workflow identity、対象commit、3正式OS、現行JSONのdigest、bundle SHA-256を確認したうえで、公式`gh attestation verify`による
+署名検証を再実行します。metadata JSONだけでは`verified`へ昇格できません。外部attestationを指定しない通常の結果は
+`trace-confirmed-unattested`に留まります。未実行のNode route、
 O1〜O3、pre/post-opt IR、同名異plugin entryはverifiedへ昇格しません。
 また、sync検証は`equivalent`フラグを信用せず、4 routeのstdout/stderr SHA-256が公式sourceと一致すること、
 trace eventCountが正でsite数を包含することも確認します。dispatch証拠schema v2のprovenanceには

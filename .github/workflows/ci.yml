@@ -68,15 +68,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 50
     steps:
-      - uses: actions/checkout@v5
-      - uses: mlugg/setup-zig@v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
           cache-key: ${{ matrix.suite }}
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.15.0
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/toolchains
           key: toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ runner.os }}-${{ runner.arch }}-v1
@@ -88,10 +88,11 @@ jobs:
         if: matrix.suite == 'core'
         run: |
           node tools/check_ci_workflow.mjs
+          node tools/check_dispatch_attestation_security.mjs
           node tools/sync_compat.mjs --check
           node tools/sync_compat_evidence.mjs --check
           node tools/check_builtin_catalog.mjs
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: matrix.suite != 'compat-aot'
         with:
           path: .cache/oracle
@@ -167,7 +168,7 @@ jobs:
           LNAKO_NATIVE_ORACLE_ARTIFACT: ${{ runner.temp }}/lnako-native-oracle.json
         run: |
           node tools/compare_native_oracle.mjs
-          node tools/check_dispatch_trace.mjs --no-build
+          node tools/check_dispatch_trace.mjs --no-build --evidence-output "${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json"
       - name: Upload native AOT oracle artifact
         if: matrix.suite == 'aot' && always()
         continue-on-error: true
@@ -175,6 +176,15 @@ jobs:
         with:
           name: lnako-native-oracle-${{ matrix.os }}
           path: ${{ runner.temp }}/lnako-native-oracle.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Upload native dispatch evidence
+        if: matrix.suite == 'aot' && always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-dispatch-evidence-${{ matrix.os }}
+          path: ${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json
           if-no-files-found: ignore
           retention-days: 30
       - name: Format
@@ -206,3 +216,51 @@ jobs:
         if: matrix.suite == 'compat-aot'
         shell: bash
         run: ./zig-out/bin/lnako run tests/fixtures/compat-js-basic.nako3 --compat-js
+
+  attest-dispatch-evidence:
+    name: Attest and verify dispatch evidence
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') && needs.test.result == 'success'
+    needs: test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Download dispatch evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: lnako-dispatch-evidence-*
+          path: ${{ runner.temp }}/dispatch-evidence
+          merge-multiple: true
+      - name: Generate artifact attestation
+        id: attest-dispatch
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/dispatch-evidence/dispatch-evidence-*.json
+      - name: Verify artifact attestations and catalog promotion
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node tools/verify_dispatch_attestation.mjs \
+            --directory "${{ runner.temp }}/dispatch-evidence" \
+            --bundle "${{ steps.attest-dispatch.outputs.bundle-path }}" \
+            --output "${{ runner.temp }}/dispatch-attestation.json" \
+            --catalog-evidence "${{ runner.temp }}/catalog-evidence-verified.json" \
+            --repository "${{ github.repository }}" \
+            --commit "${{ github.sha }}" \
+            --source-ref "refs/heads/main" \
+            --workflow "${{ github.repository }}/.github/workflows/ci.yml"
+      - name: Upload verified catalog evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-catalog-evidence-verified
+          path: |
+            ${{ runner.temp }}/catalog-evidence-verified.json
+            ${{ runner.temp }}/dispatch-attestation.json
+            ${{ steps.attest-dispatch.outputs.bundle-path }}
+          if-no-files-found: error
+          retention-days: 30

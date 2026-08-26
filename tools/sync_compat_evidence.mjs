@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const root = resolve(import.meta.dirname, "..");
@@ -28,10 +28,23 @@ const runtimeFixtureFiles = new Set([
   "supplemental-plugin-cases.json",
   "system-runtime-cases.json",
 ]);
-const mode = process.argv[2] ?? "--check";
+const arguments_ = process.argv.slice(2);
+const mode = arguments_[0] ?? "--check";
+const optionValue = (name) => {
+  const index = arguments_.indexOf(name);
+  if (index < 0) return null;
+  const value = arguments_[index + 1];
+  if (value === undefined || value.startsWith("--") || !isAbsolute(value)) throw new Error(`${name}には絶対パスを指定してください`);
+  return resolve(value);
+};
+const dispatchEvidenceInputPath = optionValue("--dispatch-evidence") ?? dispatchEvidencePath;
+const attestationPath = optionValue("--attestation");
+const attestationBundlePath = optionValue("--attestation-bundle");
+const evidenceOutputPath = optionValue("--output") ?? evidencePath;
 
-if (!new Set(["--generate", "--check"]).has(mode)) {
-  throw new Error("usage: node tools/sync_compat_evidence.mjs [--generate|--check]");
+if ((attestationPath === null) !== (attestationBundlePath === null)) throw new Error("--attestationと--attestation-bundleは同時に指定してください");
+if (!new Set(["--generate", "--check"]).has(mode) || arguments_.some((argument) => argument.startsWith("--") && !new Set(["--generate", "--check", "--dispatch-evidence", "--attestation", "--attestation-bundle", "--output"]).has(argument))) {
+  throw new Error("usage: node tools/sync_compat_evidence.mjs [--generate|--check] [--dispatch-evidence /absolute/path] [--attestation /absolute/path --attestation-bundle /absolute/path] [--output /absolute/path]");
 }
 
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
@@ -54,8 +67,15 @@ const compatJsFixtureIds = new Set(records.filter((record) => record.file === "c
 const standardNames = new Set(standard.commands.map((command) => command.name));
 const duplicateNames = duplicateNameSet(standard.commands);
 const unresolvedByName = new Map();
-const dispatchEvidence = await readJson(dispatchEvidencePath);
-validateDispatchEvidence(dispatchEvidence, lock, standard, records);
+const dispatchEvidenceBytes = await readFile(dispatchEvidenceInputPath);
+const dispatchEvidenceBase = JSON.parse(dispatchEvidenceBytes.toString("utf8"));
+const dispatchEvidenceInputSha256 = createHash("sha256").update(dispatchEvidenceBytes).digest("hex");
+const suppliedAttestation = attestationPath === null ? null : await readJson(attestationPath);
+const attestationBundleBytes = attestationBundlePath === null ? null : await readFile(attestationBundlePath);
+const dispatchEvidence = suppliedAttestation === null
+  ? dispatchEvidenceBase
+  : { ...dispatchEvidenceBase, attestation: suppliedAttestation };
+validateDispatchEvidence(dispatchEvidence, lock, standard, records, dispatchEvidenceInputSha256, dispatchEvidenceInputPath, attestationBundlePath, attestationBundleBytes);
 const dispatchEvidenceByCatalogId = new Map();
 for (const site of dispatchEvidence.sites) {
   const sites = dispatchEvidenceByCatalogId.get(site.catalogId) ?? [];
@@ -167,11 +187,11 @@ const evidence = {
 
 const expected = json(evidence);
 if (mode === "--generate") {
-  await writeFile(evidencePath, expected);
+  await writeFile(evidenceOutputPath, expected);
   console.log(`カタログ証拠レイヤーを生成しました: ${entries.length}件（verified ${evidence.executionEvidenceStates.verified}件 / trace-confirmed-unattested ${evidence.executionEvidenceStates["trace-confirmed-unattested"]}件 / unverified ${evidence.executionEvidenceStates.unverified}件）`);
 } else {
-  const actual = await readFile(evidencePath, "utf8");
-  if (actual !== expected) throw new Error(`カタログ証拠レイヤーが最新ではありません: ${evidencePath}`);
+  const actual = await readFile(evidenceOutputPath, "utf8");
+  if (actual !== expected) throw new Error(`カタログ証拠レイヤーが最新ではありません: ${evidenceOutputPath}`);
   validateEvidence(JSON.parse(actual), lock, catalogSourceSha256, nativeFixtureIds, compatJsFixtureIds, standard, matrix);
   console.log(`カタログ証拠レイヤーを検証しました: ${entries.length}件（同名異plugin ${evidence.duplicateNameCount * 2} entry、verified ${evidence.executionEvidenceStates.verified}件 / trace-confirmed-unattested ${evidence.executionEvidenceStates["trace-confirmed-unattested"]}件 / unverified ${evidence.executionEvidenceStates.unverified}件）`);
 }
@@ -328,7 +348,7 @@ function readGitState() {
   return { commit, dirty: statusResult.stdout.length > 0 };
 }
 
-function validateDispatchEvidence(evidence, lock, standard, records) {
+function validateDispatchEvidence(evidence, lock, standard, records, inputSha256, inputPath, bundlePath, bundleBytes) {
   rejectForbiddenEvidenceFields(evidence);
   assertKnownObjectKeys(evidence, ["schema", "generator", "baseline", "fixture", "officialComparison", "attestation", "provenance", "trace", "sites"], "dispatch-evidence");
   if (evidence?.schema !== "lnako.dispatch-evidence.v2" || evidence.generator !== "tools/check_dispatch_trace.mjs") {
@@ -338,7 +358,7 @@ function validateDispatchEvidence(evidence, lock, standard, records) {
   if (evidence.baseline?.tag !== lock.nadesiko3.tag || evidence.baseline?.commit !== lock.nadesiko3.commit) {
     throw new Error("dispatch証拠のbaselineがupstream.lock.jsonと一致しません");
   }
-  if (evidence.attestation !== null) throw new Error("未署名のdispatch証拠に外部attestation以外の値があります");
+  if (evidence.attestation !== null) validateAttestation(evidence.attestation, evidence, inputSha256, inputPath, bundlePath, bundleBytes);
   assertKnownObjectKeys(evidence.fixture, ["id", "file", "sourceSha256"], "dispatch-evidence.fixture");
   const fixture = records.find((record) => record.id === evidence.fixture?.id);
   if (fixture === undefined || fixture.file !== "native-cases.json") throw new Error("dispatch証拠のfixtureがnative-cases.jsonにありません");
@@ -405,6 +425,77 @@ function validateDispatchEvidence(evidence, lock, standard, records) {
     catalogIds.add(site.catalogId);
   }
   for (const name of expectedNames) if (![...catalogIds].some((id) => standardById.get(id)?.name === name)) throw new Error(`dispatch証拠に明示命令${name}のsiteがありません`);
+}
+
+function validateAttestation(attestation, evidence, inputSha256, inputPath, bundlePath, bundleBytes) {
+  assertKnownObjectKeys(attestation, ["schema", "repository", "workflow", "sourceRef", "commit", "predicateType", "verifiedBy", "bundleSha256", "subjects"], "dispatch-evidence.attestation");
+  if (attestation.schema !== "lnako.dispatch-attestation.v1" || attestation.repository !== "soramikan/lnako" ||
+      attestation.workflow !== "soramikan/lnako/.github/workflows/ci.yml" || attestation.sourceRef !== "refs/heads/main" ||
+      attestation.predicateType !== "https://slsa.dev/provenance/v1" || attestation.verifiedBy !== "gh attestation verify" ||
+      !/^[0-9a-f]{40}$/i.test(attestation.commit) || !/^[0-9a-f]{64}$/.test(attestation.bundleSha256) || !Array.isArray(attestation.subjects) || bundlePath === null) {
+    throw new Error("dispatch証拠のattestation identityが不正です");
+  }
+  const expectedPlatforms = new Set(["darwin-arm64", "linux-x64", "win32-x64"]);
+  if (attestation.subjects.length !== expectedPlatforms.size) throw new Error("dispatch証拠のattestationが3正式OSを含みません");
+  const seen = new Set();
+  for (const subject of attestation.subjects) {
+    assertKnownObjectKeys(subject, ["platform", "arch", "evidenceSha256"], "dispatch-evidence.attestation.subject");
+    const platform = `${subject.platform}-${subject.arch}`;
+    if (!expectedPlatforms.has(platform) || seen.has(platform) || !/^[0-9a-f]{64}$/.test(subject.evidenceSha256)) {
+      throw new Error(`dispatch証拠のattestation subjectが不正です: ${platform}`);
+    }
+    seen.add(platform);
+  }
+  if (seen.size !== expectedPlatforms.size || attestation.commit !== evidence.provenance.lnako.commit || evidence.provenance.lnako.dirty !== false) {
+    throw new Error("dispatch証拠のattestation commit、clean状態、またはOS集合が一致しません");
+  }
+  const currentPlatform = `${evidence.provenance.environment.platform}-${evidence.provenance.environment.arch}`;
+  const currentSubject = attestation.subjects.find((subject) => `${subject.platform}-${subject.arch}` === currentPlatform);
+  if (currentSubject === undefined || currentSubject.evidenceSha256 !== inputSha256) throw new Error(`dispatch証拠のattestation digestが一致しません: ${currentPlatform}`);
+  verifyAttestationBundle(attestation, inputPath, bundlePath, bundleBytes);
+}
+
+function verifyAttestationBundle(attestation, inputPath, bundlePath, bundleBytes) {
+  if (!Buffer.isBuffer(bundleBytes)) throw new Error("attestation bundleを読み込めません");
+  if (createHash("sha256").update(bundleBytes).digest("hex") !== attestation.bundleSha256) {
+    throw new Error("dispatch証拠のattestation bundle SHA-256が一致しません");
+  }
+  const result = spawnSync("gh", [
+    "attestation", "verify", inputPath,
+    "--bundle", bundlePath,
+    "--repo", attestation.repository,
+    "--signer-workflow", attestation.workflow,
+    "--signer-digest", attestation.commit,
+    "--source-digest", attestation.commit,
+    "--source-ref", attestation.sourceRef,
+    "--cert-oidc-issuer", "https://token.actions.githubusercontent.com",
+    "--deny-self-hosted-runners",
+    "--predicate-type", attestation.predicateType,
+    "--format", "json",
+  ], { cwd: root, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+  if (result.status !== 0) throw new Error(`公式gh attestation verifyに失敗しました: ${result.stderr}`);
+  let verified;
+  try {
+    verified = JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(`gh attestation verifyのJSON出力が不正です: ${error.message}`);
+  }
+  const expectedDigests = attestation.subjects.map((subject) => subject.evidenceSha256).sort();
+  const matchesAllSubjects = Array.isArray(verified) && verified.some((entry) => {
+    const subjects = entry.verificationResult?.statement?.subject;
+    if (!Array.isArray(subjects)) return false;
+    const digests = subjects.map((subject) => attestedSha256(subject)).filter((digest) => digest !== null).sort();
+    return JSON.stringify(digests) === JSON.stringify(expectedDigests);
+  });
+  if (!matchesAllSubjects) throw new Error("検証済みattestation bundleの3 OS subject digestが一致しません");
+}
+
+function attestedSha256(subject) {
+  if (Array.isArray(subject?.digest)) {
+    const entry = subject.digest.find((value) => value?.algorithm === "sha256" && /^[0-9a-f]{64}$/.test(value?.value));
+    return entry?.value ?? null;
+  }
+  return /^[0-9a-f]{64}$/.test(subject?.digest?.sha256) ? subject.digest.sha256 : null;
 }
 
 function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, compatJsFixtureIds, standard, matrix) {

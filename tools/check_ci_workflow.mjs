@@ -3,6 +3,11 @@ import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 const workflow = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
+const floatingActions = [...workflow.matchAll(/uses: ([^\s@]+)@([^\s#]+)/g)]
+  .filter((match) => !/^[0-9a-f]{40}$/.test(match[2]))
+  .map((match) => `${match[1]}@${match[2]}`);
+if (floatingActions.length > 0) throw new Error(`GitHub Actionをcommit SHAへ固定してください: ${floatingActions.join(", ")}`);
+if (!workflow.includes("node tools/check_dispatch_attestation_security.mjs")) throw new Error("dispatch attestationの偽造拒否検査がCIにありません");
 const setupOracle = await readFile(resolve(root, "tools/setup_oracle.mjs"), "utf8");
 const upstreamLock = JSON.parse(await readFile(resolve(root, "compat/upstream.lock.json"), "utf8"));
 const oracleIdentity = upstreamLock.nadesiko3?.oracleIdentity;
@@ -69,6 +74,9 @@ if (!nativeAotBlock[0].includes("if: matrix.suite == 'aot'")) throw new Error("D
 if (!nativeAotBlock[0].includes("LNAKO_NATIVE_ORACLE_ARTIFACT: ${{ runner.temp }}/lnako-native-oracle.json")) {
   throw new Error("AOT差分artifactの絶対出力先envがありません");
 }
+if (!nativeAotBlock[0].includes("node tools/check_dispatch_trace.mjs --no-build --evidence-output")) {
+  throw new Error("AOT dispatch evidenceの生成がありません");
+}
 if ((nativeAotBlock[0].match(/node tools\/compare_native_oracle\.mjs/g) ?? []).length !== 1) {
   throw new Error("AOT差分比較は同一suite内で1回だけ実行してください");
 }
@@ -92,9 +100,26 @@ for (const required of [
 ]) if (!upload.includes(required)) throw new Error(`AOT差分artifact uploadの設定がありません: ${required}`);
 if (upload.includes("run:")) throw new Error("AOT差分artifact uploadで追加の検証コマンドを実行しないでください");
 const uploadActions = workflow.match(/^        uses: actions\/upload-artifact@/gm) ?? [];
-if (uploadActions.length !== 1) throw new Error(`actions/upload-artifactは1ステップだけ必要です: actual=${uploadActions.length}`);
+if (uploadActions.length !== 3) throw new Error(`actions/upload-artifactは3ステップ必要です: actual=${uploadActions.length}`);
 if ((workflow.match(/name: lnako-native-oracle-\$\{\{ matrix\.os \}\}/g) ?? []).length !== 1) {
   throw new Error("AOT差分artifactのOS別保存名が一意に定義されていません");
+}
+const dispatchUploadBlock = workflow.match(/      - name: Upload native dispatch evidence[\s\S]*?(?=      - name:|$)/);
+if (!dispatchUploadBlock || !dispatchUploadBlock[0].includes("matrix.suite == 'aot' && always()") ||
+    !dispatchUploadBlock[0].includes("name: lnako-dispatch-evidence-${{ matrix.os }}") ||
+    !dispatchUploadBlock[0].includes("dispatch-evidence-${{ matrix.os }}.json") ||
+    !dispatchUploadBlock[0].includes("if-no-files-found: ignore")) {
+  throw new Error("OS別dispatch evidence artifactの設定が不正です");
+}
+const attestJob = workflow.match(/  attest-dispatch-evidence:[\s\S]*$/)?.[0];
+if (!attestJob || !attestJob.includes("github.event_name == 'push'") || !attestJob.includes("github.ref == 'refs/heads/main'") ||
+    !attestJob.includes("needs: test") || !attestJob.includes("id-token: write") || !attestJob.includes("attestations: write") || !attestJob.includes("artifact-metadata: write") ||
+    !attestJob.includes("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1") || !attestJob.includes("merge-multiple: true") ||
+    !attestJob.includes("actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2") || !attestJob.includes("node tools/verify_dispatch_attestation.mjs") ||
+    !attestJob.includes("id: attest-dispatch") || !attestJob.includes("--bundle \"${{ steps.attest-dispatch.outputs.bundle-path }}\"") ||
+    !attestJob.includes("${{ runner.temp }}/dispatch-attestation.json") || !attestJob.includes("${{ steps.attest-dispatch.outputs.bundle-path }}") ||
+    !attestJob.includes("--commit \"${{ github.sha }}\"") || !attestJob.includes("--workflow \"${{ github.repository }}/.github/workflows/ci.yml\"")) {
+  throw new Error("dispatch evidenceのattestation／検証job設定が不正です");
 }
 
 const smokeCommands = {
@@ -138,8 +163,8 @@ if (oracleSkipConditions.length !== 2) {
   throw new Error(`compat-aotのオラクル省略条件はcacheとsetupの2件必要です: actual=${oracleSkipConditions.length}`);
 }
 
-const cacheActions = [...workflow.matchAll(/^      - uses: actions\/cache@v6$/gm)];
-if (cacheActions.length !== 2) throw new Error(`actions/cache@v6は2ステップ必要です: actual=${cacheActions.length}`);
+const cacheActions = [...workflow.matchAll(/^      - uses: actions\/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6\.1\.0$/gm)];
+if (cacheActions.length !== 2) throw new Error(`actions/cache v6.1.0固定SHAは2ステップ必要です: actual=${cacheActions.length}`);
 const oracleBuild = setupOracle.match(/^const oracleBuild = (\d+);$/m)?.[1];
 if (oracleBuild === undefined) throw new Error("setup_oracle.mjsのoracleBuildを取得できません");
 if (Number(oracleBuild) !== oracleIdentity.build || !setupOracle.includes("oracleIdentity.cliSha256") || !setupOracle.includes("oracleIdentity.markerSha256") ||
@@ -149,7 +174,7 @@ if (Number(oracleBuild) !== oracleIdentity.build || !setupOracle.includes("oracl
 const oracleCacheKey = `key: nadesiko3-oracle-3.7.24-\${{ runner.os }}-\${{ runner.arch }}-a${oracleArchiveSha256.slice(0, 12)}-v${oracleBuild}`;
 if (!workflow.includes(oracleCacheKey)) throw new Error(`公式オラクルのキャッシュキーがoracleBuildと一致しません: ${oracleCacheKey}`);
 
-console.log(`CI構成検査: ${actualMatrix.size}ジョブ・${stepSuites.size}条件付き検証ステップ成功`);
+console.log(`CI構成検査: ${actualMatrix.size}テストジョブ＋1 attestationジョブ・${stepSuites.size}条件付き検証ステップ成功`);
 
 function assertSetEqual(actual, expected, label) {
   const missing = [...expected].filter((value) => !actual.has(value));
