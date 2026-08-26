@@ -26,13 +26,18 @@
   },
   {
     "id": "plugin-system-json",
-    "commands": ["JSON変換", "JSON取得", "JSONエンコード", "JSONエンコード整形", "JSONデコード", "JSON_E", "JSON_ES", "JSON_D"],
+    "commands": ["JSON変換", "JSONエンコード", "JSONエンコード整形", "JSON_E", "JSON_ES"],
     "source": "JSON変換({\"a\":1,\"b\":[true,NULL]})を表示\nJSON変換(JSON取得(『{\"x\":2}』))を表示\nJSONエンコード([1,2])を表示\nJSONエンコード整形({\"a\":[1,2]})を表示\nJSON変換(JSONデコード(『[3,4]』))を表示\nJSON_E({\"z\":5})を表示\nJSON_ES([6,{\"y\":7}])を表示\nJSON変換(JSON_D(『{\"n\":8}』))を表示\n"
   },
   {
     "id": "plugin-system-json-ecmascript-boundaries",
     "commands": [],
     "source": "JSON変換({\"2\":\"b\",\"1\":\"a\",\"x\":\"c\",\"01\":\"d\",\"4294967295\":\"e\",\"4294967294\":\"f\",\"0\":\"z\"})を表示\nJSONエンコード整形({\"2\":\"b\",\"1\":\"a\",\"x\":\"c\",\"01\":\"d\"})を表示\nJSON変換(undefined)を表示\nF=関数(A)それはA;ここまで\nJSON変換(F)を表示\nJSON変換([undefined,F])を表示\nエラー監視\nJSON変換(1n)を表示\nエラーならば\nエラーメッセージを表示\nここまで\nA=[]\nA[0]=A\nエラー監視\nJSON変換(A)を表示\nエラーならば\nエラーメッセージを表示\nここまで\nエラー監視\nJSON取得(\"x\")を表示\nエラーならば\nエラーメッセージを表示\nここまで\nエラー監視\nJSON取得(\"\")を表示\nエラーならば\nエラーメッセージを表示\nここまで\n"
+  },
+  {
+    "id": "plugin-system-json-utf16-boundaries",
+    "commands": ["JSON取得", "JSONデコード", "JSON_D"],
+    "source": "JSON変換(JSON取得(『{\"s\":\"\\ud800\",\"p\":\"\\ud800\\udc00\"}』))を表示\nJSON変換(JSONデコード(『 [ -0, 1e400, 1e-4000, 9007199254740993 ] 』))を表示\nJSON変換(JSON_D(『{\"a\":1,\"a\":2}』))を表示\nエラー監視\nJSON取得(『true x』)を表示\nエラーならば\nエラーメッセージを表示\nここまで\n"
   },
   {
     "id": "plugin-system-regexp",

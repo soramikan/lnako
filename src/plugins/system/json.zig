@@ -1,5 +1,6 @@
 const std = @import("std");
 const value_mod = @import("../../runtime/value.zig");
+const string_mod = @import("../../runtime/string.zig");
 const common = @import("common.zig");
 
 pub const Value = value_mod.Value;
@@ -300,94 +301,514 @@ fn writeIndent(writer: *std.Io.Writer, depth: usize) !void {
 
 fn decode(runtime: *Runtime, source: Value) !Value {
     const text_value = try runtime.valueToString(source);
-    const utf8 = try text_value.string.toUtf8Lossy(runtime.allocator());
-    defer runtime.allocator().free(utf8);
-    const parsed = std.json.parseFromSlice(std.json.Value, runtime.allocator(), utf8, .{ .duplicate_field_behavior = .use_last }) catch |failure| {
-        const message = try jsonParseFailureMessage(runtime.allocator(), utf8, failure);
-        defer runtime.allocator().free(message);
-        try runtime.setFailureMessage(message);
+    var text_root = text_value;
+    var text_frame = runtime.rootFrame();
+    defer text_frame.deinit();
+    try text_frame.protect(&text_root);
+    var parser = JsonParser{ .runtime = runtime, .units = text_root.string.units };
+    return parser.parse();
+}
+
+const JsonFrameKind = enum { array, object };
+const JsonFrameState = enum {
+    array_value_or_end,
+    array_value_after_comma,
+    array_delimiter,
+    object_key_or_end,
+    object_key_after_comma,
+    object_colon,
+    object_value,
+    object_delimiter,
+};
+
+const JsonFrame = struct {
+    container: Value,
+    kind: JsonFrameKind,
+    state: JsonFrameState,
+    pending_key: Value = .undefined,
+};
+
+/// JSON.parse-compatible UTF-16 parser for the interpreter runtime.
+///
+/// The parser deliberately keeps the input as UTF-16 code units. Converting
+/// the source to UTF-8 first would replace lone surrogates, which JSON.parse
+/// preserves. Containers are processed by an explicit stack so deeply nested
+/// JSON does not consume the C call stack.
+const JsonParser = struct {
+    runtime: *Runtime,
+    units: []const u16,
+    index: usize = 0,
+    frames: std.ArrayList(JsonFrame) = .empty,
+    root: Value = .undefined,
+    has_root: bool = false,
+
+    fn parse(self: *JsonParser) !Value {
+        defer self.frames.deinit(self.runtime.allocator());
+        try self.runtime.registerRootProvider(.{ .context = self, .traceFn = traceRoots });
+        defer self.runtime.unregisterRootProvider(self);
+
+        if (jsonAsciiEquals(self.units, "undefined") or
+            jsonAsciiEquals(self.units, "Infinity") or
+            jsonAsciiEquals(self.units, "NaN") or
+            jsonAsciiEquals(self.units, "[object Object]"))
+        {
+            return self.failWholeSourceInvalid();
+        }
+
+        self.skipWhitespace();
+        while (true) {
+            if (self.frames.items.len == 0) {
+                if (!self.has_root) {
+                    const value = try self.readValue();
+                    if (value) |parsed| {
+                        self.root = parsed;
+                        self.has_root = true;
+                    }
+                    continue;
+                }
+                self.skipWhitespace();
+                if (self.index != self.units.len) return self.failTrailing();
+                return self.root;
+            }
+
+            const frame_index = self.frames.items.len - 1;
+            switch (self.frames.items[frame_index].state) {
+                .array_value_or_end => {
+                    self.skipWhitespace();
+                    if (self.consume(']')) {
+                        const completed = self.frames.pop().?.container;
+                        try self.deliver(completed);
+                    } else if (self.index >= self.units.len) {
+                        return self.failEnd();
+                    } else {
+                        self.frames.items[frame_index].state = .array_delimiter;
+                        if (try self.readValue()) |value| try self.deliver(value);
+                    }
+                },
+                .array_value_after_comma => {
+                    self.skipWhitespace();
+                    if (self.index >= self.units.len) return self.failEnd();
+                    if (self.units[self.index] == ']') return self.failToken(self.index);
+                    self.frames.items[frame_index].state = .array_delimiter;
+                    if (try self.readValue()) |value| try self.deliver(value);
+                },
+                .array_delimiter => {
+                    self.skipWhitespace();
+                    if (self.consume(']')) {
+                        const completed = self.frames.pop().?.container;
+                        try self.deliver(completed);
+                    } else if (self.consume(',')) {
+                        self.frames.items[frame_index].state = .array_value_after_comma;
+                    } else if (self.index >= self.units.len) {
+                        return self.failJsonMessage("Expected ',' or ']' after array element");
+                    } else {
+                        return self.failToken(self.index);
+                    }
+                },
+                .object_key_or_end => {
+                    self.skipWhitespace();
+                    if (self.consume('}')) {
+                        const completed = self.frames.pop().?.container;
+                        try self.deliver(completed);
+                    } else if (self.index >= self.units.len) {
+                        return self.failJsonMessage("Expected property name or '}'");
+                    } else if (self.units[self.index] != '"') {
+                        return self.failJsonMessage("Expected property name or '}'");
+                    } else {
+                        self.frames.items[frame_index].pending_key = try self.parseStringValue();
+                        self.frames.items[frame_index].state = .object_colon;
+                    }
+                },
+                .object_key_after_comma => {
+                    self.skipWhitespace();
+                    if (self.index >= self.units.len) return self.failJsonMessage("Expected double-quoted property name");
+                    if (self.units[self.index] != '"') return self.failJsonMessage("Expected double-quoted property name");
+                    self.frames.items[frame_index].pending_key = try self.parseStringValue();
+                    self.frames.items[frame_index].state = .object_colon;
+                },
+                .object_colon => {
+                    self.skipWhitespace();
+                    if (!self.consume(':')) return self.failJsonMessage("Expected ':' after property name");
+                    self.frames.items[frame_index].state = .object_value;
+                },
+                .object_value => {
+                    self.skipWhitespace();
+                    if (self.index >= self.units.len) return self.failEnd();
+                    self.frames.items[frame_index].state = .object_delimiter;
+                    if (try self.readValue()) |value| try self.deliver(value);
+                },
+                .object_delimiter => {
+                    self.skipWhitespace();
+                    if (self.consume('}')) {
+                        const completed = self.frames.pop().?.container;
+                        try self.deliver(completed);
+                    } else if (self.consume(',')) {
+                        self.frames.items[frame_index].state = .object_key_after_comma;
+                    } else if (self.index >= self.units.len) {
+                        return self.failJsonMessage("Expected ',' or '}' after property value");
+                    } else {
+                        return self.failToken(self.index);
+                    }
+                },
+            }
+        }
+    }
+
+    fn traceRoots(context: *anyopaque, runtime: *Runtime) !void {
+        const self: *JsonParser = @ptrCast(@alignCast(context));
+        for (self.frames.items) |frame| {
+            try runtime.traceExternal(frame.container);
+            try runtime.traceExternal(frame.pending_key);
+        }
+    }
+
+    fn readValue(self: *JsonParser) !?Value {
+        if (self.index >= self.units.len) {
+            _ = self.failEnd() catch |failure| return failure;
+            unreachable;
+        }
+        return switch (self.units[self.index]) {
+            'n' => try self.parseLiteral("null", .null_value),
+            't' => try self.parseLiteral("true", .{ .boolean = true }),
+            'f' => try self.parseLiteral("false", .{ .boolean = false }),
+            '"' => try self.parseStringValue(),
+            '[' => blk: {
+                self.index += 1;
+                const container = try self.runtime.createArray();
+                try self.frames.append(self.runtime.allocator(), .{
+                    .container = container,
+                    .kind = .array,
+                    .state = .array_value_or_end,
+                });
+                break :blk null;
+            },
+            '{' => blk: {
+                self.index += 1;
+                const container = try self.runtime.createDictionary();
+                try self.frames.append(self.runtime.allocator(), .{
+                    .container = container,
+                    .kind = .object,
+                    .state = .object_key_or_end,
+                });
+                break :blk null;
+            },
+            '-', '0'...'9' => try self.parseNumber(),
+            else => {
+                _ = self.failToken(self.index) catch |failure| return failure;
+                unreachable;
+            },
+        };
+    }
+
+    fn deliver(self: *JsonParser, value: Value) !void {
+        if (self.frames.items.len == 0) {
+            self.root = value;
+            self.has_root = true;
+            return;
+        }
+        const frame = &self.frames.items[self.frames.items.len - 1];
+        switch (frame.kind) {
+            .array => _ = try frame.container.array.push(value),
+            .object => {
+                try frame.container.dictionary.set(frame.pending_key.string, value);
+                frame.pending_key = .undefined;
+            },
+        }
+    }
+
+    fn parseLiteral(self: *JsonParser, comptime literal: []const u8, value: Value) !?Value {
+        if (self.index + literal.len > self.units.len) {
+            _ = self.failEnd() catch |failure| return failure;
+            unreachable;
+        }
+        for (literal, 0..) |byte, offset| {
+            if (self.units[self.index + offset] != byte) {
+                _ = self.failToken(self.index + offset) catch |failure| return failure;
+                unreachable;
+            }
+        }
+        self.index += literal.len;
+        return value;
+    }
+
+    fn parseStringValue(self: *JsonParser) !Value {
+        const units = try self.parseStringUnits();
+        defer self.runtime.allocator().free(units);
+        return self.runtime.stringCodeUnits(units);
+    }
+
+    fn parseStringUnits(self: *JsonParser) ![]u16 {
+        if (self.index >= self.units.len or self.units[self.index] != '"') {
+            _ = self.failToken(self.index) catch |failure| return failure;
+            unreachable;
+        }
+        self.index += 1;
+        var result: std.ArrayList(u16) = .empty;
+        errdefer result.deinit(self.runtime.allocator());
+        while (self.index < self.units.len) {
+            const unit = self.units[self.index];
+            self.index += 1;
+            switch (unit) {
+                '"' => return result.toOwnedSlice(self.runtime.allocator()),
+                '\\' => {
+                    if (self.index >= self.units.len) {
+                        _ = self.failEnd() catch |failure| return failure;
+                        unreachable;
+                    }
+                    const escaped = self.units[self.index];
+                    self.index += 1;
+                    switch (escaped) {
+                        '"', '\\', '/' => try result.append(self.runtime.allocator(), escaped),
+                        'b' => try result.append(self.runtime.allocator(), 0x08),
+                        'f' => try result.append(self.runtime.allocator(), 0x0c),
+                        'n' => try result.append(self.runtime.allocator(), 0x0a),
+                        'r' => try result.append(self.runtime.allocator(), 0x0d),
+                        't' => try result.append(self.runtime.allocator(), 0x09),
+                        'u' => {
+                            if (self.index + 4 > self.units.len) {
+                                _ = self.failJsonMessageAt(
+                                    "Bad Unicode escape",
+                                    if (self.units.len > 0 and self.units[self.units.len - 1] == '"') self.units.len - 1 else self.units.len,
+                                ) catch |failure| return failure;
+                                unreachable;
+                            }
+                            var code_unit: u16 = 0;
+                            for (self.units[self.index .. self.index + 4], 0..) |digit, offset| {
+                                const value = jsonHexDigit(digit) orelse {
+                                    _ = self.failJsonMessageAt("Bad Unicode escape", self.index + offset) catch |failure| return failure;
+                                    unreachable;
+                                };
+                                code_unit = (code_unit << 4) | value;
+                            }
+                            self.index += 4;
+                            try result.append(self.runtime.allocator(), code_unit);
+                        },
+                        else => {
+                            _ = self.failJsonMessageAt("Bad escaped character", self.index - 1) catch |failure| return failure;
+                            unreachable;
+                        },
+                    }
+                },
+                0...0x1f => {
+                    _ = self.failJsonMessageAt("Bad control character in string literal", self.index - 1) catch |failure| return failure;
+                    unreachable;
+                },
+                else => try result.append(self.runtime.allocator(), unit),
+            }
+        }
+        _ = self.failJsonMessage("Unterminated string") catch |failure| return failure;
+        unreachable;
+    }
+
+    fn parseNumber(self: *JsonParser) !?Value {
+        const start = self.index;
+        if (self.consume('-') and (self.index >= self.units.len or !isJsonDigit(self.units[self.index]))) {
+            _ = self.failJsonMessage("No number after minus sign") catch |failure| return failure;
+            unreachable;
+        }
+        if (self.consume('0')) {
+            if (self.index < self.units.len and isJsonDigit(self.units[self.index])) {
+                _ = self.failJsonMessage("Unexpected number") catch |failure| return failure;
+                unreachable;
+            }
+        } else {
+            if (self.index >= self.units.len or self.units[self.index] < '1' or self.units[self.index] > '9') {
+                _ = self.failToken(self.index) catch |failure| return failure;
+                unreachable;
+            }
+            while (self.index < self.units.len and isJsonDigit(self.units[self.index])) self.index += 1;
+        }
+        if (self.consume('.')) {
+            if (self.index >= self.units.len or !isJsonDigit(self.units[self.index])) {
+                _ = self.failJsonMessage("Unterminated fractional number") catch |failure| return failure;
+                unreachable;
+            }
+            while (self.index < self.units.len and isJsonDigit(self.units[self.index])) self.index += 1;
+        }
+        if (self.index < self.units.len and (self.units[self.index] == 'e' or self.units[self.index] == 'E')) {
+            self.index += 1;
+            _ = self.consume('+') or self.consume('-');
+            if (self.index >= self.units.len or !isJsonDigit(self.units[self.index])) {
+                _ = self.failJsonMessage("Exponent part is missing a number") catch |failure| return failure;
+                unreachable;
+            }
+            while (self.index < self.units.len and isJsonDigit(self.units[self.index])) self.index += 1;
+        }
+        const number_units = self.units[start..self.index];
+        const ascii = try self.runtime.allocator().alloc(u8, number_units.len);
+        defer self.runtime.allocator().free(ascii);
+        for (number_units, 0..) |unit, offset| ascii[offset] = @intCast(unit);
+        const number = std.fmt.parseFloat(f64, ascii) catch jsonParseDecimal(number_units);
+        return .{ .number = number };
+    }
+
+    fn consume(self: *JsonParser, expected: u16) bool {
+        if (self.index < self.units.len and self.units[self.index] == expected) {
+            self.index += 1;
+            return true;
+        }
+        return false;
+    }
+
+    fn skipWhitespace(self: *JsonParser) void {
+        while (self.index < self.units.len) switch (self.units[self.index]) {
+            ' ', '\n', '\r', '\t' => self.index += 1,
+            else => return,
+        };
+    }
+
+    fn failEnd(self: *JsonParser) !Value {
+        try self.runtime.setFailureMessage("Unexpected end of JSON input");
         return error.InvalidJsonCloneValue;
-    };
-    defer parsed.deinit();
-    return fromJson(runtime, parsed.value);
+    }
+
+    fn failJsonMessage(self: *JsonParser, prefix: []const u8) !Value {
+        return self.failJsonMessageAt(prefix, self.index);
+    }
+
+    fn failJsonMessageAt(self: *JsonParser, prefix: []const u8, position: usize) !Value {
+        var line: usize = 1;
+        var column: usize = 1;
+        const bounded = @min(position, self.units.len);
+        var offset: usize = 0;
+        while (offset < bounded) : (offset += 1) {
+            const unit = self.units[offset];
+            if (unit == '\r') {
+                if (offset + 1 < bounded and self.units[offset + 1] == '\n') offset += 1;
+                line += 1;
+                column = 1;
+            } else if (unit == '\n') {
+                line += 1;
+                column = 1;
+            } else column += 1;
+        }
+        const message = try std.fmt.allocPrint(
+            self.runtime.allocator(),
+            "{s} in JSON at position {d} (line {d} column {d})",
+            .{ prefix, bounded, line, column },
+        );
+        defer self.runtime.allocator().free(message);
+        try self.runtime.setFailureMessage(message);
+        return error.InvalidJsonCloneValue;
+    }
+
+    fn failToken(self: *JsonParser, position: usize) !Value {
+        if (position >= self.units.len) return self.failEnd();
+        const source = try self.jsonErrorSource();
+        defer self.runtime.allocator().free(source);
+        const token_string = string_mod.String{ .allocator = self.runtime.allocator(), .units = @constCast(self.units[position .. position + 1]) };
+        const token = try token_string.toUtf8Lossy(self.runtime.allocator());
+        defer self.runtime.allocator().free(token);
+        const message = try std.fmt.allocPrint(
+            self.runtime.allocator(),
+            "Unexpected token '{s}', \"{s}\" is not valid JSON",
+            .{ token, source },
+        );
+        defer self.runtime.allocator().free(message);
+        try self.runtime.setFailureMessage(message);
+        return error.InvalidJsonCloneValue;
+    }
+
+    fn failWholeSourceInvalid(self: *JsonParser) !Value {
+        const source = try self.jsonErrorSource();
+        defer self.runtime.allocator().free(source);
+        const message = try std.fmt.allocPrint(self.runtime.allocator(), "\"{s}\" is not valid JSON", .{source});
+        defer self.runtime.allocator().free(message);
+        try self.runtime.setFailureMessage(message);
+        return error.InvalidJsonCloneValue;
+    }
+
+    fn jsonErrorSource(self: *JsonParser) ![]u8 {
+        const temporary = string_mod.String{ .allocator = self.runtime.allocator(), .units = @constCast(self.units) };
+        const utf8 = try temporary.toUtf8Lossy(self.runtime.allocator());
+        defer self.runtime.allocator().free(utf8);
+        var escaped: std.ArrayList(u8) = .empty;
+        errdefer escaped.deinit(self.runtime.allocator());
+        for (utf8) |byte| switch (byte) {
+            '\\' => try escaped.appendSlice(self.runtime.allocator(), "\\\\"),
+            '"' => try escaped.appendSlice(self.runtime.allocator(), "\\\""),
+            '\n' => try escaped.appendSlice(self.runtime.allocator(), "\\n"),
+            '\r' => try escaped.appendSlice(self.runtime.allocator(), "\\r"),
+            '\t' => try escaped.appendSlice(self.runtime.allocator(), "\\t"),
+            0...0x08, 0x0b, 0x0e...0x1f => {
+                const digits = "0123456789abcdef";
+                try escaped.appendSlice(self.runtime.allocator(), "\\u00");
+                try escaped.append(self.runtime.allocator(), digits[(byte >> 4) & 0xf]);
+                try escaped.append(self.runtime.allocator(), digits[byte & 0xf]);
+            },
+            else => try escaped.append(self.runtime.allocator(), byte),
+        };
+        return escaped.toOwnedSlice(self.runtime.allocator());
+    }
+
+    fn failTrailing(self: *JsonParser) !Value {
+        var line: usize = 1;
+        var column: usize = 1;
+        const bounded = @min(self.index, self.units.len);
+        var offset: usize = 0;
+        while (offset < bounded) : (offset += 1) {
+            const unit = self.units[offset];
+            if (unit == '\r') {
+                if (offset + 1 < bounded and self.units[offset + 1] == '\n') offset += 1;
+                line += 1;
+                column = 1;
+            } else if (unit == '\n') {
+                line += 1;
+                column = 1;
+            } else column += 1;
+        }
+        const message = try std.fmt.allocPrint(
+            self.runtime.allocator(),
+            "Unexpected non-whitespace character after JSON at position {d} (line {d} column {d})",
+            .{ bounded, line, column },
+        );
+        defer self.runtime.allocator().free(message);
+        try self.runtime.setFailureMessage(message);
+        return error.InvalidJsonCloneValue;
+    }
+};
+
+fn jsonHexDigit(unit: u16) ?u16 {
+    return if (unit >= '0' and unit <= '9') unit - '0' else if (unit >= 'a' and unit <= 'f') unit - 'a' + 10 else if (unit >= 'A' and unit <= 'F') unit - 'A' + 10 else null;
 }
 
-fn jsonParseFailureMessage(allocator: std.mem.Allocator, source: []const u8, failure: anyerror) ![]u8 {
-    if (failure == error.UnexpectedEndOfInput) return allocator.dupe(u8, "Unexpected end of JSON input");
-
-    const token = firstNonWhitespace(source) orelse return allocator.dupe(u8, "Unexpected end of JSON input");
-    var escaped: std.ArrayList(u8) = .empty;
-    defer escaped.deinit(allocator);
-    for (source) |byte| switch (byte) {
-        '\\' => try escaped.appendSlice(allocator, "\\\\"),
-        '"' => try escaped.appendSlice(allocator, "\\\""),
-        '\n' => try escaped.appendSlice(allocator, "\\n"),
-        '\r' => try escaped.appendSlice(allocator, "\\r"),
-        '\t' => try escaped.appendSlice(allocator, "\\t"),
-        0...0x08, 0x0b, 0x0e...0x1f => {
-            const digits = "0123456789abcdef";
-            try escaped.appendSlice(allocator, "\\u00");
-            try escaped.append(allocator, digits[(byte >> 4) & 0xf]);
-            try escaped.append(allocator, digits[byte & 0xf]);
-        },
-        else => try escaped.append(allocator, byte),
-    };
-    return std.fmt.allocPrint(allocator, "Unexpected token '{c}', \"{s}\" is not valid JSON", .{ token, escaped.items });
+fn isJsonDigit(unit: u16) bool {
+    return unit >= '0' and unit <= '9';
 }
 
-fn firstNonWhitespace(source: []const u8) ?u8 {
-    for (source) |byte| switch (byte) {
-        ' ', '\n', '\r', '\t' => {},
-        else => return byte,
-    };
-    return null;
+fn jsonAsciiEquals(units: []const u16, ascii: []const u8) bool {
+    if (units.len != ascii.len) return false;
+    for (units, ascii) |unit, byte| if (unit != byte) return false;
+    return true;
 }
 
-fn fromJson(runtime: *Runtime, source: std.json.Value) !Value {
-    return switch (source) {
-        .null => .null_value,
-        .bool => |boolean| .{ .boolean = boolean },
-        .integer => |integer| .{ .number = @floatFromInt(integer) },
-        .float => |float| .{ .number = float },
-        .number_string => |number| .{ .number = try std.fmt.parseFloat(f64, number) },
-        .string => |string| runtime.stringUtf8(string),
-        .array => |array| blk: {
-            var result = try runtime.createArray();
-            var roots = runtime.rootFrame();
-            defer roots.deinit();
-            try roots.protect(&result);
-            for (array.items) |item| {
-                var converted = try fromJson(runtime, item);
-                var item_roots = runtime.rootFrame();
-                defer item_roots.deinit();
-                try item_roots.protect(&converted);
-                _ = try result.array.push(converted);
-            }
-            break :blk result;
-        },
-        .object => |object| blk: {
-            var result = try runtime.createDictionary();
-            var roots = runtime.rootFrame();
-            defer roots.deinit();
-            try roots.protect(&result);
-            var iterator = object.iterator();
-            while (iterator.next()) |entry| {
-                var converted = try fromJson(runtime, entry.value_ptr.*);
-                var item_roots = runtime.rootFrame();
-                defer item_roots.deinit();
-                try item_roots.protect(&converted);
-                var key = try runtime.stringUtf8(entry.key_ptr.*);
-                try item_roots.protect(&key);
-                try result.dictionary.set(key.string, converted);
-            }
-            break :blk result;
-        },
-    };
-}
-
-fn containsPointer(comptime T: type, values: []const *T, needle: *T) bool {
-    for (values) |value| if (value == needle) return true;
-    return false;
+fn jsonParseDecimal(units: []const u16) f64 {
+    var index: usize = 0;
+    const negative = units.len > 0 and units[0] == '-';
+    if (negative) index += 1;
+    var value: f64 = 0;
+    while (index < units.len and isJsonDigit(units[index])) : (index += 1) value = value * 10 + @as(f64, @floatFromInt(units[index] - '0'));
+    if (index < units.len and units[index] == '.') {
+        index += 1;
+        var scale: f64 = 0.1;
+        while (index < units.len and isJsonDigit(units[index])) : (index += 1) {
+            value += @as(f64, @floatFromInt(units[index] - '0')) * scale;
+            scale *= 0.1;
+        }
+    }
+    var exponent: i32 = 0;
+    if (index < units.len and (units[index] == 'e' or units[index] == 'E')) {
+        index += 1;
+        var exponent_negative = false;
+        if (index < units.len and (units[index] == '+' or units[index] == '-')) {
+            exponent_negative = units[index] == '-';
+            index += 1;
+        }
+        while (index < units.len and isJsonDigit(units[index])) : (index += 1) exponent = @min(@as(i32, 10000), exponent * 10 + @as(i32, @intCast(units[index] - '0')));
+        if (exponent_negative) exponent = -exponent;
+    }
+    const result = value * std.math.pow(f64, 10, @floatFromInt(exponent));
+    return if (negative) -result else result;
 }
 
 fn isCompactEncode(name: []const u8) bool {
@@ -560,4 +981,125 @@ test "Uint8ArrayをNode互換の添字JSONオブジェクトへ変換する" {
     const pretty_utf8 = try pretty.string.toUtf8Lossy(std.testing.allocator);
     defer std.testing.allocator.free(pretty_utf8);
     try std.testing.expectEqualStrings("{\n  \"0\": 9,\n  \"1\": 2\n}", pretty_utf8);
+}
+
+test "JSONデコードはUTF-16サロゲート・空白・数値境界を保持する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+
+    var escaped = try runtime.stringCodeUnits(&.{ '"', '\\', 'u', 'd', '8', '0', '0', '"' });
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&escaped);
+    var decoded = (try call(&runtime, "JSON取得", &.{escaped})).?;
+    try roots.protect(&decoded);
+    try std.testing.expectEqualSlices(u16, &.{0xd800}, decoded.string.units);
+
+    var raw = try runtime.stringCodeUnits(&.{ '"', 0xdfff, '"' });
+    try roots.protect(&raw);
+    const raw_decoded = (try call(&runtime, "JSONデコード", &.{raw})).?;
+    var raw_root = raw_decoded;
+    try roots.protect(&raw_root);
+    try std.testing.expectEqualSlices(u16, &.{0xdfff}, raw_decoded.string.units);
+
+    var pair = try runtime.stringCodeUnits(&.{ '"', '\\', 'u', 'd', '8', '3', 'd', '\\', 'u', 'd', 'e', '0', '0', '"' });
+    try roots.protect(&pair);
+    const pair_decoded = (try call(&runtime, "JSON_D", &.{pair})).?;
+    var pair_root = pair_decoded;
+    try roots.protect(&pair_root);
+    try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00 }, pair_decoded.string.units);
+
+    var spaced = try runtime.stringUtf8(" \t\r\n [ -0,1e400,1e-4000,9007199254740993 ] ");
+    try roots.protect(&spaced);
+    const spaced_decoded = (try call(&runtime, "JSON取得", &.{spaced})).?;
+    var spaced_root = spaced_decoded;
+    try roots.protect(&spaced_root);
+    const encoded = (try call(&runtime, "JSON変換", &.{spaced_decoded})).?;
+    var encoded_root = encoded;
+    try roots.protect(&encoded_root);
+    const encoded_utf8 = try encoded.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(encoded_utf8);
+    try std.testing.expectEqualStrings("[0,null,0,9007199254740992]", encoded_utf8);
+
+    var duplicate = try runtime.stringUtf8("{\"a\":1,\"a\":2}");
+    try roots.protect(&duplicate);
+    const duplicate_decoded = (try call(&runtime, "JSON取得", &.{duplicate})).?;
+    var duplicate_root = duplicate_decoded;
+    try roots.protect(&duplicate_root);
+    const duplicate_encoded = (try call(&runtime, "JSON変換", &.{duplicate_decoded})).?;
+    var duplicate_encoded_root = duplicate_encoded;
+    try roots.protect(&duplicate_encoded_root);
+    const duplicate_utf8 = try duplicate_encoded.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(duplicate_utf8);
+    try std.testing.expectEqualStrings("{\"a\":2}", duplicate_utf8);
+
+    var nbsp = try runtime.stringCodeUnits(&.{ 0x00a0, '1' });
+    try roots.protect(&nbsp);
+    try std.testing.expectError(error.InvalidJsonCloneValue, call(&runtime, "JSON取得", &.{nbsp}));
+    try std.testing.expectEqualStrings("Unexpected token ' ', \" 1\" is not valid JSON", runtime.failureMessage().?);
+}
+
+test "JSONデコードのNode 24エラー位置を保持する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const Case = struct { source: []const u8, message: []const u8 };
+    const cases = [_]Case{
+        .{ .source = "[1", .message = "Expected ',' or ']' after array element in JSON at position 2 (line 1 column 3)" },
+        .{ .source = "{", .message = "Expected property name or '}' in JSON at position 1 (line 1 column 2)" },
+        .{ .source = "{\"a\":1,}", .message = "Expected double-quoted property name in JSON at position 7 (line 1 column 8)" },
+        .{ .source = "{\"a\":1,", .message = "Expected double-quoted property name in JSON at position 7 (line 1 column 8)" },
+        .{ .source = "true x", .message = "Unexpected non-whitespace character after JSON at position 5 (line 1 column 6)" },
+        .{ .source = "\"\\u12\"", .message = "Bad Unicode escape in JSON at position 5 (line 1 column 6)" },
+        .{ .source = "\"\\x00\"", .message = "Bad escaped character in JSON at position 2 (line 1 column 3)" },
+    };
+    for (cases) |case| {
+        const source = try runtime.stringUtf8(case.source);
+        try std.testing.expectError(error.InvalidJsonCloneValue, call(&runtime, "JSON取得", &.{source}));
+        try std.testing.expectEqualStrings(case.message, runtime.failureMessage().?);
+        runtime.clearFailureMessage();
+    }
+}
+
+test "JSONデコードは100000段のネストをCスタックなしで処理する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.next_collection = std.math.maxInt(usize);
+    const depth: usize = 100_000;
+    var source_units: std.ArrayList(u16) = .empty;
+    defer source_units.deinit(std.testing.allocator);
+    try source_units.ensureTotalCapacity(std.testing.allocator, depth * 2 + 1);
+    for (0..depth) |_| try source_units.append(std.testing.allocator, '[');
+    try source_units.append(std.testing.allocator, '0');
+    for (0..depth) |_| try source_units.append(std.testing.allocator, ']');
+    var source = try runtime.stringCodeUnits(source_units.items);
+    var source_root = runtime.rootFrame();
+    defer source_root.deinit();
+    try source_root.protect(&source);
+    var decoded = (try call(&runtime, "JSON取得", &.{source})).?;
+    var decoded_root = runtime.rootFrame();
+    defer decoded_root.deinit();
+    try decoded_root.protect(&decoded);
+    var value = decoded;
+    for (0..depth) |_| {
+        try std.testing.expect(value == .array);
+        try std.testing.expectEqual(@as(usize, 1), value.array.items.items.len);
+        value = value.array.items.items[0];
+    }
+    try std.testing.expectEqual(@as(f64, 0), value.number);
+}
+
+fn jsonDecodeAllocationTest(allocator: std.mem.Allocator) !void {
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    var source = try runtime.stringUtf8("{\"a\":[1,2,3],\"b\":{\"c\":4}}");
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&source);
+    const decoded = try call(&runtime, "JSON取得", &.{source});
+    _ = decoded;
+}
+
+test "JSONデコードは割当失敗を握り潰さない" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, jsonDecodeAllocationTest, .{});
 }

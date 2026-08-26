@@ -31,6 +31,12 @@ pub fn normalize(allocator: std.mem.Allocator, input: []const u8) !NormalizedSou
                     state = .code;
                     continue;
                 }
+                if (input[i] == '\r') {
+                    const consumed: usize = if (i + 1 < input.len and input[i + 1] == '\n') 2 else 1;
+                    try appendMapped(&output, &offsets, allocator, "\n", i);
+                    i += consumed;
+                    continue;
+                }
                 const decoded = try decodeAt(input, i);
                 try appendMapped(&output, &offsets, allocator, input[i .. i + decoded.len], i);
                 i += decoded.len;
@@ -220,6 +226,7 @@ test "公式前処理の全角記号と改行規則に合わせる" {
         .{ .input = "１２３「１２３」", .expected = "123「１２３」" },
         .{ .input = "１２３🌴１２３🌴１２３", .expected = "123🌴１２３🌴123" },
         .{ .input = "123\r\n456\r789", .expected = "123\n456\n789" },
+        .{ .input = "『A\r\nB\rC』", .expected = "『A\nB\nC』" },
         .{ .input = "！＄１２３４５＃", .expected = "!$12345#\n" },
         .{ .input = "123、456。", .expected = "123,456;" },
         .{ .input = "３．１４", .expected = "3.14" },

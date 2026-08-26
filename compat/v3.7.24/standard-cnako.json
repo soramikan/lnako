@@ -7567,14 +7567,19 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-json-utf16-boundaries",
+        "native-system-json-decode",
+        "native-system-json-decode-tostring",
+        "native-system-json-decode-errors"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "純LLVM AOT実装および公式処理系との差分テストを待機中"
+      "reason": "UTF-16明示スタックパーサをインタープリタと純LLVM AOTに実装し公式7経路差分テストに成功"
     },
     {
       "id": "command-0289",
@@ -7647,14 +7652,17 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-json-utf16-boundaries",
+        "native-system-json-decode"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "純LLVM AOT実装および公式処理系との差分テストを待機中"
+      "reason": "JSON取得と共有するUTF-16明示スタックパーサを実装し公式7経路差分テストに成功"
     },
     {
       "id": "command-0292",
@@ -7727,14 +7735,17 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-json-utf16-boundaries",
+        "native-system-json-decode"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "純LLVM AOT実装および公式処理系との差分テストを待機中"
+      "reason": "JSON取得と共有するUTF-16明示スタックパーサを実装し公式7経路差分テストに成功"
     },
     {
       "id": "command-0295",

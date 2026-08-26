@@ -44,6 +44,32 @@
     ],
     "reason": "JSONエンコード整形と共有する純LLVM AOTエンコーダを実装し公式差分テストに成功"
   },
+  "JSON取得": {
+    "status": "native",
+    "tests": [
+      "plugin-system-json-utf16-boundaries",
+      "native-system-json-decode",
+      "native-system-json-decode-tostring",
+      "native-system-json-decode-errors"
+    ],
+    "reason": "UTF-16明示スタックパーサをインタープリタと純LLVM AOTに実装し公式7経路差分テストに成功"
+  },
+  "JSONデコード": {
+    "status": "native",
+    "tests": [
+      "plugin-system-json-utf16-boundaries",
+      "native-system-json-decode"
+    ],
+    "reason": "JSON取得と共有するUTF-16明示スタックパーサを実装し公式7経路差分テストに成功"
+  },
+  "JSON_D": {
+    "status": "native",
+    "tests": [
+      "plugin-system-json-utf16-boundaries",
+      "native-system-json-decode"
+    ],
+    "reason": "JSON取得と共有するUTF-16明示スタックパーサを実装し公式7経路差分テストに成功"
+  },
   "秒待": {
     "status": "native",
     "tests": [

@@ -1006,12 +1006,30 @@ fn expectJsonAotString(runtime: *Runtime, value: Value, pretty: bool, expected: 
 /// output strings are UTF-16 code-unit sequences, so escaped and literal
 /// lone surrogates are retained exactly as ECMAScript does.  Using
 /// `std.json` here would reject those values before the Nako value layer saw
-/// them; this small recursive-descent parser deliberately works on u16.
+/// them; this explicit-stack parser deliberately works on u16.
+const JsonAotFrameKind = enum { array, dictionary };
+
+const JsonAotFrameState = enum {
+    array_open,
+    array_need_value,
+    array_after_value,
+    dictionary_open,
+    dictionary_need_key,
+    dictionary_need_value,
+    dictionary_after_value,
+};
+
+const JsonAotFrame = struct {
+    kind: JsonAotFrameKind,
+    state: JsonAotFrameState,
+    result_index: usize,
+    root_base: usize,
+};
+
 const JsonAotParser = struct {
     runtime: *Runtime,
     units: []const u16,
     index: usize = 0,
-    depth: usize = 0,
 
     fn parse(self: *JsonAotParser) anyerror!Value {
         if (jsonAsciiEquals(self.units, "undefined") or jsonAsciiEquals(self.units, "Infinity") or jsonAsciiEquals(self.units, "NaN") or jsonAsciiEquals(self.units, "[object Object]")) {
@@ -1019,27 +1037,159 @@ const JsonAotParser = struct {
         }
         self.skipWhitespace();
         if (self.index >= self.units.len) return self.failEnd();
-        const result = try self.parseValue();
-        self.skipWhitespace();
-        if (self.index != self.units.len) return self.failTrailing();
-        return result;
+        // JSON nesting is not bounded by the host call stack.  Allocate all
+        // parser frames and roots up front so reallocating either collection
+        // can never invalidate the root slice registered with the GC.
+        const max_frames = jsonAotContainerCount(self.units);
+        const frame_root_count = std.math.mul(usize, max_frames, 3) catch return error.OutOfMemory;
+        const root_count = std.math.add(usize, frame_root_count, 1) catch return error.OutOfMemory;
+        var roots = try self.runtime.allocator.alloc(Value, root_count);
+        defer self.runtime.allocator.free(roots);
+        @memset(roots, .{});
+        var frames = try self.runtime.allocator.alloc(JsonAotFrame, max_frames);
+        defer self.runtime.allocator.free(frames);
+        var root_frame = RootFrame{};
+        self.runtime.pushRoots(&root_frame, roots.ptr, roots.len);
+        defer self.runtime.popRoots(&root_frame);
+
+        var frame_count: usize = 0;
+        var root_done = false;
+        while (true) {
+            if (frame_count == 0) {
+                if (root_done) {
+                    self.skipWhitespace();
+                    if (self.index != self.units.len) return self.failTrailing();
+                    return roots[0];
+                }
+                if (try self.beginValue(roots, frames, &frame_count, 0)) continue;
+                roots[0] = try self.parseScalar();
+                root_done = true;
+                continue;
+            }
+
+            const frame_index = frame_count - 1;
+            const frame = frames[frame_index];
+            const base = frame.root_base;
+            switch (frame.state) {
+                .array_open, .array_need_value => {
+                    self.skipWhitespace();
+                    if (frame.state == .array_open and self.consume(']')) {
+                        try self.closeFrame(roots, frames, &frame_count);
+                        if (frame_count == 0) root_done = true;
+                        continue;
+                    }
+                    if (try self.beginValue(roots, frames, &frame_count, base + 2)) continue;
+                    roots[base + 2] = try self.parseScalar();
+                    try self.attachValue(roots, frames, frame_count, base + 2);
+                },
+                .array_after_value => {
+                    self.skipWhitespace();
+                    if (self.consume(']')) {
+                        try self.closeFrame(roots, frames, &frame_count);
+                        if (frame_count == 0) root_done = true;
+                    } else if (self.consume(',')) {
+                        frames[frame_index].state = .array_need_value;
+                    } else if (self.index >= self.units.len) {
+                        return self.failJsonMessage("Expected ',' or ']' after array element");
+                    } else return self.failToken(self.index);
+                },
+                .dictionary_open, .dictionary_need_key => {
+                    self.skipWhitespace();
+                    if (frame.state == .dictionary_open and self.consume('}')) {
+                        try self.closeFrame(roots, frames, &frame_count);
+                        if (frame_count == 0) root_done = true;
+                        continue;
+                    }
+                    if (frame.state == .dictionary_need_key and self.index >= self.units.len) return self.failJsonMessage("Expected double-quoted property name");
+                    if (frame.state == .dictionary_need_key and self.units[self.index] != '"') return self.failJsonMessage("Expected double-quoted property name");
+                    if (self.index >= self.units.len or self.units[self.index] != '"') return self.failJsonMessage("Expected property name or '}'");
+                    roots[base + 1] = try self.parseStringValue();
+                    self.skipWhitespace();
+                    if (!self.consume(':')) return self.failJsonMessage("Expected ':' after property name");
+                    frames[frame_index].state = .dictionary_need_value;
+                },
+                .dictionary_need_value => {
+                    self.skipWhitespace();
+                    if (try self.beginValue(roots, frames, &frame_count, base + 2)) continue;
+                    roots[base + 2] = try self.parseScalar();
+                    try self.attachValue(roots, frames, frame_count, base + 2);
+                },
+                .dictionary_after_value => {
+                    self.skipWhitespace();
+                    if (self.consume('}')) {
+                        try self.closeFrame(roots, frames, &frame_count);
+                        if (frame_count == 0) root_done = true;
+                    } else if (self.consume(',')) {
+                        frames[frame_index].state = .dictionary_need_key;
+                    } else if (self.index >= self.units.len) {
+                        return self.failJsonMessage("Expected ',' or '}' after property value");
+                    } else return self.failToken(self.index);
+                },
+            }
+        }
     }
 
-    fn parseValue(self: *JsonAotParser) anyerror!Value {
+    /// Start a scalar or container at `result_index`.  A container gets an
+    /// explicit frame; a scalar is left for parseScalar so the caller can
+    /// store it in a GC root before any append/set operation.
+    fn beginValue(self: *JsonAotParser, roots: []Value, frames: []JsonAotFrame, frame_count: *usize, result_index: usize) !bool {
         if (self.index >= self.units.len) return self.failEnd();
-        if (self.depth >= 1024) return self.failJsonMessage("Maximum call stack size exceeded");
-        self.depth += 1;
-        defer self.depth -= 1;
+        switch (self.units[self.index]) {
+            '[' => {
+                self.index += 1;
+                roots[result_index] = try self.runtime.createArray(&.{});
+                frames[frame_count.*] = .{ .kind = .array, .state = .array_open, .result_index = result_index, .root_base = 1 + frame_count.* * 3 };
+                frame_count.* += 1;
+                return true;
+            },
+            '{' => {
+                self.index += 1;
+                roots[result_index] = try self.runtime.createDictionary(&.{});
+                frames[frame_count.*] = .{ .kind = .dictionary, .state = .dictionary_open, .result_index = result_index, .root_base = 1 + frame_count.* * 3 };
+                frame_count.* += 1;
+                return true;
+            },
+            else => return false,
+        }
+    }
+
+    fn parseScalar(self: *JsonAotParser) anyerror!Value {
+        if (self.index >= self.units.len) return self.failEnd();
         return switch (self.units[self.index]) {
             'n' => try self.parseLiteral("null", .{ .tag = @intFromEnum(Tag.null_value) }),
             't' => try self.parseLiteral("true", .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 }),
             'f' => try self.parseLiteral("false", .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 }),
             '"' => try self.parseStringValue(),
-            '[' => try self.parseArray(),
-            '{' => try self.parseDictionary(),
             '-', '0'...'9' => try self.parseNumber(),
             else => self.failToken(self.index),
         };
+    }
+
+    fn attachValue(self: *JsonAotParser, roots: []Value, frames: []JsonAotFrame, frame_count: usize, value_index: usize) !void {
+        const parent_index = frame_count - 1;
+        const parent = frames[parent_index];
+        const parent_base = parent.root_base;
+        switch (frames[parent_index].kind) {
+            .array => {
+                try roots[parent.result_index].object().?.payload.array.append(self.runtime.allocator, roots[value_index]);
+                frames[parent_index].state = .array_after_value;
+            },
+            .dictionary => {
+                try self.runtime.setDictionary(&roots[parent.result_index].object().?.payload.dictionary, roots[parent_base + 1], roots[value_index]);
+                frames[parent_index].state = .dictionary_after_value;
+            },
+        }
+    }
+
+    fn closeFrame(self: *JsonAotParser, roots: []Value, frames: []JsonAotFrame, frame_count: *usize) !void {
+        const child_index = frame_count.* - 1;
+        const child_base = frames[child_index].result_index;
+        frame_count.* -= 1;
+        if (frame_count.* == 0) {
+            roots[0] = roots[child_base];
+            return;
+        }
+        try self.attachValue(roots, frames, frame_count.*, child_base);
     }
 
     fn parseLiteral(self: *JsonAotParser, comptime literal: []const u8, value: Value) anyerror!Value {
@@ -1096,58 +1246,6 @@ const JsonAotParser = struct {
             }
         }
         return self.failJsonMessage("Unterminated string");
-    }
-
-    fn parseArray(self: *JsonAotParser) anyerror!Value {
-        self.index += 1; // '['
-        var result = try self.runtime.createArray(&.{});
-        var roots = [_]Value{ result, .{} };
-        var frame = RootFrame{};
-        self.runtime.pushRoots(&frame, &roots, roots.len);
-        defer self.runtime.popRoots(&frame);
-        self.skipWhitespace();
-        if (self.consume(']')) return result;
-        while (true) {
-            roots[1] = try self.parseValue();
-            try result.object().?.payload.array.append(self.runtime.allocator, roots[1]);
-            self.skipWhitespace();
-            if (self.consume(']')) return result;
-            if (!self.consume(',')) {
-                if (self.index >= self.units.len) return self.failJsonMessage("Expected ',' or ']' after array element");
-                return self.failToken(self.index);
-            }
-            self.skipWhitespace();
-            if (self.index >= self.units.len) return self.failEnd();
-        }
-    }
-
-    fn parseDictionary(self: *JsonAotParser) anyerror!Value {
-        self.index += 1; // '{'
-        var result = try self.runtime.createDictionary(&.{});
-        var roots = [_]Value{ result, .{}, .{} };
-        var frame = RootFrame{};
-        self.runtime.pushRoots(&frame, &roots, roots.len);
-        defer self.runtime.popRoots(&frame);
-        self.skipWhitespace();
-        if (self.consume('}')) return result;
-        while (true) {
-            if (self.index >= self.units.len or self.units[self.index] != '"') return self.failJsonMessage("Expected property name or '}'");
-            roots[1] = try self.parseStringValue();
-            self.skipWhitespace();
-            if (!self.consume(':')) return self.failJsonMessage("Expected ':' after property name");
-            self.skipWhitespace();
-            roots[2] = try self.parseValue();
-            try self.runtime.setDictionary(&result.object().?.payload.dictionary, roots[1], roots[2]);
-            self.skipWhitespace();
-            if (self.consume('}')) return result;
-            if (!self.consume(',')) {
-                if (self.index >= self.units.len) return self.failJsonMessage("Expected ',' or '}' after property value");
-                return self.failToken(self.index);
-            }
-            self.skipWhitespace();
-            if (self.index >= self.units.len) return self.failEnd();
-            if (self.units[self.index] != '"') return self.failJsonMessage("Expected double-quoted property name");
-        }
     }
 
     fn parseNumber(self: *JsonAotParser) anyerror!Value {
@@ -1308,6 +1406,34 @@ fn jsonAsciiEquals(units: []const u16, ascii: []const u8) bool {
     return true;
 }
 
+/// Count only container starts outside JSON strings.  This is a sizing scan,
+/// not validation: malformed input may still be rejected by the parser, but
+/// every opening token the parser could process is counted unless it is inside
+/// the same string/escape state that parseStringUnits uses.
+fn jsonAotContainerCount(units: []const u16) usize {
+    var count: usize = 0;
+    var in_string = false;
+    var escaped = false;
+    for (units) |unit| {
+        if (in_string) {
+            if (escaped) {
+                escaped = false;
+            } else if (unit == '\\') {
+                escaped = true;
+            } else if (unit == '"') {
+                in_string = false;
+            }
+            continue;
+        }
+        if (unit == '"') {
+            in_string = true;
+        } else if (unit == '[' or unit == '{') {
+            count = std.math.add(usize, count, 1) catch return std.math.maxInt(usize);
+        }
+    }
+    return @max(count, 1);
+}
+
 fn jsonParseDecimal(units: []const u16) f64 {
     var index: usize = 0;
     const negative = units.len > 0 and units[0] == '-';
@@ -1395,6 +1521,7 @@ test "AOT JSONデコードはUTF-16・数値境界・重複キーを保持する
         .{ .source = "01", .message = "Unexpected number in JSON at position 1 (line 1 column 2)" },
         .{ .source = "-01", .message = "Unexpected number in JSON at position 2 (line 1 column 3)" },
         .{ .source = "{\"a\":1,}", .message = "Expected double-quoted property name in JSON at position 7 (line 1 column 8)" },
+        .{ .source = "{\"a\":1,", .message = "Expected double-quoted property name in JSON at position 7 (line 1 column 8)" },
         .{ .source = "{\"a\":1, x:2}", .message = "Expected double-quoted property name in JSON at position 8 (line 1 column 9)" },
         .{ .source = "\"\x1f\"", .message = "Bad control character in string literal in JSON at position 1 (line 1 column 2)" },
         .{ .source = "\"\\u12\"", .message = "Bad Unicode escape in JSON at position 5 (line 1 column 6)" },
@@ -1409,6 +1536,57 @@ test "AOT JSONデコードはUTF-16・数値境界・重複キーを保持する
         const message = runtime.takeException();
         try expectUtf16String(&runtime, message, case.message);
     }
+}
+
+test "AOT JSONデコードは深い配列と辞書を明示スタックで処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    // Keep collections frequent enough to exercise the parser's root slice,
+    // while avoiding a collection for every single nested container.
+    runtime.next_collection = 128;
+    const depth: usize = 100_000;
+    var roots = [_]Value{ .{}, .{} };
+    var root_frame = RootFrame{};
+    runtime.pushRoots(&root_frame, &roots, roots.len);
+    defer runtime.popRoots(&root_frame);
+
+    var array_source: std.ArrayList(u8) = .empty;
+    defer array_source.deinit(runtime.allocator);
+    try array_source.appendNTimes(runtime.allocator, '[', depth);
+    try array_source.append(runtime.allocator, '0');
+    try array_source.appendNTimes(runtime.allocator, ']', depth);
+    roots[0] = try createJsonTestString(&runtime, array_source.items);
+    roots[1] = try jsonDecodeBuiltin(&runtime, roots[0]);
+    var array_current = roots[1];
+    for (0..depth) |_| {
+        try std.testing.expectEqual(Tag.array, @as(Tag, @enumFromInt(array_current.tag)));
+        const items = array_current.object().?.payload.array.items;
+        try std.testing.expectEqual(@as(usize, 1), items.len);
+        array_current = items[0];
+    }
+    try std.testing.expectEqual(Tag.number, @as(Tag, @enumFromInt(array_current.tag)));
+    try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast(array_current.payload)));
+
+    var dictionary_source: std.ArrayList(u8) = .empty;
+    defer dictionary_source.deinit(runtime.allocator);
+    try dictionary_source.ensureTotalCapacity(runtime.allocator, depth * 5 + 1);
+    for (0..depth) |_| try dictionary_source.appendSlice(runtime.allocator, "{\"a\":");
+    try dictionary_source.append(runtime.allocator, '0');
+    try dictionary_source.appendNTimes(runtime.allocator, '}', depth);
+    roots[0] = try createJsonTestString(&runtime, dictionary_source.items);
+    roots[1] = try jsonDecodeBuiltin(&runtime, roots[0]);
+    var dictionary_current = roots[1];
+    for (0..depth) |_| {
+        try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(dictionary_current.tag)));
+        dictionary_current = jsonTestDictionaryGet(dictionary_current, &.{'a'});
+    }
+    try std.testing.expectEqual(Tag.number, @as(Tag, @enumFromInt(dictionary_current.tag)));
+    try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast(dictionary_current.payload)));
+}
+
+test "AOT JSONデコードのフレーム数は文字列内の括弧を除外する" {
+    try std.testing.expectEqual(@as(usize, 2), jsonAotContainerCount(&.{ '[', '{', '"', '[', '{', '"', '}', ']' }));
+    try std.testing.expectEqual(@as(usize, 1), jsonAotContainerCount(&.{ '[', '"', '\\', '"', '[', '"', ']' }));
 }
 
 fn expectUtf16String(runtime: *Runtime, value: Value, expected: []const u8) !void {

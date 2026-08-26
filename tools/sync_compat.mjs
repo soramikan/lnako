@@ -155,9 +155,9 @@ const targets = {
   commandCount: standardCnako.length,
   commands: standardCnako,
 };
-const countStatuses = (items) =>
+const countStatuses = (items, requiredStatuses = []) =>
   Object.fromEntries(
-    [...new Set(items.map((entry) => entry.status))]
+    [...new Set([...requiredStatuses, ...items.map((entry) => entry.status)])]
       .sort()
       .map((status) => [status, items.filter((entry) => entry.status === status).length]),
   );
@@ -167,8 +167,8 @@ const summary = {
   catalogCommands: entries.length,
   standardCnakoCommands: standardCnako.length,
   outOfScopeCommands: entries.length - standardCnako.length,
-  statuses: countStatuses(entries),
-  standardCnakoStatuses: countStatuses(standardCnako),
+  statuses: countStatuses(entries, ["blocked", "compat-js", "excluded-browser", "excluded-extension", "native"]),
+  standardCnakoStatuses: countStatuses(standardCnako, ["blocked", "compat-js", "native"]),
   standardCnakoPlannedModes: {
     native: standardCnako.filter((entry) => entry.plannedMode === "native").length,
     "compat-js": standardCnako.filter((entry) => entry.plannedMode === "compat-js").length,
