@@ -32,6 +32,9 @@ jobs:
           - name: Linux x86_64
             os: ubuntu-24.04
             suite: aot
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: compat-aot
           - name: macOS arm64
             os: macos-15
             suite: core
@@ -44,6 +47,9 @@ jobs:
           - name: macOS arm64
             os: macos-15
             suite: aot
+          - name: macOS arm64
+            os: macos-15
+            suite: compat-aot
           - name: Windows x86_64
             os: windows-2025
             suite: core
@@ -56,6 +62,9 @@ jobs:
           - name: Windows x86_64
             os: windows-2025
             suite: aot
+          - name: Windows x86_64
+            os: windows-2025
+            suite: compat-aot
     runs-on: ${{ matrix.os }}
     timeout-minutes: 50
     steps:
@@ -82,10 +91,12 @@ jobs:
           node tools/sync_compat.mjs --check
           node tools/check_builtin_catalog.mjs
       - uses: actions/cache@v6
+        if: matrix.suite != 'compat-aot'
         with:
           path: .cache/oracle
           key: nadesiko3-oracle-3.7.24-${{ runner.os }}-v2
       - name: Build official oracle
+        if: matrix.suite != 'compat-aot'
         run: node tools/setup_oracle.mjs
       - name: Differential lexer test
         if: matrix.suite == 'core'
@@ -159,15 +170,15 @@ jobs:
         if: matrix.suite == 'core'
         run: zig build test
       - name: Test QuickJS build
-        if: matrix.suite == 'aot'
+        if: matrix.suite == 'compat-aot'
         run: zig build -Dcompat-js=true test
+      - name: Build QuickJS compiler
+        if: matrix.suite == 'compat-aot'
+        run: zig build -Dcompat-js=true -Doptimize=ReleaseSafe
       - name: Build
         if: matrix.suite == 'aot'
         run: zig build -Doptimize=ReleaseSafe
-      - name: Build QuickJS compiler
-        if: matrix.suite == 'aot'
-        run: zig build -Dcompat-js=true -Doptimize=ReleaseSafe
-      - name: Smoke test
+      - name: Normal smoke test
         if: matrix.suite == 'aot'
         shell: bash
         run: |
@@ -176,5 +187,8 @@ jobs:
           ./zig-out/bin/lnako check tests/fixtures/check-valid.nako3
           ./zig-out/bin/lnako check tests/fixtures/module/main.nako3
           ./zig-out/bin/lnako run tests/fixtures/run-control.nako3
-          ./zig-out/bin/lnako run tests/fixtures/compat-js-basic.nako3 --compat-js
           ./zig-out/bin/lnako test tests/fixtures/run-tests.nako3
+      - name: Compatibility smoke test
+        if: matrix.suite == 'compat-aot'
+        shell: bash
+        run: ./zig-out/bin/lnako run tests/fixtures/compat-js-basic.nako3 --compat-js

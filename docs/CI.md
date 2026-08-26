@@ -187,3 +187,45 @@ macOS sandboxでは`ps`および`sysctl`による最大RSS
 クリティカルパスのWindows x86_64 `aot`ジョブは10分42秒から9分33秒へ1分09秒（約10.7%）短縮し、
 同ジョブ内の`Differential native AOT test`は102 fixtureで3分43秒だった旧runに対し、103 fixtureへ増えた状態でも
 3分14秒で完了しました。fixture数・7経路・O0〜O3・3環境を維持した実CIで、競合や失敗がないことを確認しています。
+
+## Windows AOTのQuickJSビルド分離
+
+Windows AOTの追加短縮を判断するため、分離前の[run 32932078383](https://github.com/soramikan/lnako/actions/runs/32932078383)
+（全12ジョブ、9分50秒）のステップ時刻を記録した。Windows AOTでは、セットアップ完了後の内訳が次のとおりだった。
+
+| 区間 | 所要時間 |
+|---|---:|
+| LLVM/QuickJS/オラクルのセットアップ完了 → native差分完了 | 2分42秒（04:57:07→04:59:49） |
+| `zig build -Dcompat-js=true test` | 2分53秒（04:59:49→05:02:41） |
+| 通常ReleaseSafe build | 1分25秒（05:02:41→05:04:06） |
+| QuickJS ReleaseSafe compiler build | 1分28秒（05:04:06→05:05:34） |
+
+「QuickJS compiler buildだけが遅い」とは断定できない。QuickJS Debug testとReleaseSafe buildを合わせると4分21秒であり、
+native差分と通常buildも含めて複数工程がクリティカルパスを構成している。
+
+このrun以降は、3正式環境に`compat-aot` suiteを追加して15ジョブへ分割する。
+
+| suite | 実行内容 |
+|---|---|
+| `aot` | 公式CLI・生成JavaScript・`lnako run`・AOT O0〜O3差分、通常ReleaseSafe build、通常smoke |
+| `compat-aot` | QuickJS Debug単体テスト、QuickJS ReleaseSafe compiler build、compat-js smoke |
+
+元の7経路、O0〜O3、通常build、QuickJS build、全smokeコマンドは削除せず、2 suiteへ移しただけである。通常jobのsmokeは
+`--version`、compat report、2件の`check`、通常`run`、`test`を実行し、`compat-aot`のsmokeは従来の
+`compat-js-basic.nako3 --compat-js`を実行する。`tools/check_ci_workflow.mjs`がmatrixを15ジョブとして検査し、両smokeの
+コマンド集合が従来の7件と一致することを検証する。
+
+`compat-aot`は公式オラクルを使わないため、オラクルcacheと`tools/setup_oracle.mjs`だけを条件付きで省略する。LLVM/LLDと
+QuickJSの固定版・SHA-256検証、Node、Zigのsetupは省略しない。Zig cacheは`cache-key: matrix.suite`のため、`aot`と
+`compat-aot`は別cache名前空間になる。これは並列jobのcache保存競合を避ける一方、初回の`compat-aot`ではコンパイルcacheが
+冷えて追加時間になる分かりにくい挙動である。ツールチェーンcacheは従来どおりOS・arch・固定版キーを共有し、setup scriptの
+ハッシュ検証を必ず通す。
+
+分離後は、通常AOTとQuickJS AOTが並列に走るため、Windowsの壁時計時間は分離前9分50秒から、各jobのセットアップとsmokeを
+含む長い方（予測6〜8分台）へ近づく見込みである。3つの追加jobによりrunner使用時間とcache保存処理は増える。初回runでは
+成功率、cache hit/miss、各step時間を記録し、予測が外れた場合は分離を戻す判断材料にする。GitHub Actionsログから
+得られないCPU/RSSを推測値で補わない。
+
+失敗時は、`aot`失敗なら通常AOT差分・LLVMリンク・通常smoke、`compat-aot`失敗ならQuickJS Debug/ReleaseSafe buildまたは
+compat smokeに絞って診断できる。片方のsuiteが成功しても他方の検証を成功扱いにはしない。`check_ci_workflow.mjs`のmatrix・
+条件・smoke検査を先に通過させるため、suite条件の書き間違いで検証を静かに省略することも防ぐ。

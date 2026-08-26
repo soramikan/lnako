@@ -10,7 +10,7 @@ const platforms = new Map([
   ["macOS arm64", "macos-15"],
   ["Windows x86_64", "windows-2025"],
 ]);
-const suites = ["core", "standard", "host", "aot"];
+const suites = ["core", "standard", "host", "aot", "compat-aot"];
 const matrixEntries = [...workflow.matchAll(/^          - name: (.+)\n            os: (.+)\n            suite: (.+)$/gm)]
   .map((match) => ({ name: match[1], os: match[2], suite: match[3] }));
 const actualMatrix = new Set(matrixEntries.map((entry) => `${entry.name}\0${entry.os}\0${entry.suite}`));
@@ -36,10 +36,11 @@ const stepSuites = new Map([
   ["Differential native AOT test", "aot"],
   ["Format", "core"],
   ["Test", "core"],
-  ["Test QuickJS build", "aot"],
+  ["Test QuickJS build", "compat-aot"],
   ["Build", "aot"],
-  ["Build QuickJS compiler", "aot"],
-  ["Smoke test", "aot"],
+  ["Build QuickJS compiler", "compat-aot"],
+  ["Normal smoke test", "aot"],
+  ["Compatibility smoke test", "compat-aot"],
 ]);
 for (const [name, suite] of stepSuites) {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -47,12 +48,46 @@ for (const [name, suite] of stepSuites) {
   if (!pattern.test(workflow)) throw new Error(`${name}のsuite条件が${suite}ではありません`);
 }
 
+const smokeCommands = {
+  "Normal smoke test": [
+    "./zig-out/bin/lnako --version",
+    "node tools/check_compat_report.mjs --no-build",
+    "./zig-out/bin/lnako check tests/fixtures/check-valid.nako3",
+    "./zig-out/bin/lnako check tests/fixtures/module/main.nako3",
+    "./zig-out/bin/lnako run tests/fixtures/run-control.nako3",
+    "./zig-out/bin/lnako test tests/fixtures/run-tests.nako3",
+  ],
+  "Compatibility smoke test": ["./zig-out/bin/lnako run tests/fixtures/compat-js-basic.nako3 --compat-js"],
+};
+const smokeBlock = workflow.match(
+  /      - name: Normal smoke test[\s\S]*?(?=      - name: Compatibility smoke test|$)/,
+);
+if (!smokeBlock) throw new Error("Normal smoke testブロックがありません");
+const compatSmokeBlock = workflow.match(/      - name: Compatibility smoke test[\s\S]*$/);
+if (!compatSmokeBlock) throw new Error("Compatibility smoke testブロックがありません");
+for (const [name, commands] of Object.entries(smokeCommands)) {
+  const block = name === "Normal smoke test" ? smokeBlock[0] : compatSmokeBlock[0];
+  for (const command of commands) if (!block.includes(command)) throw new Error(`${name}のコマンドがありません: ${command}`);
+}
+const legacySmokeCommands = [
+  ...smokeCommands["Normal smoke test"],
+  ...smokeCommands["Compatibility smoke test"],
+];
+if (new Set(legacySmokeCommands).size !== legacySmokeCommands.length) throw new Error("smokeコマンドが重複しています");
+if (legacySmokeCommands.length !== 7) throw new Error(`smokeコマンド数が従来の7件ではありません: ${legacySmokeCommands.length}`);
+if ((workflow.match(/\.\/zig-out\/bin\/lnako/g) ?? []).length !== 6) throw new Error("lnako smokeコマンドの合計が従来の6件ではありません");
+
 for (const required of [
   "group: ci-${{ github.workflow }}-${{ github.ref }}",
   "cancel-in-progress: true",
   "cache-key: ${{ matrix.suite }}",
   "timeout-minutes: 50",
 ]) if (!workflow.includes(required)) throw new Error(`CI安全設定がありません: ${required}`);
+
+const oracleSkipConditions = workflow.match(/^        if: matrix\.suite != 'compat-aot'$/gm) ?? [];
+if (oracleSkipConditions.length !== 2) {
+  throw new Error(`compat-aotのオラクル省略条件はcacheとsetupの2件必要です: actual=${oracleSkipConditions.length}`);
+}
 
 const cacheActions = [...workflow.matchAll(/^      - uses: actions\/cache@v6$/gm)];
 if (cacheActions.length !== 2) throw new Error(`actions/cache@v6は2ステップ必要です: actual=${cacheActions.length}`);
