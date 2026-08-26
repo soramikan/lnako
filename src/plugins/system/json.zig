@@ -1,6 +1,5 @@
 const std = @import("std");
 const value_mod = @import("../../runtime/value.zig");
-const string_mod = @import("../../runtime/string.zig");
 const common = @import("common.zig");
 
 pub const Value = value_mod.Value;
@@ -694,51 +693,42 @@ const JsonParser = struct {
 
     fn failToken(self: *JsonParser, position: usize) !Value {
         if (position >= self.units.len) return self.failEnd();
-        const source = try self.jsonErrorSource();
-        defer self.runtime.allocator().free(source);
-        const token_string = string_mod.String{ .allocator = self.runtime.allocator(), .units = @constCast(self.units[position .. position + 1]) };
-        const token = try token_string.toUtf8Lossy(self.runtime.allocator());
-        defer self.runtime.allocator().free(token);
-        const message = try std.fmt.allocPrint(
-            self.runtime.allocator(),
-            "Unexpected token '{s}', \"{s}\" is not valid JSON",
-            .{ token, source },
-        );
-        defer self.runtime.allocator().free(message);
-        try self.runtime.setFailureMessage(message);
+        var message: std.ArrayList(u16) = .empty;
+        errdefer message.deinit(self.runtime.allocator());
+        try appendAscii(&message, self.runtime.allocator(), "Unexpected token '");
+        try message.append(self.runtime.allocator(), self.units[position]);
+        try appendAscii(&message, self.runtime.allocator(), "', ");
+        try self.appendJsonErrorSourceUnits(&message, true, position);
+        try appendAscii(&message, self.runtime.allocator(), " is not valid JSON");
+        try self.runtime.setFailureMessageUnits(message.items);
         return error.InvalidJsonCloneValue;
     }
 
     fn failWholeSourceInvalid(self: *JsonParser) !Value {
-        const source = try self.jsonErrorSource();
-        defer self.runtime.allocator().free(source);
-        const message = try std.fmt.allocPrint(self.runtime.allocator(), "\"{s}\" is not valid JSON", .{source});
-        defer self.runtime.allocator().free(message);
-        try self.runtime.setFailureMessage(message);
+        var message: std.ArrayList(u16) = .empty;
+        errdefer message.deinit(self.runtime.allocator());
+        try self.appendJsonErrorSourceUnits(&message, false, 0);
+        try appendAscii(&message, self.runtime.allocator(), " is not valid JSON");
+        try self.runtime.setFailureMessageUnits(message.items);
         return error.InvalidJsonCloneValue;
     }
 
-    fn jsonErrorSource(self: *JsonParser) ![]u8 {
-        const temporary = string_mod.String{ .allocator = self.runtime.allocator(), .units = @constCast(self.units) };
-        const utf8 = try temporary.toUtf8Lossy(self.runtime.allocator());
-        defer self.runtime.allocator().free(utf8);
-        var escaped: std.ArrayList(u8) = .empty;
-        errdefer escaped.deinit(self.runtime.allocator());
-        for (utf8) |byte| switch (byte) {
-            '\\' => try escaped.appendSlice(self.runtime.allocator(), "\\\\"),
-            '"' => try escaped.appendSlice(self.runtime.allocator(), "\\\""),
-            '\n' => try escaped.appendSlice(self.runtime.allocator(), "\\n"),
-            '\r' => try escaped.appendSlice(self.runtime.allocator(), "\\r"),
-            '\t' => try escaped.appendSlice(self.runtime.allocator(), "\\t"),
-            0...0x08, 0x0b, 0x0e...0x1f => {
-                const digits = "0123456789abcdef";
-                try escaped.appendSlice(self.runtime.allocator(), "\\u00");
-                try escaped.append(self.runtime.allocator(), digits[(byte >> 4) & 0xf]);
-                try escaped.append(self.runtime.allocator(), digits[byte & 0xf]);
-            },
-            else => try escaped.append(self.runtime.allocator(), byte),
-        };
-        return escaped.toOwnedSlice(self.runtime.allocator());
+    /// V8's invalid-token diagnostic shows at most ten UTF-16 code units on
+    /// either side of the offending token.  The ellipses are outside the
+    /// quoted source, and the source itself is deliberately not escaped:
+    /// quotes, backslashes, and control units appear literally in Node 24's
+    /// error message.  This is a diagnostic formatter, not JSON serialization.
+    fn appendJsonErrorSourceUnits(self: *JsonParser, output: *std.ArrayList(u16), truncate: bool, position: usize) !void {
+        const bounded = @min(position, self.units.len);
+        const should_truncate = truncate and self.units.len > 20;
+        const start = if (should_truncate and bounded > 10) bounded - 10 else 0;
+        const end = if (should_truncate) @min(self.units.len, bounded + 10) else self.units.len;
+        const leading_ellipsis = should_truncate and (start > 0 or bounded >= 10);
+        if (leading_ellipsis) try appendAscii(output, self.runtime.allocator(), "...");
+        try output.append(self.runtime.allocator(), '"');
+        try output.appendSlice(self.runtime.allocator(), self.units[start..end]);
+        try output.append(self.runtime.allocator(), '"');
+        if (should_truncate and end < self.units.len) try appendAscii(output, self.runtime.allocator(), "...");
     }
 
     fn failTrailing(self: *JsonParser) !Value {
@@ -767,6 +757,10 @@ const JsonParser = struct {
         return error.InvalidJsonCloneValue;
     }
 };
+
+fn appendAscii(output: *std.ArrayList(u16), allocator: std.mem.Allocator, ascii: []const u8) !void {
+    for (ascii) |byte| try output.append(allocator, byte);
+}
 
 fn jsonHexDigit(unit: u16) ?u16 {
     return if (unit >= '0' and unit <= '9') unit - '0' else if (unit >= 'a' and unit <= 'f') unit - 'a' + 10 else if (unit >= 'A' and unit <= 'F') unit - 'A' + 10 else null;
@@ -1052,6 +1046,15 @@ test "JSONデコードのNode 24エラー位置を保持する" {
         .{ .source = "true x", .message = "Unexpected non-whitespace character after JSON at position 5 (line 1 column 6)" },
         .{ .source = "\"\\u12\"", .message = "Bad Unicode escape in JSON at position 5 (line 1 column 6)" },
         .{ .source = "\"\\x00\"", .message = "Bad escaped character in JSON at position 2 (line 1 column 3)" },
+        .{ .source = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaax", .message = "Unexpected token 'a', \"aaaaaaaaaa\"... is not valid JSON" },
+        .{ .source = "          xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", .message = "Unexpected token 'x', ...\"          xbbbbbbbbb\"... is not valid JSON" },
+        .{ .source = "           xbbbbbbbb", .message = "Unexpected token 'x', \"           xbbbbbbbb\" is not valid JSON" },
+        .{ .source = "          xbbbbbbbbbb", .message = "Unexpected token 'x', ...\"          xbbbbbbbbb\"... is not valid JSON" },
+        .{ .source = "         xbbbbbbbbbbb", .message = "Unexpected token 'x', \"         xbbbbbbbbb\"... is not valid JSON" },
+        .{ .source = "x\n", .message = "Unexpected token 'x', \"x\n\" is not valid JSON" },
+        .{ .source = "x\"q", .message = "Unexpected token 'x', \"x\"q\" is not valid JSON" },
+        .{ .source = "x\\q", .message = "Unexpected token 'x', \"x\\q\" is not valid JSON" },
+        .{ .source = "😀", .message = "Unexpected token '�', \"😀\" is not valid JSON" },
     };
     for (cases) |case| {
         const source = try runtime.stringUtf8(case.source);
@@ -1059,6 +1062,28 @@ test "JSONデコードのNode 24エラー位置を保持する" {
         try std.testing.expectEqualStrings(case.message, runtime.failureMessage().?);
         runtime.clearFailureMessage();
     }
+}
+
+test "JSONエラー文言は孤立サロゲートをUTF-16で保持する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var source = try runtime.stringCodeUnits(&.{ 0xd83d, 0xde00 });
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&source);
+    try std.testing.expectError(error.InvalidJsonCloneValue, call(&runtime, "JSON取得", &.{source}));
+
+    var expected: std.ArrayList(u16) = .empty;
+    defer expected.deinit(std.testing.allocator);
+    try appendAscii(&expected, std.testing.allocator, "Unexpected token '");
+    try expected.append(std.testing.allocator, 0xd83d);
+    try appendAscii(&expected, std.testing.allocator, "', \"");
+    try expected.appendSlice(std.testing.allocator, &.{ 0xd83d, 0xde00 });
+    try appendAscii(&expected, std.testing.allocator, "\" is not valid JSON");
+
+    var message = (try runtime.failureMessageValue()).?;
+    try roots.protect(&message);
+    try std.testing.expectEqualSlices(u16, expected.items, message.string.units);
 }
 
 test "JSONデコードは100000段のネストをCスタックなしで処理する" {

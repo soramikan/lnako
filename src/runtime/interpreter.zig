@@ -361,8 +361,11 @@ pub const Interpreter = struct {
                 self.executeInstruction(&frame, instruction, predecessor) catch |failure| {
                     if (frame.handlers.pop()) |handler| {
                         if (self.exception_value == .undefined) {
-                            const message = self.runtime.failureMessage() orelse error_message.forFailure(failure);
-                            self.exception_value = self.runtime.stringUtf8(message) catch return failure;
+                            if (self.runtime.failureMessageValue() catch return failure) |message| {
+                                self.exception_value = message;
+                            } else {
+                                self.exception_value = self.runtime.stringUtf8(error_message.forFailure(failure)) catch return failure;
+                            }
                         }
                         self.runtime.clearFailureMessage();
                         try self.setGlobal("エラーメッセージ", self.exception_value);

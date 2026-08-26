@@ -13,7 +13,7 @@ lnakoは、意図的な非互換として合意した項目を除き、説明文
 ## JSON（plugin_system）
 
 公式実装は `.cache/oracle/nadesiko3-3.7.24/core/src/plugin_system_json.mts` の
-`JSON.stringify` / `JSON.parse` 呼び出しです。以下の境界はインタープリタの差分fixtureで固定しています。
+`JSON.stringify` / `JSON.parse` 呼び出しです。以下の境界はインタープリタとAOTの差分fixtureで固定しています。
 JSONエンコード5命令（`JSON変換`、`JSONエンコード`、`JSON_E`、`JSONエンコード整形`、`JSON_ES`）は
 純LLVM AOTへ接続し、native fixtureで公式CLI・公式生成JavaScript・`lnako run`・AOT O0〜O3を比較します。
 JSONデコード3命令（`JSON取得`、`JSONデコード`、`JSON_D`）は、インタープリタと純LLVM AOTの両方で
@@ -25,8 +25,8 @@ UTF-16コード単位を直接解析する明示スタックパーサーへ接�
 | 辞書キーの正規化・列挙順 | JavaScriptのproperty keyとして数値`1`と文字列`"1"`は同じキーになり、後の代入が値を上書きしても最初の挿入位置は動かない。canonical array index（`0`〜`4294967294`の十進表記）は数値昇順、その後の文字列キーは挿入順で`JSON.stringify`する。`01`はindexではない | lnakoの内部辞書は型の異なるキーを保持できるため、JSON境界でproperty keyを文字列へ正規化して重複を解消してから、同じ順序へ並べ替える。辞書自体のキーや列挙順は変更しない。関数値をキーにした場合の関数名を含む文字列化は`TODO: aot-function-string-name`を維持する | `plugin-system-json-ecmascript-boundaries`、`native-system-json-encode`、`JSONの辞書キーをECMAScriptの列挙順で整形する`、`TODO: aot-function-string-name` |
 | トップレベルの`undefined` / 関数値 | `JSON.stringify(undefined)` と `JSON.stringify(function(){})` は値を返さず`undefined`になる。配列要素ではどちらも`null`になる | `encode`のトップレベル判定は`undefined`を返し、配列内の値は`null`へ変換する | `plugin-system-json-ecmascript-boundaries` |
 | BigInt / 循環参照 | `JSON.stringify(1n)` は `Do not know how to serialize a BigInt`、循環参照は開始constructor・中間のproperty/index経路・閉路位置を含む実行時エラー | インタープリタとAOTは`CannotSerializeBigInt` / `CircularCloneValue`へ正規化し、V8と同じactive container経路をエラー文言へ反映する | `plugin-system-json-ecmascript-boundaries`、`native-system-json-encode`、`JSONの実行時エラー文言を公式互換にする` |
-| 不正JSON | `JSON.parse("x")` は `Unexpected token 'x', "x" is not valid JSON`。`undefined`・`Infinity`は全体を引用したエラーになり、先頭0、配列・辞書の区切り不足、文字列制御文字・Unicode escapeにも位置付きV8文言がある | インタープリタとAOTはUTF-16入力を直接解析し、Node 24の主要な文言・position/line/column・CR/CRLF境界を保持する。制御文字を含む引用sourceと長いsourceの短縮表示などのV8詳細は`TODO: json-parse-error-details`として完成扱いにしない | `plugin-system-json-utf16-boundaries`、`native-system-json-decode-errors`、`TODO: json-parse-error-details` |
-| 孤立サロゲート | `JSON.parse("\"\\ud800\"")` とlow surrogateは受理し、UTF-16コード単位を保持する | インタープリタとAOTはhigh/low surrogateとペアを保持し、UTF-8標準出力の境界だけで孤立サロゲートをU+FFFDへ置換する | `plugin-system-json-utf16-boundaries`、`native-system-json-decode` |
+| 不正JSON | `JSON.parse("x")` は `Unexpected token 'x', "x" is not valid JSON`。`undefined`・`Infinity`は全体を引用したエラーになり、先頭0、配列・辞書の区切り不足、文字列制御文字・Unicode escapeにも位置付きV8文言がある。長い入力は不正位置の前後10 UTF-16コード単位を`...`で省略し、診断用sourceの引用符・バックスラッシュ・制御文字はエスケープしない | インタープリタとAOTはUTF-16入力を直接解析し、Node 24の文言・position/line/column・CR/CRLF境界と、20コード単位以下の全文表示、長文の前後窓表示を保持する。`failureMessageValue` / AOT例外Valueは孤立サロゲートも保持し、UTF-8標準出力時だけU+FFFDへ置換する | `plugin-system-json-utf16-boundaries`、`JSONデコードのNode 24エラー位置を保持する`、`AOT JSONエラー文言は孤立サロゲートをUTF-16で保持する`、`native-system-json-decode-errors` |
+| 孤立サロゲート | `JSON.parse("\"\\ud800\"")` とlow surrogateは受理し、UTF-16コード単位を保持する。`JSON.parse`の例外messageにも元の孤立コード単位が残る | インタープリタとAOTはhigh/low surrogateとペアを保持し、エラー監視の`エラーメッセージ`とAOT例外ValueもUTF-16のまま保持する。UTF-8標準出力の境界だけで孤立サロゲートをU+FFFDへ置換する | `plugin-system-json-utf16-boundaries`、`JSONエラー文言は孤立サロゲートをUTF-16で保持する`、`AOT JSONエラー文言は孤立サロゲートをUTF-16で保持する`、`native-system-json-decode`、`native-system-json-decode-errors` |
 | JSONパース深度 | Nodeの受理深度は実装・スタック条件に依存し、固定の仕様値ではない | インタープリタとAOTはCスタックに再帰せず、入力中のコンテナ数に比例する明示スタックを使う。配列と辞書の100,000段を単体テストし、固定の1024段制限は持たない | `JSONデコードは100000段のネストをCスタックなしで処理する`、`AOT JSONデコードは深い配列と辞書を明示スタックで処理する` |
 
 ## 配列・表・辞書

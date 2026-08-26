@@ -304,6 +304,10 @@ const Runtime = struct {
         self.setException(self.createString(units) catch |allocation_failure| runtimeFailure(allocation_failure));
     }
 
+    fn setFailureUnits(self: *Runtime, units: []const u16) void {
+        self.setException(self.createString(units) catch |allocation_failure| runtimeFailure(allocation_failure));
+    }
+
     fn setIndexAssignmentFailure(self: *Runtime, container: Value, key: Value) void {
         const key_units = valueUtf16Alloc(self, key) catch |failure| runtimeFailure(failure);
         defer self.allocator.free(key_units);
@@ -1325,48 +1329,40 @@ const JsonAotParser = struct {
 
     fn failToken(self: *JsonAotParser, position: usize) anyerror {
         if (position >= self.units.len) return self.failEnd();
-        const source = self.jsonErrorSource() catch return error.InvalidJsonCloneValue;
-        defer self.runtime.allocator.free(source);
-        // V8 displays an astral invalid token as the replacement character,
-        // while the quoted source retains the original scalar.
-        const token_end = position + 1;
-        const token = try (string_mod.String{ .allocator = self.runtime.allocator, .units = @constCast(self.units[position..token_end]) }).toUtf8Lossy(self.runtime.allocator);
-        defer self.runtime.allocator.free(token);
-        const message = std.fmt.allocPrint(self.runtime.allocator, "Unexpected token '{s}', \"{s}\" is not valid JSON", .{ token, source }) catch return error.InvalidJsonCloneValue;
-        defer self.runtime.allocator.free(message);
-        self.runtime.setFailureText(message);
+        var message: std.ArrayList(u16) = .empty;
+        errdefer message.deinit(self.runtime.allocator);
+        try appendAsciiUnits(&message, self.runtime.allocator, "Unexpected token '");
+        try message.append(self.runtime.allocator, self.units[position]);
+        try appendAsciiUnits(&message, self.runtime.allocator, "', ");
+        try self.appendJsonErrorSourceUnits(&message, true, position);
+        try appendAsciiUnits(&message, self.runtime.allocator, " is not valid JSON");
+        self.runtime.setFailureUnits(message.items);
         return error.InvalidJsonCloneValue;
     }
 
     fn failWholeSourceInvalid(self: *JsonAotParser) anyerror {
-        const source = self.jsonErrorSource() catch return error.InvalidJsonCloneValue;
-        defer self.runtime.allocator.free(source);
-        const message = std.fmt.allocPrint(self.runtime.allocator, "\"{s}\" is not valid JSON", .{source}) catch return error.InvalidJsonCloneValue;
-        defer self.runtime.allocator.free(message);
-        self.runtime.setFailureText(message);
+        var message: std.ArrayList(u16) = .empty;
+        errdefer message.deinit(self.runtime.allocator);
+        try self.appendJsonErrorSourceUnits(&message, false, 0);
+        try appendAsciiUnits(&message, self.runtime.allocator, " is not valid JSON");
+        self.runtime.setFailureUnits(message.items);
         return error.InvalidJsonCloneValue;
     }
 
-    fn jsonErrorSource(self: *JsonAotParser) ![]u8 {
-        const utf8 = try (string_mod.String{ .allocator = self.runtime.allocator, .units = @constCast(self.units) }).toUtf8Lossy(self.runtime.allocator);
-        defer self.runtime.allocator.free(utf8);
-        var escaped: std.ArrayList(u8) = .empty;
-        errdefer escaped.deinit(self.runtime.allocator);
-        for (utf8) |byte| switch (byte) {
-            '\\' => try escaped.appendSlice(self.runtime.allocator, "\\\\"),
-            '"' => try escaped.appendSlice(self.runtime.allocator, "\\\""),
-            '\n' => try escaped.appendSlice(self.runtime.allocator, "\\n"),
-            '\r' => try escaped.appendSlice(self.runtime.allocator, "\\r"),
-            '\t' => try escaped.appendSlice(self.runtime.allocator, "\\t"),
-            0...0x08, 0x0b, 0x0e...0x1f => {
-                const digits = "0123456789abcdef";
-                try escaped.appendSlice(self.runtime.allocator, "\\u00");
-                try escaped.append(self.runtime.allocator, digits[(byte >> 4) & 0xf]);
-                try escaped.append(self.runtime.allocator, digits[byte & 0xf]);
-            },
-            else => try escaped.append(self.runtime.allocator, byte),
-        };
-        return escaped.toOwnedSlice(self.runtime.allocator);
+    /// V8 shows a UTF-16 window of at most ten code units on either side of
+    /// the invalid token.  Diagnostic source text is not JSON-escaped: raw
+    /// quotes, backslashes, and control units are retained by Node 24.
+    fn appendJsonErrorSourceUnits(self: *JsonAotParser, output: *std.ArrayList(u16), truncate: bool, position: usize) !void {
+        const bounded = @min(position, self.units.len);
+        const should_truncate = truncate and self.units.len > 20;
+        const start = if (should_truncate and bounded > 10) bounded - 10 else 0;
+        const end = if (should_truncate) @min(self.units.len, bounded + 10) else self.units.len;
+        const leading_ellipsis = should_truncate and (start > 0 or bounded >= 10);
+        if (leading_ellipsis) try appendAsciiUnits(output, self.runtime.allocator, "...");
+        try output.append(self.runtime.allocator, '"');
+        try output.appendSlice(self.runtime.allocator, self.units[start..end]);
+        try output.append(self.runtime.allocator, '"');
+        if (should_truncate and end < self.units.len) try appendAsciiUnits(output, self.runtime.allocator, "...");
     }
 
     fn failTrailing(self: *JsonAotParser) anyerror {
@@ -1391,6 +1387,10 @@ const JsonAotParser = struct {
         return error.InvalidJsonCloneValue;
     }
 };
+
+fn appendAsciiUnits(output: *std.ArrayList(u16), allocator: std.mem.Allocator, ascii: []const u8) !void {
+    for (ascii) |byte| try output.append(allocator, byte);
+}
 
 fn jsonHexDigit(unit: u16) ?u16 {
     return if (unit >= '0' and unit <= '9') unit - '0' else if (unit >= 'a' and unit <= 'f') unit - 'a' + 10 else if (unit >= 'A' and unit <= 'F') unit - 'A' + 10 else null;
@@ -1529,6 +1529,14 @@ test "AOT JSONデコードはUTF-16・数値境界・重複キーを保持する
         .{ .source = "あ", .message = "Unexpected token 'あ', \"あ\" is not valid JSON" },
         .{ .source = "\"abc", .message = "Unterminated string in JSON at position 4 (line 1 column 5)" },
         .{ .source = "\"\\x00\"", .message = "Bad escaped character in JSON at position 2 (line 1 column 3)" },
+        .{ .source = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaax", .message = "Unexpected token 'a', \"aaaaaaaaaa\"... is not valid JSON" },
+        .{ .source = "          xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", .message = "Unexpected token 'x', ...\"          xbbbbbbbbb\"... is not valid JSON" },
+        .{ .source = "           xbbbbbbbb", .message = "Unexpected token 'x', \"           xbbbbbbbb\" is not valid JSON" },
+        .{ .source = "          xbbbbbbbbbb", .message = "Unexpected token 'x', ...\"          xbbbbbbbbb\"... is not valid JSON" },
+        .{ .source = "         xbbbbbbbbbbb", .message = "Unexpected token 'x', \"         xbbbbbbbbb\"... is not valid JSON" },
+        .{ .source = "x\n", .message = "Unexpected token 'x', \"x\n\" is not valid JSON" },
+        .{ .source = "x\"q", .message = "Unexpected token 'x', \"x\"q\" is not valid JSON" },
+        .{ .source = "x\\q", .message = "Unexpected token 'x', \"x\\q\" is not valid JSON" },
     };
     for (invalid_cases) |case| {
         roots[8] = try createJsonTestString(&runtime, case.source);
@@ -1536,6 +1544,28 @@ test "AOT JSONデコードはUTF-16・数値境界・重複キーを保持する
         const message = runtime.takeException();
         try expectUtf16String(&runtime, message, case.message);
     }
+}
+
+test "AOT JSONエラー文言は孤立サロゲートをUTF-16で保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 2;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createString(&.{ 0xd83d, 0xde00 });
+    try std.testing.expectError(error.InvalidJsonCloneValue, jsonDecodeBuiltin(&runtime, roots[0]));
+    const message = runtime.takeException();
+
+    var expected: std.ArrayList(u16) = .empty;
+    defer expected.deinit(runtime.allocator);
+    try appendAsciiUnits(&expected, runtime.allocator, "Unexpected token '");
+    try expected.append(runtime.allocator, 0xd83d);
+    try appendAsciiUnits(&expected, runtime.allocator, "', \"");
+    try expected.appendSlice(runtime.allocator, &.{ 0xd83d, 0xde00 });
+    try appendAsciiUnits(&expected, runtime.allocator, "\" is not valid JSON");
+    try std.testing.expectEqualSlices(u16, expected.items, message.object().?.payload.utf16_string);
 }
 
 test "AOT JSONデコードは深い配列と辞書を明示スタックで処理する" {

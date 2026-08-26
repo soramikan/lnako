@@ -389,6 +389,7 @@ pub const Runtime = struct {
     promise_tasks: std.ArrayList(PromiseTask) = .empty,
     stringifying_arrays: std.ArrayList(*Array) = .empty,
     custom_failure_message: std.ArrayList(u8) = .empty,
+    custom_failure_message_units: std.ArrayList(u16) = .empty,
     next_collection: usize = 64,
     stress_collection: bool = false,
 
@@ -405,6 +406,7 @@ pub const Runtime = struct {
         self.promise_tasks.deinit(self.backing_allocator);
         self.stringifying_arrays.deinit(self.backing_allocator);
         self.custom_failure_message.deinit(self.backing_allocator);
+        self.custom_failure_message_units.deinit(self.backing_allocator);
         self.* = undefined;
     }
 
@@ -414,16 +416,37 @@ pub const Runtime = struct {
 
     /// 命令固有の動的な例外文言を、汎用error setとは別に保持する。
     pub fn setFailureMessage(self: *Runtime, message: []const u8) !void {
+        errdefer self.clearFailureMessage();
+        const units = try std.unicode.utf8ToUtf16LeAlloc(self.backing_allocator, message);
+        defer self.backing_allocator.free(units);
+        try self.setFailureMessageUnits(units);
+    }
+
+    /// UTF-16を保持するValueの例外文言を、変換で孤立サロゲートを
+    /// 失わないように保存する。failureMessage()は従来どおりUTF-8の
+    /// lossy表示用だが、インタープリタのエラー監視はこのunitsを使う。
+    pub fn setFailureMessageUnits(self: *Runtime, units: []const u16) !void {
         self.custom_failure_message.clearRetainingCapacity();
-        try self.custom_failure_message.appendSlice(self.backing_allocator, message);
+        self.custom_failure_message_units.clearRetainingCapacity();
+        errdefer self.clearFailureMessage();
+        try self.custom_failure_message_units.appendSlice(self.backing_allocator, units);
+        const utf8 = try (String{ .allocator = self.backing_allocator, .units = @constCast(units) }).toUtf8Lossy(self.backing_allocator);
+        defer self.backing_allocator.free(utf8);
+        try self.custom_failure_message.appendSlice(self.backing_allocator, utf8);
     }
 
     pub fn failureMessage(self: Runtime) ?[]const u8 {
         return if (self.custom_failure_message.items.len > 0) self.custom_failure_message.items else null;
     }
 
+    pub fn failureMessageValue(self: *Runtime) !?Value {
+        if (self.custom_failure_message_units.items.len == 0) return null;
+        return try self.stringCodeUnits(self.custom_failure_message_units.items);
+    }
+
     pub fn clearFailureMessage(self: *Runtime) void {
         self.custom_failure_message.clearRetainingCapacity();
+        self.custom_failure_message_units.clearRetainingCapacity();
     }
 
     pub fn rootFrame(self: *Runtime) RootFrame {
@@ -1236,4 +1259,37 @@ test "Promise反応とマイクロタスクをGCルートとして追跡する" 
     try std.testing.expectEqual(PromiseState.fulfilled, next.promise.state);
     const released = try runtime.collect();
     try std.testing.expectEqual(@as(usize, 0), released.after);
+}
+
+fn failureMessageUnitsAllocationTest(allocator: std.mem.Allocator) !void {
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    runtime.setFailureMessageUnits(&.{ 0xd800, 'x' }) catch |failure| {
+        try std.testing.expectEqual(@as(usize, 0), runtime.custom_failure_message.items.len);
+        try std.testing.expectEqual(@as(usize, 0), runtime.custom_failure_message_units.items.len);
+        return failure;
+    };
+    try std.testing.expectEqualSlices(u16, &.{ 0xd800, 'x' }, runtime.custom_failure_message_units.items);
+    try std.testing.expectEqualStrings("�x", runtime.custom_failure_message.items);
+}
+
+test "UTF-16例外文言は割当失敗時に途中状態を残さない" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, failureMessageUnitsAllocationTest, .{});
+}
+
+fn failureMessageUtf8AllocationTest(allocator: std.mem.Allocator) !void {
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    try runtime.custom_failure_message.appendSlice(allocator, "old");
+    try runtime.custom_failure_message_units.appendSlice(allocator, &.{ 'o', 'l', 'd' });
+    runtime.setFailureMessage("新しい文言") catch |failure| {
+        try std.testing.expectEqual(@as(usize, 0), runtime.custom_failure_message.items.len);
+        try std.testing.expectEqual(@as(usize, 0), runtime.custom_failure_message_units.items.len);
+        return failure;
+    };
+    try std.testing.expectEqualStrings("新しい文言", runtime.custom_failure_message.items);
+}
+
+test "UTF-8例外文言は変換失敗時に古い文言を残さない" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, failureMessageUtf8AllocationTest, .{});
 }
