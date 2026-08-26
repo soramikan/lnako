@@ -10,6 +10,16 @@ AOT差分artifactとdispatch証拠は入力・実行物・結果のSHA-256を内
 OIDC issuer、対象commit、3 OSのdigestを検証します。検証成功時だけCI一時出力のcatalog evidenceを`verified`として生成し、追跡中のmacOS単体JSONは変更しません。
 未attest、fork PR、権限不足、対象commit・workflow・digest不一致では`trace-confirmed-unattested`のまま昇格しません。
 
+### 外部成果物の履歴固定
+
+Actions artifactの保持期限後も外部検証できるよう、run `32983175945`（証拠対象commit `1ee47232d34711abaddb28038218258232ac3800`）の成果物を
+`compat/v3.7.24/attestations/32983175945/`へ追跡している。`manifest.json`で3正式OSのdispatch JSON、各digest、dispatch-attestation、Sigstore bundle、
+historical catalogのdigestとworkflow identityを固定し、`node tools/check_tracked_dispatch_attestation.mjs`が禁止field、対象commit、bundleの
+in-toto subject、SLSA predicate、GitHub Actions workflow identityを検査する。bundleの署名を暗号学的に再検証する場合は、保存したbundleを
+公式`gh attestation verify`へ同じ厳格なidentity引数で渡す。固定されたhistorical catalogの`verified: 4`は現在commitの台帳へ自動反映せず、
+追跡中の`compat/v3.7.24/evidence.json`は`verified: 0`、`trace-confirmed-unattested: 4`を維持する。catalog再生成時の`--historical-commit`は
+この明示的な履歴検査でだけ対象commitとの差異を許可し、明示的な非canonical outputを必須にする（通常のsync検査の現行HEAD一致制約とcanonical output保護は緩めない）。target commitとこの履歴固定を追加する後続commitを混同しない。
+
 ## 生成と検証
 
 ```sh

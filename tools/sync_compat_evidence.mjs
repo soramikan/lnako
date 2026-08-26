@@ -37,14 +37,26 @@ const optionValue = (name) => {
   if (value === undefined || value.startsWith("--") || !isAbsolute(value)) throw new Error(`${name}には絶対パスを指定してください`);
   return resolve(value);
 };
+const argumentValue = (name) => {
+  const index = arguments_.indexOf(name);
+  if (index < 0) return null;
+  const value = arguments_[index + 1];
+  if (value === undefined || value.startsWith("--")) throw new Error(`${name}の値がありません`);
+  return value;
+};
 const dispatchEvidenceInputPath = optionValue("--dispatch-evidence") ?? dispatchEvidencePath;
 const attestationPath = optionValue("--attestation");
 const attestationBundlePath = optionValue("--attestation-bundle");
 const evidenceOutputPath = optionValue("--output") ?? evidencePath;
+const historicalCommit = argumentValue("--historical-commit");
 
 if ((attestationPath === null) !== (attestationBundlePath === null)) throw new Error("--attestationと--attestation-bundleは同時に指定してください");
-if (!new Set(["--generate", "--check"]).has(mode) || arguments_.some((argument) => argument.startsWith("--") && !new Set(["--generate", "--check", "--dispatch-evidence", "--attestation", "--attestation-bundle", "--output"]).has(argument))) {
-  throw new Error("usage: node tools/sync_compat_evidence.mjs [--generate|--check] [--dispatch-evidence /absolute/path] [--attestation /absolute/path --attestation-bundle /absolute/path] [--output /absolute/path]");
+if (historicalCommit !== null && !/^[0-9a-f]{40}$/i.test(historicalCommit)) throw new Error("--historical-commitには40桁commitを指定してください");
+if (!new Set(["--generate", "--check"]).has(mode) || arguments_.some((argument) => argument.startsWith("--") && !new Set(["--generate", "--check", "--dispatch-evidence", "--attestation", "--attestation-bundle", "--output", "--historical-commit"]).has(argument))) {
+  throw new Error("usage: node tools/sync_compat_evidence.mjs [--generate|--check] [--dispatch-evidence /absolute/path] [--attestation /absolute/path --attestation-bundle /absolute/path] [--historical-commit 40-hex-commit] [--output /absolute/path]");
+}
+if (historicalCommit !== null && (!arguments_.includes("--dispatch-evidence") || !arguments_.includes("--output") || evidenceOutputPath === evidencePath)) {
+  throw new Error("--historical-commitでは--dispatch-evidenceと明示的な非canonical --outputが必須です");
 }
 
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
@@ -75,7 +87,7 @@ const attestationBundleBytes = attestationBundlePath === null ? null : await rea
 const dispatchEvidence = suppliedAttestation === null
   ? dispatchEvidenceBase
   : { ...dispatchEvidenceBase, attestation: suppliedAttestation };
-validateDispatchEvidence(dispatchEvidence, lock, standard, records, dispatchEvidenceInputSha256, dispatchEvidenceInputPath, attestationBundlePath, attestationBundleBytes);
+validateDispatchEvidence(dispatchEvidence, lock, standard, records, dispatchEvidenceInputSha256, dispatchEvidenceInputPath, attestationBundlePath, attestationBundleBytes, historicalCommit);
 const dispatchEvidenceByCatalogId = new Map();
 for (const site of dispatchEvidence.sites) {
   const sites = dispatchEvidenceByCatalogId.get(site.catalogId) ?? [];
@@ -348,7 +360,7 @@ function readGitState() {
   return { commit, dirty: statusResult.stdout.length > 0 };
 }
 
-function validateDispatchEvidence(evidence, lock, standard, records, inputSha256, inputPath, bundlePath, bundleBytes) {
+function validateDispatchEvidence(evidence, lock, standard, records, inputSha256, inputPath, bundlePath, bundleBytes, historicalCommit = null) {
   rejectForbiddenEvidenceFields(evidence);
   assertKnownObjectKeys(evidence, ["schema", "generator", "baseline", "fixture", "officialComparison", "attestation", "provenance", "trace", "sites"], "dispatch-evidence");
   if (evidence?.schema !== "lnako.dispatch-evidence.v2" || evidence.generator !== "tools/check_dispatch_trace.mjs") {
@@ -403,7 +415,10 @@ function validateDispatchEvidence(evidence, lock, standard, records, inputSha256
     throw new Error("dispatch証拠のprovenanceが不正です");
   }
   const currentGit = readGitState();
-  if (evidence.provenance.lnako.commit !== currentGit.commit && evidence.provenance.lnako.dirty !== true) {
+  if (historicalCommit !== null && evidence.provenance.lnako.commit !== historicalCommit) {
+    throw new Error("--historical-commitとdispatch証拠のcommitが一致しません");
+  }
+  if (evidence.provenance.lnako.commit !== currentGit.commit && evidence.provenance.lnako.dirty !== true && historicalCommit !== evidence.provenance.lnako.commit) {
     throw new Error("cleanなdispatch証拠のlnako commitが現行HEADと一致しません");
   }
   const standardById = new Map(standard.commands.map((command) => [command.id, command]));

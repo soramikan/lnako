@@ -89,6 +89,8 @@ jobs:
         run: |
           node tools/check_ci_workflow.mjs
           node tools/check_dispatch_attestation_security.mjs
+          node tools/check_tracked_dispatch_attestation.mjs --offline
+          node tools/check_tracked_dispatch_attestation_security.mjs
           node tools/sync_compat.mjs --check
           node tools/sync_compat_evidence.mjs --check
           node tools/check_builtin_catalog.mjs
@@ -230,6 +232,10 @@ jobs:
       artifact-metadata: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Verify tracked attestation history
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tools/check_tracked_dispatch_attestation.mjs
       - name: Download dispatch evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:

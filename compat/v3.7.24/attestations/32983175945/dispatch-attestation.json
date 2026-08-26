@@ -1,0 +1,27 @@
+{
+  "schema": "lnako.dispatch-attestation.v1",
+  "repository": "soramikan/lnako",
+  "workflow": "soramikan/lnako/.github/workflows/ci.yml",
+  "sourceRef": "refs/heads/main",
+  "commit": "1ee47232d34711abaddb28038218258232ac3800",
+  "predicateType": "https://slsa.dev/provenance/v1",
+  "verifiedBy": "gh attestation verify",
+  "bundleSha256": "d0d50887fb0e88befa3334e8c9d51cb20623ce26d976ba972f76b39bce79cfe3",
+  "subjects": [
+    {
+      "platform": "darwin",
+      "arch": "arm64",
+      "evidenceSha256": "a9355c9672bc480dd20bde4cf0c8779a9f157cd4db687ae544560f860dc20dc2"
+    },
+    {
+      "platform": "linux",
+      "arch": "x64",
+      "evidenceSha256": "2473143a1644d9c58881142747e3ecb0a46133b4d8243e558809526fe14544fd"
+    },
+    {
+      "platform": "win32",
+      "arch": "x64",
+      "evidenceSha256": "71d89ccb96074e1f24cdfcfa30782e1bf08c704c0f97c2c5102c3bb741d3209b"
+    }
+  ]
+}

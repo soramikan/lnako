@@ -1,0 +1,41 @@
+{
+  "schema": "lnako.dispatch-evidence-history.v1",
+  "workflowRun": "32983175945",
+  "workflowAttempt": 1,
+  "targetCommit": "1ee47232d34711abaddb28038218258232ac3800",
+  "sourceRef": "refs/heads/main",
+  "workflow": "soramikan/lnako/.github/workflows/ci.yml",
+  "attestation": "dispatch-attestation.json",
+  "bundle": "sigstore-bundle.json",
+  "catalogEvidenceUnattested": "catalog-evidence-unattested.json",
+  "catalogEvidence": "catalog-evidence-verified.json",
+  "dispatchEvidence": [
+    {
+      "platform": "darwin",
+      "arch": "arm64",
+      "runner": "macos-15",
+      "path": "dispatch/dispatch-evidence-macos-15.json",
+      "sha256": "a9355c9672bc480dd20bde4cf0c8779a9f157cd4db687ae544560f860dc20dc2"
+    },
+    {
+      "platform": "linux",
+      "arch": "x64",
+      "runner": "ubuntu-24.04",
+      "path": "dispatch/dispatch-evidence-ubuntu-24.04.json",
+      "sha256": "2473143a1644d9c58881142747e3ecb0a46133b4d8243e558809526fe14544fd"
+    },
+    {
+      "platform": "win32",
+      "arch": "x64",
+      "runner": "windows-2025",
+      "path": "dispatch/dispatch-evidence-windows-2025.json",
+      "sha256": "71d89ccb96074e1f24cdfcfa30782e1bf08c704c0f97c2c5102c3bb741d3209b"
+    }
+  ],
+  "artifactSha256": {
+    "dispatch-attestation.json": "3054c3885a66cd46692c6b1c5c66a2f8935fdd7093ec43f5eb397b5db7b535ef",
+    "sigstore-bundle.json": "d0d50887fb0e88befa3334e8c9d51cb20623ce26d976ba972f76b39bce79cfe3",
+    "catalog-evidence-unattested.json": "d58869ae0771b89302bf3e8bad0c8d0d9735cff32060ad4b0325b7bd62fccb61",
+    "catalog-evidence-verified.json": "62f8b04d944ce7fc4306a0908d92b0b69695954764e186729336bf3cb174cb3e"
+  }
+}

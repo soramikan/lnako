@@ -65,6 +65,15 @@ CIのmain実行で生成したdispatch evidenceを昇格する場合は、GitHub
 node tools/verify_dispatch_attestation.mjs --directory /absolute/path/dispatch-evidence --bundle /absolute/path/attestation-bundle.json --output /absolute/path/dispatch-attestation.json --catalog-evidence /absolute/path/evidence-verified.json --repository soramikan/lnako --commit <40-hex-commit> --source-ref refs/heads/main --workflow soramikan/lnako/.github/workflows/ci.yml
 ```
 
+Actions artifactの期限に依存しない履歴成果物は`compat/v3.7.24/attestations/32983175945/`に置く。対象commit、3 OS、digest、bundleのSLSA identity、
+禁止field、historical catalogと現在台帳の分離を確認するには次を実行する。署名の再検証は保存bundleを公式`gh attestation verify`へ渡す。
+通常syncで過去証拠を明示検査する場合だけ`--historical-commit`と非canonical outputを使い、現行HEAD一致やcanonical output上書きを許可することはない。
+
+```sh
+node tools/check_tracked_dispatch_attestation.mjs
+node tools/check_tracked_dispatch_attestation_security.mjs
+```
+
 AST差分テストは公式の `core/test/fixtures/parser_corpus.mjs` を直接読み、コメント・空行の保持方式に
 左右されない構文フィンガープリントを比較します。ローカル追加ケースは
 `tests/oracle/parser-cases.json`、拒否ケースは `tests/oracle/parser-diagnostic-cases.json` に置きます。
