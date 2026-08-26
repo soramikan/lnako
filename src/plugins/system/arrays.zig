@@ -520,6 +520,7 @@ fn reference(runtime: *Runtime, source: Value, index_value: Value) !Value {
     if (source_value == .array) {
         if (index == .number) return source_value.array.get(propertyIndex(index.number) orelse return .undefined);
         if (index == .bigint) return source_value.array.get(bigIntPropertyIndex(index.bigint, source_value.array.len()) orelse return .undefined);
+        if (index == .string) return indexed(runtime, source_value, index);
         const range = (try rangeBounds(runtime, index, source_value.array.len())) orelse return .undefined;
         var result = try runtime.createArray();
         try roots.protect(&result);
@@ -1086,6 +1087,10 @@ fn propertyIndexUnits(units: []const u16) ?usize {
         result = std.math.mul(usize, result, 10) catch return null;
         result = std.math.add(usize, result, unit - '0') catch return null;
     }
+    // ECMAScript array-index property names are in [0, 2^32 - 2].  2^32 - 1
+    // is the non-index length sentinel and must not address a dense array.
+    const max_array_index: usize = @as(usize, std.math.maxInt(u32)) - 1;
+    if (result > max_array_index) return null;
     return result;
 }
 
@@ -1605,6 +1610,43 @@ test "配列コピーと参照はJSONとJavaScript添字の境界を保つ" {
     try std.testing.expectEqual(Value.undefined, try reference(&runtime, range_source, negative_bigint));
     try std.testing.expectEqual(Value.undefined, try reference(&runtime, range_source, huge_positive_bigint));
 
+    var key_zero = try runtime.stringUtf8("0");
+    try roots.protect(&key_zero);
+    var key_one = try runtime.stringUtf8("1");
+    try roots.protect(&key_one);
+    var key_leading_zero = try runtime.stringUtf8("01");
+    try roots.protect(&key_leading_zero);
+    var key_negative_zero = try runtime.stringUtf8("-0");
+    try roots.protect(&key_negative_zero);
+    var key_negative_one = try runtime.stringUtf8("-1");
+    try roots.protect(&key_negative_one);
+    var key_decimal = try runtime.stringUtf8("1.0");
+    try roots.protect(&key_decimal);
+    var key_empty = try runtime.stringUtf8("");
+    try roots.protect(&key_empty);
+    var key_max = try runtime.stringUtf8("4294967295");
+    try roots.protect(&key_max);
+    var key_huge = try runtime.stringUtf8("900719925474099999999999999");
+    try roots.protect(&key_huge);
+    var key_length = try runtime.stringUtf8("length");
+    try roots.protect(&key_length);
+    try std.testing.expectEqual(@as(f64, 0), (try reference(&runtime, range_source, key_zero)).number);
+    try std.testing.expectEqual(@as(f64, 1), (try reference(&runtime, range_source, key_one)).number);
+    try std.testing.expectEqual(Value.undefined, try reference(&runtime, range_source, key_leading_zero));
+    try std.testing.expectEqual(Value.undefined, try reference(&runtime, range_source, key_negative_zero));
+    try std.testing.expectEqual(Value.undefined, try reference(&runtime, range_source, key_negative_one));
+    try std.testing.expectEqual(Value.undefined, try reference(&runtime, range_source, key_decimal));
+    try std.testing.expectEqual(Value.undefined, try reference(&runtime, range_source, key_empty));
+    try std.testing.expectEqual(Value.undefined, try reference(&runtime, range_source, key_max));
+    try std.testing.expectEqual(Value.undefined, try reference(&runtime, range_source, key_huge));
+    try std.testing.expectEqual(@as(f64, 4), (try reference(&runtime, range_source, key_length)).number);
+    const alias_arguments = [_]Value{ range_source, key_one };
+    const alias_result = (try call(&runtime, "配列参照", &alias_arguments, null)).?;
+    try std.testing.expectEqual(@as(f64, 1), alias_result.number);
+    try std.testing.expectEqual(@as(?usize, 0), propertyIndexUnits(&.{'0'}));
+    try std.testing.expectEqual(@as(?usize, 4294967294), propertyIndexUnits(&.{ '4', '2', '9', '4', '9', '6', '7', '2', '9', '4' }));
+    try std.testing.expectEqual(@as(?usize, null), propertyIndexUnits(&.{ '4', '2', '9', '4', '9', '6', '7', '2', '9', '5' }));
+
     try range.dictionary.set(first_key.string, .{ .number = 0 });
     try range.dictionary.set(last_key.string, one_bigint);
     var bigint_text = try reference(&runtime, text, range);
@@ -1663,6 +1705,23 @@ fn bigintRangeAllocationTest(allocator: std.mem.Allocator) !void {
         if (failure == error.WriteFailed) return error.OutOfMemory;
         return failure;
     };
+}
+
+fn referenceArrayStringKeyAllocationTest(allocator: std.mem.Allocator) !void {
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var source = try common.arrayFromValues(&runtime, &.{ .{ .number = 1 }, .{ .number = 2 } });
+    try roots.protect(&source);
+    var key = try runtime.stringUtf8("length");
+    try roots.protect(&key);
+    const result = try reference(&runtime, source, key);
+    try std.testing.expectEqual(@as(f64, 2), result.number);
+}
+
+test "参照の配列文字列添字は割当失敗でも入力を保持する" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, referenceArrayStringKeyAllocationTest, .{});
 }
 
 test "BigInt範囲終端は割当失敗とGCストレスでも入力を保持する" {

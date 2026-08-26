@@ -5192,14 +5192,15 @@
         "plugin-system-array-core",
         "native-system-array-copy-reference-commands",
         "native-system-array-range-copy-null-error",
-        "native-system-array-range-copy-receiver-error"
+        "native-system-array-range-copy-receiver-error",
+        "native-system-array-range-copy-bigint-coercion"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "範囲結果のJSON深い複製を実装し、BigInt範囲端の数値化差をTODOとして分離して公式差分テストに成功"
+      "reason": "範囲結果のJSON深い複製と明示的なBigInt範囲端のNumber変換を実装し、配列切取の暗黙減算経路は変更せず公式差分テストに成功"
     },
     {
       "id": "command-0199",
@@ -5221,14 +5222,17 @@
         "plugin-system-array-core",
         "native-system-array-copy-reference-commands",
         "native-system-reference-null-error",
-        "native-system-reference-string-range-error"
+        "native-system-reference-string-range-error",
+        "native-system-reference-string-range-error-details",
+        "native-system-reference-array-string-properties",
+        "native-system-array-range-copy-bigint-coercion"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "UTF-16文字列・配列・own辞書の参照を実装し、継承プロパティとBigInt範囲端の差をTODOとして分離して公式差分テストに成功"
+      "reason": "UTF-16文字列・配列・own辞書の参照、canonical文字列添字、length、明示的なBigInt範囲端のNumber変換を実装し、任意の配列own文字列プロパティはTODO: reference-array-own-properties、継承プロパティはTODO: reference-inherited-propertiesとして分離して公式差分テストに成功"
     },
     {
       "id": "command-0200",
@@ -5250,14 +5254,17 @@
         "plugin-system-array-core",
         "native-system-array-copy-reference-commands",
         "native-system-reference-null-error",
-        "native-system-reference-string-range-error"
+        "native-system-reference-string-range-error",
+        "native-system-reference-string-range-error-details",
+        "native-system-reference-array-string-properties",
+        "native-system-array-range-copy-bigint-coercion"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "参照の別名として実装し、継承プロパティとBigInt範囲端の差をTODOとして分離して公式差分テストに成功"
+      "reason": "参照の別名としてcanonical文字列添字とlengthを含めて実装し、任意の配列own文字列プロパティはTODO: reference-array-own-properties、継承プロパティはTODO: reference-inherited-propertiesとして分離して公式差分テストに成功"
     },
     {
       "id": "command-0201",

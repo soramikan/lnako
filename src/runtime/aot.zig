@@ -3891,6 +3891,10 @@ fn tablePropertyIndex(units: []const u16) ?usize {
         result = std.math.mul(usize, result, 10) catch return null;
         result = std.math.add(usize, result, digit) catch return null;
     }
+    // Keep the ECMAScript array-index boundary exact: 2^32 - 1 is not an
+    // array index (it is distinct from the length property).
+    const max_array_index: usize = @as(usize, std.math.maxInt(u32)) - 1;
+    if (result > max_array_index) return null;
     return result;
 }
 
@@ -4452,6 +4456,7 @@ fn referenceBuiltin(runtime: *Runtime, source: Value, index: Value) !Value {
             const position = bigIntPropertyIndex(rooted[1].object().?.payload.bigint, items.items.len) orelse return .{};
             return items.items[position];
         }
+        if (isString(rooted[1])) return tableRowProperty(runtime, rooted[0], rooted[1]);
         const range = (try sliceRange(runtime, rooted[1], items.items.len)) orelse return .{};
         const start = @min(range.start, items.items.len);
         const end = @min(@max(range.end, start), items.items.len);
@@ -6082,6 +6087,58 @@ test "AOT配列複製範囲参照と配列足は深さと参照を公式どお�
     try std.testing.expectEqual(@as(f64, 1), valueToNumber(try referenceBuiltin(&active_runtime.?, roots[16], roots[20])));
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try referenceBuiltin(&active_runtime.?, roots[16], roots[23])).tag)));
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try referenceBuiltin(&active_runtime.?, roots[16], roots[26])).tag)));
+    try std.testing.expectEqual(@as(f64, 0), valueToNumber(try referenceBuiltin(&active_runtime.?, roots[16], staticStringValue("0"))));
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(try referenceBuiltin(&active_runtime.?, roots[16], staticStringValue("1"))));
+    try std.testing.expectEqual(@as(f64, 4), valueToNumber(try referenceBuiltin(&active_runtime.?, roots[16], staticStringValue("length"))));
+    const invalid_keys = [_]Value{
+        staticStringValue("01"),
+        staticStringValue("-0"),
+        staticStringValue("-1"),
+        staticStringValue("1.0"),
+        staticStringValue(""),
+        staticStringValue("4294967295"),
+        staticStringValue("900719925474099999999999999"),
+    };
+    for (invalid_keys) |key| {
+        try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try referenceBuiltin(&active_runtime.?, roots[16], key)).tag)));
+    }
+    try std.testing.expectEqual(@as(?usize, 0), tablePropertyIndex(&.{'0'}));
+    try std.testing.expectEqual(@as(?usize, 4294967294), tablePropertyIndex(&.{ '4', '2', '9', '4', '9', '6', '7', '2', '9', '4' }));
+    try std.testing.expectEqual(@as(?usize, null), tablePropertyIndex(&.{ '4', '2', '9', '4', '9', '6', '7', '2', '9', '5' }));
+}
+
+test "AOT参照の配列文字列添字はGC後も配列とキーを保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 3;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    runtime.next_collection = 1;
+    roots[0] = try runtime.createArray(&.{ numberValue(10), numberValue(20) });
+    roots[1] = try runtime.createString(&.{ 'l', 'e', 'n', 'g', 't', 'h' });
+    roots[2] = try runtime.createString(&.{'1'});
+    var i: usize = 0;
+    while (i < 8) : (i += 1) _ = runtime.collect();
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(try referenceBuiltin(&runtime, roots[0], roots[1])));
+    try std.testing.expectEqual(@as(f64, 20), valueToNumber(try referenceBuiltin(&runtime, roots[0], roots[2])));
+}
+
+fn referenceAotArrayStringKeyAllocationTest(allocator: std.mem.Allocator) !void {
+    var runtime = Runtime{ .allocator = allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 2;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[0] = try runtime.createArray(&.{ numberValue(1), numberValue(2) });
+    roots[1] = try runtime.createString(&.{ 'l', 'e', 'n', 'g', 't', 'h' });
+    const result = try referenceBuiltin(&runtime, roots[0], roots[1]);
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(result));
+}
+
+test "AOT参照の配列文字列添字は割当失敗でも入力を保持する" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, referenceAotArrayStringKeyAllocationTest, .{});
 }
 
 fn aotBigintRangeAllocationTest(allocator: std.mem.Allocator) !void {
