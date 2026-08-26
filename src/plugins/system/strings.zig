@@ -48,6 +48,14 @@ pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Val
         return try fullWidthAscii(runtime, kana, true);
     }
 
+    if (eql(name, "何文字目")) {
+        if (a_root == .string and b_root == .string) {
+            const index = findStringArrayWindow(a_root.string.units, b_root.string.units) orelse 0;
+            return .{ .number = @floatFromInt(index) };
+        }
+        return .{ .number = @floatFromInt(try findRawArrayIndex(runtime, a_root, b_root)) };
+    }
+
     var a_text = try runtime.valueToString(a);
     try text_roots.protect(&a_text);
     var b_text = try runtime.valueToString(b);
@@ -55,7 +63,6 @@ pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Val
     var c_text = try runtime.valueToString(c);
     try text_roots.protect(&c_text);
     if (eql(name, "文字数")) return .{ .number = @floatFromInt(codePointCount(a_text.string.units)) };
-    if (eql(name, "何文字目")) return .{ .number = @floatFromInt(findCodePoints(a_text.string.units, b_text.string.units, 0) orelse return Value{ .number = 0 }) };
     if (eql(name, "CHR")) return try chr(runtime, a);
     if (eql(name, "ASC")) return try asc(runtime, a);
     if (eql(name, "文字挿入")) return try insert(runtime, a_text, b, c_text);
@@ -846,6 +853,115 @@ fn codePointOffset(units: []const u16, target: usize) usize {
     return index;
 }
 
+/// Compare the same windows that `Array.from(source).slice(i, i +
+/// needle.length).join('')` produces.  The window's width is measured in
+/// Unicode scalar elements, while equality is still UTF-16 code-unit based;
+/// this distinction prevents a lone surrogate from matching half of a pair.
+/// Both offsets advance monotonically, avoiding an extra full prefix scan for
+/// each candidate; equality retains the usual window-comparison cost.
+fn findStringArrayWindow(haystack: []const u16, needle: []const u16) ?usize {
+    if (haystack.len == 0) return null;
+    const needle_count = codePointCount(needle);
+    var end: usize = 0;
+    var initial: usize = 0;
+    while (initial < needle_count and end < haystack.len) : (initial += 1) end += codePointLength(haystack, end);
+
+    var start: usize = 0;
+    var scalar_index: usize = 0;
+    while (start < haystack.len) : (scalar_index += 1) {
+        if (std.mem.eql(u16, haystack[start..end], needle)) return scalar_index + 1;
+        start += codePointLength(haystack, start);
+        if (end < haystack.len) end += codePointLength(haystack, end);
+    }
+    return null;
+}
+
+// The upstream implementation deliberately applies Array.from to both
+// operands, then compares String(array.slice(...)) values.  This is broader
+// than the command's documentation: arrays, byte buffers, and objects with
+// an own `length` property participate, while null/undefined fail as
+// non-iterables.  Keep the sequence virtual so a large dictionary length does
+// not allocate an intermediate array, and keep the original operands rooted
+// while temporary join strings are created under GC stress.
+const raw_array_element_limit: usize = 1_000_000;
+
+fn findRawArrayIndex(runtime: *Runtime, source: Value, needle: Value) !usize {
+    const source_length = try rawArrayLength(runtime, source);
+    const needle_length = try rawArrayLength(runtime, needle);
+    const needle_joined = try rawArraySliceJoin(runtime, needle, 0, needle_length, needle_length);
+    defer runtime.allocator().free(needle_joined);
+    if (source_length == 0) return 0;
+
+    var source_start: usize = 0;
+    while (source_start < source_length) : (source_start += 1) {
+        const source_joined = try rawArraySliceJoin(runtime, source, source_start, needle_length, source_length);
+        defer runtime.allocator().free(source_joined);
+        if (std.mem.eql(u16, source_joined, needle_joined)) return source_start + 1;
+    }
+    return 0;
+}
+
+fn rawArrayLength(runtime: *Runtime, value: Value) !usize {
+    const length = switch (value) {
+        .undefined => return error.RawArrayUndefinedNotIterable,
+        .null_value => return error.RawArrayNullNotIterable,
+        .string => |string| codePointCount(string.units),
+        .array => |array| array.items.items.len,
+        .bytes => |buffer| if (buffer.kind == .array_buffer) 0 else buffer.bytes.len,
+        .dictionary => |dictionary| blk: {
+            const key = try runtime.stringUtf8("length");
+            const length_value = dictionary.get(key.string) orelse .undefined;
+            const number = try runtime.valueToNumber(length_value);
+            if (std.math.isNan(number) or number <= 0) break :blk 0;
+            if (!std.math.isFinite(number)) return error.ArraySizeLimitExceeded;
+            const floored = @floor(number);
+            if (floored > @as(f64, @floatFromInt(raw_array_element_limit))) return error.ArraySizeLimitExceeded;
+            break :blk @as(usize, @intFromFloat(floored));
+        },
+        else => 0,
+    };
+    return length;
+}
+
+fn rawArraySliceJoin(runtime: *Runtime, source: Value, start: usize, requested_count: usize, length: usize) ![]u16 {
+    var output: std.ArrayList(u16) = .empty;
+    defer output.deinit(runtime.allocator());
+    const end = @min(length, std.math.add(usize, start, requested_count) catch length);
+    if (start >= end) return try runtime.allocator().dupe(u16, &.{});
+
+    switch (source) {
+        .string => |string| {
+            const first = codePointOffset(string.units, start);
+            const last = codePointOffset(string.units, end);
+            try output.appendSlice(runtime.allocator(), string.units[first..last]);
+        },
+        else => {
+            var index = start;
+            while (index < end) : (index += 1) {
+                try appendRawArrayElement(runtime, source, index, &output);
+            }
+        },
+    }
+    return try output.toOwnedSlice(runtime.allocator());
+}
+
+fn appendRawArrayElement(runtime: *Runtime, source: Value, index: usize, output: *std.ArrayList(u16)) !void {
+    const element: Value = switch (source) {
+        .array => |array| array.get(index),
+        .bytes => |buffer| buffer.get(index),
+        .dictionary => |dictionary| blk: {
+            var key_buffer: [32]u8 = undefined;
+            const key_text = std.fmt.bufPrint(&key_buffer, "{}", .{index}) catch return error.OutOfMemory;
+            const key = try runtime.stringUtf8(key_text);
+            break :blk dictionary.get(key.string) orelse .undefined;
+        },
+        else => .undefined,
+    };
+    if (element == .undefined or element == .null_value) return;
+    const text_value = try runtime.valueToString(element);
+    try output.appendSlice(runtime.allocator(), text_value.string.units);
+}
+
 fn findCodePoints(haystack: []const u16, needle: []const u16, from_codepoint: usize) ?usize {
     var codepoint_index = from_codepoint;
     var unit_index = codePointOffset(haystack, from_codepoint);
@@ -970,6 +1086,175 @@ test "Unicode文字列命令をコードポイント単位で処理する" {
     const utf8 = try middle.string.toUtf8Lossy(std.testing.allocator);
     defer std.testing.allocator.free(utf8);
     try std.testing.expectEqualStrings("😀B", utf8);
+}
+
+fn rawArrayNoop(_: *Runtime, _: []const Value) !Value {
+    return .undefined;
+}
+
+test "何文字目は公式のArray.fromとslice.joinを型別に再現する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var source = try runtime.stringUtf8("A😀B");
+    var needle = try runtime.stringUtf8("😀B");
+    try roots.protect(&source);
+    try roots.protect(&needle);
+    try std.testing.expectEqual(@as(f64, 2), (try call(&runtime, "何文字目", &.{ source, needle })).?.number);
+
+    var long_units: [2048]u16 = undefined;
+    @memset(long_units[0..2046], 'a');
+    long_units[2046] = 0xd83d;
+    long_units[2047] = 0xde00;
+    var long_source = try runtime.stringCodeUnits(&long_units);
+    var long_needle = try runtime.stringUtf8("😀");
+    try roots.protect(&long_source);
+    try roots.protect(&long_needle);
+    try std.testing.expectEqual(@as(f64, 2047), (try call(&runtime, "何文字目", &.{ long_source, long_needle })).?.number);
+
+    var pair_source = (try call(&runtime, "CHR", &.{.{ .number = 128512 }})).?;
+    var pair_needle = (try call(&runtime, "CHR", &.{.{ .number = 128512 }})).?;
+    var high_needle = (try call(&runtime, "CHR", &.{.{ .number = 55357 }})).?;
+    var low_needle = (try call(&runtime, "CHR", &.{.{ .number = 56832 }})).?;
+    try roots.protect(&pair_source);
+    try roots.protect(&pair_needle);
+    try roots.protect(&high_needle);
+    try roots.protect(&low_needle);
+    try std.testing.expectEqual(@as(f64, 1), (try call(&runtime, "何文字目", &.{ pair_source, pair_needle })).?.number);
+    try std.testing.expectEqual(@as(f64, 0), (try call(&runtime, "何文字目", &.{ pair_source, high_needle })).?.number);
+    try std.testing.expectEqual(@as(f64, 0), (try call(&runtime, "何文字目", &.{ pair_source, low_needle })).?.number);
+    try std.testing.expectEqual(@as(f64, 1), (try call(&runtime, "何文字目", &.{ high_needle, high_needle })).?.number);
+    try std.testing.expectEqual(@as(f64, 0), (try call(&runtime, "何文字目", &.{ high_needle, pair_needle })).?.number);
+
+    var one = try runtime.createArray();
+    var one_with_null = try runtime.createArray();
+    var mixed = try runtime.createArray();
+    try roots.protect(&one);
+    try roots.protect(&one_with_null);
+    try roots.protect(&mixed);
+    _ = try one.array.push(try runtime.stringUtf8("a"));
+    _ = try one_with_null.array.push(try runtime.stringUtf8("a"));
+    _ = try one_with_null.array.push(.null_value);
+    _ = try mixed.array.push(try runtime.stringUtf8("a"));
+    _ = try mixed.array.push(.{ .number = 12 });
+    _ = try mixed.array.push(.{ .number = 3 });
+    try std.testing.expectEqual(@as(f64, 1), (try call(&runtime, "何文字目", &.{ one, one_with_null })).?.number);
+    try std.testing.expectEqual(@as(f64, 2), (try call(&runtime, "何文字目", &.{ mixed, try runtime.stringUtf8("123") })).?.number);
+
+    var nested_item = try runtime.createArray();
+    var nested_source = try runtime.createArray();
+    var nested_needle = try runtime.createArray();
+    try roots.protect(&nested_item);
+    try roots.protect(&nested_source);
+    try roots.protect(&nested_needle);
+    _ = try nested_item.array.push(try runtime.stringUtf8("a"));
+    _ = try nested_item.array.push(try runtime.stringUtf8("b"));
+    _ = try nested_source.array.push(nested_item);
+    _ = try nested_source.array.push(try runtime.stringUtf8("c"));
+    _ = try nested_needle.array.push(nested_item);
+    try std.testing.expectEqual(@as(f64, 0), (try call(&runtime, "何文字目", &.{ nested_source, try runtime.stringUtf8("a,b") })).?.number);
+    try std.testing.expectEqual(@as(f64, 1), (try call(&runtime, "何文字目", &.{ nested_source, nested_needle })).?.number);
+
+    const number = Value{ .number = 12 };
+    const boolean = Value{ .boolean = true };
+    var bigint = try runtime.bigIntLiteral("1n");
+    var function_name = try runtime.stringUtf8("noop");
+    var function = try runtime.createNativeFunction(function_name.string, 0, rawArrayNoop, &.{});
+    try roots.protect(&bigint);
+    try roots.protect(&function_name);
+    try roots.protect(&function);
+    try std.testing.expectEqual(@as(f64, 0), (try call(&runtime, "何文字目", &.{ number, source })).?.number);
+    try std.testing.expectEqual(@as(f64, 0), (try call(&runtime, "何文字目", &.{ boolean, source })).?.number);
+    try std.testing.expectEqual(@as(f64, 0), (try call(&runtime, "何文字目", &.{ bigint, source })).?.number);
+    try std.testing.expectEqual(@as(f64, 0), (try call(&runtime, "何文字目", &.{ function, source })).?.number);
+
+    var bytes = try runtime.createBytes(&.{ 1, 2, 3 });
+    var uint8 = try runtime.createUint8Array(&.{ 1, 2, 3 });
+    var array_buffer = try runtime.createArrayBuffer(&.{ 1, 2, 3 });
+    try roots.protect(&bytes);
+    try roots.protect(&uint8);
+    try roots.protect(&array_buffer);
+    var numeric_text = try runtime.stringUtf8("123");
+    try roots.protect(&numeric_text);
+    try std.testing.expectEqual(@as(f64, 1), (try call(&runtime, "何文字目", &.{ bytes, numeric_text })).?.number);
+    try std.testing.expectEqual(@as(f64, 1), (try call(&runtime, "何文字目", &.{ uint8, numeric_text })).?.number);
+    try std.testing.expectEqual(@as(f64, 0), (try call(&runtime, "何文字目", &.{ array_buffer, numeric_text })).?.number);
+
+    var object = try runtime.createDictionary();
+    try roots.protect(&object);
+    try common.dictionarySetUtf8(&runtime, object.dictionary, "length", try runtime.stringUtf8("1.9"));
+    try common.dictionarySetUtf8(&runtime, object.dictionary, "0", try runtime.stringUtf8("a"));
+    var object_needle = try runtime.stringUtf8("a");
+    try roots.protect(&object_needle);
+    try std.testing.expectEqual(@as(f64, 1), (try call(&runtime, "何文字目", &.{ object, object_needle })).?.number);
+    try common.dictionarySetUtf8(&runtime, object.dictionary, "length", .{ .number = @floatFromInt(raw_array_element_limit) });
+    try std.testing.expectEqual(@as(f64, 1), (try call(&runtime, "何文字目", &.{ object, object_needle })).?.number);
+    try common.dictionarySetUtf8(&runtime, object.dictionary, "length", .{ .number = @floatFromInt(raw_array_element_limit + 1) });
+    try std.testing.expectError(error.ArraySizeLimitExceeded, call(&runtime, "何文字目", &.{ object, object_needle }));
+    try common.dictionarySetUtf8(&runtime, object.dictionary, "length", .{ .number = std.math.inf(f64) });
+    try std.testing.expectError(error.ArraySizeLimitExceeded, call(&runtime, "何文字目", &.{ object, object_needle }));
+
+    try std.testing.expectError(error.RawArrayNullNotIterable, call(&runtime, "何文字目", &.{ .null_value, source }));
+    try std.testing.expectError(error.RawArrayUndefinedNotIterable, call(&runtime, "何文字目", &.{ .undefined, source }));
+    try std.testing.expectError(error.RawArrayNullNotIterable, call(&runtime, "何文字目", &.{ source, .null_value }));
+    try std.testing.expectError(error.RawArrayUndefinedNotIterable, call(&runtime, "何文字目", &.{ source, .undefined }));
+}
+
+fn rawArrayAllocationTest(allocator: std.mem.Allocator) !void {
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var source = try runtime.createArray();
+    try roots.protect(&source);
+    var first = try runtime.stringUtf8("a");
+    try roots.protect(&first);
+    var second = try runtime.stringUtf8("b");
+    try roots.protect(&second);
+    var third = try runtime.stringUtf8("c");
+    try roots.protect(&third);
+    _ = try source.array.push(first);
+    _ = try source.array.push(second);
+    _ = try source.array.push(third);
+    var needle = try runtime.stringUtf8("bc");
+    try roots.protect(&needle);
+    const result = call(&runtime, "何文字目", &.{ source, needle }) catch |failure| {
+        if (failure == error.WriteFailed) return error.OutOfMemory;
+        return failure;
+    };
+    try std.testing.expectEqual(@as(f64, 2), result.?.number);
+}
+
+test "何文字目はGCストレスと全割当失敗でもraw入力を保持する" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, rawArrayAllocationTest, .{});
+}
+
+test "何文字目はGCストレス中もraw入力を保持する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var source = try runtime.createArray();
+    try roots.protect(&source);
+    var nested = try runtime.createArray();
+    try roots.protect(&nested);
+    var first = try runtime.stringUtf8("a");
+    try roots.protect(&first);
+    var second = try runtime.stringUtf8("b");
+    try roots.protect(&second);
+    _ = try nested.array.push(first);
+    _ = try nested.array.push(second);
+    _ = try source.array.push(nested);
+    var tail = try runtime.stringUtf8("c");
+    try roots.protect(&tail);
+    _ = try source.array.push(tail);
+    var needle = try runtime.stringUtf8("a,b");
+    try roots.protect(&needle);
+    const result = try call(&runtime, "何文字目", &.{ source, needle });
+    try std.testing.expectEqual(@as(f64, 0), result.?.number);
 }
 
 test "文字始と文字終は非文字列レシーバを公式文言で拒否する" {

@@ -13,6 +13,7 @@ const executable = resolve(root, "zig-out/bin", process.platform === "win32" ? "
 const officialCli = resolve(oracleRoot, "src/cnako3.mjs");
 const temporary = await mkdtemp(join(tmpdir(), "lnako-native-"));
 const maxBuffer = 16 * 1024 * 1024;
+const knownCaseFields = new Set(["id", "source", "oracle", "stderrIncludes"]);
 
 try {
   buildLnako();
@@ -20,12 +21,18 @@ try {
   let generatedOracleCases = 0;
   let sourceOracleCases = 0;
   for (const testCase of cases) {
+    for (const field of Object.keys(testCase)) {
+      if (!knownCaseFields.has(field)) throw new Error(`未知のAOTオラクルfixtureフィールドです: ${testCase.id}: ${field}`);
+    }
     if (testCase.oracle !== undefined && testCase.oracle !== "official-source" && testCase.oracle !== "official-generated") {
       throw new Error(`未知のAOTオラクル指定です: ${testCase.id}: ${testCase.oracle}`);
     }
+    if (testCase.stderrIncludes !== undefined && (typeof testCase.stderrIncludes !== "string" || testCase.stderrIncludes.length === 0)) {
+      throw new Error(`stderrIncludesは空でない文字列を指定してください: ${testCase.id}`);
+    }
   }
   const completed = await runCases(cases, temporary, executable, officialCli, nativeOracleConcurrency());
-  for (const { testCase, results, officialCompile, compileErrors } of completed) {
+  for (const { testCase, results, stderrResults, officialCompile, compileErrors } of completed) {
     if (testCase.oracle === "official-generated") generatedOracleCases += 1;
     if (testCase.oracle === "official-source") sourceOracleCases += 1;
     const oracleKey = testCase.oracle === "official-generated" ? "officialGenerated" : "officialSource";
@@ -39,6 +46,19 @@ try {
       console.error(`AOT実行差分 ${testCase.id}:\n${JSON.stringify(results, null, 2)}`);
       if (officialCompile.status !== 0) console.error(`公式JavaScript生成エラー:\n${officialCompile.stderr}`);
       if (compileErrors.length > 0) console.error(`lnakoネイティブ生成エラー:\n${compileErrors.join("\n")}`);
+    }
+    if (testCase.stderrIncludes !== undefined) {
+      const stderrCompared = Object.entries(stderrResults).filter(([key]) =>
+        key === oracleKey ||
+        (testCase.oracle !== "official-generated" || key !== "officialSource") &&
+        (testCase.oracle !== "official-source" || key !== "officialGenerated"),
+      );
+      const missing = stderrCompared.filter(([key, stderr]) => results[key].exitCode !== 0 && !stderr.includes(testCase.stderrIncludes));
+      if (missing.length > 0) {
+        failures += 1;
+        console.error(`非成功stderr本文差分 ${testCase.id}: ${testCase.stderrIncludes}`);
+        for (const [key, stderr] of missing) console.error(`${key}: ${JSON.stringify(stderr)}`);
+      }
     }
   }
   if (failures > 0) throw new Error(`AOT実行結果の差分が${failures}件あります`);
@@ -98,14 +118,21 @@ async function runCase(testCase, index, temporary, executable, officialCli) {
     officialGenerated: normalize(officialGenerated),
     lnakoRun: normalize(interpreted),
   };
+  const stderrResults = {
+    officialSource: normalizeStderr(officialSource),
+    officialGenerated: normalizeStderr(officialGenerated),
+    lnakoRun: normalizeStderr(interpreted),
+  };
   const compileErrors = [];
   for (const optimization of ["O0", "O1", "O2", "O3"]) {
     const nativeExecutable = resolve(fixtureDirectory, `${stem}-${optimization}${process.platform === "win32" ? ".exe" : ""}`);
     const nativeCompile = await runProcess(executable, ["build", sourcePath, "-o", nativeExecutable, `-${optimization}`], options);
-    results[`lnakoNative${optimization}`] = normalize(nativeCompile.status === 0 ? await runProcess(nativeExecutable, [], options) : nativeCompile);
+    const nativeResult = nativeCompile.status === 0 ? await runProcess(nativeExecutable, [], options) : nativeCompile;
+    results[`lnakoNative${optimization}`] = normalize(nativeResult);
+    stderrResults[`lnakoNative${optimization}`] = normalizeStderr(nativeResult);
     if (nativeCompile.status !== 0) compileErrors.push(`${optimization}:\n${nativeCompile.stderr}`);
   }
-  return { testCase, results, officialCompile, compileErrors };
+  return { testCase, results, stderrResults, officialCompile, compileErrors };
 }
 
 function runProcess(command, arguments_, options) {
@@ -145,4 +172,8 @@ function normalize(result) {
     exitCode: result.status,
     signal: result.signal,
   };
+}
+
+function normalizeStderr(result) {
+  return result.stderr.replaceAll("\r\n", "\n");
 }

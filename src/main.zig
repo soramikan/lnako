@@ -59,7 +59,7 @@ pub fn main(init: std.process.Init) !void {
                 try stderr.flush();
                 std.process.exit(interpreter.requestedExitCode() orelse 0);
             }
-            try stderr.print("実行時エラー: {s}\n", .{runtime.failureMessage() orelse @errorName(err)});
+            try stderr.print("実行時エラー: {s}\n", .{runtime.failureMessage() orelse lnako.runtime.error_message.forFailure(err)});
             try stderr.flush();
             std.process.exit(1);
         };
@@ -182,7 +182,7 @@ pub fn main(init: std.process.Init) !void {
                     try stderr.flush();
                     std.process.exit(interpreter.requestedExitCode() orelse 0);
                 }
-                try stderr.print("実行時エラー: {s}\n", .{runtime.failureMessage() orelse @errorName(err)});
+                try stderr.print("実行時エラー: {s}\n", .{runtime.failureMessage() orelse lnako.runtime.error_message.forFailure(err)});
                 try stderr.flush();
                 std.process.exit(1);
             };

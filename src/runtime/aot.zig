@@ -2064,6 +2064,41 @@ fn writeUtf16(units: []const u16, newline: bool) void {
     if (newline) _ = putchar('\n');
 }
 
+/// Convert a UTF-16 exception message to UTF-8 without rejecting lone
+/// surrogates.  JavaScript strings can contain unpaired surrogates, while the
+/// process stderr stream is UTF-8; use U+FFFD for an unpaired code unit just
+/// as the normal AOT output path does.
+fn utf16FailureMessageUtf8Alloc(allocator: std.mem.Allocator, units: []const u16) anyerror![]u8 {
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(allocator);
+
+    var index: usize = 0;
+    while (index < units.len) {
+        const first = units[index];
+        var codepoint: u21 = undefined;
+        if (first >= 0xd800 and first <= 0xdbff and index + 1 < units.len and units[index + 1] >= 0xdc00 and units[index + 1] <= 0xdfff) {
+            const second = units[index + 1];
+            codepoint = @intCast(0x10000 + ((@as(u32, first) - 0xd800) << 10) + (@as(u32, second) - 0xdc00));
+            index += 2;
+        } else {
+            codepoint = if (first >= 0xd800 and first <= 0xdfff) 0xfffd else @intCast(first);
+            index += 1;
+        }
+
+        var encoded: [4]u8 = undefined;
+        const length = std.unicode.utf8Encode(codepoint, &encoded) catch return error.InvalidUnicodeScalar;
+        try output.appendSlice(allocator, encoded[0..length]);
+    }
+    return output.toOwnedSlice(allocator);
+}
+
+fn pendingExceptionMessageUtf8Alloc(runtime: *Runtime) anyerror![]u8 {
+    if (!runtime.has_pending_exception) return error.NoPendingException;
+    const units = try valueUtf16Alloc(runtime, runtime.pending_exception);
+    defer runtime.allocator.free(units);
+    return utf16FailureMessageUtf8Alloc(runtime.allocator, units);
+}
+
 fn writeBytes(bytes: []const u8, newline: bool) void {
     for (bytes) |byte| _ = putchar(byte);
     if (newline) _ = putchar('\n');
@@ -2111,6 +2146,20 @@ pub export fn lnako_aot_exception_take(out: *Value) callconv(.c) void {
 }
 
 pub export fn lnako_aot_exception_abort() callconv(.c) noreturn {
+    if (active_runtime) |*runtime| {
+        if (runtime.has_pending_exception) {
+            const message = pendingExceptionMessageUtf8Alloc(runtime) catch {
+                // The exception is already pending, but formatting it may
+                // allocate (for example for an array value).  Never replace
+                // this path with an allocator panic or recurse through the
+                // exception machinery: retain the established safe fallback.
+                runtimeFailure(error.NakoException);
+            };
+            defer runtime.allocator.free(message);
+            std.debug.print("[実行時エラー] {s}\n", .{message});
+            std.process.exit(1);
+        }
+    }
     runtimeFailure(error.NakoException);
 }
 
@@ -2667,7 +2716,7 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 return;
             }
             out.* = numberValue(@floatFromInt(codePointFindBuiltin(runtime, arguments.?[0], arguments.?[1]) catch |failure| {
-                runtime.setFailure(failure);
+                if (!runtime.has_pending_exception) runtime.setFailure(failure);
                 return;
             }));
         },
@@ -3036,18 +3085,172 @@ fn codePointLength(units: []const u16, index: usize) usize {
     return if (index + 1 < units.len and units[index] >= 0xd800 and units[index] <= 0xdbff and units[index + 1] >= 0xdc00 and units[index + 1] <= 0xdfff) 2 else 1;
 }
 
-fn codePointFindBuiltin(runtime: *Runtime, source: Value, needle: Value) !usize {
+/// Fast path for the common string/string form of `何文字目`.  Both
+/// operands are already strings, so allocating one UTF-16 buffer per value
+/// is enough.  The window width is measured in Array.from elements rather
+/// than UTF-16 units; this is important for a lone high surrogate not to
+/// match the prefix of a supplementary pair.
+fn codePointFindStringBuiltin(runtime: *Runtime, source: Value, needle: Value) !usize {
     const source_units = try valueUtf16Alloc(runtime, source);
     defer runtime.allocator.free(source_units);
     const needle_units = try valueUtf16Alloc(runtime, needle);
     defer runtime.allocator.free(needle_units);
     if (source_units.len == 0) return 0;
-    var codepoint_index: usize = 0;
-    var unit_index: usize = 0;
-    while (unit_index < source_units.len) {
-        if (needle_units.len <= source_units.len - unit_index and std.mem.eql(u16, source_units[unit_index..][0..needle_units.len], needle_units)) return codepoint_index + 1;
-        unit_index += codePointLength(source_units, unit_index);
-        codepoint_index += 1;
+
+    const needle_count = codePointCount(needle_units);
+    var end: usize = 0;
+    var initial: usize = 0;
+    while (initial < needle_count and end < source_units.len) : (initial += 1) end += codePointLength(source_units, end);
+
+    var start: usize = 0;
+    var scalar_index: usize = 0;
+    while (start < source_units.len) : (scalar_index += 1) {
+        if (std.mem.eql(u16, source_units[start..end], needle_units)) return scalar_index + 1;
+        start += codePointLength(source_units, start);
+        if (end < source_units.len) end += codePointLength(source_units, end);
+    }
+    return 0;
+}
+
+const search_element_limit: usize = 1_000_000;
+
+/// `何文字目` uses `Array.from(value)` and then compares joined windows.  A
+/// single concatenated string is not sufficient: a match may start only at
+/// an Array.from element boundary (for example, `['AB', 'C']` must not match
+/// `BC`).  Keep each element as owned UTF-16 while searching so no temporary
+/// GC value needs to remain rooted between allocations.
+const SearchElements = struct {
+    runtime: *Runtime,
+    items: std.ArrayList([]u16) = .empty,
+
+    fn deinit(self: *SearchElements) void {
+        for (self.items.items) |units| if (units.len != 0) self.runtime.allocator.free(units);
+        self.items.deinit(self.runtime.allocator);
+        self.* = undefined;
+    }
+
+    fn appendEmpty(self: *SearchElements) !void {
+        try self.items.append(self.runtime.allocator, &.{});
+    }
+
+    fn appendOwned(self: *SearchElements, units: []u16) !void {
+        errdefer if (units.len != 0) self.runtime.allocator.free(units);
+        try self.items.append(self.runtime.allocator, units);
+    }
+
+    fn appendValue(self: *SearchElements, value: Value) !void {
+        const tag: Tag = @enumFromInt(value.tag);
+        switch (tag) {
+            .undefined, .null_value => try self.appendEmpty(),
+            .binding_cell => try self.appendValue(value.object().?.payload.binding_cell),
+            else => try self.appendOwned(try valueUtf16Alloc(self.runtime, value)),
+        }
+    }
+};
+
+fn searchArrayFromLength(runtime: *Runtime, value: Value) !usize {
+    const number = try valueToNumberRuntime(runtime, value);
+    if (std.math.isNan(number) or number <= 0) return 0;
+    if (!std.math.isFinite(number) or number > @as(f64, @floatFromInt(search_element_limit))) return error.ArraySizeLimitExceeded;
+    return @intFromFloat(@trunc(number));
+}
+
+fn appendStringSearchElements(elements: *SearchElements, value: Value) !void {
+    const units = try valueUtf16Alloc(elements.runtime, value);
+    defer elements.runtime.allocator.free(units);
+    var index: usize = 0;
+    while (index < units.len) {
+        const length = codePointLength(units, index);
+        try elements.appendOwned(try elements.runtime.allocator.dupe(u16, units[index .. index + length]));
+        index += length;
+    }
+}
+
+fn appendDictionarySearchElements(elements: *SearchElements, value: Value) !void {
+    // TODO: aot-array-from-dictionary-lazy-length
+    // Array.from({length: huge, 0: "hit"}) can observe index 0 before any
+    // later index is read.  The bounded eager representation is retained for
+    // OOM safety until the AOT value model grows a lazy array-like view.
+    const length = searchArrayFromLength(elements.runtime, dictionaryProperty(value, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) catch |failure| return failure;
+    var key_buffer: [32]u16 = undefined;
+    for (0..length) |index| {
+        const key = searchIndexKey(&key_buffer, index);
+        try elements.appendValue(dictionaryProperty(value, key));
+    }
+}
+
+fn searchIndexKey(buffer: *[32]u16, index: usize) []const u16 {
+    var utf8: [32]u8 = undefined;
+    const text = std.fmt.bufPrint(&utf8, "{d}", .{index}) catch unreachable;
+    const length = std.unicode.utf8ToUtf16Le(buffer, text) catch unreachable;
+    return buffer[0..length];
+}
+
+fn appendSearchElements(runtime: *Runtime, value: Value) !SearchElements {
+    const tag: Tag = @enumFromInt(value.tag);
+    if (tag == .null_value) {
+        runtime.setFailureText("object null is not iterable (cannot read property Symbol(Symbol.iterator))");
+        return error.NakoException;
+    }
+    if (tag == .undefined) {
+        runtime.setFailureText("undefined is not iterable (cannot read property Symbol(Symbol.iterator))");
+        return error.NakoException;
+    }
+
+    var elements = SearchElements{ .runtime = runtime };
+    errdefer elements.deinit();
+    switch (tag) {
+        .static_utf8_string, .utf16_string => try appendStringSearchElements(&elements, value),
+        .array => for (value.object().?.payload.array.items) |item| try elements.appendValue(item),
+        .dictionary => try appendDictionarySearchElements(&elements, value),
+        // The official generated function wrapper is not an iterable or
+        // array-like value for this command, so Array.from(function) is []
+        // regardless of the source function's language-level arity.
+        .function => {},
+        else => {},
+    }
+    return elements;
+}
+
+fn joinedSearchElementsEqual(source: SearchElements, start: usize, count: usize, needle: SearchElements) bool {
+    const source_end = start + count;
+    var source_index = start;
+    var source_offset: usize = 0;
+    var needle_index: usize = 0;
+    var needle_offset: usize = 0;
+    while (true) {
+        while (source_index < source_end and source_offset == source.items.items[source_index].len) {
+            source_index += 1;
+            source_offset = 0;
+        }
+        while (needle_index < needle.items.items.len and needle_offset == needle.items.items[needle_index].len) {
+            needle_index += 1;
+            needle_offset = 0;
+        }
+        const source_done = source_index == source_end;
+        const needle_done = needle_index == needle.items.items.len;
+        if (source_done or needle_done) return source_done and needle_done;
+        if (source.items.items[source_index][source_offset] != needle.items.items[needle_index][needle_offset]) return false;
+        source_offset += 1;
+        needle_offset += 1;
+    }
+}
+
+fn codePointFindBuiltin(runtime: *Runtime, source: Value, needle: Value) !usize {
+    var roots = [_]Value{ source, needle };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    if (isString(roots[0]) and isString(roots[1])) return codePointFindStringBuiltin(runtime, roots[0], roots[1]);
+
+    var source_elements = try appendSearchElements(runtime, roots[0]);
+    defer source_elements.deinit();
+    var needle_elements = try appendSearchElements(runtime, roots[1]);
+    defer needle_elements.deinit();
+    for (source_elements.items.items, 0..) |_, index| {
+        const count = @min(needle_elements.items.items.len, source_elements.items.items.len - index);
+        if (joinedSearchElementsEqual(source_elements, index, count, needle_elements)) return index + 1;
     }
     return 0;
 }
@@ -5699,6 +5902,175 @@ test "AOT文字長検索と要素数はUnicode scalarとUTF-16を区別する" {
     try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(roots[10].payload)));
 }
 
+test "AOT何文字目はArray.from要素境界と辞書ToLengthを再現する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    runtime.next_collection = 1;
+    var roots = [_]Value{.{}} ** 24;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createArray(&.{staticStringValue("a")});
+    roots[1] = try runtime.createArray(&.{ staticStringValue("a"), .{ .tag = @intFromEnum(Tag.null_value) } });
+    try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, roots[0], roots[1]));
+    roots[2] = try runtime.createArray(&.{
+        staticStringValue("a"),
+        .{},
+    });
+    try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, roots[0], roots[2]));
+
+    roots[3] = try runtime.createArray(&.{ staticStringValue("a"), numberValue(12), numberValue(3) });
+    try std.testing.expectEqual(@as(usize, 2), try codePointFindBuiltin(&runtime, roots[3], staticStringValue("123")));
+    try std.testing.expectEqual(@as(usize, 0), try codePointFindBuiltin(&runtime, roots[3], staticStringValue("12")));
+    try std.testing.expectEqual(@as(usize, 0), try codePointFindBuiltin(&runtime, numberValue(123), numberValue(123)));
+    try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, staticStringValue("abc"), numberValue(123)));
+    roots[17] = try runtime.createBigInt("1n");
+    try std.testing.expectEqual(@as(usize, 0), try codePointFindBuiltin(&runtime, roots[17], roots[17]));
+    try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, staticStringValue("abc"), roots[17]));
+
+    roots[4] = try runtime.createArray(&.{ staticStringValue("a"), staticStringValue("b") });
+    roots[5] = try runtime.createArray(&.{ roots[4], staticStringValue("c") });
+    roots[6] = try runtime.createArray(&.{roots[4]});
+    try std.testing.expectEqual(@as(usize, 0), try codePointFindBuiltin(&runtime, roots[5], staticStringValue("a,b")));
+    try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, roots[5], roots[6]));
+    try std.testing.expectEqual(@as(usize, 0), try codePointFindBuiltin(&runtime, roots[5], staticStringValue("b,c")));
+
+    roots[7] = try runtime.createDictionary(&.{ staticStringValue("length"), staticStringValue("2"), staticStringValue("0"), staticStringValue("x"), staticStringValue("1"), staticStringValue("y") });
+    try std.testing.expectEqual(@as(usize, 2), try codePointFindBuiltin(&runtime, roots[7], staticStringValue("y")));
+    roots[8] = try runtime.createDictionary(&.{ staticStringValue("length"), numberValue(1.9), staticStringValue("0"), staticStringValue("x"), staticStringValue("1"), staticStringValue("y") });
+    try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, roots[8], staticStringValue("x")));
+    roots[9] = try runtime.createDictionary(&.{ staticStringValue("length"), .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 }, staticStringValue("0"), staticStringValue("x") });
+    try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, roots[9], staticStringValue("x")));
+    roots[10] = try runtime.createArray(&.{numberValue(2)});
+    roots[11] = try runtime.createDictionary(&.{ staticStringValue("length"), roots[10], staticStringValue("0"), staticStringValue("x"), staticStringValue("1"), staticStringValue("y") });
+    try std.testing.expectEqual(@as(usize, 2), try codePointFindBuiltin(&runtime, roots[11], staticStringValue("y")));
+    roots[12] = try runtime.createDictionary(&.{ staticStringValue("length"), numberValue(-1), staticStringValue("0"), staticStringValue("x") });
+    try std.testing.expectEqual(@as(usize, 0), try codePointFindBuiltin(&runtime, roots[12], staticStringValue("x")));
+    roots[13] = try runtime.createDictionary(&.{ staticStringValue("length"), numberValue(std.math.nan(f64)), staticStringValue("0"), staticStringValue("x") });
+    try std.testing.expectEqual(@as(usize, 0), try codePointFindBuiltin(&runtime, roots[13], staticStringValue("x")));
+    roots[14] = try runtime.createDictionary(&.{ staticStringValue("length"), .{ .tag = @intFromEnum(Tag.null_value) }, staticStringValue("0"), staticStringValue("x") });
+    try std.testing.expectEqual(@as(usize, 0), try codePointFindBuiltin(&runtime, roots[14], staticStringValue("x")));
+
+    roots[15] = try runtime.createFunction(testAotFunction, 1, &.{});
+    try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, staticStringValue("abc"), roots[15]));
+    try std.testing.expectEqual(@as(usize, 0), try codePointFindBuiltin(&runtime, roots[15], staticStringValue("a")));
+
+    const null_value: Value = .{ .tag = @intFromEnum(Tag.null_value) };
+    try std.testing.expectError(error.NakoException, codePointFindBuiltin(&runtime, null_value, staticStringValue("a")));
+    const null_message = try valueUtf16Alloc(&runtime, runtime.takeException());
+    defer runtime.allocator.free(null_message);
+    const expected_null = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, "object null is not iterable (cannot read property Symbol(Symbol.iterator))");
+    defer runtime.allocator.free(expected_null);
+    try std.testing.expectEqualSlices(u16, expected_null, null_message);
+    const undefined_value: Value = .{};
+    try std.testing.expectError(error.NakoException, codePointFindBuiltin(&runtime, undefined_value, staticStringValue("a")));
+    const undefined_message = try valueUtf16Alloc(&runtime, runtime.takeException());
+    defer runtime.allocator.free(undefined_message);
+    const expected_undefined = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, "undefined is not iterable (cannot read property Symbol(Symbol.iterator))");
+    defer runtime.allocator.free(expected_undefined);
+    try std.testing.expectEqualSlices(u16, expected_undefined, undefined_message);
+    try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, staticStringValue("abc"), staticStringValue("a")));
+
+    roots[16] = try runtime.createDictionary(&.{ staticStringValue("length"), numberValue(@floatFromInt(search_element_limit + 1)), staticStringValue("0"), staticStringValue("hit") });
+    try std.testing.expectError(error.ArraySizeLimitExceeded, codePointFindBuiltin(&runtime, roots[16], staticStringValue("hit")));
+}
+
+fn codePointFindAllocationTest(allocator: std.mem.Allocator) !void {
+    var runtime = Runtime{ .allocator = allocator };
+    defer runtime.deinit();
+    const source = try runtime.createArray(&.{ staticStringValue("A"), staticStringValue("😀"), staticStringValue("B") });
+    const needle = try runtime.createArray(&.{staticStringValue("😀")});
+    const result = try codePointFindBuiltin(&runtime, source, needle);
+    try std.testing.expectEqual(@as(usize, 2), result);
+    const string_source = try runtime.createString(&.{ 'A', 0xd83d, 0xde00, 'B' });
+    const string_needle = try runtime.createString(&.{ 0xd83d, 0xde00, 'B' });
+    const string_result = try codePointFindBuiltin(&runtime, string_source, string_needle);
+    try std.testing.expectEqual(@as(usize, 2), string_result);
+}
+
+test "AOT何文字目の要素列構築は割当失敗で入力を壊さない" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, codePointFindAllocationTest, .{});
+}
+
+test "AOT何文字目の文字列fast pathはスカラーwindowを比較する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 5;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    try std.testing.expectEqual(@as(usize, 2), try codePointFindBuiltin(&runtime, staticStringValue("A😀B"), staticStringValue("😀B")));
+    try std.testing.expectEqual(@as(usize, 0), try codePointFindBuiltin(&runtime, staticStringValue(""), staticStringValue("x")));
+    try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, staticStringValue("x"), staticStringValue("")));
+
+    roots[0] = try runtime.createString(&.{ 0xd83d, 0xde00 });
+    roots[1] = try runtime.createString(&.{0xd83d});
+    roots[2] = try runtime.createString(&.{0xde00});
+    try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, roots[0], roots[0]));
+    try std.testing.expectEqual(@as(usize, 0), try codePointFindBuiltin(&runtime, roots[0], roots[1]));
+    try std.testing.expectEqual(@as(usize, 0), try codePointFindBuiltin(&runtime, roots[0], roots[2]));
+    try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, roots[1], roots[1]));
+
+    var long_units: [2048]u16 = undefined;
+    @memset(long_units[0..2046], 'a');
+    long_units[2046] = 0xd83d;
+    long_units[2047] = 0xde00;
+    roots[3] = try runtime.createString(&long_units);
+    try std.testing.expectEqual(@as(usize, 2047), try codePointFindBuiltin(&runtime, roots[3], roots[0]));
+}
+
+test "AOT何文字目のdispatch例外は文言を保持し次の呼出しへ回復する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    const command = @intFromEnum(aot_builtin.Command.codepoint_find);
+    roots[0] = .{ .tag = @intFromEnum(Tag.null_value) };
+    roots[1] = staticStringValue("a");
+    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[0]), 2, command);
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    lnako_aot_exception_take(&roots[3]);
+    const null_message = try valueUtf16Alloc(&runtime, roots[3]);
+    defer runtime.allocator.free(null_message);
+    const expected_null = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, "object null is not iterable (cannot read property Symbol(Symbol.iterator))");
+    defer runtime.allocator.free(expected_null);
+    try std.testing.expectEqualSlices(u16, expected_null, null_message);
+
+    roots[0] = staticStringValue("abc");
+    roots[1] = staticStringValue("a");
+    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[0]), 2, command);
+    try std.testing.expectEqual(@as(c_int, 0), lnako_aot_exception_pending());
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(roots[2].payload)));
+
+    roots[0] = .{};
+    roots[1] = staticStringValue("a");
+    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[0]), 2, command);
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    lnako_aot_exception_take(&roots[3]);
+    const undefined_message = try valueUtf16Alloc(&runtime, roots[3]);
+    defer runtime.allocator.free(undefined_message);
+    const expected_undefined = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, "undefined is not iterable (cannot read property Symbol(Symbol.iterator))");
+    defer runtime.allocator.free(expected_undefined);
+    try std.testing.expectEqualSlices(u16, expected_undefined, undefined_message);
+
+    roots[0] = staticStringValue("abc");
+    roots[1] = staticStringValue("a");
+    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[0]), 2, command);
+    try std.testing.expectEqual(@as(c_int, 0), lnako_aot_exception_pending());
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(roots[2].payload)));
+}
+
 test "AOT加算系命令はparseFloatとBigIntとJavaScript加算を分離する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -6586,6 +6958,30 @@ test "保留例外をGCルートとして保持し一度だけ取り出す" {
     try std.testing.expectEqual(message.payload, taken.payload);
     try std.testing.expectEqual(@as(c_int, 0), lnako_aot_exception_pending());
     try std.testing.expectEqual(@as(usize, 1), active_runtime.?.collect());
+}
+
+test "AOT未捕捉例外の本文をUTF-16から安全にUTF-8へ変換する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+
+    try std.testing.expectError(error.NoPendingException, pendingExceptionMessageUtf8Alloc(&runtime));
+
+    runtime.setFailureText("object null is not iterable (cannot read property Symbol(Symbol.iterator))");
+    const null_message = try pendingExceptionMessageUtf8Alloc(&runtime);
+    defer runtime.allocator.free(null_message);
+    try std.testing.expectEqualStrings("object null is not iterable (cannot read property Symbol(Symbol.iterator))", null_message);
+    _ = runtime.takeException();
+
+    runtime.setFailureText("undefined is not iterable (cannot read property Symbol(Symbol.iterator))");
+    const undefined_message = try pendingExceptionMessageUtf8Alloc(&runtime);
+    defer runtime.allocator.free(undefined_message);
+    try std.testing.expectEqualStrings("undefined is not iterable (cannot read property Symbol(Symbol.iterator))", undefined_message);
+    _ = runtime.takeException();
+
+    const units = [_]u16{ 'a', 0xd83d, 0xde00, 0xd800, 'b', 0xdc00 };
+    const surrogate_message = try utf16FailureMessageUtf8Alloc(runtime.allocator, &units);
+    defer runtime.allocator.free(surrogate_message);
+    try std.testing.expectEqualStrings("a😀�b�", surrogate_message);
 }
 
 test "AOT算術失敗を公式文言の保留例外へ変換する" {
