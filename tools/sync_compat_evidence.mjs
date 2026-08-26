@@ -18,6 +18,7 @@ const runtimeFixtureFiles = new Set([
   "node-exit-cases.json",
   "node-file-cases.json",
   "node-http-cases.json",
+  "node-interrupt-case.json",
   "node-native-cases.json",
   "plugin-system-cases.json",
   "standard-plugin-cases.json",
@@ -154,7 +155,15 @@ async function readFixtureRecords() {
   const files = (await readdir(oracleDirectory)).filter((file) => file.endsWith(".json")).sort();
   for (const file of files) {
     const value = await readJson(resolve(oracleDirectory, file));
-    const fixtures = Array.isArray(value) ? value : Array.isArray(value.cases) ? value.cases : Array.isArray(value.entries) ? value.entries : [];
+    const fixtures = Array.isArray(value)
+      ? value
+      : Array.isArray(value.cases)
+        ? value.cases
+        : Array.isArray(value.entries)
+          ? value.entries
+          : typeof value?.id === "string"
+            ? [value]
+            : [];
     for (const fixture of fixtures) {
       if (typeof fixture?.id !== "string" || fixture.id.length === 0) continue;
       const record = {

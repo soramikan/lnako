@@ -8,16 +8,16 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 217,
+    "total": 219,
     "nativeAot": 115,
-    "interpreter": 93,
+    "interpreter": 95,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
     "paired": 79,
-    "interpreter-only": 431,
+    "interpreter-only": 442,
     "aot-only": 0,
-    "none": 13,
+    "none": 2,
     "compat-js-only": 4
   },
   "executionEvidenceStates": {
@@ -12070,22 +12070,26 @@
       "name": "強制終了時",
       "plugin": "plugin_node",
       "status": "native",
-      "interpreterFixtureIds": [],
+      "interpreterFixtureIds": [
+        "plugin-node-interrupt"
+      ],
       "aotFixtureIds": [],
       "compatJsFixtureIds": [],
       "associationOrigin": {
-        "interpreter": {},
+        "interpreter": {
+          "plugin-node-interrupt": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "aot": {},
         "compatJs": {}
       },
-      "fixtureCoverageState": "none",
+      "fixtureCoverageState": "interpreter-only",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 0件、AOT 0件（fixtureCoverageState=none）。executionEvidenceState=unverified。 実装台帳の未解決fixture ID: plugin-node-interrupt。",
-      "implementationReason": "SIGINTコールバックと終了結果の公式差分テストに成功",
-      "unresolvedTestIds": [
-        "plugin-node-interrupt"
-      ]
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "implementationReason": "SIGINTコールバックと終了結果の公式差分テストに成功"
     },
     {
       "id": "command-0748",
@@ -13344,220 +13348,260 @@
       "name": "HTTPメソッド",
       "plugin": "plugin_httpserver",
       "status": "native",
-      "interpreterFixtureIds": [],
+      "interpreterFixtureIds": [
+        "plugin-httpserver-all"
+      ],
       "aotFixtureIds": [],
       "compatJsFixtureIds": [],
       "associationOrigin": {
-        "interpreter": {},
+        "interpreter": {
+          "plugin-httpserver-all": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "aot": {},
         "compatJs": {}
       },
-      "fixtureCoverageState": "none",
+      "fixtureCoverageState": "interpreter-only",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 0件、AOT 0件（fixtureCoverageState=none）。executionEvidenceState=unverified。 実装台帳の未解決fixture ID: plugin-httpserver-all。",
-      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功",
-      "unresolvedTestIds": [
-        "plugin-httpserver-all"
-      ]
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0796",
       "name": "GETデータ",
       "plugin": "plugin_httpserver",
       "status": "native",
-      "interpreterFixtureIds": [],
+      "interpreterFixtureIds": [
+        "plugin-httpserver-all"
+      ],
       "aotFixtureIds": [],
       "compatJsFixtureIds": [],
       "associationOrigin": {
-        "interpreter": {},
+        "interpreter": {
+          "plugin-httpserver-all": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "aot": {},
         "compatJs": {}
       },
-      "fixtureCoverageState": "none",
+      "fixtureCoverageState": "interpreter-only",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 0件、AOT 0件（fixtureCoverageState=none）。executionEvidenceState=unverified。 実装台帳の未解決fixture ID: plugin-httpserver-all。",
-      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功",
-      "unresolvedTestIds": [
-        "plugin-httpserver-all"
-      ]
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0797",
       "name": "POSTデータ",
       "plugin": "plugin_httpserver",
       "status": "native",
-      "interpreterFixtureIds": [],
+      "interpreterFixtureIds": [
+        "plugin-httpserver-all"
+      ],
       "aotFixtureIds": [],
       "compatJsFixtureIds": [],
       "associationOrigin": {
-        "interpreter": {},
+        "interpreter": {
+          "plugin-httpserver-all": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "aot": {},
         "compatJs": {}
       },
-      "fixtureCoverageState": "none",
+      "fixtureCoverageState": "interpreter-only",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 0件、AOT 0件（fixtureCoverageState=none）。executionEvidenceState=unverified。 実装台帳の未解決fixture ID: plugin-httpserver-all。",
-      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功",
-      "unresolvedTestIds": [
-        "plugin-httpserver-all"
-      ]
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0798",
       "name": "FILESデータ",
       "plugin": "plugin_httpserver",
       "status": "native",
-      "interpreterFixtureIds": [],
+      "interpreterFixtureIds": [
+        "plugin-httpserver-all"
+      ],
       "aotFixtureIds": [],
       "compatJsFixtureIds": [],
       "associationOrigin": {
-        "interpreter": {},
+        "interpreter": {
+          "plugin-httpserver-all": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "aot": {},
         "compatJs": {}
       },
-      "fixtureCoverageState": "none",
+      "fixtureCoverageState": "interpreter-only",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 0件、AOT 0件（fixtureCoverageState=none）。executionEvidenceState=unverified。 実装台帳の未解決fixture ID: plugin-httpserver-all。",
-      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功",
-      "unresolvedTestIds": [
-        "plugin-httpserver-all"
-      ]
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0799",
       "name": "簡易HTTPサーバ起動時",
       "plugin": "plugin_httpserver",
       "status": "native",
-      "interpreterFixtureIds": [],
+      "interpreterFixtureIds": [
+        "plugin-httpserver-all"
+      ],
       "aotFixtureIds": [],
       "compatJsFixtureIds": [],
       "associationOrigin": {
-        "interpreter": {},
+        "interpreter": {
+          "plugin-httpserver-all": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "aot": {},
         "compatJs": {}
       },
-      "fixtureCoverageState": "none",
+      "fixtureCoverageState": "interpreter-only",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 0件、AOT 0件（fixtureCoverageState=none）。executionEvidenceState=unverified。 実装台帳の未解決fixture ID: plugin-httpserver-all。",
-      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功",
-      "unresolvedTestIds": [
-        "plugin-httpserver-all"
-      ]
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0800",
       "name": "簡易HTTPサーバ静的パス指定",
       "plugin": "plugin_httpserver",
       "status": "native",
-      "interpreterFixtureIds": [],
+      "interpreterFixtureIds": [
+        "plugin-httpserver-all"
+      ],
       "aotFixtureIds": [],
       "compatJsFixtureIds": [],
       "associationOrigin": {
-        "interpreter": {},
+        "interpreter": {
+          "plugin-httpserver-all": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "aot": {},
         "compatJs": {}
       },
-      "fixtureCoverageState": "none",
+      "fixtureCoverageState": "interpreter-only",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 0件、AOT 0件（fixtureCoverageState=none）。executionEvidenceState=unverified。 実装台帳の未解決fixture ID: plugin-httpserver-all。",
-      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功",
-      "unresolvedTestIds": [
-        "plugin-httpserver-all"
-      ]
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0801",
       "name": "簡易HTTPサーバ受信時",
       "plugin": "plugin_httpserver",
       "status": "native",
-      "interpreterFixtureIds": [],
+      "interpreterFixtureIds": [
+        "plugin-httpserver-all"
+      ],
       "aotFixtureIds": [],
       "compatJsFixtureIds": [],
       "associationOrigin": {
-        "interpreter": {},
+        "interpreter": {
+          "plugin-httpserver-all": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "aot": {},
         "compatJs": {}
       },
-      "fixtureCoverageState": "none",
+      "fixtureCoverageState": "interpreter-only",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 0件、AOT 0件（fixtureCoverageState=none）。executionEvidenceState=unverified。 実装台帳の未解決fixture ID: plugin-httpserver-all。",
-      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功",
-      "unresolvedTestIds": [
-        "plugin-httpserver-all"
-      ]
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0802",
       "name": "簡易HTTPサーバ出力",
       "plugin": "plugin_httpserver",
       "status": "native",
-      "interpreterFixtureIds": [],
+      "interpreterFixtureIds": [
+        "plugin-httpserver-all"
+      ],
       "aotFixtureIds": [],
       "compatJsFixtureIds": [],
       "associationOrigin": {
-        "interpreter": {},
+        "interpreter": {
+          "plugin-httpserver-all": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "aot": {},
         "compatJs": {}
       },
-      "fixtureCoverageState": "none",
+      "fixtureCoverageState": "interpreter-only",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 0件、AOT 0件（fixtureCoverageState=none）。executionEvidenceState=unverified。 実装台帳の未解決fixture ID: plugin-httpserver-all。",
-      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功",
-      "unresolvedTestIds": [
-        "plugin-httpserver-all"
-      ]
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0803",
       "name": "簡易HTTPサーバヘッダ出力",
       "plugin": "plugin_httpserver",
       "status": "native",
-      "interpreterFixtureIds": [],
+      "interpreterFixtureIds": [
+        "plugin-httpserver-all"
+      ],
       "aotFixtureIds": [],
       "compatJsFixtureIds": [],
       "associationOrigin": {
-        "interpreter": {},
+        "interpreter": {
+          "plugin-httpserver-all": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "aot": {},
         "compatJs": {}
       },
-      "fixtureCoverageState": "none",
+      "fixtureCoverageState": "interpreter-only",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 0件、AOT 0件（fixtureCoverageState=none）。executionEvidenceState=unverified。 実装台帳の未解決fixture ID: plugin-httpserver-all。",
-      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功",
-      "unresolvedTestIds": [
-        "plugin-httpserver-all"
-      ]
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0804",
       "name": "簡易HTTPサーバ移動",
       "plugin": "plugin_httpserver",
       "status": "native",
-      "interpreterFixtureIds": [],
+      "interpreterFixtureIds": [
+        "plugin-httpserver-all"
+      ],
       "aotFixtureIds": [],
       "compatJsFixtureIds": [],
       "associationOrigin": {
-        "interpreter": {},
+        "interpreter": {
+          "plugin-httpserver-all": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "aot": {},
         "compatJs": {}
       },
-      "fixtureCoverageState": "none",
+      "fixtureCoverageState": "interpreter-only",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 0件、AOT 0件（fixtureCoverageState=none）。executionEvidenceState=unverified。 実装台帳の未解決fixture ID: plugin-httpserver-all。",
-      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功",
-      "unresolvedTestIds": [
-        "plugin-httpserver-all"
-      ]
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0805",
