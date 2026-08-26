@@ -280,8 +280,10 @@ const CliHost = struct {
     http_head_request: bool = false,
     held_http_connections: std.ArrayList(std.Io.net.Stream) = .empty,
     upload_sequence: u64 = 1,
+    dispatch_trace_file: ?std.Io.File = null,
 
     fn deinit(self: *CliHost) void {
+        if (self.dispatch_trace_file) |file| file.close(self.io);
         if (self.http_connection) |stream| stream.close(self.io);
         for (self.held_http_connections.items) |stream| stream.close(self.io);
         self.held_http_connections.deinit(std.heap.page_allocator);
@@ -294,6 +296,8 @@ const CliHost = struct {
         return .{
             .context = self,
             .writeFn = write,
+            .dispatch_trace_path = self.environmentValue("LNAKO_DISPATCH_TRACE"),
+            .dispatch_trace_writeFn = writeDispatchTrace,
             .sleepMillisecondsFn = sleepMilliseconds,
             .nowMillisecondsFn = nowMilliseconds,
             .monotonicMillisecondsFn = monotonicMilliseconds,
@@ -347,6 +351,24 @@ const CliHost = struct {
                 .writeFn = write,
             },
         };
+    }
+
+    fn environmentValue(self: *CliHost, name: []const u8) ?[]const u8 {
+        for (self.environment_names, self.environment_values) |candidate, value| {
+            if (std.mem.eql(u8, candidate, name)) return value;
+        }
+        return null;
+    }
+
+    fn writeDispatchTrace(context: *anyopaque, path: []const u8, bytes: []const u8) !void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        if (self.dispatch_trace_file == null) {
+            self.dispatch_trace_file = if (std.fs.path.isAbsolute(path))
+                try std.Io.Dir.createFileAbsolute(self.io, path, .{ .exclusive = true })
+            else
+                try std.Io.Dir.cwd().createFile(self.io, path, .{ .exclusive = true });
+        }
+        try self.dispatch_trace_file.?.writeStreamingAll(self.io, bytes);
     }
 
     fn write(context: *anyopaque, bytes: []const u8) !void {

@@ -39,9 +39,83 @@ const default_plugin_names = [_][]const u8{
     "plugin_node",
 };
 
+const DispatchTraceWriteFn = *const fn (context: *anyopaque, path: []const u8, bytes: []const u8) anyerror!void;
+
+/// Runtime dispatch tracing is deliberately opt-in and metadata-only.  The
+/// environment is read lazily so ordinary execution does not open a file or
+/// add work to interpreter construction.
+const DispatchTrace = struct {
+    path: ?[]const u8 = null,
+    context: ?*anyopaque = null,
+    writeFn: ?DispatchTraceWriteFn = null,
+    disabled: bool = false,
+    sequence: u64 = 0,
+    locked: std.atomic.Value(bool) = .init(false),
+
+    fn lock(self: *DispatchTrace) void {
+        while (self.locked.swap(true, .acquire)) std.atomic.spinLoopHint();
+    }
+
+    fn unlock(self: *DispatchTrace) void {
+        self.locked.store(false, .release);
+    }
+
+    fn emit(self: *DispatchTrace, name: []const u8, result: []const u8) void {
+        self.lock();
+        defer self.unlock();
+        if (self.disabled) return;
+        const path = self.path orelse return;
+        const writeFn = self.writeFn orelse return;
+        const context = self.context orelse return;
+        var line: [1024]u8 = undefined;
+        const rendered = std.fmt.bufPrint(
+            &line,
+            "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"dispatch-result\",\"seq\":{d},\"command\":\"{s}\",\"route\":\"callBuiltin\",\"result\":\"{s}\"}}\n",
+            .{ self.sequence, name, result },
+        ) catch {
+            self.disabled = true;
+            return;
+        };
+        writeFn(context, path, rendered) catch {
+            self.disabled = true;
+            return;
+        };
+        self.sequence += 1;
+    }
+
+    fn finish(self: *DispatchTrace) void {
+        self.lock();
+        defer self.unlock();
+        if (self.disabled) return;
+        const path = self.path orelse return;
+        const writeFn = self.writeFn orelse return;
+        const context = self.context orelse return;
+        var line: [160]u8 = undefined;
+        const rendered = std.fmt.bufPrint(
+            &line,
+            "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"trace-end\",\"seq\":{d},\"dropped\":0}}\n",
+            .{self.sequence},
+        ) catch return;
+        writeFn(context, path, rendered) catch return;
+        self.sequence += 1;
+        self.disabled = true;
+    }
+};
+
+fn traceBuiltinName(name: []const u8) []const u8 {
+    for (builtin_catalog.names) |known| {
+        if (std.mem.eql(u8, known, name)) return name;
+    }
+    // Unknown names are still represented without copying arbitrary source
+    // text into a trace file.
+    return "<non-catalog>";
+}
+
 pub const Host = struct {
     context: *anyopaque,
     writeFn: *const fn (context: *anyopaque, bytes: []const u8) anyerror!void,
+    dispatch_trace_path: ?[]const u8 = null,
+    dispatch_trace_writeFn: ?DispatchTraceWriteFn = null,
     sleepMillisecondsFn: ?*const fn (context: *anyopaque, milliseconds: u64) anyerror!void = null,
     nowMillisecondsFn: ?*const fn (context: *anyopaque) anyerror!i64 = null,
     monotonicMillisecondsFn: ?*const fn (context: *anyopaque) anyerror!f64 = null,
@@ -244,12 +318,14 @@ pub const Interpreter = struct {
     current_source_path: []const u8 = "",
     debug_enabled: bool = false,
     system_initialized: bool = false,
+    dispatch_trace: DispatchTrace = .{},
 
     pub fn init(allocator: std.mem.Allocator, runtime: *Runtime, program: ir.Program, host: Host) Interpreter {
-        return .{ .allocator = allocator, .runtime = runtime, .program = program, .host = host, .csv_state = plugin_csv.State.init(allocator), .quickjs_state = quickjs.State.init(program.compat_js), .native_plugin_state = plugin_native.State.init() };
+        return .{ .allocator = allocator, .runtime = runtime, .program = program, .host = host, .dispatch_trace = .{ .path = host.dispatch_trace_path, .context = host.context, .writeFn = host.dispatch_trace_writeFn }, .csv_state = plugin_csv.State.init(allocator), .quickjs_state = quickjs.State.init(program.compat_js), .native_plugin_state = plugin_native.State.init() };
     }
 
     pub fn deinit(self: *Interpreter) void {
+        self.dispatch_trace.finish();
         // Native plugins may retain host handles and stop worker threads from
         // deinitialize, so tear them down while all interpreter services exist.
         self.native_plugin_state.deinit();
@@ -602,6 +678,15 @@ pub const Interpreter = struct {
     }
 
     fn callBuiltin(self: *Interpreter, name: []const u8, arguments: []const Value) !Value {
+        const result = self.callBuiltinImpl(name, arguments) catch |failure| {
+            self.dispatch_trace.emit(traceBuiltinName(name), "failure");
+            return failure;
+        };
+        self.dispatch_trace.emit(traceBuiltinName(name), "success");
+        return result;
+    }
+
+    fn callBuiltinImpl(self: *Interpreter, name: []const u8, arguments: []const Value) !Value {
         if (std.mem.eql(u8, name, "連続加算") and arguments.len == 0) return self.systemContext();
         if (std.mem.eql(u8, name, "ください") or std.mem.eql(u8, name, "お願") or std.mem.eql(u8, name, "です")) {
             if (!std.math.isFinite(self.courtesy_level) or self.courtesy_level == 0) self.courtesy_level = 0;

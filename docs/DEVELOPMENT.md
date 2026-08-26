@@ -44,8 +44,10 @@ node tools/compare_node_exit_oracle.mjs
 node tools/compare_node_interrupt_oracle.mjs
 node tools/check_node_archive_smoke.mjs
 node tools/compare_native_oracle.mjs
+node tools/check_dispatch_trace.mjs
 node tools/check_builtin_catalog.mjs
 node tools/sync_compat.mjs --check
+node tools/sync_compat_evidence.mjs --check
 node tools/check_compat_report.mjs
 ```
 

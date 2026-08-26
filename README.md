@@ -107,6 +107,8 @@ QuickJS対応ランタイムへ埋め込み、元ソース、Zig、LLVMを実行
 [docs/NATIVE_PLUGIN_ABI.md](docs/NATIVE_PLUGIN_ABI.md)を参照してください。
 
 設計と検証方針は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) と [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) を参照してください。
+命令ごとのfixture関連付けと、実行証拠ではないことの境界は
+[docs/COMPATIBILITY_EVIDENCE.md](docs/COMPATIBILITY_EVIDENCE.md) に記録します。
 公式実装の説明だけでは分かりにくい戻り値、破壊的変更、出力プールなどは
 [docs/COMPATIBILITY_QUIRKS.md](docs/COMPATIBILITY_QUIRKS.md) に差分テストID付きで記録します。
 

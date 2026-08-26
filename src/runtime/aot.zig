@@ -9,9 +9,96 @@ const string_mod = @import("string.zig");
 const system_constant = @import("system_constant.zig");
 const regexp = @import("../plugins/system/regexp.zig");
 
+extern "c" fn fflush(stream: ?*std.c.FILE) c_int;
+
 pub const Tag = aot_abi.Tag;
 
 const safe_array_element_limit: usize = 1_000_000;
+
+/// AOT dispatch tracing is opt-in through LNAKO_DISPATCH_TRACE.  It records
+/// only canonical opcode metadata; arguments, values, and addresses never
+/// cross this boundary.  C stdio keeps the helper available to generated
+/// executables on POSIX and Windows without requiring a runtime Io object.
+const DispatchTrace = struct {
+    file: ?*std.c.FILE = null,
+    initialized: bool = false,
+    disabled: bool = false,
+    sequence: u64 = 0,
+    locked: std.atomic.Value(bool) = .init(false),
+
+    fn lock(self: *DispatchTrace) void {
+        while (self.locked.swap(true, .acquire)) std.atomic.spinLoopHint();
+    }
+
+    fn unlock(self: *DispatchTrace) void {
+        self.locked.store(false, .release);
+    }
+
+    fn deinit(self: *DispatchTrace) void {
+        self.finish();
+        self.lock();
+        defer self.unlock();
+        if (self.file) |file| _ = std.c.fclose(file);
+        self.file = null;
+    }
+
+    fn emit(self: *DispatchTrace, command: []const u8, opcode: u16, route: []const u8) void {
+        self.lock();
+        defer self.unlock();
+        if (self.disabled) return;
+        if (!self.initialized) {
+            self.initialized = true;
+            const path = std.c.getenv("LNAKO_DISPATCH_TRACE") orelse return;
+            if (path[0] == 0) return;
+            self.file = std.c.fopen(path, "wbx") orelse {
+                self.disabled = true;
+                return;
+            };
+        }
+        const file = self.file orelse return;
+        var line: [512]u8 = undefined;
+        const rendered = std.fmt.bufPrint(
+            &line,
+            "{{\"schema\":1,\"engine\":\"aot\",\"phase\":\"dispatch-attempt\",\"seq\":{d},\"opcode\":{d},\"command\":\"{s}\",\"name_source\":\"canonical-opcode\",\"route\":\"{s}\"}}\n",
+            .{ self.sequence, opcode, command, route },
+        ) catch {
+            self.disabled = true;
+            return;
+        };
+        if (std.c.fwrite(rendered.ptr, 1, rendered.len, file) != rendered.len or fflush(file) != 0) {
+            _ = std.c.fclose(file);
+            self.file = null;
+            self.disabled = true;
+            return;
+        }
+        self.sequence += 1;
+    }
+
+    fn finish(self: *DispatchTrace) void {
+        self.lock();
+        defer self.unlock();
+        if (self.disabled) return;
+        if (!self.initialized) {
+            self.initialized = true;
+            const path = std.c.getenv("LNAKO_DISPATCH_TRACE") orelse return;
+            if (path[0] == 0) return;
+            self.file = std.c.fopen(path, "wbx") orelse {
+                self.disabled = true;
+                return;
+            };
+        }
+        const file = self.file orelse return;
+        var line: [160]u8 = undefined;
+        const rendered = std.fmt.bufPrint(
+            &line,
+            "{{\"schema\":1,\"engine\":\"aot\",\"phase\":\"trace-end\",\"seq\":{d},\"dropped\":0}}\n",
+            .{self.sequence},
+        ) catch return;
+        if (std.c.fwrite(rendered.ptr, 1, rendered.len, file) != rendered.len or fflush(file) != 0) return;
+        self.sequence += 1;
+        self.disabled = true;
+    }
+};
 
 pub const Value = extern struct {
     tag: u8 = @intFromEnum(Tag.undefined),
@@ -112,8 +199,10 @@ const Runtime = struct {
     pending_exception: Value = .{},
     has_pending_exception: bool = false,
     system_context: Value = .{},
+    dispatch_trace: DispatchTrace = .{},
 
     fn deinit(self: *Runtime) void {
+        self.dispatch_trace.deinit();
         var current = self.objects;
         while (current) |object| {
             const next = object.next;
@@ -739,9 +828,11 @@ pub export fn lnako_aot_regexp_call(out: *Value, captures: ?*Value, arguments: ?
     out.* = .{};
     const runtime = if (active_runtime) |*active| active else return;
     const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
+        runtime.dispatch_trace.emit("unknown", opcode, "regexp");
         runtime.setFailure(error.UnknownCommand);
         return;
     };
+    runtime.dispatch_trace.emit(aot_builtin.canonicalOpcodeName(command), opcode, "regexp");
     if (arguments == null and len != 0) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
@@ -2440,6 +2531,8 @@ pub export fn lnako_aot_function_call(out: *Value, callable: *const Value, argum
 pub export fn lnako_aot_cut(out: *Value, target: *Value, arguments: ?[*]const Value, len: usize, mode: u8) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*active| active else return;
+    const command: aot_builtin.Command = if (mode == 0) .cut else .cut_range;
+    runtime.dispatch_trace.emit(aot_builtin.canonicalOpcodeName(command), @intFromEnum(command), "cut");
     if (arguments == null and len != 0) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
@@ -2464,9 +2557,11 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
     out.* = .{};
     const runtime = if (active_runtime) |*active| active else return;
     const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
+        runtime.dispatch_trace.emit("unknown", opcode, "builtin");
         runtime.setFailure(error.UnknownCommand);
         return;
     };
+    runtime.dispatch_trace.emit(aot_builtin.canonicalOpcodeName(command), opcode, "builtin");
     if (arguments == null and len != 0) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;

@@ -149,6 +149,13 @@ pub const Command = enum(u16) {
     json_decode,
 };
 
+/// The LLVM ABI receives an opcode after aliases have already been lowered.
+/// Trace consumers must therefore treat this as the canonical enum spelling,
+/// not as the source spelling used by a Nadesiko program.
+pub fn canonicalOpcodeName(command: Command) []const u8 {
+    return @tagName(command);
+}
+
 pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "文字列変換") or std.mem.eql(u8, name, "TOSTR")) return .to_string;
     if (std.mem.eql(u8, name, "変数型確認") or std.mem.eql(u8, name, "TYPEOF")) return .type_of;
@@ -459,4 +466,10 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.digit_predicate, lookup("数字判定").?);
     try std.testing.expectEqual(Command.number_sequence_predicate, lookup("数列判定").?);
     try std.testing.expect(lookup("未対応命令") == null);
+}
+
+test "AOTトレース名は別名ではなくcanonical opcodeを使う" {
+    try std.testing.expectEqualStrings("to_string", canonicalOpcodeName(.to_string));
+    try std.testing.expectEqualStrings("array_cut", canonicalOpcodeName(.array_cut));
+    try std.testing.expectEqualStrings("regexp_match", canonicalOpcodeName(.regexp_match));
 }
