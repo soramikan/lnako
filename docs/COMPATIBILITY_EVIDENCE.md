@@ -105,7 +105,10 @@ metadataのschema、workflow identity、対象commit、3正式OS、現行JSONの
 `trace-confirmed-unattested`に留まります。未実行のNode route、
 O1〜O3、pre/post-opt IR、同名異plugin entryはverifiedへ昇格しません。
 また、sync検証は`equivalent`フラグを信用せず、4 routeのstdout/stderr SHA-256が公式sourceと一致すること、
-trace eventCountが正でsite数を包含することも確認します。dispatch証拠schema v2のprovenanceには
+trace eventCountが正でsite数を包含することも確認します。Windowsネイティブ実行のCRLFと公式Node経路のLFを同じ出力として比較できるよう、
+4 routeのstdout/stderrだけはCRLFをLFへ正規化してから
+SHA-256を記録します。trace・compile manifestのraw hashは正規化しません。
+dispatch証拠schema v2のprovenanceには
 OS、Node、公式oracle marker／CLI／archiveのhash、実行前lnako binaryのhash、git commit／dirty、
 一時raw trace／manifestのhashだけを保存し、source本文・ローカルパス・raw本文は保存しません。
 sync検証時はgit取得失敗を拒否し、dirty=falseの証拠だけは記録commitが現行HEADと一致することも確認します。

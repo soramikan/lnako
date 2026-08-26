@@ -150,7 +150,7 @@ try {
       ["公式生成JavaScript", officialGenerated],
       ["lnako Interpreter", interpretedWithoutTrace],
       ["lnako AOT O0", aotWithoutTrace],
-    ]) assertProcessEquivalent(`公式cnako3 source/${label}`, officialSource, result);
+    ]) assertOfficialProcessEquivalent(`公式cnako3 source/${label}`, officialSource, result);
     await writeDispatchEvidence(evidenceOutput, fixture, interpreterEvents, aotEvents, manifestEntries, {
       officialSource,
       officialGenerated,
@@ -208,6 +208,21 @@ function assertProcessEquivalent(label, left, right) {
   for (const field of ["status", "signal", "stdout", "stderr"]) {
     if (left[field] !== right[field]) throw new Error(`${label}で${field}が変化しました:\n${JSON.stringify({ left, right }, null, 2)}`);
   }
+}
+
+function assertOfficialProcessEquivalent(label, left, right) {
+  for (const field of ["status", "signal"]) {
+    if (left[field] !== right[field]) throw new Error(`${label}で${field}が変化しました:\n${JSON.stringify({ left, right }, null, 2)}`);
+  }
+  for (const field of ["stdout", "stderr"]) {
+    if (normalizeLineEndings(left[field]) !== normalizeLineEndings(right[field])) {
+      throw new Error(`${label}で正規化${field}が変化しました:\n${JSON.stringify({ left, right }, null, 2)}`);
+    }
+  }
+}
+
+function normalizeLineEndings(value) {
+  return value.replaceAll("\r\n", "\n");
 }
 
 function assertNoJsonl(names) {
@@ -467,8 +482,8 @@ async function writeDispatchEvidence(output, fixture, interpreterEvents, aotEven
   }).map(([route, result]) => [route, {
     status: result.status,
     signal: result.signal,
-    stdoutSha256: sha256(result.stdout),
-    stderrSha256: sha256(result.stderr),
+    stdoutSha256: sha256(normalizeLineEndings(result.stdout)),
+    stderrSha256: sha256(normalizeLineEndings(result.stderr)),
   }]));
   const evidence = {
     schema: "lnako.dispatch-evidence.v2",
