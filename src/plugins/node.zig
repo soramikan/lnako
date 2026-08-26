@@ -1347,16 +1347,28 @@ test "Node互換のパス・OS・環境変数命令を処理する" {
 test "ブラウザとファイルマネージャーの起動をホストへ委譲する" {
     const TestHost = struct {
         calls: usize = 0,
-        reveal: bool = false,
+        first_target: [128]u8 = undefined,
+        first_target_length: usize = 0,
+        first_reveal: bool = false,
+        last_target: [128]u8 = undefined,
+        last_target_length: usize = 0,
+        last_reveal: bool = false,
 
         fn cwd(_: *anyopaque, allocator: std.mem.Allocator) ![]u8 {
             return allocator.dupe(u8, "/work");
         }
 
-        fn open(context: *anyopaque, _: std.mem.Allocator, _: []const u8, reveal: bool) !void {
+        fn open(context: *anyopaque, _: std.mem.Allocator, target: []const u8, reveal: bool) !void {
             const self: *@This() = @ptrCast(@alignCast(context));
+            if (self.calls == 0) {
+                @memcpy(self.first_target[0..target.len], target);
+                self.first_target_length = target.len;
+                self.first_reveal = reveal;
+            }
+            @memcpy(self.last_target[0..target.len], target);
+            self.last_target_length = target.len;
+            self.last_reveal = reveal;
             self.calls += 1;
-            self.reveal = reveal;
         }
     };
     var host = TestHost{};
@@ -1368,7 +1380,10 @@ test "ブラウザとファイルマネージャーの起動をホストへ委�
     _ = try call(&runtime, &state, context, null, "ブラウザ起動", &.{try runtime.stringUtf8("https://example.invalid/")});
     _ = try call(&runtime, &state, context, null, "エクスプローラー起動", &.{try runtime.stringUtf8("file.txt")});
     try std.testing.expectEqual(@as(usize, 2), host.calls);
-    try std.testing.expect(host.reveal);
+    try std.testing.expect(!host.first_reveal);
+    try std.testing.expectEqualStrings("https://example.invalid/", host.first_target[0..host.first_target_length]);
+    try std.testing.expect(host.last_reveal);
+    try std.testing.expectEqualStrings("file.txt", host.last_target[0..host.last_target_length]);
 }
 
 test "一時フォルダの空指定はテンポラリパス自体を接頭辞にする" {

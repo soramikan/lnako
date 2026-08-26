@@ -309,6 +309,7 @@ ABI値の所有権と非同期スレッド制約は[`NATIVE_PLUGIN_ABI.md`](NATI
 | 命令 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID |
 |---|---|---|---|
 | `一時フォルダ作成` | 引数を親フォルダとして扱わず、`fs.mkdtempSync`の接頭辞へそのまま渡す。例えば`work-`ならカレントディレクトリ直下の`work-XXXXXX`を作る。空なら`os.tmpdir()`自体を接頭辞にするため、通常は一時ディレクトリの「中」ではなく同じ親に作る | 同じ接頭辞規則で6文字を付加し、新規ディレクトリを作る | `plugin-node-temporary-directory` |
+| `ブラウザ起動` / `エクスプローラー起動` | `ブラウザ起動`はOSのランチャーを非同期起動して直ちに戻る。`エクスプローラー起動`はWindowsでは`explorer`を起動して戻るが、macOS/Linuxでは`open`/`xdg-open`を起動した後も公式実装が`対応していないOSです`を投げる | 本番はOS別ランチャーをhostへ委譲する。`plugin-node-host-open-external`の公式差分fixtureでは、実アプリを起動しない`LNAKO_TEST_OPEN_EXTERNAL` hookとNode child-process preloaderを使い、対象URL・reveal経路とOS別の成功/エラー結果だけを比較する | `plugin-node-host-open-external` |
 | `ファイル情報取得` | Nodeの`fs.Stats`を返すため、`isFile`と`isDirectory`は真偽値ではなくメソッド。メソッドだけを変数へ取り出して呼ぶと`this`が失われ、Node内部の`_checkModeProperty`参照で失敗する | メソッドとして公開する。なでしこ構文ではレシーバー付きメソッド呼び出しを直接表せないため、型とフィールド構成を差分検証する | `plugin-node-file-core` |
 | `ファイル列挙`（順序） | `fs.readdirSync`が返す順序をそのまま使う。順序はAPI契約上保証されず、ファイルシステムにも依存する | 3正式環境で再現可能にするため名前の昇順へ固定する。各OSでは同じfixtureを公式処理系でも実測する | `plugin-node-file-core` |
 | `ファイル列挙`（パターン） | `*`だけのglobではない。`.`と`*`だけを正規表現用に変換し、残りの`[]()+?`などは正規表現として解釈する。また先頭を固定しないため、`a*.txt`は`za.txt`にも一致する | 同じ正規表現生成規則、末尾固定、大文字小文字無視を使う | `plugin-node-file-pattern-regexp` |

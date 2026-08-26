@@ -10247,7 +10247,7 @@
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "OS別外部起動をホスト抽象化へ委譲する単体テストに成功"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0703",
@@ -10272,7 +10272,7 @@
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "OS別ファイルマネージャー起動をホスト抽象化へ委譲する単体テストに成功"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0704",

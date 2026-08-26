@@ -14,8 +14,6 @@ for (const path of ["tests/oracle/node-file-cases.json", "tests/oracle/node-exit
 }
 const interrupt = JSON.parse(await readFile(resolve(root, "tests/oracle/node-interrupt-case.json"), "utf8"));
 for (const name of interrupt.commands) add(name, interrupt.id);
-add("ブラウザ起動", "plugin-node-host-open-external");
-add("エクスプローラー起動", "plugin-node-host-open-external");
 
 const tested = [...mappings.keys()].sort();
 if (JSON.stringify(expected) !== JSON.stringify(tested)) {

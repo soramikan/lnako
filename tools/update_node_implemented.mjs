@@ -20,8 +20,6 @@ for (const [path, reason] of sources) {
 }
 const interrupt = JSON.parse(await readFile(resolve(root, "tests/oracle/node-interrupt-case.json"), "utf8"));
 for (const name of interrupt.commands) register(name, interrupt.id, "SIGINTコールバックと終了結果の公式差分テストに成功");
-register("ブラウザ起動", "plugin-node-host-open-external", "OS別外部起動をホスト抽象化へ委譲する単体テストに成功");
-register("エクスプローラー起動", "plugin-node-host-open-external", "OS別ファイルマネージャー起動をホスト抽象化へ委譲する単体テストに成功");
 
 const output = `${JSON.stringify(implemented, null, 2)}\n`;
 if (process.argv.includes("--check")) {

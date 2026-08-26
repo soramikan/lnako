@@ -12,6 +12,7 @@ const cases = JSON.parse(await readFile(resolve(root, "tests/oracle/node-file-ca
 const executable = resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
 const officialCli = resolve(oracleRoot, "src/cnako3.mjs");
 const fixedHost = resolve(root, "tools/oracle/fixed_host.mjs");
+const safeExternalHost = resolve(root, "tools/oracle/safe_external_host.mjs");
 const temporary = await mkdtemp(join(tmpdir(), "lnako-node-file-"));
 
 try {
@@ -38,9 +39,15 @@ try {
       LNAKO_TEST_RANDOM_SEED: "5573589319906701683",
       NAKO3_DISABLE_NEW_CONSOLE: "1",
     };
+    const safeEnvironment = testCase.safeExternalMock
+      ? { ...environment, LNAKO_TEST_OPEN_EXTERNAL: "mock" }
+      : environment;
     const spawnOptions = { input: testCase.stdin ?? undefined, env: environment, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 };
-    const official = spawnSync(process.execPath, ["--import", pathToFileURL(fixedHost).href, officialCli, officialSource], { ...spawnOptions, cwd: officialDirectory });
-    const actual = spawnSync(executable, ["run", lnakoSource], { ...spawnOptions, cwd: lnakoDirectory });
+    const officialArguments = ["--import", pathToFileURL(fixedHost).href];
+    if (testCase.safeExternalMock) officialArguments.push("--import", pathToFileURL(safeExternalHost).href);
+    officialArguments.push(officialCli, officialSource);
+    const official = spawnSync(process.execPath, officialArguments, { ...spawnOptions, cwd: officialDirectory });
+    const actual = spawnSync(executable, ["run", lnakoSource], { ...spawnOptions, env: safeEnvironment, cwd: lnakoDirectory });
     const expectedResult = normalize(official);
     const actualResult = normalize(actual);
     const expectedFiles = await snapshot(officialDirectory, basename(officialSource));

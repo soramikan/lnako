@@ -72,5 +72,11 @@
     "id": "plugin-node-file-callbacks",
     "commands": ["ファイルコピー時", "ファイル移動時", "ファイル削除時", "ファイル処理時", "ファイル処理強制停止"],
     "source": "保存(\"A\",\"a.txt\")\n保存(\"B\",\"m.txt\")\n保存(\"C\",\"x.txt\")\nC=[]\n完了=関数(D)それは配列追加(C,1);ここまで\n完了で\"a.txt\"から\"b.txt\"へファイルコピー時\n完了で\"m.txt\"から\"n.txt\"へファイル移動時\n完了で\"x.txt\"をファイル削除時\n0.05秒待\nR=[]\n進捗=関数(P)それは配列追加(R,P[\"件数\"]+P[\"現在\"]);ここまで\n進捗でファイル処理時\nファイルコピー(\"a.txt\",\"d.txt\")\nJSON変換(R)を表示\nフォルダ作成(\"tree/sub\")\n保存(\"1\",\"tree/one.txt\")\n保存(\"2\",\"tree/sub/two.txt\")\nR=[]\nファイルコピー(\"tree\",\"tree-copy\")\nJSON変換(R)を表示\n読(\"tree-copy/sub/two.txt\")を表示\n●(Pを)停止処理とは\nファイル処理強制停止\nPで戻る\nここまで\n\"停止処理\"でファイル処理時\nファイル移動(\"tree-copy\",\"tree-move\")\n存在(\"tree-copy\")を表示\n要素数(全ファイル列挙(\"tree-move/*\"))を表示\n要素数(C)を表示\n"
+  },
+  {
+    "id": "plugin-node-host-open-external",
+    "commands": ["ブラウザ起動", "エクスプローラー起動"],
+    "safeExternalMock": true,
+    "source": "エラー監視\n\"https://example.invalid/\"をブラウザ起動\n\"BROWSER:OK\"を表示\nエラーならば\n\"BROWSER:ERROR\"を表示\nここまで\nエラー監視\n\"fixture-target.txt\"をエクスプローラー起動\n\"EXPLORER:OK\"を表示\nエラーならば\n\"EXPLORER:ERROR\"を表示\nここまで\n"
   }
 ]
