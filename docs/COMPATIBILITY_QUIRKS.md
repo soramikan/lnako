@@ -10,14 +10,18 @@ lnakoは、意図的な非互換として合意した項目を除き、説明文
 `JSON.stringify` / `JSON.parse` 呼び出しです。以下の境界はインタープリタの差分fixtureで固定しています。
 JSONエンコード5命令（`JSON変換`、`JSONエンコード`、`JSON_E`、`JSONエンコード整形`、`JSON_ES`）は
 純LLVM AOTへ接続し、native fixtureで公式CLI・公式生成JavaScript・`lnako run`・AOT O0〜O3を比較します。
-JSONデコード3命令（`JSON取得`、`JSONデコード`、`JSON_D`）はAOT未接続のため互換台帳で`blocked`として扱います。
+JSONデコード3命令（`JSON取得`、`JSONデコード`、`JSON_D`）は純LLVM AOTのUTF-16パーサーへ接続済みですが、
+インタープリタの`std.json`経路が孤立サロゲートを拒否するため、公式CLI・生成JavaScript・`lnako run`を含む
+完全な7経路差分が揃うまでは互換台帳で`blocked`として扱います。
 
 | 境界 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID |
 |---|---|---|---|
 | 辞書キーの正規化・列挙順 | JavaScriptのproperty keyとして数値`1`と文字列`"1"`は同じキーになり、後の代入が値を上書きしても最初の挿入位置は動かない。canonical array index（`0`〜`4294967294`の十進表記）は数値昇順、その後の文字列キーは挿入順で`JSON.stringify`する。`01`はindexではない | lnakoの内部辞書は型の異なるキーを保持できるため、JSON境界でproperty keyを文字列へ正規化して重複を解消してから、同じ順序へ並べ替える。辞書自体のキーや列挙順は変更しない。関数値をキーにした場合の関数名を含む文字列化は`TODO: aot-function-string-name`を維持する | `plugin-system-json-ecmascript-boundaries`、`native-system-json-encode`、`JSONの辞書キーをECMAScriptの列挙順で整形する`、`TODO: aot-function-string-name` |
 | トップレベルの`undefined` / 関数値 | `JSON.stringify(undefined)` と `JSON.stringify(function(){})` は値を返さず`undefined`になる。配列要素ではどちらも`null`になる | `encode`のトップレベル判定は`undefined`を返し、配列内の値は`null`へ変換する | `plugin-system-json-ecmascript-boundaries` |
 | BigInt / 循環参照 | `JSON.stringify(1n)` は `Do not know how to serialize a BigInt`、循環参照は開始constructor・中間のproperty/index経路・閉路位置を含む実行時エラー | インタープリタとAOTは`CannotSerializeBigInt` / `CircularCloneValue`へ正規化し、V8と同じactive container経路をエラー文言へ反映する | `plugin-system-json-ecmascript-boundaries`、`native-system-json-encode`、`JSONの実行時エラー文言を公式互換にする` |
-| 不正JSON | `JSON.parse("x")` は `Unexpected token 'x', "x" is not valid JSON`。入力終端は `Unexpected end of JSON input` | `InvalidJsonCloneValue`分類と動的`Runtime.failureMessage`でfixtureの文言を保持する。入力途中の構文エラー位置と抜粋を含むV8固有文言は`TODO: json-parse-error-position`として完成扱いにしない | `plugin-system-json-ecmascript-boundaries`、`JSONの実行時エラー文言を公式互換にする`、`TODO: json-parse-error-position` |
+| 不正JSON | `JSON.parse("x")` は `Unexpected token 'x', "x" is not valid JSON`。`undefined`・`Infinity`は全体を引用したエラーになり、先頭0、配列・辞書の区切り不足、文字列制御文字・Unicode escapeにも位置付きV8文言がある | AOTはUTF-16入力を直接解析し、Node 24の主要な文言・position/line/column・CR/CRLF境界を保持する。制御文字を含む引用sourceなどのV8詳細は`TODO: json-parse-error-details`、インタープリタ側の同一パーサー移行と完全な7経路fixtureは`TODO: json-parse-interpreter-parity`として完成扱いにしない | `AOT JSONデコードはUTF-16・数値境界・重複キーを保持する`、`TODO: json-parse-error-details`、`TODO: json-parse-interpreter-parity` |
+| 孤立サロゲート | `JSON.parse("\"\\ud800\"")` とlow surrogateは受理し、UTF-16コード単位を保持する | AOTはhigh/low surrogateとペアを保持する。インタープリタの`std.json`は孤立サロゲートを拒否するため、`TODO: json-parse-interpreter-parity`が解消するまでblocked | `AOT JSONデコードはUTF-16・数値境界・重複キーを保持する`、`TODO: json-parse-interpreter-parity` |
+| JSONパース深度 | Nodeの受理深度は実装・スタック条件に依存し、固定の仕様値ではない | AOTはCスタック枯渇を避けるため1024段で`Maximum call stack size exceeded`へ制限している。Nodeとの深いネスト差分は`TODO: json-parse-depth`として、反復パーサー化までnative化の根拠にしない | `TODO: json-parse-depth` |
 
 ## 配列・表・辞書
 

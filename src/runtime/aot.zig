@@ -1002,6 +1002,433 @@ fn expectJsonAotString(runtime: *Runtime, value: Value, pretty: bool, expected: 
     try std.testing.expectEqualSlices(u16, expected_units, actual_units);
 }
 
+/// JSON.parse-compatible decoder for the native runtime.  The input and
+/// output strings are UTF-16 code-unit sequences, so escaped and literal
+/// lone surrogates are retained exactly as ECMAScript does.  Using
+/// `std.json` here would reject those values before the Nako value layer saw
+/// them; this small recursive-descent parser deliberately works on u16.
+const JsonAotParser = struct {
+    runtime: *Runtime,
+    units: []const u16,
+    index: usize = 0,
+    depth: usize = 0,
+
+    fn parse(self: *JsonAotParser) anyerror!Value {
+        if (jsonAsciiEquals(self.units, "undefined") or jsonAsciiEquals(self.units, "Infinity") or jsonAsciiEquals(self.units, "NaN") or jsonAsciiEquals(self.units, "[object Object]")) {
+            return self.failWholeSourceInvalid();
+        }
+        self.skipWhitespace();
+        if (self.index >= self.units.len) return self.failEnd();
+        const result = try self.parseValue();
+        self.skipWhitespace();
+        if (self.index != self.units.len) return self.failTrailing();
+        return result;
+    }
+
+    fn parseValue(self: *JsonAotParser) anyerror!Value {
+        if (self.index >= self.units.len) return self.failEnd();
+        if (self.depth >= 1024) return self.failJsonMessage("Maximum call stack size exceeded");
+        self.depth += 1;
+        defer self.depth -= 1;
+        return switch (self.units[self.index]) {
+            'n' => try self.parseLiteral("null", .{ .tag = @intFromEnum(Tag.null_value) }),
+            't' => try self.parseLiteral("true", .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 }),
+            'f' => try self.parseLiteral("false", .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 }),
+            '"' => try self.parseStringValue(),
+            '[' => try self.parseArray(),
+            '{' => try self.parseDictionary(),
+            '-', '0'...'9' => try self.parseNumber(),
+            else => self.failToken(self.index),
+        };
+    }
+
+    fn parseLiteral(self: *JsonAotParser, comptime literal: []const u8, value: Value) anyerror!Value {
+        if (self.index + literal.len > self.units.len) return self.failEnd();
+        for (literal, 0..) |byte, offset| if (self.units[self.index + offset] != byte) return self.failToken(self.index + offset);
+        self.index += literal.len;
+        return value;
+    }
+
+    fn parseStringValue(self: *JsonAotParser) anyerror!Value {
+        const units = try self.parseStringUnits();
+        defer self.runtime.allocator.free(units);
+        return self.runtime.createString(units);
+    }
+
+    fn parseStringUnits(self: *JsonAotParser) anyerror![]u16 {
+        if (self.index >= self.units.len or self.units[self.index] != '"') return self.failToken(self.index);
+        self.index += 1;
+        var result: std.ArrayList(u16) = .empty;
+        errdefer result.deinit(self.runtime.allocator);
+        while (self.index < self.units.len) {
+            const unit = self.units[self.index];
+            self.index += 1;
+            switch (unit) {
+                '"' => return result.toOwnedSlice(self.runtime.allocator),
+                '\\' => {
+                    if (self.index >= self.units.len) return self.failEnd();
+                    const escaped = self.units[self.index];
+                    self.index += 1;
+                    switch (escaped) {
+                        '"', '\\', '/' => try result.append(self.runtime.allocator, escaped),
+                        'b' => try result.append(self.runtime.allocator, 0x08),
+                        'f' => try result.append(self.runtime.allocator, 0x0c),
+                        'n' => try result.append(self.runtime.allocator, 0x0a),
+                        'r' => try result.append(self.runtime.allocator, 0x0d),
+                        't' => try result.append(self.runtime.allocator, 0x09),
+                        'u' => {
+                            if (self.index + 4 > self.units.len) return self.failJsonMessageAt("Bad Unicode escape", if (self.units.len > 0 and self.units[self.units.len - 1] == '"') self.units.len - 1 else self.units.len);
+                            var code_unit: u16 = 0;
+                            for (self.units[self.index .. self.index + 4], 0..) |digit, offset| {
+                                const value = jsonHexDigit(digit) orelse return self.failJsonMessageAt("Bad Unicode escape", self.index + offset);
+                                code_unit = (code_unit << 4) | value;
+                            }
+                            self.index += 4;
+                            // ECMAScript JSON.parse preserves lone surrogates.
+                            // A valid pair is also kept as two UTF-16 units.
+                            try result.append(self.runtime.allocator, code_unit);
+                        },
+                        else => return self.failJsonMessageAt("Bad escaped character", self.index - 1),
+                    }
+                },
+                0...0x1f => return self.failJsonMessageAt("Bad control character in string literal", self.index - 1),
+                else => try result.append(self.runtime.allocator, unit),
+            }
+        }
+        return self.failJsonMessage("Unterminated string");
+    }
+
+    fn parseArray(self: *JsonAotParser) anyerror!Value {
+        self.index += 1; // '['
+        var result = try self.runtime.createArray(&.{});
+        var roots = [_]Value{ result, .{} };
+        var frame = RootFrame{};
+        self.runtime.pushRoots(&frame, &roots, roots.len);
+        defer self.runtime.popRoots(&frame);
+        self.skipWhitespace();
+        if (self.consume(']')) return result;
+        while (true) {
+            roots[1] = try self.parseValue();
+            try result.object().?.payload.array.append(self.runtime.allocator, roots[1]);
+            self.skipWhitespace();
+            if (self.consume(']')) return result;
+            if (!self.consume(',')) {
+                if (self.index >= self.units.len) return self.failJsonMessage("Expected ',' or ']' after array element");
+                return self.failToken(self.index);
+            }
+            self.skipWhitespace();
+            if (self.index >= self.units.len) return self.failEnd();
+        }
+    }
+
+    fn parseDictionary(self: *JsonAotParser) anyerror!Value {
+        self.index += 1; // '{'
+        var result = try self.runtime.createDictionary(&.{});
+        var roots = [_]Value{ result, .{}, .{} };
+        var frame = RootFrame{};
+        self.runtime.pushRoots(&frame, &roots, roots.len);
+        defer self.runtime.popRoots(&frame);
+        self.skipWhitespace();
+        if (self.consume('}')) return result;
+        while (true) {
+            if (self.index >= self.units.len or self.units[self.index] != '"') return self.failJsonMessage("Expected property name or '}'");
+            roots[1] = try self.parseStringValue();
+            self.skipWhitespace();
+            if (!self.consume(':')) return self.failJsonMessage("Expected ':' after property name");
+            self.skipWhitespace();
+            roots[2] = try self.parseValue();
+            try self.runtime.setDictionary(&result.object().?.payload.dictionary, roots[1], roots[2]);
+            self.skipWhitespace();
+            if (self.consume('}')) return result;
+            if (!self.consume(',')) {
+                if (self.index >= self.units.len) return self.failJsonMessage("Expected ',' or '}' after property value");
+                return self.failToken(self.index);
+            }
+            self.skipWhitespace();
+            if (self.index >= self.units.len) return self.failEnd();
+            if (self.units[self.index] != '"') return self.failJsonMessage("Expected double-quoted property name");
+        }
+    }
+
+    fn parseNumber(self: *JsonAotParser) anyerror!Value {
+        const start = self.index;
+        if (self.consume('-') and (self.index >= self.units.len or !isJsonDigit(self.units[self.index]))) return self.failJsonMessage("No number after minus sign");
+        if (self.consume('0')) {
+            if (self.index < self.units.len and isJsonDigit(self.units[self.index])) return self.failJsonMessage("Unexpected number");
+        } else {
+            if (self.index >= self.units.len or self.units[self.index] < '1' or self.units[self.index] > '9') return self.failToken(self.index);
+            while (self.index < self.units.len and isJsonDigit(self.units[self.index])) self.index += 1;
+        }
+        if (self.consume('.')) {
+            if (self.index >= self.units.len or !isJsonDigit(self.units[self.index])) return self.failJsonMessage("Unterminated fractional number");
+            while (self.index < self.units.len and isJsonDigit(self.units[self.index])) self.index += 1;
+        }
+        if (self.index < self.units.len and (self.units[self.index] == 'e' or self.units[self.index] == 'E')) {
+            self.index += 1;
+            _ = self.consume('+') or self.consume('-');
+            if (self.index >= self.units.len or !isJsonDigit(self.units[self.index])) return self.failJsonMessage("Exponent part is missing a number");
+            while (self.index < self.units.len and isJsonDigit(self.units[self.index])) self.index += 1;
+        }
+        const number_units = self.units[start..self.index];
+        var ascii = try self.runtime.allocator.alloc(u8, number_units.len);
+        defer self.runtime.allocator.free(ascii);
+        for (number_units, 0..) |unit, offset| ascii[offset] = @intCast(unit);
+        const number = std.fmt.parseFloat(f64, ascii) catch jsonParseDecimal(number_units);
+        return .{ .tag = @intFromEnum(Tag.number), .payload = @bitCast(number) };
+    }
+
+    fn consume(self: *JsonAotParser, expected: u16) bool {
+        if (self.index < self.units.len and self.units[self.index] == expected) {
+            self.index += 1;
+            return true;
+        }
+        return false;
+    }
+
+    fn skipWhitespace(self: *JsonAotParser) void {
+        while (self.index < self.units.len) switch (self.units[self.index]) {
+            ' ', '\n', '\r', '\t' => self.index += 1,
+            else => return,
+        };
+    }
+
+    fn failEnd(self: *JsonAotParser) anyerror {
+        self.runtime.setFailureText("Unexpected end of JSON input");
+        return error.InvalidJsonCloneValue;
+    }
+
+    fn failJsonMessage(self: *JsonAotParser, prefix: []const u8) anyerror {
+        return self.failJsonMessageAt(prefix, self.index);
+    }
+
+    fn failJsonMessageAt(self: *JsonAotParser, prefix: []const u8, position: usize) anyerror {
+        var line: usize = 1;
+        var column: usize = 1;
+        const bounded = @min(position, self.units.len);
+        var offset: usize = 0;
+        while (offset < bounded) : (offset += 1) {
+            const unit = self.units[offset];
+            if (unit == '\r') {
+                if (offset + 1 < bounded and self.units[offset + 1] == '\n') offset += 1;
+                line += 1;
+                column = 1;
+                continue;
+            }
+            if (unit == '\n') {
+                line += 1;
+                column = 1;
+            } else column += 1;
+        }
+        const message = std.fmt.allocPrint(self.runtime.allocator, "{s} in JSON at position {d} (line {d} column {d})", .{ prefix, bounded, line, column }) catch return error.InvalidJsonCloneValue;
+        defer self.runtime.allocator.free(message);
+        self.runtime.setFailureText(message);
+        return error.InvalidJsonCloneValue;
+    }
+
+    fn failToken(self: *JsonAotParser, position: usize) anyerror {
+        if (position >= self.units.len) return self.failEnd();
+        const source = self.jsonErrorSource() catch return error.InvalidJsonCloneValue;
+        defer self.runtime.allocator.free(source);
+        // V8 displays an astral invalid token as the replacement character,
+        // while the quoted source retains the original scalar.
+        const token_end = position + 1;
+        const token = try (string_mod.String{ .allocator = self.runtime.allocator, .units = @constCast(self.units[position..token_end]) }).toUtf8Lossy(self.runtime.allocator);
+        defer self.runtime.allocator.free(token);
+        const message = std.fmt.allocPrint(self.runtime.allocator, "Unexpected token '{s}', \"{s}\" is not valid JSON", .{ token, source }) catch return error.InvalidJsonCloneValue;
+        defer self.runtime.allocator.free(message);
+        self.runtime.setFailureText(message);
+        return error.InvalidJsonCloneValue;
+    }
+
+    fn failWholeSourceInvalid(self: *JsonAotParser) anyerror {
+        const source = self.jsonErrorSource() catch return error.InvalidJsonCloneValue;
+        defer self.runtime.allocator.free(source);
+        const message = std.fmt.allocPrint(self.runtime.allocator, "\"{s}\" is not valid JSON", .{source}) catch return error.InvalidJsonCloneValue;
+        defer self.runtime.allocator.free(message);
+        self.runtime.setFailureText(message);
+        return error.InvalidJsonCloneValue;
+    }
+
+    fn jsonErrorSource(self: *JsonAotParser) ![]u8 {
+        const utf8 = try (string_mod.String{ .allocator = self.runtime.allocator, .units = @constCast(self.units) }).toUtf8Lossy(self.runtime.allocator);
+        defer self.runtime.allocator.free(utf8);
+        var escaped: std.ArrayList(u8) = .empty;
+        errdefer escaped.deinit(self.runtime.allocator);
+        for (utf8) |byte| switch (byte) {
+            '\\' => try escaped.appendSlice(self.runtime.allocator, "\\\\"),
+            '"' => try escaped.appendSlice(self.runtime.allocator, "\\\""),
+            '\n' => try escaped.appendSlice(self.runtime.allocator, "\\n"),
+            '\r' => try escaped.appendSlice(self.runtime.allocator, "\\r"),
+            '\t' => try escaped.appendSlice(self.runtime.allocator, "\\t"),
+            0...0x08, 0x0b, 0x0e...0x1f => {
+                const digits = "0123456789abcdef";
+                try escaped.appendSlice(self.runtime.allocator, "\\u00");
+                try escaped.append(self.runtime.allocator, digits[(byte >> 4) & 0xf]);
+                try escaped.append(self.runtime.allocator, digits[byte & 0xf]);
+            },
+            else => try escaped.append(self.runtime.allocator, byte),
+        };
+        return escaped.toOwnedSlice(self.runtime.allocator);
+    }
+
+    fn failTrailing(self: *JsonAotParser) anyerror {
+        const position = self.index;
+        var line: usize = 1;
+        var column: usize = 1;
+        var offset: usize = 0;
+        while (offset < position) : (offset += 1) {
+            const unit = self.units[offset];
+            if (unit == '\r') {
+                if (offset + 1 < position and self.units[offset + 1] == '\n') offset += 1;
+                line += 1;
+                column = 1;
+            } else if (unit == '\n') {
+                line += 1;
+                column = 1;
+            } else column += 1;
+        }
+        const message = std.fmt.allocPrint(self.runtime.allocator, "Unexpected non-whitespace character after JSON at position {d} (line {d} column {d})", .{ position, line, column }) catch return error.InvalidJsonCloneValue;
+        defer self.runtime.allocator.free(message);
+        self.runtime.setFailureText(message);
+        return error.InvalidJsonCloneValue;
+    }
+};
+
+fn jsonHexDigit(unit: u16) ?u16 {
+    return if (unit >= '0' and unit <= '9') unit - '0' else if (unit >= 'a' and unit <= 'f') unit - 'a' + 10 else if (unit >= 'A' and unit <= 'F') unit - 'A' + 10 else null;
+}
+
+fn isJsonDigit(unit: u16) bool {
+    return unit >= '0' and unit <= '9';
+}
+
+fn jsonAsciiEquals(units: []const u16, ascii: []const u8) bool {
+    if (units.len != ascii.len) return false;
+    for (units, ascii) |unit, byte| if (unit != byte) return false;
+    return true;
+}
+
+fn jsonParseDecimal(units: []const u16) f64 {
+    var index: usize = 0;
+    const negative = units.len > 0 and units[0] == '-';
+    if (negative) index += 1;
+    var value: f64 = 0;
+    while (index < units.len and isJsonDigit(units[index])) : (index += 1) value = value * 10 + @as(f64, @floatFromInt(units[index] - '0'));
+    if (index < units.len and units[index] == '.') {
+        index += 1;
+        var scale: f64 = 0.1;
+        while (index < units.len and isJsonDigit(units[index])) : (index += 1) {
+            value += @as(f64, @floatFromInt(units[index] - '0')) * scale;
+            scale *= 0.1;
+        }
+    }
+    var exponent: i32 = 0;
+    if (index < units.len and (units[index] == 'e' or units[index] == 'E')) {
+        index += 1;
+        var exponent_negative = false;
+        if (index < units.len and (units[index] == '+' or units[index] == '-')) {
+            exponent_negative = units[index] == '-';
+            index += 1;
+        }
+        while (index < units.len and isJsonDigit(units[index])) : (index += 1) exponent = @min(@as(i32, 10000), exponent * 10 + @as(i32, @intCast(units[index] - '0')));
+        if (exponent_negative) exponent = -exponent;
+    }
+    const result = value * std.math.pow(f64, 10, @floatFromInt(exponent));
+    return if (negative) -result else result;
+}
+
+fn jsonDecodeBuiltin(runtime: *Runtime, source: Value) !Value {
+    const units = try valueUtf16Alloc(runtime, source);
+    defer runtime.allocator.free(units);
+    var parser = JsonAotParser{ .runtime = runtime, .units = units };
+    return parser.parse();
+}
+
+test "AOT JSONデコードはUTF-16・数値境界・重複キーを保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    runtime.next_collection = 1;
+    var roots = [_]Value{.{}} ** 12;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try createJsonTestString(&runtime, "{\"a\":1,\"b\":[true,null,-0,9007199254740993,1e400,1e-4000],\"a\":3,\"s\":\"\\ud800\\udc00\\ud800\"}");
+    roots[1] = try jsonDecodeBuiltin(&runtime, roots[0]);
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(roots[1].tag)));
+    try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(jsonTestDictionaryGet(roots[1], &.{'a'}).payload)));
+    roots[2] = jsonTestDictionaryGet(roots[1], &.{'b'});
+    try std.testing.expectEqual(@as(usize, 6), roots[2].object().?.payload.array.items.len);
+    try std.testing.expectEqual(@as(u64, 0x8000_0000_0000_0000), roots[2].object().?.payload.array.items[2].payload);
+    try std.testing.expect(std.math.isInf(@as(f64, @bitCast(roots[2].object().?.payload.array.items[4].payload))));
+    try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast(roots[2].object().?.payload.array.items[5].payload)));
+    roots[3] = jsonTestDictionaryGet(roots[1], &.{'s'});
+    try std.testing.expectEqualSlices(u16, &.{ 0xd800, 0xdc00, 0xd800 }, roots[3].object().?.payload.utf16_string);
+
+    roots[4] = try createJsonTestString(&runtime, "[1,2]");
+    roots[5] = try jsonDecodeBuiltin(&runtime, roots[4]);
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(roots[5].object().?.payload.array.items[0].payload)));
+    try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(roots[5].object().?.payload.array.items[1].payload)));
+
+    roots[6] = try createJsonTestString(&runtime, "x");
+    try std.testing.expectError(error.InvalidJsonCloneValue, jsonDecodeBuiltin(&runtime, roots[6]));
+    const invalid_message = runtime.takeException();
+    try expectUtf16String(&runtime, invalid_message, "Unexpected token 'x', \"x\" is not valid JSON");
+    roots[7] = try createJsonTestString(&runtime, "");
+    try std.testing.expectError(error.InvalidJsonCloneValue, jsonDecodeBuiltin(&runtime, roots[7]));
+    const empty_message = runtime.takeException();
+    try expectUtf16String(&runtime, empty_message, "Unexpected end of JSON input");
+    try std.testing.expectError(error.InvalidJsonCloneValue, jsonDecodeBuiltin(&runtime, .{}));
+    const undefined_message = runtime.takeException();
+    try expectUtf16String(&runtime, undefined_message, "\"undefined\" is not valid JSON");
+
+    const invalid_cases = [_]struct { source: []const u8, message: []const u8 }{
+        .{ .source = "[1", .message = "Expected ',' or ']' after array element in JSON at position 2 (line 1 column 3)" },
+        .{ .source = "{", .message = "Expected property name or '}' in JSON at position 1 (line 1 column 2)" },
+        .{ .source = "{\"a\"}", .message = "Expected ':' after property name in JSON at position 4 (line 1 column 5)" },
+        .{ .source = "{\"a\":1", .message = "Expected ',' or '}' after property value in JSON at position 6 (line 1 column 7)" },
+        .{ .source = "1.", .message = "Unterminated fractional number in JSON at position 2 (line 1 column 3)" },
+        .{ .source = "1e+", .message = "Exponent part is missing a number in JSON at position 3 (line 1 column 4)" },
+        .{ .source = "-Infinity", .message = "No number after minus sign in JSON at position 1 (line 1 column 2)" },
+        .{ .source = "NaN", .message = "\"NaN\" is not valid JSON" },
+        .{ .source = "[object Object]", .message = "\"[object Object]\" is not valid JSON" },
+        .{ .source = "01", .message = "Unexpected number in JSON at position 1 (line 1 column 2)" },
+        .{ .source = "-01", .message = "Unexpected number in JSON at position 2 (line 1 column 3)" },
+        .{ .source = "{\"a\":1,}", .message = "Expected double-quoted property name in JSON at position 7 (line 1 column 8)" },
+        .{ .source = "{\"a\":1, x:2}", .message = "Expected double-quoted property name in JSON at position 8 (line 1 column 9)" },
+        .{ .source = "\"\x1f\"", .message = "Bad control character in string literal in JSON at position 1 (line 1 column 2)" },
+        .{ .source = "\"\\u12\"", .message = "Bad Unicode escape in JSON at position 5 (line 1 column 6)" },
+        .{ .source = "\"\\u12x4\"", .message = "Bad Unicode escape in JSON at position 5 (line 1 column 6)" },
+        .{ .source = "あ", .message = "Unexpected token 'あ', \"あ\" is not valid JSON" },
+        .{ .source = "\"abc", .message = "Unterminated string in JSON at position 4 (line 1 column 5)" },
+        .{ .source = "\"\\x00\"", .message = "Bad escaped character in JSON at position 2 (line 1 column 3)" },
+    };
+    for (invalid_cases) |case| {
+        roots[8] = try createJsonTestString(&runtime, case.source);
+        try std.testing.expectError(error.InvalidJsonCloneValue, jsonDecodeBuiltin(&runtime, roots[8]));
+        const message = runtime.takeException();
+        try expectUtf16String(&runtime, message, case.message);
+    }
+}
+
+fn expectUtf16String(runtime: *Runtime, value: Value, expected: []const u8) !void {
+    const actual = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(actual);
+    const expected_units = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, expected);
+    defer runtime.allocator.free(expected_units);
+    try std.testing.expectEqualSlices(u16, expected_units, actual);
+}
+
+fn createJsonTestString(runtime: *Runtime, text: []const u8) !Value {
+    const units = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, text);
+    defer runtime.allocator.free(units);
+    return runtime.createString(units);
+}
+
+fn jsonTestDictionaryGet(value: Value, key: []const u16) Value {
+    return dictionaryProperty(value, key);
+}
+
 fn valueUtf16Alloc(runtime: *Runtime, value: Value) anyerror![]u16 {
     if (value.tag == @intFromEnum(Tag.utf16_string)) return runtime.allocator.dupe(u16, value.object().?.payload.utf16_string);
     const utf8 = switch (@as(Tag, @enumFromInt(value.tag))) {
@@ -1717,7 +2144,7 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -1726,6 +2153,12 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
         .regexp_match, .regexp_extract, .regexp_replace, .regexp_split => runtime.setFailure(error.UnknownCommand),
         .json_encode, .json_encode_pretty => {
             out.* = jsonEncodeBuiltin(runtime, value, command == .json_encode_pretty) catch |failure| {
+                if (!runtime.has_pending_exception) runtime.setFailure(failure);
+                return;
+            };
+        },
+        .json_decode => {
+            out.* = jsonDecodeBuiltin(runtime, value) catch |failure| {
                 if (!runtime.has_pending_exception) runtime.setFailure(failure);
                 return;
             };
