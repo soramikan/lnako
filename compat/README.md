@@ -23,3 +23,7 @@ node tools/sync_compat.mjs --check
 
 `plannedMode` は実装予定経路、`status` はテスト証拠を伴う現在状態です。対応テストが成功するまで
 `blocked` から対応済みへ変更しません。
+
+`tests` は`native`または`compat-js`への完了判定に使ったテストIDです。インタープリタだけで成功する
+境界fixtureがあっても、AOT等の予定経路が未検証の`blocked`命令では空配列を保ちます。途中段階の
+検証内容と未対応差異は`docs/COMPATIBILITY_QUIRKS.md`に記録します。

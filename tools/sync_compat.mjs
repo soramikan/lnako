@@ -69,7 +69,10 @@ function classify(command, index) {
 
   if (inScope) {
     status = "blocked";
-    reason = "実装および公式処理系との差分テストを待機中";
+    reason =
+      plannedMode === "native"
+        ? "純LLVM AOT実装および公式処理系との差分テストを待機中"
+        : "--compat-js実装および公式処理系との差分テストを待機中";
   } else if (!isBuiltin) {
     status = "excluded-extension";
     reason = "外部拡張プラグインはv1対象外";

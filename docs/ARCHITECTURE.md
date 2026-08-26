@@ -183,13 +183,16 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
 - 文字列はUTF-16で保持しつつ、公式実装が `Array.from` を使う文字数・検索・部分抽出はUnicode scalar単位で扱う。
   ECMAScript大小文字変換は `tools/generate_unicode_case.mjs` がNode 24.15.0から生成した固定テーブルを使い、
   複数文字への写像と文脈依存のGreek final sigmaも処理する。
-- JSONは挿入順辞書を保ち、非有限数、`undefined`、関数、Promise、重複キー、孤立サロゲート、循環参照を
-  ECMAScriptの `JSON.stringify` / `JSON.parse` 規則へ合わせる。循環参照とBigIntは明示エラーにする。
+- インタープリタのJSON命令は、非有限数、`undefined`、関数、Promise、重複キー、孤立サロゲート、循環参照を
+  ECMAScriptの `JSON.stringify` / `JSON.parse` 規則へ合わせる。canonical array indexの辞書キー順と
+  BigInt・循環・不正JSONの実行時文言は`docs/COMPATIBILITY_QUIRKS.md`に固定する。JSON命令のAOT接続は未対応である。
 - 正規表現は外部共有ライブラリへ依存しないUTF-16バックトラッキングエンジンで、選択、グループ、量指定、
   文字クラス、アンカー、フラグ、後方参照、通常・名前付きキャプチャ、置換参照と分割を提供する。
 - `tests/oracle/plugin-system-cases.json` は対象20カテゴリと追加パス5命令、計274命令を重複なく列挙する。
   `tests/oracle/system-runtime-cases.json` は礼節・特殊実行・デバッグ支援・プラグイン管理の33命令を列挙する。
-  `tools/check_plugin_system_coverage.mjs` が公式カタログ・互換台帳・テストIDを照合し、
+  `tools/check_plugin_system_coverage.mjs` がインタープリタの全命令列挙、必須境界fixture、互換台帳の
+  `native` / `blocked`を照合する。ここでの`native`件数は台帳値であり、AOT差分テスト自体は
+  `tests/oracle/native-cases.json`と`tools/compare_native_oracle.mjs`が検証する。
   `tools/check_system_runtime_coverage.mjs` が実行器固有命令を同様に照合する。
   `tools/compare_plugin_system_oracle.mjs` が同じソースを公式cnako3と `lnako run` で実行する。
 

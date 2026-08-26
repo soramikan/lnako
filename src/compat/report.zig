@@ -10,7 +10,7 @@ pub fn write(writer: *std.Io.Writer) !void {
 
 test "埋め込み互換レポートが標準527命令の現在状態を表す" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"standardCnakoCommands\": 527") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"native\": 523") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"native\": 515") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"compat-js\": 4") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"blocked\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"blocked\": 8") != null);
 }

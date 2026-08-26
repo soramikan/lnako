@@ -1204,62 +1204,6 @@
     ],
     "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
   },
-  "JSON変換": {
-    "status": "native",
-    "tests": [
-      "plugin-system-json"
-    ],
-    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
-  },
-  "JSON取得": {
-    "status": "native",
-    "tests": [
-      "plugin-system-json"
-    ],
-    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
-  },
-  "JSONエンコード": {
-    "status": "native",
-    "tests": [
-      "plugin-system-json"
-    ],
-    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
-  },
-  "JSONエンコード整形": {
-    "status": "native",
-    "tests": [
-      "plugin-system-json"
-    ],
-    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
-  },
-  "JSONデコード": {
-    "status": "native",
-    "tests": [
-      "plugin-system-json"
-    ],
-    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
-  },
-  "JSON_E": {
-    "status": "native",
-    "tests": [
-      "plugin-system-json"
-    ],
-    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
-  },
-  "JSON_ES": {
-    "status": "native",
-    "tests": [
-      "plugin-system-json"
-    ],
-    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
-  },
-  "JSON_D": {
-    "status": "native",
-    "tests": [
-      "plugin-system-json"
-    ],
-    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
-  },
   "正規表現マッチ": {
     "status": "native",
     "tests": [

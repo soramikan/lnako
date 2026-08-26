@@ -8,21 +8,20 @@ const pluginCases = JSON.parse(await readFile(resolve(root, "tests/oracle/plugin
 const runtimeCases = JSON.parse(await readFile(resolve(root, "tests/oracle/system-runtime-cases.json"), "utf8"));
 const compatCases = JSON.parse(await readFile(resolve(root, "tests/oracle/compat-js-cases.json"), "utf8"));
 const cases = [...pluginCases, ...runtimeCases];
-const runtimeCaseIds = new Set(runtimeCases.map((testCase) => testCase.id));
 
 for (const testCase of cases) for (const name of testCase.commands) {
   const current = implemented[name];
+  // The plugin-system fixtures exercise the interpreter.  They are not, by
+  // themselves, evidence that the command is connected to the pure LLVM AOT
+  // path.  Only enrich an entry which was explicitly promoted to native after
+  // its AOT differential fixture succeeded.
+  if (current?.status !== "native") continue;
   const tests = new Set(current?.tests ?? []);
   tests.add(testCase.id);
   implemented[name] = {
     status: "native",
     tests: [...tests],
-    reason:
-      current?.status === "native"
-        ? current.reason
-        : runtimeCaseIds.has(testCase.id)
-          ? "Zig製実行時システム命令で公式cnako3との差分テストに成功"
-          : "Zig製plugin_system実装で公式cnako3との差分テストに成功",
+    reason: current.reason,
   };
 }
 

@@ -7539,16 +7539,14 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "native",
-      "tests": [
-        "plugin-system-json"
-      ],
+      "status": "blocked",
+      "tests": [],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "純LLVM AOT実装および公式処理系との差分テストを待機中"
     },
     {
       "id": "command-0288",
@@ -7565,16 +7563,14 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "native",
-      "tests": [
-        "plugin-system-json"
-      ],
+      "status": "blocked",
+      "tests": [],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "純LLVM AOT実装および公式処理系との差分テストを待機中"
     },
     {
       "id": "command-0289",
@@ -7591,16 +7587,14 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "native",
-      "tests": [
-        "plugin-system-json"
-      ],
+      "status": "blocked",
+      "tests": [],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "純LLVM AOT実装および公式処理系との差分テストを待機中"
     },
     {
       "id": "command-0290",
@@ -7617,16 +7611,14 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "native",
-      "tests": [
-        "plugin-system-json"
-      ],
+      "status": "blocked",
+      "tests": [],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "純LLVM AOT実装および公式処理系との差分テストを待機中"
     },
     {
       "id": "command-0291",
@@ -7643,16 +7635,14 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "native",
-      "tests": [
-        "plugin-system-json"
-      ],
+      "status": "blocked",
+      "tests": [],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "純LLVM AOT実装および公式処理系との差分テストを待機中"
     },
     {
       "id": "command-0292",
@@ -7669,16 +7659,14 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "native",
-      "tests": [
-        "plugin-system-json"
-      ],
+      "status": "blocked",
+      "tests": [],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "純LLVM AOT実装および公式処理系との差分テストを待機中"
     },
     {
       "id": "command-0293",
@@ -7695,16 +7683,14 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "native",
-      "tests": [
-        "plugin-system-json"
-      ],
+      "status": "blocked",
+      "tests": [],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "純LLVM AOT実装および公式処理系との差分テストを待機中"
     },
     {
       "id": "command-0294",
@@ -7721,16 +7707,14 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "native",
-      "tests": [
-        "plugin-system-json"
-      ],
+      "status": "blocked",
+      "tests": [],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "純LLVM AOT実装および公式処理系との差分テストを待機中"
     },
     {
       "id": "command-0295",

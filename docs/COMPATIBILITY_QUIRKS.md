@@ -4,6 +4,20 @@
 lnakoは、意図的な非互換として合意した項目を除き、説明文ではなく固定した公式実装と差分テストの結果を
 互換基準にします。項目を追加するときは、公式実装の場所、lnako側の扱い、差分テストIDを併記します。
 
+## JSON（plugin_system）
+
+公式実装は `.cache/oracle/nadesiko3-3.7.24/core/src/plugin_system_json.mts` の
+`JSON.stringify` / `JSON.parse` 呼び出しです。以下の境界はインタープリタの差分fixtureで固定しています。
+JSONのAOT命令接続は未実装のため、8命令は互換台帳で`blocked`として扱います。AOTのnative fixtureが
+公式差分に成功するまでは`native`へ変更せず、このインタープリタ境界をAOT対応の完了根拠として扱いません。
+
+| 境界 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID |
+|---|---|---|---|
+| 辞書キーの列挙順 | canonical array index（`0`〜`4294967294`の十進表記）は数値昇順、その後の文字列キーは挿入順で`JSON.stringify`する。`01`はindexではない | `src/plugins/system/json.zig`のJSON境界だけで同じ順序へ並べ替える。辞書自体の列挙順は変更しない | `plugin-system-json-ecmascript-boundaries`、`JSONの辞書キーをECMAScriptの列挙順で整形する` |
+| トップレベルの`undefined` / 関数値 | `JSON.stringify(undefined)` と `JSON.stringify(function(){})` は値を返さず`undefined`になる。配列要素ではどちらも`null`になる | `encode`のトップレベル判定は`undefined`を返し、配列内の値は`null`へ変換する | `plugin-system-json-ecmascript-boundaries` |
+| BigInt / 循環参照 | `JSON.stringify(1n)` は `Do not know how to serialize a BigInt`、直接自己参照は `Converting circular structure to JSON` とconstructor・閉路位置を含む実行時エラー | `CannotSerializeBigInt` / `CircularCloneValue`へ正規化し、直接自己参照の公式文言を監視へ渡す。複数コンテナを経由するV8固有の詳細経路表示は`TODO: json-circular-error-path`として完成扱いにしない | `plugin-system-json-ecmascript-boundaries`、`JSONの実行時エラー文言を公式互換にする`、`TODO: json-circular-error-path` |
+| 不正JSON | `JSON.parse("x")` は `Unexpected token 'x', "x" is not valid JSON`。入力終端は `Unexpected end of JSON input` | `InvalidJsonCloneValue`分類と動的`Runtime.failureMessage`でfixtureの文言を保持する。入力途中の構文エラー位置と抜粋を含むV8固有文言は`TODO: json-parse-error-position`として完成扱いにしない | `plugin-system-json-ecmascript-boundaries`、`JSONの実行時エラー文言を公式互換にする`、`TODO: json-parse-error-position` |
+
 ## 配列・表・辞書
 
 | 命令 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID |
