@@ -21,6 +21,151 @@ pub const UnsupportedFeature = struct {
     span: ast.Span,
 };
 
+/// A single builtin dispatch recorded by the optional AOT compile manifest.
+///
+/// This is deliberately limited to names and source locations.  It is a
+/// pre-optimization witness of the dispatches that the LLVM emitter will see;
+/// it must not expose IR values, arguments, or pointers.
+pub const ManifestCall = struct {
+    source_name: []const u8,
+    canonical_opcode: []const u8,
+    route: []const u8,
+};
+
+const manifest_schema = "lnako.aot.builtin-manifest.v1";
+
+const ManifestHeader = struct {
+    schema: []const u8,
+    phase: []const u8,
+    sourcePath: []const u8,
+};
+
+const ManifestSource = struct {
+    line: usize,
+    column: usize,
+    sourceStart: usize,
+    sourceEnd: usize,
+};
+
+const ManifestEntry = struct {
+    schema: []const u8,
+    phase: []const u8,
+    kind: []const u8,
+    sourceName: []const u8,
+    canonicalOpcode: []const u8,
+    route: []const u8,
+    function: []const u8,
+    source: ManifestSource,
+};
+
+const ManifestComplete = struct {
+    schema: []const u8,
+    phase: []const u8,
+    kind: []const u8,
+    complete: bool,
+    entryCount: usize,
+};
+
+/// Resolves the same builtin routes used by the LLVM emitter.  A `null`
+/// result means that the call is a user/dynamic call and is intentionally not
+/// part of the builtin manifest.
+pub fn manifestCall(name: []const u8, direct_callee: ?ir.FunctionId) ?ManifestCall {
+    if (direct_callee != null) return null;
+    if (isDisplayCall(name)) return .{
+        .source_name = name,
+        .canonical_opcode = "display",
+        .route = "direct-display",
+    };
+    const command = aot_builtin.lookup(name) orelse return null;
+    const route = switch (command) {
+        .cut, .cut_range => "cut",
+        .regexp_match, .regexp_extract, .regexp_replace, .regexp_split => "regexp",
+        else => "builtin",
+    };
+    return .{
+        .source_name = name,
+        .canonical_opcode = aot_builtin.canonicalOpcodeName(command),
+        .route = route,
+    };
+}
+
+/// Writes a JSONL manifest without replacing an existing file.  The first
+/// record describes the schema; subsequent records are pre-optimization
+/// builtin dispatch evidence in source/IR order.
+pub fn writeBuiltinManifest(io: std.Io, program: ir.Program, source_path: []const u8, manifest_path: []const u8) !usize {
+    if (!std.fs.path.isAbsolute(manifest_path)) return error.ManifestPathMustBeAbsolute;
+
+    var file = try std.Io.Dir.createFileAbsolute(io, manifest_path, .{ .exclusive = true });
+    var keep_file = true;
+    defer {
+        file.close(io);
+        if (keep_file) std.Io.Dir.deleteFileAbsolute(io, manifest_path) catch {};
+    }
+
+    var buffer: [4096]u8 = undefined;
+    var file_writer = file.writer(io, &buffer);
+    const writer = &file_writer.interface;
+    writeManifestLine(writer, ManifestHeader{
+        .schema = manifest_schema,
+        .phase = "pre-opt",
+        .sourcePath = source_path,
+    }) catch |err| return err;
+    var entry_count: usize = 0;
+    for (program.functions) |function| {
+        for (function.blocks) |block| {
+            for (block.instructions) |instruction| {
+                if (instruction.opcode != .call) continue;
+                const call = manifestCall(instruction.name, instruction.direct_callee) orelse continue;
+                entry_count += 1;
+                try writeManifestLine(writer, ManifestEntry{
+                    .schema = manifest_schema,
+                    .phase = "pre-opt",
+                    .kind = "builtin-dispatch",
+                    .sourceName = call.source_name,
+                    .canonicalOpcode = call.canonical_opcode,
+                    .route = call.route,
+                    .function = function.name,
+                    .source = .{
+                        .line = instruction.span.line + 1,
+                        .column = @max(@as(usize, 1), instruction.span.column),
+                        .sourceStart = instruction.span.source_start,
+                        .sourceEnd = instruction.span.source_end,
+                    },
+                });
+            }
+        }
+    }
+    try writer.flush();
+    keep_file = false;
+    return entry_count;
+}
+
+/// Completes a manifest after LLVM emission and linking have succeeded.  A
+/// missing completion record deliberately means that the preceding file is
+/// only a partial validation artifact.
+pub fn completeBuiltinManifest(io: std.Io, manifest_path: []const u8, entry_count: usize) !void {
+    if (!std.fs.path.isAbsolute(manifest_path)) return error.ManifestPathMustBeAbsolute;
+    var file = try std.Io.Dir.openFileAbsolute(io, manifest_path, .{ .mode = .read_write });
+    defer file.close(io);
+    const stat = try file.stat(io);
+    var buffer: [1024]u8 = undefined;
+    var file_writer = file.writer(io, &buffer);
+    try file_writer.seekTo(stat.size);
+    try writeManifestLine(&file_writer.interface, ManifestComplete{
+        .schema = manifest_schema,
+        .phase = "pre-opt",
+        .kind = "complete",
+        .complete = true,
+        .entryCount = entry_count,
+    });
+    try file_writer.interface.flush();
+}
+
+fn writeManifestLine(writer: *std.Io.Writer, value: anytype) !void {
+    try std.json.Stringify.value(value, .{}, writer);
+    try writer.writeByte('\n');
+}
+
 pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
     for (program.functions) |function| for (function.blocks) |block| {
         for (block.instructions) |instruction| {
@@ -1492,6 +1637,28 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.global.0") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "!llvm.dbg.cu") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "!DILocation(line: 1") != null);
+}
+
+test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {
+    const display = manifestCall("表示", null).?;
+    try std.testing.expectEqualStrings("表示", display.source_name);
+    try std.testing.expectEqualStrings("display", display.canonical_opcode);
+    try std.testing.expectEqualStrings("direct-display", display.route);
+
+    const cut = manifestCall("切取", null).?;
+    try std.testing.expectEqualStrings("cut", cut.canonical_opcode);
+    try std.testing.expectEqualStrings("cut", cut.route);
+
+    const regexp = manifestCall("正規表現マッチ", null).?;
+    try std.testing.expectEqualStrings("regexp_match", regexp.canonical_opcode);
+    try std.testing.expectEqualStrings("regexp", regexp.route);
+
+    const builtin = manifestCall("文字列変換", null).?;
+    try std.testing.expectEqualStrings("to_string", builtin.canonical_opcode);
+    try std.testing.expectEqualStrings("builtin", builtin.route);
+
+    try std.testing.expect(manifestCall("利用者関数", 0) == null);
+    try std.testing.expect(manifestCall("未知命令", null) == null);
 }
 
 test "参照されたスカラーシステム定数をAOTグローバルへ初期化する" {

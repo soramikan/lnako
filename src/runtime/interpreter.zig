@@ -60,7 +60,7 @@ const DispatchTrace = struct {
         self.locked.store(false, .release);
     }
 
-    fn emit(self: *DispatchTrace, name: []const u8, result: []const u8) void {
+    fn emit(self: *DispatchTrace, name: []const u8, route: []const u8, result: []const u8) void {
         self.lock();
         defer self.unlock();
         if (self.disabled) return;
@@ -70,8 +70,8 @@ const DispatchTrace = struct {
         var line: [1024]u8 = undefined;
         const rendered = std.fmt.bufPrint(
             &line,
-            "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"dispatch-result\",\"seq\":{d},\"command\":\"{s}\",\"route\":\"callBuiltin\",\"result\":\"{s}\"}}\n",
-            .{ self.sequence, name, result },
+            "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"dispatch-result\",\"seq\":{d},\"command\":\"{s}\",\"route\":\"{s}\",\"result\":\"{s}\"}}\n",
+            .{ self.sequence, name, route, result },
         ) catch {
             self.disabled = true;
             return;
@@ -319,6 +319,9 @@ pub const Interpreter = struct {
     debug_enabled: bool = false,
     system_initialized: bool = false,
     dispatch_trace: DispatchTrace = .{},
+    dispatch_route_stack: [64][]const u8 = undefined,
+    dispatch_route_depth: usize = 0,
+    dispatch_route_overflow: usize = 0,
 
     pub fn init(allocator: std.mem.Allocator, runtime: *Runtime, program: ir.Program, host: Host) Interpreter {
         return .{ .allocator = allocator, .runtime = runtime, .program = program, .host = host, .dispatch_trace = .{ .path = host.dispatch_trace_path, .context = host.context, .writeFn = host.dispatch_trace_writeFn }, .csv_state = plugin_csv.State.init(allocator), .quickjs_state = quickjs.State.init(program.compat_js), .native_plugin_state = plugin_native.State.init() };
@@ -678,12 +681,41 @@ pub const Interpreter = struct {
     }
 
     fn callBuiltin(self: *Interpreter, name: []const u8, arguments: []const Value) !Value {
+        self.beginDispatchRoute();
         const result = self.callBuiltinImpl(name, arguments) catch |failure| {
-            self.dispatch_trace.emit(traceBuiltinName(name), "failure");
+            const route = self.endDispatchRoute();
+            self.dispatch_trace.emit(traceBuiltinName(name), route, "failure");
             return failure;
         };
-        self.dispatch_trace.emit(traceBuiltinName(name), "success");
+        const route = self.endDispatchRoute();
+        self.dispatch_trace.emit(traceBuiltinName(name), route, "success");
         return result;
+    }
+
+    fn beginDispatchRoute(self: *Interpreter) void {
+        if (self.dispatch_route_depth >= self.dispatch_route_stack.len) {
+            self.dispatch_route_overflow += 1;
+            return;
+        }
+        self.dispatch_route_stack[self.dispatch_route_depth] = "interpreter-core";
+        self.dispatch_route_depth += 1;
+    }
+
+    fn setDispatchRoute(self: *Interpreter, route: []const u8) void {
+        if (self.dispatch_route_overflow > 0) return;
+        if (self.dispatch_route_depth == 0) return;
+        self.dispatch_route_stack[self.dispatch_route_depth - 1] = route;
+    }
+
+    fn endDispatchRoute(self: *Interpreter) []const u8 {
+        if (self.dispatch_route_overflow > 0) {
+            self.dispatch_route_overflow -= 1;
+            return "unknown";
+        }
+        if (self.dispatch_route_depth == 0) return "unknown";
+        const route = self.dispatch_route_stack[self.dispatch_route_depth - 1];
+        self.dispatch_route_depth -= 1;
+        return route;
     }
 
     fn callBuiltinImpl(self: *Interpreter, name: []const u8, arguments: []const Value) !Value {
@@ -800,6 +832,7 @@ pub const Interpreter = struct {
         if (std.mem.eql(u8, name, "終了時")) return self.chainPromise(arguments, .finally);
         if (std.mem.eql(u8, name, "束")) return self.bundlePromises(arguments);
         if (std.mem.eql(u8, name, "二進表示")) {
+            self.setDispatchRoute("plugin_system");
             const text = (try plugin_system.types.call(self.runtime, "二進", arguments)).?;
             const utf8 = try text.string.toUtf8Lossy(self.allocator);
             defer self.allocator.free(utf8);
@@ -808,36 +841,57 @@ pub const Interpreter = struct {
             return .undefined;
         }
         if (std.mem.eql(u8, name, "切取")) {
+            self.setDispatchRoute("plugin_system");
             const result = try plugin_system.strings.cut(self.runtime, if (arguments.len > 0) arguments[0] else .undefined, if (arguments.len > 1) arguments[1] else .undefined);
             try self.setGlobal("対象", result.remainder);
             return result.result;
         }
         if (std.mem.eql(u8, name, "範囲切取")) {
+            self.setDispatchRoute("plugin_system");
             const result = try plugin_system.strings.cutRange(self.runtime, if (arguments.len > 0) arguments[0] else .undefined, if (arguments.len > 1) arguments[1] else .undefined, if (arguments.len > 2) arguments[2] else .undefined);
             try self.setGlobal("対象", result.remainder);
             return result.result;
         }
         if (std.mem.eql(u8, name, "正規表現マッチ") or std.mem.eql(u8, name, "正規表現抽出")) {
+            self.setDispatchRoute("plugin_system");
             const result = (try plugin_system.regexp.callWithEffects(self.runtime, name, arguments)).?;
             if (result.captures) |captures| try self.setGlobal("抽出文字列", captures);
             return result.value;
         }
+        self.setDispatchRoute("plugin_system");
         const plugin_context = try self.pluginContext();
+        self.setDispatchRoute("plugin_math");
         if (try plugin_math.call(self.runtime, name, arguments, .{
             .context = self,
             .randomFn = pluginRandom,
         })) |value| return value;
+        self.setDispatchRoute("plugin_csv");
         if (try plugin_csv.call(self.runtime, &self.csv_state, name, arguments)) |value| return value;
+        self.setDispatchRoute("plugin_toml");
         if (try plugin_toml.call(self.runtime, name, arguments)) |value| return value;
-        if (self.host.node_context) |node_context| if (try plugin_node.call(self.runtime, &self.node_state, node_context, self.nodeEffects(), name, arguments)) |value| return value;
-        if (self.host.http_server_context) |server_context| if (try plugin_http_server.call(self.runtime, &self.http_server_state, server_context, self.httpServerEffects(), name, arguments)) |value| return value;
+        if (self.host.node_context) |node_context| {
+            self.setDispatchRoute("plugin_node");
+            if (try plugin_node.call(self.runtime, &self.node_state, node_context, self.nodeEffects(), name, arguments)) |value| return value;
+        }
+        if (self.host.http_server_context) |server_context| {
+            self.setDispatchRoute("plugin_http_server");
+            if (try plugin_http_server.call(self.runtime, &self.http_server_state, server_context, self.httpServerEffects(), name, arguments)) |value| return value;
+        }
+        self.setDispatchRoute("plugin_markup");
         if (try plugin_markup.call(self.runtime, name, arguments)) |value| return value;
+        self.setDispatchRoute("plugin_caniuse");
         if (try plugin_caniuse.call(self.runtime, &self.caniuse_state, name, arguments)) |value| return value;
+        self.setDispatchRoute("plugin_kansuji");
         if (try plugin_kansuji.call(self.runtime, name, arguments)) |value| return value;
+        self.setDispatchRoute("plugin_native");
         if (try plugin_native.call(self.runtime, &self.native_plugin_state, self.nativePluginEffects(), name, arguments)) |value| return value;
+        self.setDispatchRoute("quickjs");
         if (try quickjs.call(self.runtime, &self.quickjs_state, self.quickJsEffects(), name, arguments)) |value| return value;
+        self.setDispatchRoute("plugin_encoding");
         if (try plugin_encoding.call(self.runtime, name, arguments)) |value| return value;
+        self.setDispatchRoute("plugin_system");
         if (try plugin_system.callWithContext(self.runtime, name, arguments, plugin_context)) |value| return value;
+        self.setDispatchRoute("unknown");
         return error.UnknownCommand;
     }
 

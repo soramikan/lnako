@@ -8,9 +8,15 @@ const arguments_ = process.argv.slice(2);
 if (arguments_.some((argument) => argument !== "--no-build")) throw new Error("usage: node tools/check_dispatch_trace.mjs [--no-build]");
 const noBuild = arguments_.includes("--no-build");
 const compiler = resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
+const catalog = JSON.parse(await readFile(resolve(root, "compat/v3.7.24/standard-cnako.json"), "utf8"));
+if (catalog.commandCount !== 527 || catalog.commands.length !== 527) throw new Error("標準cnakoカタログが527 entryではありません");
+const catalogByName = Map.groupBy(catalog.commands, (command) => command.name);
 const cases = JSON.parse(await readFile(resolve(root, "tests/oracle/native-cases.json"), "utf8"));
 const fixture = cases.find((candidate) => candidate.id === "native-cut-commands");
 if (fixture === undefined) throw new Error("dispatch trace用fixtureがありません: native-cut-commands");
+const nodeCases = JSON.parse(await readFile(resolve(root, "tests/oracle/node-file-cases.json"), "utf8"));
+const nodeFixture = nodeCases.find((candidate) => candidate.id === "plugin-node-path-host");
+if (nodeFixture === undefined) throw new Error("Node route trace用fixtureがありません: plugin-node-path-host");
 
 const temporary = await mkdtemp(join(tmpdir(), "lnako-dispatch-trace-"));
 try {
@@ -19,7 +25,11 @@ try {
   const native = resolve(temporary, process.platform === "win32" ? "trace.exe" : "trace");
   const interpreterTrace = resolve(temporary, "interpreter.jsonl");
   const aotTrace = resolve(temporary, "aot.jsonl");
+  const compileManifest = resolve(temporary, "compile-manifest.jsonl");
+  const nodeSource = resolve(temporary, "node-route.nako3");
+  const nodeTrace = resolve(temporary, "node-route.jsonl");
   await writeFile(source, fixture.source, "utf8");
+  await writeFile(nodeSource, nodeFixture.source, "utf8");
 
   const baseEnvironment = { ...process.env, TZ: "Asia/Tokyo" };
   const interpretedWithoutTrace = run(compiler, ["run", source], baseEnvironment, temporary);
@@ -34,13 +44,43 @@ try {
   );
   assertEquivalent("Interpreter", interpretedWithoutTrace, interpretedWithTrace);
   const interpreterEvents = await readTrace(interpreterTrace, "interpreter", "dispatch-result");
-  assertCommand(interpreterEvents, "切取", "success");
-  assertCommand(interpreterEvents, "範囲切取", "success");
+  assertCommand(interpreterEvents, "切取", "plugin_system", "success");
+  assertCommand(interpreterEvents, "範囲切取", "plugin_system", "success");
+  assertCommand(interpreterEvents, "表示", "interpreter-core", "success");
+  assertCatalogResolution("切取", "plugin_system", "command-0141", "unique-name");
+  assertCatalogResolution("範囲切取", "plugin_system", "command-0142", "unique-name");
+  assertCatalogResolution("表示", "interpreter-core", "command-0307", "unique-name");
   assertOnlyCommands(interpreterEvents, new Set(["切取", "範囲切取", "表示", "CHR"]));
   await assertExistingTracePreserved("Interpreter", compiler, ["run", source], interpretedWithoutTrace, resolve(temporary, "interpreter-existing.jsonl"), baseEnvironment, temporary);
 
-  const compiled = run(compiler, ["build", source, "-o", native, "-O0"], baseEnvironment, temporary);
+  const nodeEnvironment = { ...baseEnvironment, LNAKO_NODE_TEST: "dispatch-trace" };
+  const nodeWithoutTrace = run(compiler, ["run", nodeSource], nodeEnvironment, temporary);
+  assertSuccess("trace無効Node route", nodeWithoutTrace);
+  const nodeWithTrace = run(compiler, ["run", nodeSource], { ...nodeEnvironment, LNAKO_DISPATCH_TRACE: nodeTrace }, temporary);
+  assertEquivalent("Node route", nodeWithoutTrace, nodeWithTrace);
+  const nodeEvents = await readTrace(nodeTrace, "interpreter", "dispatch-result");
+  assertCommand(nodeEvents, "ファイル名抽出", "plugin_node", "success");
+  assertCommand(nodeEvents, "パス抽出", "plugin_node", "success");
+  assertCatalogResolution("ファイル名抽出", "plugin_node", "command-0722", "node-route-priority");
+  assertCatalogResolution("パス抽出", "plugin_node", "command-0723", "node-route-priority");
+  assertCatalogUnresolved("ファイル名抽出", "plugin_system");
+  assertCatalogUnresolved("パス抽出", "plugin_system");
+
+  const compiled = run(
+    compiler,
+    ["build", source, "-o", native, "-O0"],
+    { ...baseEnvironment, LNAKO_COMPILE_MANIFEST: compileManifest },
+    temporary,
+  );
   assertSuccess("AOTコンパイル", compiled);
+  const manifestEntries = await readCompileManifest(compileManifest, source);
+  assertManifestCommand(manifestEntries, "切取", "cut", "cut", "command-0141");
+  assertManifestCommand(manifestEntries, "範囲切取", "cut_range", "cut", "command-0142");
+  assertManifestCommand(manifestEntries, "CHR", "chr", "builtin", "command-0122");
+  assertManifestCommand(manifestEntries, "表示", "display", "direct-display", "command-0307");
+  assertOnlyManifestCommands(manifestEntries, new Set(["切取", "範囲切取", "CHR", "表示"]));
+  await assertExistingManifestPreserved(compiler, source, baseEnvironment, temporary);
+  await assertFailedManifestRemoved(compiler, source, baseEnvironment, temporary);
   const aotWithoutTrace = run(native, [], baseEnvironment, temporary);
   assertSuccess("trace無効AOT", aotWithoutTrace);
   if ((await readdir(temporary)).some((name) => name === "aot.jsonl")) throw new Error("trace無効AOTがtraceファイルを生成しました");
@@ -53,7 +93,7 @@ try {
   assertOnlyCommands(aotEvents, new Set(["cut", "cut_range", "chr"]));
   await assertExistingTracePreserved("AOT", native, [], aotWithoutTrace, resolve(temporary, "aot-existing.jsonl"), baseEnvironment, temporary);
 
-  console.log(`dispatch traceスモークテスト: Interpreter ${interpreterEvents.length}イベント / AOT ${aotEvents.length}イベント成功`);
+  console.log(`dispatch証拠スモークテスト: Interpreter ${interpreterEvents.length}イベント / Node ${nodeEvents.length}イベント / AOT manifest ${manifestEntries.length}件・runtime ${aotEvents.length}イベント成功`);
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }
@@ -115,9 +155,48 @@ async function readTrace(path, engine, phase) {
   return dispatchEvents;
 }
 
-function assertCommand(events, command, result) {
-  if (!events.some((event) => event.command === command && event.result === result)) {
-    throw new Error(`Interpreter traceに${command}/${result}がありません`);
+async function readCompileManifest(path, sourcePath) {
+  const text = await readFile(path, "utf8");
+  if (!text.endsWith("\n")) throw new Error("AOT compile manifestが改行で完結していません");
+  const records = text.trimEnd().split("\n").map((line, index) => {
+    try {
+      return JSON.parse(line);
+    } catch (error) {
+      throw new Error(`AOT compile manifest ${index + 1}行目がJSONではありません: ${error.message}`);
+    }
+  });
+  if (records.length < 2) throw new Error("AOT compile manifestにheaderと完了recordがありません");
+  const schema = "lnako.aot.builtin-manifest.v1";
+  const header = records[0];
+  if (header.schema !== schema || header.phase !== "pre-opt" || header.sourcePath !== sourcePath) {
+    throw new Error(`AOT compile manifest headerが不正です: ${JSON.stringify(header)}`);
+  }
+  const complete = records.at(-1);
+  const entries = records.slice(1, -1);
+  if (complete.schema !== schema || complete.phase !== "pre-opt" || complete.kind !== "complete" || complete.complete !== true || complete.entryCount !== entries.length) {
+    throw new Error(`AOT compile manifest完了recordが不正です: ${JSON.stringify(complete)}`);
+  }
+  for (const entry of entries) {
+    if (entry.schema !== schema || entry.phase !== "pre-opt" || entry.kind !== "builtin-dispatch") {
+      throw new Error(`AOT compile manifest entryが不正です: ${JSON.stringify(entry)}`);
+    }
+    if (![entry.sourceName, entry.canonicalOpcode, entry.route, entry.function].every((value) => typeof value === "string" && value.length > 0)) {
+      throw new Error(`AOT compile manifestの文字列fieldが不正です: ${JSON.stringify(entry)}`);
+    }
+    const location = entry.source;
+    if (location === null || !Number.isInteger(location.line) || location.line < 1 || !Number.isInteger(location.column) || location.column < 1 || !Number.isInteger(location.sourceStart) || !Number.isInteger(location.sourceEnd) || location.sourceStart < 0 || location.sourceEnd < location.sourceStart) {
+      throw new Error(`AOT compile manifestのsource位置が不正です: ${JSON.stringify(entry)}`);
+    }
+    for (const forbidden of ["arguments", "values", "value", "pointer", "address"]) {
+      if (Object.hasOwn(entry, forbidden)) throw new Error(`AOT compile manifestに禁止フィールドがあります: ${forbidden}`);
+    }
+  }
+  return entries;
+}
+
+function assertCommand(events, command, route, result) {
+  if (!events.some((event) => event.command === command && event.route === route && event.result === result)) {
+    throw new Error(`Interpreter traceに${command}/${route}/${result}がありません`);
   }
 }
 
@@ -125,6 +204,40 @@ function assertCanonicalCommand(events, command, route) {
   if (!events.some((event) => event.command === command && event.route === route && event.name_source === "canonical-opcode")) {
     throw new Error(`AOT traceに${command}/${route}がありません`);
   }
+}
+
+function assertManifestCommand(entries, sourceName, canonicalOpcode, route, catalogId) {
+  if (!entries.some((entry) => entry.sourceName === sourceName && entry.canonicalOpcode === canonicalOpcode && entry.route === route)) {
+    throw new Error(`AOT compile manifestに${sourceName}/${canonicalOpcode}/${route}がありません`);
+  }
+  assertCatalogResolution(sourceName, route, catalogId, "unique-name");
+}
+
+function assertOnlyManifestCommands(entries, allowed) {
+  const unexpected = entries.filter((entry) => !allowed.has(entry.sourceName));
+  if (unexpected.length > 0) throw new Error(`AOT compile manifestに予期しない命令があります: ${JSON.stringify(unexpected)}`);
+}
+
+function resolveCatalogCommand(name, route) {
+  const candidates = catalogByName.get(name) ?? [];
+  if (candidates.length === 1) return { command: candidates[0], reason: "unique-name" };
+  if (route === "plugin_node") {
+    const nodeCandidates = candidates.filter((command) => command.plugin === "plugin_node");
+    if (nodeCandidates.length === 1) return { command: nodeCandidates[0], reason: "node-route-priority" };
+  }
+  return null;
+}
+
+function assertCatalogResolution(name, route, id, reason) {
+  const resolved = resolveCatalogCommand(name, route);
+  if (resolved === null || resolved.command.id !== id || resolved.reason !== reason) {
+    throw new Error(`catalog ID解決が不正です: ${JSON.stringify({ name, route, expected: { id, reason }, resolved })}`);
+  }
+}
+
+function assertCatalogUnresolved(name, route) {
+  const resolved = resolveCatalogCommand(name, route);
+  if (resolved !== null) throw new Error(`同名命令を過大にcatalog IDへ解決しました: ${JSON.stringify({ name, route, resolved })}`);
 }
 
 function assertOnlyCommands(events, allowed) {
@@ -138,4 +251,34 @@ async function assertExistingTracePreserved(label, command, arguments_, expected
   const result = run(command, arguments_, { ...environment, LNAKO_DISPATCH_TRACE: path }, cwd);
   assertEquivalent(`${label}既存trace`, expected, result);
   if (await readFile(path, "utf8") !== sentinel) throw new Error(`${label}が既存traceを上書きしました`);
+}
+
+async function assertExistingManifestPreserved(command, source, environment, cwd) {
+  const path = resolve(cwd, "manifest-existing.jsonl");
+  const output = resolve(cwd, process.platform === "win32" ? "manifest-existing.exe" : "manifest-existing");
+  const sentinel = "既存manifestは上書きしない\n";
+  await writeFile(path, sentinel, "utf8");
+  const result = run(command, ["build", source, "-o", output, "-O0"], { ...environment, LNAKO_COMPILE_MANIFEST: path }, cwd);
+  if (result.status === 0) throw new Error("既存AOT compile manifestを指定したbuildが成功しました");
+  if (await readFile(path, "utf8") !== sentinel) throw new Error("AOT compile manifestが既存ファイルを上書きしました");
+}
+
+async function assertFailedManifestRemoved(command, source, environment, cwd) {
+  const path = resolve(cwd, "manifest-failed.jsonl");
+  const output = resolve(cwd, process.platform === "win32" ? "failed.exe" : "failed");
+  const missingLlvm = resolve(cwd, process.platform === "win32" ? "missing-LLVM-C.dll" : "missing-libLLVM");
+  const result = run(
+    command,
+    ["build", source, "-o", output, "-O0"],
+    { ...environment, LNAKO_COMPILE_MANIFEST: path, LNAKO_LLVM_LIBRARY: missingLlvm },
+    cwd,
+  );
+  if (result.status === 0) throw new Error("存在しないLLVMライブラリを指定したAOT buildが成功しました");
+  try {
+    await readFile(path, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  throw new Error("失敗したAOT buildが部分manifestを残しました");
 }

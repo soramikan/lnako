@@ -54,7 +54,7 @@ ID単位の実行証拠にはなりません。その理由は各entryへ明記�
 引数・値・ポインタを含まない固定メタデータだけを記録します。未指定時はファイルを作成せず、
 標準出力、標準エラー、終了コードを変えません。既存ファイルは上書きせず、新しいパスだけを受理します。
 
-- Interpreter: `callBuiltin`の完了を`dispatch-result`として記録し、`success`と`failure`を区別する
+- Interpreter: `callBuiltin`の完了を`dispatch-result`として記録し、実際に成功・失敗したplugin routeを区別する
 - AOT: builtin、切取、正規表現ABIへの到達を`dispatch-attempt`として記録する
 - AOTの命令名: ソース上の別名ではなく、LLVM ABIへ渡ったcanonical opcode名
 - 正常終了: 最終行に`trace-end`と`dropped: 0`を記録し、途中欠落を検出可能にする
@@ -63,6 +63,27 @@ ID単位の実行証拠にはなりません。その理由は各entryへ明記�
 その場合は`trace-end`が得られないため、検証ハーネスが実行基盤エラーとして拒否します。
 
 `node tools/check_dispatch_trace.mjs`はtrace有無の実行結果一致、JSONL構造、
-`切取`・`範囲切取`のInterpreter/AOT実dispatchを1 fixtureだけで検証します。
+`切取`・`範囲切取`のInterpreter/AOT実dispatchと、同名system命令よりNode routeが優先される
+`ファイル名抽出`・`パス抽出`を固定fixtureで検証します。
 全527 entryのplugin・catalog ID、AOT成功結果、pre/post-opt IR、O0〜O3をまだ接続していないため、
 このスモークテストだけで`executionEvidenceState`を更新してはいけません。
+
+## AOT compile manifest
+
+`LNAKO_COMPILE_MANIFEST`へ絶対JSONLパスを指定すると、AOT buildは
+`lnako.aot.builtin-manifest.v1`形式のmanifestを新規作成します。既存ファイルは上書きしません。
+先頭に`pre-opt` header、続けてLLVM emitterへ渡す前の各builtin call、buildとlinkの成功後に
+件数付き`complete` recordを書きます。途中で失敗したbuildは部分manifestを削除します。
+
+各callはソース上の命令名、canonical opcode、LLVM emitter route、関数名、ソース位置だけを含み、
+引数・値・ポインタは含みません。定数やグローバル読出し、利用者関数・動的呼出しは対象外です。
+emitter routeは`builtin`・`cut`・`regexp`・`direct-display`のABI分類であり、
+Interpreterの`plugin_system`・`plugin_node`等のplugin routeとは異なります。
+また、これはNako最適化前のdispatch予定を示す資料であり、LLVM最適化後にcallが残ったことや、
+実行時の成功を単独では証明しません。実行時traceと公式差分結果を別に照合する必要があります。
+
+manifest自体にはcatalog IDやpluginを記録しません。検証器が標準527 entryと照合する際は、
+命令名が一意な場合だけIDを自動解決します。同名命令はrouteが一致するだけでは
+公式plugin由来を一般には証明できません。現在のスモークでは、InterpreterがNodeをsystemより先に
+探索することを実測した`ファイル名抽出`・`パス抽出`だけNode側IDへ解決し、system側やdatetime別名は
+未解決のまま扱います。

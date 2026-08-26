@@ -17,10 +17,24 @@ pub const Options = struct {
     llvm_root: ?[]const u8 = null,
     llvm_library: ?[]const u8 = null,
     runtime_library: ?[]const u8 = null,
+    compile_manifest_path: ?[]const u8 = null,
     trace: bool = false,
 };
 
 pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, options: Options, diagnostics: *std.Io.Writer) !void {
+    var manifest_entry_count: ?usize = null;
+    var manifest_created = false;
+    var manifest_complete = false;
+    defer if (manifest_created and !manifest_complete) if (options.compile_manifest_path) |manifest_path| {
+        std.Io.Dir.deleteFileAbsolute(io, manifest_path) catch {};
+    };
+    if (options.compile_manifest_path) |manifest_path| {
+        manifest_entry_count = module_mod.writeBuiltinManifest(io, program, options.source_path, manifest_path) catch |failure| {
+            try diagnostics.print("AOT builtin manifest生成エラー: {s}\n", .{@errorName(failure)});
+            return error.CompileManifestFailed;
+        };
+        manifest_created = true;
+    }
     var optimized_program: ?ir.Program = null;
     defer if (optimized_program) |*owned| owned.deinit();
     if (options.optimization != .o0) {
@@ -134,6 +148,13 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
             try emitObject(allocator, &api, machine, llvm_module, object_path, diagnostics);
             try linkExecutable(allocator, io, object_path, options.output_path, options.llvm_root, options.runtime_library, diagnostics);
         },
+    }
+    if (manifest_entry_count) |entry_count| {
+        module_mod.completeBuiltinManifest(io, options.compile_manifest_path.?, entry_count) catch |failure| {
+            try diagnostics.print("AOT builtin manifest完了記録エラー: {s}\n", .{@errorName(failure)});
+            return error.CompileManifestFailed;
+        };
+        manifest_complete = true;
     }
 }
 
