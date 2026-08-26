@@ -95,7 +95,7 @@ jobs:
         if: matrix.suite != 'compat-aot'
         with:
           path: .cache/oracle
-          key: nadesiko3-oracle-3.7.24-${{ runner.os }}-v2
+          key: nadesiko3-oracle-3.7.24-${{ runner.os }}-${{ runner.arch }}-ac3bedbf10111-v4
       - name: Build official oracle
         if: matrix.suite != 'compat-aot'
         run: node tools/setup_oracle.mjs

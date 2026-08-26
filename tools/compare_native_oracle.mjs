@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { execFile, spawnSync } from "node:child_process";
+import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const oracleArg = process.argv.indexOf("--oracle");
@@ -11,6 +12,9 @@ const oracleRoot = resolve(
   oracleArg >= 0 ? process.argv[oracleArg + 1] : process.env.NADESIKO3_ORACLE ?? resolve(root, ".cache/oracle/nadesiko3-3.7.24"),
 );
 const cases = JSON.parse(await readFile(resolve(root, "tests/oracle/native-cases.json"), "utf8"));
+const standardCatalog = JSON.parse(await readFile(resolve(root, "compat/v3.7.24/standard-cnako.json"), "utf8"));
+if (standardCatalog.commandCount !== 527 || !Array.isArray(standardCatalog.commands) || standardCatalog.commands.length !== 527) throw new Error("標準cnakoカタログが527 entryではありません");
+const standardCommandNames = new Set(standardCatalog.commands.map((command) => command.name));
 const executable = resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
 const officialCli = resolve(oracleRoot, "src/cnako3.mjs");
 const artifactPath = parseArtifactPath();
@@ -19,10 +23,12 @@ const artifactBaseline = artifactPath === null ? null : JSON.parse(await readFil
 const artifactToolchain = artifactPath === null ? null : JSON.parse(await readFile(resolve(root, "toolchain.lock.json"), "utf8"));
 const artifactGitState = artifactPath === null ? null : gitState();
 const artifactCompareScriptSha256 = artifactPath === null ? null : sha256(await readFile(resolve(root, "tools/compare_native_oracle.mjs")));
-const artifactOracleIdentity = artifactPath === null ? null : await readOracleIdentity(oracleRoot, officialCli, artifactBaseline);
+const oracleBaseline = JSON.parse(await readFile(resolve(root, "compat/upstream.lock.json"), "utf8")).nadesiko3;
+const oracleIdentity = await readOracleIdentity(oracleRoot, officialCli, oracleBaseline);
+const artifactOracleIdentity = artifactPath === null ? null : oracleIdentity;
 const temporary = await mkdtemp(join(tmpdir(), "lnako-native-"));
 const maxBuffer = 16 * 1024 * 1024;
-const knownCaseFields = new Set(["id", "source", "oracle", "stderrIncludes"]);
+const knownCaseFields = new Set(["id", "source", "oracle", "stderrIncludes", "commands"]);
 const routeNames = ["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0", "lnakoNativeO1", "lnakoNativeO2", "lnakoNativeO3"];
 let artifactLnakoBinarySha256 = null;
 
@@ -41,6 +47,9 @@ try {
     }
     if (testCase.stderrIncludes !== undefined && (typeof testCase.stderrIncludes !== "string" || testCase.stderrIncludes.length === 0)) {
       throw new Error(`stderrIncludesは空でない文字列を指定してください: ${testCase.id}`);
+    }
+    if (testCase.commands !== undefined && (!Array.isArray(testCase.commands) || testCase.commands.length === 0 || testCase.commands.some((name) => typeof name !== "string" || name.length === 0 || !standardCommandNames.has(name)) || new Set(testCase.commands).size !== testCase.commands.length)) {
+      throw new Error(`commandsは標準527命令の重複しない非空文字列配列で指定してください: ${testCase.id}`);
     }
   }
   let completed;
@@ -314,10 +323,26 @@ async function readOracleIdentity(directory, cli, baseline) {
     throw new Error("公式オラクルが固定baselineと一致しません");
   }
   if (!Number.isSafeInteger(marker.oracleBuild) || marker.oracleBuild < 1) throw new Error("公式オラクルのbuild番号が不正です");
+  const expected = baseline.oracleIdentity;
+  const actualCliSha256 = sha256(await readFile(cli));
+  const actualMarkerSha256 = sha256(markerBytes);
+  const platform = `${process.platform}-${process.arch}`;
+  const expectedTreeSha256 = expected?.treeSha256ByPlatform?.[platform];
+  if (expected?.treeHashAlgorithm !== oracleTreeHashAlgorithm || !/^[0-9a-f]{64}$/.test(expectedTreeSha256 ?? "")) {
+    throw new Error(`公式オラクルのtree hashが未登録です: ${platform}`);
+  }
+  const actualTreeSha256 = await oracleTreeHash(directory);
+  if (expected?.build !== marker.oracleBuild || expected.cliSha256 !== actualCliSha256 || expected.markerSha256 !== actualMarkerSha256 ||
+      marker.treeSha256 !== actualTreeSha256 || marker.treeSha256 !== expectedTreeSha256) {
+    throw new Error("公式オラクルの固定buildまたはCLI／marker SHA-256が一致しません");
+  }
   return {
     build: marker.oracleBuild,
-    cliSha256: sha256(await readFile(cli)),
-    markerSha256: sha256(markerBytes),
+    archiveSha256: baseline.archive.sha256,
+    cliSha256: actualCliSha256,
+    markerSha256: actualMarkerSha256,
+    treeHashAlgorithm: oracleTreeHashAlgorithm,
+    treeSha256: actualTreeSha256,
   };
 }
 
@@ -429,51 +454,91 @@ function createArtifact(fixtures, failureCount, fixtureCount, baseline, toolchai
 }
 
 function validateArtifact(artifact) {
+  assertExactKeys(artifact, ["schema", "generatedAt", "baseline", "oracle", "lnako", "toolchain", "artifactSha256", "environment", "fixtureCount", "routeCount", "routes", "knownOracleSelections", "status", "comparisonSucceeded", "failureCount", "fixtures"], "AOT差分artifact");
   if (artifact.schema !== "lnako.native-oracle-artifact.v1" || artifact.routeCount !== routeNames.length) {
     throw new Error("AOT差分artifactのschemaまたはrouteCountが不正です");
   }
+  if (typeof artifact.generatedAt !== "string" || Number.isNaN(Date.parse(artifact.generatedAt))) throw new Error("AOT差分artifactの生成日時が不正です");
+  assertExactKeys(artifact.baseline, ["repository", "tag", "commit", "archiveSha256"], "AOT差分artifact.baseline");
+  assertExactKeys(artifact.oracle, ["build", "archiveSha256", "cliSha256", "markerSha256", "treeHashAlgorithm", "treeSha256"], "AOT差分artifact.oracle");
+  assertExactKeys(artifact.lnako, ["commit", "dirty"], "AOT差分artifact.lnako");
+  assertExactKeys(artifact.toolchain, ["zig", "llvm", "node"], "AOT差分artifact.toolchain");
+  assertExactKeys(artifact.artifactSha256, ["compareScript", "lnakoBinary"], "AOT差分artifact.artifactSha256");
+  assertExactKeys(artifact.environment, ["platform", "arch", "node"], "AOT差分artifact.environment");
+  assertExactKeys(artifact.knownOracleSelections, ["defaultOfficialSource", "officialSource", "officialGenerated"], "AOT差分artifact.knownOracleSelections");
+  if (typeof artifact.baseline.repository !== "string" || artifact.baseline.repository.length === 0 || typeof artifact.baseline.tag !== "string" || artifact.baseline.tag.length === 0 ||
+      typeof artifact.oracle.treeHashAlgorithm !== "string" || artifact.oracle.treeHashAlgorithm !== oracleTreeHashAlgorithm ||
+      !Object.values(artifact.toolchain).every((value) => typeof value === "string" && value.length > 0) ||
+      !Object.values(artifact.environment).every((value) => typeof value === "string" && value.length > 0) ||
+      !Object.values(artifact.knownOracleSelections).every((value) => Number.isSafeInteger(value) && value >= 0)) {
+    throw new Error("AOT差分artifactのmetadataが不正です");
+  }
   if (!["success", "comparison-failure", "infrastructure-failure"].includes(artifact.status)) throw new Error("AOT差分artifactのstatusが不正です");
+  if (!Number.isSafeInteger(artifact.fixtureCount) || artifact.fixtureCount < 0 || !Number.isSafeInteger(artifact.failureCount) || artifact.failureCount < 0 || typeof artifact.comparisonSucceeded !== "boolean") {
+    throw new Error("AOT差分artifactの集計値が不正です");
+  }
+  if (!Array.isArray(artifact.fixtures)) throw new Error("AOT差分artifactのfixturesが配列ではありません");
   if (artifact.comparisonSucceeded !== (artifact.status === "success") || (artifact.failureCount === 0) !== (artifact.status === "success")) {
     throw new Error("AOT差分artifactのstatusとcomparisonSucceededが一致しません");
   }
   if (artifact.status === "infrastructure-failure" && artifact.fixtures.length !== 0) throw new Error("インフラ失敗artifactにfixture結果があります");
   if (artifact.status !== "infrastructure-failure" && artifact.fixtureCount !== artifact.fixtures.length) throw new Error("AOT差分artifactのfixtureCountが一致しません");
-  if (JSON.stringify(artifact.routes) !== JSON.stringify(routeNames)) throw new Error("AOT差分artifactのroute一覧が不正です");
+  const fixtureSelectionCounts = {
+    defaultOfficialSource: artifact.fixtures.filter((fixture) => fixture?.knownOracleSelection === null).length,
+    officialSource: artifact.fixtures.filter((fixture) => fixture?.knownOracleSelection === "official-source").length,
+    officialGenerated: artifact.fixtures.filter((fixture) => fixture?.knownOracleSelection === "official-generated").length,
+  };
+  if (Object.keys(fixtureSelectionCounts).some((key) => artifact.knownOracleSelections[key] !== fixtureSelectionCounts[key])) throw new Error("AOT差分artifactのknown oracle集計が一致しません");
+  assertStringArray(artifact.routes, routeNames, "AOT差分artifact.routes");
   const hashPattern = /^[0-9a-f]{64}$/;
   const commitPattern = /^[0-9a-f]{40}$/i;
   if (!commitPattern.test(artifact.baseline.commit) || !commitPattern.test(artifact.lnako.commit)) throw new Error("AOT差分artifactのcommitが不正です");
   if (typeof artifact.lnako.dirty !== "boolean") throw new Error("AOT差分artifactのdirty状態が不正です");
-  if (!Number.isSafeInteger(artifact.oracle.build) || artifact.oracle.build < 1 || !hashPattern.test(artifact.baseline.archiveSha256) ||
-      !hashPattern.test(artifact.oracle.cliSha256) || !hashPattern.test(artifact.oracle.markerSha256)) {
+  if (!Number.isSafeInteger(artifact.oracle.build) || artifact.oracle.build < 1 || artifact.oracle.archiveSha256 !== artifact.baseline.archiveSha256 || !hashPattern.test(artifact.baseline.archiveSha256) ||
+      !hashPattern.test(artifact.oracle.cliSha256) || !hashPattern.test(artifact.oracle.markerSha256) || artifact.oracle.treeHashAlgorithm !== oracleTreeHashAlgorithm ||
+      !hashPattern.test(artifact.oracle.treeSha256)) {
     throw new Error("AOT差分artifactの公式オラクルhashが不正です");
   }
   if (!hashPattern.test(artifact.artifactSha256.compareScript) || !hashPattern.test(artifact.artifactSha256.lnakoBinary)) throw new Error("AOT差分artifactの実行物ハッシュが不正です");
-  const forbiddenFields = new Set(["stdout", "stderr", "arguments", "args", "value", "values", "pointer", "address"]);
-  function visit(value) {
+  const forbiddenFields = new Set(["stdout", "stderr", "arguments", "args", "value", "values", "pointer", "address", "sourcePath", "cwd"]);
+  function visit(value, path = "") {
     if (Array.isArray(value)) {
-      for (const item of value) visit(item);
+      for (const item of value) visit(item, path);
       return;
     }
     if (value === null || typeof value !== "object") return;
     for (const [key, item] of Object.entries(value)) {
       if (forbiddenFields.has(key)) throw new Error(`AOT差分artifactに禁止フィールドがあります: ${key}`);
-      visit(item);
+      if (key === "environment" && path !== "") throw new Error("AOT差分artifactにネストされたenvironmentがあります");
+      visit(item, path === "" ? key : `${path}.${key}`);
     }
   }
   visit(artifact);
   for (const fixture of artifact.fixtures) {
-    if (fixture.id.length === 0 || typeof fixture.equivalent !== "boolean" || !Array.isArray(fixture.failureKinds)) throw new Error("AOT差分artifactのfixtureが不正です");
+    const fixtureLabel = fixture !== null && typeof fixture === "object" ? fixture.id ?? "?" : "?";
+    assertExactKeys(fixture, ["id", "knownOracleSelection", "oracleRoute", "comparedRoutes", "equivalent", "failureKinds", "sourceSha256", "generatedJavaScriptSha256", "results", "compileStatuses", "compileManifest"], `AOT差分artifact.fixture(${fixtureLabel})`);
+    if (typeof fixture.id !== "string" || fixture.id.length === 0 || ![null, "official-source", "official-generated"].includes(fixture.knownOracleSelection) ||
+        !["officialSource", "officialGenerated"].includes(fixture.oracleRoute) || typeof fixture.equivalent !== "boolean" || !Array.isArray(fixture.failureKinds)) {
+      throw new Error("AOT差分artifactのfixtureが不正です");
+    }
+    const expectedComparedRoutes = routeNames.filter((route) =>
+      (fixture.knownOracleSelection !== "official-generated" || route !== "officialSource") &&
+      (fixture.knownOracleSelection !== "official-source" || route !== "officialGenerated"),
+    );
+    assertStringArray(fixture.comparedRoutes, expectedComparedRoutes, `AOT差分artifact.fixture(${fixture.id}).comparedRoutes`);
+    assertStringArray(fixture.failureKinds, null, `AOT差分artifact.fixture(${fixture.id}).failureKinds`, new Set(["result-mismatch", "stderr-mismatch"]));
     if (fixture.equivalent !== (fixture.failureKinds.length === 0)) throw new Error(`AOT差分artifactのfixture statusが不正です: ${fixture.id}`);
     if (!hashPattern.test(fixture.sourceSha256) || (fixture.generatedJavaScriptSha256 !== null && !hashPattern.test(fixture.generatedJavaScriptSha256))) {
       throw new Error(`AOT差分artifactのfixture hashが不正です: ${fixture.id}`);
     }
-    if (JSON.stringify(fixture.results && Object.keys(fixture.results)) !== JSON.stringify(routeNames)) {
-      throw new Error(`AOT差分artifactのroute結果が不正です: ${fixture.id}`);
+    assertExactKeys(fixture.results, routeNames, `AOT差分artifact.fixture(${fixture.id}).results`);
+    for (const result of Object.values(fixture.results)) {
+      assertExactKeys(result, ["exitCode", "signal", "stderrClass", "stdoutSha256", "stderrSha256"], `AOT差分artifact.fixture(${fixture.id}).result`);
+      if ((result.exitCode !== null && !Number.isSafeInteger(result.exitCode)) || (result.signal !== null && typeof result.signal !== "string") ||
+          !["success", "runtime-error"].includes(result.stderrClass)) throw new Error(`AOT差分artifactのroute結果が不正です: ${fixture.id}`);
     }
-    if (!Array.isArray(fixture.comparedRoutes) || fixture.comparedRoutes.some((route) => !routeNames.includes(route))) {
-      throw new Error(`AOT差分artifactの比較routeが不正です: ${fixture.id}`);
-    }
-    if (JSON.stringify(Object.keys(fixture.compileStatuses ?? {})) !== JSON.stringify(["O0", "O1", "O2", "O3"])) {
+    assertExactKeys(fixture.compileStatuses, ["O0", "O1", "O2", "O3"], `AOT差分artifact.fixture(${fixture.id}).compileStatuses`);
+    if (Object.values(fixture.compileStatuses).some((status) => status !== null && !Number.isSafeInteger(status))) {
       throw new Error(`AOT差分artifactのcompile statusが不正です: ${fixture.id}`);
     }
     if ((fixture.compileManifest === null) !== (fixture.compileStatuses.O0 !== 0)) {
@@ -483,13 +548,30 @@ function validateArtifact(artifact) {
       if (!hashPattern.test(result.stdoutSha256) || !hashPattern.test(result.stderrSha256)) throw new Error(`AOT差分artifactのroute hashが不正です: ${fixture.id}`);
     }
     if (fixture.compileManifest !== null) {
+      assertExactKeys(fixture.compileManifest, ["complete", "entries"], `AOT差分artifact.fixture(${fixture.id}).compileManifest`);
       if (fixture.compileManifest.complete !== true || !Array.isArray(fixture.compileManifest.entries)) {
         throw new Error(`AOT差分artifactのcompile manifest要約が不正です: ${fixture.id}`);
       }
       for (const entry of fixture.compileManifest.entries) {
-        if (Object.keys(entry).sort().join(",") !== "canonicalOpcode,opcode,route,siteId,sourceName" || !Number.isInteger(entry.opcode) || entry.opcode < 0 || entry.opcode > 0xffff || !/^0x[0-9a-f]{16}$/.test(entry.siteId)) throw new Error(`AOT差分artifactのmanifest要約に余分な情報があります: ${fixture.id}`);
+        assertExactKeys(entry, ["canonicalOpcode", "opcode", "route", "siteId", "sourceName"], `AOT差分artifact.fixture(${fixture.id}).compileManifest.entry`);
+        if ([entry.canonicalOpcode, entry.route, entry.sourceName].some((value) => typeof value !== "string" || value.length === 0) ||
+            !Number.isInteger(entry.opcode) || entry.opcode < 0 || entry.opcode > 0xffff || !/^0x[0-9a-f]{16}$/.test(entry.siteId)) {
+          throw new Error(`AOT差分artifactのmanifest要約に余分な情報があります: ${fixture.id}`);
+        }
       }
     }
+  }
+}
+
+function assertExactKeys(value, expected, label) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || JSON.stringify(Object.keys(value).sort()) !== JSON.stringify([...expected].sort())) {
+    throw new Error(`${label}のkey一覧が不正です`);
+  }
+}
+
+function assertStringArray(value, expected, label, allowed = new Set(expected ?? [])) {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !allowed.has(item)) || new Set(value).size !== value.length || (expected !== null && JSON.stringify(value) !== JSON.stringify(expected))) {
+    throw new Error(`${label}が不正です`);
   }
 }
 

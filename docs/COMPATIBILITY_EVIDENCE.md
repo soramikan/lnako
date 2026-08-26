@@ -1,18 +1,23 @@
 # 命令カタログ証拠レイヤー
 
 `compat/v3.7.24/evidence.json`は、標準cnako 527 entryをカタログID単位で
-既存fixtureへ関連付ける台帳です。実行結果やdispatch接続を証明する資料ではありません。
-全entryの`executionEvidenceState`は現在`unverified`であり、将来の実行traceでのみ更新します。
+既存fixtureへ関連付ける台帳です。通常のfixture関連付けは実行結果やdispatch接続を証明しません。
+現在は、macOS arm64の単一実行環境で、明示fixture `native-cut-commands`についてcompile manifest、Interpreter/AOT trace、公式差分を
+同一fixture・siteで突き合わせられた一意名4 entryが`trace-confirmed-unattested`です。外部attestationを
+まだ導入していないため`verified`は0件で、残り523 entryも`unverified`です。
 
-AOT差分artifactは入力・実行物・結果のSHA-256を内包しますが、artifact自身の署名や外部attestationはまだありません。
-そのため単体のJSONをverified証拠とは扱いません。将来verifiedへ移す前に、CIのcommit・OS別runへ結び付く外部hashまたは
-artifact attestationを導入し、JSON全体の改変を検出できることを必須とします。
+AOT差分artifactとdispatch証拠は入力・実行物・結果のSHA-256を内包しますが、artifact自身の署名や外部attestationはまだありません。
+そのため`trace-confirmed-unattested`は機械検証済みでも、単体のJSONを`verified`証拠とは扱いません。将来verifiedへ移す前に、
+CIのcommit・OS別runへ結び付く外部hashまたはartifact attestationを導入し、JSON全体の改変を検出できることを必須とします。
 
 ## 生成と検証
 
 ```sh
 node tools/sync_compat_evidence.mjs --generate
 node tools/sync_compat_evidence.mjs --check
+# 公式差分を含む最小dispatch証拠を一度だけ生成（絶対パス、既存ファイル不可）。
+# NADESIKO3_ORACLEを指定する場合もmarker・CLI・実行treeの固定SHA-256がlockと一致する必要がある
+node tools/check_dispatch_trace.mjs --evidence-output /absolute/path/dispatch-evidence.json
 ```
 
 生成元は次の固定資料です。
@@ -23,6 +28,17 @@ node tools/sync_compat_evidence.mjs --check
 - `compat/v3.7.24/standard-cnako.json`（標準cnako 527 entry）
 - `compat/v3.7.24/implemented.json`（実装台帳）
 - `tests/oracle/*.json`（fixtureの明示`commands`と実在ID）
+- `compat/v3.7.24/dispatch-evidence.json`（checkerが生成した同一fixture/siteの実行証拠）
+
+`upstream.lock.json`の`nadesiko3.oracleIdentity`にはoracle build 4のCLIとmarkerのSHA-256に加え、marker自身を除く
+実行ツリー全体の決定的tree hashも固定しています。tree hashは相対POSIXパス、entry種別、通常ファイルのサイズと
+内容SHA-256をパス順に結合し、絶対パス・mtime・modeは含めません。symlinkはproduction treeに残っていれば拒否します。production prune後に
+npmが生成する全階層の`.bin`と`.package-lock.json`を明示削除した`node_modules`を含みます。lockには正式3環境
+（darwin-arm64、linux-x64、win32-x64）へ同一値を登録し、未登録のOS/archは安全側に拒否します。各OSでの初回再計算一致が
+完了条件であり、macOS以外をこのローカル実行だけで検証済みとは扱いません。CIキャッシュキーにもrunner archと
+固定archive hashの短縮値を含めます。
+`tools/setup_oracle.mjs`はcache hitでもこれらの固定値を実体と照合し、`compare_native_oracle.mjs`と
+`check_dispatch_trace.mjs`も同じ固定値に一致しないoracleを受理しません。
 
 生成・検証時には、baselineとSHA-256を`upstream.lock.json`へ直接照合し、
 standard各entryをmatrixの同一IDについて`name`、`plugin`、`status`など全共通フィールドで照合します。
@@ -45,6 +61,12 @@ fixtureのソース本文から命令名を推測することはしません。�
 - `aot-only`: AOTだけに明示fixtureがある
 - `none`: 明示fixtureがない
 - `compat-js-only`: compat-js fixtureだけに明示関連付けがある
+
+`executionEvidenceState`は別の状態です。`verified`へ進めるには、dispatch証拠に記録されたcatalog IDが
+一意名として解決でき、明示fixtureの同一siteについてcompile manifest、Interpreterの成功result、
+AOTの成功attempt/result対、公式source・生成JavaScript・lnako run・AOT O0の終了結果が全て一致し、外部attestationが検証できなければなりません。
+attestationがない場合は`trace-confirmed-unattested`に留めます。
+この条件を満たさないentryは、fixtureが存在しても`unverified`のままです。
 
 ## 同名命令
 
@@ -73,8 +95,18 @@ traceのschemaは2です。
 `node tools/check_dispatch_trace.mjs`はtrace有無の実行結果一致、JSONL構造、
 `切取`・`範囲切取`のInterpreter/AOT実dispatchと、同名system命令よりNode routeが優先される
 `ファイル名抽出`・`パス抽出`を固定fixtureで検証します。
-全527 entryのplugin・catalog ID、AOT成功結果、pre/post-opt IR、O0〜O3をまだ接続していないため、
-このスモークテストだけで`executionEvidenceState`を更新してはいけません。
+通常実行は作業ツリーを変更せず、`--evidence-output`を指定した場合だけ公式source・生成JavaScriptとの
+差分を追加確認し、絶対パスへ新規証拠を生成します。`sync_compat_evidence.mjs --check`はその証拠の
+baseline、fixture source hash、catalog identity、site、runtime成否を再検証します。ただし外部attestationは生成しないため、
+結果は`trace-confirmed-unattested`に留まります。未実行のNode route、
+O1〜O3、pre/post-opt IR、同名異plugin entryはverifiedへ昇格しません。
+また、sync検証は`equivalent`フラグを信用せず、4 routeのstdout/stderr SHA-256が公式sourceと一致すること、
+trace eventCountが正でsite数を包含することも確認します。dispatch証拠schema v2のprovenanceには
+OS、Node、公式oracle marker／CLI／archiveのhash、実行前lnako binaryのhash、git commit／dirty、
+一時raw trace／manifestのhashだけを保存し、source本文・ローカルパス・raw本文は保存しません。
+sync検証時はgit取得失敗を拒否し、dirty=falseの証拠だけは記録commitが現行HEADと一致することも確認します。
+dirty=trueの場合は未コミット差分の内容までは証明しないため、
+これは単一環境のunattested証拠であり、3環境の互換性や署名済みverified証拠を意味しません。
 
 ## AOT compile manifest
 
@@ -98,4 +130,5 @@ manifest自体にはcatalog IDやpluginを記録しません。検証器が標�
 命令名が一意な場合だけIDを自動解決します。同名命令はrouteが一致するだけでは
 公式plugin由来を一般には証明できません。現在のスモークでは、InterpreterがNodeをsystemより先に
 探索することを実測した`ファイル名抽出`・`パス抽出`だけNode側IDへ解決し、system側やdatetime別名は
-未解決のまま扱います。
+未解決のまま扱います。verifiedへ使うcatalog IDとsiteの対応は生成済み
+`dispatch-evidence.json`の明示associationだけを受理し、ソース本文から推測しません。

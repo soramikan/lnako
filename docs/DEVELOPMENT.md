@@ -12,6 +12,13 @@ CI定義を変更した場合は `node tools/check_ci_workflow.mjs` で12ジョ�
 
 公式なでしこ3 v3.7.24との字句解析差分テストは次で実行します。初回だけ固定アーカイブを
 SHA-256検証して `.cache/oracle/` に展開し、公式TypeScriptをNode 24でビルドします。
+`compat/upstream.lock.json`にはoracle build 4のCLI／marker SHA-256と、markerを除く実行ツリー全体の
+決定的tree hashも固定され、cache hitと各差分テストで実体を照合します。tree対象はproduction prune後の
+`node_modules`を含み、production prune後にnpmが生成する全階層の`.bin`と`.package-lock.json`を明示削除します。残存metadataは
+tree hash側で拒否します。tscの改行をLFへ固定し、
+package-lockからproduction optional dependencyがないことを構築時に確認することで、正式3環境へ同一値を登録しています。
+各OSでの初回再計算一致が必要で、未登録環境を推測で通しません。tree hashのmacOS実測は現行cacheで約0.6秒
+（13 MiBのproduction tree）でした。markerだけを差し替えた改変CLIや、他ファイルを改変した公式oracleは受理しません。
 
 ```sh
 node tools/setup_oracle.mjs
@@ -85,7 +92,8 @@ canonical opcode・route・固定site IDをfixtureの`compileManifest`へ要約�
 位置情報はartifactへ持ち込みません。artifactの`comparisonSucceeded`と各fixtureの`equivalent`は、全経路の終了コードが0という意味ではなく、
 採用した公式経路と終了状態を含む結果が等価だったことを表します。両方がtrueであることを確認してから比較証拠として扱ってください。
 トップレベルの`status`は比較失敗とインフラ失敗を区別し、インフラ失敗ではfixture結果を空にして成功扱いにしません。
-実際に実行した公式CLIと固定情報markerのSHA-256も保存し、markerがbaselineのタグ・commit・archive hashと一致しなければ実行前に拒否します。
+実際に実行した公式CLIと固定情報markerのSHA-256も保存し、markerがbaselineのタグ・commit・archive hashと一致しない場合や、
+CLI／markerの実体hashが`upstream.lock.json`のoracle identityと一致しない場合は実行前に拒否します。
 
 標準命令を実装して個別の公式差分テストを追加したら `compat/v3.7.24/implemented.json` にテストIDと理由を記録し、
 `node tools/sync_compat.mjs --generate` で分類表と集計を再生成します。固定した公式スナップショット自体を再取得する

@@ -1,12 +1,34 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { link, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const arguments_ = process.argv.slice(2);
-if (arguments_.some((argument) => argument !== "--no-build")) throw new Error("usage: node tools/check_dispatch_trace.mjs [--no-build]");
+let evidenceOutput = null;
+for (let index = 0; index < arguments_.length; index += 1) {
+  const argument = arguments_[index];
+  if (argument === "--no-build") continue;
+  if (argument === "--evidence-output" && evidenceOutput === null) {
+    evidenceOutput = arguments_[index + 1] ?? null;
+    if (evidenceOutput === null || !isAbsolute(evidenceOutput)) throw new Error("--evidence-outputには絶対パスを指定してください");
+    index += 1;
+    continue;
+  }
+  throw new Error("usage: node tools/check_dispatch_trace.mjs [--no-build] [--evidence-output /absolute/path]");
+}
 const noBuild = arguments_.includes("--no-build");
+if (evidenceOutput !== null) {
+  try {
+    await readFile(evidenceOutput);
+    throw new Error(`dispatch証拠の出力先は既に存在します: ${evidenceOutput}`);
+  } catch (error) {
+    if (error?.message?.startsWith("dispatch証拠の出力先は既に存在します")) throw error;
+    if (error?.code !== "ENOENT") throw error;
+  }
+}
 const compiler = resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
 const catalog = JSON.parse(await readFile(resolve(root, "compat/v3.7.24/standard-cnako.json"), "utf8"));
 if (catalog.commandCount !== 527 || catalog.commands.length !== 527) throw new Error("標準cnakoカタログが527 entryではありません");
@@ -105,6 +127,40 @@ try {
   assertTraceSitesContained(interpreterEvents, manifestEntries);
   assertSameStaticSiteSet(interpreterEvents, aotEvents);
 
+  if (evidenceOutput !== null) {
+    const oracle = await readOracleIdentity();
+    const officialSource = run(
+      process.execPath,
+      [oracle.cliPath, source],
+      baseEnvironment,
+      temporary,
+    );
+    assertSuccess("公式cnako3 source", officialSource);
+    const officialGeneratedPath = resolve(temporary, "official-generated.mjs");
+    const officialCompile = run(
+      process.execPath,
+      [oracle.cliPath, "--compile", "--silent", "--output", officialGeneratedPath, source],
+      baseEnvironment,
+      temporary,
+    );
+    assertSuccess("公式cnako3 JavaScript生成", officialCompile);
+    const officialGenerated = run(process.execPath, [officialGeneratedPath], baseEnvironment, temporary);
+    assertSuccess("公式生成JavaScript", officialGenerated);
+    for (const [label, result] of [
+      ["公式生成JavaScript", officialGenerated],
+      ["lnako Interpreter", interpretedWithoutTrace],
+      ["lnako AOT O0", aotWithoutTrace],
+    ]) assertProcessEquivalent(`公式cnako3 source/${label}`, officialSource, result);
+    await writeDispatchEvidence(evidenceOutput, fixture, interpreterEvents, aotEvents, manifestEntries, {
+      officialSource,
+      officialGenerated,
+      interpretedWithoutTrace,
+      aotWithoutTrace,
+      oracle,
+      compiler,
+    });
+  }
+
   const loopCompiled = run(
     compiler,
     ["build", loopSource, "-o", loopNative, "-O0"],
@@ -145,10 +201,12 @@ function assertSuccess(label, result) {
 
 function assertEquivalent(label, withoutTrace, withTrace) {
   assertSuccess(`${label} trace有効実行`, withTrace);
+  assertProcessEquivalent(`${label}のtrace有無`, withoutTrace, withTrace);
+}
+
+function assertProcessEquivalent(label, left, right) {
   for (const field of ["status", "signal", "stdout", "stderr"]) {
-    if (withoutTrace[field] !== withTrace[field]) {
-      throw new Error(`${label}のtrace有無で${field}が変化しました:\n${JSON.stringify({ withoutTrace, withTrace }, null, 2)}`);
-    }
+    if (left[field] !== right[field]) throw new Error(`${label}で${field}が変化しました:\n${JSON.stringify({ left, right }, null, 2)}`);
   }
 }
 
@@ -184,6 +242,7 @@ async function readTrace(path, engine, phase = undefined) {
       throw new Error(`${engine} traceのsiteIdが不正です: ${JSON.stringify(event)}`);
     }
   }
+  Object.defineProperty(dispatchEvents, "rawSha256", { value: sha256(text), enumerable: false });
   return dispatchEvents;
 }
 
@@ -231,6 +290,7 @@ async function readCompileManifest(path, sourcePath) {
       if (Object.hasOwn(entry, forbidden)) throw new Error(`AOT compile manifestに禁止フィールドがあります: ${forbidden}`);
     }
   }
+  Object.defineProperty(entries, "rawSha256", { value: sha256(text), enumerable: false });
   return entries;
 }
 
@@ -338,6 +398,191 @@ function assertCatalogUnresolved(name, route) {
 function assertOnlyCommands(events, allowed) {
   const unexpected = events.filter((event) => !allowed.has(event.command));
   if (unexpected.length > 0) throw new Error(`dispatch traceに予期しない命令があります: ${JSON.stringify(unexpected)}`);
+}
+
+async function writeDispatchEvidence(output, fixture, interpreterEvents, aotEvents, manifestEntries, processes) {
+  if (!Array.isArray(fixture.commands) || fixture.commands.length === 0) throw new Error("dispatch証拠fixtureには明示commandsが必要です");
+  const git = gitState();
+  const attempts = new Map(aotEvents.filter((event) => event.phase === "dispatch-attempt").map((event) => [event.callId, event]));
+  const results = new Map(aotEvents.filter((event) => event.phase === "dispatch-result").map((event) => [event.callId, event]));
+  const sites = [];
+  const commandSiteCounts = new Map();
+  const seenSites = new Set();
+  for (const entry of manifestEntries) {
+    const resolution = resolveCatalogCommand(entry.sourceName, entry.route);
+    if (resolution === null || resolution.command.name !== entry.sourceName) {
+      throw new Error(`dispatch証拠のcatalog IDを一意に解決できません: ${entry.sourceName}/${entry.route}`);
+    }
+    const interpreterSiteEvents = interpreterEvents.filter((event) => event.siteId === entry.siteId);
+    if (interpreterSiteEvents.some((event) => event.command !== entry.sourceName)) {
+      throw new Error(`dispatch証拠のsiteIdに異なるInterpreter命令があります: ${entry.siteId}`);
+    }
+    const interpreterRoutes = new Set(interpreterSiteEvents.map((event) => event.route).filter((route) => typeof route === "string" && route.length > 0));
+    if (interpreterSiteEvents.length > 0 && interpreterRoutes.size !== 1) {
+      throw new Error(`dispatch証拠のInterpreter routeが一意ではありません: ${entry.siteId}`);
+    }
+    const interpreterMatches = interpreterSiteEvents.filter((event) => event.command === entry.sourceName && event.result === "success");
+    const aotMatches = aotEvents
+      .filter((event) => event.phase === "dispatch-attempt" && event.siteId === entry.siteId)
+      .map((attempt) => ({ attempt, result: results.get(attempt.callId) }))
+      .filter(({ result }) => result?.success === true);
+    if (interpreterMatches.length === 0 || aotMatches.length === 0) continue;
+    if (seenSites.has(entry.siteId)) throw new Error(`dispatch証拠のsiteIdが重複しています: ${entry.siteId}`);
+    seenSites.add(entry.siteId);
+    const aotMatch = aotMatches[0];
+    sites.push({
+      catalogId: resolution.command.id,
+      name: resolution.command.name,
+      plugin: resolution.command.plugin,
+      siteId: entry.siteId,
+      sourceName: entry.sourceName,
+      canonicalOpcode: entry.canonicalOpcode,
+      opcode: entry.opcode,
+      route: entry.route,
+      runtime: {
+        interpreter: { result: "success", route: [...interpreterRoutes][0], count: interpreterMatches.length },
+        aot: { success: true, callId: aotMatch.attempt.callId, count: aotMatches.length },
+      },
+      officialEquivalent: true,
+    });
+    commandSiteCounts.set(resolution.command.id, (commandSiteCounts.get(resolution.command.id) ?? 0) + 1);
+  }
+  const expectedCommands = new Set(fixture.commands);
+  for (const name of expectedCommands) {
+    const resolution = resolveCatalogCommand(name, "cut");
+    if (resolution === null || (commandSiteCounts.get(resolution.command.id) ?? 0) === 0) {
+      const candidate = manifestEntries.find((entry) => entry.sourceName === name);
+      const actualResolution = candidate === undefined ? null : resolveCatalogCommand(name, candidate.route);
+      if (actualResolution === null || (commandSiteCounts.get(actualResolution.command.id) ?? 0) === 0) {
+        throw new Error(`dispatch証拠fixtureの${name}に成功した同一siteがありません`);
+      }
+    }
+  }
+  const lock = JSON.parse(await readFile(resolve(root, "compat/upstream.lock.json"), "utf8"));
+  const routeResults = Object.fromEntries(Object.entries({
+    officialSource: processes.officialSource,
+    officialGenerated: processes.officialGenerated,
+    lnakoRun: processes.interpretedWithoutTrace,
+    lnakoNativeO0: processes.aotWithoutTrace,
+  }).map(([route, result]) => [route, {
+    status: result.status,
+    signal: result.signal,
+    stdoutSha256: sha256(result.stdout),
+    stderrSha256: sha256(result.stderr),
+  }]));
+  const evidence = {
+    schema: "lnako.dispatch-evidence.v2",
+    generator: "tools/check_dispatch_trace.mjs",
+    baseline: { tag: lock.nadesiko3.tag, commit: lock.nadesiko3.commit },
+    fixture: {
+      id: fixture.id,
+      file: "native-cases.json",
+      sourceSha256: sha256(fixture.source),
+    },
+    officialComparison: {
+      oracle: "official-source",
+      routes: Object.keys(routeResults),
+      equivalent: true,
+      results: routeResults,
+    },
+    attestation: null,
+    provenance: {
+      environment: {
+        platform: process.platform,
+        arch: process.arch,
+        node: process.version,
+      },
+      oracle: {
+        build: processes.oracle.build,
+        archiveSha256: processes.oracle.archiveSha256,
+        cliSha256: processes.oracle.cliSha256,
+        markerSha256: processes.oracle.markerSha256,
+        treeHashAlgorithm: processes.oracle.treeHashAlgorithm,
+        treeSha256: processes.oracle.treeSha256,
+      },
+      lnako: {
+        binarySha256: sha256(await readFile(processes.compiler)),
+        commit: git.commit,
+        dirty: git.dirty,
+      },
+      raw: {
+        interpreterTraceSha256: interpreterEvents.rawSha256,
+        aotTraceSha256: aotEvents.rawSha256,
+        compileManifestSha256: manifestEntries.rawSha256,
+      },
+    },
+    trace: {
+      interpreter: { schema: 2, eventCount: interpreterEvents.length },
+      aot: { schema: 2, eventCount: aotEvents.length },
+    },
+    sites,
+  };
+  const temporaryPath = join(dirname(output), `.lnako-dispatch-evidence-${process.pid}-${randomUUID()}.tmp`);
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify(evidence, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+    try {
+      await link(temporaryPath, output);
+    } catch (error) {
+      if (error?.code === "EEXIST") throw new Error(`dispatch証拠の出力先は既に存在します: ${output}`);
+      throw new Error("dispatch証拠を原子的に出力できません", { cause: error });
+    }
+  } finally {
+    await rm(temporaryPath, { force: true });
+  }
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function gitState() {
+  const commit = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
+  if (commit.status !== 0) throw new Error("lnakoのcommitを取得できません");
+  const commitHash = commit.stdout.trim();
+  if (!/^[0-9a-f]{40}$/i.test(commitHash)) throw new Error("lnakoのcommit形式が不正です");
+  const status = spawnSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" });
+  if (status.status !== 0) throw new Error("lnakoのdirty状態を取得できません");
+  return { commit: commitHash, dirty: status.stdout.length > 0 };
+}
+
+async function readOracleIdentity() {
+  const directory = resolve(process.env.NADESIKO3_ORACLE ?? resolve(root, ".cache/oracle/nadesiko3-3.7.24"));
+  const baseline = JSON.parse(await readFile(resolve(root, "compat/upstream.lock.json"), "utf8")).nadesiko3;
+  const cliPath = resolve(directory, "src/cnako3.mjs");
+  let markerBytes;
+  let marker;
+  try {
+    markerBytes = await readFile(resolve(directory, ".lnako-oracle.json"));
+    marker = JSON.parse(markerBytes.toString("utf8"));
+  } catch {
+    throw new Error("公式オラクルの固定情報を取得できません");
+  }
+  if (marker.tag !== baseline.tag || marker.commit !== baseline.commit || marker.archiveSha256 !== baseline.archive.sha256) {
+    throw new Error("公式オラクルが固定baselineと一致しません");
+  }
+  if (!Number.isSafeInteger(marker.oracleBuild) || marker.oracleBuild < 1) throw new Error("公式オラクルのbuild番号が不正です");
+  const expected = baseline.oracleIdentity;
+  const actualCliSha256 = sha256(await readFile(cliPath));
+  const actualMarkerSha256 = sha256(markerBytes);
+  const platform = `${process.platform}-${process.arch}`;
+  const expectedTreeSha256 = expected?.treeSha256ByPlatform?.[platform];
+  if (expected?.treeHashAlgorithm !== oracleTreeHashAlgorithm || !/^[0-9a-f]{64}$/.test(expectedTreeSha256 ?? "")) {
+    throw new Error(`公式オラクルのtree hashが未登録です: ${platform}`);
+  }
+  const actualTreeSha256 = await oracleTreeHash(directory);
+  if (expected?.build !== marker.oracleBuild || expected.cliSha256 !== actualCliSha256 || expected.markerSha256 !== actualMarkerSha256 ||
+      marker.treeSha256 !== actualTreeSha256 || marker.treeSha256 !== expectedTreeSha256) {
+    throw new Error("公式オラクルの固定buildまたはCLI／marker SHA-256が一致しません");
+  }
+  return {
+    cliPath,
+    build: marker.oracleBuild,
+    archiveSha256: baseline.archive.sha256,
+    cliSha256: actualCliSha256,
+    markerSha256: actualMarkerSha256,
+    treeHashAlgorithm: oracleTreeHashAlgorithm,
+    treeSha256: actualTreeSha256,
+  };
 }
 
 async function assertExistingTracePreserved(label, command, arguments_, expected, path, environment, cwd) {

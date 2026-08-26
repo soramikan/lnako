@@ -12,6 +12,17 @@
       "url": "https://raw.githubusercontent.com/kujirahand/nadesiko3/3.7.24/doc/command_list.json",
       "sha256": "0eff352616d925e74caae069baf4d718b8cca1b6fc28ebb28fb12f21b485c732"
     },
+    "oracleIdentity": {
+      "build": 4,
+      "cliSha256": "65e32f1d7de0b2da18edf3f4c49565c37d31aa474d31ee08426f2f6a0c0d6c81",
+      "markerSha256": "e9444955298c3bb22164a219c0f342ee32301e901ec967d648cae9a25d8bf531",
+      "treeHashAlgorithm": "sha256-json-records-v3",
+      "treeSha256ByPlatform": {
+        "darwin-arm64": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64",
+        "linux-x64": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64",
+        "win32-x64": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
+      }
+    },
     "license": {
       "url": "https://raw.githubusercontent.com/kujirahand/nadesiko3/3.7.24/LICENSE",
       "sha256": "bb972b990b63ee903524b7bdc0a53925addee16eeedd625bc7967e3a488b0021"

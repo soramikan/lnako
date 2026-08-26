@@ -4,6 +4,19 @@ import { resolve } from "node:path";
 const root = resolve(import.meta.dirname, "..");
 const workflow = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
 const setupOracle = await readFile(resolve(root, "tools/setup_oracle.mjs"), "utf8");
+const upstreamLock = JSON.parse(await readFile(resolve(root, "compat/upstream.lock.json"), "utf8"));
+const oracleIdentity = upstreamLock.nadesiko3?.oracleIdentity;
+const oracleArchiveSha256 = upstreamLock.nadesiko3?.archive?.sha256;
+const treeHashes = oracleIdentity?.treeSha256ByPlatform;
+const requiredTreePlatforms = ["darwin-arm64", "linux-x64", "win32-x64"];
+if (!Number.isSafeInteger(oracleIdentity?.build) || oracleIdentity.treeHashAlgorithm !== "sha256-json-records-v3" ||
+    !/^[0-9a-f]{64}$/.test(oracleIdentity?.cliSha256 ?? "") || !/^[0-9a-f]{64}$/.test(oracleIdentity?.markerSha256 ?? "") ||
+    !/^[0-9a-f]{64}$/.test(oracleArchiveSha256 ?? "") ||
+    treeHashes === null || typeof treeHashes !== "object" || Array.isArray(treeHashes) || Object.keys(treeHashes).length === 0 ||
+    JSON.stringify(Object.keys(treeHashes).sort()) !== JSON.stringify(requiredTreePlatforms) ||
+    Object.entries(treeHashes).some(([platform, hash]) => !/^(darwin|linux|win32)-(arm64|x64)$/.test(platform) || !/^[0-9a-f]{64}$/.test(hash))) {
+  throw new Error("upstream.lock.jsonの公式オラクルidentityが不正です");
+}
 
 const platforms = new Map([
   ["Linux x86_64", "ubuntu-24.04"],
@@ -129,7 +142,11 @@ const cacheActions = [...workflow.matchAll(/^      - uses: actions\/cache@v6$/gm
 if (cacheActions.length !== 2) throw new Error(`actions/cache@v6は2ステップ必要です: actual=${cacheActions.length}`);
 const oracleBuild = setupOracle.match(/^const oracleBuild = (\d+);$/m)?.[1];
 if (oracleBuild === undefined) throw new Error("setup_oracle.mjsのoracleBuildを取得できません");
-const oracleCacheKey = `key: nadesiko3-oracle-3.7.24-\${{ runner.os }}-v${oracleBuild}`;
+if (Number(oracleBuild) !== oracleIdentity.build || !setupOracle.includes("oracleIdentity.cliSha256") || !setupOracle.includes("oracleIdentity.markerSha256") ||
+    !setupOracle.includes("oracleTreeHash") || !setupOracle.includes("oracleTreeHashAlgorithm")) {
+  throw new Error("公式オラクルのbuild／CLI／marker固定hash検証がsetup_oracle.mjsにありません");
+}
+const oracleCacheKey = `key: nadesiko3-oracle-3.7.24-\${{ runner.os }}-\${{ runner.arch }}-a${oracleArchiveSha256.slice(0, 12)}-v${oracleBuild}`;
 if (!workflow.includes(oracleCacheKey)) throw new Error(`公式オラクルのキャッシュキーがoracleBuildと一致しません: ${oracleCacheKey}`);
 
 console.log(`CI構成検査: ${actualMatrix.size}ジョブ・${stepSuites.size}条件付き検証ステップ成功`);

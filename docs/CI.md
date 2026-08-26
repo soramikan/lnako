@@ -113,6 +113,9 @@ Windows x86_64 MSVCの各`core`・`standard`・`host`・`aot`を省略してお�
 警告が出ました。製品テストの失敗ではありませんが、次のように扱います。
 
 - `actions/cache`はNode 24を使う公式v6へ更新し、同じcache keyとハッシュ検証を維持します。
+- 公式oracle cache keyは`runner.os`・`runner.arch`・固定archive SHA-256の先頭12桁・oracle buildを含めます。実行ツリー
+  （production prune後、npm生成metadataを明示削除した`node_modules`を含む）の決定的hashをmarker以外全て再計算します。
+  lockへ3正式環境の同一値を登録していますが、各runnerでの再計算一致が必要で、未登録のOS/archはsetup時に拒否します。
 - `mlugg/setup-zig`は2026-08-25時点の最新v2.2.1も`node20`指定です。runner上ではNode 24で正常完了しているため
   `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION`でNode 20へ戻さず、上流の更新を待ちます。
 - 警告と検証失敗を混同せず、setup失敗またはキャッシュ破損は従来どおりジョブ失敗として扱います。
@@ -123,7 +126,7 @@ Windows x86_64 MSVCの各`core`・`standard`・`host`・`aot`を省略してお�
 固定オラクルを再構築した後、stagingディレクトリを完成先へ移す`rename`で一時的な`EPERM`になりました。
 SHA-256検証、`npm ci`、TypeScriptビルドは完了しており、ソース差分テストへ到達する前のWindowsファイルロックです。
 復元したキャッシュキーの版が`v1`、`tools/setup_oracle.mjs`の内容版が`oracleBuild = 2`だったため、古いキャッシュを
-毎run再構築していたことも誘因でした。キーを`v2`へ更新し、`tools/check_ci_workflow.mjs`で両方の版を照合します。
+毎run再構築していたことも誘因でした。当時のキーを`v2`へ更新し、`tools/check_ci_workflow.mjs`で両方の版を照合しました。
 
 `tools/setup_oracle.mjs`は、Windowsで`EACCES` / `EBUSY` / `EPERM`になった置換だけを、最大4秒の待機を含む
 7回まで再試行します。ハッシュ検証やビルドを省略せず、別種のエラーは直ちに失敗させます。stagingから完成先への
