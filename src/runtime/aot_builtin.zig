@@ -43,6 +43,13 @@ pub const Command = enum(u16) {
     range,
     empty_array,
     empty_dictionary,
+    dictionary_keys,
+    dictionary_remove,
+    dictionary_has,
+    hash_keys,
+    hash_values,
+    hash_remove,
+    hash_has,
     truth_label,
     repeat_multiply,
     unicode_length,
@@ -185,6 +192,13 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "範囲")) return .range;
     if (std.mem.eql(u8, name, "空配列")) return .empty_array;
     if (std.mem.eql(u8, name, "空辞書") or std.mem.eql(u8, name, "空ハッシュ") or std.mem.eql(u8, name, "空オブジェクト")) return .empty_dictionary;
+    if (std.mem.eql(u8, name, "辞書キー列挙")) return .dictionary_keys;
+    if (std.mem.eql(u8, name, "辞書キー削除")) return .dictionary_remove;
+    if (std.mem.eql(u8, name, "辞書キー存在")) return .dictionary_has;
+    if (std.mem.eql(u8, name, "ハッシュキー列挙")) return .hash_keys;
+    if (std.mem.eql(u8, name, "ハッシュ内容列挙")) return .hash_values;
+    if (std.mem.eql(u8, name, "ハッシュキー削除")) return .hash_remove;
+    if (std.mem.eql(u8, name, "ハッシュキー存在")) return .hash_has;
     if (std.mem.eql(u8, name, "真偽判定")) return .truth_label;
     if (std.mem.eql(u8, name, "掛")) return .repeat_multiply;
     if (std.mem.eql(u8, name, "文字数")) return .unicode_length;
@@ -349,6 +363,13 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.empty_dictionary, lookup("空辞書").?);
     try std.testing.expectEqual(Command.empty_dictionary, lookup("空ハッシュ").?);
     try std.testing.expectEqual(Command.empty_dictionary, lookup("空オブジェクト").?);
+    try std.testing.expectEqual(Command.dictionary_keys, lookup("辞書キー列挙").?);
+    try std.testing.expectEqual(Command.dictionary_remove, lookup("辞書キー削除").?);
+    try std.testing.expectEqual(Command.dictionary_has, lookup("辞書キー存在").?);
+    try std.testing.expectEqual(Command.hash_keys, lookup("ハッシュキー列挙").?);
+    try std.testing.expectEqual(Command.hash_values, lookup("ハッシュ内容列挙").?);
+    try std.testing.expectEqual(Command.hash_remove, lookup("ハッシュキー削除").?);
+    try std.testing.expectEqual(Command.hash_has, lookup("ハッシュキー存在").?);
     try std.testing.expectEqual(Command.truth_label, lookup("真偽判定").?);
     try std.testing.expectEqual(Command.repeat_multiply, lookup("掛").?);
     try std.testing.expectEqual(Command.unicode_length, lookup("文字数").?);

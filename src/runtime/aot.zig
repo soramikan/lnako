@@ -160,14 +160,22 @@ const Runtime = struct {
     }
 
     fn createDictionary(self: *Runtime, values: []const Value) !Value {
+        var source_frame = RootFrame{};
+        self.pushRoots(&source_frame, if (values.len == 0) null else @constCast(values.ptr), values.len);
+        defer self.popRoots(&source_frame);
         try self.beforeAllocation();
-        var entries: std.ArrayList(DictionaryEntry) = .empty;
-        errdefer entries.deinit(self.allocator);
+        var roots = [_]Value{ try self.createObject(.{ .dictionary = .empty }, .dictionary), .{}, .{} };
+        var result_frame = RootFrame{};
+        self.pushRoots(&result_frame, &roots, roots.len);
+        defer self.popRoots(&result_frame);
         var index: usize = 0;
         while (index + 1 < values.len) : (index += 2) {
-            try self.setDictionary(&entries, values[index], values[index + 1]);
+            roots[1] = values[index];
+            roots[2] = values[index + 1];
+            roots[1] = try self.propertyKey(roots[1]);
+            try self.setDictionary(&roots[0].object().?.payload.dictionary, roots[1], roots[2]);
         }
-        return self.createObject(.{ .dictionary = entries }, .dictionary);
+        return roots[0];
     }
 
     fn createIterator(self: *Runtime, values: []const Value, is_range: bool, direction: u8) !Value {
@@ -383,7 +391,13 @@ const Runtime = struct {
                 }
                 items.items[index] = value;
             },
-            .dictionary => |*entries| try self.setDictionary(entries, key, value),
+            .dictionary => |*entries| {
+                var rooted = [_]Value{ container, key, value };
+                var frame = RootFrame{};
+                self.pushRoots(&frame, &rooted, rooted.len);
+                defer self.popRoots(&frame);
+                try self.setDictionary(entries, try self.propertyKey(rooted[1]), rooted[2]);
+            },
             .utf16_string, .bigint, .function, .iterator, .binding_cell => {},
         }
     }
@@ -454,6 +468,17 @@ const Runtime = struct {
             return;
         };
         try entries.append(self.allocator, .{ .key = key, .value = value });
+    }
+
+    fn propertyKey(self: *Runtime, key: Value) !Value {
+        return switch (@as(Tag, @enumFromInt(key.tag))) {
+            .static_utf8_string, .utf16_string => key,
+            else => blk: {
+                const units = try valueUtf16Alloc(self, key);
+                defer self.allocator.free(units);
+                break :blk try self.createString(units);
+            },
+        };
     }
 };
 
@@ -2025,6 +2050,16 @@ fn repeatCount(number: f64) !usize {
 }
 
 fn sameKey(left: Value, right: Value) bool {
+    const left_tag: Tag = @enumFromInt(left.tag);
+    const right_tag: Tag = @enumFromInt(right.tag);
+    if ((left_tag == .static_utf8_string or left_tag == .utf16_string) and
+        (right_tag == .static_utf8_string or right_tag == .utf16_string))
+    {
+        if (left_tag == .static_utf8_string and right_tag == .static_utf8_string) return std.mem.eql(u8, staticUtf8(left), staticUtf8(right));
+        if (left_tag == .static_utf8_string) return staticUtf8EqualsUtf16(staticUtf8(left), right.object().?.payload.utf16_string);
+        if (right_tag == .static_utf8_string) return staticUtf8EqualsUtf16(staticUtf8(right), left.object().?.payload.utf16_string);
+        return std.mem.eql(u16, left.object().?.payload.utf16_string, right.object().?.payload.utf16_string);
+    }
     if (left.tag != right.tag) return false;
     return switch (@as(Tag, @enumFromInt(left.tag))) {
         .undefined, .null_value => true,
@@ -2035,6 +2070,28 @@ fn sameKey(left: Value, right: Value) bool {
         .array, .dictionary, .iterator, .function => left.payload == right.payload,
         .binding_cell => unreachable,
     };
+}
+
+fn staticUtf8EqualsUtf16(text: []const u8, units: []const u16) bool {
+    var text_index: usize = 0;
+    var unit_index: usize = 0;
+    while (text_index < text.len) {
+        const length = std.unicode.utf8ByteSequenceLength(text[text_index]) catch return false;
+        if (text_index + length > text.len) return false;
+        const codepoint = std.unicode.utf8Decode(text[text_index .. text_index + length]) catch return false;
+        text_index += length;
+        if (codepoint <= 0xffff) {
+            if (unit_index >= units.len or units[unit_index] != @as(u16, @intCast(codepoint))) return false;
+            unit_index += 1;
+        } else {
+            if (unit_index + 1 >= units.len) return false;
+            const offset = codepoint - 0x10000;
+            if (units[unit_index] != @as(u16, @intCast(0xd800 + (offset >> 10))) or
+                units[unit_index + 1] != @as(u16, @intCast(0xdc00 + (offset & 0x3ff)))) return false;
+            unit_index += 2;
+        }
+    }
+    return unit_index == units.len;
 }
 
 fn staticUtf8(value: Value) []const u8 {
@@ -2685,6 +2742,47 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
                 runtime.setFailure(failure);
                 return;
             };
+        },
+        .dictionary_keys, .hash_keys => {
+            if (len < 1) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            out.* = dictionaryKeysBuiltin(runtime, value) catch |failure| {
+                if (!runtime.has_pending_exception) runtime.setFailure(failure);
+                return;
+            };
+        },
+        .hash_values => {
+            if (len < 1) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            out.* = dictionaryValuesBuiltin(runtime, value) catch |failure| {
+                if (!runtime.has_pending_exception) runtime.setFailure(failure);
+                return;
+            };
+        },
+        .dictionary_remove, .hash_remove => {
+            if (len < 2) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            out.* = dictionaryRemoveBuiltin(runtime, arguments.?[0], arguments.?[1]) catch |failure| {
+                if (!runtime.has_pending_exception) runtime.setFailure(failure);
+                return;
+            };
+        },
+        .dictionary_has, .hash_has => {
+            if (len < 2) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            const found = dictionaryHasBuiltin(runtime, arguments.?[0], arguments.?[1]) catch |failure| {
+                if (!runtime.has_pending_exception) runtime.setFailure(failure);
+                return;
+            };
+            out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(found) };
         },
         .truth_label => {
             out.* = runtime.createString(if (valueTruthy(value)) &.{0x771f} else &.{0x507d}) catch |failure| {
@@ -3833,6 +3931,199 @@ fn dictionaryProperty(value: Value, key: []const u16) Value {
         if (matches) return entry.value;
     }
     return .{};
+}
+
+fn aotCanonicalArrayIndex(value: Value) ?usize {
+    switch (@as(Tag, @enumFromInt(value.tag))) {
+        .number => {
+            const number: f64 = @bitCast(value.payload);
+            if (!std.math.isFinite(number) or number < 0 or number > 4_294_967_294 or @trunc(number) != number) return null;
+            const index: usize = @intFromFloat(number);
+            return if (index <= 4_294_967_294) index else null;
+        },
+        .bigint => {
+            const integer = value.object().?.payload.bigint.toI64() catch return null;
+            if (integer < 0) return null;
+            const index = std.math.cast(usize, integer) orelse return null;
+            return if (index <= 4_294_967_294) index else null;
+        },
+        else => {},
+    }
+    const units: []const u16 = switch (@as(Tag, @enumFromInt(value.tag))) {
+        .static_utf8_string => {
+            const text = staticUtf8(value);
+            if (text.len == 0 or (text.len > 1 and text[0] == '0')) return null;
+            var number: usize = 0;
+            for (text) |unit| {
+                if (unit < '0' or unit > '9') return null;
+                number = std.math.mul(usize, number, 10) catch return null;
+                number = std.math.add(usize, number, unit - '0') catch return null;
+            }
+            return if (number <= 4_294_967_294) number else null;
+        },
+        .utf16_string => value.object().?.payload.utf16_string,
+        else => return null,
+    };
+    if (units.len == 0 or (units.len > 1 and units[0] == '0')) return null;
+    var number: usize = 0;
+    for (units) |unit| {
+        if (unit < '0' or unit > '9') return null;
+        number = std.math.mul(usize, number, 10) catch return null;
+        number = std.math.add(usize, number, unit - '0') catch return null;
+    }
+    return if (number <= 4_294_967_294) number else null;
+}
+
+fn aotDictionaryOrder(runtime: *Runtime, entries: []const DictionaryEntry) ![]usize {
+    const order = try runtime.allocator.alloc(usize, entries.len);
+    for (order, 0..) |*entry, index| entry.* = index;
+    std.sort.pdq(usize, order, entries, aotDictionaryOrderBefore);
+    return order;
+}
+
+fn aotDictionaryOrderBefore(entries: []const DictionaryEntry, left_index: usize, right_index: usize) bool {
+    const left = aotCanonicalArrayIndex(entries[left_index].key);
+    const right = aotCanonicalArrayIndex(entries[right_index].key);
+    return if (left) |left_number| if (right) |right_number| left_number < right_number else true else if (right != null) false else left_index < right_index;
+}
+
+fn aotPropertyKeyEqual(runtime: *Runtime, key: Value, units: []const u16) !bool {
+    const key_units = try valueUtf16Alloc(runtime, key);
+    defer runtime.allocator.free(key_units);
+    return std.mem.eql(u16, key_units, units);
+}
+
+fn dictionaryKeysBuiltin(runtime: *Runtime, source: Value) !Value {
+    var roots = [_]Value{ source, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[1] = try runtime.createArray(&.{});
+    const result = &roots[1].object().?.payload.array;
+    switch (@as(Tag, @enumFromInt(roots[0].tag))) {
+        .dictionary => {
+            const entries = roots[0].object().?.payload.dictionary.items;
+            const order = try aotDictionaryOrder(runtime, entries);
+            defer runtime.allocator.free(order);
+            for (order) |index| {
+                const units = try valueUtf16Alloc(runtime, entries[index].key);
+                defer runtime.allocator.free(units);
+                const key = try runtime.createString(units);
+                try result.append(runtime.allocator, key);
+            }
+        },
+        .array => {
+            const items = roots[0].object().?.payload.array.items;
+            for (items, 0..) |_, index| {
+                var text: [32]u8 = undefined;
+                const encoded = std.fmt.bufPrint(&text, "{d}", .{index}) catch return error.ArrayTooLarge;
+                var units: [32]u16 = undefined;
+                const unit_len = std.unicode.utf8ToUtf16Le(&units, encoded) catch return error.ArrayTooLarge;
+                const key = try runtime.createString(units[0..unit_len]);
+                try result.append(runtime.allocator, key);
+            }
+        },
+        .function => {},
+        else => return error.DictionaryKeysReceiver,
+    }
+    return roots[1];
+}
+
+fn dictionaryValuesBuiltin(runtime: *Runtime, source: Value) !Value {
+    var roots = [_]Value{ source, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[1] = try runtime.createArray(&.{});
+    const result = &roots[1].object().?.payload.array;
+    switch (@as(Tag, @enumFromInt(roots[0].tag))) {
+        .dictionary => {
+            const entries = roots[0].object().?.payload.dictionary.items;
+            const order = try aotDictionaryOrder(runtime, entries);
+            defer runtime.allocator.free(order);
+            for (order) |index| try result.append(runtime.allocator, entries[index].value);
+        },
+        .array => {
+            const items = roots[0].object().?.payload.array.items;
+            try result.appendSlice(runtime.allocator, items);
+        },
+        .function => {},
+        else => return error.DictionaryValuesReceiver,
+    }
+    return roots[1];
+}
+
+fn dictionaryRemoveBuiltin(runtime: *Runtime, source: Value, key: Value) !Value {
+    var roots = [_]Value{ source, key };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    switch (@as(Tag, @enumFromInt(roots[0].tag))) {
+        .dictionary => {
+            const entries = &roots[0].object().?.payload.dictionary;
+            const key_units = try valueUtf16Alloc(runtime, roots[1]);
+            defer runtime.allocator.free(key_units);
+            for (entries.items, 0..) |entry, index| if (try aotPropertyKeyEqual(runtime, entry.key, key_units)) {
+                _ = entries.orderedRemove(index);
+                break;
+            };
+            return roots[0];
+        },
+        .array => {
+            const key_units = try valueUtf16Alloc(runtime, roots[1]);
+            defer runtime.allocator.free(key_units);
+            if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return error.ArrayLengthDelete;
+            if (aotCanonicalArrayIndex(roots[1])) |index| {
+                const items = &roots[0].object().?.payload.array;
+                if (index < items.items.len) items.items[index] = .{};
+            }
+            return roots[0];
+        },
+        .function => return roots[0],
+        else => return error.DictionaryRemoveReceiver,
+    }
+}
+
+fn dictionaryHasBuiltin(runtime: *Runtime, source: Value, key: Value) !bool {
+    var roots = [_]Value{ source, key };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    switch (@as(Tag, @enumFromInt(roots[0].tag))) {
+        .dictionary => {
+            const key_units = try valueUtf16Alloc(runtime, roots[1]);
+            defer runtime.allocator.free(key_units);
+            for (roots[0].object().?.payload.dictionary.items) |entry| if (try aotPropertyKeyEqual(runtime, entry.key, key_units)) return true;
+            return false;
+        },
+        .array => {
+            const key_units = try valueUtf16Alloc(runtime, roots[1]);
+            defer runtime.allocator.free(key_units);
+            if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return true;
+            const index = aotCanonicalArrayIndex(roots[1]) orelse return false;
+            const items = roots[0].object().?.payload.array.items;
+            return index < items.len;
+        },
+        .function => {
+            const key_units = try valueUtf16Alloc(runtime, roots[1]);
+            defer runtime.allocator.free(key_units);
+            return std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) or std.mem.eql(u16, key_units, &.{ 'n', 'a', 'm', 'e' });
+        },
+        else => {
+            const key_units = try valueUtf16Alloc(runtime, roots[1]);
+            defer runtime.allocator.free(key_units);
+            const receiver_units = try valueUtf16Alloc(runtime, roots[0]);
+            defer runtime.allocator.free(receiver_units);
+            const key_utf8 = try utf16FailureMessageUtf8Alloc(runtime.allocator, key_units);
+            defer runtime.allocator.free(key_utf8);
+            const receiver_utf8 = try utf16FailureMessageUtf8Alloc(runtime.allocator, receiver_units);
+            defer runtime.allocator.free(receiver_utf8);
+            const message = try std.fmt.allocPrint(runtime.allocator, "Cannot use 'in' operator to search for '{s}' in {s}", .{ key_utf8, receiver_utf8 });
+            defer runtime.allocator.free(message);
+            runtime.setFailureText(message);
+            return error.DictionaryHasReceiver;
+        },
+    }
 }
 
 fn stringValuesEqual(runtime: *Runtime, left: Value, right: Value) !bool {
@@ -7673,6 +7964,92 @@ test "AOT JSONエンコードはcompact prettyとECMAScript境界を保つ" {
     // produced by the serializer remain in its temporary root frame.
     runtime.next_collection = runtime.object_count;
     try expectJsonAotString(&runtime, roots[15], false, expected_gc.written());
+}
+
+test "AOT辞書・配列のキー命令は順序とBigIntキーを保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{
+        try runtime.createDictionary(&.{
+            staticStringValue("b"), numberValue(1),
+            staticStringValue("2"), numberValue(2),
+            staticStringValue("1"), numberValue(3),
+        }),
+        try runtime.createArray(&.{ numberValue(10), numberValue(20) }),
+        try runtime.createBigInt("1n"),
+        .{},
+        .{},
+    };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[3] = try dictionaryKeysBuiltin(&runtime, roots[0]);
+    try std.testing.expectEqual(@as(usize, 3), roots[3].object().?.payload.array.items.len);
+    const dictionary_keys = roots[3].object().?.payload.array.items;
+    try std.testing.expectEqualSlices(u16, &.{'1'}, dictionary_keys[0].object().?.payload.utf16_string);
+    try std.testing.expectEqualSlices(u16, &.{'2'}, dictionary_keys[1].object().?.payload.utf16_string);
+    try std.testing.expectEqualSlices(u16, &.{'b'}, dictionary_keys[2].object().?.payload.utf16_string);
+    roots[4] = try dictionaryKeysBuiltin(&runtime, roots[1]);
+    try std.testing.expectEqualSlices(u16, &.{'0'}, roots[4].object().?.payload.array.items[0].object().?.payload.utf16_string);
+    try std.testing.expectEqualSlices(u16, &.{'1'}, roots[4].object().?.payload.array.items[1].object().?.payload.utf16_string);
+    try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[1], roots[2]));
+    try std.testing.expectError(error.ArrayLengthDelete, dictionaryRemoveBuiltin(&runtime, roots[1], staticStringValue("length")));
+    try runtime.indexSet(roots[0], roots[2], numberValue(9));
+    roots[3] = try dictionaryKeysBuiltin(&runtime, roots[0]);
+    try std.testing.expectEqual(@as(usize, 3), roots[3].object().?.payload.array.items.len);
+}
+
+fn aotDictionaryPropertyKeyAllocationTest(allocator: std.mem.Allocator) !void {
+    var runtime = Runtime{ .allocator = allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ try runtime.createBigInt("1n"), .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    runtime.next_collection = runtime.object_count;
+    roots[1] = try runtime.createDictionary(&.{ roots[0], numberValue(1), staticStringValue("1"), numberValue(2), numberValue(2), numberValue(3), staticStringValue("2"), numberValue(4) });
+    const entries = roots[1].object().?.payload.dictionary.items;
+    try std.testing.expectEqual(@as(usize, 2), entries.len);
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(entries[0].value));
+    try std.testing.expectEqual(@as(f64, 4), valueToNumber(entries[1].value));
+    roots[2] = try dictionaryKeysBuiltin(&runtime, roots[1]);
+    try std.testing.expectEqualSlices(u16, &.{'1'}, roots[2].object().?.payload.array.items[0].object().?.payload.utf16_string);
+    try std.testing.expectEqualSlices(u16, &.{'2'}, roots[2].object().?.payload.array.items[1].object().?.payload.utf16_string);
+}
+
+test "AOT辞書リテラルは非文字列キーをproperty keyへ正規化する" {
+    try aotDictionaryPropertyKeyAllocationTest(std.testing.allocator);
+}
+
+fn aotDictionaryBigIntPropertyKeyAllocationTest(allocator: std.mem.Allocator) !void {
+    var runtime = Runtime{ .allocator = allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 3;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[0] = try runtime.createBigInt("1n");
+    roots[1] = try runtime.createBigInt("2n");
+    runtime.next_collection = runtime.object_count;
+    roots[2] = try runtime.createDictionary(&.{ roots[0], numberValue(1), staticStringValue("1"), numberValue(2), roots[1], numberValue(3), staticStringValue("2"), numberValue(4) });
+    const entries = roots[2].object().?.payload.dictionary.items;
+    try std.testing.expectEqual(@as(usize, 2), entries.len);
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(entries[0].value));
+    try std.testing.expectEqual(@as(f64, 4), valueToNumber(entries[1].value));
+}
+
+test "AOT辞書リテラルのproperty key正規化は割当失敗を安全に処理する" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, aotDictionaryBigIntPropertyKeyAllocationTest, .{});
+}
+
+test "AOT辞書キー存在の型エラーは動的な公式文言を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const invalid_key = try runtime.createString(&.{ 'x', 0xd800 });
+    try std.testing.expectError(error.DictionaryHasReceiver, dictionaryHasBuiltin(&runtime, .{ .tag = @intFromEnum(Tag.null_value) }, invalid_key));
+    const message = try pendingExceptionMessageUtf8Alloc(&runtime);
+    defer runtime.allocator.free(message);
+    try std.testing.expectEqualStrings("Cannot use 'in' operator to search for 'x�' in null", message);
 }
 
 fn numberValue(number: f64) Value {

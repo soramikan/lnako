@@ -34,6 +34,11 @@ pub fn forFailure(failure: anyerror) []const u8 {
         error.InvalidJsonCloneValue => "Unexpected token 'u', \"undefined\" is not valid JSON",
         error.InvalidStringRange => "『参照』で文字列型の範囲指定が不正です。",
         error.ArrayCutNullIndex => "Cannot read properties of null (reading '先頭')",
+        error.ArrayLengthDelete => "Cannot delete property 'length' of [object Array]",
+        error.DictionaryKeysReceiver => "『辞書キー列挙』でハッシュ以外が与えられました。",
+        error.DictionaryValuesReceiver => "『ハッシュ内容列挙』でハッシュ以外が与えられました。",
+        error.DictionaryRemoveReceiver => "『辞書キー削除』でハッシュ以外が与えられました。",
+        error.DictionaryHasReceiver => "Cannot use 'in' operator to search for a property",
         error.CannotConvertNullToBigInt => "Cannot convert null to a BigInt",
         error.CannotConvertUndefinedToBigInt => "Cannot convert undefined to a BigInt",
         error.RawArrayNullNotIterable => "object null is not iterable (cannot read property Symbol(Symbol.iterator))",
@@ -63,6 +68,10 @@ test "BigInt実行時エラーを公式JavaScriptの文言へ変換する" {
     try std.testing.expectEqualStrings("s.startsWith is not a function", forFailure(error.StartsWithReceiverExpected));
     try std.testing.expectEqualStrings("Cannot read properties of null (reading 'endsWith')", forFailure(error.EndsWithNullReceiver));
     try std.testing.expectEqualStrings("Cannot read properties of null (reading 'length')", forFailure(error.KatakanaFullWidthLengthNull));
+    try std.testing.expectEqualStrings("Cannot delete property 'length' of [object Array]", forFailure(error.ArrayLengthDelete));
+    try std.testing.expectEqualStrings("『辞書キー列挙』でハッシュ以外が与えられました。", forFailure(error.DictionaryKeysReceiver));
+    try std.testing.expectEqualStrings("『ハッシュ内容列挙』でハッシュ以外が与えられました。", forFailure(error.DictionaryValuesReceiver));
+    try std.testing.expectEqualStrings("『辞書キー削除』でハッシュ以外が与えられました。", forFailure(error.DictionaryRemoveReceiver));
     try std.testing.expectEqualStrings("Cannot read properties of undefined (reading 'length')", forFailure(error.KatakanaFullWidthLengthUndefined));
     try std.testing.expectEqualStrings("s.substring is not a function", forFailure(error.KatakanaFullWidthSubstringReceiver));
     try std.testing.expectEqualStrings("Cannot read properties of null (reading 'split')", forFailure(error.KatakanaHalfWidthSplitNull));

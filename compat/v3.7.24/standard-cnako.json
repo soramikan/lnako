@@ -7926,14 +7926,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-dictionary-hash"
+        "plugin-system-dictionary-hash",
+        "native-system-dictionary-hash-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "挿入順を保持して実装し、公式差分テストに成功"
+      "reason": "ECMAScriptのproperty key順と配列・関数境界をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0301",
@@ -7952,14 +7953,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-dictionary-hash"
+        "plugin-system-dictionary-hash",
+        "native-system-dictionary-hash-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
+      "reason": "property key正規化と配列length削除エラーをInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0302",
@@ -7978,14 +7980,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-dictionary-hash"
+        "plugin-system-dictionary-hash",
+        "native-system-dictionary-hash-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
+      "reason": "辞書・配列・関数の存在判定と動的エラー文言をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0303",
@@ -8004,14 +8007,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-dictionary-hash"
+        "plugin-system-dictionary-hash",
+        "native-system-dictionary-hash-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "挿入順を保持して実装し、公式差分テストに成功"
+      "reason": "ECMAScriptのproperty key順と配列・関数境界をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0304",
@@ -8030,14 +8034,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-dictionary-hash"
+        "plugin-system-dictionary-hash",
+        "native-system-dictionary-hash-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "挿入順を保持して実装し、公式差分テストに成功"
+      "reason": "辞書のproperty key順と配列・関数の内容列挙をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0305",
@@ -8056,14 +8061,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-dictionary-hash"
+        "plugin-system-dictionary-hash",
+        "native-system-dictionary-hash-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
+      "reason": "property key正規化と配列length削除エラーをInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0306",
@@ -8082,14 +8088,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-dictionary-hash"
+        "plugin-system-dictionary-hash",
+        "native-system-dictionary-hash-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
+      "reason": "辞書・配列・関数の存在判定と動的エラー文言をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0307",
