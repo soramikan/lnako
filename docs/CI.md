@@ -229,3 +229,17 @@ QuickJSの固定版・SHA-256検証、Node、Zigのsetupは省略しない。Zig
 失敗時は、`aot`失敗なら通常AOT差分・LLVMリンク・通常smoke、`compat-aot`失敗ならQuickJS Debug/ReleaseSafe buildまたは
 compat smokeに絞って診断できる。片方のsuiteが成功しても他方の検証を成功扱いにはしない。`check_ci_workflow.mjs`のmatrix・
 条件・smoke検査を先に通過させるため、suite条件の書き間違いで検証を静かに省略することも防ぐ。
+
+分離後の初回[run 32934552628](https://github.com/soramikan/lnako/actions/runs/32934552628)（`cd65d5e`）は、
+3正式環境の全15ジョブが6分29秒で成功した。分離前run 32932078383の9分50秒から3分21秒（約34.1%）短縮した。
+新設した`compat-aot`のZig cache keyは初回利用であったが、それを含めても20分以内という従来基準を維持した。
+
+| 環境 | `aot` | `compat-aot` | 長い方 |
+|---|---:|---:|---:|
+| Linux x86_64 | 4分13秒 | 3分25秒 | 4分13秒 |
+| macOS arm64 | 4分26秒 | 5分06秒 | 5分06秒 |
+| Windows x86_64 | 5分11秒 | 5分18秒 | 5分18秒 |
+
+分離前のWindows `aot` 9分45秒に対し、同じ検証を担う2ジョブの長い方は5分18秒で、4分27秒（約45.6%）短縮した。
+run全体のクリティカルパスはWindows `host`の6分26秒へ移った。全15ジョブの成功を条件とするため、AOTだけの短縮値を
+run全体の完了時間として扱わない。
