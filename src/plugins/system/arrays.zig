@@ -496,30 +496,55 @@ fn rangeCopy(runtime: *Runtime, source: Value, index_value: Value) !Value {
 }
 
 fn reference(runtime: *Runtime, source: Value, index_value: Value) !Value {
-    if (source == .string) {
-        if (index_value == .number) {
-            const index = charAtIndex(index_value.number, source.string.len()) orelse return runtime.stringUtf8("");
-            if (index >= source.string.len()) return runtime.stringUtf8("");
-            return runtime.stringCodeUnits(source.string.units[index .. index + 1]);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var rooted_source = source;
+    var rooted_index = index_value;
+    try roots.protect(&rooted_source);
+    try roots.protect(&rooted_index);
+    const source_value = rooted_source;
+    const index = rooted_index;
+    if (source_value == .string) {
+        if (index == .number) {
+            const position = charAtIndex(index.number, source_value.string.len()) orelse return runtime.stringUtf8("");
+            if (position >= source_value.string.len()) return runtime.stringUtf8("");
+            return runtime.stringCodeUnits(source_value.string.units[position .. position + 1]);
         }
-        const range = (try substringBounds(runtime, index_value, source.string.len())) orelse return error.InvalidStringRange;
-        return runtime.stringCodeUnits(source.string.units[range.start .. range.start + range.count]);
+        const range = (try substringBounds(runtime, index, source_value.string.len())) orelse return invalidStringRange(runtime, index);
+        return runtime.stringCodeUnits(source_value.string.units[range.start .. range.start + range.count]);
     }
-    if (source == .array) {
-        if (index_value == .number) return source.array.get(propertyIndex(index_value.number) orelse return .undefined);
-        const range = (try rangeBounds(runtime, index_value, source.array.len())) orelse return .undefined;
+    if (source_value == .array) {
+        if (index == .number) return source_value.array.get(propertyIndex(index.number) orelse return .undefined);
+        const range = (try rangeBounds(runtime, index, source_value.array.len())) orelse return .undefined;
         var result = try runtime.createArray();
-        var roots = runtime.rootFrame();
-        defer roots.deinit();
         try roots.protect(&result);
-        for (source.array.items.items[range.start .. range.start + range.count]) |item| _ = try result.array.push(item);
+        for (source_value.array.items.items[range.start .. range.start + range.count]) |item| _ = try result.array.push(item);
         return result;
     }
-    if (source == .dictionary) {
-        const key = try runtime.valueToString(index_value);
-        return source.dictionary.get(key.string) orelse .undefined;
+    if (source_value == .dictionary) {
+        const key = try runtime.valueToString(index);
+        return source_value.dictionary.get(key.string) orelse .undefined;
     }
     return error.IndexableValueExpected;
+}
+
+fn invalidStringRange(runtime: *Runtime, index: Value) !Value {
+    const encoded = try json.call(runtime, "JSON変換", &.{index}) orelse .undefined;
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var rooted_encoded = encoded;
+    try roots.protect(&rooted_encoded);
+    var message: std.ArrayList(u16) = .empty;
+    errdefer message.deinit(runtime.allocator());
+    try appendUtf8Units(&message, runtime.allocator(), "『参照』で文字列型の範囲指定(");
+    if (rooted_encoded == .undefined) {
+        try appendAsciiUnits(&message, runtime.allocator(), "undefined");
+    } else {
+        try message.appendSlice(runtime.allocator(), rooted_encoded.string.units);
+    }
+    try appendUtf8Units(&message, runtime.allocator(), ")が不正です。");
+    try runtime.setFailureMessageUnits(message.items);
+    return error.InvalidStringRange;
 }
 
 fn arrayAdd(runtime: *Runtime, source: Value, other: Value) !Value {
@@ -1172,6 +1197,16 @@ fn eql(left: []const u8, right: []const u8) bool {
     return std.mem.eql(u8, left, right);
 }
 
+fn appendAsciiUnits(output: *std.ArrayList(u16), allocator: std.mem.Allocator, ascii: []const u8) !void {
+    for (ascii) |byte| try output.append(allocator, byte);
+}
+
+fn appendUtf8Units(output: *std.ArrayList(u16), allocator: std.mem.Allocator, text: []const u8) !void {
+    const units = try std.unicode.utf8ToUtf16LeAlloc(allocator, text);
+    defer allocator.free(units);
+    try output.appendSlice(allocator, units);
+}
+
 test "関数とPromiseの要素数はObject.keysと同じ0にする" {
     var runtime = Runtime.init(std.testing.allocator);
     defer runtime.deinit();
@@ -1526,6 +1561,90 @@ test "配列コピーと参照はJSONとJavaScript添字の境界を保つ" {
     var missing_last_text = try reference(&runtime, text, range);
     try roots.protect(&missing_last_text);
     try std.testing.expectEqualSlices(u16, &.{ 'A', 'B' }, missing_last_text.string.units);
+}
+
+fn expectReferenceStringRangeMessage(runtime: *Runtime, index: Value, expected: []const u8) !void {
+    _ = reference(runtime, try runtime.stringUtf8("ABC"), index) catch |failure| {
+        try std.testing.expectEqual(error.InvalidStringRange, failure);
+        const actual = (try runtime.failureMessageValue()).?;
+        const expected_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, expected);
+        defer std.testing.allocator.free(expected_units);
+        try std.testing.expectEqualSlices(u16, expected_units, actual.string.units);
+        runtime.clearFailureMessage();
+        return;
+    };
+    try std.testing.expect(false);
+}
+
+test "参照の文字列範囲エラーはJSON値とUTF-16を公式文言へ埋め込む" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    try expectReferenceStringRangeMessage(&runtime, .undefined, "『参照』で文字列型の範囲指定(undefined)が不正です。");
+
+    var function_name = try runtime.stringUtf8("F");
+    try roots.protect(&function_name);
+    var function = try runtime.createNativeFunction(function_name.string, 0, testElementCountFunction, &.{});
+    try roots.protect(&function);
+    try expectReferenceStringRangeMessage(&runtime, function, "『参照』で文字列型の範囲指定(undefined)が不正です。");
+
+    var string_index = try runtime.stringUtf8("ABC");
+    try roots.protect(&string_index);
+    try expectReferenceStringRangeMessage(&runtime, string_index, "『参照』で文字列型の範囲指定(\"ABC\")が不正です。");
+
+    var array_index = try common.arrayFromValues(&runtime, &.{ .{ .number = 1 }, .{ .number = 2 } });
+    try roots.protect(&array_index);
+    try expectReferenceStringRangeMessage(&runtime, array_index, "『参照』で文字列型の範囲指定([1,2])が不正です。");
+
+    var dictionary_index = try runtime.createDictionary();
+    try roots.protect(&dictionary_index);
+    try expectReferenceStringRangeMessage(&runtime, dictionary_index, "『参照』で文字列型の範囲指定({})が不正です。");
+
+    var lone_surrogate = try runtime.stringCodeUnits(&.{0xd800});
+    try roots.protect(&lone_surrogate);
+    try expectReferenceStringRangeMessage(&runtime, lone_surrogate, "『参照』で文字列型の範囲指定(\"\\ud800\")が不正です。");
+
+    var pair = try runtime.stringCodeUnits(&.{ 0xd83d, 0xde00 });
+    try roots.protect(&pair);
+    try expectReferenceStringRangeMessage(&runtime, pair, "『参照』で文字列型の範囲指定(\"😀\")が不正です。");
+
+    var bigint = try runtime.bigIntLiteral("1n");
+    try roots.protect(&bigint);
+    try std.testing.expectError(error.CannotSerializeBigInt, reference(&runtime, try runtime.stringUtf8("ABC"), bigint));
+
+    var circular = try runtime.createDictionary();
+    try roots.protect(&circular);
+    var self_key = try runtime.stringUtf8("self");
+    try roots.protect(&self_key);
+    try circular.dictionary.set(self_key.string, circular);
+    try std.testing.expectError(error.CircularCloneValue, reference(&runtime, try runtime.stringUtf8("ABC"), circular));
+    try std.testing.expect(std.mem.startsWith(u8, runtime.failureMessage().?, "Converting circular structure to JSON"));
+    runtime.clearFailureMessage();
+
+    try std.testing.expectError(error.ArrayCutNullIndex, reference(&runtime, try runtime.stringUtf8("ABC"), .null_value));
+}
+
+fn referenceStringRangeAllocationTest(allocator: std.mem.Allocator) !void {
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    const source = try runtime.stringUtf8("ABC");
+    const index = try runtime.stringUtf8("bad");
+    _ = reference(&runtime, source, index) catch |failure| {
+        if (failure == error.InvalidStringRange) return;
+        try std.testing.expect(runtime.failureMessage() == null);
+        // Zig 0.16のArrayList Writerは内部の割当失敗をWriteFailedへ
+        // 変換するため、割当網羅テストへ元の意味を戻す。
+        if (failure == error.WriteFailed) return error.OutOfMemory;
+        return failure;
+    };
+    return error.ExpectedInvalidStringRange;
+}
+
+test "参照の文字列範囲エラーは割当失敗時にも途中状態を残さない" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, referenceStringRangeAllocationTest, .{});
 }
 
 test "配列集約・連番・要素生成の型変換と複製境界を保つ" {

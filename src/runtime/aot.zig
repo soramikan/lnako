@@ -1392,6 +1392,12 @@ fn appendAsciiUnits(output: *std.ArrayList(u16), allocator: std.mem.Allocator, a
     for (ascii) |byte| try output.append(allocator, byte);
 }
 
+fn appendUtf8Units(output: *std.ArrayList(u16), allocator: std.mem.Allocator, text: []const u8) !void {
+    const units = try std.unicode.utf8ToUtf16LeAlloc(allocator, text);
+    defer allocator.free(units);
+    try output.appendSlice(allocator, units);
+}
+
 fn jsonHexDigit(unit: u16) ?u16 {
     return if (unit >= '0' and unit <= '9') unit - '0' else if (unit >= 'a' and unit <= 'f') unit - 'a' + 10 else if (unit >= 'A' and unit <= 'F') unit - 'A' + 10 else null;
 }
@@ -2700,7 +2706,7 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
         .array_insert, .array_insert_many, .array_cut, .array_take, .array_pop, .array_push, .array_clone, .array_range_copy, .reference, .array_add, .array_maximum, .array_minimum, .array_sum, .array_swap, .array_sequence, .array_fill => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = arrayMutationBuiltin(runtime, command, actual) catch |failure| {
-                runtime.setFailure(failure);
+                if (!runtime.has_pending_exception) runtime.setFailure(failure);
                 return;
             };
         },
@@ -4406,35 +4412,58 @@ fn arrayRangeCopyBuiltin(runtime: *Runtime, source: Value, index: Value) !Value 
 }
 
 fn referenceBuiltin(runtime: *Runtime, source: Value, index: Value) !Value {
-    if (isString(source)) {
-        const units = try valueUtf16Alloc(runtime, source);
+    var rooted = [_]Value{ source, index };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &rooted, rooted.len);
+    defer runtime.popRoots(&frame);
+    if (isString(rooted[0])) {
+        const units = try valueUtf16Alloc(runtime, rooted[0]);
         defer runtime.allocator.free(units);
-        if (index.tag == @intFromEnum(Tag.number)) {
-            const position = charAtIndex(@bitCast(index.payload), units.len) orelse return runtime.createString(&.{});
+        if (rooted[1].tag == @intFromEnum(Tag.number)) {
+            const position = charAtIndex(@bitCast(rooted[1].payload), units.len) orelse return runtime.createString(&.{});
             return runtime.createString(units[position .. position + 1]);
         }
-        const range = (try substringRange(runtime, index, units.len)) orelse return error.InvalidStringRange;
+        const range = (try substringRange(runtime, rooted[1], units.len)) orelse return invalidStringRangeBuiltin(runtime, rooted[1]);
         const start = @min(range.start, units.len);
         const end = @min(range.end, units.len);
         return runtime.createString(units[start..end]);
     }
-    if (source.tag == @intFromEnum(Tag.array)) {
-        const items = try arrayItems(source);
-        if (index.tag == @intFromEnum(Tag.number)) {
-            const position = directIndex(@bitCast(index.payload)) orelse return .{};
+    if (rooted[0].tag == @intFromEnum(Tag.array)) {
+        const items = try arrayItems(rooted[0]);
+        if (rooted[1].tag == @intFromEnum(Tag.number)) {
+            const position = directIndex(@bitCast(rooted[1].payload)) orelse return .{};
             return if (position < items.items.len) items.items[position] else .{};
         }
-        const range = (try sliceRange(runtime, index, items.items.len)) orelse return .{};
+        const range = (try sliceRange(runtime, rooted[1], items.items.len)) orelse return .{};
         const start = @min(range.start, items.items.len);
         const end = @min(@max(range.end, start), items.items.len);
         return runtime.createArray(items.items[start..end]);
     }
-    if (source.tag == @intFromEnum(Tag.dictionary)) {
-        const key = try valueUtf16Alloc(runtime, index);
+    if (rooted[0].tag == @intFromEnum(Tag.dictionary)) {
+        const key = try valueUtf16Alloc(runtime, rooted[1]);
         defer runtime.allocator.free(key);
-        return dictionaryProperty(source, key);
+        return dictionaryProperty(rooted[0], key);
     }
     return error.IndexableValueExpected;
+}
+
+fn invalidStringRangeBuiltin(runtime: *Runtime, index: Value) !Value {
+    const encoded = try jsonEncodeBuiltin(runtime, index, false);
+    var roots = [_]Value{encoded};
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    var message: std.ArrayList(u16) = .empty;
+    errdefer message.deinit(runtime.allocator);
+    try appendUtf8Units(&message, runtime.allocator, "『参照』で文字列型の範囲指定(");
+    if (roots[0].tag == @intFromEnum(Tag.undefined)) {
+        try appendAsciiUnits(&message, runtime.allocator, "undefined");
+    } else {
+        try message.appendSlice(runtime.allocator, roots[0].object().?.payload.utf16_string);
+    }
+    try appendUtf8Units(&message, runtime.allocator, ")が不正です。");
+    runtime.setFailureUnits(message.items);
+    return error.InvalidStringRange;
 }
 
 fn arrayAddBuiltin(runtime: *Runtime, source: Value, other: Value) !Value {
@@ -6007,6 +6036,69 @@ test "AOT配列複製範囲参照と配列足は深さと参照を公式どお�
     roots[14] = try active_runtime.?.createDictionary(&.{ staticStringValue("先頭"), numberValue(1e100), staticStringValue("末尾"), numberValue(1e100) });
     roots[15] = try referenceBuiltin(&active_runtime.?, staticStringValue("ABC"), roots[14]);
     try std.testing.expectEqual(@as(usize, 0), roots[15].object().?.payload.utf16_string.len);
+}
+
+fn expectAotReferenceStringRangeMessage(runtime: *Runtime, index: Value, expected: []const u8) !void {
+    _ = referenceBuiltin(runtime, staticStringValue("ABC"), index) catch |failure| {
+        try std.testing.expectEqual(error.InvalidStringRange, failure);
+        const message = runtime.takeException();
+        const actual = try valueUtf16Alloc(runtime, message);
+        defer runtime.allocator.free(actual);
+        const expected_units = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, expected);
+        defer runtime.allocator.free(expected_units);
+        try std.testing.expectEqualSlices(u16, expected_units, actual);
+        return;
+    };
+    try std.testing.expect(false);
+}
+
+test "AOT参照の文字列範囲エラーはJSON値・UTF-16・保留例外を保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{.{}} ** 12;
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    try expectAotReferenceStringRangeMessage(&active_runtime.?, .{}, "『参照』で文字列型の範囲指定(undefined)が不正です。");
+    roots[0] = try active_runtime.?.createString(&.{ 'A', 'B', 'C' });
+    try expectAotReferenceStringRangeMessage(&active_runtime.?, roots[0], "『参照』で文字列型の範囲指定(\"ABC\")が不正です。");
+    roots[1] = try active_runtime.?.createArray(&.{ numberValue(1), numberValue(2) });
+    try expectAotReferenceStringRangeMessage(&active_runtime.?, roots[1], "『参照』で文字列型の範囲指定([1,2])が不正です。");
+    roots[2] = try active_runtime.?.createDictionary(&.{});
+    try expectAotReferenceStringRangeMessage(&active_runtime.?, roots[2], "『参照』で文字列型の範囲指定({})が不正です。");
+    roots[3] = try active_runtime.?.createString(&.{0xd800});
+    try expectAotReferenceStringRangeMessage(&active_runtime.?, roots[3], "『参照』で文字列型の範囲指定(\"\\ud800\")が不正です。");
+    roots[4] = try active_runtime.?.createFunction(testAotFunction, 1, &.{});
+    try expectAotReferenceStringRangeMessage(&active_runtime.?, roots[4], "『参照』で文字列型の範囲指定(undefined)が不正です。");
+
+    roots[5] = try active_runtime.?.createBigInt("1n");
+    try std.testing.expectError(error.CannotSerializeBigInt, referenceBuiltin(&active_runtime.?, staticStringValue("ABC"), roots[5]));
+    roots[6] = try active_runtime.?.createDictionary(&.{});
+    try active_runtime.?.indexSet(roots[6], staticStringValue("self"), roots[6]);
+    const circular_args = [_]Value{ staticStringValue("ABC"), roots[6] };
+    var result: Value = .{};
+    lnako_aot_builtin_call(&result, &circular_args, circular_args.len, @intFromEnum(aot_builtin.Command.reference));
+    try std.testing.expect(active_runtime.?.has_pending_exception);
+    const circular_message = active_runtime.?.takeException();
+    const circular_units = try valueUtf16Alloc(&active_runtime.?, circular_message);
+    defer active_runtime.?.allocator.free(circular_units);
+    try std.testing.expect(std.mem.startsWith(u16, circular_units, &.{ 'C', 'o', 'n', 'v' }));
+
+    const null_args = [_]Value{ staticStringValue("ABC"), .{ .tag = @intFromEnum(Tag.null_value) } };
+    lnako_aot_builtin_call(&result, &null_args, null_args.len, @intFromEnum(aot_builtin.Command.reference));
+    try std.testing.expect(active_runtime.?.has_pending_exception);
+    const null_message = active_runtime.?.takeException();
+    const null_units = try valueUtf16Alloc(&active_runtime.?, null_message);
+    defer active_runtime.?.allocator.free(null_units);
+    const expected_null = try std.unicode.utf8ToUtf16LeAlloc(active_runtime.?.allocator, "Cannot read properties of null (reading '先頭')");
+    defer active_runtime.?.allocator.free(expected_null);
+    try std.testing.expectEqualSlices(u16, expected_null, null_units);
 }
 
 test "AOT文字列連結分解反復出現命令は公式の型変換を保つ" {
