@@ -4,6 +4,10 @@
 既存fixtureへ関連付ける台帳です。実行結果やdispatch接続を証明する資料ではありません。
 全entryの`executionEvidenceState`は現在`unverified`であり、将来の実行traceでのみ更新します。
 
+AOT差分artifactは入力・実行物・結果のSHA-256を内包しますが、artifact自身の署名や外部attestationはまだありません。
+そのため単体のJSONをverified証拠とは扱いません。将来verifiedへ移す前に、CIのcommit・OS別runへ結び付く外部hashまたは
+artifact attestationを導入し、JSON全体の改変を検出できることを必須とします。
+
 ## 生成と検証
 
 ```sh

@@ -67,6 +67,26 @@ AOT差分ケースは `tests/oracle/native-cases.json` に置きます。公式C
 この指定を使った差異は `docs/COMPATIBILITY_QUIRKS.md` に両経路の実測結果と採用理由を記録し、ハーネスの
 成功表示にも基準別の件数を出します。
 
+全115件の実行結果を保存する必要がある検証では、任意の絶対パスを明示してJSON artifactを生成できます。
+通常実行のstdout、所要時間、比較処理は変わりません。
+
+```sh
+node tools/compare_native_oracle.mjs --artifact /absolute/path/native-oracle.json
+# または
+LNAKO_NATIVE_ORACLE_ARTIFACT=/absolute/path/native-oracle.json node tools/compare_native_oracle.mjs
+```
+
+artifactは公式baselineのタグ・commit、lnakoのcommit、OS/CPUアーキテクチャ、7経路名、fixture ID、
+採用した既知oracle、各経路の終了状態、fixture単位の等価性判定を含みます。各fixtureのソース、生成JS、
+各経路の正規化stdout/stderr、比較スクリプト、lnako本体はSHA-256だけを記録します。プログラムの
+stdout/stderr、引数、ソース本文は保存しません。出力先は絶対パスの新規ファイルに限り、同一ディレクトリ内の一時ファイルから
+原子的に作成します。AOT `-O0`生成時に得たcompile manifestは完了レコードを検証した上で、命令名・
+canonical opcode・routeだけをfixtureの`compileManifest`へ要約します。manifestのsourcePath、関数名、
+位置情報はartifactへ持ち込みません。artifactの`comparisonSucceeded`と各fixtureの`equivalent`は、全経路の終了コードが0という意味ではなく、
+採用した公式経路と終了状態を含む結果が等価だったことを表します。両方がtrueであることを確認してから比較証拠として扱ってください。
+トップレベルの`status`は比較失敗とインフラ失敗を区別し、インフラ失敗ではfixture結果を空にして成功扱いにしません。
+実際に実行した公式CLIと固定情報markerのSHA-256も保存し、markerがbaselineのタグ・commit・archive hashと一致しなければ実行前に拒否します。
+
 標準命令を実装して個別の公式差分テストを追加したら `compat/v3.7.24/implemented.json` にテストIDと理由を記録し、
 `node tools/sync_compat.mjs --generate` で分類表と集計を再生成します。固定した公式スナップショット自体を再取得する
 `--refresh` とは分離されているため、通常の進捗更新ではネットワークを使用しません。

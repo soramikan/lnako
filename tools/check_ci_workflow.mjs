@@ -48,6 +48,42 @@ for (const [name, suite] of stepSuites) {
   if (!pattern.test(workflow)) throw new Error(`${name}のsuite条件が${suite}ではありません`);
 }
 
+const nativeAotBlock = workflow.match(
+  /      - name: Differential native AOT test[\s\S]*?(?=      - name:|$)/,
+);
+if (!nativeAotBlock) throw new Error("Differential native AOT testブロックがありません");
+if (!nativeAotBlock[0].includes("if: matrix.suite == 'aot'")) throw new Error("Differential native AOT testのsuite条件がありません");
+if (!nativeAotBlock[0].includes("LNAKO_NATIVE_ORACLE_ARTIFACT: ${{ runner.temp }}/lnako-native-oracle.json")) {
+  throw new Error("AOT差分artifactの絶対出力先envがありません");
+}
+if ((nativeAotBlock[0].match(/node tools\/compare_native_oracle\.mjs/g) ?? []).length !== 1) {
+  throw new Error("AOT差分比較は同一suite内で1回だけ実行してください");
+}
+const nativeAotBlockEnd = workflow.indexOf(nativeAotBlock[0]) + nativeAotBlock[0].length;
+const uploadName = "Upload native AOT oracle artifact";
+const uploadStart = workflow.indexOf(`      - name: ${uploadName}`);
+if (uploadStart !== nativeAotBlockEnd) throw new Error("AOT artifact uploadは差分比較の直後に配置してください");
+const uploadBlock = workflow.match(
+  /      - name: Upload native AOT oracle artifact[\s\S]*?(?=      - name:|$)/,
+);
+if (!uploadBlock) throw new Error("AOT差分artifact uploadブロックがありません");
+const upload = uploadBlock[0];
+for (const required of [
+  "if: matrix.suite == 'aot' && always()",
+  "continue-on-error: true",
+  "uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1",
+  "name: lnako-native-oracle-${{ matrix.os }}",
+  "path: ${{ runner.temp }}/lnako-native-oracle.json",
+  "if-no-files-found: ignore",
+  "retention-days: 30",
+]) if (!upload.includes(required)) throw new Error(`AOT差分artifact uploadの設定がありません: ${required}`);
+if (upload.includes("run:")) throw new Error("AOT差分artifact uploadで追加の検証コマンドを実行しないでください");
+const uploadActions = workflow.match(/^        uses: actions\/upload-artifact@/gm) ?? [];
+if (uploadActions.length !== 1) throw new Error(`actions/upload-artifactは1ステップだけ必要です: actual=${uploadActions.length}`);
+if ((workflow.match(/name: lnako-native-oracle-\$\{\{ matrix\.os \}\}/g) ?? []).length !== 1) {
+  throw new Error("AOT差分artifactのOS別保存名が一意に定義されていません");
+}
+
 const smokeCommands = {
   "Normal smoke test": [
     "./zig-out/bin/lnako --version",

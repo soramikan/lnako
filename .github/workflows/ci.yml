@@ -163,9 +163,20 @@ jobs:
           node tools/check_node_archive_smoke.mjs
       - name: Differential native AOT test
         if: matrix.suite == 'aot'
+        env:
+          LNAKO_NATIVE_ORACLE_ARTIFACT: ${{ runner.temp }}/lnako-native-oracle.json
         run: |
           node tools/compare_native_oracle.mjs
           node tools/check_dispatch_trace.mjs --no-build
+      - name: Upload native AOT oracle artifact
+        if: matrix.suite == 'aot' && always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-native-oracle-${{ matrix.os }}
+          path: ${{ runner.temp }}/lnako-native-oracle.json
+          if-no-files-found: ignore
+          retention-days: 30
       - name: Format
         if: matrix.suite == 'core'
         run: zig build fmt-check

@@ -230,6 +230,23 @@ QuickJSの固定版・SHA-256検証、Node、Zigのsetupは省略しない。Zig
 compat smokeに絞って診断できる。片方のsuiteが成功しても他方の検証を成功扱いにはしない。`check_ci_workflow.mjs`のmatrix・
 条件・smoke検査を先に通過させるため、suite条件の書き間違いで検証を静かに省略することも防ぐ。
 
+### AOT差分artifact
+
+`aot` suiteは、公式CLI・公式生成JavaScript・`lnako run`・LLVM AOT O0〜O3の比較を実行した同じ1回の結果から、
+`${{ runner.temp }}/lnako-native-oracle.json`を生成し、Linux x86_64・macOS arm64・Windows x86_64の各ジョブで
+`lnako-native-oracle-${{ matrix.os }}`というOS別名へ保存する。artifact保存のためにAOT差分テストを追加実行したり、
+経路を減らしたりはしない。保持期間は30日である。
+
+比較失敗時も、比較処理が最後までfixture結果を書けた場合は`status: comparison-failure`のartifactを保存する。
+セットアップ、ビルド、または比較基盤の失敗でartifactが生成されない場合は、uploadを`if-no-files-found: ignore`かつ
+`continue-on-error: true`で扱う。これにより成果物サービスの欠損・障害が元の検証失敗を別の失敗へ上書きせず、AOT比較の終了状態を
+正本として残す。artifact uploadは追加の検証結果ではない。
+
+保存されたartifactの全fixture・全経路は、実行証拠を保存しただけの`unverified`として扱う。artifactの存在やupload成功だけで
+互換性をverifiedと判定せず、互換台帳と公式差分の成功結果を別途確認する。
+`comparisonSucceeded`とfixtureの`equivalent`は、成功終了だけを表す値ではない。意図した失敗を含め、終了コード・signal・
+正規化stdout/stderrが採用した公式経路と等価であったことを表す。
+
 分離後の初回[run 32934552628](https://github.com/soramikan/lnako/actions/runs/32934552628)（`cd65d5e`）は、
 3正式環境の全15ジョブが6分29秒で成功した。分離前run 32932078383の9分50秒から3分21秒（約34.1%）短縮した。
 新設した`compat-aot`のZig cache keyは初回利用であったが、それを含めても20分以内という従来基準を維持した。
