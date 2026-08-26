@@ -185,7 +185,8 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
   複数文字への写像と文脈依存のGreek final sigmaも処理する。
 - インタープリタのJSON命令は、非有限数、`undefined`、関数、Promise、重複キー、孤立サロゲート、循環参照を
   ECMAScriptの `JSON.stringify` / `JSON.parse` 規則へ合わせる。canonical array indexの辞書キー順と
-  BigInt・循環・不正JSONの実行時文言は`docs/COMPATIBILITY_QUIRKS.md`に固定する。JSON命令のAOT接続は未対応である。
+  BigInt・循環・不正JSONの実行時文言は`docs/COMPATIBILITY_QUIRKS.md`に固定する。JSONエンコード5命令は純LLVM
+  AOTへ接続し、デコード3命令はQuickJS互換モードを含むインタープリタ経路に限定する。
 - 正規表現は外部共有ライブラリへ依存しないUTF-16バックトラッキングエンジンで、選択、グループ、量指定、
   文字クラス、アンカー、フラグ、後方参照、通常・名前付きキャプチャ、置換参照と分割を提供する。
 - `tests/oracle/plugin-system-cases.json` は対象20カテゴリと追加パス5命令、計274命令を重複なく列挙する。

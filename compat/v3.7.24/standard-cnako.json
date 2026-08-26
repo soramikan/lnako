@@ -7539,14 +7539,18 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-json",
+        "plugin-system-json-ecmascript-boundaries",
+        "native-system-json-encode"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "純LLVM AOT実装および公式処理系との差分テストを待機中"
+      "reason": "純LLVM AOTのJSON.stringify互換エンコーダと公式CLI・生成JavaScriptとの差分テストに成功"
     },
     {
       "id": "command-0288",
@@ -7587,14 +7591,18 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-json",
+        "plugin-system-json-ecmascript-boundaries",
+        "native-system-json-encode"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "純LLVM AOT実装および公式処理系との差分テストを待機中"
+      "reason": "JSON変換と共有する純LLVM AOTエンコーダを実装し公式差分テストに成功"
     },
     {
       "id": "command-0290",
@@ -7611,14 +7619,18 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-json",
+        "plugin-system-json-ecmascript-boundaries",
+        "native-system-json-encode"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "純LLVM AOT実装および公式処理系との差分テストを待機中"
+      "reason": "純LLVM AOTのpretty JSON.stringify互換エンコーダと公式差分テストに成功"
     },
     {
       "id": "command-0291",
@@ -7659,14 +7671,18 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-json",
+        "plugin-system-json-ecmascript-boundaries",
+        "native-system-json-encode"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "純LLVM AOT実装および公式処理系との差分テストを待機中"
+      "reason": "JSON変換と共有する純LLVM AOTエンコーダを実装し公式差分テストに成功"
     },
     {
       "id": "command-0293",
@@ -7683,14 +7699,18 @@
       "category": "JSON",
       "scope": "standard-cnako-v1",
       "plannedMode": "native",
-      "status": "blocked",
-      "tests": [],
+      "status": "native",
+      "tests": [
+        "plugin-system-json",
+        "plugin-system-json-ecmascript-boundaries",
+        "native-system-json-encode"
+      ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "純LLVM AOT実装および公式処理系との差分テストを待機中"
+      "reason": "JSONエンコード整形と共有する純LLVM AOTエンコーダを実装し公式差分テストに成功"
     },
     {
       "id": "command-0294",

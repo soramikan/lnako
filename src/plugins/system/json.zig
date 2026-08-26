@@ -17,6 +17,12 @@ const JsonPath = union(enum) {
     property: *value_mod.String,
 };
 
+const JsonActive = struct {
+    object: union(enum) { array: *value_mod.Array, dictionary: *value_mod.Dictionary },
+    constructor: []const u8,
+    path: ?JsonPath,
+};
+
 pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Value {
     const value = common.argument(arguments, 0);
     if (isCompactEncode(name)) return try encode(runtime, value, false);
@@ -29,11 +35,9 @@ fn encode(runtime: *Runtime, value: Value, pretty: bool) !Value {
     if (value == .undefined or value == .function) return .undefined;
     var output: std.Io.Writer.Allocating = .init(runtime.allocator());
     defer output.deinit();
-    var active_arrays: std.ArrayList(*value_mod.Array) = .empty;
-    defer active_arrays.deinit(runtime.allocator());
-    var active_dictionaries: std.ArrayList(*value_mod.Dictionary) = .empty;
-    defer active_dictionaries.deinit(runtime.allocator());
-    try writeValue(runtime, &output.writer, value, pretty, 0, &active_arrays, &active_dictionaries, false, null);
+    var active_objects: std.ArrayList(JsonActive) = .empty;
+    defer active_objects.deinit(runtime.allocator());
+    try writeValue(runtime, &output.writer, value, pretty, 0, &active_objects, false, null);
     return runtime.stringUtf8(output.written());
 }
 
@@ -43,8 +47,7 @@ fn writeValue(
     value: Value,
     pretty: bool,
     depth: usize,
-    active_arrays: *std.ArrayList(*value_mod.Array),
-    active_dictionaries: *std.ArrayList(*value_mod.Dictionary),
+    active_objects: *std.ArrayList(JsonActive),
     in_array: bool,
     path: ?JsonPath,
 ) !void {
@@ -117,12 +120,12 @@ fn writeValue(
             try writer.writeByte('}');
         },
         .array => |array| {
-            if (containsPointer(value_mod.Array, active_arrays.items, array)) {
-                try setCircularFailureMessage(runtime, .array, path);
+            if (jsonActiveIndexArray(active_objects.items, array)) |cycle_start| {
+                try setCircularFailureMessage(runtime, active_objects.items, cycle_start, path);
                 return error.CircularCloneValue;
             }
-            try active_arrays.append(runtime.allocator(), array);
-            defer _ = active_arrays.pop();
+            try active_objects.append(runtime.allocator(), .{ .object = .{ .array = array }, .constructor = "Array", .path = path });
+            defer _ = active_objects.pop();
             try writer.writeByte('[');
             for (array.items.items, 0..) |item, index| {
                 if (index > 0) try writer.writeByte(',');
@@ -130,7 +133,7 @@ fn writeValue(
                     try writer.writeByte('\n');
                     try writeIndent(writer, depth + 1);
                 }
-                try writeValue(runtime, writer, item, pretty, depth + 1, active_arrays, active_dictionaries, true, .{ .array_index = index });
+                try writeValue(runtime, writer, item, pretty, depth + 1, active_objects, true, .{ .array_index = index });
             }
             if (pretty and array.items.items.len > 0) {
                 try writer.writeByte('\n');
@@ -140,12 +143,12 @@ fn writeValue(
         },
         .dictionary => |dictionary| {
             if (dictionary.kind == .http_response) return writer.writeAll("{}");
-            if (containsPointer(value_mod.Dictionary, active_dictionaries.items, dictionary)) {
-                try setCircularFailureMessage(runtime, .dictionary, path);
+            if (jsonActiveIndexDictionary(active_objects.items, dictionary)) |cycle_start| {
+                try setCircularFailureMessage(runtime, active_objects.items, cycle_start, path);
                 return error.CircularCloneValue;
             }
-            try active_dictionaries.append(runtime.allocator(), dictionary);
-            defer _ = active_dictionaries.pop();
+            try active_objects.append(runtime.allocator(), .{ .object = .{ .dictionary = dictionary }, .constructor = "Object", .path = path });
+            defer _ = active_objects.pop();
 
             var entries: std.ArrayList(DictionaryEntry) = .empty;
             defer entries.deinit(runtime.allocator());
@@ -169,7 +172,7 @@ fn writeValue(
                 }
                 try writeQuotedString(writer, entry.key.units);
                 try writer.writeAll(if (pretty) ": " else ":");
-                try writeValue(runtime, writer, entry.value, pretty, depth + 1, active_arrays, active_dictionaries, false, .{ .property = entry.key });
+                try writeValue(runtime, writer, entry.value, pretty, depth + 1, active_objects, false, .{ .property = entry.key });
                 emitted += 1;
             }
             if (pretty and emitted > 0) {
@@ -181,23 +184,41 @@ fn writeValue(
     }
 }
 
-fn setCircularFailureMessage(runtime: *Runtime, constructor: enum { array, dictionary }, path: ?JsonPath) !void {
+fn jsonActiveIndexArray(active: []JsonActive, target: *value_mod.Array) ?usize {
+    for (active, 0..) |entry, index| if (entry.object == .array and entry.object.array == target) return index;
+    return null;
+}
+
+fn jsonActiveIndexDictionary(active: []JsonActive, target: *value_mod.Dictionary) ?usize {
+    for (active, 0..) |entry, index| if (entry.object == .dictionary and entry.object.dictionary == target) return index;
+    return null;
+}
+
+fn setCircularFailureMessage(runtime: *Runtime, active: []JsonActive, cycle_start: usize, closing_path: ?JsonPath) !void {
     var output: std.Io.Writer.Allocating = .init(runtime.allocator());
     defer output.deinit();
-    try output.writer.writeAll("Converting circular structure to JSON");
-    try output.writer.writeByte('\n');
-    try output.writer.writeAll("    --> starting at object with constructor '");
-    try output.writer.writeAll(if (constructor == .array) "Array" else "Object");
-    try output.writer.writeAll("'\n    --- ");
+    const constructor = if (cycle_start < active.len) active[cycle_start].constructor else "Object";
+    try output.writer.print("Converting circular structure to JSON\n    --> starting at object with constructor '{s}'\n", .{constructor});
+    var index: usize = cycle_start + 1;
+    while (index < active.len) : (index += 1) {
+        try output.writer.writeAll("    |     ");
+        try writeJsonPath(&output.writer, runtime, active[index].path, false);
+        try output.writer.print(" -> object with constructor '{s}'\n", .{active[index].constructor});
+    }
+    try output.writer.writeAll("    --- ");
+    try writeJsonPath(&output.writer, runtime, closing_path, true);
+    try runtime.setFailureMessage(output.written());
+}
+
+fn writeJsonPath(writer: *std.Io.Writer, runtime: *Runtime, path: ?JsonPath, closing: bool) !void {
     if (path) |cycle_path| switch (cycle_path) {
-        .array_index => |index| try output.writer.print("index {d} closes the circle", .{index}),
+        .array_index => |index| try writer.print("index {d}{s}", .{ index, if (closing) " closes the circle" else "" }),
         .property => |key| {
             const key_utf8 = try key.toUtf8Lossy(runtime.allocator());
             defer runtime.allocator().free(key_utf8);
-            try output.writer.print("property '{s}' closes the circle", .{key_utf8});
+            try writer.print("property '{s}'{s}", .{ key_utf8, if (closing) " closes the circle" else "" });
         },
-    } else try output.writer.writeAll("cycle closes the circle");
-    try runtime.setFailureMessage(output.written());
+    } else if (closing) try writer.writeAll("cycle closes the circle") else try writer.writeAll("cycle");
 }
 
 /// ECMAScript JSON.stringify enumerates canonical array-index property names

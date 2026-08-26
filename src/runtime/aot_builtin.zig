@@ -137,6 +137,8 @@ pub const Command = enum(u16) {
     regexp_extract,
     regexp_replace,
     regexp_split,
+    json_encode,
+    json_encode_pretty,
 };
 
 pub fn lookup(name: []const u8) ?Command {
@@ -276,6 +278,8 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "正規表現抽出")) return .regexp_extract;
     if (std.mem.eql(u8, name, "正規表現置換")) return .regexp_replace;
     if (std.mem.eql(u8, name, "正規表現区切")) return .regexp_split;
+    if (std.mem.eql(u8, name, "JSON変換") or std.mem.eql(u8, name, "JSONエンコード") or std.mem.eql(u8, name, "JSON_E")) return .json_encode;
+    if (std.mem.eql(u8, name, "JSONエンコード整形") or std.mem.eql(u8, name, "JSON_ES")) return .json_encode_pretty;
     return null;
 }
 
@@ -404,6 +408,11 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.regexp_extract, lookup("正規表現抽出").?);
     try std.testing.expectEqual(Command.regexp_replace, lookup("正規表現置換").?);
     try std.testing.expectEqual(Command.regexp_split, lookup("正規表現区切").?);
+    try std.testing.expectEqual(Command.json_encode, lookup("JSON変換").?);
+    try std.testing.expectEqual(Command.json_encode, lookup("JSONエンコード").?);
+    try std.testing.expectEqual(Command.json_encode, lookup("JSON_E").?);
+    try std.testing.expectEqual(Command.json_encode_pretty, lookup("JSONエンコード整形").?);
+    try std.testing.expectEqual(Command.json_encode_pretty, lookup("JSON_ES").?);
     try std.testing.expectEqual(Command.uppercase, lookup("大文字変換").?);
     try std.testing.expectEqual(Command.lowercase, lookup("小文字変換").?);
     try std.testing.expectEqual(Command.hiragana, lookup("平仮名変換").?);

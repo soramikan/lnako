@@ -1,4 +1,49 @@
 {
+  "JSON変換": {
+    "status": "native",
+    "tests": [
+      "plugin-system-json",
+      "plugin-system-json-ecmascript-boundaries",
+      "native-system-json-encode"
+    ],
+    "reason": "純LLVM AOTのJSON.stringify互換エンコーダと公式CLI・生成JavaScriptとの差分テストに成功"
+  },
+  "JSONエンコード": {
+    "status": "native",
+    "tests": [
+      "plugin-system-json",
+      "plugin-system-json-ecmascript-boundaries",
+      "native-system-json-encode"
+    ],
+    "reason": "JSON変換と共有する純LLVM AOTエンコーダを実装し公式差分テストに成功"
+  },
+  "JSON_E": {
+    "status": "native",
+    "tests": [
+      "plugin-system-json",
+      "plugin-system-json-ecmascript-boundaries",
+      "native-system-json-encode"
+    ],
+    "reason": "JSON変換と共有する純LLVM AOTエンコーダを実装し公式差分テストに成功"
+  },
+  "JSONエンコード整形": {
+    "status": "native",
+    "tests": [
+      "plugin-system-json",
+      "plugin-system-json-ecmascript-boundaries",
+      "native-system-json-encode"
+    ],
+    "reason": "純LLVM AOTのpretty JSON.stringify互換エンコーダと公式差分テストに成功"
+  },
+  "JSON_ES": {
+    "status": "native",
+    "tests": [
+      "plugin-system-json",
+      "plugin-system-json-ecmascript-boundaries",
+      "native-system-json-encode"
+    ],
+    "reason": "JSONエンコード整形と共有する純LLVM AOTエンコーダを実装し公式差分テストに成功"
+  },
   "秒待": {
     "status": "native",
     "tests": [

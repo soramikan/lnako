@@ -8,14 +8,15 @@ lnakoは、意図的な非互換として合意した項目を除き、説明文
 
 公式実装は `.cache/oracle/nadesiko3-3.7.24/core/src/plugin_system_json.mts` の
 `JSON.stringify` / `JSON.parse` 呼び出しです。以下の境界はインタープリタの差分fixtureで固定しています。
-JSONのAOT命令接続は未実装のため、8命令は互換台帳で`blocked`として扱います。AOTのnative fixtureが
-公式差分に成功するまでは`native`へ変更せず、このインタープリタ境界をAOT対応の完了根拠として扱いません。
+JSONエンコード5命令（`JSON変換`、`JSONエンコード`、`JSON_E`、`JSONエンコード整形`、`JSON_ES`）は
+純LLVM AOTへ接続し、native fixtureで公式CLI・公式生成JavaScript・`lnako run`・AOT O0〜O3を比較します。
+JSONデコード3命令（`JSON取得`、`JSONデコード`、`JSON_D`）はAOT未接続のため互換台帳で`blocked`として扱います。
 
 | 境界 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID |
 |---|---|---|---|
-| 辞書キーの列挙順 | canonical array index（`0`〜`4294967294`の十進表記）は数値昇順、その後の文字列キーは挿入順で`JSON.stringify`する。`01`はindexではない | `src/plugins/system/json.zig`のJSON境界だけで同じ順序へ並べ替える。辞書自体の列挙順は変更しない | `plugin-system-json-ecmascript-boundaries`、`JSONの辞書キーをECMAScriptの列挙順で整形する` |
+| 辞書キーの正規化・列挙順 | JavaScriptのproperty keyとして数値`1`と文字列`"1"`は同じキーになり、後の代入が値を上書きしても最初の挿入位置は動かない。canonical array index（`0`〜`4294967294`の十進表記）は数値昇順、その後の文字列キーは挿入順で`JSON.stringify`する。`01`はindexではない | lnakoの内部辞書は型の異なるキーを保持できるため、JSON境界でproperty keyを文字列へ正規化して重複を解消してから、同じ順序へ並べ替える。辞書自体のキーや列挙順は変更しない。関数値をキーにした場合の関数名を含む文字列化は`TODO: aot-function-string-name`を維持する | `plugin-system-json-ecmascript-boundaries`、`native-system-json-encode`、`JSONの辞書キーをECMAScriptの列挙順で整形する`、`TODO: aot-function-string-name` |
 | トップレベルの`undefined` / 関数値 | `JSON.stringify(undefined)` と `JSON.stringify(function(){})` は値を返さず`undefined`になる。配列要素ではどちらも`null`になる | `encode`のトップレベル判定は`undefined`を返し、配列内の値は`null`へ変換する | `plugin-system-json-ecmascript-boundaries` |
-| BigInt / 循環参照 | `JSON.stringify(1n)` は `Do not know how to serialize a BigInt`、直接自己参照は `Converting circular structure to JSON` とconstructor・閉路位置を含む実行時エラー | `CannotSerializeBigInt` / `CircularCloneValue`へ正規化し、直接自己参照の公式文言を監視へ渡す。複数コンテナを経由するV8固有の詳細経路表示は`TODO: json-circular-error-path`として完成扱いにしない | `plugin-system-json-ecmascript-boundaries`、`JSONの実行時エラー文言を公式互換にする`、`TODO: json-circular-error-path` |
+| BigInt / 循環参照 | `JSON.stringify(1n)` は `Do not know how to serialize a BigInt`、循環参照は開始constructor・中間のproperty/index経路・閉路位置を含む実行時エラー | インタープリタとAOTは`CannotSerializeBigInt` / `CircularCloneValue`へ正規化し、V8と同じactive container経路をエラー文言へ反映する | `plugin-system-json-ecmascript-boundaries`、`native-system-json-encode`、`JSONの実行時エラー文言を公式互換にする` |
 | 不正JSON | `JSON.parse("x")` は `Unexpected token 'x', "x" is not valid JSON`。入力終端は `Unexpected end of JSON input` | `InvalidJsonCloneValue`分類と動的`Runtime.failureMessage`でfixtureの文言を保持する。入力途中の構文エラー位置と抜粋を含むV8固有文言は`TODO: json-parse-error-position`として完成扱いにしない | `plugin-system-json-ecmascript-boundaries`、`JSONの実行時エラー文言を公式互換にする`、`TODO: json-parse-error-position` |
 
 ## 配列・表・辞書

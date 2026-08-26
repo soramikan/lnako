@@ -1,5 +1,9 @@
 [
   {
+    "id": "native-system-json-encode",
+    "source": "JSON変換({\"2\":\"b\",\"1\":\"a\",\"x\":\"c\",\"01\":\"d\",\"4294967295\":\"e\",\"4294967294\":\"f\",\"0\":\"z\"})を表示\nJSONエンコード([非数,無限大,-無限大,undefined])を表示\nJSON変換([-0,1e21,1e-6,1e-7])を表示\nF=関数(A)それはA;ここまで\nJSONエンコード整形({\"a\":[1,2]})を表示\nJSON_E(F)を表示\nJSON_ES({\"a\":[1,2],\"x\":\"😀\"})を表示\nJSON変換(CHR(55296))を表示\nD={}\nD[\"u\"]=undefined\nD[\"f\"]=F\nD[\"v\"]=1\nJSON変換(D)を表示\nS=[1]\nT=[S,S]\nJSON変換(T)を表示\nK={}\nK[1]=\"number\"\nK[\"1\"]=\"string\"\nK[\"2\"]=\"two\"\nJSON変換(K)を表示\nエラー監視\nJSON変換(1n)を表示\nエラーならば\nエラーメッセージを表示\nここまで\nA=[]\nA[0]=A\nエラー監視\nJSON変換(A)を表示\nエラーならば\nエラーメッセージを表示\nここまで\nR={}\nQ=[]\nP={}\nR[\"a\"]=Q\nQ[0]=P\nP[\"self\"]=R\nエラー監視\nJSON変換(R)を表示\nエラーならば\nエラーメッセージを表示\nここまで\nRoot={}\nB={}\nRoot[\"a\"]=B\nB[\"self\"]=B\nエラー監視\nJSON変換(Root)を表示\nエラーならば\nエラーメッセージを表示\nここまで\n"
+  },
+  {
     "id": "native-arithmetic",
     "source": "(1+2*3)を表示\n(9-4)/2を表示\n"
   },

@@ -721,6 +721,287 @@ pub export fn lnako_aot_regexp_call(out: *Value, captures: ?*Value, arguments: ?
     }
 }
 
+const JsonAotPath = union(enum) {
+    array_index: usize,
+    property: Value,
+};
+
+const JsonAotActive = struct {
+    object: *Object,
+    constructor: []const u8,
+    path: ?JsonAotPath,
+};
+
+const JsonAotEntry = struct {
+    key: Value,
+    value: Value,
+    insertion_index: usize,
+    array_index: ?u32,
+};
+
+/// Pure AOT implementation of the JSON.stringify-backed command family.
+/// Keep this serializer independent from QuickJS: the generated executable
+/// must retain the same ECMAScript JSON boundary without a JavaScript engine.
+fn jsonEncodeBuiltin(runtime: *Runtime, value: Value, pretty: bool) !Value {
+    if (value.tag == @intFromEnum(Tag.undefined) or value.tag == @intFromEnum(Tag.function)) return .{};
+    var output: std.Io.Writer.Allocating = .init(runtime.allocator);
+    defer output.deinit();
+    var active_objects: std.ArrayList(JsonAotActive) = .empty;
+    defer active_objects.deinit(runtime.allocator);
+    try jsonWriteValue(runtime, &output.writer, value, pretty, 0, &active_objects, false, null);
+    return runtime.ownString(try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, output.written()));
+}
+
+fn jsonWriteValue(
+    runtime: *Runtime,
+    writer: *std.Io.Writer,
+    value: Value,
+    pretty: bool,
+    depth: usize,
+    active_objects: *std.ArrayList(JsonAotActive),
+    in_array: bool,
+    path: ?JsonAotPath,
+) !void {
+    switch (@as(Tag, @enumFromInt(value.tag))) {
+        .undefined, .function => if (in_array) try writer.writeAll("null") else return,
+        .null_value => try writer.writeAll("null"),
+        .boolean => try writer.writeAll(if (value.payload != 0) "true" else "false"),
+        .number => {
+            const number: f64 = @bitCast(value.payload);
+            if (!std.math.isFinite(number)) return writer.writeAll("null");
+            const text = try numberString(runtime.allocator, number);
+            defer runtime.allocator.free(text);
+            try writer.writeAll(text);
+        },
+        .bigint => return error.CannotSerializeBigInt,
+        .static_utf8_string => {
+            const units = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, staticUtf8(value));
+            defer runtime.allocator.free(units);
+            try jsonWriteQuotedString(writer, units);
+        },
+        .utf16_string => try jsonWriteQuotedString(writer, value.object().?.payload.utf16_string),
+        .iterator => try writer.writeAll("{}"),
+        .binding_cell => unreachable,
+        .array => {
+            const object = value.object().?;
+            if (jsonActiveIndex(active_objects.items, object)) |cycle_start| {
+                try jsonSetCircularFailureMessage(runtime, active_objects.items, cycle_start, path);
+                return error.CircularCloneValue;
+            }
+            try active_objects.append(runtime.allocator, .{ .object = object, .constructor = "Array", .path = path });
+            defer _ = active_objects.pop();
+            const items = object.payload.array.items;
+            try writer.writeByte('[');
+            for (items, 0..) |item, index| {
+                if (index > 0) try writer.writeByte(',');
+                if (pretty) {
+                    try writer.writeByte('\n');
+                    try jsonWriteIndent(writer, depth + 1);
+                }
+                try jsonWriteValue(runtime, writer, item, pretty, depth + 1, active_objects, true, .{ .array_index = index });
+            }
+            if (pretty and items.len > 0) {
+                try writer.writeByte('\n');
+                try jsonWriteIndent(writer, depth);
+            }
+            try writer.writeByte(']');
+        },
+        .dictionary => {
+            const object = value.object().?;
+            if (jsonActiveIndex(active_objects.items, object)) |cycle_start| {
+                try jsonSetCircularFailureMessage(runtime, active_objects.items, cycle_start, path);
+                return error.CircularCloneValue;
+            }
+            try active_objects.append(runtime.allocator, .{ .object = object, .constructor = "Object", .path = path });
+            defer _ = active_objects.pop();
+            const dictionary_length = object.payload.dictionary.items.len;
+            const key_roots = try runtime.allocator.alloc(Value, dictionary_length);
+            defer runtime.allocator.free(key_roots);
+            @memset(key_roots, .{});
+            var key_frame = RootFrame{};
+            runtime.pushRoots(&key_frame, if (dictionary_length > 0) key_roots.ptr else null, dictionary_length);
+            defer runtime.popRoots(&key_frame);
+            var entries: std.ArrayList(JsonAotEntry) = .empty;
+            defer entries.deinit(runtime.allocator);
+            for (object.payload.dictionary.items, 0..) |entry, insertion_index| {
+                const normalized_key = try jsonAotPropertyKey(runtime, entry.key);
+                key_roots[insertion_index] = normalized_key;
+                var replaced = false;
+                for (entries.items) |*existing| if (sameKey(existing.key, normalized_key)) {
+                    // JavaScript property assignment keeps the first insertion
+                    // position while a later numeric/string spelling wins.
+                    existing.value = entry.value;
+                    replaced = true;
+                    break;
+                };
+                if (!replaced) try entries.append(runtime.allocator, .{
+                    .key = normalized_key,
+                    .value = entry.value,
+                    .insertion_index = insertion_index,
+                    .array_index = jsonAotArrayIndex(runtime, normalized_key),
+                });
+            }
+            std.sort.pdq(JsonAotEntry, entries.items, {}, lessJsonAotEntry);
+            try writer.writeByte('{');
+            var emitted: usize = 0;
+            for (entries.items) |entry| {
+                if (entry.value.tag == @intFromEnum(Tag.undefined) or entry.value.tag == @intFromEnum(Tag.function)) continue;
+                if (emitted > 0) try writer.writeByte(',');
+                if (pretty) {
+                    try writer.writeByte('\n');
+                    try jsonWriteIndent(writer, depth + 1);
+                }
+                try jsonWriteKey(runtime, writer, entry.key);
+                try writer.writeAll(if (pretty) ": " else ":");
+                try jsonWriteValue(runtime, writer, entry.value, pretty, depth + 1, active_objects, false, .{ .property = entry.key });
+                emitted += 1;
+            }
+            if (pretty and emitted > 0) {
+                try writer.writeByte('\n');
+                try jsonWriteIndent(writer, depth);
+            }
+            try writer.writeByte('}');
+        },
+    }
+}
+
+fn jsonActiveIndex(objects: []JsonAotActive, object: *Object) ?usize {
+    for (objects, 0..) |active, index| if (active.object == object) return index;
+    return null;
+}
+
+fn jsonAotArrayIndex(runtime: *Runtime, key: Value) ?u32 {
+    const units = jsonAotKeyUnits(runtime, key) catch return null;
+    defer runtime.allocator.free(units);
+    if (units.len == 0 or (units.len > 1 and units[0] == '0')) return null;
+    var number: u64 = 0;
+    for (units) |unit| {
+        if (unit < '0' or unit > '9') return null;
+        const digit: u64 = unit - '0';
+        if (number > (0xffff_ffff - digit) / 10) return null;
+        number = number * 10 + digit;
+        if (number >= 0xffff_ffff) return null;
+    }
+    if (units.len == 1 and units[0] == '0') return 0;
+    return @intCast(number);
+}
+
+fn jsonAotKeyUnits(runtime: *Runtime, key: Value) ![]u16 {
+    return switch (@as(Tag, @enumFromInt(key.tag))) {
+        .static_utf8_string => std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, staticUtf8(key)),
+        .utf16_string => runtime.allocator.dupe(u16, key.object().?.payload.utf16_string),
+        else => std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, "undefined"),
+    };
+}
+
+fn jsonAotPropertyKey(runtime: *Runtime, key: Value) !Value {
+    return runtime.ownString(try valueUtf16Alloc(runtime, key));
+}
+
+fn lessJsonAotEntry(_: void, left: JsonAotEntry, right: JsonAotEntry) bool {
+    if (left.array_index) |left_index| {
+        if (right.array_index) |right_index| return left_index < right_index;
+        return true;
+    }
+    if (right.array_index != null) return false;
+    return left.insertion_index < right.insertion_index;
+}
+
+fn jsonWriteKey(runtime: *Runtime, writer: *std.Io.Writer, key: Value) !void {
+    const units = try jsonAotKeyUnits(runtime, key);
+    defer runtime.allocator.free(units);
+    try jsonWriteQuotedString(writer, units);
+}
+
+fn jsonWriteQuotedString(writer: *std.Io.Writer, units: []const u16) !void {
+    try writer.writeByte('"');
+    var index: usize = 0;
+    while (index < units.len) {
+        const unit = units[index];
+        switch (unit) {
+            '"' => try writer.writeAll("\\\""),
+            '\\' => try writer.writeAll("\\\\"),
+            0x08 => try writer.writeAll("\\b"),
+            0x09 => try writer.writeAll("\\t"),
+            0x0a => try writer.writeAll("\\n"),
+            0x0c => try writer.writeAll("\\f"),
+            0x0d => try writer.writeAll("\\r"),
+            0x0000...0x0007, 0x000b, 0x000e...0x001f => try jsonWriteUnicodeEscape(writer, unit),
+            0xd800...0xdbff => {
+                if (index + 1 < units.len and units[index + 1] >= 0xdc00 and units[index + 1] <= 0xdfff) {
+                    const codepoint: u21 = @intCast(0x10000 + ((@as(u32, unit) - 0xd800) << 10) + (@as(u32, units[index + 1]) - 0xdc00));
+                    var encoded: [4]u8 = undefined;
+                    const length = try std.unicode.utf8Encode(codepoint, &encoded);
+                    try writer.writeAll(encoded[0..length]);
+                    index += 1;
+                } else try jsonWriteUnicodeEscape(writer, unit);
+            },
+            0xdc00...0xdfff => try jsonWriteUnicodeEscape(writer, unit),
+            else => {
+                var encoded: [3]u8 = undefined;
+                const length = try std.unicode.utf8Encode(@intCast(unit), &encoded);
+                try writer.writeAll(encoded[0..length]);
+            },
+        }
+        index += 1;
+    }
+    try writer.writeByte('"');
+}
+
+fn jsonWriteUnicodeEscape(writer: *std.Io.Writer, unit: u16) !void {
+    const digits = "0123456789abcdef";
+    try writer.writeAll("\\u");
+    try writer.writeByte(digits[(unit >> 12) & 0xf]);
+    try writer.writeByte(digits[(unit >> 8) & 0xf]);
+    try writer.writeByte(digits[(unit >> 4) & 0xf]);
+    try writer.writeByte(digits[unit & 0xf]);
+}
+
+fn jsonWriteIndent(writer: *std.Io.Writer, depth: usize) !void {
+    var index: usize = 0;
+    while (index < depth) : (index += 1) try writer.writeAll("  ");
+}
+
+fn jsonSetCircularFailureMessage(runtime: *Runtime, active: []JsonAotActive, cycle_start: usize, closing_path: ?JsonAotPath) !void {
+    var output: std.Io.Writer.Allocating = .init(runtime.allocator);
+    defer output.deinit();
+    const start_constructor = if (cycle_start < active.len) active[cycle_start].constructor else "Object";
+    try output.writer.print("Converting circular structure to JSON\n    --> starting at object with constructor '{s}'\n", .{start_constructor});
+    // Every active entry after the root is an edge on the current path. V8
+    // prints those edges before the final edge that closes the cycle.
+    var index: usize = cycle_start + 1;
+    while (index < active.len) : (index += 1) {
+        try output.writer.writeAll("    |     ");
+        try jsonWritePath(&output.writer, runtime, active[index].path, false);
+        try output.writer.print(" -> object with constructor '{s}'\n", .{active[index].constructor});
+    }
+    try output.writer.writeAll("    --- ");
+    try jsonWritePath(&output.writer, runtime, closing_path, true);
+    runtime.setFailureText(output.written());
+}
+
+fn jsonWritePath(writer: *std.Io.Writer, runtime: *Runtime, path: ?JsonAotPath, closing: bool) !void {
+    if (path) |cycle_path| switch (cycle_path) {
+        .array_index => |index| try writer.print("index {d}{s}", .{ index, if (closing) " closes the circle" else "" }),
+        .property => |key| {
+            const units = try jsonAotKeyUnits(runtime, key);
+            defer runtime.allocator.free(units);
+            const utf8 = try (string_mod.String{ .allocator = runtime.allocator, .units = units }).toUtf8Lossy(runtime.allocator);
+            defer runtime.allocator.free(utf8);
+            try writer.print("property '{s}'{s}", .{ utf8, if (closing) " closes the circle" else "" });
+        },
+    } else if (closing) try writer.writeAll("cycle closes the circle") else try writer.writeAll("cycle");
+}
+
+fn expectJsonAotString(runtime: *Runtime, value: Value, pretty: bool, expected: []const u8) !void {
+    const encoded = try jsonEncodeBuiltin(runtime, value, pretty);
+    const actual_units = try valueUtf16Alloc(runtime, encoded);
+    defer runtime.allocator.free(actual_units);
+    const expected_units = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, expected);
+    defer runtime.allocator.free(expected_units);
+    try std.testing.expectEqualSlices(u16, expected_units, actual_units);
+}
+
 fn valueUtf16Alloc(runtime: *Runtime, value: Value) anyerror![]u16 {
     if (value.tag == @intFromEnum(Tag.utf16_string)) return runtime.allocator.dupe(u16, value.object().?.payload.utf16_string);
     const utf8 = switch (@as(Tag, @enumFromInt(value.tag))) {
@@ -1443,6 +1724,12 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
     const value = if (len > 0) arguments.?[0] else Value{};
     switch (command) {
         .regexp_match, .regexp_extract, .regexp_replace, .regexp_split => runtime.setFailure(error.UnknownCommand),
+        .json_encode, .json_encode_pretty => {
+            out.* = jsonEncodeBuiltin(runtime, value, command == .json_encode_pretty) catch |failure| {
+                if (!runtime.has_pending_exception) runtime.setFailure(failure);
+                return;
+            };
+        },
         .to_string => {
             const units = valueUtf16Alloc(runtime, value) catch |failure| {
                 runtime.setFailure(failure);
@@ -5920,6 +6207,107 @@ test "AOT一般正規表現命令は共有エンジンと抽出副作用を保�
     const split = try regexpBuiltin(&runtime, .regexp_split, &.{ staticStringValue("a,b"), staticStringValue("/(,)/") });
     roots[7] = split.value;
     try std.testing.expectEqual(@as(usize, 3), roots[7].object().?.payload.array.items.len);
+}
+
+test "AOT JSONエンコードはcompact prettyとECMAScript境界を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 20;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try jsonEncodeBuiltin(&runtime, .{}, false)).tag)));
+    roots[0] = try runtime.createFunction(testAotFunction, 1, &.{});
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try jsonEncodeBuiltin(&runtime, roots[0], false)).tag)));
+
+    roots[1] = try runtime.createArray(&.{ .{}, roots[0], .{ .tag = @intFromEnum(Tag.null_value) }, numberValue(std.math.nan(f64)) });
+    try expectJsonAotString(&runtime, roots[1], false, "[null,null,null,null]");
+
+    roots[2] = try runtime.createDictionary(&.{
+        staticStringValue("undefined"), .{},
+        staticStringValue("function"),  roots[0],
+        staticStringValue("present"),   numberValue(1),
+    });
+    try expectJsonAotString(&runtime, roots[2], false, "{\"present\":1}");
+    try expectJsonAotString(&runtime, roots[2], true, "{\n  \"present\": 1\n}");
+
+    roots[3] = try runtime.createArray(&.{numberValue(7)});
+    roots[4] = try runtime.createArray(&.{ roots[3], roots[3] });
+    try expectJsonAotString(&runtime, roots[4], false, "[[7],[7]]");
+
+    roots[5] = try runtime.createDictionary(&.{
+        staticStringValue("2"),          staticStringValue("b"),
+        staticStringValue("1"),          staticStringValue("a"),
+        staticStringValue("x"),          staticStringValue("c"),
+        staticStringValue("01"),         staticStringValue("d"),
+        staticStringValue("4294967294"), staticStringValue("f"),
+        staticStringValue("0"),          staticStringValue("z"),
+    });
+    try expectJsonAotString(&runtime, roots[5], false, "{\"0\":\"z\",\"1\":\"a\",\"2\":\"b\",\"4294967294\":\"f\",\"x\":\"c\",\"01\":\"d\"}");
+    try expectJsonAotString(&runtime, roots[5], true, "{\n  \"0\": \"z\",\n  \"1\": \"a\",\n  \"2\": \"b\",\n  \"4294967294\": \"f\",\n  \"x\": \"c\",\n  \"01\": \"d\"\n}");
+    roots[10] = try runtime.createDictionary(&.{ numberValue(1), staticStringValue("number"), staticStringValue("1"), staticStringValue("string"), staticStringValue("2"), staticStringValue("two") });
+    try expectJsonAotString(&runtime, roots[10], false, "{\"1\":\"string\",\"2\":\"two\"}");
+
+    roots[6] = try runtime.createString(&.{0xd800});
+    try expectJsonAotString(&runtime, roots[6], false, "\"\\ud800\"");
+    roots[7] = try runtime.createArray(&.{ numberValue(-0.0), numberValue(1e21), numberValue(1e-6), numberValue(1e-7) });
+    try expectJsonAotString(&runtime, roots[7], false, "[0,1e+21,0.000001,1e-7]");
+
+    roots[8] = try runtime.createBigInt("1n");
+    try std.testing.expectError(error.CannotSerializeBigInt, jsonEncodeBuiltin(&runtime, roots[8], false));
+    roots[9] = try runtime.createArray(&.{});
+    try roots[9].object().?.payload.array.append(runtime.allocator, roots[9]);
+    try std.testing.expectError(error.CircularCloneValue, jsonEncodeBuiltin(&runtime, roots[9], false));
+    const message = runtime.takeException();
+    const message_units = try valueUtf16Alloc(&runtime, message);
+    defer runtime.allocator.free(message_units);
+    const expected_message = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, "Converting circular structure to JSON\n    --> starting at object with constructor 'Array'\n    --- index 0 closes the circle");
+    defer runtime.allocator.free(expected_message);
+    try std.testing.expectEqualSlices(u16, expected_message, message_units);
+
+    roots[11] = try runtime.createDictionary(&.{});
+    roots[12] = try runtime.createDictionary(&.{});
+    try runtime.indexSet(roots[11], staticStringValue("a"), roots[12]);
+    try runtime.indexSet(roots[12], staticStringValue("self"), roots[12]);
+    try std.testing.expectError(error.CircularCloneValue, jsonEncodeBuiltin(&runtime, roots[11], false));
+    const nested_message = runtime.takeException();
+    const nested_units = try valueUtf16Alloc(&runtime, nested_message);
+    defer runtime.allocator.free(nested_units);
+    const expected_nested = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, "Converting circular structure to JSON\n    --> starting at object with constructor 'Object'\n    --- property 'self' closes the circle");
+    defer runtime.allocator.free(expected_nested);
+    try std.testing.expectEqualSlices(u16, expected_nested, nested_units);
+
+    roots[13] = try runtime.createDictionary(&.{});
+    roots[14] = try runtime.createString(&.{0xd800});
+    try runtime.indexSet(roots[13], roots[14], roots[13]);
+    try std.testing.expectError(error.CircularCloneValue, jsonEncodeBuiltin(&runtime, roots[13], false));
+    const surrogate_message = runtime.takeException();
+    const surrogate_units = try valueUtf16Alloc(&runtime, surrogate_message);
+    defer runtime.allocator.free(surrogate_units);
+    const expected_surrogate = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, "Converting circular structure to JSON\n    --> starting at object with constructor 'Object'\n    --- property '�' closes the circle");
+    defer runtime.allocator.free(expected_surrogate);
+    try std.testing.expectEqualSlices(u16, expected_surrogate, surrogate_units);
+
+    var dictionary_values: [160]Value = undefined;
+    for (0..80) |index| {
+        dictionary_values[index * 2] = numberValue(@floatFromInt(index));
+        dictionary_values[index * 2 + 1] = numberValue(@floatFromInt(index));
+    }
+    roots[15] = try runtime.createDictionary(&dictionary_values);
+    var expected_gc: std.Io.Writer.Allocating = .init(runtime.allocator);
+    defer expected_gc.deinit();
+    try expected_gc.writer.writeByte('{');
+    for (0..80) |index| {
+        if (index > 0) try expected_gc.writer.writeByte(',');
+        try expected_gc.writer.print("\"{d}\":{d}", .{ index, index });
+    }
+    try expected_gc.writer.writeByte('}');
+    // Force collections while normalized property-key objects are being built.
+    // The source dictionary remains in the caller root frame, and keys already
+    // produced by the serializer remain in its temporary root frame.
+    runtime.next_collection = runtime.object_count;
+    try expectJsonAotString(&runtime, roots[15], false, expected_gc.written());
 }
 
 fn numberValue(number: f64) Value {
