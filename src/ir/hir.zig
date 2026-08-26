@@ -61,6 +61,9 @@ pub const Node = struct {
     names: []const []const u8 = &.{},
     number_value: ?f64 = null,
     boolean_value: bool = false,
+    /// True only when semantic analysis resolved this call to the fixed
+    /// language builtin catalog. Dynamic plugin commands stay false.
+    is_builtin_call: bool = false,
     loop_direction: ast.LoopDirection = .automatic,
     children: []NodeId = &.{},
 };
@@ -271,6 +274,7 @@ const Lowerer = struct {
         if (node.arguments.len > 0) result.names = try self.resolvedArgumentNames(node);
         result.number_value = node.number_value;
         result.boolean_value = node.number_value != null and node.number_value.? != 0;
+        result.is_builtin_call = node.kind == .function_call and self.bindingIsBuiltin(node);
         result.loop_direction = node.loop_direction;
         if (node.kind == .anonymous_function) {
             result.name = try self.allocator.dupe(u8, self.anonymous_names.get(node) orelse return error.MissingAnonymousFunction);
@@ -302,7 +306,7 @@ const Lowerer = struct {
     }
 
     fn bindingIsBuiltin(self: Lowerer, node: *ast.Node) bool {
-        for (self.semantic_program.bindings) |binding| if (binding.node == node) return binding.kind == .builtin;
+        for (self.semantic_program.bindings) |binding| if (binding.node == node) return binding.kind == .builtin and !binding.dynamic_builtin;
         return false;
     }
 

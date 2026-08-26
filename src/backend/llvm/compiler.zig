@@ -29,7 +29,7 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
         std.Io.Dir.deleteFileAbsolute(io, manifest_path) catch {};
     };
     if (options.compile_manifest_path) |manifest_path| {
-        manifest_entry_count = module_mod.writeBuiltinManifest(io, program, options.source_path, manifest_path) catch |failure| {
+        manifest_entry_count = module_mod.writeBuiltinManifest(allocator, io, program, options.source_path, manifest_path) catch |failure| {
             try diagnostics.print("AOT builtin manifest生成エラー: {s}\n", .{@errorName(failure)});
             return error.CompileManifestFailed;
         };

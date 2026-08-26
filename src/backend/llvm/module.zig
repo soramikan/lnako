@@ -23,13 +23,14 @@ pub const UnsupportedFeature = struct {
 
 /// A single builtin dispatch recorded by the optional AOT compile manifest.
 ///
-/// This is deliberately limited to names and source locations.  It is a
-/// pre-optimization witness of the dispatches that the LLVM emitter will see;
-/// it must not expose IR values, arguments, or pointers.
+/// This is deliberately limited to names, a stable site identity, and source
+/// locations. It is a pre-optimization witness of the dispatches that the
+/// LLVM emitter will see; it must not expose IR values, arguments, or pointers.
 pub const ManifestCall = struct {
     source_name: []const u8,
     canonical_opcode: []const u8,
     route: []const u8,
+    opcode: u16,
 };
 
 const manifest_schema = "lnako.aot.builtin-manifest.v1";
@@ -38,6 +39,7 @@ const ManifestHeader = struct {
     schema: []const u8,
     phase: []const u8,
     sourcePath: []const u8,
+    siteIdEncoding: []const u8,
 };
 
 const ManifestSource = struct {
@@ -54,6 +56,8 @@ const ManifestEntry = struct {
     sourceName: []const u8,
     canonicalOpcode: []const u8,
     route: []const u8,
+    opcode: u16,
+    siteId: []const u8,
     function: []const u8,
     source: ManifestSource,
 };
@@ -69,12 +73,13 @@ const ManifestComplete = struct {
 /// Resolves the same builtin routes used by the LLVM emitter.  A `null`
 /// result means that the call is a user/dynamic call and is intentionally not
 /// part of the builtin manifest.
-pub fn manifestCall(name: []const u8, direct_callee: ?ir.FunctionId) ?ManifestCall {
-    if (direct_callee != null) return null;
+pub fn manifestCall(name: []const u8, direct_callee: ?ir.FunctionId, is_builtin_call: bool) ?ManifestCall {
+    if (direct_callee != null or !is_builtin_call) return null;
     if (isDisplayCall(name)) return .{
         .source_name = name,
         .canonical_opcode = "display",
         .route = "direct-display",
+        .opcode = 0,
     };
     const command = aot_builtin.lookup(name) orelse return null;
     const route = switch (command) {
@@ -86,13 +91,14 @@ pub fn manifestCall(name: []const u8, direct_callee: ?ir.FunctionId) ?ManifestCa
         .source_name = name,
         .canonical_opcode = aot_builtin.canonicalOpcodeName(command),
         .route = route,
+        .opcode = @intFromEnum(command),
     };
 }
 
 /// Writes a JSONL manifest without replacing an existing file.  The first
 /// record describes the schema; subsequent records are pre-optimization
 /// builtin dispatch evidence in source/IR order.
-pub fn writeBuiltinManifest(io: std.Io, program: ir.Program, source_path: []const u8, manifest_path: []const u8) !usize {
+pub fn writeBuiltinManifest(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, source_path: []const u8, manifest_path: []const u8) !usize {
     if (!std.fs.path.isAbsolute(manifest_path)) return error.ManifestPathMustBeAbsolute;
 
     var file = try std.Io.Dir.createFileAbsolute(io, manifest_path, .{ .exclusive = true });
@@ -105,17 +111,24 @@ pub fn writeBuiltinManifest(io: std.Io, program: ir.Program, source_path: []cons
     var buffer: [4096]u8 = undefined;
     var file_writer = file.writer(io, &buffer);
     const writer = &file_writer.interface;
+    var seen_site_ids: std.AutoHashMapUnmanaged(u64, void) = .empty;
+    defer seen_site_ids.deinit(allocator);
     writeManifestLine(writer, ManifestHeader{
         .schema = manifest_schema,
         .phase = "pre-opt",
         .sourcePath = source_path,
+        .siteIdEncoding = "u64-hex16",
     }) catch |err| return err;
     var entry_count: usize = 0;
     for (program.functions) |function| {
         for (function.blocks) |block| {
             for (block.instructions) |instruction| {
                 if (instruction.opcode != .call) continue;
-                const call = manifestCall(instruction.name, instruction.direct_callee) orelse continue;
+                const call = manifestCall(instruction.name, instruction.direct_callee, instruction.is_builtin_call) orelse continue;
+                const site_id = instruction.site_id orelse return error.MissingDispatchSiteId;
+                if (seen_site_ids.contains(site_id)) return error.ManifestSiteIdCollision;
+                try seen_site_ids.put(allocator, site_id, {});
+                var site_id_text: [18]u8 = undefined;
                 entry_count += 1;
                 try writeManifestLine(writer, ManifestEntry{
                     .schema = manifest_schema,
@@ -124,6 +137,8 @@ pub fn writeBuiltinManifest(io: std.Io, program: ir.Program, source_path: []cons
                     .sourceName = call.source_name,
                     .canonicalOpcode = call.canonical_opcode,
                     .route = call.route,
+                    .opcode = call.opcode,
+                    .siteId = formatSiteId(&site_id_text, site_id),
                     .function = function.name,
                     .source = .{
                         .line = instruction.span.line + 1,
@@ -138,6 +153,10 @@ pub fn writeBuiltinManifest(io: std.Io, program: ir.Program, source_path: []cons
     try writer.flush();
     keep_file = false;
     return entry_count;
+}
+
+fn formatSiteId(buffer: *[18]u8, site_id: u64) []const u8 {
+    return std.fmt.bufPrint(buffer, "0x{x:0>16}", .{site_id}) catch unreachable;
 }
 
 /// Completes a manifest after LLVM emission and linking have succeeded.  A
@@ -321,8 +340,14 @@ const Emitter = struct {
                 "declare void @lnako_aot_function_capture(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_function_call(ptr, ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_cut(ptr, ptr, ptr, i64, i8)\n" ++
+                "declare void @lnako_aot_cut_site(ptr, ptr, ptr, i64, i8, i64)\n" ++
                 "declare void @lnako_aot_builtin_call(ptr, ptr, i64, i16)\n" ++
+                "declare void @lnako_aot_builtin_call_site(ptr, ptr, i64, i16, i64)\n" ++
                 "declare void @lnako_aot_regexp_call(ptr, ptr, ptr, i64, i16)\n" ++
+                "declare void @lnako_aot_regexp_call_site(ptr, ptr, ptr, i64, i16, i64)\n" ++
+                "declare i64 @lnako_aot_dispatch_display_begin(i64)\n" ++
+                "declare i64 @lnako_aot_dispatch_display_begin_with_epoch(i64, ptr)\n" ++
+                "declare void @lnako_aot_dispatch_result(i64, i64, i64)\n" ++
                 "declare i32 @printf(ptr, ...)\n" ++
                 "declare i32 @puts(ptr)\n" ++
                 "declare double @llvm.pow.f64(double, double)\n" ++
@@ -503,8 +528,10 @@ const Emitter = struct {
                 "  %inline.result = call i32 (ptr, ...) @printf(ptr @.lnako.fmt.text.inline, ptr %text)\n" ++
                 "  ret void\n" ++
                 "}\n\n" ++
-                "define internal %lnako.Value @lnako.display(%lnako.Value %value, i1 %newline) {\n" ++
+                "define internal %lnako.Value @lnako.display(%lnako.Value %value, i1 %newline, i64 %site_id) {\n" ++
                 "entry:\n" ++
+                "  %display.failure_epoch = alloca i64\n" ++
+                "  %display.call_id = call i64 @lnako_aot_dispatch_display_begin_with_epoch(i64 %site_id, ptr %display.failure_epoch)\n" ++
                 "  %display.value = alloca %lnako.Value\n" ++
                 "  store %lnako.Value %value, ptr %display.value\n" ++
                 "  %tag = extractvalue %lnako.Value %value, 0\n" ++
@@ -539,6 +566,8 @@ const Emitter = struct {
                 "  call void @lnako_aot_print_bigint(ptr %display.value, i1 %newline)\n" ++
                 "  br label %done\n" ++
                 "done:\n" ++
+                "  %display.start_epoch = load i64, ptr %display.failure_epoch\n" ++
+                "  call void @lnako_aot_dispatch_result(i64 %display.call_id, i64 %site_id, i64 %display.start_epoch)\n" ++
                 "  ret %lnako.Value { i8 0, i64 0 }\n" ++
                 "}\n\n",
         );
@@ -993,15 +1022,16 @@ const Emitter = struct {
 
     fn writeCall(self: *Emitter, function: ir.Function, locals: []const []const u8, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
         const result = instruction.result orelse return error.MissingInstructionResult;
-        if (instruction.direct_callee == null and isDisplayCall(instruction.name)) {
+        if (instruction.direct_callee == null and instruction.is_builtin_call and isDisplayCall(instruction.name)) {
             if (instruction.operands.len == 0) return error.InvalidCall;
+            const site_id = instruction.site_id orelse return error.MissingDispatchSiteId;
             try self.output.writer.print("  %v{d} = call %lnako.Value @lnako.display(%lnako.Value ", .{result});
             try self.writeValueRef(function, instruction.operands[instruction.operands.len - 1]);
-            try self.output.writer.writeAll(", i1 true)");
+            try self.output.writer.print(", i1 true, i64 {d})", .{site_id});
             try self.debugSuffix(instruction.span, scope);
             return;
         }
-        if (instruction.direct_callee == null) if (aot_builtin.lookup(instruction.name)) |command| {
+        if (instruction.direct_callee == null and instruction.is_builtin_call) if (aot_builtin.lookup(instruction.name)) |command| {
             if (command == .regexp_match or command == .regexp_extract or command == .regexp_replace or command == .regexp_split) {
                 try self.writeRegexpCall(function, instruction, scope, aggregate_count, command);
                 try self.writeCallResult(result, instruction.span, scope);
@@ -1037,6 +1067,7 @@ const Emitter = struct {
 
     fn writeBuiltinCall(self: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize, command: aot_builtin.Command) !void {
         const result = instruction.result orelse return error.MissingInstructionResult;
+        const site_id = instruction.site_id orelse return error.MissingDispatchSiteId;
         if (instruction.operands.len > aggregate_count) return error.InvalidCallScratch;
         for (instruction.operands, 0..) |argument, index| {
             try self.output.writer.print("  %builtin.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
@@ -1049,17 +1080,17 @@ const Emitter = struct {
         if (command == .cut or command == .cut_range) {
             const target_index = self.globalIndex("対象") orelse return error.MissingTargetGlobal;
             const mode: u8 = if (command == .cut) 0 else 1;
-            try self.output.writer.print("  call void @lnako_aot_cut(ptr %root.slot.{d}, ptr @lnako.global.{d}, ptr ", .{ result, target_index });
+            try self.output.writer.print("  call void @lnako_aot_cut_site(ptr %root.slot.{d}, ptr @lnako.global.{d}, ptr ", .{ result, target_index });
             if (instruction.operands.len > 0) {
                 try self.output.writer.print("%builtin.{d}.slot.0", .{result});
             } else try self.output.writer.writeAll("null");
-            try self.output.writer.print(", i64 {d}, i8 {d})", .{ instruction.operands.len, mode });
+            try self.output.writer.print(", i64 {d}, i8 {d}, i64 {d})", .{ instruction.operands.len, mode, site_id });
         } else {
-            try self.output.writer.print("  call void @lnako_aot_builtin_call(ptr %root.slot.{d}, ptr ", .{result});
+            try self.output.writer.print("  call void @lnako_aot_builtin_call_site(ptr %root.slot.{d}, ptr ", .{result});
             if (instruction.operands.len > 0) {
                 try self.output.writer.print("%builtin.{d}.slot.0", .{result});
             } else try self.output.writer.writeAll("null");
-            try self.output.writer.print(", i64 {d}, i16 {d})", .{ instruction.operands.len, @intFromEnum(command) });
+            try self.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
         }
         try self.debugSuffix(instruction.span, scope);
         try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
@@ -1068,6 +1099,7 @@ const Emitter = struct {
 
     fn writeRegexpCall(self: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize, command: aot_builtin.Command) !void {
         const result = instruction.result orelse return error.MissingInstructionResult;
+        const site_id = instruction.site_id orelse return error.MissingDispatchSiteId;
         if (instruction.operands.len > aggregate_count) return error.InvalidCallScratch;
         for (instruction.operands, 0..) |argument, index| {
             try self.output.writer.print("  %regexp.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
@@ -1077,14 +1109,14 @@ const Emitter = struct {
             try self.output.writer.print(", ptr %regexp.{d}.slot.{d}", .{ result, index });
             try self.debugSuffix(instruction.span, scope);
         }
-        try self.output.writer.print("  call void @lnako_aot_regexp_call(ptr %root.slot.{d}, ptr ", .{result});
+        try self.output.writer.print("  call void @lnako_aot_regexp_call_site(ptr %root.slot.{d}, ptr ", .{result});
         if (command == .regexp_match or command == .regexp_extract) {
             const captures_index = self.globalIndex("抽出文字列") orelse return error.MissingCaptureGlobal;
             try self.output.writer.print("@lnako.global.{d}", .{captures_index});
         } else try self.output.writer.writeAll("null");
         try self.output.writer.writeAll(", ptr ");
         if (instruction.operands.len > 0) try self.output.writer.print("%regexp.{d}.slot.0", .{result}) else try self.output.writer.writeAll("null");
-        try self.output.writer.print(", i64 {d}, i16 {d})", .{ instruction.operands.len, @intFromEnum(command) });
+        try self.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
         try self.debugSuffix(instruction.span, scope);
         try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try self.debugSuffix(instruction.span, scope);
@@ -1637,28 +1669,62 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.global.0") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "!llvm.dbg.cu") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "!DILocation(line: 1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_builtin_call_site") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_dispatch_display_begin") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare i64 @lnako_aot_dispatch_display_begin_with_epoch(i64, ptr)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_dispatch_result(i64, i64, i64)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_dispatch_result(i64 %display.call_id, i64 %site_id, i64 %display.start_epoch)\n") != null);
 }
 
 test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {
-    const display = manifestCall("表示", null).?;
+    const display = manifestCall("表示", null, true).?;
     try std.testing.expectEqualStrings("表示", display.source_name);
     try std.testing.expectEqualStrings("display", display.canonical_opcode);
     try std.testing.expectEqualStrings("direct-display", display.route);
+    try std.testing.expectEqual(@as(u16, 0), display.opcode);
 
-    const cut = manifestCall("切取", null).?;
+    const cut = manifestCall("切取", null, true).?;
     try std.testing.expectEqualStrings("cut", cut.canonical_opcode);
     try std.testing.expectEqualStrings("cut", cut.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.cut), cut.opcode);
 
-    const regexp = manifestCall("正規表現マッチ", null).?;
+    const regexp = manifestCall("正規表現マッチ", null, true).?;
     try std.testing.expectEqualStrings("regexp_match", regexp.canonical_opcode);
     try std.testing.expectEqualStrings("regexp", regexp.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.regexp_match), regexp.opcode);
 
-    const builtin = manifestCall("文字列変換", null).?;
+    const builtin = manifestCall("文字列変換", null, true).?;
     try std.testing.expectEqualStrings("to_string", builtin.canonical_opcode);
     try std.testing.expectEqualStrings("builtin", builtin.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.to_string), builtin.opcode);
 
-    try std.testing.expect(manifestCall("利用者関数", 0) == null);
-    try std.testing.expect(manifestCall("未知命令", null) == null);
+    try std.testing.expect(manifestCall("利用者関数", 0, false) == null);
+    try std.testing.expect(manifestCall("未知命令", null, false) == null);
+}
+
+test "site-aware builtin emissionはsite ID欠落を拒否する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "1を表示\n", "missing-site.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "missing-site.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "missing-site", "missing-site.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    var found_builtin = false;
+    for (program.functions) |*function| for (function.blocks) |*block| for (block.instructions) |*instruction| {
+        if (instruction.opcode == .call and instruction.is_builtin_call) {
+            instruction.site_id = null;
+            found_builtin = true;
+            break;
+        }
+    };
+    try std.testing.expect(found_builtin);
+    try std.testing.expectError(error.MissingDispatchSiteId, generate(std.testing.allocator, program, "missing-site.nako3", false));
 }
 
 test "参照されたスカラーシステム定数をAOTグローバルへ初期化する" {
@@ -1745,7 +1811,7 @@ test "正規表現マッチは未参照の抽出文字列もAOTグローバル�
     var module = try generate(std.testing.allocator, program, "regexp-global.nako3", false);
     defer module.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_array_new(ptr @lnako.global.") != null);
-    const call = std.mem.indexOf(u8, module.text, "call void @lnako_aot_regexp_call").?;
+    const call = std.mem.indexOf(u8, module.text, "call void @lnako_aot_regexp_call_site").?;
     const capture_pointer = std.mem.indexOfPos(u8, module.text, call, "ptr @lnako.global.").?;
     const call_end = std.mem.indexOfPos(u8, module.text, call, "\n").?;
     try std.testing.expect(capture_pointer < call_end);

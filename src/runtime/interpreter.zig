@@ -60,7 +60,7 @@ const DispatchTrace = struct {
         self.locked.store(false, .release);
     }
 
-    fn emit(self: *DispatchTrace, name: []const u8, route: []const u8, result: []const u8) void {
+    fn emit(self: *DispatchTrace, name: []const u8, route: []const u8, result: []const u8, site_id: ?u64) void {
         self.lock();
         defer self.unlock();
         if (self.disabled) return;
@@ -68,11 +68,15 @@ const DispatchTrace = struct {
         const writeFn = self.writeFn orelse return;
         const context = self.context orelse return;
         var line: [1024]u8 = undefined;
-        const rendered = std.fmt.bufPrint(
+        const rendered = (if (site_id) |id| std.fmt.bufPrint(
             &line,
-            "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"dispatch-result\",\"seq\":{d},\"command\":\"{s}\",\"route\":\"{s}\",\"result\":\"{s}\"}}\n",
+            "{{\"schema\":2,\"engine\":\"interpreter\",\"phase\":\"dispatch-result\",\"seq\":{d},\"siteId\":\"0x{x:0>16}\",\"command\":\"{s}\",\"route\":\"{s}\",\"result\":\"{s}\"}}\n",
+            .{ self.sequence, id, name, route, result },
+        ) else std.fmt.bufPrint(
+            &line,
+            "{{\"schema\":2,\"engine\":\"interpreter\",\"phase\":\"dispatch-result\",\"seq\":{d},\"siteId\":null,\"command\":\"{s}\",\"route\":\"{s}\",\"result\":\"{s}\"}}\n",
             .{ self.sequence, name, route, result },
-        ) catch {
+        )) catch {
             self.disabled = true;
             return;
         };
@@ -93,7 +97,7 @@ const DispatchTrace = struct {
         var line: [160]u8 = undefined;
         const rendered = std.fmt.bufPrint(
             &line,
-            "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"trace-end\",\"seq\":{d},\"dropped\":0}}\n",
+            "{{\"schema\":2,\"engine\":\"interpreter\",\"phase\":\"trace-end\",\"seq\":{d},\"dropped\":0}}\n",
             .{self.sequence},
         ) catch return;
         writeFn(context, path, rendered) catch return;
@@ -631,7 +635,7 @@ pub const Interpreter = struct {
             break :blk try self.callFunctionValue(callable.function, arguments);
         } else blk: {
             writes_result = !preservesResultVariable(instruction.name);
-            break :blk try self.callBuiltin(instruction.name, arguments);
+            break :blk try self.callBuiltin(instruction.name, arguments, instruction.site_id);
         };
         if (writes_result) try self.setGlobal("それ", result);
         return result;
@@ -680,15 +684,15 @@ pub const Interpreter = struct {
         return self.system_context;
     }
 
-    fn callBuiltin(self: *Interpreter, name: []const u8, arguments: []const Value) !Value {
+    fn callBuiltin(self: *Interpreter, name: []const u8, arguments: []const Value, site_id: ?u64) !Value {
         self.beginDispatchRoute();
         const result = self.callBuiltinImpl(name, arguments) catch |failure| {
             const route = self.endDispatchRoute();
-            self.dispatch_trace.emit(traceBuiltinName(name), route, "failure");
+            self.dispatch_trace.emit(traceBuiltinName(name), route, "failure", site_id);
             return failure;
         };
         const route = self.endDispatchRoute();
-        self.dispatch_trace.emit(traceBuiltinName(name), route, "success");
+        self.dispatch_trace.emit(traceBuiltinName(name), route, "success", site_id);
         return result;
     }
 
@@ -1057,7 +1061,7 @@ pub const Interpreter = struct {
                     var roots = self.runtime.rootFrame();
                     defer roots.deinit();
                     try roots.protect(&code);
-                    const callback = try self.callBuiltin("JS実行", &.{code});
+                    const callback = try self.callBuiltin("JS実行", &.{code}, null);
                     if (callback != .function) return error.InvalidHatenaCallback;
                     try self.hatena_callbacks.append(self.allocator, .{ .function = callback });
                 } else try self.appendHatenaName(item);
@@ -1090,7 +1094,7 @@ pub const Interpreter = struct {
     fn callNamedHatena(self: *Interpreter, name_value: Value, parameter: Value) !Value {
         const name = try name_value.string.toUtf8Lossy(self.allocator);
         defer self.allocator.free(name);
-        return self.callBuiltin(name, &.{parameter});
+        return self.callBuiltin(name, &.{parameter}, null);
     }
 
     fn debugBreakpointWait(self: *Interpreter, arguments: []const Value) !Value {
@@ -1329,7 +1333,7 @@ pub const Interpreter = struct {
         if (quickJsResolve(self, name)) |callable| {
             if (callable == .function) return self.callFunctionValue(callable.function, arguments);
         } else |_| {}
-        return self.callBuiltin(name, arguments);
+        return self.callBuiltin(name, arguments, null);
     }
 
     fn installSystemConstant(context: *anyopaque, name: []const u8, value: Value) !void {

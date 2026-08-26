@@ -15,15 +15,18 @@ pub const Tag = aot_abi.Tag;
 
 const safe_array_element_limit: usize = 1_000_000;
 
-/// AOT dispatch tracing is opt-in through LNAKO_DISPATCH_TRACE.  It records
-/// only canonical opcode metadata; arguments, values, and addresses never
-/// cross this boundary.  C stdio keeps the helper available to generated
+/// AOT dispatch tracing is opt-in through LNAKO_DISPATCH_TRACE. It records
+/// only static dispatch metadata; arguments, values, and addresses never
+/// cross this boundary. C stdio keeps the helper available to generated
 /// executables on POSIX and Windows without requiring a runtime Io object.
+pub const no_dispatch_call_id = std.math.maxInt(u64);
+
 const DispatchTrace = struct {
     file: ?*std.c.FILE = null,
     initialized: bool = false,
     disabled: bool = false,
     sequence: u64 = 0,
+    next_call_id: u64 = 0,
     locked: std.atomic.Value(bool) = .init(false),
 
     fn lock(self: *DispatchTrace) void {
@@ -42,36 +45,73 @@ const DispatchTrace = struct {
         self.file = null;
     }
 
-    fn emit(self: *DispatchTrace, command: []const u8, opcode: u16, route: []const u8) void {
-        self.lock();
-        defer self.unlock();
-        if (self.disabled) return;
+    fn ensureFile(self: *DispatchTrace) ?*std.c.FILE {
+        if (self.disabled) return null;
         if (!self.initialized) {
             self.initialized = true;
-            const path = std.c.getenv("LNAKO_DISPATCH_TRACE") orelse return;
-            if (path[0] == 0) return;
+            const path = std.c.getenv("LNAKO_DISPATCH_TRACE") orelse return null;
+            if (path[0] == 0) return null;
             self.file = std.c.fopen(path, "wbx") orelse {
                 self.disabled = true;
-                return;
+                return null;
             };
         }
-        const file = self.file orelse return;
-        var line: [512]u8 = undefined;
-        const rendered = std.fmt.bufPrint(
-            &line,
-            "{{\"schema\":1,\"engine\":\"aot\",\"phase\":\"dispatch-attempt\",\"seq\":{d},\"opcode\":{d},\"command\":\"{s}\",\"name_source\":\"canonical-opcode\",\"route\":\"{s}\"}}\n",
-            .{ self.sequence, opcode, command, route },
-        ) catch {
-            self.disabled = true;
-            return;
-        };
+        return self.file;
+    }
+
+    fn writeLine(self: *DispatchTrace, file: *std.c.FILE, rendered: []const u8) bool {
         if (std.c.fwrite(rendered.ptr, 1, rendered.len, file) != rendered.len or fflush(file) != 0) {
             _ = std.c.fclose(file);
             self.file = null;
             self.disabled = true;
-            return;
+            return false;
         }
         self.sequence += 1;
+        return true;
+    }
+
+    fn begin(self: *DispatchTrace, command: []const u8, opcode: u16, route: []const u8, site_id: u64) u64 {
+        self.lock();
+        defer self.unlock();
+        const file = self.ensureFile() orelse return no_dispatch_call_id;
+        if (self.next_call_id == no_dispatch_call_id) {
+            self.disabled = true;
+            return no_dispatch_call_id;
+        }
+        const call_id = self.next_call_id;
+        self.next_call_id += 1;
+        var line: [768]u8 = undefined;
+        const rendered = if (site_id == 0)
+            std.fmt.bufPrint(&line, "{{\"schema\":2,\"engine\":\"aot\",\"phase\":\"dispatch-attempt\",\"seq\":{d},\"callId\":{d},\"siteId\":null,\"opcode\":{d},\"command\":\"{s}\",\"name_source\":\"canonical-opcode\",\"route\":\"{s}\"}}\n", .{ self.sequence, call_id, opcode, command, route }) catch {
+                self.disabled = true;
+                return no_dispatch_call_id;
+            }
+        else
+            std.fmt.bufPrint(&line, "{{\"schema\":2,\"engine\":\"aot\",\"phase\":\"dispatch-attempt\",\"seq\":{d},\"callId\":{d},\"siteId\":\"0x{x:0>16}\",\"opcode\":{d},\"command\":\"{s}\",\"name_source\":\"canonical-opcode\",\"route\":\"{s}\"}}\n", .{ self.sequence, call_id, site_id, opcode, command, route }) catch {
+                self.disabled = true;
+                return no_dispatch_call_id;
+            };
+        if (!self.writeLine(file, rendered)) return no_dispatch_call_id;
+        return call_id;
+    }
+
+    fn result(self: *DispatchTrace, call_id: u64, command: []const u8, opcode: u16, route: []const u8, site_id: u64, success: bool) void {
+        if (call_id == no_dispatch_call_id) return;
+        self.lock();
+        defer self.unlock();
+        const file = self.ensureFile() orelse return;
+        var line: [768]u8 = undefined;
+        const rendered = if (site_id == 0)
+            std.fmt.bufPrint(&line, "{{\"schema\":2,\"engine\":\"aot\",\"phase\":\"dispatch-result\",\"seq\":{d},\"callId\":{d},\"siteId\":null,\"opcode\":{d},\"command\":\"{s}\",\"route\":\"{s}\",\"success\":{}}}\n", .{ self.sequence, call_id, opcode, command, route, success }) catch {
+                self.disabled = true;
+                return;
+            }
+        else
+            std.fmt.bufPrint(&line, "{{\"schema\":2,\"engine\":\"aot\",\"phase\":\"dispatch-result\",\"seq\":{d},\"callId\":{d},\"siteId\":\"0x{x:0>16}\",\"opcode\":{d},\"command\":\"{s}\",\"route\":\"{s}\",\"success\":{}}}\n", .{ self.sequence, call_id, site_id, opcode, command, route, success }) catch {
+                self.disabled = true;
+                return;
+            };
+        _ = self.writeLine(file, rendered);
     }
 
     fn finish(self: *DispatchTrace) void {
@@ -87,16 +127,14 @@ const DispatchTrace = struct {
                 return;
             };
         }
-        const file = self.file orelse return;
+        const file = self.ensureFile() orelse return;
         var line: [160]u8 = undefined;
         const rendered = std.fmt.bufPrint(
             &line,
-            "{{\"schema\":1,\"engine\":\"aot\",\"phase\":\"trace-end\",\"seq\":{d},\"dropped\":0}}\n",
+            "{{\"schema\":2,\"engine\":\"aot\",\"phase\":\"trace-end\",\"seq\":{d},\"dropped\":0}}\n",
             .{self.sequence},
         ) catch return;
-        if (std.c.fwrite(rendered.ptr, 1, rendered.len, file) != rendered.len or fflush(file) != 0) return;
-        self.sequence += 1;
-        self.disabled = true;
+        if (self.writeLine(file, rendered)) self.disabled = true;
     }
 };
 
@@ -198,6 +236,10 @@ const Runtime = struct {
     stringifying_arrays: std.ArrayList(*Object) = .empty,
     pending_exception: Value = .{},
     has_pending_exception: bool = false,
+    /// Monotonic-with-wrap generation of the pending failure slot. Dispatch
+    /// tracing compares this value at call boundaries so an exception left by
+    /// an earlier call does not make a later successful call look failed.
+    failure_epoch: u64 = 0,
     system_context: Value = .{},
     dispatch_trace: DispatchTrace = .{},
 
@@ -389,6 +431,7 @@ const Runtime = struct {
     fn setException(self: *Runtime, value: Value) void {
         self.pending_exception = value;
         self.has_pending_exception = true;
+        self.failure_epoch +%= 1;
     }
 
     fn setFailure(self: *Runtime, failure: anyerror) void {
@@ -825,14 +868,23 @@ fn regexpBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []c
 /// Dedicated ABI because regexp match/extract update the system global
 /// `抽出文字列` in addition to returning their normal value.
 pub export fn lnako_aot_regexp_call(out: *Value, captures: ?*Value, arguments: ?[*]const Value, len: usize, opcode: u16) callconv(.c) void {
+    lnako_aot_regexp_call_site(out, captures, arguments, len, opcode, 0);
+}
+
+pub export fn lnako_aot_regexp_call_site(out: *Value, captures: ?*Value, arguments: ?[*]const Value, len: usize, opcode: u16, site_id: u64) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*active| active else return;
+    const start_epoch = runtime.failure_epoch;
     const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
-        runtime.dispatch_trace.emit("unknown", opcode, "regexp");
+        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "regexp", site_id);
         runtime.setFailure(error.UnknownCommand);
+        runtime.dispatch_trace.result(call_id, "unknown", opcode, "regexp", site_id, false);
         return;
     };
-    runtime.dispatch_trace.emit(aot_builtin.canonicalOpcodeName(command), opcode, "regexp");
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "regexp", site_id);
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "regexp", site_id, success);
     if (arguments == null and len != 0) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
@@ -846,6 +898,7 @@ pub export fn lnako_aot_regexp_call(out: *Value, captures: ?*Value, arguments: ?
     if (captures) |target| {
         if (result.captures) |value| target.* = value;
     }
+    success = runtime.failure_epoch == start_epoch;
 }
 
 const JsonAotPath = union(enum) {
@@ -2269,6 +2322,30 @@ pub export fn lnako_aot_runtime_deinit() callconv(.c) void {
     active_runtime = null;
 }
 
+/// Site-aware display hooks used by generated LLVM.  The hooks are additive;
+/// the runtime ABI for existing generated modules remains unchanged.
+pub export fn lnako_aot_dispatch_display_begin(site_id: u64) callconv(.c) u64 {
+    var ignored_epoch: u64 = 0;
+    return lnako_aot_dispatch_display_begin_with_epoch(site_id, &ignored_epoch);
+}
+
+/// Begins a direct-display trace and returns the failure epoch observed at the
+/// same boundary through `epoch_out`.  The extra out parameter avoids making
+/// the call ID carry two independent pieces of state across LLVM IR.
+pub export fn lnako_aot_dispatch_display_begin_with_epoch(site_id: u64, epoch_out: *u64) callconv(.c) u64 {
+    const runtime = if (active_runtime) |*active| active else {
+        epoch_out.* = 0;
+        return no_dispatch_call_id;
+    };
+    epoch_out.* = runtime.failure_epoch;
+    return runtime.dispatch_trace.begin("display", 0, "direct-display", site_id);
+}
+
+pub export fn lnako_aot_dispatch_result(call_id: u64, site_id: u64, start_epoch: u64) callconv(.c) void {
+    const runtime = if (active_runtime) |*active| active else return;
+    runtime.dispatch_trace.result(call_id, "display", 0, "direct-display", site_id, runtime.failure_epoch == start_epoch);
+}
+
 pub export fn lnako_aot_push_roots(frame: *RootFrame, values: ?[*]Value, len: usize) callconv(.c) void {
     if (active_runtime) |*runtime| runtime.pushRoots(frame, values, len);
 }
@@ -2529,10 +2606,19 @@ pub export fn lnako_aot_function_call(out: *Value, callable: *const Value, argum
 /// The target is explicit so a local variable named 対象 can never shadow the
 /// command's side effect in generated LLVM.
 pub export fn lnako_aot_cut(out: *Value, target: *Value, arguments: ?[*]const Value, len: usize, mode: u8) callconv(.c) void {
+    lnako_aot_cut_site(out, target, arguments, len, mode, 0);
+}
+
+pub export fn lnako_aot_cut_site(out: *Value, target: *Value, arguments: ?[*]const Value, len: usize, mode: u8, site_id: u64) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*active| active else return;
+    const start_epoch = runtime.failure_epoch;
     const command: aot_builtin.Command = if (mode == 0) .cut else .cut_range;
-    runtime.dispatch_trace.emit(aot_builtin.canonicalOpcodeName(command), @intFromEnum(command), "cut");
+    const opcode = @intFromEnum(command);
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "cut", site_id);
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "cut", site_id, success);
     if (arguments == null and len != 0) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
@@ -2551,17 +2637,27 @@ pub export fn lnako_aot_cut(out: *Value, target: *Value, arguments: ?[*]const Va
     // allocations and all delayed property accesses have succeeded.
     out.* = result.result;
     target.* = result.remainder;
+    success = runtime.failure_epoch == start_epoch;
 }
 
 pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, len: usize, opcode: u16) callconv(.c) void {
+    lnako_aot_builtin_call_site(out, arguments, len, opcode, 0);
+}
+
+pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Value, len: usize, opcode: u16, site_id: u64) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*active| active else return;
+    const start_epoch = runtime.failure_epoch;
     const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
-        runtime.dispatch_trace.emit("unknown", opcode, "builtin");
+        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "builtin", site_id);
         runtime.setFailure(error.UnknownCommand);
+        runtime.dispatch_trace.result(call_id, "unknown", opcode, "builtin", site_id, false);
         return;
     };
-    runtime.dispatch_trace.emit(aot_builtin.canonicalOpcodeName(command), opcode, "builtin");
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "builtin", site_id);
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "builtin", site_id, success);
     if (arguments == null and len != 0) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
@@ -2572,7 +2668,10 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
     }
     const value = if (len > 0) arguments.?[0] else Value{};
     switch (command) {
-        .regexp_match, .regexp_extract, .regexp_replace, .regexp_split => runtime.setFailure(error.UnknownCommand),
+        .regexp_match, .regexp_extract, .regexp_replace, .regexp_split => {
+            runtime.setFailure(error.UnknownCommand);
+            return;
+        },
         .json_encode, .json_encode_pretty => {
             out.* = jsonEncodeBuiltin(runtime, value, command == .json_encode_pretty) catch |failure| {
                 if (!runtime.has_pending_exception) runtime.setFailure(failure);
@@ -3173,6 +3272,7 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
             };
         },
     }
+    success = runtime.failure_epoch == start_epoch;
 }
 
 fn typeNameValue(value: Value) Value {
@@ -5863,11 +5963,38 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, *anyopaque, usize) callconv(.c) void, @TypeOf(&lnako_aot_function_capture));
     try std.testing.expectEqual(*const fn (*Value, *const Value, ?[*]const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_function_call));
     try std.testing.expectEqual(*const fn (*Value, *Value, ?[*]const Value, usize, u8) callconv(.c) void, @TypeOf(&lnako_aot_cut));
+    try std.testing.expectEqual(*const fn (*Value, *Value, ?[*]const Value, usize, u8, u64) callconv(.c) void, @TypeOf(&lnako_aot_cut_site));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16) callconv(.c) void, @TypeOf(&lnako_aot_builtin_call));
+    try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_builtin_call_site));
+    try std.testing.expectEqual(*const fn (*Value, ?*Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_regexp_call_site));
+    try std.testing.expectEqual(*const fn (u64) callconv(.c) u64, @TypeOf(&lnako_aot_dispatch_display_begin));
+    try std.testing.expectEqual(*const fn (u64, *u64) callconv(.c) u64, @TypeOf(&lnako_aot_dispatch_display_begin_with_epoch));
+    try std.testing.expectEqual(*const fn (u64, u64, u64) callconv(.c) void, @TypeOf(&lnako_aot_dispatch_result));
     try std.testing.expectEqual(*const fn (*const Value, bool) callconv(.c) void, @TypeOf(&lnako_aot_print_number));
     try std.testing.expectEqual(*const fn (*const Value) callconv(.c) void, @TypeOf(&lnako_aot_exception_set));
     try std.testing.expectEqual(*const fn () callconv(.c) c_int, @TypeOf(&lnako_aot_exception_pending));
     try std.testing.expectEqual(*const fn (*Value) callconv(.c) void, @TypeOf(&lnako_aot_exception_take));
+}
+
+test "AOT dispatchのfailure epochは過去のpending exceptionを再利用しない" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+
+    const first_dispatch_epoch = runtime.failure_epoch;
+    runtime.setFailure(error.InvalidArgumentCount);
+    try std.testing.expectEqual(first_dispatch_epoch +% 1, runtime.failure_epoch);
+    try std.testing.expect(runtime.has_pending_exception);
+
+    // The pending exception intentionally remains set. A successful dispatch
+    // beginning here observes the new epoch and therefore is not attributed
+    // the earlier failure merely because the slot is still occupied.
+    const second_dispatch_epoch = runtime.failure_epoch;
+    try std.testing.expectEqual(second_dispatch_epoch, runtime.failure_epoch);
+    try std.testing.expect(second_dispatch_epoch != first_dispatch_epoch);
+
+    _ = runtime.takeException();
+    try std.testing.expectEqual(second_dispatch_epoch, runtime.failure_epoch);
+    try std.testing.expect(!runtime.has_pending_exception);
 }
 
 test "AOT切取はUTF-16検索と元値lengthの遅延評価を再現する" {

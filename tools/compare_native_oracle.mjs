@@ -336,7 +336,7 @@ async function readManifestSummary(path) {
   }
   if (lines.length < 2) throw new Error("AOT compile manifestが完了レコードを含みません");
   const header = lines[0];
-  if (header.schema !== "lnako.aot.builtin-manifest.v1" || header.phase !== "pre-opt") {
+  if (header.schema !== "lnako.aot.builtin-manifest.v1" || header.phase !== "pre-opt" || header.siteIdEncoding !== "u64-hex16") {
     throw new Error("AOT compile manifestのschemaまたはphaseが不正です");
   }
   const complete = lines.at(-1);
@@ -345,21 +345,28 @@ async function readManifestSummary(path) {
   }
   const entries = lines.slice(1, -1);
   if (complete.entryCount !== entries.length) throw new Error("AOT compile manifestのentryCountが一致しません");
+  const siteIds = new Set();
+  const entriesSummary = entries.map((entry, index) => {
+    if (entry.kind !== "builtin-dispatch" || entry.schema !== header.schema || entry.phase !== "pre-opt") {
+      throw new Error(`AOT compile manifestのdispatchレコードが不正です（${index + 2}行目）`);
+    }
+    for (const field of ["sourceName", "canonicalOpcode", "route"]) {
+      if (typeof entry[field] !== "string" || entry[field].length === 0) throw new Error(`AOT compile manifestの${field}が不正です`);
+    }
+    if (!Number.isInteger(entry.opcode) || entry.opcode < 0 || entry.opcode > 0xffff) throw new Error("AOT compile manifestのopcodeが不正です");
+    if (typeof entry.siteId !== "string" || !/^0x[0-9a-f]{16}$/.test(entry.siteId) || siteIds.has(entry.siteId)) throw new Error(`AOT compile manifestのsiteIdが不正または重複しています`);
+    siteIds.add(entry.siteId);
+    return {
+      sourceName: entry.sourceName,
+      canonicalOpcode: entry.canonicalOpcode,
+      route: entry.route,
+      opcode: entry.opcode,
+      siteId: entry.siteId,
+    };
+  });
   return {
     complete: true,
-    entries: entries.map((entry, index) => {
-      if (entry.kind !== "builtin-dispatch" || entry.schema !== header.schema || entry.phase !== "pre-opt") {
-        throw new Error(`AOT compile manifestのdispatchレコードが不正です（${index + 2}行目）`);
-      }
-      for (const field of ["sourceName", "canonicalOpcode", "route"]) {
-        if (typeof entry[field] !== "string" || entry[field].length === 0) throw new Error(`AOT compile manifestの${field}が不正です`);
-      }
-      return {
-        sourceName: entry.sourceName,
-        canonicalOpcode: entry.canonicalOpcode,
-        route: entry.route,
-      };
-    }),
+    entries: entriesSummary,
   };
 }
 
@@ -480,7 +487,7 @@ function validateArtifact(artifact) {
         throw new Error(`AOT差分artifactのcompile manifest要約が不正です: ${fixture.id}`);
       }
       for (const entry of fixture.compileManifest.entries) {
-        if (Object.keys(entry).sort().join(",") !== "canonicalOpcode,route,sourceName") throw new Error(`AOT差分artifactのmanifest要約に余分な情報があります: ${fixture.id}`);
+        if (Object.keys(entry).sort().join(",") !== "canonicalOpcode,opcode,route,siteId,sourceName" || !Number.isInteger(entry.opcode) || entry.opcode < 0 || entry.opcode > 0xffff || !/^0x[0-9a-f]{16}$/.test(entry.siteId)) throw new Error(`AOT差分artifactのmanifest要約に余分な情報があります: ${fixture.id}`);
       }
     }
   }

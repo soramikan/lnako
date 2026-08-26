@@ -176,6 +176,7 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
   ランタイムABI実装で順次この許可集合へ加える。
 - `tools/compare_native_oracle.mjs` は同じ入力を公式CLI、公式生成済みJavaScript＋Node、`lnako run`、
   `lnako build` の実行ファイルという4経路で実行し、標準出力・エラー分類・終了コード・シグナルを照合する。
+  dispatch traceではlowering時に決めたsite IDをInterpreter/AOTで共有し、AOTはattempt/resultをcall IDで対にする。
 
 ## plugin_system標準命令
 

@@ -354,6 +354,7 @@ fn constantInstruction(instruction: ir.Instruction) ?Constant {
 fn replaceWithConstant(instruction: *ir.Instruction, constant: Constant) void {
     instruction.operands = &.{};
     instruction.phi_incoming = &.{};
+    instruction.site_id = null;
     instruction.name = "";
     instruction.operator = "";
     instruction.names = &.{};

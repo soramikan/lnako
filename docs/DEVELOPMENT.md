@@ -80,8 +80,8 @@ artifactは公式baselineのタグ・commit、lnakoのcommit、OS/CPUアーキ�
 採用した既知oracle、各経路の終了状態、fixture単位の等価性判定を含みます。各fixtureのソース、生成JS、
 各経路の正規化stdout/stderr、比較スクリプト、lnako本体はSHA-256だけを記録します。プログラムの
 stdout/stderr、引数、ソース本文は保存しません。出力先は絶対パスの新規ファイルに限り、同一ディレクトリ内の一時ファイルから
-原子的に作成します。AOT `-O0`生成時に得たcompile manifestは完了レコードを検証した上で、命令名・
-canonical opcode・routeだけをfixtureの`compileManifest`へ要約します。manifestのsourcePath、関数名、
+原子的に作成します。AOT `-O0`生成時に得たcompile manifestは完了レコードを検証した上で、命令名・numeric opcode・
+canonical opcode・route・固定site IDをfixtureの`compileManifest`へ要約します。manifestのsourcePath、関数名、
 位置情報はartifactへ持ち込みません。artifactの`comparisonSucceeded`と各fixtureの`equivalent`は、全経路の終了コードが0という意味ではなく、
 採用した公式経路と終了状態を含む結果が等価だったことを表します。両方がtrueであることを確認してから比較証拠として扱ってください。
 トップレベルの`status`は比較失敗とインフラ失敗を区別し、インフラ失敗ではfixture結果を空にして成功扱いにしません。

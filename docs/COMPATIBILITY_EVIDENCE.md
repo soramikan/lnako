@@ -57,9 +57,13 @@ ID単位の実行証拠にはなりません。その理由は各entryへ明記�
 `LNAKO_DISPATCH_TRACE`へ絶対JSONLパスを指定すると、InterpreterとAOTランタイムは
 引数・値・ポインタを含まない固定メタデータだけを記録します。未指定時はファイルを作成せず、
 標準出力、標準エラー、終了コードを変えません。既存ファイルは上書きせず、新しいパスだけを受理します。
+traceのschemaは2です。
 
-- Interpreter: `callBuiltin`の完了を`dispatch-result`として記録し、実際に成功・失敗したplugin routeを区別する
-- AOT: builtin、切取、正規表現ABIへの到達を`dispatch-attempt`として記録する
+- Interpreter: `callBuiltin`の同期完了だけを`dispatch-result`として記録し、`seq`で各callを識別して実際に成功・失敗したplugin routeを区別する
+- AOT: builtin、切取、正規表現ABI、直接表示への到達を`dispatch-attempt`と`dispatch-result`の対で記録する
+- 静的呼出しには`siteId`（`0x`＋16桁小文字hex）を付け、同じsiteの反復実行でも`callId`は毎回変える。InterpreterとAOTはこのsite IDで照合できる
+- AOTの`dispatch-result`は対応するattemptと同じ`callId`・site・opcode・command・routeを持ち、`success`で成否を示す
+- AOTのbuiltin・切取・正規表現・直接表示の`success`は固定値ではなく、各ABI開始時と完了時のfailure epochで決定する。直接表示の結果ABIも成否引数を持たず、ランタイムが開始epochを参照するため、過去から残ったpending exceptionを後続callへ誤帰属しない
 - AOTの命令名: ソース上の別名ではなく、LLVM ABIへ渡ったcanonical opcode名
 - 正常終了: 最終行に`trace-end`と`dropped: 0`を記録し、途中欠落を検出可能にする
 
@@ -77,10 +81,14 @@ ID単位の実行証拠にはなりません。その理由は各entryへ明記�
 `LNAKO_COMPILE_MANIFEST`へ絶対JSONLパスを指定すると、AOT buildは
 `lnako.aot.builtin-manifest.v1`形式のmanifestを新規作成します。既存ファイルは上書きしません。
 先頭に`pre-opt` header、続けてLLVM emitterへ渡す前の各builtin call、buildとlinkの成功後に
-件数付き`complete` recordを書きます。途中で失敗したbuildは部分manifestを削除します。
+件数付き`complete` recordを書きます。schema名は維持したままheaderの`siteIdEncoding`とentryの
+`siteId`を追加しており、site IDを使う検証器はこの追加フィールドを必須にします。途中で失敗したbuildは部分manifestを削除します。
 
-各callはソース上の命令名、canonical opcode、LLVM emitter route、関数名、ソース位置だけを含み、
+各callはソース上の命令名、numeric opcode、canonical opcode、LLVM emitter route、site ID、関数名、ソース位置だけを含み、
 引数・値・ポインタは含みません。定数やグローバル読出し、利用者関数・動的呼出しは対象外です。
+site IDはsemantic bindingが固定builtinと解決した全呼出しについて、lowering時に関数IDと関数内の静的呼出し順から決定します。
+利用者関数、名前が衝突した利用者関数、native/JS pluginの動的命令には付けません。manifestはそのうち
+AOT ABIで処理できるsubsetだけを証拠化し、manifest内の重複はbuildエラーにします。
 emitter routeは`builtin`・`cut`・`regexp`・`direct-display`のABI分類であり、
 Interpreterの`plugin_system`・`plugin_node`等のplugin routeとは異なります。
 また、これはNako最適化前のdispatch予定を示す資料であり、LLVM最適化後にcallが残ったことや、

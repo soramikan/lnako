@@ -53,6 +53,11 @@ pub const Instruction = struct {
     result: ?ValueId,
     opcode: Opcode,
     type: Type,
+    /// Stable identity for a statically named dispatch site.  This is assigned
+    /// while lowering, before optimization, and is intentionally independent
+    /// of source paths so it can join compile and runtime traces.
+    site_id: ?u64 = null,
+    is_builtin_call: bool = false,
     operands: []ValueId = &.{},
     phi_incoming: []PhiIncoming = &.{},
     name: []const u8 = "",

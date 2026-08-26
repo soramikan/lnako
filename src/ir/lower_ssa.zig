@@ -21,7 +21,9 @@ pub fn lower(backing_allocator: std.mem.Allocator, hir_program: hir.Program) !ir
         });
         _ = try builder.lowerNode(function.body);
         if (!builder.isTerminated()) builder.terminate(.{ .return_value = builder.implicitResult() });
-        try functions.append(allocator, try builder.finish());
+        var lowered = try builder.finish();
+        try assignDispatchSiteIds(&lowered);
+        try functions.append(allocator, lowered);
     }
     const module_entries = try allocator.alloc(ir.FunctionId, hir_program.modules.len);
     for (hir_program.modules, 0..) |module, index| module_entries[index] = module.entry_function;
@@ -38,6 +40,22 @@ pub fn lower(backing_allocator: std.mem.Allocator, hir_program: hir.Program) !ir
         .module_names = module_names,
         .module_paths = module_paths,
     };
+}
+
+/// Assigns deterministic dispatch identities before any optimizer can clone,
+/// fold, or remove instructions.  Function IDs are stable within a lowered
+/// program and the low word is the source/CFG traversal ordinal, so IDs do not
+/// depend on absolute paths or allocator addresses.
+fn assignDispatchSiteIds(function: *ir.Function) !void {
+    var ordinal: u64 = 0;
+    for (function.blocks) |*block| {
+        for (block.instructions) |*instruction| {
+            if (instruction.opcode != .call or instruction.direct_callee != null or !instruction.is_builtin_call) continue;
+            ordinal += 1;
+            if (ordinal > std.math.maxInt(u32)) return error.DispatchSiteIdOverflow;
+            instruction.site_id = (@as(u64, function.id) << 32) | ordinal;
+        }
+    }
 }
 
 const BlockBuilder = struct {
@@ -385,6 +403,7 @@ const FunctionBuilder = struct {
             .number_value = node.number_value,
             .boolean_value = node.boolean_value,
             .loop_direction = toLoopDirection(node.loop_direction),
+            .is_builtin_call = node.is_builtin_call,
             .span = node.span,
         });
         return value;
@@ -401,6 +420,7 @@ const FunctionBuilder = struct {
             .operator = try self.allocator.dupe(u8, node.operator),
             .names = try dupeStrings(self.allocator, node.names),
             .loop_direction = toLoopDirection(node.loop_direction),
+            .is_builtin_call = node.is_builtin_call,
             .span = node.span,
         });
     }
@@ -633,4 +653,101 @@ test "速度優先領域の本体と境界をIRへ保持する" {
     }
     try std.testing.expect(begin_index != null and store_index != null and end_index != null);
     try std.testing.expect(begin_index.? < store_index.? and store_index.? < end_index.?);
+}
+
+test "dispatch site IDはパス非依存で一意かつclone後も保持する" {
+    const parser = @import("../frontend/parser.zig");
+    const semantic = @import("../semantic/analyzer.zig");
+    const source = "1を表示\n2を表示\n";
+    var first_parsed = try parser.parse(std.testing.allocator, source, "first.nako3");
+    defer first_parsed.deinit();
+    var first_analyzed = try semantic.analyze(std.testing.allocator, first_parsed.root.?, "first.nako3");
+    defer first_analyzed.deinit();
+    var first_hir = try hir.lowerSingle(std.testing.allocator, first_parsed.root.?, "main", "first.nako3", first_analyzed);
+    defer first_hir.deinit();
+    var first = try lower(std.testing.allocator, first_hir);
+    defer first.deinit();
+
+    var second_parsed = try parser.parse(std.testing.allocator, source, "/tmp/other.nako3");
+    defer second_parsed.deinit();
+    var second_analyzed = try semantic.analyze(std.testing.allocator, second_parsed.root.?, "/tmp/other.nako3");
+    defer second_analyzed.deinit();
+    var second_hir = try hir.lowerSingle(std.testing.allocator, second_parsed.root.?, "main", "/tmp/other.nako3", second_analyzed);
+    defer second_hir.deinit();
+    var second = try lower(std.testing.allocator, second_hir);
+    defer second.deinit();
+
+    const first_entry = first.findFunction("main__$entry").?;
+    const second_entry = second.findFunction("main__$entry").?;
+    var first_sites: [2]u64 = undefined;
+    var second_sites: [2]u64 = undefined;
+    var first_count: usize = 0;
+    var second_count: usize = 0;
+    for (first_entry.blocks) |block| for (block.instructions) |instruction| if (instruction.site_id) |site_id| {
+        try std.testing.expect(first_count < first_sites.len);
+        first_sites[first_count] = site_id;
+        first_count += 1;
+    };
+    for (second_entry.blocks) |block| for (block.instructions) |instruction| if (instruction.site_id) |site_id| {
+        try std.testing.expect(second_count < second_sites.len);
+        second_sites[second_count] = site_id;
+        second_count += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 2), first_count);
+    try std.testing.expectEqualSlices(u64, first_sites[0..first_count], second_sites[0..second_count]);
+    try std.testing.expect(first_sites[0] != first_sites[1]);
+
+    var cloned = try first.clone(std.testing.allocator);
+    defer cloned.deinit();
+    const cloned_entry = cloned.findFunction("main__$entry").?;
+    var clone_count: usize = 0;
+    for (cloned_entry.blocks) |block| for (block.instructions) |instruction| if (instruction.site_id) |site_id| {
+        try std.testing.expectEqual(first_sites[clone_count], site_id);
+        clone_count += 1;
+    };
+    try std.testing.expectEqual(first_count, clone_count);
+}
+
+test "利用者関数名のbuiltin衝突と動的plugin命令にはsite IDを付けない" {
+    const parser = @import("../frontend/parser.zig");
+    const semantic = @import("../semantic/analyzer.zig");
+
+    var collision_parsed = try parser.parse(std.testing.allocator, "●表示とは\n99で戻る\nここまで\n表示()を表示\n", "collision.nako3");
+    defer collision_parsed.deinit();
+    var collision_analyzed = try semantic.analyze(std.testing.allocator, collision_parsed.root.?, "collision.nako3");
+    defer collision_analyzed.deinit();
+    var collision_hir = try hir.lowerSingle(std.testing.allocator, collision_parsed.root.?, "collision", "collision.nako3", collision_analyzed);
+    defer collision_hir.deinit();
+    var collision = try lower(std.testing.allocator, collision_hir);
+    defer collision.deinit();
+    var collision_calls: usize = 0;
+    for (collision.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
+        if (instruction.opcode != .call) continue;
+        collision_calls += 1;
+        try std.testing.expect(!instruction.is_builtin_call);
+        try std.testing.expect(instruction.site_id == null);
+    };
+    try std.testing.expect(collision_calls > 0);
+
+    var dynamic_parsed = try parser.parse(std.testing.allocator, "外部追加()\n", "dynamic-plugin.nako3");
+    defer dynamic_parsed.deinit();
+    var dynamic_analyzed = try semantic.analyzeModules(std.testing.allocator, &.{.{
+        .name = "dynamic-plugin",
+        .path = "dynamic-plugin.nako3",
+        .root = dynamic_parsed.root.?,
+        .allows_dynamic_commands = true,
+    }});
+    defer dynamic_analyzed.deinit();
+    var dynamic_hir = try hir.lower(std.testing.allocator, &.{dynamic_parsed.root.?}, &.{"dynamic-plugin"}, &.{"dynamic-plugin.nako3"}, dynamic_analyzed);
+    defer dynamic_hir.deinit();
+    var dynamic = try lower(std.testing.allocator, dynamic_hir);
+    defer dynamic.deinit();
+    var dynamic_calls: usize = 0;
+    for (dynamic.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
+        if (instruction.opcode != .call) continue;
+        dynamic_calls += 1;
+        try std.testing.expect(!instruction.is_builtin_call);
+        try std.testing.expect(instruction.site_id == null);
+    };
+    try std.testing.expectEqual(@as(usize, 1), dynamic_calls);
 }

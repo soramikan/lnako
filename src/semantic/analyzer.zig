@@ -52,6 +52,10 @@ pub const Binding = struct {
     name: []const u8,
     resolved_name: []const u8,
     symbol: ?SymbolId,
+    /// A command supplied by a native/plugin module rather than the fixed
+    /// language builtin catalog. Such calls remain dynamic and must not be
+    /// assigned a static compiler dispatch site.
+    dynamic_builtin: bool = false,
 };
 
 pub const FunctionScope = struct {
@@ -231,6 +235,7 @@ const Analyzer = struct {
         }
         if (callable and self.inputs[module_index].allows_dynamic_commands) {
             try self.bind(node, .builtin, name, name, null);
+            self.bindings.items[self.bindings.items.len - 1].dynamic_builtin = true;
             return;
         }
         if (self.modules.items[module_index].strict) {

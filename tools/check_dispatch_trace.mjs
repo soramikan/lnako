@@ -28,8 +28,13 @@ try {
   const compileManifest = resolve(temporary, "compile-manifest.jsonl");
   const nodeSource = resolve(temporary, "node-route.nako3");
   const nodeTrace = resolve(temporary, "node-route.jsonl");
+  const loopSource = resolve(temporary, "loop.nako3");
+  const loopNative = resolve(temporary, process.platform === "win32" ? "loop.exe" : "loop");
+  const loopTrace = resolve(temporary, "loop.jsonl");
+  const loopManifest = resolve(temporary, "loop-manifest.jsonl");
   await writeFile(source, fixture.source, "utf8");
   await writeFile(nodeSource, nodeFixture.source, "utf8");
+  await writeFile(loopSource, "N=2\n(N>0)の間、繰り返す\nNを表示\nN=N-1\nここまで\n", "utf8");
 
   const baseEnvironment = { ...process.env, TZ: "Asia/Tokyo" };
   const interpretedWithoutTrace = run(compiler, ["run", source], baseEnvironment, temporary);
@@ -51,6 +56,7 @@ try {
   assertCatalogResolution("範囲切取", "plugin_system", "command-0142", "unique-name");
   assertCatalogResolution("表示", "interpreter-core", "command-0307", "unique-name");
   assertOnlyCommands(interpreterEvents, new Set(["切取", "範囲切取", "表示", "CHR"]));
+  assertStaticCommandsHaveSites(interpreterEvents, new Set(["切取", "範囲切取", "表示", "CHR"]));
   await assertExistingTracePreserved("Interpreter", compiler, ["run", source], interpretedWithoutTrace, resolve(temporary, "interpreter-existing.jsonl"), baseEnvironment, temporary);
 
   const nodeEnvironment = { ...baseEnvironment, LNAKO_NODE_TEST: "dispatch-trace" };
@@ -61,6 +67,7 @@ try {
   const nodeEvents = await readTrace(nodeTrace, "interpreter", "dispatch-result");
   assertCommand(nodeEvents, "ファイル名抽出", "plugin_node", "success");
   assertCommand(nodeEvents, "パス抽出", "plugin_node", "success");
+  assertStaticCommandsHaveSites(nodeEvents, new Set(["ファイル名抽出", "パス抽出"]));
   assertCatalogResolution("ファイル名抽出", "plugin_node", "command-0722", "node-route-priority");
   assertCatalogResolution("パス抽出", "plugin_node", "command-0723", "node-route-priority");
   assertCatalogUnresolved("ファイル名抽出", "plugin_system");
@@ -87,13 +94,33 @@ try {
 
   const aotWithTrace = run(native, [], { ...baseEnvironment, LNAKO_DISPATCH_TRACE: aotTrace }, temporary);
   assertEquivalent("AOT", aotWithoutTrace, aotWithTrace);
-  const aotEvents = await readTrace(aotTrace, "aot", "dispatch-attempt");
+  const aotEvents = await readTrace(aotTrace, "aot");
+  assertAotTrace(aotEvents, manifestEntries);
+  if (!aotEvents.some((event) => event.phase === "dispatch-result" && event.success === false)) throw new Error("AOT traceにfailure resultがありません");
   assertCanonicalCommand(aotEvents, "cut", "cut");
   assertCanonicalCommand(aotEvents, "cut_range", "cut");
-  assertOnlyCommands(aotEvents, new Set(["cut", "cut_range", "chr"]));
+  assertCanonicalCommand(aotEvents, "display", "direct-display");
+  assertOnlyCommands(aotEvents, new Set(["cut", "cut_range", "chr", "display"]));
+  assertTraceSitesContained(aotEvents, manifestEntries);
+  assertTraceSitesContained(interpreterEvents, manifestEntries);
+  assertSameStaticSiteSet(interpreterEvents, aotEvents);
+
+  const loopCompiled = run(
+    compiler,
+    ["build", loopSource, "-o", loopNative, "-O0"],
+    { ...baseEnvironment, LNAKO_COMPILE_MANIFEST: loopManifest },
+    temporary,
+  );
+  assertSuccess("ループAOTコンパイル", loopCompiled);
+  const loopManifestEntries = await readCompileManifest(loopManifest, loopSource);
+  const loopWithTrace = run(loopNative, [], { ...baseEnvironment, LNAKO_DISPATCH_TRACE: loopTrace }, temporary);
+  assertSuccess("ループAOT trace実行", loopWithTrace);
+  const loopEvents = await readTrace(loopTrace, "aot");
+  assertAotTrace(loopEvents, loopManifestEntries);
+  assertRepeatedSite(loopEvents);
   await assertExistingTracePreserved("AOT", native, [], aotWithoutTrace, resolve(temporary, "aot-existing.jsonl"), baseEnvironment, temporary);
 
-  console.log(`dispatch証拠スモークテスト: Interpreter ${interpreterEvents.length}イベント / Node ${nodeEvents.length}イベント / AOT manifest ${manifestEntries.length}件・runtime ${aotEvents.length}イベント成功`);
+  console.log(`dispatch証拠スモークテスト: Interpreter ${interpreterEvents.length}イベント / Node ${nodeEvents.length}イベント / AOT manifest ${manifestEntries.length}件・runtime ${aotEvents.length}イベント / loop ${loopEvents.length}イベント成功`);
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }
@@ -129,7 +156,7 @@ function assertNoJsonl(names) {
   if (names.some((name) => name.endsWith(".jsonl"))) throw new Error("trace無効Interpreterがtraceファイルを生成しました");
 }
 
-async function readTrace(path, engine, phase) {
+async function readTrace(path, engine, phase = undefined) {
   const text = await readFile(path, "utf8");
   if (!text.endsWith("\n")) throw new Error(`${engine} traceが改行で完結していません`);
   const events = text.trimEnd().split("\n").map((line, index) => {
@@ -141,7 +168,7 @@ async function readTrace(path, engine, phase) {
   });
   if (events.length < 2) throw new Error(`${engine} traceにdispatchと終端イベントがありません`);
   for (const [index, event] of events.entries()) {
-    if (event.schema !== 1 || event.engine !== engine || event.seq !== index) {
+    if (event.schema !== 2 || event.engine !== engine || event.seq !== index) {
       throw new Error(`${engine} trace metadataが不正です: ${JSON.stringify(event)}`);
     }
     for (const forbidden of ["arguments", "values", "value", "pointer", "address"]) {
@@ -151,7 +178,12 @@ async function readTrace(path, engine, phase) {
   const end = events.at(-1);
   if (end.phase !== "trace-end" || end.dropped !== 0) throw new Error(`${engine} traceが正常に完結していません`);
   const dispatchEvents = events.slice(0, -1);
-  if (dispatchEvents.some((event) => event.phase !== phase)) throw new Error(`${engine} traceのdispatch phaseが不正です`);
+  if (phase !== undefined && dispatchEvents.some((event) => event.phase !== phase)) throw new Error(`${engine} traceのdispatch phaseが不正です`);
+  for (const event of dispatchEvents) {
+    if (event.siteId !== null && (typeof event.siteId !== "string" || !/^0x[0-9a-f]{16}$/.test(event.siteId))) {
+      throw new Error(`${engine} traceのsiteIdが不正です: ${JSON.stringify(event)}`);
+    }
+  }
   return dispatchEvents;
 }
 
@@ -168,7 +200,7 @@ async function readCompileManifest(path, sourcePath) {
   if (records.length < 2) throw new Error("AOT compile manifestにheaderと完了recordがありません");
   const schema = "lnako.aot.builtin-manifest.v1";
   const header = records[0];
-  if (header.schema !== schema || header.phase !== "pre-opt" || header.sourcePath !== sourcePath) {
+  if (header.schema !== schema || header.phase !== "pre-opt" || header.sourcePath !== sourcePath || header.siteIdEncoding !== "u64-hex16") {
     throw new Error(`AOT compile manifest headerが不正です: ${JSON.stringify(header)}`);
   }
   const complete = records.at(-1);
@@ -176,6 +208,7 @@ async function readCompileManifest(path, sourcePath) {
   if (complete.schema !== schema || complete.phase !== "pre-opt" || complete.kind !== "complete" || complete.complete !== true || complete.entryCount !== entries.length) {
     throw new Error(`AOT compile manifest完了recordが不正です: ${JSON.stringify(complete)}`);
   }
+  const siteIds = new Set();
   for (const entry of entries) {
     if (entry.schema !== schema || entry.phase !== "pre-opt" || entry.kind !== "builtin-dispatch") {
       throw new Error(`AOT compile manifest entryが不正です: ${JSON.stringify(entry)}`);
@@ -183,6 +216,13 @@ async function readCompileManifest(path, sourcePath) {
     if (![entry.sourceName, entry.canonicalOpcode, entry.route, entry.function].every((value) => typeof value === "string" && value.length > 0)) {
       throw new Error(`AOT compile manifestの文字列fieldが不正です: ${JSON.stringify(entry)}`);
     }
+    if (!Number.isInteger(entry.opcode) || entry.opcode < 0 || entry.opcode > 0xffff) {
+      throw new Error(`AOT compile manifestのopcodeが不正です: ${JSON.stringify(entry)}`);
+    }
+    if (typeof entry.siteId !== "string" || !/^0x[0-9a-f]{16}$/.test(entry.siteId) || siteIds.has(entry.siteId)) {
+      throw new Error(`AOT compile manifestのsiteIdが不正または重複しています: ${JSON.stringify(entry)}`);
+    }
+    siteIds.add(entry.siteId);
     const location = entry.source;
     if (location === null || !Number.isInteger(location.line) || location.line < 1 || !Number.isInteger(location.column) || location.column < 1 || !Number.isInteger(location.sourceStart) || !Number.isInteger(location.sourceEnd) || location.sourceStart < 0 || location.sourceEnd < location.sourceStart) {
       throw new Error(`AOT compile manifestのsource位置が不正です: ${JSON.stringify(entry)}`);
@@ -201,8 +241,63 @@ function assertCommand(events, command, route, result) {
 }
 
 function assertCanonicalCommand(events, command, route) {
-  if (!events.some((event) => event.command === command && event.route === route && event.name_source === "canonical-opcode")) {
+  if (!events.some((event) => event.command === command && event.route === route && event.name_source === "canonical-opcode" && (event.phase === "dispatch-attempt" || event.phase === "dispatch-result"))) {
     throw new Error(`AOT traceに${command}/${route}がありません`);
+  }
+}
+
+function assertAotTrace(events, manifestEntries) {
+  const attempts = events.filter((event) => event.phase === "dispatch-attempt");
+  const results = events.filter((event) => event.phase === "dispatch-result");
+  if (attempts.length === 0 || attempts.length !== results.length) throw new Error(`AOT traceのattempt/result件数が一致しません: ${attempts.length}/${results.length}`);
+  const manifestBySite = new Map(manifestEntries.map((entry) => [entry.siteId, entry]));
+  const attemptsByCall = new Map();
+  const resultsByCall = new Map();
+  for (const attempt of attempts) {
+    if (!Number.isSafeInteger(attempt.callId) || attemptsByCall.has(attempt.callId)) throw new Error(`AOT traceのcallIdが不正または重複しています: ${JSON.stringify(attempt)}`);
+    if (!Number.isInteger(attempt.opcode) || typeof attempt.command !== "string" || typeof attempt.route !== "string" || attempt.name_source !== "canonical-opcode") throw new Error(`AOT trace attemptのdispatch metadataが不正です: ${JSON.stringify(attempt)}`);
+    if (attempt.siteId === null || !manifestBySite.has(attempt.siteId)) throw new Error(`runtime traceの静的siteIdがmanifestにありません: ${JSON.stringify(attempt)}`);
+    const manifestEntry = manifestBySite.get(attempt.siteId);
+    if (manifestEntry.canonicalOpcode !== attempt.command || manifestEntry.route !== attempt.route || manifestEntry.opcode !== attempt.opcode) throw new Error(`runtime traceとmanifestのdispatchが一致しません: ${JSON.stringify({ attempt, manifestEntry })}`);
+    attemptsByCall.set(attempt.callId, attempt);
+  }
+  for (const result of results) {
+    if (!Number.isSafeInteger(result.callId) || resultsByCall.has(result.callId)) throw new Error(`AOT resultのcallIdが不正または重複しています: ${JSON.stringify(result)}`);
+    if (!Number.isInteger(result.opcode) || typeof result.command !== "string" || typeof result.route !== "string") throw new Error(`AOT trace resultのdispatch metadataが不正です: ${JSON.stringify(result)}`);
+    const attempt = attemptsByCall.get(result.callId);
+    if (attempt === undefined || result.siteId !== attempt.siteId || result.opcode !== attempt.opcode || result.command !== attempt.command || result.route !== attempt.route || typeof result.success !== "boolean") {
+      throw new Error(`AOT traceのattempt/result対応が不正です: ${JSON.stringify({ attempt, result })}`);
+    }
+    resultsByCall.set(result.callId, result);
+  }
+  if (resultsByCall.size !== attemptsByCall.size) throw new Error("AOT traceに対応しないattemptがあります");
+}
+
+function assertRepeatedSite(events) {
+  const siteCallCounts = new Map();
+  for (const attempt of events.filter((event) => event.phase === "dispatch-attempt")) {
+    if (attempt.siteId !== null) siteCallCounts.set(attempt.siteId, (siteCallCounts.get(attempt.siteId) ?? 0) + 1);
+  }
+  if (!Array.from(siteCallCounts.values()).some((count) => count > 1)) throw new Error("同一siteの複数callId実行を検証できません");
+}
+
+function assertTraceSitesContained(events, manifestEntries) {
+  const sites = new Set(manifestEntries.map((entry) => entry.siteId));
+  for (const event of events) if (event.siteId !== null && !sites.has(event.siteId)) throw new Error(`trace siteIdがmanifestにありません: ${JSON.stringify(event)}`);
+}
+
+function assertStaticCommandsHaveSites(events, commands) {
+  for (const command of commands) {
+    const matches = events.filter((event) => event.command === command);
+    if (matches.length === 0 || matches.some((event) => event.siteId === null)) throw new Error(`静的命令${command}のsiteIdがnullです`);
+  }
+}
+
+function assertSameStaticSiteSet(left, right) {
+  const leftSites = new Set(left.filter((event) => event.siteId !== null).map((event) => event.siteId));
+  const rightSites = new Set(right.filter((event) => event.siteId !== null).map((event) => event.siteId));
+  if (leftSites.size !== rightSites.size || [...leftSites].some((site) => !rightSites.has(site))) {
+    throw new Error(`Interpreter/AOTの静的dispatch site集合が一致しません: ${JSON.stringify({ interpreter: [...leftSites], aot: [...rightSites] })}`);
   }
 }
 
