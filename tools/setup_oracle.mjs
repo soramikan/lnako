@@ -64,8 +64,7 @@ try {
     resolve(extracted, ".lnako-oracle.json"),
     `${JSON.stringify({ tag: lock.tag, commit: lock.commit, archiveSha256: lock.archive.sha256, oracleBuild }, null, 2)}\n`,
   );
-  await rm(target, { recursive: true, force: true });
-  await rename(extracted, target);
+  await replaceDirectory(extracted, target);
 } finally {
   await rm(stagingRoot, { recursive: true, force: true });
 }
@@ -75,4 +74,22 @@ console.log(`公式オラクルを構築しました: ${lock.tag} (${lock.commit
 function run(command, args, cwd = root) {
   const result = spawnSync(command, args, { cwd, stdio: "inherit", shell: process.platform === "win32" });
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} が失敗しました`);
+}
+
+async function replaceDirectory(source, destination) {
+  const retryable = new Set(["EACCES", "EBUSY", "EPERM"]);
+  const delaysMs = process.platform === "win32" ? [0, 100, 250, 500, 1000, 2000, 4000] : [0];
+  let lastFailure;
+  for (const delayMs of delaysMs) {
+    if (delayMs > 0) await new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs));
+    try {
+      await rm(destination, { recursive: true, force: true });
+      await rename(source, destination);
+      return;
+    } catch (failure) {
+      lastFailure = failure;
+      if (!retryable.has(failure?.code)) throw failure;
+    }
+  }
+  throw lastFailure;
 }
