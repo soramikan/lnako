@@ -486,6 +486,13 @@ fn valueToNumberRuntime(runtime: *Runtime, value: Value) !f64 {
     };
 }
 
+/// `Number(i['末尾'])` 相当。暗黙のBigInt数値変換は他の演算で拒否し、
+/// 明示的な範囲終端の変換だけBigInt.toF64を許可する。
+fn explicitRangeNumber(runtime: *Runtime, value: Value) !f64 {
+    if (value.tag == @intFromEnum(Tag.bigint)) return value.object().?.payload.bigint.toF64();
+    return valueToNumberRuntime(runtime, value);
+}
+
 fn valueToParseFloatRuntime(runtime: *Runtime, value: Value) !f64 {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
         .number => @bitCast(value.payload),
@@ -4338,6 +4345,13 @@ fn directIndex(number: f64) ?usize {
     return @intFromFloat(number);
 }
 
+fn bigIntPropertyIndex(value: BigInt, length: usize) ?usize {
+    const integer = value.toI64() catch return null;
+    if (integer < 0) return null;
+    const index = std.math.cast(usize, integer) orelse return null;
+    return if (index < length) index else null;
+}
+
 fn charAtIndex(number: f64, length: usize) ?usize {
     if (std.math.isNan(number) or number == 0) return if (length > 0) 0 else null;
     if (!std.math.isFinite(number)) return null;
@@ -4353,7 +4367,7 @@ fn sliceRange(runtime: *Runtime, index: Value, length: usize) !?SliceRange {
     if (first.tag != @intFromEnum(Tag.number)) return null;
     const last = dictionaryProperty(index, &.{ 0x672b, 0x5c3e });
     const start = sliceIndex(@bitCast(first.payload), length);
-    const end_number = try valueToNumberRuntime(runtime, last);
+    const end_number = try explicitRangeNumber(runtime, last);
     const end = sliceIndex(end_number + 1, length);
     return .{ .start = start, .end = end };
 }
@@ -4365,7 +4379,7 @@ fn substringRange(runtime: *Runtime, index: Value, length: usize) !?SliceRange {
     if (first.tag != @intFromEnum(Tag.number)) return null;
     const last = dictionaryProperty(index, &.{ 0x672b, 0x5c3e });
     const first_number: f64 = @bitCast(first.payload);
-    const last_number = try valueToNumberRuntime(runtime, last) + 1;
+    const last_number = try explicitRangeNumber(runtime, last) + 1;
     const normalize = struct {
         fn apply(number: f64, size: usize) usize {
             if (std.math.isNan(number) or number <= 0 or number == -std.math.inf(f64)) return 0;
@@ -4381,10 +4395,14 @@ fn substringRange(runtime: *Runtime, index: Value, length: usize) !?SliceRange {
 }
 
 fn arrayRangeCopyBuiltin(runtime: *Runtime, source: Value, index: Value) !Value {
-    if (source.tag != @intFromEnum(Tag.array)) return error.ArrayRangeCopyReceiver;
-    const items = try arrayItems(source);
-    if (index.tag == @intFromEnum(Tag.number)) {
-        const position = directIndex(@bitCast(index.payload)) orelse return .{};
+    var rooted = [_]Value{ source, index, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &rooted, rooted.len);
+    defer runtime.popRoots(&frame);
+    if (rooted[0].tag != @intFromEnum(Tag.array)) return error.ArrayRangeCopyReceiver;
+    const items = try arrayItems(rooted[0]);
+    if (rooted[1].tag == @intFromEnum(Tag.number)) {
+        const position = directIndex(@bitCast(rooted[1].payload)) orelse return .{};
         if (position >= items.items.len) return .{};
         const item = items.items[position];
         return switch (@as(Tag, @enumFromInt(item.tag))) {
@@ -4392,23 +4410,19 @@ fn arrayRangeCopyBuiltin(runtime: *Runtime, source: Value, index: Value) !Value 
             else => item,
         };
     }
-    const range = (try sliceRange(runtime, index, items.items.len)) orelse return .{};
+    const range = (try sliceRange(runtime, rooted[1], items.items.len)) orelse return .{};
     if (range.end <= range.start) return runtime.createArray(&.{});
-    const result = try runtime.createArray(&.{});
-    var roots = [_]Value{result};
-    var frame: RootFrame = .{};
-    runtime.pushRoots(&frame, &roots, roots.len);
-    defer runtime.popRoots(&frame);
+    rooted[2] = try runtime.createArray(&.{});
     const values = items.items[range.start..range.end];
-    try roots[0].object().?.payload.array.ensureTotalCapacity(runtime.allocator, values.len);
+    try rooted[2].object().?.payload.array.ensureTotalCapacity(runtime.allocator, values.len);
     var state: CloneState = .{};
     defer state.deinit(runtime.allocator);
     for (values) |item| {
         var cloned = try deepCloneValue(runtime, item, &state);
         if (cloned.tag == @intFromEnum(Tag.undefined) or cloned.tag == @intFromEnum(Tag.function)) cloned = .{ .tag = @intFromEnum(Tag.null_value) };
-        try roots[0].object().?.payload.array.append(runtime.allocator, cloned);
+        try rooted[2].object().?.payload.array.append(runtime.allocator, cloned);
     }
-    return roots[0];
+    return rooted[2];
 }
 
 fn referenceBuiltin(runtime: *Runtime, source: Value, index: Value) !Value {
@@ -4433,6 +4447,10 @@ fn referenceBuiltin(runtime: *Runtime, source: Value, index: Value) !Value {
         if (rooted[1].tag == @intFromEnum(Tag.number)) {
             const position = directIndex(@bitCast(rooted[1].payload)) orelse return .{};
             return if (position < items.items.len) items.items[position] else .{};
+        }
+        if (rooted[1].tag == @intFromEnum(Tag.bigint)) {
+            const position = bigIntPropertyIndex(rooted[1].object().?.payload.bigint, items.items.len) orelse return .{};
+            return items.items[position];
         }
         const range = (try sliceRange(runtime, rooted[1], items.items.len)) orelse return .{};
         const start = @min(range.start, items.items.len);
@@ -5997,7 +6015,7 @@ test "AOT配列複製範囲参照と配列足は深さと参照を公式どお�
         runtime = active_runtime.?;
         active_runtime = null;
     }
-    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var roots = [_]Value{.{}} ** 36;
     var frame: RootFrame = .{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
@@ -6036,6 +6054,60 @@ test "AOT配列複製範囲参照と配列足は深さと参照を公式どお�
     roots[14] = try active_runtime.?.createDictionary(&.{ staticStringValue("先頭"), numberValue(1e100), staticStringValue("末尾"), numberValue(1e100) });
     roots[15] = try referenceBuiltin(&active_runtime.?, staticStringValue("ABC"), roots[14]);
     try std.testing.expectEqual(@as(usize, 0), roots[15].object().?.payload.utf16_string.len);
+
+    roots[16] = try active_runtime.?.createArray(&.{ numberValue(0), numberValue(1), numberValue(2), numberValue(3) });
+    roots[17] = try active_runtime.?.createBigInt("0n");
+    roots[18] = try active_runtime.?.createDictionary(&.{ staticStringValue("先頭"), numberValue(0), staticStringValue("末尾"), roots[17] });
+    roots[19] = try arrayRangeCopyBuiltin(&active_runtime.?, roots[16], roots[18]);
+    try std.testing.expectEqual(@as(usize, 1), roots[19].object().?.payload.array.items.len);
+    roots[20] = try active_runtime.?.createBigInt("1n");
+    roots[21] = try active_runtime.?.createDictionary(&.{ staticStringValue("先頭"), numberValue(0), staticStringValue("末尾"), roots[20] });
+    roots[22] = try arrayRangeCopyBuiltin(&active_runtime.?, roots[16], roots[21]);
+    try std.testing.expectEqual(@as(usize, 2), roots[22].object().?.payload.array.items.len);
+    roots[23] = try active_runtime.?.createBigInt("-2n");
+    roots[24] = try active_runtime.?.createDictionary(&.{ staticStringValue("先頭"), numberValue(0), staticStringValue("末尾"), roots[23] });
+    roots[25] = try arrayRangeCopyBuiltin(&active_runtime.?, roots[16], roots[24]);
+    try std.testing.expectEqual(@as(usize, 3), roots[25].object().?.payload.array.items.len);
+    roots[26] = try active_runtime.?.createBigInt("9007199254740993n");
+    roots[27] = try active_runtime.?.createDictionary(&.{ staticStringValue("先頭"), numberValue(0), staticStringValue("末尾"), roots[26] });
+    roots[28] = try arrayRangeCopyBuiltin(&active_runtime.?, roots[16], roots[27]);
+    try std.testing.expectEqual(@as(usize, 4), roots[28].object().?.payload.array.items.len);
+    roots[29] = try active_runtime.?.createDictionary(&.{ staticStringValue("先頭"), roots[20], staticStringValue("末尾"), numberValue(2) });
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try arrayRangeCopyBuiltin(&active_runtime.?, roots[16], roots[29])).tag)));
+    roots[30] = try active_runtime.?.createBigInt("-9007199254740993n");
+    roots[31] = try active_runtime.?.createDictionary(&.{ staticStringValue("先頭"), numberValue(0), staticStringValue("末尾"), roots[30] });
+    roots[32] = try arrayRangeCopyBuiltin(&active_runtime.?, roots[16], roots[31]);
+    try std.testing.expectEqual(@as(usize, 0), roots[32].object().?.payload.array.items.len);
+    try std.testing.expectEqual(@as(f64, 0), valueToNumber(try referenceBuiltin(&active_runtime.?, roots[16], roots[17])));
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(try referenceBuiltin(&active_runtime.?, roots[16], roots[20])));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try referenceBuiltin(&active_runtime.?, roots[16], roots[23])).tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try referenceBuiltin(&active_runtime.?, roots[16], roots[26])).tag)));
+}
+
+fn aotBigintRangeAllocationTest(allocator: std.mem.Allocator) !void {
+    var runtime = Runtime{ .allocator = allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 7;
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createArray(&.{ numberValue(0), numberValue(1), numberValue(2) });
+    roots[1] = try runtime.createBigInt("1n");
+    roots[2] = try runtime.createDictionary(&.{ staticStringValue("先頭"), numberValue(0), staticStringValue("末尾"), roots[1] });
+    runtime.next_collection = runtime.object_count;
+    roots[3] = try arrayRangeCopyBuiltin(&runtime, roots[0], roots[2]);
+    try std.testing.expectEqual(@as(usize, 2), roots[3].object().?.payload.array.items.len);
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(try referenceBuiltin(&runtime, roots[0], roots[1])));
+    roots[4] = try runtime.createString(&.{ 'A', 'B', 'C' });
+    roots[5] = try runtime.createDictionary(&.{ staticStringValue("先頭"), numberValue(0), staticStringValue("末尾"), roots[1] });
+    runtime.next_collection = runtime.object_count;
+    roots[6] = try referenceBuiltin(&runtime, roots[4], roots[5]);
+    try std.testing.expectEqualSlices(u16, &.{ 'A', 'B' }, roots[6].object().?.payload.utf16_string);
+}
+
+test "AOT BigInt範囲終端は割当失敗とGCストレスでも入力を保持する" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, aotBigintRangeAllocationTest, .{});
 }
 
 fn expectAotReferenceStringRangeMessage(runtime: *Runtime, index: Value, expected: []const u8) !void {

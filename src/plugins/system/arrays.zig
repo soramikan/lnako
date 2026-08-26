@@ -476,22 +476,26 @@ fn cloneValue(runtime: *Runtime, source: Value, arrays: *std.ArrayList(*value_mo
 }
 
 fn rangeCopy(runtime: *Runtime, source: Value, index_value: Value) !Value {
-    if (source != .array) return error.ArrayExpected;
-    if (index_value == .number) {
-        const index = propertyIndex(index_value.number) orelse return .undefined;
-        if (index >= source.array.len()) return .undefined;
-        const item = source.array.get(index);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var rooted_source = source;
+    var rooted_index = index_value;
+    try roots.protect(&rooted_source);
+    try roots.protect(&rooted_index);
+    if (rooted_source != .array) return error.ArrayExpected;
+    if (rooted_index == .number) {
+        const index = propertyIndex(rooted_index.number) orelse return .undefined;
+        if (index >= rooted_source.array.len()) return .undefined;
+        const item = rooted_source.array.get(index);
         return switch (item) {
             .array, .dictionary, .bytes, .promise, .null_value => deepClone(runtime, item),
             else => item,
         };
     }
-    const range = (try rangeBounds(runtime, index_value, source.array.len())) orelse return .undefined;
+    const range = (try rangeBounds(runtime, rooted_index, rooted_source.array.len())) orelse return .undefined;
     var result = try runtime.createArray();
-    var roots = runtime.rootFrame();
-    defer roots.deinit();
     try roots.protect(&result);
-    for (source.array.items.items[range.start .. range.start + range.count]) |item| _ = try result.array.push(item);
+    for (rooted_source.array.items.items[range.start .. range.start + range.count]) |item| _ = try result.array.push(item);
     return deepClone(runtime, result);
 }
 
@@ -515,6 +519,7 @@ fn reference(runtime: *Runtime, source: Value, index_value: Value) !Value {
     }
     if (source_value == .array) {
         if (index == .number) return source_value.array.get(propertyIndex(index.number) orelse return .undefined);
+        if (index == .bigint) return source_value.array.get(bigIntPropertyIndex(index.bigint, source_value.array.len()) orelse return .undefined);
         const range = (try rangeBounds(runtime, index, source_value.array.len())) orelse return .undefined;
         var result = try runtime.createArray();
         try roots.protect(&result);
@@ -526,6 +531,13 @@ fn reference(runtime: *Runtime, source: Value, index_value: Value) !Value {
         return source_value.dictionary.get(key.string) orelse .undefined;
     }
     return error.IndexableValueExpected;
+}
+
+fn bigIntPropertyIndex(value: *value_mod.BigInt, length: usize) ?usize {
+    const integer = value.toI64() catch return null;
+    if (integer < 0) return null;
+    const index = std.math.cast(usize, integer) orelse return null;
+    return if (index < length) index else null;
 }
 
 fn invalidStringRange(runtime: *Runtime, index: Value) !Value {
@@ -1092,7 +1104,7 @@ fn rangeBounds(runtime: *Runtime, value: Value, length: usize) !?Range {
     const last_value = value.dictionary.get(last_key.string) orelse .undefined;
     if (first_value != .number) return null;
     const first = spliceIndex(first_value.number, length);
-    const last_number = try runtime.valueToNumber(last_value);
+    const last_number = try runtime.valueToExplicitRangeNumber(last_value);
     const end = spliceIndex(last_number + 1, length);
     if (end <= first) return .{ .start = first, .count = 0 };
     return .{ .start = first, .count = end - first };
@@ -1128,7 +1140,7 @@ fn substringBounds(runtime: *Runtime, value: Value, length: usize) !?Range {
     const last_value = value.dictionary.get(last_key.string) orelse .undefined;
     if (first_value != .number) return null;
     const first_number = first_value.number;
-    const last_number = try runtime.valueToNumber(last_value) + 1;
+    const last_number = try runtime.valueToExplicitRangeNumber(last_value) + 1;
     const normalize = struct {
         fn apply(number: f64, size: usize) usize {
             if (std.math.isNan(number) or number <= 0 or number == -std.math.inf(f64)) return 0;
@@ -1552,6 +1564,57 @@ test "配列コピーと参照はJSONとJavaScript添字の境界を保つ" {
     try std.testing.expectEqual(@as(f64, 3), removed.array.get(1).number);
     try std.testing.expectEqual(@as(usize, 2), cut_source.array.len());
 
+    var range_source = try common.arrayFromValues(&runtime, &.{ .{ .number = 0 }, .{ .number = 1 }, .{ .number = 2 }, .{ .number = 3 } });
+    try roots.protect(&range_source);
+    var zero_bigint = try runtime.bigIntLiteral("0n");
+    try roots.protect(&zero_bigint);
+    var one_bigint = try runtime.bigIntLiteral("1n");
+    try roots.protect(&one_bigint);
+    var negative_bigint = try runtime.bigIntLiteral("-2n");
+    try roots.protect(&negative_bigint);
+    var huge_positive_bigint = try runtime.bigIntLiteral("9007199254740993n");
+    try roots.protect(&huge_positive_bigint);
+    var huge_negative_bigint = try runtime.bigIntLiteral("-9007199254740993n");
+    try roots.protect(&huge_negative_bigint);
+    try range.dictionary.set(first_key.string, .{ .number = 0 });
+    try range.dictionary.set(last_key.string, zero_bigint);
+    var bigint_zero_copy = try rangeCopy(&runtime, range_source, range);
+    try roots.protect(&bigint_zero_copy);
+    try std.testing.expectEqual(@as(usize, 1), bigint_zero_copy.array.len());
+    try range.dictionary.set(last_key.string, one_bigint);
+    var bigint_one_copy = try rangeCopy(&runtime, range_source, range);
+    try roots.protect(&bigint_one_copy);
+    try std.testing.expectEqual(@as(usize, 2), bigint_one_copy.array.len());
+    try range.dictionary.set(last_key.string, negative_bigint);
+    var bigint_negative_copy = try rangeCopy(&runtime, range_source, range);
+    try roots.protect(&bigint_negative_copy);
+    try std.testing.expectEqual(@as(usize, 3), bigint_negative_copy.array.len());
+    try range.dictionary.set(last_key.string, huge_positive_bigint);
+    var bigint_huge_copy = try rangeCopy(&runtime, range_source, range);
+    try roots.protect(&bigint_huge_copy);
+    try std.testing.expectEqual(@as(usize, 4), bigint_huge_copy.array.len());
+    try range.dictionary.set(last_key.string, huge_negative_bigint);
+    var bigint_huge_negative_copy = try rangeCopy(&runtime, range_source, range);
+    try roots.protect(&bigint_huge_negative_copy);
+    try std.testing.expectEqual(@as(usize, 0), bigint_huge_negative_copy.array.len());
+    try range.dictionary.set(first_key.string, one_bigint);
+    try range.dictionary.set(last_key.string, .{ .number = 2 });
+    try std.testing.expectEqual(Value.undefined, try rangeCopy(&runtime, range_source, range));
+    try std.testing.expectEqual(@as(f64, 0), (try reference(&runtime, range_source, zero_bigint)).number);
+    try std.testing.expectEqual(@as(f64, 1), (try reference(&runtime, range_source, one_bigint)).number);
+    try std.testing.expectEqual(Value.undefined, try reference(&runtime, range_source, negative_bigint));
+    try std.testing.expectEqual(Value.undefined, try reference(&runtime, range_source, huge_positive_bigint));
+
+    try range.dictionary.set(first_key.string, .{ .number = 0 });
+    try range.dictionary.set(last_key.string, one_bigint);
+    var bigint_text = try reference(&runtime, text, range);
+    try roots.protect(&bigint_text);
+    try std.testing.expectEqualSlices(u16, &.{ 'A', 'B' }, bigint_text.string.units);
+    try range.dictionary.set(last_key.string, negative_bigint);
+    var bigint_empty_text = try reference(&runtime, text, range);
+    try roots.protect(&bigint_empty_text);
+    try std.testing.expectEqual(@as(usize, 0), bigint_empty_text.string.len());
+
     _ = range.dictionary.remove(last_key.string);
     try range.dictionary.set(first_key.string, .{ .number = 1 });
     var missing_last_copy = try rangeCopy(&runtime, source, range);
@@ -1561,6 +1624,49 @@ test "配列コピーと参照はJSONとJavaScript添字の境界を保つ" {
     var missing_last_text = try reference(&runtime, text, range);
     try roots.protect(&missing_last_text);
     try std.testing.expectEqualSlices(u16, &.{ 'A', 'B' }, missing_last_text.string.units);
+}
+
+fn bigintRangeAllocationCase(allocator: std.mem.Allocator) !void {
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var source = try common.arrayFromValues(&runtime, &.{ .{ .number = 0 }, .{ .number = 1 }, .{ .number = 2 } });
+    try roots.protect(&source);
+    var first_key = try runtime.stringUtf8("先頭");
+    try roots.protect(&first_key);
+    var last_key = try runtime.stringUtf8("末尾");
+    try roots.protect(&last_key);
+    var last = try runtime.bigIntLiteral("1n");
+    try roots.protect(&last);
+    var range = try runtime.createDictionary();
+    try roots.protect(&range);
+    try range.dictionary.set(first_key.string, .{ .number = 0 });
+    try range.dictionary.set(last_key.string, last);
+
+    var copied = try rangeCopy(&runtime, source, range);
+    try roots.protect(&copied);
+    try std.testing.expectEqual(@as(usize, 2), copied.array.len());
+    var text = try runtime.stringUtf8("ABC");
+    try roots.protect(&text);
+    var referenced = try reference(&runtime, text, range);
+    try roots.protect(&referenced);
+    try std.testing.expectEqualSlices(u16, &.{ 'A', 'B' }, referenced.string.units);
+}
+
+fn bigintRangeAllocationTest(allocator: std.mem.Allocator) !void {
+    bigintRangeAllocationCase(allocator) catch |failure| {
+        // Zig 0.16のArrayList WriterはJSON複製中のOOMをWriteFailedへ
+        // 変換するため、割当網羅テストへ元の意味を戻す。
+        if (failure == error.WriteFailed) return error.OutOfMemory;
+        return failure;
+    };
+}
+
+test "BigInt範囲終端は割当失敗とGCストレスでも入力を保持する" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, bigintRangeAllocationTest, .{});
 }
 
 fn expectReferenceStringRangeMessage(runtime: *Runtime, index: Value, expected: []const u8) !void {

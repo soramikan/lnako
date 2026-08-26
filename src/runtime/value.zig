@@ -813,6 +813,13 @@ pub const Runtime = struct {
         return primitive.toNumber(self.allocator());
     }
 
+    /// 明示的な `Number(value)` 相当が必要な範囲終端だけで使う。
+    /// 通常の暗黙BigInt数値変換は公式どおりエラーのままにする。
+    pub fn valueToExplicitRangeNumber(self: *Runtime, value: Value) !f64 {
+        if (value == .bigint) return value.bigint.toF64();
+        return self.valueToNumber(value);
+    }
+
     pub fn abstractEqual(self: *Runtime, left: Value, right: Value) !bool {
         var left_root = left;
         var right_root = right;
