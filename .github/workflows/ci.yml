@@ -84,7 +84,7 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: .cache/oracle
-          key: nadesiko3-oracle-3.7.24-${{ runner.os }}-v1
+          key: nadesiko3-oracle-3.7.24-${{ runner.os }}-v2
       - name: Build official oracle
         run: node tools/setup_oracle.mjs
       - name: Differential lexer test

@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 const workflow = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
+const setupOracle = await readFile(resolve(root, "tools/setup_oracle.mjs"), "utf8");
 
 const platforms = new Map([
   ["Linux x86_64", "ubuntu-24.04"],
@@ -55,6 +56,10 @@ for (const required of [
 
 const cacheActions = [...workflow.matchAll(/^      - uses: actions\/cache@v6$/gm)];
 if (cacheActions.length !== 2) throw new Error(`actions/cache@v6は2ステップ必要です: actual=${cacheActions.length}`);
+const oracleBuild = setupOracle.match(/^const oracleBuild = (\d+);$/m)?.[1];
+if (oracleBuild === undefined) throw new Error("setup_oracle.mjsのoracleBuildを取得できません");
+const oracleCacheKey = `key: nadesiko3-oracle-3.7.24-\${{ runner.os }}-v${oracleBuild}`;
+if (!workflow.includes(oracleCacheKey)) throw new Error(`公式オラクルのキャッシュキーがoracleBuildと一致しません: ${oracleCacheKey}`);
 
 console.log(`CI構成検査: ${actualMatrix.size}ジョブ・${stepSuites.size}条件付き検証ステップ成功`);
 
