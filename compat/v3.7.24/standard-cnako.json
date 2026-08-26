@@ -4121,14 +4121,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-string-conversion"
+        "plugin-system-string-conversion",
+        "native-system-width-ascii-non-string-coercion"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "公式のString変換をInterpreter/AOTで実装し、ASCII非文字列差分テストに成功。AOTバイト列値はTODO: aot-byte-buffer-value"
     },
     {
       "id": "command-0159",
@@ -4147,14 +4148,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-string-conversion"
+        "plugin-system-string-conversion",
+        "native-system-width-ascii-non-string-coercion"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "公式のString変換をInterpreter/AOTで実装し、ASCII非文字列差分テストに成功。AOTバイト列値はTODO: aot-byte-buffer-value"
     },
     {
       "id": "command-0160",
@@ -4173,14 +4175,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-string-conversion"
+        "plugin-system-string-conversion",
+        "native-system-width-ascii-non-string-coercion"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "公式のString変換をInterpreter/AOTで実装し、ASCII非文字列差分テストに成功。AOTバイト列値はTODO: aot-byte-buffer-value"
     },
     {
       "id": "command-0161",
@@ -4199,14 +4202,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-string-conversion"
+        "plugin-system-string-conversion",
+        "native-system-width-ascii-non-string-coercion"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "公式のString変換をInterpreter/AOTで実装し、ASCII非文字列差分テストに成功。AOTバイト列値はTODO: aot-byte-buffer-value"
     },
     {
       "id": "command-0162",
@@ -4225,14 +4229,16 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-string-conversion"
+        "plugin-system-string-conversion",
+        "native-system-width-kana-full-non-string-coercion",
+        "native-system-width-function-receiver"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "raw length/substring分岐と公式エラー文言をInterpreter/AOTで実装し、公式差分テストに成功。動的own substring/splitはTODO: system-width-custom-string-methods、AOTバイト列値はTODO: aot-byte-buffer-value"
     },
     {
       "id": "command-0163",
@@ -4251,14 +4257,16 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-string-conversion"
+        "plugin-system-string-conversion",
+        "native-system-width-kana-half-non-string-coercion",
+        "native-system-width-function-receiver"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "raw split分岐と公式エラー文言をInterpreter/AOTで実装し、公式差分テストに成功。動的own substring/splitはTODO: system-width-custom-string-methods、AOTバイト列値はTODO: aot-byte-buffer-value"
     },
     {
       "id": "command-0164",
@@ -4277,14 +4285,16 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-string-conversion"
+        "plugin-system-string-conversion",
+        "native-system-width-kana-full-non-string-coercion",
+        "native-system-width-function-receiver"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "カナraw length/substring分岐からASCII String変換へ合成する公式順序をInterpreter/AOTで実装し、公式差分テストに成功。動的own substring/splitはTODO: system-width-custom-string-methods、AOTバイト列値はTODO: aot-byte-buffer-value"
     },
     {
       "id": "command-0165",
@@ -4303,14 +4313,17 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-string-conversion"
+        "plugin-system-string-conversion",
+        "native-system-width-kana-half-non-string-coercion",
+        "native-system-width-function-receiver",
+        "native-system-width-half-uncaught-error"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "カナraw split分岐からASCII String変換へ合成する公式順序と未捕捉エラーをInterpreter/AOTで実装し、公式差分テストに成功。動的own substring/splitはTODO: system-width-custom-string-methods、AOTバイト列値はTODO: aot-byte-buffer-value"
     },
     {
       "id": "command-0166",

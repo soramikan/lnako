@@ -13,6 +13,12 @@ pub fn forFailure(failure: anyerror) []const u8 {
         error.StartsWithUndefinedReceiver => "Cannot read properties of undefined (reading 'startsWith')",
         error.EndsWithNullReceiver => "Cannot read properties of null (reading 'endsWith')",
         error.EndsWithUndefinedReceiver => "Cannot read properties of undefined (reading 'endsWith')",
+        error.KatakanaFullWidthLengthNull => "Cannot read properties of null (reading 'length')",
+        error.KatakanaFullWidthLengthUndefined => "Cannot read properties of undefined (reading 'length')",
+        error.KatakanaFullWidthSubstringReceiver => "s.substring is not a function",
+        error.KatakanaHalfWidthSplitNull => "Cannot read properties of null (reading 'split')",
+        error.KatakanaHalfWidthSplitUndefined => "Cannot read properties of undefined (reading 'split')",
+        error.KatakanaHalfWidthSplitReceiver => "s.split is not a function",
         error.CutNullDelimiterLength => "Cannot read properties of null (reading 'length')",
         error.CutUndefinedDelimiterLength => "Cannot read properties of undefined (reading 'length')",
         error.ArrayInsertReceiver => "『配列挿入』で配列以外の要素への挿入。",
@@ -54,5 +60,11 @@ test "BigInt実行時エラーを公式JavaScriptの文言へ変換する" {
     try std.testing.expectEqualStrings("UnknownFailure", forFailure(error.UnknownFailure));
     try std.testing.expectEqualStrings("s.startsWith is not a function", forFailure(error.StartsWithReceiverExpected));
     try std.testing.expectEqualStrings("Cannot read properties of null (reading 'endsWith')", forFailure(error.EndsWithNullReceiver));
+    try std.testing.expectEqualStrings("Cannot read properties of null (reading 'length')", forFailure(error.KatakanaFullWidthLengthNull));
+    try std.testing.expectEqualStrings("Cannot read properties of undefined (reading 'length')", forFailure(error.KatakanaFullWidthLengthUndefined));
+    try std.testing.expectEqualStrings("s.substring is not a function", forFailure(error.KatakanaFullWidthSubstringReceiver));
+    try std.testing.expectEqualStrings("Cannot read properties of null (reading 'split')", forFailure(error.KatakanaHalfWidthSplitNull));
+    try std.testing.expectEqualStrings("Cannot read properties of undefined (reading 'split')", forFailure(error.KatakanaHalfWidthSplitUndefined));
+    try std.testing.expectEqualStrings("s.split is not a function", forFailure(error.KatakanaHalfWidthSplitReceiver));
     try std.testing.expectEqualStrings("Cannot convert null to a BigInt", forFailure(error.CannotConvertNullToBigInt));
 }

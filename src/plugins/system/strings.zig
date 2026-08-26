@@ -26,6 +26,28 @@ pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Val
     try text_roots.protect(&a_root);
     try text_roots.protect(&b_root);
     try text_roots.protect(&c_root);
+
+    // The ASCII-only commands explicitly coerce their receiver with
+    // String(s), while the kana commands in the official implementation
+    // access the raw receiver (length/substring or split).  Keep this split
+    // before the common eager String conversions below.
+    if (eql(name, "英数全角変換")) return try asciiFullWidth(runtime, a_root, false);
+    if (eql(name, "英数半角変換")) return try fullWidthAscii(runtime, a_root, false);
+    if (eql(name, "英数記号全角変換")) return try asciiFullWidth(runtime, a_root, true);
+    if (eql(name, "英数記号半角変換")) return try fullWidthAscii(runtime, a_root, true);
+    if (eql(name, "カタカナ全角変換")) return try katakanaFullWidth(runtime, a_root);
+    if (eql(name, "カタカナ半角変換")) return try katakanaHalfWidth(runtime, a_root);
+    if (eql(name, "全角変換")) {
+        var kana = try katakanaFullWidth(runtime, a_root);
+        try text_roots.protect(&kana);
+        return try asciiFullWidth(runtime, kana, true);
+    }
+    if (eql(name, "半角変換")) {
+        var kana = try katakanaHalfWidth(runtime, a_root);
+        try text_roots.protect(&kana);
+        return try fullWidthAscii(runtime, kana, true);
+    }
+
     var a_text = try runtime.valueToString(a);
     try text_roots.protect(&a_text);
     var b_text = try runtime.valueToString(b);
@@ -63,22 +85,6 @@ pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Val
     if (eql(name, "小文字変換")) return try unicodeCase(runtime, a_text, false);
     if (eql(name, "平仮名変換")) return try offsetRange(runtime, a_text, 0x30a1, 0x30f6, -0x60);
     if (eql(name, "カタカナ変換")) return try offsetRange(runtime, a_text, 0x3041, 0x3096, 0x60);
-    if (eql(name, "英数全角変換")) return try asciiFullWidth(runtime, a_text, false);
-    if (eql(name, "英数半角変換")) return try fullWidthAscii(runtime, a_text, false);
-    if (eql(name, "英数記号全角変換")) return try asciiFullWidth(runtime, a_text, true);
-    if (eql(name, "英数記号半角変換")) return try fullWidthAscii(runtime, a_text, true);
-    if (eql(name, "カタカナ全角変換")) return try katakanaFullWidth(runtime, a_text);
-    if (eql(name, "カタカナ半角変換")) return try katakanaHalfWidth(runtime, a_text);
-    if (eql(name, "全角変換")) {
-        var kana = try katakanaFullWidth(runtime, a_text);
-        try text_roots.protect(&kana);
-        return try asciiFullWidth(runtime, kana, true);
-    }
-    if (eql(name, "半角変換")) {
-        var kana = try katakanaHalfWidth(runtime, a_text);
-        try text_roots.protect(&kana);
-        return try fullWidthAscii(runtime, kana, true);
-    }
     if (eql(name, "通貨形式")) return try currency(runtime, a_text);
     if (eql(name, "ゼロ埋")) return try pad(runtime, a_text, b, '0');
     if (eql(name, "空白埋")) return try pad(runtime, a_text, b, ' ');
@@ -647,7 +653,47 @@ fn katakanaHalfWidth(runtime: *Runtime, source: Value) !Value {
 }
 
 fn mapKana(runtime: *Runtime, source: Value, to_full: bool) !Value {
-    const source_units = (try text(runtime, source)).units;
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var source_root = source;
+    try roots.protect(&source_root);
+
+    const source_units: []const u16 = blk: {
+        if (source_root == .string) break :blk source_root.string.units;
+        if (!to_full) break :blk switch (source_root) {
+            .null_value => return error.KatakanaHalfWidthSplitNull,
+            .undefined => return error.KatakanaHalfWidthSplitUndefined,
+            else => return error.KatakanaHalfWidthSplitReceiver,
+        };
+
+        switch (source_root) {
+            .null_value => return error.KatakanaFullWidthLengthNull,
+            .undefined => return error.KatakanaFullWidthLengthUndefined,
+            .array => |array| {
+                if (array.items.items.len > 0) return error.KatakanaFullWidthSubstringReceiver;
+                break :blk &.{};
+            },
+            .dictionary => |dictionary| {
+                var length_key = try runtime.stringUtf8("length");
+                try roots.protect(&length_key);
+                const length = dictionary.get(length_key.string) orelse .undefined;
+                // `0 < s.length` is an abstract relational comparison in
+                // JavaScript, rather than a strict numeric conversion.
+                if (try operators.compare(runtime, .{ .number = 0 }, length)) |order| {
+                    if (order == .lt) return error.KatakanaFullWidthSubstringReceiver;
+                }
+                break :blk &.{};
+            },
+            .bytes => |buffer| {
+                if (buffer.kind != .array_buffer and buffer.bytes.len > 0) return error.KatakanaFullWidthSubstringReceiver;
+                break :blk &.{};
+            },
+            // Nadesiko's generated wrapper functions have length 0.  The
+            // internal callback arity is intentionally not observable here.
+            .function => break :blk &.{},
+            else => break :blk &.{},
+        }
+    };
     var full_string = try string_mod.String.fromUtf8(runtime.allocator(), full_kana);
     defer full_string.deinit();
     var half_string = try string_mod.String.fromUtf8(runtime.allocator(), half_kana);
@@ -944,6 +990,52 @@ test "置換・幅変換・かな変換を処理する" {
     const converted_utf8 = try converted.string.toUtf8Lossy(std.testing.allocator);
     defer std.testing.allocator.free(converted_utf8);
     try std.testing.expectEqualStrings("ＡＢＣ　ガ", converted_utf8);
+}
+
+test "幅変換のカナ系は公式の生レシーバ分岐と専用エラーを保つ" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+
+    const empty_array = try runtime.createArray();
+    const nonempty_array = try runtime.createArray();
+    _ = try nonempty_array.array.push(.{ .number = 1 });
+    const no_length = try runtime.createDictionary();
+    const zero_length = try runtime.createDictionary();
+    try common.dictionarySetUtf8(&runtime, zero_length.dictionary, "length", .{ .number = 0 });
+    const positive_length = try runtime.createDictionary();
+    try common.dictionarySetUtf8(&runtime, positive_length.dictionary, "length", try runtime.stringUtf8("1"));
+
+    for ([_]Value{ .{ .number = 1 }, .{ .boolean = true }, try runtime.bigIntLiteral("1n"), empty_array, no_length }) |value| {
+        const result = (try call(&runtime, "カタカナ全角変換", &.{value})).?;
+        try std.testing.expectEqualSlices(u16, &.{}, result.string.units);
+    }
+    const zero_result = (try call(&runtime, "全角変換", &.{zero_length})).?;
+    try std.testing.expectEqualSlices(u16, &.{}, zero_result.string.units);
+    try std.testing.expectError(error.KatakanaFullWidthSubstringReceiver, call(&runtime, "カタカナ全角変換", &.{nonempty_array}));
+    try std.testing.expectError(error.KatakanaFullWidthSubstringReceiver, call(&runtime, "全角変換", &.{positive_length}));
+    try std.testing.expectError(error.KatakanaFullWidthLengthNull, call(&runtime, "カタカナ全角変換", &.{.null_value}));
+    try std.testing.expectError(error.KatakanaFullWidthLengthUndefined, call(&runtime, "カタカナ全角変換", &.{.undefined}));
+    try std.testing.expectError(error.KatakanaHalfWidthSplitNull, call(&runtime, "カタカナ半角変換", &.{.null_value}));
+    try std.testing.expectError(error.KatakanaHalfWidthSplitUndefined, call(&runtime, "半角変換", &.{.undefined}));
+    try std.testing.expectError(error.KatakanaHalfWidthSplitReceiver, call(&runtime, "カタカナ半角変換", &.{.{ .number = 1 }}));
+}
+
+fn widthConversionAllocationTest(allocator: std.mem.Allocator) !void {
+    var runtime = Runtime.init(allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var source = try runtime.stringUtf8("Ａ ｶﾞ");
+    try roots.protect(&source);
+    var full = (try call(&runtime, "全角変換", &.{source})).?;
+    try roots.protect(&full);
+    _ = try call(&runtime, "英数半角変換", &.{source});
+    _ = try call(&runtime, "カタカナ半角変換", &.{try runtime.stringUtf8("ガ")});
+}
+
+test "幅変換はGCストレスと全割当失敗でも入力を保持する" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, widthConversionAllocationTest, .{});
 }
 
 test "置換はsplitとjoinのundefined型強制を再現する" {

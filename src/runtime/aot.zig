@@ -4914,7 +4914,6 @@ fn asciiWidthBuiltin(runtime: *Runtime, value: Value, to_full: bool, symbols: bo
     const units = try valueUtf16Alloc(runtime, value);
     defer runtime.allocator.free(units);
     const output = try runtime.allocator.dupe(u16, units);
-    errdefer runtime.allocator.free(output);
     for (output) |*unit| {
         if (to_full) {
             if (symbols and unit.* == 0x20) {
@@ -5074,8 +5073,42 @@ fn isSequenceSignBuiltin(unit: u16) bool {
 }
 
 fn kanaMapBuiltin(runtime: *Runtime, value: Value, to_full: bool) !Value {
-    const source = try valueUtf16Alloc(runtime, value);
-    defer runtime.allocator.free(source);
+    var roots = [_]Value{value};
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    var allocated_source: ?[]u16 = null;
+    defer if (allocated_source) |source| runtime.allocator.free(source);
+    const source: []const u16 = blk: {
+        if (isString(roots[0])) {
+            allocated_source = try valueUtf16Alloc(runtime, roots[0]);
+            break :blk allocated_source.?;
+        }
+        if (!to_full) switch (@as(Tag, @enumFromInt(roots[0].tag))) {
+            .null_value => return error.KatakanaHalfWidthSplitNull,
+            .undefined => return error.KatakanaHalfWidthSplitUndefined,
+            else => return error.KatakanaHalfWidthSplitReceiver,
+        };
+
+        switch (@as(Tag, @enumFromInt(roots[0].tag))) {
+            .null_value => return error.KatakanaFullWidthLengthNull,
+            .undefined => return error.KatakanaFullWidthLengthUndefined,
+            .array => {
+                if (roots[0].object().?.payload.array.items.len > 0) return error.KatakanaFullWidthSubstringReceiver;
+                break :blk &.{};
+            },
+            .dictionary => {
+                const length = dictionaryProperty(roots[0], &.{ 'l', 'e', 'n', 'g', 't', 'h' });
+                // `0 < s.length` uses JavaScript's abstract relational
+                // comparison. Undefined/NaN therefore takes the empty path.
+                if (try compareValues(runtime, .less, numberValue(0), length)) return error.KatakanaFullWidthSubstringReceiver;
+                break :blk &.{};
+            },
+            .function => break :blk &.{},
+            else => break :blk &.{},
+        }
+    };
     const full_utf8 = system_constant.lookupString("全角カナ一覧").?;
     const full_voiced_utf8 = system_constant.lookupString("全角カナ濁音一覧").?;
     const half_utf8 = system_constant.lookupString("半角カナ一覧").?;
@@ -6435,6 +6468,80 @@ test "AOT幅変換は英数記号とカナの合成順序および公式の濁�
     const half = [_]Value{staticStringValue("Ａ　ガ！")};
     lnako_aot_builtin_call(&roots[7], &half, half.len, @intFromEnum(aot_builtin.Command.half_width));
     try std.testing.expectEqualSlices(u16, &.{ 'A', ' ', 0xff76, 0xff9e, '!' }, roots[7].object().?.payload.utf16_string);
+}
+
+test "AOT幅変換のカナ系は生レシーバ分岐と保留例外を公式どおり処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    const rt = &active_runtime.?;
+    var roots = [_]Value{.{}} ** 8;
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+    rt.next_collection = 1;
+
+    roots[0] = try rt.createArray(&.{});
+    roots[1] = try rt.createArray(&.{numberValue(1)});
+    roots[2] = try rt.createDictionary(&.{ staticStringValue("length"), numberValue(1) });
+    roots[3] = try rt.createDictionary(&.{});
+    try std.testing.expectEqualSlices(u16, &.{}, (try kanaMapBuiltin(rt, roots[0], true)).object().?.payload.utf16_string);
+    try std.testing.expectError(error.KatakanaFullWidthSubstringReceiver, kanaMapBuiltin(rt, roots[1], true));
+    try std.testing.expectError(error.KatakanaFullWidthSubstringReceiver, kanaMapBuiltin(rt, roots[2], true));
+    try std.testing.expectEqualSlices(u16, &.{}, (try kanaMapBuiltin(rt, roots[3], true)).object().?.payload.utf16_string);
+    try std.testing.expectError(error.KatakanaFullWidthLengthNull, kanaMapBuiltin(rt, .{ .tag = @intFromEnum(Tag.null_value) }, true));
+    try std.testing.expectError(error.KatakanaHalfWidthSplitUndefined, kanaMapBuiltin(rt, .{}, false));
+    try std.testing.expectError(error.KatakanaHalfWidthSplitReceiver, kanaMapBuiltin(rt, numberValue(1), false));
+
+    const failing = [_]Value{numberValue(1)};
+    lnako_aot_builtin_call(&roots[4], &failing, failing.len, @intFromEnum(aot_builtin.Command.half_width));
+    const failure_units = try valueUtf16Alloc(rt, rt.takeException());
+    defer rt.allocator.free(failure_units);
+    try std.testing.expectEqualSlices(u16, &.{ 's', '.', 's', 'p', 'l', 'i', 't', ' ', 'i', 's', ' ', 'n', 'o', 't', ' ', 'a', ' ', 'f', 'u', 'n', 'c', 't', 'i', 'o', 'n' }, failure_units);
+    const succeeding = [_]Value{staticStringValue("ガ")};
+    lnako_aot_builtin_call(&roots[5], &succeeding, succeeding.len, @intFromEnum(aot_builtin.Command.half_width));
+    try std.testing.expect(!rt.has_pending_exception);
+    try std.testing.expectEqualSlices(u16, &.{ 0xff76, 0xff9e }, roots[5].object().?.payload.utf16_string);
+}
+
+fn aotWidthAllocationTest(allocator: std.mem.Allocator) !void {
+    var runtime = Runtime{ .allocator = allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 4;
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[0] = try runtime.createString(&.{ 'A', 0x20, 0xff76, 0xff9e });
+    roots[2] = try runtime.createArray(&.{numberValue(1)});
+    roots[3] = try runtime.createDictionary(&.{ staticStringValue("length"), numberValue(1) });
+    runtime.next_collection = 1;
+
+    roots[1] = try asciiWidthBuiltin(&runtime, roots[0], true, false);
+    runtime.next_collection = 1;
+    roots[1] = try asciiWidthBuiltin(&runtime, roots[0], false, false);
+    runtime.next_collection = 1;
+    roots[1] = try asciiWidthBuiltin(&runtime, roots[0], true, true);
+    runtime.next_collection = 1;
+    roots[1] = try asciiWidthBuiltin(&runtime, roots[0], false, true);
+    runtime.next_collection = 1;
+    roots[1] = try kanaMapBuiltin(&runtime, roots[0], true);
+    runtime.next_collection = 1;
+    roots[1] = try kanaMapBuiltin(&runtime, roots[0], false);
+    runtime.next_collection = 1;
+    roots[1] = try widthBuiltin(&runtime, roots[0], true);
+    runtime.next_collection = 1;
+    roots[1] = try widthBuiltin(&runtime, roots[0], false);
+    try std.testing.expectError(error.KatakanaFullWidthSubstringReceiver, kanaMapBuiltin(&runtime, roots[2], true));
+    try std.testing.expectError(error.KatakanaFullWidthSubstringReceiver, kanaMapBuiltin(&runtime, roots[3], true));
+    try std.testing.expectError(error.KatakanaHalfWidthSplitReceiver, kanaMapBuiltin(&runtime, numberValue(1), false));
+}
+
+test "AOT幅変換は入力をGCルート化し全割当失敗を処理する" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, aotWidthAllocationTest, .{});
 }
 
 test "AOTクロージャがGC管理の可変セルを共有する" {
