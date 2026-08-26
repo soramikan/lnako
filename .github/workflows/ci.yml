@@ -72,7 +72,9 @@ jobs:
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
+          use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'aot' }}
           cache-key: ${{ matrix.suite }}
+          cache-size-limit: 1024
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.15.0

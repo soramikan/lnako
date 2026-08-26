@@ -157,10 +157,25 @@ if (new Set(legacySmokeCommands).size !== legacySmokeCommands.length) throw new 
 if (legacySmokeCommands.length !== 7) throw new Error(`smokeコマンド数が従来の7件ではありません: ${legacySmokeCommands.length}`);
 if ((workflow.match(/\.\/zig-out\/bin\/lnako/g) ?? []).length !== 6) throw new Error("lnako smokeコマンドの合計が従来の6件ではありません");
 
+const setupZigBlock = workflow.match(
+  /      - uses: mlugg\/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2\.2\.1[\s\S]*?(?=      - uses: actions\/setup-node@)/,
+)?.[0];
+if (setupZigBlock === undefined ||
+    !setupZigBlock.includes("version: 0.16.0") ||
+    !setupZigBlock.includes("use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'aot' }}") ||
+    !setupZigBlock.includes("cache-key: ${{ matrix.suite }}") ||
+    !setupZigBlock.includes("cache-size-limit: 1024") ||
+    (workflow.match(/use-cache:/g) ?? []).length !== 1 ||
+    (workflow.match(/cache-size-limit:/g) ?? []).length !== 1) {
+  throw new Error("setup-zigのcache保存対象または1 GiB上限が不正です");
+}
+
 for (const required of [
   "group: ci-${{ github.workflow }}-${{ github.ref }}",
   "cancel-in-progress: true",
+  "use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'aot' }}",
   "cache-key: ${{ matrix.suite }}",
+  "cache-size-limit: 1024",
   "timeout-minutes: 50",
 ]) if (!workflow.includes(required)) throw new Error(`CI安全設定がありません: ${required}`);
 

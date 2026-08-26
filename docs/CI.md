@@ -22,9 +22,9 @@ Linuxログでは通常のmath・CSV・TOML・Promise差分は約0.8秒で完了
 1本だけに24分13秒かかっていました。検証値を削らず、同じ文を最大96文ずつのfixtureへ分け、各fixtureで
 公式処理系とlnakoを比較します。公式パーサーへ巨大な1ソースを渡す非線形コストだけを避けます。
 
-## 4スイートへの分割
+## 5スイートへの分割
 
-各正式環境（Linux x86_64、macOS arm64、Windows x86_64）で、次の4スイートを並列実行します。
+各正式環境（Linux x86_64、macOS arm64、Windows x86_64）で、次の5スイートを並列実行します。
 
 | スイート | 検証内容 |
 |---|---|
@@ -32,6 +32,7 @@ Linuxログでは通常のmath・CSV・TOML・Promise差分は約0.8秒で完了
 | `standard` | math・CSV・TOML・Promise、markup・caniuse・kansujiの公式差分と全生成コーパス |
 | `host` | QuickJS互換差分、ネイティブプラグインABI、ファイル・プロセス・HTTP・暗号・文字コード・圧縮などNodeホスト差分 |
 | `aot` | 公式CLI・公式生成JavaScript・インタープリタ・LLVM AOT O0〜O3差分、通常/QuickJSビルドとスモークテスト |
+| `compat-aot` | QuickJS Debug単体テスト、QuickJS ReleaseSafe compiler build、compat-js smoke |
 
 元のコマンドは削除せず、各OSでいずれか1スイートが一度だけ実行します。OSごとの互換検証をLinuxだけへ
 縮小する最適化は行いません。ジョブ上限は50分とし、停止しないホスト・ネットワークテストを検出します。
@@ -43,17 +44,31 @@ pushされた場合だけ、進行中の古いrunを取り消します。別ブ�
 
 最新commitは古いcommitを祖先として含むため、最新runが累積したソースを全スイートで検証します。一方、取り消された
 個々のcommitにはGitHub上の完走記録が残らないため、機能コミット前のローカル検証と署名を省略してよい規則では
-ありません。リリース候補やマイルストーンのcommitは、後続pushを止めて全12ジョブの完走を証拠として残します。
+ありません。リリース候補やマイルストーンのcommitは、後続pushを止めて全15ジョブとattestation jobの完走を証拠として残します。
 
 ## キャッシュ
 
 - LLVM/LLD・QuickJSと公式なでしこ3オラクルはOS別の固定バージョン・ハッシュ付きキャッシュを全スイートで共有します。
-- Zigのglobal/local cacheは同時保存の競合を避けるため、OSに加えてスイート名をキーへ含めます。
+- Zigのglobal/local cacheは長時間の`host`・`aot`だけで保存し、OSに加えてスイート名をキーへ含めます。上限は1,024 MiBです。
 - キャッシュmissでもセットアップスクリプトがlockfileのSHA-256を検証します。キャッシュhitを安全性の根拠にはしません。
 - 初回またはキャッシュ失効時はダウンロード時間が加わるため、定常時と同じ所要時間にはなりません。
 
-4スイートはセットアップを個別に行うため、単一runだけの総runner時間は直列構成より少し増える可能性があります。
+分割した各スイートはセットアップを個別に行うため、単一runだけの総runner時間は直列構成より少し増える可能性があります。
 壁時計時間を短縮し、旧run取消によって複数run全体の無駄なrunner時間を抑える設計です。
+
+### Zig build cacheの保存対象
+
+`mlugg/setup-zig`のbuild cacheは、保存keyへrun IDとattemptが付くため、全15ジョブで有効にすると最大15個の新規cacheが
+runごとに増えます。2026-08-27に確認した時点では、Actions cacheが30件・約11.6 GBに達し、固定Linux LLVM cacheが
+退避された後のrunで5つのLinuxジョブが同じ配布物の取得・SHA-256検証・展開を約148秒ずつ重複していました。
+
+検証工程を変えずにcacheの増加を抑えるため、cross-runのZig build cacheはコンパイル量の大きい`host`と`aot`だけに限定します。
+3 OSで最大6個/runとなり、`core`・`standard`・`compat-aot`もjob内のZig cacheは通常どおり使用します。
+`use-cache: false`のjobでも、setup actionが管理する固定Zig 0.16.0配布物のcacheは別系統で維持されます。
+
+1,024 MiB上限を超えたbuild cacheはactionの仕様上、部分的なLRU整理ではなく空にして保存されます。このため上限を小さく
+しすぎず、今後の実runでcache clear、固定toolchain cacheの残存、壁時計時間を合わせて確認します。固定LLVM/LLD・QuickJS・
+公式オラクルの実体hash検証は、cache hit時も従来どおり毎jobで実行します。
 
 ## 分割直後の実測
 
