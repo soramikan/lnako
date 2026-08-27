@@ -233,6 +233,8 @@ pub const Command = enum(u16) {
     toml_stringify,
     markdown_to_html,
     html_pretty,
+    deep_equal,
+    deep_not_equal,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -475,6 +477,8 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "TOML変換")) return .toml_stringify;
     if (std.mem.eql(u8, name, "マークダウンHTML変換")) return .markdown_to_html;
     if (std.mem.eql(u8, name, "HTML整形")) return .html_pretty;
+    if (std.mem.eql(u8, name, "一致")) return .deep_equal;
+    if (std.mem.eql(u8, name, "不一致")) return .deep_not_equal;
     return null;
 }
 
@@ -699,6 +703,8 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.toml_stringify, lookup("TOML変換").?);
     try std.testing.expectEqual(Command.markdown_to_html, lookup("マークダウンHTML変換").?);
     try std.testing.expectEqual(Command.html_pretty, lookup("HTML整形").?);
+    try std.testing.expectEqual(Command.deep_equal, lookup("一致").?);
+    try std.testing.expectEqual(Command.deep_not_equal, lookup("不一致").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }
 

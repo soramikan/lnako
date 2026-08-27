@@ -259,6 +259,8 @@ const Comparison = enum(u8) {
     less_equal,
     greater,
     greater_equal,
+    deep_equal,
+    deep_not_equal,
 };
 
 const ShiftOperator = enum(u8) {
@@ -2053,6 +2055,39 @@ fn relationalOrder(runtime: *Runtime, left: Value, right: Value) !?std.math.Orde
     return std.math.order(left_number, right_number);
 }
 
+fn deepEqual(runtime: *Runtime, left: Value, right: Value) !bool {
+    if (isString(left) and isString(right)) return stringEqual(runtime, left, right);
+    if (left.tag != right.tag) return false;
+    return switch (@as(Tag, @enumFromInt(left.tag))) {
+        .array => blk: {
+            const left_object = left.object() orelse break :blk false;
+            const right_object = right.object() orelse break :blk false;
+            if (left_object.payload != .array or right_object.payload != .array) break :blk false;
+            const left_items = left_object.payload.array.items;
+            const right_items = right_object.payload.array.items;
+            if (left_items.len != right_items.len) break :blk false;
+            for (left_items, right_items) |left_item, right_item| {
+                if (!try deepEqual(runtime, left_item, right_item)) break :blk false;
+            }
+            break :blk true;
+        },
+        .dictionary => blk: {
+            const left_object = left.object() orelse break :blk false;
+            const right_object = right.object() orelse break :blk false;
+            if (left_object.payload != .dictionary or right_object.payload != .dictionary) break :blk false;
+            const left_entries = left_object.payload.dictionary.items;
+            const right_entries = right_object.payload.dictionary.items;
+            if (left_entries.len != right_entries.len) break :blk false;
+            for (left_entries, right_entries) |left_entry, right_entry| {
+                if (!try strictEqual(runtime, left_entry.key, right_entry.key)) break :blk false;
+                if (!try deepEqual(runtime, left_entry.value, right_entry.value)) break :blk false;
+            }
+            break :blk true;
+        },
+        else => strictEqual(runtime, left, right),
+    };
+}
+
 fn compareValues(runtime: *Runtime, operator: Comparison, left: Value, right: Value) !bool {
     var roots = [_]Value{ left, right, .{}, .{} };
     var frame: RootFrame = .{};
@@ -2063,6 +2098,8 @@ fn compareValues(runtime: *Runtime, operator: Comparison, left: Value, right: Va
         .strict_equal => strictEqual(runtime, roots[0], roots[1]),
         .abstract_not_equal => !try abstractEqual(runtime, roots[0], roots[1]),
         .strict_not_equal => !try strictEqual(runtime, roots[0], roots[1]),
+        .deep_equal => deepEqual(runtime, roots[0], roots[1]),
+        .deep_not_equal => !try deepEqual(runtime, roots[0], roots[1]),
         .less, .less_equal, .greater, .greater_equal => blk: {
             const order = (try relationalOrder(runtime, roots[0], roots[1])) orelse break :blk false;
             break :blk switch (operator) {
@@ -3045,7 +3082,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
             const expected: f64 = if (command == .is_even) 0 else 1;
             out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(@rem(integer, 2) == expected) };
         },
-        .greater_equal, .less_equal, .less, .greater, .strict_equal, .strict_not_equal => {
+        .greater_equal, .less_equal, .less, .greater, .strict_equal, .strict_not_equal, .deep_equal, .deep_not_equal => {
             if (len < 2) {
                 runtime.setFailure(error.InvalidArgumentCount);
                 return;
@@ -3057,6 +3094,8 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 .greater => .greater,
                 .strict_equal => .strict_equal,
                 .strict_not_equal => .strict_not_equal,
+                .deep_equal => .deep_equal,
+                .deep_not_equal => .deep_not_equal,
                 else => unreachable,
             };
             const result = compareValues(runtime, comparison, arguments.?[0], arguments.?[1]) catch |failure| {
@@ -10964,6 +11003,30 @@ test "AOT動的比較は文字列変換と参照同一性を区別する" {
     try std.testing.expect(!(try compareValues(&runtime, .strict_equal, .{ .tag = @intFromEnum(Tag.null_value) }, .{})));
     try std.testing.expect(try compareValues(&runtime, .greater, staticStringValue("2"), numberValue(1)));
     try std.testing.expect(!(try compareValues(&runtime, .greater, staticStringValue("A"), numberValue(1))));
+}
+
+test "AOT一致系命令は配列と辞書を内容比較する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createArray(&.{ numberValue(1), numberValue(2) });
+    roots[1] = try runtime.createArray(&.{ numberValue(1), numberValue(2) });
+    roots[2] = try runtime.createArray(&.{ numberValue(1), numberValue(3) });
+    roots[3] = try runtime.createDictionary(&.{ staticStringValue("x"), roots[0] });
+    roots[4] = try runtime.createDictionary(&.{ staticStringValue("x"), roots[1] });
+    roots[5] = try runtime.createDictionary(&.{ staticStringValue("x"), roots[2] });
+
+    try std.testing.expect(try compareValues(&runtime, .deep_equal, roots[0], roots[1]));
+    try std.testing.expect(!(try compareValues(&runtime, .deep_equal, roots[0], roots[2])));
+    try std.testing.expect(try compareValues(&runtime, .deep_equal, roots[3], roots[4]));
+    try std.testing.expect(!(try compareValues(&runtime, .deep_equal, roots[3], roots[5])));
+    try std.testing.expect(try compareValues(&runtime, .deep_not_equal, roots[3], roots[5]));
+    try std.testing.expect(try compareValues(&runtime, .deep_equal, numberValue(1), numberValue(1)));
+    try std.testing.expect(try compareValues(&runtime, .deep_not_equal, numberValue(1), staticStringValue("1")));
 }
 
 test "AOTのNumberとBigIntシフトを公式規則で処理する" {

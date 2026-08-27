@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "362858d56cdc355a6610656478858e831f544caa997c1213b275402f5c5f185b"
+    "sha256": "2bee63efdf298d993308c485eda232f344a631387db92c786b0438720339cf06"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 170,
+    "count": 168,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 170
+      "unverified": 168
     }
   },
   "groups": [
@@ -690,24 +690,6 @@
     {
       "plugin": "plugin_system",
       "group": "基本プラグイン",
-      "category": "四則演算",
-      "type": "関数",
-      "count": 2,
-      "executionEvidenceStates": {
-        "unverified": 2
-      },
-      "commandIds": [
-        "command-0100",
-        "command-0101"
-      ],
-      "names": [
-        "一致",
-        "不一致"
-      ]
-    },
-    {
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
       "category": "敬語",
       "type": "関数",
       "count": 6,
@@ -1301,40 +1283,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "system-runtime-catalog-and-namespace"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0100",
-      "name": "一致",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "四則演算",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-math"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0101",
-      "name": "不一致",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "四則演算",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-math"
       ],
       "aotFixtureIds": []
     },

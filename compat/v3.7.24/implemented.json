@@ -606,16 +606,18 @@
   "一致": {
     "status": "native",
     "tests": [
-      "plugin-system-math"
+      "plugin-system-math",
+      "native-system-deep-comparison"
     ],
-    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+    "reason": "Zig製ランタイムで実装し、公式差分テストと純LLVM AOT dispatchの公式7経路差分テストに成功"
   },
   "不一致": {
     "status": "native",
     "tests": [
-      "plugin-system-math"
+      "plugin-system-math",
+      "native-system-deep-comparison"
     ],
-    "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+    "reason": "Zig製ランタイムで実装し、公式差分テストと純LLVM AOT dispatchの公式7経路差分テストに成功"
   },
   "範囲内": {
     "status": "native",

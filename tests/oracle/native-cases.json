@@ -612,5 +612,10 @@
     "oracle": "official-source",
     "commands": ["マークダウンHTML変換", "HTML整形"],
     "source": "!「${PLUGIN_MARKUP}」を取り込む\nJSON変換(マークダウンHTML変換(『# Heading\\n\\nplain *em* **strong**』))を表示\nJSON変換(HTML整形(『<div><p>A <strong>B</strong></p><p>C</p></div>』))を表示\n"
+  },
+  {
+    "id": "native-system-deep-comparison",
+    "commands": ["一致", "不一致"],
+    "source": "A={\"x\":[1,2]}\nB={\"x\":[1,2]}\nC={\"x\":[1,3]}\n一致(A,B)を表示\n不一致(A,C)を表示\n一致(1,1)を表示\n不一致(1,\"1\")を表示\n"
   }
 ]

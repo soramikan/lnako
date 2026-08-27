@@ -2606,14 +2606,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-math"
+        "plugin-system-math",
+        "native-system-deep-comparison"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "Zig製ランタイムで実装し、公式差分テストと純LLVM AOT dispatchの公式7経路差分テストに成功"
     },
     {
       "id": "command-0101",
@@ -2632,14 +2633,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-math"
+        "plugin-system-math",
+        "native-system-deep-comparison"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
+      "reason": "Zig製ランタイムで実装し、公式差分テストと純LLVM AOT dispatchの公式7経路差分テストに成功"
     },
     {
       "id": "command-0102",
