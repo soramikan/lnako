@@ -2724,6 +2724,25 @@ test "AOT __DEBUGはデバッグ状態を有効化して値を返さない" {
     try std.testing.expectEqual(@intFromEnum(Tag.undefined), result.tag);
 }
 
+test "AOTデバッグ表示はオブジェクトをJSON化して位置付き表示ログへ書き込む" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try active_runtime.?.createDictionary(&.{ staticStringValue("a"), numberValue(1) });
+    roots[1] = try active_runtime.?.createString(&.{});
+    debugDisplayBuiltin(&active_runtime.?, roots[0], 4, "main.nako3", &roots[1]) catch |failure| return failure;
+    try expectUtf16String(&active_runtime.?, roots[1], "main.nako3(4): {\"a\":1}\n");
+}
+
 test "AOT ASSERT等はNodeのSameValue境界と戻り値を保つ" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -2962,6 +2981,58 @@ pub export fn lnako_aot_print_collection(value: *const Value, newline: bool) cal
 pub export fn lnako_aot_display_value(value: *const Value, newline: bool, display_log: ?*Value) callconv(.c) void {
     const runtime = if (active_runtime) |*active| active else return;
     displayValue(runtime, value.*, newline, display_log) catch |failure| runtime.setFailure(failure);
+}
+
+fn debugDisplayBuiltin(runtime: *Runtime, value: Value, line: u64, source_path: []const u8, display_log: ?*Value) !void {
+    var roots = [_]Value{ value, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    var printable = value;
+    switch (@as(Tag, @enumFromInt(value.tag))) {
+        .array, .dictionary => {
+            roots[1] = try jsonEncodeBuiltin(runtime, value, false);
+            printable = roots[1];
+        },
+        else => {},
+    }
+    const text = try valueUtf8LossyAlloc(runtime, printable);
+    defer runtime.allocator.free(text);
+    const message = try std.fmt.allocPrint(runtime.allocator, "{s}({d}): {s}", .{ source_path, line, text });
+    defer runtime.allocator.free(message);
+    roots[2] = try runtimeUtf8String(runtime, message);
+    try displayValue(runtime, roots[2], true, display_log);
+}
+
+/// AOT版`デバッグ表示`は、LLVMが保持しているソース位置をABIで受け取り、
+/// 公式命令のJSON化と「ファイル名(行): 値」形式を純Zigで再現する。
+pub export fn lnako_aot_debug_display(
+    out: *Value,
+    value: ?*const Value,
+    line: u64,
+    source_path: ?[*]const u8,
+    source_len: usize,
+    display_log: ?*Value,
+    site_id: u64,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    const path = if (source_path) |pointer| pointer[0..source_len] else if (source_len == 0) &.{} else {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    };
+    const command = aot_builtin.Command.system_debug_display;
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    const call_id = runtime.dispatch_trace.begin(command_name, @intFromEnum(command), "debug-display", site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, @intFromEnum(command), "debug-display", site_id, success);
+    debugDisplayBuiltin(runtime, if (value) |pointer| pointer.* else .{}, line, path, display_log) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    success = runtime.failure_epoch == start_epoch;
 }
 
 pub export fn lnako_aot_display_many(values: ?[*]const Value, len: usize, display_log: ?*Value) callconv(.c) void {
@@ -3312,7 +3383,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all and command != .namespace_pop and command != .async_noop and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all and command != .namespace_pop and command != .async_noop and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -3408,6 +3479,10 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 runtime.setFailure(failure);
                 return;
             };
+        },
+        .system_debug_display => debugDisplayBuiltin(runtime, value, 1, &.{}, null) catch |failure| {
+            runtime.setFailure(failure);
+            return;
         },
         .system_debug_enable => runtime.debug_enabled = true,
         .system_global_function_names => {
@@ -9570,6 +9645,7 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, *Value, ?[*]const Value, usize, u8, u64) callconv(.c) void, @TypeOf(&lnako_aot_cut_site));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16) callconv(.c) void, @TypeOf(&lnako_aot_builtin_call));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_builtin_call_site));
+    try std.testing.expectEqual(*const fn (*Value, ?*const Value, u64, ?[*]const u8, usize, ?*Value, u64) callconv(.c) void, @TypeOf(&lnako_aot_debug_display));
     try std.testing.expectEqual(*const fn (*Value, ?*Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_regexp_call_site));
     try std.testing.expectEqual(*const fn (u64) callconv(.c) u64, @TypeOf(&lnako_aot_dispatch_display_begin));
     try std.testing.expectEqual(*const fn (u64, *u64) callconv(.c) u64, @TypeOf(&lnako_aot_dispatch_display_begin_with_epoch));

@@ -3681,9 +3681,10 @@
   "デバッグ表示": {
     "status": "native",
     "tests": [
-      "system-runtime-execution-and-debug"
+      "system-runtime-execution-and-debug",
+      "native-system-debug-display"
     ],
-    "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+    "reason": "Zig製実行時システム命令と純LLVM AOTで位置付きJSON表示を公式cnako3との差分テストに成功"
   },
   "ハテナ関数設定": {
     "status": "native",

@@ -85,6 +85,7 @@ pub fn manifestCall(name: []const u8, direct_callee: ?ir.FunctionId, is_builtin_
     const route = switch (command) {
         .cut, .cut_range => "cut",
         .regexp_match, .regexp_extract, .regexp_replace, .regexp_split => "regexp",
+        .system_debug_display => "debug-display",
         else => "builtin",
     };
     return .{
@@ -254,6 +255,7 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
 }
 
 const StringConstant = struct { function_id: ir.FunctionId, value_id: ir.ValueId, units: []u16, index: usize };
+const DebugPathConstant = struct { path: []const u8 };
 const SystemStringConstant = struct { global_index: usize, units: []u16 };
 const BigIntConstant = struct { function_id: ir.FunctionId, value_id: ir.ValueId, text: []const u8, index: usize };
 const DebugLocation = struct { id: usize, line: usize, column: usize, scope: usize };
@@ -279,6 +281,7 @@ const Emitter = struct {
     output: std.Io.Writer.Allocating,
     globals: std.ArrayList([]const u8) = .empty,
     strings: std.ArrayList(StringConstant) = .empty,
+    debug_paths: std.ArrayList(DebugPathConstant) = .empty,
     system_strings: std.ArrayList(SystemStringConstant) = .empty,
     system_arrays: std.ArrayList(usize) = .empty,
     system_dictionaries: std.ArrayList(usize) = .empty,
@@ -291,6 +294,7 @@ const Emitter = struct {
         self.globals.deinit(self.allocator);
         for (self.strings.items) |constant| self.allocator.free(constant.units);
         self.strings.deinit(self.allocator);
+        self.debug_paths.deinit(self.allocator);
         for (self.system_strings.items) |constant| self.allocator.free(constant.units);
         self.system_strings.deinit(self.allocator);
         self.system_arrays.deinit(self.allocator);
@@ -327,6 +331,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_print_collection(ptr, i1)\n" ++
                 "declare void @lnako_aot_display_value(ptr, i1, ptr)\n" ++
                 "declare void @lnako_aot_display_many(ptr, i64, ptr)\n" ++
+                "declare void @lnako_aot_debug_display(ptr, ptr, i64, ptr, i64, ptr, i64)\n" ++
                 "declare void @lnako_aot_stdio_call(ptr, ptr, ptr, i64, i16, i64)\n" ++
                 "declare void @lnako_aot_plugin_management_call(ptr, ptr, i64, i16, ptr, ptr, i64)\n" ++
                 "declare i32 @lnako_aot_bigint_truthy(ptr)\n" ++
@@ -390,6 +395,20 @@ const Emitter = struct {
             }
         }
         if (self.strings.items.len > 0) try writer.writeByte('\n');
+        for (self.debug_paths.items, 0..) |constant, index| {
+            try writer.print("@lnako.debug.path.{d} = private unnamed_addr constant [{d} x i8] ", .{ index, constant.path.len });
+            if (constant.path.len == 0) {
+                try writer.writeAll("zeroinitializer\n");
+            } else {
+                try writer.writeByte('[');
+                for (constant.path, 0..) |byte, byte_index| {
+                    if (byte_index > 0) try writer.writeAll(", ");
+                    try writer.print("i8 {d}", .{byte});
+                }
+                try writer.writeAll("]\n");
+            }
+        }
+        if (self.debug_paths.items.len > 0) try writer.writeByte('\n');
         for (self.program.functions) |function| {
             try writer.print("@lnako.function.name.{d} = private unnamed_addr constant [{d} x i8] ", .{ function.id, function.name.len });
             if (function.name.len == 0) {
@@ -464,6 +483,10 @@ const Emitter = struct {
                 if (instruction.is_builtin_call and requiresDisplayLog(instruction.name) and self.globalIndex("表示ログ") == null) {
                     try self.globals.append(self.allocator, "表示ログ");
                 }
+                if (instruction.is_builtin_call) if (aot_builtin.lookup(instruction.name)) |command| if (command == .system_debug_display) {
+                    const path = self.sourcePathForFunction(function.name);
+                    if (self.debugPathIndex(path) == null) try self.debug_paths.append(self.allocator, .{ .path = path });
+                };
                 if (aot_builtin.lookup(instruction.name)) |command| if (command == .cut or command == .cut_range) {
                     if (self.globalIndex("対象") == null) try self.globals.append(self.allocator, "対象");
                 };
@@ -1106,6 +1129,34 @@ const Emitter = struct {
         const result = instruction.result orelse return error.MissingInstructionResult;
         const site_id = instruction.site_id orelse return error.MissingDispatchSiteId;
         if (instruction.operands.len > aggregate_count) return error.InvalidCallScratch;
+        if (command == .system_debug_display) {
+            const display_log_index = self.globalIndex("表示ログ") orelse return error.MissingDisplayLogGlobal;
+            const source_path = self.sourcePathForFunction(function.name);
+            const path_index = self.debugPathIndex(source_path) orelse return error.MissingDebugSourcePath;
+            if (instruction.operands.len > 0) {
+                try self.output.writer.print("  %debug-display.{d}.slot.0 = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 0", .{ result, aggregate_count });
+                try self.debugSuffix(instruction.span, scope);
+                try self.output.writer.writeAll("  store %lnako.Value ");
+                try self.writeValueRef(function, instruction.operands[instruction.operands.len - 1]);
+                try self.output.writer.print(", ptr %debug-display.{d}.slot.0", .{result});
+                try self.debugSuffix(instruction.span, scope);
+            }
+            try self.output.writer.print("  call void @lnako_aot_debug_display(ptr %root.slot.{d}, ptr ", .{result});
+            if (instruction.operands.len > 0) {
+                try self.output.writer.print("%debug-display.{d}.slot.0", .{result});
+            } else try self.output.writer.writeAll("null");
+            try self.output.writer.print(", i64 {d}, ptr @lnako.debug.path.{d}, i64 {d}, ptr @lnako.global.{d}, i64 {d})", .{
+                instruction.span.line + 1,
+                path_index,
+                source_path.len,
+                display_log_index,
+                site_id,
+            });
+            try self.debugSuffix(instruction.span, scope);
+            try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+            try self.debugSuffix(instruction.span, scope);
+            return;
+        }
         if (isPluginManagementCommand(command)) {
             const plugin_name_index = self.globalIndex("プラグイン名") orelse return error.MissingPluginNameGlobal;
             const namespace_index = self.globalIndex("名前空間") orelse return error.MissingNamespaceGlobal;
@@ -1506,6 +1557,21 @@ const Emitter = struct {
         return system_constant.lookupString(name);
     }
 
+    fn sourcePathForFunction(self: Emitter, function_name: []const u8) []const u8 {
+        var best: ?usize = null;
+        for (self.program.module_names, 0..) |module_name, index| {
+            if (index >= self.program.module_paths.len or !std.mem.startsWith(u8, function_name, module_name)) continue;
+            if (function_name.len <= module_name.len + 1 or !std.mem.eql(u8, function_name[module_name.len .. module_name.len + 2], "__")) continue;
+            if (best == null or module_name.len > self.program.module_names[best.?].len) best = index;
+        }
+        return if (best) |index| self.program.module_paths[index] else self.source_path;
+    }
+
+    fn debugPathIndex(self: Emitter, path: []const u8) ?usize {
+        for (self.debug_paths.items, 0..) |constant, index| if (std.mem.eql(u8, constant.path, path)) return index;
+        return null;
+    }
+
     fn stringConstant(self: Emitter, function_id: ir.FunctionId, value_id: ir.ValueId) ?StringConstant {
         for (self.strings.items) |constant| if (constant.function_id == function_id and constant.value_id == value_id) return constant;
         return null;
@@ -1598,7 +1664,7 @@ fn isPluginManagementCommand(command: aot_builtin.Command) bool {
 
 fn requiresDisplayLog(name: []const u8) bool {
     if (isDisplayCall(name)) return true;
-    return if (aot_builtin.lookup(name)) |command| isStdioCommand(command) else false;
+    return if (aot_builtin.lookup(name)) |command| isStdioCommand(command) or command == .system_debug_display else false;
 }
 
 fn nameIndex(names: []const []const u8, name: []const u8) ?usize {
@@ -1763,7 +1829,7 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     const semantic = @import("../../semantic/analyzer.zig");
     const hir = @import("../../ir/hir.zig");
     const lower = @import("../../ir/lower_ssa.zig");
-    var parsed = try parser.parse(std.testing.allocator, "A=1\nB=A+2\nBを表示\n", "main.nako3");
+    var parsed = try parser.parse(std.testing.allocator, "A=1\nB=A+2\nBを表示\nデバッグ表示({\"a\":1})\n", "main.nako3");
     defer parsed.deinit();
     var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
     defer analyzed.deinit();
@@ -1784,6 +1850,9 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare i64 @lnako_aot_dispatch_display_begin_with_epoch(i64, ptr)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_dispatch_result(i64, i64, i64)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_dispatch_result(i64 %display.call_id, i64 %site_id, i64 %display.start_epoch)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_debug_display(ptr, ptr, i64, ptr, i64, ptr, i64)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.debug.path.0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_debug_display") != null);
 }
 
 test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {
@@ -1807,6 +1876,11 @@ test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {
     try std.testing.expectEqualStrings("to_string", builtin.canonical_opcode);
     try std.testing.expectEqualStrings("builtin", builtin.route);
     try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.to_string), builtin.opcode);
+
+    const debug = manifestCall("デバッグ表示", null, true).?;
+    try std.testing.expectEqualStrings("system_debug_display", debug.canonical_opcode);
+    try std.testing.expectEqualStrings("debug-display", debug.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.system_debug_display), debug.opcode);
 
     try std.testing.expect(manifestCall("利用者関数", 0, false) == null);
     try std.testing.expect(manifestCall("未知命令", null, false) == null);
