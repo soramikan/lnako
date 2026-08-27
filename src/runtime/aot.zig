@@ -3770,7 +3770,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             });
         },
-        .array_sort, .array_numeric_convert, .array_numeric_sort, .array_reverse => {
+        .array_sort, .array_numeric_convert, .array_numeric_sort, .array_reverse, .array_shuffle => {
             const source: Value = if (len > 0) arguments.?[0] else .{};
             out.* = arrayOrderingBuiltin(runtime, command, source) catch |failure| {
                 runtime.setFailure(failure);
@@ -7183,8 +7183,22 @@ fn arrayOrderingBuiltin(runtime: *Runtime, command: aot_builtin.Command, source:
             return source_root;
         },
         .array_sort, .array_numeric_sort => return try stableArraySort(runtime, source, command == .array_numeric_sort),
+        .array_shuffle => return try arrayShuffleBuiltin(runtime, source),
         else => unreachable,
     }
+}
+
+fn arrayShuffleBuiltin(runtime: *Runtime, source: Value) !Value {
+    if (source.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
+    const object = source.object() orelse return error.InvalidArray;
+    if (object.payload != .array) return error.InvalidArray;
+    var index = object.payload.array.items.len;
+    while (index > 1) {
+        index -= 1;
+        const random_index: usize = @intFromFloat(@floor(nextRandom(runtime) * @as(f64, @floatFromInt(index + 1))));
+        std.mem.swap(Value, &object.payload.array.items[index], &object.payload.array.items[random_index]);
+    }
+    return source;
 }
 
 fn stableArraySort(runtime: *Runtime, source: Value, numeric: bool) !Value {
@@ -11770,6 +11784,36 @@ test "AOT配列ソート系は安定mergeとundefined末尾と同一配列を保
     try std.testing.expect(std.math.isNan(valueToNumber((try arrayItems(roots[3])).items[5])));
     try std.testing.expectEqual(roots[3].payload, (try arrayOrderingBuiltin(&runtime, .array_reverse, roots[3])).payload);
     try std.testing.expect(std.math.isNan(valueToNumber((try arrayItems(roots[3])).items[0])));
+}
+
+test "AOT配列シャッフルはFisher-Yatesの置換と同一配列を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator, .random_state = default_random_seed };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try active_runtime.?.createArray(&.{ numberValue(1), numberValue(2), numberValue(3), numberValue(4) });
+    const original = roots[0].payload;
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.array_shuffle));
+    try std.testing.expectEqual(original, roots[1].payload);
+    try std.testing.expect(active_runtime.?.random_state != default_random_seed);
+
+    var seen = [_]bool{false} ** 4;
+    for ((try arrayItems(roots[0])).items) |item| {
+        const number = valueToNumber(item);
+        try std.testing.expect(number >= 1 and number <= 4 and @trunc(number) == number);
+        const index: usize = @intFromFloat(number - 1);
+        try std.testing.expect(!seen[index]);
+        seen[index] = true;
+    }
+    for (seen) |present| try std.testing.expect(present);
 }
 
 test "AOT表ソートは指定列を比較して同じ配列を安定ソートする" {

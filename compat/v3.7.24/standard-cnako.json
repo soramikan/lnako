@@ -5005,14 +5005,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-array-core"
+        "plugin-system-array-core",
+        "native-system-array-shuffle"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "差し替え可能な乱数源で実装し、公式差分テストに成功"
+      "reason": "Interpreterと純LLVM AOTでFisher-Yatesと同一配列戻り値を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0191",
