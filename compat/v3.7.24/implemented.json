@@ -2585,7 +2585,8 @@
   "環境変数一覧取得": {
     "status": "native",
     "tests": [
-      "plugin-node-path-host"
+      "plugin-node-path-host",
+      "native-node-environment-list"
     ],
     "reason": "公式cnako3とのNodeホスト差分テストに成功"
   },

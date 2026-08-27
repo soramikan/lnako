@@ -2734,7 +2734,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -2786,6 +2786,12 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         .node_environment_get => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = nodeEnvironmentValueBuiltin(runtime, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .node_environment_list => {
+            out.* = nodeEnvironmentListBuiltin(runtime) catch |failure| {
                 runtime.setFailure(failure);
                 return;
             };
@@ -4090,6 +4096,37 @@ fn nodeEnvironmentValueBuiltin(runtime: *Runtime, arguments: []const Value) !Val
     defer runtime.allocator.free(key_z);
     const environment = std.c.getenv(key_z.ptr) orelse return .{};
     return runtimeUtf8String(runtime, std.mem.span(environment));
+}
+
+fn nodeEnvironmentListBuiltin(runtime: *Runtime) !Value {
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createDictionary(&.{});
+    if (comptime builtin.os.tag == .windows) {
+        const environ: std.process.Environ = .{ .block = .global };
+        var map = try std.process.Environ.createMap(environ, runtime.allocator);
+        defer map.deinit();
+        var iterator = map.iterator();
+        while (iterator.next()) |entry| {
+            roots[1] = try runtimeUtf8StringLossy(runtime, entry.key_ptr.*);
+            roots[2] = try runtimeUtf8StringLossy(runtime, entry.value_ptr.*);
+            try runtime.setDictionary(&roots[0].object().?.payload.dictionary, roots[1], roots[2]);
+        }
+    } else {
+        var index: usize = 0;
+        while (std.c.environ[index]) |entry| : (index += 1) {
+            const bytes = std.mem.span(entry);
+            const separator = std.mem.indexOfScalar(u8, bytes, '=') orelse continue;
+            if (separator == 0) continue;
+            roots[1] = try runtimeUtf8StringLossy(runtime, bytes[0..separator]);
+            roots[2] = try runtimeUtf8StringLossy(runtime, bytes[separator + 1 ..]);
+            try runtime.setDictionary(&roots[0].object().?.payload.dictionary, roots[1], roots[2]);
+        }
+    }
+    return roots[0];
 }
 
 fn aotOsName() []const u8 {
@@ -7295,6 +7332,19 @@ test "AOT環境変数取得はC環境から値を読み未設定をundefinedに�
     arguments[0] = try runtimeUtf8String(&runtime, "LNAKO_ENVIRONMENT_VARIABLE_THAT_DOES_NOT_EXIST_7F4B");
     roots[1] = try nodeEnvironmentValueBuiltin(&runtime, &arguments);
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[1].tag)));
+}
+
+test "AOT環境変数一覧取得はPATHを含む辞書を生成する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    const path = std.c.getenv("PATH") orelse return error.EnvironmentUnavailable;
+    roots[0] = try nodeEnvironmentListBuiltin(&runtime);
+    try expectUtf16String(&runtime, dictionaryProperty(roots[0], &.{ 'P', 'A', 'T', 'H' }), std.mem.span(path));
 }
 
 test "AOT対応ブラウザ一覧取得はv3.7.24の辞書をキャッシュする" {
