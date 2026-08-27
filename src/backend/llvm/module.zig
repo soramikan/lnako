@@ -442,6 +442,10 @@ const Emitter = struct {
         var string_index: usize = 0;
         var bigint_index: usize = 0;
         try self.globals.append(self.allocator, "それ");
+        for (self.program.functions) |function| {
+            if (!isNamedGlobalFunction(function.name) or self.globalIndex(function.name) != null) continue;
+            try self.globals.append(self.allocator, function.name);
+        }
         for (self.program.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
             if ((instruction.opcode == .load_global or instruction.opcode == .store_global) and self.globalIndex(instruction.name) == null) {
                 try self.globals.append(self.allocator, instruction.name);
@@ -1651,6 +1655,10 @@ fn destructureSourceSupported(_: ir.Function, instruction: ir.Instruction) bool 
 
 fn isQualifiedGlobal(name: []const u8) bool {
     return std.mem.indexOf(u8, name, "__") != null;
+}
+
+fn isNamedGlobalFunction(name: []const u8) bool {
+    return !std.mem.endsWith(u8, name, "__$entry") and std.mem.indexOf(u8, name, "__lambda$") == null;
 }
 
 fn arithmeticOpcode(operator: []const u8) ?[]const u8 {

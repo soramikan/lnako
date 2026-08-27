@@ -299,6 +299,11 @@ const Object = struct {
     payload: Payload,
 };
 
+const RegisteredFunction = struct {
+    name: []u8,
+    object: *Object,
+};
+
 const NamespaceFrame = struct {
     namespace: Value,
     plugin_name: Value,
@@ -330,6 +335,7 @@ const Runtime = struct {
     era_data: Value = .{},
     csv_state: AotCsvState = .{},
     namespace_stack: std.ArrayList(NamespaceFrame) = .empty,
+    named_functions: std.ArrayList(RegisteredFunction) = .empty,
 
     fn deinit(self: *Runtime) void {
         self.dispatch_trace.deinit();
@@ -342,6 +348,7 @@ const Runtime = struct {
             self.destroyObject(object);
             current = next;
         }
+        self.named_functions.deinit(self.allocator);
         self.stringifying_arrays.deinit(self.allocator);
         self.* = undefined;
     }
@@ -434,11 +441,19 @@ const Runtime = struct {
         self.pushRoots(&frame, if (captures.len > 0) @constCast(captures.ptr) else null, captures.len);
         defer self.popRoots(&frame);
         try self.beforeAllocation();
-        const owned_name = try self.allocator.dupe(u8, name);
-        errdefer self.allocator.free(owned_name);
-        const owned_captures = try self.allocator.dupe(Value, captures);
-        errdefer self.allocator.free(owned_captures);
-        return self.createObject(.{ .function = .{ .callback = callback, .arity = arity, .name = owned_name, .captures = owned_captures } }, .function);
+        const result = blk: {
+            const owned_name = try self.allocator.dupe(u8, name);
+            errdefer self.allocator.free(owned_name);
+            const owned_captures = try self.allocator.dupe(Value, captures);
+            errdefer self.allocator.free(owned_captures);
+            break :blk try self.createObject(.{ .function = .{ .callback = callback, .arity = arity, .name = owned_name, .captures = owned_captures } }, .function);
+        };
+        if (name.len > 0) {
+            const registered_name = try self.allocator.dupe(u8, name);
+            errdefer self.allocator.free(registered_name);
+            try self.named_functions.append(self.allocator, .{ .name = registered_name, .object = result.object().? });
+        }
+        return result;
     }
 
     fn createBindingCell(self: *Runtime, initial: Value) !Value {
@@ -583,6 +598,15 @@ const Runtime = struct {
             .array => |*items| items.deinit(self.allocator),
             .dictionary => |*entries| entries.deinit(self.allocator),
             .function => |function| {
+                var index: usize = 0;
+                while (index < self.named_functions.items.len) {
+                    if (self.named_functions.items[index].object == object) {
+                        self.allocator.free(self.named_functions.items[index].name);
+                        _ = self.named_functions.swapRemove(index);
+                    } else {
+                        index += 1;
+                    }
+                }
                 self.allocator.free(function.name);
                 self.allocator.free(function.captures);
             },
@@ -3774,6 +3798,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
             const source: Value = if (len > 0) arguments.?[0] else .{};
             out.* = arrayOrderingBuiltin(runtime, command, source) catch |failure| {
                 runtime.setFailure(failure);
+                return;
+            };
+        },
+        .array_custom_sort, .array_function_apply, .array_map, .array_filter => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = arrayCallbackBuiltin(runtime, command, actual) catch |failure| {
+                if (!runtime.has_pending_exception) runtime.setFailure(failure);
                 return;
             };
         },
@@ -7201,6 +7232,139 @@ fn arrayShuffleBuiltin(runtime: *Runtime, source: Value) !Value {
     return source;
 }
 
+fn arrayCallbackBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    if (arguments.len < 2) return error.InvalidArgumentCount;
+    var roots = [_]Value{ arguments[0], arguments[1], .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try resolveAotCallback(runtime, roots[0]);
+    _ = try arrayItems(roots[1]);
+    if (command == .array_custom_sort) return try stableArrayCallbackSort(runtime, roots[1], roots[0]);
+
+    roots[2] = try runtime.createArray(&.{});
+    const result = try arrayItems(roots[2]);
+    var index: usize = 0;
+    while (index < (try arrayItems(roots[1])).items.len) : (index += 1) {
+        const item = (try arrayItems(roots[1])).items[index];
+        roots[3] = item;
+        const mapped = try invokeAotCallback(runtime, roots[0], @ptrCast(&roots[3]), 1);
+        roots[3] = mapped;
+        if (command != .array_filter or valueTruthy(mapped)) try result.append(runtime.allocator, if (command == .array_filter) item else mapped);
+    }
+    return roots[2];
+}
+
+fn stableArrayCallbackSort(runtime: *Runtime, source: Value, callable: Value) !Value {
+    const items = try arrayItems(source);
+    const original_length = items.items.len;
+    if (original_length < 2) return source;
+
+    const first = try runtime.allocator.dupe(Value, items.items);
+    defer runtime.allocator.free(first);
+    const second = try runtime.allocator.dupe(Value, first);
+    defer runtime.allocator.free(second);
+
+    const root_count = std.math.add(usize, 3, std.math.mul(usize, original_length, 2) catch return error.ArrayTooLarge) catch return error.ArrayTooLarge;
+    const root_values = try runtime.allocator.alloc(Value, root_count);
+    defer runtime.allocator.free(root_values);
+    root_values[0] = source;
+    root_values[1] = callable;
+    root_values[2] = .{};
+    std.mem.copyForwards(Value, root_values[3 .. 3 + original_length], first);
+    std.mem.copyForwards(Value, root_values[3 + original_length ..], second);
+    var roots = RootFrame{};
+    runtime.pushRoots(&roots, root_values.ptr, root_values.len);
+    defer runtime.popRoots(&roots);
+
+    var width: usize = 1;
+    var from_first = true;
+    while (width < original_length) : (width = std.math.mul(usize, width, 2) catch original_length) {
+        const input = if (from_first) first else second;
+        const output = if (from_first) second else first;
+        var start: usize = 0;
+        while (start < original_length) {
+            const middle = @min(std.math.add(usize, start, width) catch original_length, original_length);
+            const end = @min(std.math.add(usize, middle, width) catch original_length, original_length);
+            var left = start;
+            var right = middle;
+            var destination = start;
+            while (left < middle and right < end) {
+                const order = try compareAotCallback(runtime, root_values[1], input[left], input[right], &root_values[2]);
+                if (order == .gt) {
+                    output[destination] = input[right];
+                    right += 1;
+                } else {
+                    output[destination] = input[left];
+                    left += 1;
+                }
+                destination += 1;
+            }
+            while (left < middle) : ({
+                left += 1;
+                destination += 1;
+            }) output[destination] = input[left];
+            while (right < end) : ({
+                right += 1;
+                destination += 1;
+            }) output[destination] = input[right];
+            start = end;
+        }
+        from_first = !from_first;
+    }
+
+    if (items.items.len < original_length) {
+        const old_length = items.items.len;
+        try items.resize(runtime.allocator, original_length);
+        @memset(items.items[old_length..], .{});
+    }
+    const sorted = if (from_first) first else second;
+    std.mem.copyForwards(Value, items.items[0..original_length], sorted);
+    return root_values[0];
+}
+
+fn compareAotCallback(runtime: *Runtime, callable: Value, left: Value, right: Value, result_root: *Value) !std.math.Order {
+    if (left.tag == @intFromEnum(Tag.undefined)) return if (right.tag == @intFromEnum(Tag.undefined)) .eq else .gt;
+    if (right.tag == @intFromEnum(Tag.undefined)) return .lt;
+    result_root.* = try invokeAotCallback(runtime, callable, @ptrCast(&[_]Value{ left, right }), 2);
+    const number = try valueToNumberRuntime(runtime, result_root.*);
+    if (std.math.isNan(number) or number == 0) return .eq;
+    return if (number < 0) .lt else .gt;
+}
+
+fn invokeAotCallback(runtime: *Runtime, callable: Value, arguments: ?[*]const Value, len: usize) !Value {
+    if (callable.tag != @intFromEnum(Tag.function)) return error.NotCallable;
+    const object = callable.object() orelse return error.NotCallable;
+    if (object.payload != .function) return error.NotCallable;
+    var result: Value = .{};
+    const start_epoch = runtime.failure_epoch;
+    lnako_aot_function_call(&result, &callable, arguments, len);
+    if (runtime.has_pending_exception and runtime.failure_epoch != start_epoch) return error.CallbackExecutionFailed;
+    return result;
+}
+
+fn resolveAotCallback(runtime: *Runtime, value: Value) !Value {
+    if (value.tag == @intFromEnum(Tag.function)) return value;
+    if (!isString(value)) return error.NotCallable;
+    const name = try stringUtf8Alloc(runtime, value);
+    defer runtime.allocator.free(name);
+
+    var match: ?Value = null;
+    for (runtime.named_functions.items) |registered| {
+        if (!registeredFunctionMatches(registered.name, name)) continue;
+        if (match != null) return error.UnknownFunction;
+        match = .{ .tag = @intFromEnum(Tag.function), .payload = @intFromPtr(registered.object) };
+    }
+    return match orelse error.UnknownFunction;
+}
+
+fn registeredFunctionMatches(registered_name: []const u8, requested_name: []const u8) bool {
+    if (std.mem.eql(u8, registered_name, requested_name)) return true;
+    const separator = std.mem.lastIndexOf(u8, registered_name, "__") orelse return false;
+    return std.mem.eql(u8, registered_name[separator + 2 ..], requested_name);
+}
+
 fn stableArraySort(runtime: *Runtime, source: Value, numeric: bool) !Value {
     const items = &source.object().?.payload.array;
     if (items.items.len < 2) return source;
@@ -9347,6 +9511,24 @@ fn testAotFunction(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: 
 
 fn testAotSecondArgument(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
     out.* = if (arguments == null or len != 2) .{} else arguments.?[1];
+}
+
+fn testAotDescending(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
+    out.* = if (arguments == null or len != 2)
+        .{}
+    else
+        numberValue(valueToNumber(arguments.?[1]) - valueToNumber(arguments.?[0]));
+}
+
+fn testAotDouble(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
+    out.* = if (arguments == null or len != 1) .{} else numberValue(valueToNumber(arguments.?[0]) * 2);
+}
+
+fn testAotEven(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
+    out.* = if (arguments == null or len != 1)
+        .{}
+    else
+        .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(@mod(valueToNumber(arguments.?[0]), 2) == 0) };
 }
 
 fn testAotCapturedIncrement(out: *Value, context: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
@@ -11814,6 +11996,49 @@ test "AOT配列シャッフルはFisher-Yatesの置換と同一配列を保つ" 
         seen[index] = true;
     }
     for (seen) |present| try std.testing.expect(present);
+}
+
+test "AOT配列コールバックは関数値・名前解決と新配列規則を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    runtime.next_collection = 1;
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    const active = &active_runtime.?;
+    var roots = [_]Value{.{}} ** 11;
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try active.createNamedFunction(testAotDescending, 2, "module__降順", &.{});
+    roots[1] = try active.createArray(&.{ numberValue(1), numberValue(3), numberValue(2) });
+    var sort_arguments = [_]Value{ roots[0], roots[1] };
+    roots[2] = try arrayCallbackBuiltin(active, .array_custom_sort, &sort_arguments);
+    try std.testing.expectEqual(roots[1].payload, roots[2].payload);
+    try std.testing.expectEqual(@as(f64, 3), valueToNumber((try arrayItems(roots[1])).items[0]));
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber((try arrayItems(roots[1])).items[1]));
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber((try arrayItems(roots[1])).items[2]));
+
+    roots[3] = try active.createNamedFunction(testAotDouble, 1, "module__二倍", &.{});
+    roots[4] = try active.createArray(&.{ numberValue(1), numberValue(2), numberValue(3) });
+    var apply_arguments = [_]Value{ staticStringValue("二倍"), roots[4] };
+    roots[5] = try arrayCallbackBuiltin(active, .array_function_apply, &apply_arguments);
+    try std.testing.expect(roots[4].payload != roots[5].payload);
+    try std.testing.expectEqualSlices(Value, &.{ numberValue(2), numberValue(4), numberValue(6) }, (try arrayItems(roots[5])).items);
+
+    roots[6] = try active.createArray(&.{ numberValue(4), numberValue(5) });
+    var map_arguments = [_]Value{ roots[3], roots[6] };
+    roots[7] = try arrayCallbackBuiltin(active, .array_map, &map_arguments);
+    try std.testing.expectEqualSlices(Value, &.{ numberValue(8), numberValue(10) }, (try arrayItems(roots[7])).items);
+
+    roots[8] = try active.createNamedFunction(testAotEven, 1, "module__偶数判定関数", &.{});
+    roots[9] = try active.createArray(&.{ numberValue(1), numberValue(2), numberValue(3), numberValue(4) });
+    var filter_arguments = [_]Value{ staticStringValue("偶数判定関数"), roots[9] };
+    roots[10] = try arrayCallbackBuiltin(active, .array_filter, &filter_arguments);
+    try std.testing.expectEqualSlices(Value, &.{ numberValue(2), numberValue(4) }, (try arrayItems(roots[10])).items);
 }
 
 test "AOT表ソートは指定列を比較して同じ配列を安定ソートする" {

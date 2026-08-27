@@ -4952,14 +4952,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-array-callbacks"
+        "plugin-system-array-callbacks",
+        "native-system-array-callbacks"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "文字列指定関数の一意解決と安定ソートを実装し、公式差分テストに成功"
+      "reason": "AOTで文字列指定関数を一意解決し、安定ソートと同一配列戻り値を実装して公式差分テストに成功"
     },
     {
       "id": "command-0189",
@@ -5507,14 +5508,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-array-callbacks"
+        "plugin-system-array-callbacks",
+        "native-system-array-callbacks"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "生成コード関数コールバックを実装し、公式差分テストに成功"
+      "reason": "AOTの生成コード関数コールバックで各要素から新配列を生成し、公式差分テストに成功"
     },
     {
       "id": "command-0209",
@@ -5533,14 +5535,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-array-callbacks"
+        "plugin-system-array-callbacks",
+        "native-system-array-callbacks"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "生成コード関数コールバックを実装し、公式差分テストに成功"
+      "reason": "AOTの生成コード関数コールバックで各要素から新配列を生成し、公式差分テストに成功"
     },
     {
       "id": "command-0210",
@@ -5559,14 +5562,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-array-callbacks"
+        "plugin-system-array-callbacks",
+        "native-system-array-callbacks"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "生成コード関数コールバックを実装し、公式差分テストに成功"
+      "reason": "AOTの真偽コールバックで元要素を選択する新配列を生成し、公式差分テストに成功"
     },
     {
       "id": "command-0211",

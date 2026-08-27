@@ -8,14 +8,14 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 249,
-    "nativeAot": 144,
+    "total": 250,
+    "nativeAot": 145,
     "interpreter": 96,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
-    "paired": 386,
-    "interpreter-only": 137,
+    "paired": 390,
+    "interpreter-only": 133,
     "aot-only": 0,
     "none": 0,
     "compat-js-only": 4
@@ -6321,7 +6321,9 @@
       "interpreterFixtureIds": [
         "plugin-system-array-callbacks"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-array-callbacks"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -6330,15 +6332,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-array-callbacks": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "文字列指定関数の一意解決と安定ソートを実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "AOTで文字列指定関数を一意解決し、安定ソートと同一配列戻り値を実装して公式差分テストに成功"
     },
     {
       "id": "command-0189",
@@ -7040,7 +7047,9 @@
       "interpreterFixtureIds": [
         "plugin-system-array-callbacks"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-array-callbacks"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -7049,15 +7058,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-array-callbacks": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "生成コード関数コールバックを実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "AOTの生成コード関数コールバックで各要素から新配列を生成し、公式差分テストに成功"
     },
     {
       "id": "command-0209",
@@ -7067,7 +7081,9 @@
       "interpreterFixtureIds": [
         "plugin-system-array-callbacks"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-array-callbacks"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -7076,15 +7092,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-array-callbacks": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "生成コード関数コールバックを実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "AOTの生成コード関数コールバックで各要素から新配列を生成し、公式差分テストに成功"
     },
     {
       "id": "command-0210",
@@ -7094,7 +7115,9 @@
       "interpreterFixtureIds": [
         "plugin-system-array-callbacks"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-array-callbacks"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -7103,15 +7126,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-array-callbacks": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "生成コード関数コールバックを実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "AOTの真偽コールバックで元要素を選択する新配列を生成し、公式差分テストに成功"
     },
     {
       "id": "command-0211",
