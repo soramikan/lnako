@@ -83,8 +83,8 @@ fixtureのソース本文から命令名を推測することはしません。�
 この分類は実装完了、AOT実行、公式等価性、attestation済みの`verified`を意味しません。
 
 現行HEADでは、明示`commands`を追加した既存AOT fixtureと数学・日時・caniuse fixtureを含めて、fixture inventoryは
-全233件（AOT 128件、Interpreter 96件、QuickJS 9件）です。命令のfixture coverageは`paired` 309 entry、
-`interpreter-only` 214 entryです。execution evidenceは`verified` 0、
+全233件（AOT 128件、Interpreter 96件、QuickJS 9件）です。命令のfixture coverageは`paired` 311 entry、
+`interpreter-only` 212 entryです。execution evidenceは`verified` 0、
 `trace-confirmed-unattested` 4、`unverified` 523のままです。
 fixtureの関連付けを変更した場合は、次で派生台帳の生成と検査を行います。
 

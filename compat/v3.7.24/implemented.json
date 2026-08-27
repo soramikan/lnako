@@ -2515,7 +2515,8 @@
   "カレントディレクトリ変更": {
     "status": "native",
     "tests": [
-      "plugin-node-path-host"
+      "plugin-node-path-host",
+      "native-node-current-directory"
     ],
     "reason": "公式cnako3とのNodeホスト差分テストに成功"
   },
@@ -2530,7 +2531,8 @@
   "作業フォルダ変更": {
     "status": "native",
     "tests": [
-      "plugin-node-path-host"
+      "plugin-node-path-host",
+      "native-node-current-directory"
     ],
     "reason": "公式cnako3とのNodeホスト差分テストに成功"
   },

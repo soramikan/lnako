@@ -2802,6 +2802,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
+        .node_change_directory => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = nodeChangeDirectoryBuiltin(runtime, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .caniuse_browsers => {
             out.* = caniuseBrowsersBuiltin(runtime) catch |failure| {
                 runtime.setFailure(failure);
@@ -4143,6 +4150,18 @@ fn nodeCurrentDirectoryBuiltin(runtime: *Runtime) !Value {
         if (std.c.getcwd(buffer.ptr, buffer.len)) |path| return runtimeUtf8StringLossy(runtime, std.mem.sliceTo(path, 0));
     }
     return error.CurrentDirectoryUnavailable;
+}
+
+fn nodeChangeDirectoryBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    if (arguments.len < 1) return error.InvalidArgumentCount;
+    const units = try valueUtf16Alloc(runtime, arguments[0]);
+    defer runtime.allocator.free(units);
+    const path = try (string_mod.String{ .allocator = runtime.allocator, .units = units }).toUtf8Lossy(runtime.allocator);
+    defer runtime.allocator.free(path);
+    const path_z = try runtime.allocator.dupeZ(u8, path);
+    defer runtime.allocator.free(path_z);
+    if (std.c.chdir(path_z.ptr) != 0) return error.ChangeDirectoryFailed;
+    return .{};
 }
 
 fn aotOsName() []const u8 {
@@ -7360,7 +7379,25 @@ test "AOT環境変数一覧取得はPATHを含む辞書を生成する" {
 
     const path = std.c.getenv("PATH") orelse return error.EnvironmentUnavailable;
     roots[0] = try nodeEnvironmentListBuiltin(&runtime);
-    try expectUtf16String(&runtime, dictionaryProperty(roots[0], &.{ 'P', 'A', 'T', 'H' }), std.mem.span(path));
+    var path_key: []const u8 = "PATH";
+    var path_key_copy: ?[]u8 = null;
+    defer if (path_key_copy) |copy| runtime.allocator.free(copy);
+    if (comptime builtin.os.tag == .windows) {
+        const environ: std.process.Environ = .{ .block = .global };
+        var map = try std.process.Environ.createMap(environ, runtime.allocator);
+        defer map.deinit();
+        var iterator = map.iterator();
+        while (iterator.next()) |entry| {
+            if (std.ascii.eqlIgnoreCase(entry.key_ptr.*, "PATH")) {
+                path_key_copy = try runtime.allocator.dupe(u8, entry.key_ptr.*);
+                path_key = path_key_copy.?;
+                break;
+            }
+        }
+    }
+    const path_key_units = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, path_key);
+    defer runtime.allocator.free(path_key_units);
+    try expectUtf16String(&runtime, dictionaryProperty(roots[0], path_key_units), std.mem.span(path));
 }
 
 test "AOTカレントディレクトリ取得は現在の作業フォルダを返す" {
@@ -7377,6 +7414,19 @@ test "AOTカレントディレクトリ取得は現在の作業フォルダを�
     try expectUtf16String(&runtime, roots[0], std.mem.sliceTo(expected, 0));
     roots[1] = try nodeCurrentDirectoryBuiltin(&runtime);
     try expectUtf16String(&runtime, roots[1], std.mem.sliceTo(expected, 0));
+}
+
+test "AOTカレントディレクトリ変更は相対パスを受けてundefinedを返す" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}};
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    var arguments = [_]Value{try runtimeUtf8String(&runtime, ".")};
+    roots[0] = try nodeChangeDirectoryBuiltin(&runtime, &arguments);
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[0].tag)));
 }
 
 test "AOT対応ブラウザ一覧取得はv3.7.24の辞書をキャッシュする" {
