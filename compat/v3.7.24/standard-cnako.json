@@ -8576,14 +8576,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-csv-all"
+        "plugin-csv-all",
+        "native-csv-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製CSVプラグインで実装し、公式差分テストに成功"
+      "reason": "Zig製CSVプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
       "id": "command-0324",
@@ -8601,14 +8602,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-csv-all"
+        "plugin-csv-all",
+        "native-csv-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製CSVプラグインで実装し、公式差分テストに成功"
+      "reason": "Zig製CSVプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
       "id": "command-0325",
@@ -8626,14 +8628,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-csv-all"
+        "plugin-csv-all",
+        "native-csv-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製CSVプラグインで実装し、公式差分テストに成功"
+      "reason": "Zig製CSVプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
       "id": "command-0326",
@@ -8651,14 +8654,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-csv-all"
+        "plugin-csv-all",
+        "native-csv-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製CSVプラグインで実装し、公式差分テストに成功"
+      "reason": "Zig製CSVプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
       "id": "command-0327",
@@ -8676,14 +8680,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-csv-all"
+        "plugin-csv-all",
+        "native-csv-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製CSVプラグインで実装し、公式差分テストに成功"
+      "reason": "Zig製CSVプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
       "id": "command-0328",
@@ -8701,14 +8706,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-csv-all"
+        "plugin-csv-all",
+        "native-csv-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製CSVプラグインで実装し、公式差分テストに成功"
+      "reason": "Zig製CSVプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
       "id": "command-0329",
@@ -8726,14 +8732,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-csv-all"
+        "plugin-csv-all",
+        "native-csv-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製CSVプラグインで実装し、公式差分テストに成功"
+      "reason": "Zig製CSVプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
       "id": "command-0330",

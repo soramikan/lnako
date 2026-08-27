@@ -185,6 +185,57 @@ const FunctionObject = struct {
     captures: []Value,
 };
 
+const AotCsvDelimiterDefault = enum { comma, tab };
+
+const aot_csv_comma = [_]u16{','};
+const aot_csv_tab = [_]u16{'\t'};
+const aot_csv_crlf = [_]u16{ '\r', '\n' };
+
+/// CSV options are process-local in the official plugin. Keep the same
+/// lifetime as the AOT runtime so separate builtin calls observe updates from
+/// CSVオプション設定 without introducing a JavaScript runtime.
+const AotCsvState = struct {
+    custom_delimiter: ?[]u16 = null,
+    custom_eol: ?[]u16 = null,
+    delimiter_default: AotCsvDelimiterDefault = .comma,
+    auto_convert_number: bool = true,
+
+    fn deinit(self: *AotCsvState, allocator: std.mem.Allocator) void {
+        if (self.custom_delimiter) |value| allocator.free(value);
+        if (self.custom_eol) |value| allocator.free(value);
+        self.* = undefined;
+    }
+
+    fn delimiter(self: *const AotCsvState) []const u16 {
+        return self.custom_delimiter orelse switch (self.delimiter_default) {
+            .comma => &aot_csv_comma,
+            .tab => &aot_csv_tab,
+        };
+    }
+
+    fn eol(self: *const AotCsvState) []const u16 {
+        return self.custom_eol orelse &aot_csv_crlf;
+    }
+
+    fn useDelimiter(self: *AotCsvState, allocator: std.mem.Allocator, value: AotCsvDelimiterDefault) void {
+        if (self.custom_delimiter) |owned| allocator.free(owned);
+        self.custom_delimiter = null;
+        self.delimiter_default = value;
+    }
+
+    fn setDelimiter(self: *AotCsvState, allocator: std.mem.Allocator, value: []const u16) !void {
+        const owned = try allocator.dupe(u16, value);
+        if (self.custom_delimiter) |old| allocator.free(old);
+        self.custom_delimiter = owned;
+    }
+
+    fn setEol(self: *AotCsvState, allocator: std.mem.Allocator, value: []const u16) !void {
+        const owned = try allocator.dupe(u16, value);
+        if (self.custom_eol) |old| allocator.free(old);
+        self.custom_eol = owned;
+    }
+};
+
 const Arithmetic = enum(u8) {
     add,
     subtract,
@@ -254,9 +305,11 @@ const Runtime = struct {
     caniuse_browsers: Value = .{},
     caniuse_agents: Value = .{},
     era_data: Value = .{},
+    csv_state: AotCsvState = .{},
 
     fn deinit(self: *Runtime) void {
         self.dispatch_trace.deinit();
+        self.csv_state.deinit(self.allocator);
         var current = self.objects;
         while (current) |object| {
             const next = object.next;
@@ -2791,6 +2844,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
+        .csv_parse, .tsv_parse, .table_csv_stringify, .csv_stringify, .table_tsv_stringify, .tsv_stringify, .csv_options => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = csvBuiltin(runtime, command, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .node_os, .node_architecture => {
             out.* = nodeEnvironmentBuiltin(runtime, command) catch |failure| {
                 runtime.setFailure(failure);
@@ -4920,6 +4980,256 @@ fn base64Digit(unit: u16) ?u8 {
         '+', '-' => 62,
         '/', '_' => 63,
         else => null,
+    };
+}
+
+fn csvBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    if (arguments.len < 1) return error.InvalidArgumentCount;
+    return switch (command) {
+        .csv_parse => blk: {
+            runtime.csv_state.useDelimiter(runtime.allocator, .comma);
+            break :blk try csvParse(runtime, &runtime.csv_state, arguments[0]);
+        },
+        .tsv_parse => blk: {
+            runtime.csv_state.useDelimiter(runtime.allocator, .tab);
+            break :blk try csvParse(runtime, &runtime.csv_state, arguments[0]);
+        },
+        .table_csv_stringify, .csv_stringify => blk: {
+            runtime.csv_state.useDelimiter(runtime.allocator, .comma);
+            break :blk try csvStringify(runtime, &runtime.csv_state, arguments[0]);
+        },
+        .table_tsv_stringify, .tsv_stringify => blk: {
+            runtime.csv_state.useDelimiter(runtime.allocator, .tab);
+            break :blk try csvStringify(runtime, &runtime.csv_state, arguments[0]);
+        },
+        .csv_options => blk: {
+            try csvSetOptions(runtime, &runtime.csv_state, arguments[0]);
+            break :blk .{};
+        },
+        else => error.UnknownCommand,
+    };
+}
+
+fn csvParse(runtime: *Runtime, state: *const AotCsvState, source: Value) !Value {
+    var rooted = [_]Value{ source, .{}, .{} };
+    var roots = RootFrame{};
+    runtime.pushRoots(&roots, &rooted, rooted.len);
+    defer runtime.popRoots(&roots);
+
+    const source_units = try valueUtf16Alloc(runtime, rooted[0]);
+    defer runtime.allocator.free(source_units);
+    var normalized: std.ArrayList(u16) = .empty;
+    defer normalized.deinit(runtime.allocator);
+    var input_index: usize = 0;
+    while (input_index < source_units.len) : (input_index += 1) {
+        const unit = source_units[input_index];
+        if (unit == '\r') {
+            if (input_index + 1 < source_units.len and source_units[input_index + 1] == '\n') input_index += 1;
+            try normalized.append(runtime.allocator, '\n');
+        } else try normalized.append(runtime.allocator, unit);
+    }
+    while (normalized.items.len > 0 and csvIsWhitespace(normalized.items[normalized.items.len - 1])) _ = normalized.pop();
+    try normalized.append(runtime.allocator, '\n');
+
+    rooted[1] = try runtime.createArray(&.{});
+    rooted[2] = try runtime.createArray(&.{});
+    const delimiter = if (state.delimiter().len > 0) state.delimiter()[0] else ',';
+    var cursor: usize = 0;
+    while (cursor < normalized.items.len) {
+        var current = normalized.items[cursor];
+        if (current == delimiter) {
+            try csvAppendCell(runtime, &rooted[2].object().?.payload.array, &.{}, state.auto_convert_number);
+            cursor += 1;
+            continue;
+        }
+        if (current == '\n') {
+            try csvAppendCell(runtime, &rooted[2].object().?.payload.array, &.{}, state.auto_convert_number);
+            try rooted[1].object().?.payload.array.append(runtime.allocator, rooted[2]);
+            rooted[2] = try runtime.createArray(&.{});
+            cursor += 1;
+            continue;
+        }
+        while (cursor < normalized.items.len and csvIsWhitespace(normalized.items[cursor]) and normalized.items[cursor] != '\n') cursor += 1;
+        if (cursor >= normalized.items.len) break;
+        current = normalized.items[cursor];
+        if (current == delimiter) {
+            try csvAppendCell(runtime, &rooted[2].object().?.payload.array, &.{}, state.auto_convert_number);
+            cursor += 1;
+            continue;
+        }
+        if (current == '=' and cursor + 1 < normalized.items.len and normalized.items[cursor + 1] == '"') {
+            cursor += 1;
+            current = '"';
+        }
+        if (current != '"') {
+            const start = cursor;
+            while (cursor < normalized.items.len and normalized.items[cursor] != delimiter and normalized.items[cursor] != '\n') cursor += 1;
+            try csvAppendCell(runtime, &rooted[2].object().?.payload.array, normalized.items[start..cursor], state.auto_convert_number);
+            if (cursor < normalized.items.len and normalized.items[cursor] == '\n') {
+                try rooted[1].object().?.payload.array.append(runtime.allocator, rooted[2]);
+                rooted[2] = try runtime.createArray(&.{});
+            }
+            cursor += 1;
+            continue;
+        }
+        if (cursor + 1 < normalized.items.len and normalized.items[cursor + 1] == '"') {
+            try csvAppendCell(runtime, &rooted[2].object().?.payload.array, &.{}, state.auto_convert_number);
+            cursor += 2;
+            continue;
+        }
+        cursor += 1;
+        var quoted: std.ArrayList(u16) = .empty;
+        defer quoted.deinit(runtime.allocator);
+        while (cursor < normalized.items.len) {
+            const first = normalized.items[cursor];
+            const second = if (cursor + 1 < normalized.items.len) normalized.items[cursor + 1] else 0;
+            if (first == '"' and second == '"') {
+                try quoted.append(runtime.allocator, '"');
+                cursor += 2;
+                continue;
+            }
+            if (first == '"') {
+                cursor += 1;
+                if (second == delimiter) {
+                    cursor += 1;
+                    try csvAppendCell(runtime, &rooted[2].object().?.payload.array, quoted.items, state.auto_convert_number);
+                    break;
+                }
+                if (second == '\n') {
+                    cursor += 1;
+                    try csvAppendCell(runtime, &rooted[2].object().?.payload.array, quoted.items, state.auto_convert_number);
+                    try rooted[1].object().?.payload.array.append(runtime.allocator, rooted[2]);
+                    rooted[2] = try runtime.createArray(&.{});
+                    break;
+                }
+                if (cursor < normalized.items.len) cursor += 1;
+                continue;
+            }
+            try quoted.append(runtime.allocator, first);
+            cursor += 1;
+        }
+    }
+    if (rooted[2].object().?.payload.array.items.len > 0) try rooted[1].object().?.payload.array.append(runtime.allocator, rooted[2]);
+    return rooted[1];
+}
+
+fn csvAppendCell(runtime: *Runtime, row: *std.ArrayList(Value), units: []const u16, auto_convert: bool) !void {
+    if (auto_convert and csvIsNumeric(units)) {
+        var ascii = try runtime.allocator.alloc(u8, units.len);
+        defer runtime.allocator.free(ascii);
+        for (units, 0..) |unit, index| ascii[index] = @intCast(unit);
+        try row.append(runtime.allocator, numberValue(std.fmt.parseFloat(f64, ascii) catch std.math.nan(f64)));
+        return;
+    }
+    try row.append(runtime.allocator, try runtime.createString(units));
+}
+
+fn csvStringify(runtime: *Runtime, state: *const AotCsvState, source: Value) !Value {
+    if (source.tag == @intFromEnum(Tag.undefined)) return runtime.createString(&.{});
+    if (source.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
+    var rooted = [_]Value{ source, .{} };
+    var roots = RootFrame{};
+    runtime.pushRoots(&roots, &rooted, rooted.len);
+    defer runtime.popRoots(&roots);
+
+    var raw: std.ArrayList(u16) = .empty;
+    defer raw.deinit(runtime.allocator);
+    const delimiter = state.delimiter();
+    for (rooted[0].object().?.payload.array.items) |row| {
+        if (row.tag == @intFromEnum(Tag.undefined)) {
+            try raw.appendSlice(runtime.allocator, state.eol());
+            continue;
+        }
+        if (row.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
+        const row_object = row.object().?;
+        for (row_object.payload.array.items, 0..) |cell, column| {
+            if (column > 0) try raw.appendSlice(runtime.allocator, delimiter);
+            rooted[1] = try csvQuoteCell(runtime, cell, delimiter);
+            row_object.payload.array.items[column] = rooted[1];
+            try raw.appendSlice(runtime.allocator, rooted[1].object().?.payload.utf16_string);
+        }
+        try raw.appendSlice(runtime.allocator, state.eol());
+    }
+
+    var normalized: std.ArrayList(u16) = .empty;
+    defer normalized.deinit(runtime.allocator);
+    var index: usize = 0;
+    while (index < raw.items.len) : (index += 1) {
+        if (raw.items[index] == '\r') {
+            if (index + 1 < raw.items.len and raw.items[index + 1] == '\n') index += 1;
+            try normalized.appendSlice(runtime.allocator, state.eol());
+        } else if (raw.items[index] == '\n') {
+            try normalized.appendSlice(runtime.allocator, state.eol());
+        } else try normalized.append(runtime.allocator, raw.items[index]);
+    }
+    return runtime.createString(normalized.items);
+}
+
+fn csvQuoteCell(runtime: *Runtime, source: Value, delimiter: []const u16) !Value {
+    const text = try valueUtf16Alloc(runtime, source);
+    defer runtime.allocator.free(text);
+    const needs_quote = std.mem.indexOfScalar(u16, text, '\n') != null or
+        std.mem.indexOfScalar(u16, text, '\r') != null or
+        (delimiter.len > 0 and std.mem.indexOf(u16, text, delimiter) != null) or
+        std.mem.indexOfScalar(u16, text, '"') != null;
+    if (!needs_quote) return runtime.createString(text);
+    var output: std.ArrayList(u16) = .empty;
+    defer output.deinit(runtime.allocator);
+    try output.append(runtime.allocator, '"');
+    for (text) |unit| {
+        if (unit == '"') try output.append(runtime.allocator, '"');
+        try output.append(runtime.allocator, unit);
+    }
+    try output.append(runtime.allocator, '"');
+    return runtime.createString(output.items);
+}
+
+fn csvSetOptions(runtime: *Runtime, state: *AotCsvState, source: Value) !void {
+    if (source.tag != @intFromEnum(Tag.dictionary)) return;
+    for (source.object().?.payload.dictionary.items) |entry| {
+        const key_units = try valueUtf16Alloc(runtime, entry.key);
+        defer runtime.allocator.free(key_units);
+        const key = try std.unicode.utf16LeToUtf8Alloc(runtime.allocator, key_units);
+        defer runtime.allocator.free(key);
+        if (std.mem.eql(u8, key, "delimiter") or std.mem.eql(u8, key, "区切文字")) {
+            const value_units = try valueUtf16Alloc(runtime, entry.value);
+            defer runtime.allocator.free(value_units);
+            try state.setDelimiter(runtime.allocator, value_units);
+        } else if (std.mem.eql(u8, key, "eol")) {
+            const value_units = try valueUtf16Alloc(runtime, entry.value);
+            defer runtime.allocator.free(value_units);
+            try state.setEol(runtime.allocator, value_units);
+        } else if (std.mem.eql(u8, key, "auto_convert_number")) state.auto_convert_number = valueTruthy(entry.value);
+    }
+}
+
+fn csvIsNumeric(units: []const u16) bool {
+    if (units.len == 0) return false;
+    var index: usize = 0;
+    if (units[index] == '-') index += 1;
+    const integer_start = index;
+    while (index < units.len and units[index] >= '0' and units[index] <= '9') index += 1;
+    if (index == integer_start) return false;
+    if (index < units.len and units[index] == '.') {
+        index += 1;
+        const fraction_start = index;
+        while (index < units.len and units[index] >= '0' and units[index] <= '9') index += 1;
+        if (index == fraction_start) return false;
+    }
+    if (index < units.len and (units[index] == 'e' or units[index] == 'E')) {
+        index += 1;
+        if (index < units.len and (units[index] == '-' or units[index] == '+')) index += 1;
+        const exponent_start = index;
+        while (index < units.len and units[index] >= '0' and units[index] <= '9') index += 1;
+        if (index == exponent_start) return false;
+    }
+    return index == units.len;
+}
+
+fn csvIsWhitespace(unit: u16) bool {
+    return switch (unit) {
+        ' ', '\t', '\n', '\r', 0x0b, 0x0c, 0x00a0, 0x3000 => true,
+        else => false,
     };
 }
 
@@ -8298,6 +8608,53 @@ test "AOT漢数字命令は指数・全角数字・小数・BigIntを処理す�
     try std.testing.expectEqual(@as(usize, 69), huge.len);
     try std.testing.expectEqual(@as(u8, '1'), huge[0]);
     for (huge[1..]) |digit| try std.testing.expectEqual(@as(u8, '0'), digit);
+}
+
+test "AOT CSV命令は引用・数値変換・TSV・オプションを処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try runtimeUtf8String(&active_runtime.?, "1,\"a,b\",3\n4,5,6");
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.csv_parse));
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(roots[1].object().?.payload.array.items[0].object().?.payload.array.items[0].payload)));
+    try expectUtf16String(&runtime, roots[1].object().?.payload.array.items[0].object().?.payload.array.items[1], "a,b");
+    try std.testing.expectEqual(@as(usize, 2), roots[1].object().?.payload.array.items.len);
+
+    roots[2] = try runtimeUtf8String(&active_runtime.?, "1\t2\n3\t4");
+    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[2]), 1, @intFromEnum(aot_builtin.Command.tsv_parse));
+    try std.testing.expectEqual(@as(f64, 4), @as(f64, @bitCast(roots[3].object().?.payload.array.items[1].object().?.payload.array.items[1].payload)));
+
+    roots[4] = try active_runtime.?.createArray(&.{});
+    roots[5] = try active_runtime.?.createArray(&.{numberValue(1)});
+    try roots[5].object().?.payload.array.append(active_runtime.?.allocator, try runtimeUtf8String(&active_runtime.?, "a,b"));
+    try roots[4].object().?.payload.array.append(active_runtime.?.allocator, roots[5]);
+    lnako_aot_builtin_call(&roots[6], @ptrCast(&roots[4]), 1, @intFromEnum(aot_builtin.Command.table_csv_stringify));
+    try expectUtf16String(&runtime, roots[6], "1,\"a,b\"\r\n");
+    try expectUtf16String(&runtime, roots[5].object().?.payload.array.items[0], "1");
+    try expectUtf16String(&runtime, roots[5].object().?.payload.array.items[1], "\"a,b\"");
+
+    roots[7] = try runtimeUtf8String(&active_runtime.?, "|");
+    roots[8] = try active_runtime.?.createDictionary(&.{ staticStringValue("eol"), roots[7], staticStringValue("auto_convert_number"), .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 } });
+    lnako_aot_builtin_call(&roots[9], @ptrCast(&roots[8]), 1, @intFromEnum(aot_builtin.Command.csv_options));
+    roots[10] = try runtimeUtf8String(&active_runtime.?, "1,2");
+    lnako_aot_builtin_call(&roots[11], @ptrCast(&roots[10]), 1, @intFromEnum(aot_builtin.Command.csv_parse));
+    try std.testing.expectEqual(Tag.utf16_string, @as(Tag, @enumFromInt(roots[11].object().?.payload.array.items[0].object().?.payload.array.items[0].tag)));
+
+    roots[12] = try active_runtime.?.createArray(&.{try active_runtime.?.createArray(&.{ numberValue(3), numberValue(4) })});
+    lnako_aot_builtin_call(&roots[13], @ptrCast(&roots[12]), 1, @intFromEnum(aot_builtin.Command.csv_stringify));
+    try expectUtf16String(&runtime, roots[13], "3,4|");
+    roots[12] = try active_runtime.?.createArray(&.{try active_runtime.?.createArray(&.{ numberValue(5), numberValue(6) })});
+    lnako_aot_builtin_call(&roots[13], @ptrCast(&roots[12]), 1, @intFromEnum(aot_builtin.Command.tsv_stringify));
+    try expectUtf16String(&runtime, roots[13], "5\t6|");
 }
 
 test "AOT Node環境命令はコンパイル対象のOSとCPU名を返す" {

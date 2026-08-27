@@ -8,14 +8,14 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 236,
-    "nativeAot": 131,
+    "total": 237,
+    "nativeAot": 132,
     "interpreter": 96,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
-    "paired": 342,
-    "interpreter-only": 181,
+    "paired": 349,
+    "interpreter-only": 174,
     "aot-only": 0,
     "none": 0,
     "compat-js-only": 4
@@ -10747,7 +10747,9 @@
       "interpreterFixtureIds": [
         "plugin-csv-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-csv-commands"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10756,15 +10758,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-csv-commands": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製CSVプラグインで実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Zig製CSVプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
       "id": "command-0324",
@@ -10774,7 +10781,9 @@
       "interpreterFixtureIds": [
         "plugin-csv-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-csv-commands"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10783,15 +10792,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-csv-commands": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製CSVプラグインで実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Zig製CSVプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
       "id": "command-0325",
@@ -10801,7 +10815,9 @@
       "interpreterFixtureIds": [
         "plugin-csv-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-csv-commands"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10810,15 +10826,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-csv-commands": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製CSVプラグインで実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Zig製CSVプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
       "id": "command-0326",
@@ -10828,7 +10849,9 @@
       "interpreterFixtureIds": [
         "plugin-csv-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-csv-commands"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10837,15 +10860,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-csv-commands": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製CSVプラグインで実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Zig製CSVプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
       "id": "command-0327",
@@ -10855,7 +10883,9 @@
       "interpreterFixtureIds": [
         "plugin-csv-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-csv-commands"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10864,15 +10894,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-csv-commands": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製CSVプラグインで実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Zig製CSVプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
       "id": "command-0328",
@@ -10882,7 +10917,9 @@
       "interpreterFixtureIds": [
         "plugin-csv-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-csv-commands"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10891,15 +10928,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-csv-commands": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製CSVプラグインで実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Zig製CSVプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
       "id": "command-0329",
@@ -10909,7 +10951,9 @@
       "interpreterFixtureIds": [
         "plugin-csv-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-csv-commands"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10918,15 +10962,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-csv-commands": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製CSVプラグインで実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Zig製CSVプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
       "id": "command-0330",

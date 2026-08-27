@@ -272,6 +272,8 @@ fn isNativeBuiltinPlugin(path: []const u8) bool {
         "plugin_httpserver.js",
         "plugin_markup.mjs",
         "plugin_markup.js",
+        "plugin_csv.mjs",
+        "plugin_csv.js",
         "plugin_caniuse.mjs",
         "plugin_caniuse.js",
         "plugin_kansuji.mjs",

@@ -222,6 +222,13 @@ pub const Command = enum(u16) {
     path_delete_trailing_separator,
     kansuji_to_kanji,
     kansuji_to_arabic,
+    csv_parse,
+    tsv_parse,
+    table_csv_stringify,
+    csv_stringify,
+    table_tsv_stringify,
+    tsv_stringify,
+    csv_options,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -453,6 +460,13 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "終端パス削除")) return .path_delete_trailing_separator;
     if (std.mem.eql(u8, name, "漢数字")) return .kansuji_to_kanji;
     if (std.mem.eql(u8, name, "算用数字")) return .kansuji_to_arabic;
+    if (std.mem.eql(u8, name, "CSV取得")) return .csv_parse;
+    if (std.mem.eql(u8, name, "TSV取得")) return .tsv_parse;
+    if (std.mem.eql(u8, name, "表CSV変換")) return .table_csv_stringify;
+    if (std.mem.eql(u8, name, "CSV変換")) return .csv_stringify;
+    if (std.mem.eql(u8, name, "表TSV変換")) return .table_tsv_stringify;
+    if (std.mem.eql(u8, name, "TSV変換")) return .tsv_stringify;
+    if (std.mem.eql(u8, name, "CSVオプション設定")) return .csv_options;
     return null;
 }
 
@@ -666,6 +680,13 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.path_delete_trailing_separator, lookup("終端パス削除").?);
     try std.testing.expectEqual(Command.kansuji_to_kanji, lookup("漢数字").?);
     try std.testing.expectEqual(Command.kansuji_to_arabic, lookup("算用数字").?);
+    try std.testing.expectEqual(Command.csv_parse, lookup("CSV取得").?);
+    try std.testing.expectEqual(Command.tsv_parse, lookup("TSV取得").?);
+    try std.testing.expectEqual(Command.table_csv_stringify, lookup("表CSV変換").?);
+    try std.testing.expectEqual(Command.csv_stringify, lookup("CSV変換").?);
+    try std.testing.expectEqual(Command.table_tsv_stringify, lookup("表TSV変換").?);
+    try std.testing.expectEqual(Command.tsv_stringify, lookup("TSV変換").?);
+    try std.testing.expectEqual(Command.csv_options, lookup("CSVオプション設定").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }
 

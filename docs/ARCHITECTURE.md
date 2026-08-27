@@ -163,7 +163,8 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
   `RGB`、32bit・BigIntビット演算、基本算術・比較・集約・論理・範囲、空コレクション・真偽判定、多相`掛`、
   Unicode文字数・検索・先頭末尾判定、配列・辞書・UTF-16要素数、parseFloat・BigInt・JavaScript加算を使い分ける
   `足`・`合計`・`連続加算`命令の各正式名と別名、および数学38 entry（乱数を含む）、日時29 entry（現在時刻・日付・年月・曜日・Unix秒・日時文字列・書式・元号・差分・加算・単調時計）、URL・Base64 5 entry、パス5 entry（拡張子・終端パス処理）、漢数字・算用数字2 entry（指数・全角数字・小数・BigInt変換）、Nodeホスト情報8 entry（OS・CPU・環境変数取得・一覧取得・カレントディレクトリ取得2 alias・カレントディレクトリ変更2 alias）、`元号データ`の固定5件、caniuseの`対応ブラウザ一覧取得`と`ブラウザ名変換表`を実装し、後続命令を個別ABIの増殖なしに追加できる。副作用命令の`二進表示`は同じ変換結果を
-  改行付きで出力して`undefined`を返す。
+  改行付きで出力して`undefined`を返す。CSV 7 entry（CSV/TSV解析、引用、数値自動変換、セル文字列化、オプション設定）も
+  `runtime/aot.zig`の`AotCsvState`と同じ標準命令ABIで処理する。
 - `runtime/system_constant.zig` はインタープリタとAOTで共有するシステム定数表を持つ。AOTは実際に参照された
   真偽値、数値、`NaN`、無限大、`null`、`undefined`をLLVMグローバルのタグ付き値へ初期化する。文字列は
   UTF-16定数データから、グローバルのGCルート登録後かつ利用者コードの実行前にヒープ値として生成する。
@@ -204,7 +205,7 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
 ## 数学・CSV・TOML・Promise標準命令
 
 - `plugins/math.zig` はbinary64演算とホスト注入乱数で`plugin_math`の38命令を実装する。
-- `plugins/csv.zig` はInterpreter単位のCSV設定を保持し、CSV/TSVの解析、引用、数値自動変換を実装する。
+- `plugins/csv.zig` はInterpreter単位のCSV設定を保持し、CSV/TSVの解析、引用、数値自動変換を実装する。AOTは`runtime/aot.zig`の`AotCsvState`と共通builtin dispatchで同じ7 entryを処理し、`native-csv-commands`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。
 - `plugins/toml.zig` は外部ランタイムへ依存せず、TOMLの表、配列テーブル、文字列、数値、配列、インライン表を扱う。
 - Promiseの`束`は入力PromiseをFIFOマイクロタスクへ接続し、入力順の成功配列、空入力、最初の失敗を`Promise.all`と同じ順序で処理する。
 - `tests/oracle/standard-plugin-cases.json` が48命令を重複なく列挙し、カバレッジ検査と公式CLI差分テストを3環境CIで実行する。
