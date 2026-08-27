@@ -237,6 +237,10 @@ pub const Command = enum(u16) {
     deep_not_equal,
     table_sort,
     table_numeric_sort,
+    courtesy_increment,
+    courtesy_begin,
+    courtesy_end,
+    courtesy_level,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -483,6 +487,10 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "HTML整形")) return .html_pretty;
     if (std.mem.eql(u8, name, "一致")) return .deep_equal;
     if (std.mem.eql(u8, name, "不一致")) return .deep_not_equal;
+    if (std.mem.eql(u8, name, "ください") or std.mem.eql(u8, name, "お願") or std.mem.eql(u8, name, "です")) return .courtesy_increment;
+    if (std.mem.eql(u8, name, "拝啓")) return .courtesy_begin;
+    if (std.mem.eql(u8, name, "敬具")) return .courtesy_end;
+    if (std.mem.eql(u8, name, "礼節レベル取得")) return .courtesy_level;
     return null;
 }
 
@@ -711,6 +719,12 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.html_pretty, lookup("HTML整形").?);
     try std.testing.expectEqual(Command.deep_equal, lookup("一致").?);
     try std.testing.expectEqual(Command.deep_not_equal, lookup("不一致").?);
+    try std.testing.expectEqual(Command.courtesy_increment, lookup("ください").?);
+    try std.testing.expectEqual(Command.courtesy_increment, lookup("お願").?);
+    try std.testing.expectEqual(Command.courtesy_increment, lookup("です").?);
+    try std.testing.expectEqual(Command.courtesy_begin, lookup("拝啓").?);
+    try std.testing.expectEqual(Command.courtesy_end, lookup("敬具").?);
+    try std.testing.expectEqual(Command.courtesy_level, lookup("礼節レベル取得").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }
 

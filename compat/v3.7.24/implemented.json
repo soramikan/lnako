@@ -3457,44 +3457,50 @@
   "ください": {
     "status": "native",
     "tests": [
-      "system-runtime-courtesy"
+      "system-runtime-courtesy",
+      "native-system-courtesy"
     ],
-    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+    "reason": "Zig製plugin_system実装と純LLVM AOT dispatchを実装し、公式7経路差分テストに成功"
   },
   "お願": {
     "status": "native",
     "tests": [
-      "system-runtime-courtesy"
+      "system-runtime-courtesy",
+      "native-system-courtesy"
     ],
-    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+    "reason": "Zig製plugin_system実装と純LLVM AOT dispatchを実装し、公式7経路差分テストに成功"
   },
   "です": {
     "status": "native",
     "tests": [
-      "system-runtime-courtesy"
+      "system-runtime-courtesy",
+      "native-system-courtesy"
     ],
-    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+    "reason": "Zig製plugin_system実装と純LLVM AOT dispatchを実装し、公式7経路差分テストに成功"
   },
   "拝啓": {
     "status": "native",
     "tests": [
-      "system-runtime-courtesy"
+      "system-runtime-courtesy",
+      "native-system-courtesy"
     ],
-    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+    "reason": "Zig製plugin_system実装と純LLVM AOT dispatchを実装し、公式7経路差分テストに成功"
   },
   "敬具": {
     "status": "native",
     "tests": [
-      "system-runtime-courtesy"
+      "system-runtime-courtesy",
+      "native-system-courtesy"
     ],
-    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+    "reason": "Zig製plugin_system実装と純LLVM AOT dispatchを実装し、公式7経路差分テストに成功"
   },
   "礼節レベル取得": {
     "status": "native",
     "tests": [
-      "system-runtime-courtesy"
+      "system-runtime-courtesy",
+      "native-system-courtesy"
     ],
-    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+    "reason": "Zig製plugin_system実装と純LLVM AOT dispatchを実装し、公式7経路差分テストに成功"
   },
   "__DEBUG強制待機": {
     "status": "native",

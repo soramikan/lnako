@@ -301,6 +301,7 @@ const Runtime = struct {
     /// an earlier call does not make a later successful call look failed.
     failure_epoch: u64 = 0,
     system_context: Value = .{},
+    courtesy_level: f64 = std.math.nan(f64),
     dispatch_trace: DispatchTrace = .{},
     random_state: u64 = 0,
     clock_milliseconds: ?i64 = null,
@@ -2826,7 +2827,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .datetime_monotonic_milliseconds) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -2900,6 +2901,9 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 runtime.setFailure(failure);
                 return;
             };
+        },
+        .courtesy_increment, .courtesy_begin, .courtesy_end, .courtesy_level => {
+            out.* = courtesyBuiltin(runtime, command);
         },
         .node_os, .node_architecture => {
             out.* = nodeEnvironmentBuiltin(runtime, command) catch |failure| {
@@ -5850,6 +5854,29 @@ fn markupBuiltin(runtime: *Runtime, command: aot_builtin.Command, value: Value) 
     };
     defer runtime.allocator.free(output);
     return runtimeUtf8String(runtime, output);
+}
+
+fn courtesyBuiltin(runtime: *Runtime, command: aot_builtin.Command) Value {
+    switch (command) {
+        .courtesy_increment => {
+            if (!std.math.isFinite(runtime.courtesy_level) or runtime.courtesy_level == 0) runtime.courtesy_level = 0;
+            runtime.courtesy_level += 1;
+            return .{};
+        },
+        .courtesy_begin => {
+            runtime.courtesy_level = 0;
+            return .{};
+        },
+        .courtesy_end => {
+            runtime.courtesy_level += 100;
+            return .{};
+        },
+        .courtesy_level => {
+            if (!std.math.isFinite(runtime.courtesy_level) or runtime.courtesy_level == 0) runtime.courtesy_level = 0;
+            return numberValue(runtime.courtesy_level);
+        },
+        else => unreachable,
+    }
 }
 
 fn nodeEnvironmentBuiltin(runtime: *Runtime, command: aot_builtin.Command) !Value {
@@ -11284,6 +11311,34 @@ test "AOT表ソートは指定列を比較して同じ配列を安定ソート�
     try expectUtf16String(&runtime, try tableRowProperty(&runtime, numeric_rows[0], numberValue(0)), "y");
     try expectUtf16String(&runtime, try tableRowProperty(&runtime, numeric_rows[1], numberValue(0)), "x");
     try expectUtf16String(&runtime, try tableRowProperty(&runtime, numeric_rows[2], numberValue(0)), "z");
+}
+
+test "AOT敬語命令は未定義初期値と礼節レベルを公式どおり処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{.{}} ** 7;
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    lnako_aot_builtin_call(&roots[0], null, 0, @intFromEnum(aot_builtin.Command.courtesy_end));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[0].tag)));
+    lnako_aot_builtin_call(&roots[1], null, 0, @intFromEnum(aot_builtin.Command.courtesy_level));
+    try std.testing.expectEqual(@as(f64, 0), valueToNumber(roots[1]));
+
+    lnako_aot_builtin_call(&roots[2], null, 0, @intFromEnum(aot_builtin.Command.courtesy_end));
+    lnako_aot_builtin_call(&roots[3], null, 0, @intFromEnum(aot_builtin.Command.courtesy_level));
+    try std.testing.expectEqual(@as(f64, 100), valueToNumber(roots[3]));
+
+    lnako_aot_builtin_call(&roots[4], null, 0, @intFromEnum(aot_builtin.Command.courtesy_increment));
+    lnako_aot_builtin_call(&roots[5], null, 0, @intFromEnum(aot_builtin.Command.courtesy_increment));
+    lnako_aot_builtin_call(&roots[6], null, 0, @intFromEnum(aot_builtin.Command.courtesy_level));
+    try std.testing.expectEqual(@as(f64, 102), valueToNumber(roots[6]));
 }
 
 test "AOT表検索系は行プロパティとraw開始値を公式どおり処理する" {

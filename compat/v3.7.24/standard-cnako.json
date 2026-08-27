@@ -1167,14 +1167,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "system-runtime-courtesy"
+        "system-runtime-courtesy",
+        "native-system-courtesy"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "Zig製plugin_system実装と純LLVM AOT dispatchを実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0046",
@@ -1193,14 +1194,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "system-runtime-courtesy"
+        "system-runtime-courtesy",
+        "native-system-courtesy"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "Zig製plugin_system実装と純LLVM AOT dispatchを実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0047",
@@ -1219,14 +1221,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "system-runtime-courtesy"
+        "system-runtime-courtesy",
+        "native-system-courtesy"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "Zig製plugin_system実装と純LLVM AOT dispatchを実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0048",
@@ -1245,14 +1248,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "system-runtime-courtesy"
+        "system-runtime-courtesy",
+        "native-system-courtesy"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "Zig製plugin_system実装と純LLVM AOT dispatchを実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0049",
@@ -1271,14 +1275,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "system-runtime-courtesy"
+        "system-runtime-courtesy",
+        "native-system-courtesy"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "Zig製plugin_system実装と純LLVM AOT dispatchを実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0050",
@@ -1297,14 +1302,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "system-runtime-courtesy"
+        "system-runtime-courtesy",
+        "native-system-courtesy"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "Zig製plugin_system実装と純LLVM AOT dispatchを実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0051",
