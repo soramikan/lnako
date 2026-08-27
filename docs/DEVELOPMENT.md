@@ -1,12 +1,12 @@
 # 開発手順
 
 GitHub Actionsのスイート分割、同一refの旧run取消、変更前後の所要時間は[`CI.md`](CI.md)に記録します。
-CI定義を変更した場合は `node tools/check_ci_workflow.mjs` で12ジョブと全検証ステップの所属も確認します。
+CI定義を変更した場合は `node tools/check_ci_workflow.mjs` で3環境×5スイートの15テストジョブ、attestation job、全検証ステップの所属も確認します。
 
 ## 検証順序
 
-1. `zig fmt --check build.zig src`
-2. `zig build test`
+1. `zig build fmt-check`
+2. `zig build test --summary all`
 3. 変更した機能の差分互換テスト
 4. マイルストーンでは全互換テストとベンチマーク
 
