@@ -121,6 +121,7 @@ pub const Program = struct {
     compat_js: bool = false,
     javascript_modules: []JavaScriptModule = &.{},
     native_plugin_paths: []const []const u8 = &.{},
+    http_server_plugin_imported: bool = false,
 
     pub fn deinit(self: *Program) void {
         self.arena.deinit();
@@ -173,6 +174,7 @@ pub const Program = struct {
             .compat_js = self.compat_js,
             .javascript_modules = javascript_modules,
             .native_plugin_paths = native_plugin_paths,
+            .http_server_plugin_imported = self.http_server_plugin_imported,
         };
     }
 

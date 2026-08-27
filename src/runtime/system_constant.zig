@@ -42,6 +42,10 @@ pub const scalar_entries = [_]Entry{
     .{ .name = "NULL", .value = .null_value },
     .{ .name = "undefined", .value = .undefined },
     .{ .name = "未定義", .value = .undefined },
+    .{ .name = "HTTPメソッド", .value = .null_value },
+    .{ .name = "GETデータ", .value = .null_value },
+    .{ .name = "POSTデータ", .value = .null_value },
+    .{ .name = "FILESデータ", .value = .null_value },
 };
 
 pub const string_entries = [_]StringEntry{
@@ -67,6 +71,7 @@ pub const string_entries = [_]StringEntry{
     .{ .name = "半角カナ一覧", .value = "ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜｦﾝｧｨｩｪｫｬｭｮｯ､｡ｰ｢｣ﾞﾟ" },
     .{ .name = "半角カナ濁音一覧", .value = "ｶﾞｷﾞｸﾞｹﾞｺﾞｻﾞｼﾞｽﾞｾﾞｿﾞﾀﾞﾁﾞﾂﾞﾃﾞﾄﾞﾊﾞﾋﾞﾌﾞﾍﾞﾎﾞﾊﾟﾋﾟﾌﾟﾍﾟﾎﾟ" },
     .{ .name = "表示ログ", .value = "" },
+    .{ .name = "AJAXオプション", .value = "" },
     .{ .name = "プラグイン名", .value = "メイン" },
     .{ .name = "名前空間", .value = "" },
 };
@@ -129,6 +134,11 @@ test "v3.7.24のスカラーシステム定数を解決する" {
     try std.testing.expect(lookupScalar("ナデシコバージョン") == null);
     try std.testing.expectEqualStrings("3.7.24", lookupString("ナデシコバージョン").?);
     try std.testing.expectEqualStrings("\n", lookupString("改行").?);
+    try std.testing.expectEqualStrings("", lookupString("AJAXオプション").?);
+    try std.testing.expect(lookupScalar("HTTPメソッド").? == .null_value);
+    try std.testing.expect(lookupScalar("GETデータ").? == .null_value);
+    try std.testing.expect(lookupScalar("POSTデータ").? == .null_value);
+    try std.testing.expect(lookupScalar("FILESデータ").? == .null_value);
     try std.testing.expect(lookupString("PI") == null);
     try std.testing.expect(isArray("抽出文字列"));
     try std.testing.expect(isArray("__DEBUGブレイクポイント一覧"));

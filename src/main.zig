@@ -49,6 +49,7 @@ pub fn main(init: std.process.Init) !void {
             .fixed_now_milliseconds = parseOptionalI64(init.environ_map.get("LNAKO_TEST_NOW_MS")),
             .fixed_monotonic_milliseconds = parseOptionalF64(init.environ_map.get("LNAKO_TEST_MONOTONIC_MS")),
             .random_state = parseOptionalU64(init.environ_map.get("LNAKO_TEST_RANDOM_SEED")) orelse 0,
+            .http_server_enabled = ir_program.http_server_plugin_imported,
         };
         defer cli_host.deinit();
         var interpreter = lnako.runtime.interpreter.Interpreter.init(allocator, &runtime, ir_program, cli_host.host());
@@ -173,6 +174,7 @@ pub fn main(init: std.process.Init) !void {
                 .fixed_now_milliseconds = parseOptionalI64(init.environ_map.get("LNAKO_TEST_NOW_MS")),
                 .fixed_monotonic_milliseconds = parseOptionalF64(init.environ_map.get("LNAKO_TEST_MONOTONIC_MS")),
                 .random_state = parseOptionalU64(init.environ_map.get("LNAKO_TEST_RANDOM_SEED")) orelse 0,
+                .http_server_enabled = ir_program.http_server_plugin_imported,
             };
             defer cli_host.deinit();
             var interpreter = lnako.runtime.interpreter.Interpreter.init(allocator, &runtime, ir_program, cli_host.host());
@@ -638,6 +640,7 @@ const CliHost = struct {
     environment_values: []const []const u8 = &.{},
     home_directory: ?[]const u8 = null,
     temporary_directory: []const u8 = "/tmp",
+    http_server_enabled: bool = false,
     async_tasks: std.ArrayList(*AsyncOperationTask) = .empty,
     next_async_token: usize = 1,
     async_completion_sequence: std.atomic.Value(u64) = .init(1),
@@ -705,7 +708,7 @@ const CliHost = struct {
                 .httpRequestFn = runHttpRequest,
                 .startHttpFn = startHttp,
             },
-            .http_server_context = .{
+            .http_server_context = if (self.http_server_enabled) .{
                 .context = self,
                 .startFn = startHttpServer,
                 .receiveFn = receiveHttpServerRequest,
@@ -715,7 +718,7 @@ const CliHost = struct {
                 .statPathFn = statHttpServerPath,
                 .saveUploadFn = saveHttpServerUpload,
                 .writeFn = write,
-            },
+            } else null,
         };
     }
 
@@ -1675,6 +1678,7 @@ fn compileInputWithProvider(allocator: std.mem.Allocator, path: []const u8, comp
     errdefer ir_program.deinit();
     ir_program.compat_js = compat_js;
     var javascript_modules: std.ArrayList(lnako.ir.nako_ir.JavaScriptModule) = .empty;
+    var http_server_plugin_imported = false;
     const plugin_modules = try allocator.alloc(bool, graph.modules.len);
     defer allocator.free(plugin_modules);
     @memset(plugin_modules, false);
@@ -1685,7 +1689,12 @@ fn compileInputWithProvider(allocator: std.mem.Allocator, path: []const u8, comp
         };
     }
     for (graph.modules) |module| {
-        if (module.kind != .javascript or module.source.len == 0) continue;
+        if (module.kind != .javascript) continue;
+        const basename = std.fs.path.basename(module.path);
+        if (std.ascii.eqlIgnoreCase(basename, "plugin_httpserver.mjs") or std.ascii.eqlIgnoreCase(basename, "plugin_httpserver.js")) {
+            http_server_plugin_imported = true;
+        }
+        if (module.source.len == 0) continue;
         try javascript_modules.append(ir_program.arena.allocator(), .{
             .path = try ir_program.arena.allocator().dupe(u8, module.path),
             .source = try ir_program.arena.allocator().dupe(u8, module.source),
@@ -1693,6 +1702,7 @@ fn compileInputWithProvider(allocator: std.mem.Allocator, path: []const u8, comp
         });
     }
     ir_program.javascript_modules = try javascript_modules.toOwnedSlice(ir_program.arena.allocator());
+    ir_program.http_server_plugin_imported = http_server_plugin_imported;
     var native_plugin_paths: std.ArrayList([]const u8) = .empty;
     for (graph.modules) |module| {
         if (module.kind != .native_plugin) continue;
@@ -1764,7 +1774,7 @@ fn runTestFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8, stdou
     defer ir_program.deinit();
     var runtime = lnako.runtime.value.Runtime.init(allocator);
     defer runtime.deinit();
-    var cli_host = CliHost{ .writer = stdout, .error_writer = stderr, .io = io };
+    var cli_host = CliHost{ .writer = stdout, .error_writer = stderr, .io = io, .http_server_enabled = ir_program.http_server_plugin_imported };
     defer cli_host.deinit();
     var interpreter = lnako.runtime.interpreter.Interpreter.init(allocator, &runtime, ir_program, cli_host.host());
     defer interpreter.deinit();

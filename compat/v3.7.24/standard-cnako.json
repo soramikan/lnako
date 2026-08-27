@@ -11954,14 +11954,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-http-options-and-promises"
+        "plugin-node-http-options-and-promises",
+        "native-node-http-initial-constants"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+      "reason": "Nodeホストの初期空文字を共有システム定数として純LLVM AOTへ接続し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0768",
@@ -12657,14 +12658,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-httpserver-all"
+        "plugin-httpserver-all",
+        "native-node-http-initial-constants"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
+      "reason": "HTTPサーバー未取り込み時のnull初期値を共有システム定数として純LLVM AOTへ接続し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0796",
@@ -12681,14 +12683,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-httpserver-all"
+        "plugin-httpserver-all",
+        "native-node-http-initial-constants"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
+      "reason": "HTTPサーバー未取り込み時のnull初期値を共有システム定数として純LLVM AOTへ接続し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0797",
@@ -12705,14 +12708,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-httpserver-all"
+        "plugin-httpserver-all",
+        "native-node-http-initial-constants"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
+      "reason": "HTTPサーバー未取り込み時のnull初期値を共有システム定数として純LLVM AOTへ接続し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0798",
@@ -12729,14 +12733,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-httpserver-all"
+        "plugin-httpserver-all",
+        "native-node-http-initial-constants"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
+      "reason": "HTTPサーバー未取り込み時のnull初期値を共有システム定数として純LLVM AOTへ接続し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0799",
