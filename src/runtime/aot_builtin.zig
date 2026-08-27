@@ -252,6 +252,7 @@ pub const Command = enum(u16) {
     plugin_name_set,
     namespace_set,
     namespace_pop,
+    timer_wait,
     async_noop,
     system_await_execute,
     system_execute,
@@ -530,6 +531,7 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "プラグイン名設定")) return .plugin_name_set;
     if (std.mem.eql(u8, name, "名前空間設定")) return .namespace_set;
     if (std.mem.eql(u8, name, "名前空間ポップ")) return .namespace_pop;
+    if (std.mem.eql(u8, name, "秒待") or std.mem.eql(u8, name, "秒待機") or std.mem.eql(u8, name, "秒逐次待機")) return .timer_wait;
     if (std.mem.eql(u8, name, "ASYNC")) return .async_noop;
     if (std.mem.eql(u8, name, "AWAIT実行")) return .system_await_execute;
     if (std.mem.eql(u8, name, "実行")) return .system_execute;
@@ -723,6 +725,9 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.plugin_name_set, lookup("プラグイン名設定").?);
     try std.testing.expectEqual(Command.namespace_set, lookup("名前空間設定").?);
     try std.testing.expectEqual(Command.namespace_pop, lookup("名前空間ポップ").?);
+    try std.testing.expectEqual(Command.timer_wait, lookup("秒待").?);
+    try std.testing.expectEqual(Command.timer_wait, lookup("秒待機").?);
+    try std.testing.expectEqual(Command.timer_wait, lookup("秒逐次待機").?);
     try std.testing.expectEqual(Command.async_noop, lookup("ASYNC").?);
     try std.testing.expectEqual(Command.system_await_execute, lookup("AWAIT実行").?);
     try std.testing.expectEqual(Command.system_execute, lookup("実行").?);

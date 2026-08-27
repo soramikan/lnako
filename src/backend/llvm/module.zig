@@ -1882,6 +1882,11 @@ test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {
     try std.testing.expectEqualStrings("debug-display", debug.route);
     try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.system_debug_display), debug.opcode);
 
+    const timer_wait = manifestCall("秒待", null, true).?;
+    try std.testing.expectEqualStrings("timer_wait", timer_wait.canonical_opcode);
+    try std.testing.expectEqualStrings("builtin", timer_wait.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.timer_wait), timer_wait.opcode);
+
     try std.testing.expect(manifestCall("利用者関数", 0, false) == null);
     try std.testing.expect(manifestCall("未知命令", null, false) == null);
 }

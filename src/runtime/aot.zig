@@ -2627,6 +2627,33 @@ fn pluginManagementBuiltin(
     }
 }
 
+fn timerWaitBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    const source = if (arguments.len > 0) arguments[arguments.len - 1] else Value{};
+    const seconds = try valueToNumberRuntime(runtime, source);
+    if (!std.math.isFinite(seconds) or seconds <= 0) return .{};
+    const milliseconds = @floor(seconds * 1000.0);
+    if (milliseconds >= @as(f64, @floatFromInt(std.math.maxInt(u64)))) return error.TimerOverflow;
+    const delay: u64 = @intFromFloat(milliseconds);
+    if (delay > @as(u64, std.math.maxInt(i64))) return error.TimerOverflow;
+    if (delay > 0) {
+        try std.Io.sleep(
+            std.Io.Threaded.global_single_threaded.io(),
+            std.Io.Duration.fromMilliseconds(@intCast(delay)),
+            .awake,
+        );
+    }
+    return .{};
+}
+
+test "AOT秒待は0秒・負数・非数をundefinedで完了する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+
+    try std.testing.expectEqual(Value{}, try timerWaitBuiltin(&runtime, &.{}));
+    try std.testing.expectEqual(Value{}, try timerWaitBuiltin(&runtime, &.{numberValue(-1)}));
+    try std.testing.expectEqual(Value{}, try timerWaitBuiltin(&runtime, &.{numberValue(std.math.nan(f64))}));
+}
+
 fn stringArrayBuiltin(runtime: *Runtime, names: []const []const u8) !Value {
     var roots = [_]Value{ .{}, .{} };
     var frame = RootFrame{};
@@ -3383,7 +3410,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all and command != .namespace_pop and command != .async_noop and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all and command != .namespace_pop and command != .timer_wait and command != .async_noop and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -3471,6 +3498,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         .plugin_name_set, .namespace_set, .namespace_pop => {
             runtime.setFailure(error.PluginManagementRequiresTargets);
             return;
+        },
+        .timer_wait => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = timerWaitBuiltin(runtime, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
         },
         .async_noop => out.* = .{},
         .system_await_execute, .system_execute => {

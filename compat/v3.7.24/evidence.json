@@ -8,14 +8,14 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 257,
-    "nativeAot": 152,
+    "total": 258,
+    "nativeAot": 153,
     "interpreter": 96,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
-    "paired": 402,
-    "interpreter-only": 121,
+    "paired": 405,
+    "interpreter-only": 118,
     "aot-only": 0,
     "none": 0,
     "compat-js-only": 4
@@ -10796,7 +10796,9 @@
         "timer-wait",
         "timer-wait-interleaving"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-timer-wait"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10807,15 +10809,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-timer-wait": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 2件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "差し替え可能な時計を用いた待機と公式cnako3差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 2件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "差し替え可能な時計を用いたInterpreter待機と純LLVM AOTの待機を公式cnako3差分テストで確認"
     },
     {
       "id": "command-0316",
@@ -10825,7 +10832,9 @@
       "interpreterFixtureIds": [
         "timer-wait-aliases"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-timer-wait"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10833,15 +10842,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-timer-wait": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "秒待の別名として公式cnako3差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "秒待の別名としてInterpreterと純LLVM AOTの公式cnako3差分テストに成功"
     },
     {
       "id": "command-0317",
@@ -10851,7 +10865,9 @@
       "interpreterFixtureIds": [
         "timer-wait-aliases"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-timer-wait"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10859,15 +10875,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-timer-wait": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "逐次待機の互換呼び出しとして公式cnako3差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "逐次待機の互換呼び出しとしてInterpreterと純LLVM AOTの公式cnako3差分テストに成功"
     },
     {
       "id": "command-0318",

@@ -74,23 +74,26 @@
     "status": "native",
     "tests": [
       "timer-wait",
-      "timer-wait-interleaving"
+      "timer-wait-interleaving",
+      "native-system-timer-wait"
     ],
-    "reason": "差し替え可能な時計を用いた待機と公式cnako3差分テストに成功"
+    "reason": "差し替え可能な時計を用いたInterpreter待機と純LLVM AOTの待機を公式cnako3差分テストで確認"
   },
   "秒待機": {
     "status": "native",
     "tests": [
-      "timer-wait-aliases"
+      "timer-wait-aliases",
+      "native-system-timer-wait"
     ],
-    "reason": "秒待の別名として公式cnako3差分テストに成功"
+    "reason": "秒待の別名としてInterpreterと純LLVM AOTの公式cnako3差分テストに成功"
   },
   "秒逐次待機": {
     "status": "native",
     "tests": [
-      "timer-wait-aliases"
+      "timer-wait-aliases",
+      "native-system-timer-wait"
     ],
-    "reason": "逐次待機の互換呼び出しとして公式cnako3差分テストに成功"
+    "reason": "逐次待機の互換呼び出しとしてInterpreterと純LLVM AOTの公式cnako3差分テストに成功"
   },
   "秒後": {
     "status": "native",
