@@ -3588,9 +3588,10 @@
   "プラグイン名設定": {
     "status": "native",
     "tests": [
-      "system-runtime-catalog-and-namespace"
+      "system-runtime-catalog-and-namespace",
+      "native-system-plugin-management"
     ],
-    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+    "reason": "Zig製plugin_system実装と純LLVM AOTで公式cnako3の7経路差分テストに成功"
   },
   "名前空間": {
     "status": "native",
@@ -3602,16 +3603,18 @@
   "名前空間設定": {
     "status": "native",
     "tests": [
-      "system-runtime-catalog-and-namespace"
+      "system-runtime-catalog-and-namespace",
+      "native-system-plugin-management"
     ],
-    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+    "reason": "Zig製plugin_system実装と純LLVM AOTで公式cnako3の7経路差分テストに成功"
   },
   "名前空間ポップ": {
     "status": "native",
     "tests": [
-      "system-runtime-catalog-and-namespace"
+      "system-runtime-catalog-and-namespace",
+      "native-system-plugin-management"
     ],
-    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+    "reason": "Zig製plugin_system実装と純LLVM AOTで公式cnako3の7経路差分テストに成功"
   },
   "ASYNC": {
     "status": "native",

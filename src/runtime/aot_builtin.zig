@@ -245,6 +245,9 @@ pub const Command = enum(u16) {
     stdio_continue_display_many,
     stdio_clear_log,
     stdio_write_all,
+    plugin_name_set,
+    namespace_set,
+    namespace_pop,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -499,6 +502,9 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "連続無改行表示")) return .stdio_continue_display_many;
     if (std.mem.eql(u8, name, "表示ログクリア")) return .stdio_clear_log;
     if (std.mem.eql(u8, name, "言") or std.mem.eql(u8, name, "コンソール表示")) return .stdio_write_all;
+    if (std.mem.eql(u8, name, "プラグイン名設定")) return .plugin_name_set;
+    if (std.mem.eql(u8, name, "名前空間設定")) return .namespace_set;
+    if (std.mem.eql(u8, name, "名前空間ポップ")) return .namespace_pop;
     return null;
 }
 
@@ -672,6 +678,9 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.number_sequence_predicate, lookup("数列判定").?);
     try std.testing.expectEqual(Command.math_random, lookup("乱数").?);
     try std.testing.expectEqual(Command.math_random_range, lookup("乱数範囲").?);
+    try std.testing.expectEqual(Command.plugin_name_set, lookup("プラグイン名設定").?);
+    try std.testing.expectEqual(Command.namespace_set, lookup("名前空間設定").?);
+    try std.testing.expectEqual(Command.namespace_pop, lookup("名前空間ポップ").?);
     try std.testing.expectEqual(Command.datetime_now, lookup("今").?);
     try std.testing.expectEqual(Command.datetime_system_time_milliseconds, lookup("システム時間ミリ秒").?);
     try std.testing.expectEqual(Command.datetime_today, lookup("今日").?);

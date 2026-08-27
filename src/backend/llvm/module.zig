@@ -327,6 +327,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_display_value(ptr, i1, ptr)\n" ++
                 "declare void @lnako_aot_display_many(ptr, i64, ptr)\n" ++
                 "declare void @lnako_aot_stdio_call(ptr, ptr, ptr, i64, i16, i64)\n" ++
+                "declare void @lnako_aot_plugin_management_call(ptr, ptr, i64, i16, ptr, ptr, i64)\n" ++
                 "declare i32 @lnako_aot_bigint_truthy(ptr)\n" ++
                 "declare void @lnako_aot_arithmetic(ptr, ptr, ptr, i8)\n" ++
                 "declare void @lnako_aot_compare(ptr, ptr, ptr, i8)\n" ++
@@ -463,6 +464,10 @@ const Emitter = struct {
                 };
                 if (aot_builtin.lookup(instruction.name)) |command| if (command == .regexp_match or command == .regexp_extract) {
                     if (self.globalIndex("抽出文字列") == null) try self.globals.append(self.allocator, "抽出文字列");
+                };
+                if (aot_builtin.lookup(instruction.name)) |command| if (isPluginManagementCommand(command)) {
+                    if (self.globalIndex("プラグイン名") == null) try self.globals.append(self.allocator, "プラグイン名");
+                    if (self.globalIndex("名前空間") == null) try self.globals.append(self.allocator, "名前空間");
                 };
             }
             if (instruction.opcode == .const_string) {
@@ -1096,6 +1101,31 @@ const Emitter = struct {
         const result = instruction.result orelse return error.MissingInstructionResult;
         const site_id = instruction.site_id orelse return error.MissingDispatchSiteId;
         if (instruction.operands.len > aggregate_count) return error.InvalidCallScratch;
+        if (isPluginManagementCommand(command)) {
+            const plugin_name_index = self.globalIndex("プラグイン名") orelse return error.MissingPluginNameGlobal;
+            const namespace_index = self.globalIndex("名前空間") orelse return error.MissingNamespaceGlobal;
+            for (instruction.operands, 0..) |argument, index| {
+                try self.output.writer.print("  %plugin-management.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+                try self.debugSuffix(instruction.span, scope);
+                try self.output.writer.writeAll("  store %lnako.Value ");
+                try self.writeValueRef(function, argument);
+                try self.output.writer.print(", ptr %plugin-management.{d}.slot.{d}", .{ result, index });
+                try self.debugSuffix(instruction.span, scope);
+            }
+            try self.output.writer.print("  call void @lnako_aot_plugin_management_call(ptr %root.slot.{d}, ptr ", .{result});
+            if (instruction.operands.len > 0) try self.output.writer.print("%plugin-management.{d}.slot.0", .{result}) else try self.output.writer.writeAll("null");
+            try self.output.writer.print(", i64 {d}, i16 {d}, ptr @lnako.global.{d}, ptr @lnako.global.{d}, i64 {d})", .{
+                instruction.operands.len,
+                @intFromEnum(command),
+                plugin_name_index,
+                namespace_index,
+                site_id,
+            });
+            try self.debugSuffix(instruction.span, scope);
+            try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+            try self.debugSuffix(instruction.span, scope);
+            return;
+        }
         if (isStdioCommand(command)) {
             const display_log_index = self.globalIndex("表示ログ") orelse return error.MissingDisplayLogGlobal;
             for (instruction.operands, 0..) |argument, index| {
@@ -1553,6 +1583,13 @@ fn isStdioCommand(command: aot_builtin.Command) bool {
     };
 }
 
+fn isPluginManagementCommand(command: aot_builtin.Command) bool {
+    return switch (command) {
+        .plugin_name_set, .namespace_set, .namespace_pop => true,
+        else => false,
+    };
+}
+
 fn requiresDisplayLog(name: []const u8) bool {
     if (isDisplayCall(name)) return true;
     return if (aot_builtin.lookup(name)) |command| isStdioCommand(command) else false;
@@ -1832,6 +1869,27 @@ test "参照された文字列システム定数をGCルート登録後に初期
     const entry = std.mem.indexOf(u8, module.text, "%entry.result.0 = call").?;
     try std.testing.expect(push < initialize);
     try std.testing.expect(initialize < entry);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "[4 x i16] [i16 109, i16 97, i16 105, i16 110]") != null);
+}
+
+test "プラグイン管理命令を専用AOT ABIへ出力する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "プラグイン名設定(123)\n名前空間設定(456)\n名前空間ポップ()\n", "plugin-management.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "plugin-management.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "plugin-management.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    var module = try generate(std.testing.allocator, program, "plugin-management.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_plugin_management_call(ptr, ptr, i64, i16, ptr, ptr, i64)\n") != null);
+    try std.testing.expectEqual(@as(usize, 3), std.mem.count(u8, module.text, "call void @lnako_aot_plugin_management_call("));
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "ptr @lnako.global.1, ptr @lnako.global.2") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "[4 x i16] [i16 109, i16 97, i16 105, i16 110]") != null);
 }
 

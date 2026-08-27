@@ -286,6 +286,11 @@ const Object = struct {
     payload: Payload,
 };
 
+const NamespaceFrame = struct {
+    namespace: Value,
+    plugin_name: Value,
+};
+
 const Runtime = struct {
     allocator: std.mem.Allocator,
     objects: ?*Object = null,
@@ -311,11 +316,13 @@ const Runtime = struct {
     caniuse_agents: Value = .{},
     era_data: Value = .{},
     csv_state: AotCsvState = .{},
+    namespace_stack: std.ArrayList(NamespaceFrame) = .empty,
 
     fn deinit(self: *Runtime) void {
         self.dispatch_trace.deinit();
         self.csv_state.deinit(self.allocator);
         self.print_pool.deinit(self.allocator);
+        self.namespace_stack.deinit(self.allocator);
         var current = self.objects;
         while (current) |object| {
             const next = object.next;
@@ -469,6 +476,10 @@ const Runtime = struct {
         self.markValue(self.caniuse_browsers);
         self.markValue(self.caniuse_agents);
         self.markValue(self.era_data);
+        for (self.namespace_stack.items) |entry| {
+            self.markValue(entry.namespace);
+            self.markValue(entry.plugin_name);
+        }
         while (self.grey) |object| {
             self.grey = object.grey_next;
             object.grey_next = null;
@@ -2489,6 +2500,13 @@ fn isStdioCommand(command: aot_builtin.Command) bool {
     };
 }
 
+fn isPluginManagementCommand(command: aot_builtin.Command) bool {
+    return switch (command) {
+        .plugin_name_set, .namespace_set, .namespace_pop => true,
+        else => false,
+    };
+}
+
 fn stdioBuiltin(runtime: *Runtime, command: aot_builtin.Command, values: []const Value, display_log: ?*Value) !void {
     switch (command) {
         .stdio_continue_display => try continueDisplayValue(runtime, if (values.len > 0) values[values.len - 1] else .{}),
@@ -2503,6 +2521,74 @@ fn stdioBuiltin(runtime: *Runtime, command: aot_builtin.Command, values: []const
         .stdio_write_all => try writeAllValues(runtime, values),
         else => return error.UnknownCommand,
     }
+}
+
+fn pluginManagementArgument(runtime: *Runtime, values: []const Value) !Value {
+    var source = if (values.len > 0) values[values.len - 1] else Value{};
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, @ptrCast(&source), 1);
+    defer runtime.popRoots(&frame);
+    const units = try valueUtf16Alloc(runtime, source);
+    defer runtime.allocator.free(units);
+    return runtime.createString(units);
+}
+
+fn pluginManagementBuiltin(
+    runtime: *Runtime,
+    command: aot_builtin.Command,
+    values: []const Value,
+    plugin_name: *Value,
+    namespace: *Value,
+) !void {
+    switch (command) {
+        .plugin_name_set => plugin_name.* = try pluginManagementArgument(runtime, values),
+        .namespace_set => {
+            var converted = try pluginManagementArgument(runtime, values);
+            var frame = RootFrame{};
+            runtime.pushRoots(&frame, @ptrCast(&converted), 1);
+            defer runtime.popRoots(&frame);
+            try runtime.namespace_stack.append(runtime.allocator, .{
+                .namespace = namespace.*,
+                .plugin_name = plugin_name.*,
+            });
+            namespace.* = converted;
+        },
+        .namespace_pop => if (runtime.namespace_stack.pop()) |previous| {
+            namespace.* = previous.namespace;
+            plugin_name.* = previous.plugin_name;
+        },
+        else => return error.UnknownCommand,
+    }
+}
+
+test "AOTプラグイン管理命令は文字列化と名前空間スタックをGC越しに保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtimeUtf8String(&runtime, "メイン");
+    roots[1] = try runtimeUtf8String(&runtime, "main");
+    try pluginManagementBuiltin(&runtime, .plugin_name_set, &.{numberValue(123)}, &roots[0], &roots[1]);
+    try expectUtf16String(&runtime, roots[0], "123");
+    try pluginManagementBuiltin(&runtime, .namespace_set, &.{numberValue(456)}, &roots[0], &roots[1]);
+    try pluginManagementBuiltin(&runtime, .plugin_name_set, &.{staticStringValue("孫")}, &roots[0], &roots[1]);
+    try pluginManagementBuiltin(&runtime, .namespace_set, &.{staticStringValue("二階")}, &roots[0], &roots[1]);
+    try std.testing.expectEqual(@as(usize, 2), runtime.namespace_stack.items.len);
+
+    _ = runtime.collect();
+    try pluginManagementBuiltin(&runtime, .namespace_pop, &.{}, &roots[0], &roots[1]);
+    try expectUtf16String(&runtime, roots[0], "孫");
+    try expectUtf16String(&runtime, roots[1], "456");
+    try pluginManagementBuiltin(&runtime, .namespace_pop, &.{}, &roots[0], &roots[1]);
+    try expectUtf16String(&runtime, roots[0], "123");
+    try expectUtf16String(&runtime, roots[1], "main");
+    try pluginManagementBuiltin(&runtime, .namespace_pop, &.{}, &roots[0], &roots[1]);
+    try std.testing.expectEqual(@as(usize, 0), runtime.namespace_stack.items.len);
+    try expectUtf16String(&runtime, roots[0], "123");
+    try expectUtf16String(&runtime, roots[1], "main");
 }
 
 /// Convert a UTF-16 exception message to UTF-8 without rejecting lone
@@ -2720,6 +2806,45 @@ pub export fn lnako_aot_stdio_call(
     defer runtime.dispatch_trace.result(call_id, command_name, opcode, "builtin", site_id, success);
     const actual = if (values) |pointer| pointer[0..len] else &.{};
     stdioBuiltin(runtime, command, actual, display_log) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    success = runtime.failure_epoch == start_epoch;
+}
+
+/// Dedicated ABI for plugin and namespace state.  These commands mutate
+/// system globals, so the targets are explicit instead of being looked up by
+/// name inside the AOT runtime.
+pub export fn lnako_aot_plugin_management_call(
+    out: *Value,
+    values: ?[*]const Value,
+    len: usize,
+    opcode: u16,
+    plugin_name: *Value,
+    namespace: *Value,
+    site_id: u64,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    if (values == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
+        runtime.setFailure(error.UnknownCommand);
+        return;
+    };
+    if (!isPluginManagementCommand(command)) {
+        runtime.setFailure(error.UnknownCommand);
+        return;
+    }
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "builtin", site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "builtin", site_id, success);
+    const actual = if (values) |pointer| pointer[0..len] else &.{};
+    pluginManagementBuiltin(runtime, command, actual, plugin_name, namespace) catch |failure| {
         runtime.setFailure(failure);
         return;
     };
@@ -2990,7 +3115,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all and command != .namespace_pop) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -3074,6 +3199,10 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 runtime.setFailure(failure);
                 return;
             };
+        },
+        .plugin_name_set, .namespace_set, .namespace_pop => {
+            runtime.setFailure(error.PluginManagementRequiresTargets);
+            return;
         },
         .node_os, .node_architecture => {
             out.* = nodeEnvironmentBuiltin(runtime, command) catch |failure| {

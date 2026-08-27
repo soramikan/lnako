@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "0596280e0a248e82a552ffc1594d57fa505f4a9e3b1b9b2dc6c689836f53a202"
+    "sha256": "217a73fa6ac9237d57c1498f1890ec72147beaeeeea001236b9f3d6ae5cf697b"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 154,
+    "count": 151,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 154
+      "unverified": 151
     }
   },
   "groups": [
@@ -652,26 +652,6 @@
     {
       "plugin": "plugin_system",
       "group": "基本プラグイン",
-      "category": "プラグイン管理",
-      "type": "関数",
-      "count": 3,
-      "executionEvidenceStates": {
-        "unverified": 3
-      },
-      "commandIds": [
-        "command-0079",
-        "command-0081",
-        "command-0082"
-      ],
-      "names": [
-        "プラグイン名設定",
-        "名前空間設定",
-        "名前空間ポップ"
-      ]
-    },
-    {
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
       "category": "特殊命令",
       "type": "関数",
       "count": 7,
@@ -1052,57 +1032,6 @@
       "plugin": "plugin_system",
       "group": "基本プラグイン",
       "category": "デバッグ支援",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "system-runtime-catalog-and-namespace"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0079",
-      "name": "プラグイン名設定",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "プラグイン管理",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "system-runtime-catalog-and-namespace"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0081",
-      "name": "名前空間設定",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "プラグイン管理",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "system-runtime-catalog-and-namespace"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0082",
-      "name": "名前空間ポップ",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "プラグイン管理",
       "type": "関数",
       "plannedMode": "native",
       "status": "native",
