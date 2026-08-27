@@ -73,7 +73,13 @@ pub const Instruction = struct {
 };
 
 pub const ConditionalBranch = struct { condition: ValueId, then_block: BlockId, else_block: BlockId };
-pub const Throw = struct { value: ValueId, target: ?BlockId = null };
+pub const Throw = struct {
+    value: ValueId,
+    target: ?BlockId = null,
+    /// `エラー発生` uses JavaScript Error(message) semantics rather than
+    /// preserving an arbitrary thrown value in `エラーメッセージ`.
+    coerce_to_error_message: bool = false,
+};
 
 pub const Terminator = union(enum) {
     none,

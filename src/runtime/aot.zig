@@ -568,6 +568,19 @@ const Runtime = struct {
         self.setException(self.createString(units) catch |allocation_failure| runtimeFailure(allocation_failure));
     }
 
+    fn setErrorMessage(self: *Runtime, value: Value) void {
+        // JavaScript's Error(undefined).message is the empty string.  The
+        // other cases use the same String(value) conversion as ordinary AOT
+        // text operations, including arrays and dictionaries.
+        if (value.tag == @intFromEnum(Tag.undefined)) {
+            self.setFailureUnits(&.{});
+            return;
+        }
+        const units = valueUtf16Alloc(self, value) catch |failure| runtimeFailure(failure);
+        defer self.allocator.free(units);
+        self.setFailureUnits(units);
+    }
+
     fn setIndexAssignmentFailure(self: *Runtime, container: Value, key: Value) void {
         const key_units = valueUtf16Alloc(self, key) catch |failure| runtimeFailure(failure);
         defer self.allocator.free(key_units);
@@ -2866,6 +2879,10 @@ pub export fn lnako_aot_collect() callconv(.c) usize {
 
 pub export fn lnako_aot_exception_set(value: *const Value) callconv(.c) void {
     if (active_runtime) |*runtime| runtime.setException(value.*);
+}
+
+pub export fn lnako_aot_exception_set_error_message(value: *const Value) callconv(.c) void {
+    if (active_runtime) |*runtime| runtime.setErrorMessage(value.*);
 }
 
 pub export fn lnako_aot_exception_pending() callconv(.c) c_int {
@@ -9559,6 +9576,7 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (u64, u64, u64) callconv(.c) void, @TypeOf(&lnako_aot_dispatch_result));
     try std.testing.expectEqual(*const fn (*const Value, bool) callconv(.c) void, @TypeOf(&lnako_aot_print_number));
     try std.testing.expectEqual(*const fn (*const Value) callconv(.c) void, @TypeOf(&lnako_aot_exception_set));
+    try std.testing.expectEqual(*const fn (*const Value) callconv(.c) void, @TypeOf(&lnako_aot_exception_set_error_message));
     try std.testing.expectEqual(*const fn () callconv(.c) c_int, @TypeOf(&lnako_aot_exception_pending));
     try std.testing.expectEqual(*const fn (*Value) callconv(.c) void, @TypeOf(&lnako_aot_exception_take));
 }
@@ -11717,6 +11735,39 @@ test "保留例外をGCルートとして保持し一度だけ取り出す" {
     try std.testing.expectEqual(message.payload, taken.payload);
     try std.testing.expectEqual(@as(c_int, 0), lnako_aot_exception_pending());
     try std.testing.expectEqual(@as(usize, 1), active_runtime.?.collect());
+}
+
+test "AOTエラー発生のError message変換を値型ごとに行う" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var values = [_]Value{
+        .{},
+        numberValue(123),
+        .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 },
+        .{ .tag = @intFromEnum(Tag.null_value) },
+        staticStringValue("文字列"),
+    };
+    var roots: RootFrame = .{};
+    lnako_aot_push_roots(&roots, &values, values.len);
+    defer lnako_aot_pop_roots(&roots);
+
+    const expected = [_][]const u8{ "", "123", "true", "null", "文字列" };
+    for (&values, expected) |*value, expected_text| {
+        lnako_aot_exception_set_error_message(value);
+        try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+        var taken: Value = .{};
+        lnako_aot_exception_take(&taken);
+        const actual = try valueUtf16Alloc(&runtime, taken);
+        defer runtime.allocator.free(actual);
+        const expected_units = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, expected_text);
+        defer runtime.allocator.free(expected_units);
+        try std.testing.expectEqualSlices(u16, expected_units, actual);
+    }
 }
 
 test "AOT未捕捉例外の本文をUTF-16から安全にUTF-8へ変換する" {

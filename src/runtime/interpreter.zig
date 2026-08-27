@@ -476,7 +476,8 @@ pub const Interpreter = struct {
                 },
                 .return_value => |value| return if (value) |id| frame.values[id] else .undefined,
                 .throw_value => |throw_value| {
-                    self.exception_value = frame.values[throw_value.value];
+                    const thrown = frame.values[throw_value.value];
+                    self.exception_value = if (throw_value.coerce_to_error_message) try self.errorMessageValue(thrown) else thrown;
                     if (frame.handlers.pop() orelse throw_value.target) |handler| {
                         try self.setGlobal("エラーメッセージ", self.exception_value);
                         self.exception_value = .undefined;
@@ -488,6 +489,13 @@ pub const Interpreter = struct {
                 .unreachable_terminator => return error.ReachedUnreachable,
             }
         }
+    }
+
+    fn errorMessageValue(self: *Interpreter, value: Value) !Value {
+        // JavaScript's Error(undefined).message is the empty string.  All
+        // other values use their ordinary String(value) representation.
+        if (value == .undefined) return self.runtime.stringUtf8("");
+        return self.runtime.valueToString(value);
     }
 
     fn executeInstruction(self: *Interpreter, frame: *Frame, instruction: ir.Instruction, predecessor: ?ir.BlockId) anyerror!void {
@@ -801,7 +809,8 @@ pub const Interpreter = struct {
             return .undefined;
         }
         if (std.mem.eql(u8, name, "エラー発生")) {
-            self.exception_value = if (arguments.len > 0) arguments[arguments.len - 1] else try self.runtime.stringUtf8("エラー");
+            const thrown = if (arguments.len > 0) arguments[arguments.len - 1] else try self.runtime.stringUtf8("エラー");
+            self.exception_value = try self.errorMessageValue(thrown);
             return error.NakoException;
         }
         if (std.mem.eql(u8, name, "ASSERT") or std.mem.eql(u8, name, "確認")) {
@@ -2195,6 +2204,25 @@ test "例外監視と動的ななでしこ実行を処理する" {
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("失敗\n3\n", host.written());
+}
+
+test "エラー発生は公式Error.messageの値変換を行う" {
+    const source =
+        "エラー監視\nundefinedのエラー発生\nエラーならば\n(\"U:\"&エラーメッセージ)を表示\nここまで\n" ++
+        "エラー監視\n123のエラー発生\nエラーならば\n(\"N:\"&エラーメッセージ)を表示\nここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("U:\nN:123\n", host.written());
 }
 
 test "テスト定義を個別に実行して結果を記録する" {

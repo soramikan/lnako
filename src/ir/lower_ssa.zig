@@ -350,6 +350,7 @@ const FunctionBuilder = struct {
         self.terminate(.{ .throw_value = .{
             .value = value,
             .target = if (self.exception_handlers.items.len > 0) self.exception_handlers.items[self.exception_handlers.items.len - 1] else null,
+            .coerce_to_error_message = true,
         } });
         return value;
     }
@@ -577,6 +578,7 @@ test "エラー発生を最内側の例外分岐先付きthrowへ変換する" {
             throw_count += 1;
             try std.testing.expect(throw_value.target != null);
             try std.testing.expect(throw_value.target.? < entry.blocks.len);
+            try std.testing.expect(throw_value.coerce_to_error_message);
         },
         else => {},
     };

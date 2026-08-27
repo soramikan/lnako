@@ -477,7 +477,13 @@
   {
     "id": "native-uncaught-exception",
     "oracle": "official-generated",
+    "commands": ["エラー発生"],
     "source": "「未捕捉」のエラー発生\n"
+  },
+  {
+    "id": "native-system-error-raise",
+    "commands": ["エラー発生"],
+    "source": "エラー監視\nundefinedのエラー発生\nエラーならば\n(\"U:\"&エラーメッセージ)を表示\nここまで\nエラー監視\n123のエラー発生\nエラーならば\n(\"N:\"&エラーメッセージ)を表示\nここまで\nエラー監視\nはいのエラー発生\nエラーならば\n(\"B:\"&エラーメッセージ)を表示\nここまで\nエラー監視\nNULLのエラー発生\nエラーならば\n(\"Z:\"&エラーメッセージ)を表示\nここまで\n"
   },
   {
     "id": "native-system-width-conversion-commands",

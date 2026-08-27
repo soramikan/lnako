@@ -315,6 +315,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_push_roots(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_pop_roots(ptr)\n" ++
                 "declare void @lnako_aot_exception_set(ptr)\n" ++
+                "declare void @lnako_aot_exception_set_error_message(ptr)\n" ++
                 "declare i32 @lnako_aot_exception_pending()\n" ++
                 "declare void @lnako_aot_exception_take(ptr)\n" ++
                 "declare void @lnako_aot_exception_abort()\n" ++
@@ -1297,7 +1298,8 @@ const Emitter = struct {
                 try self.debugSuffix(span, scope);
             },
             .throw_value => |throw_value| {
-                try self.output.writer.print("  call void @lnako_aot_exception_set(ptr %root.slot.{d})", .{throw_value.value});
+                const exception_set = if (throw_value.coerce_to_error_message) "lnako_aot_exception_set_error_message" else "lnako_aot_exception_set";
+                try self.output.writer.print("  call void @{s}(ptr %root.slot.{d})", .{ exception_set, throw_value.value });
                 try self.debugSuffix(span, scope);
                 if (throw_value.target) |target| {
                     try self.output.writer.print("  br label %bb{d}", .{target});
@@ -2197,7 +2199,7 @@ test "監視外のthrowを保留例外としてmainまで伝播する" {
     try std.testing.expect(findUnsupported(program) == null);
     var module = try generate(std.testing.allocator, program, "uncaught.nako3", false);
     defer module.deinit(std.testing.allocator);
-    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_exception_set") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_exception_set_error_message") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_exception_abort") != null);
 }
 

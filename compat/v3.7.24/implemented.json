@@ -3704,9 +3704,11 @@
   "エラー発生": {
     "status": "native",
     "tests": [
-      "system-runtime-execution-and-debug"
+      "system-runtime-execution-and-debug",
+      "native-system-error-raise",
+      "native-uncaught-exception"
     ],
-    "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+    "reason": "HIRのthrow_valueからInterpreterと純LLVM AOTへ分岐し、公式Error(message)の値変換と未捕捉終了経路を公式cnako3との差分テストで確認"
   },
   "__DEBUG": {
     "status": "native",
