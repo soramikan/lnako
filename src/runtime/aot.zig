@@ -248,6 +248,7 @@ const Runtime = struct {
     system_context: Value = .{},
     dispatch_trace: DispatchTrace = .{},
     random_state: u64 = 0,
+    clock_milliseconds: ?i64 = null,
 
     fn deinit(self: *Runtime) void {
         self.dispatch_trace.deinit();
@@ -2708,7 +2709,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -2733,6 +2734,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         .math_sin, .math_cos, .math_tan, .math_arcsin, .math_arccos, .math_arctan, .math_atan2, .math_coordinate_angle, .math_rad2deg, .math_deg2rad, .math_sign, .math_abs, .math_exp, .math_hypot, .math_log, .math_logn, .math_frac, .math_integer, .math_sqrt, .math_round, .math_decimal_ceil, .math_decimal_floor, .math_decimal_round, .math_ceil, .math_floor, .math_random, .math_random_range => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = mathBuiltin(runtime, command, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .datetime_now, .datetime_system_time, .datetime_system_time_milliseconds, .datetime_today, .datetime_tomorrow, .datetime_yesterday, .datetime_current_year, .datetime_next_year, .datetime_last_year, .datetime_current_month, .datetime_next_month, .datetime_previous_month => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = datetimeBuiltin(runtime, command, actual) catch |failure| {
                 runtime.setFailure(failure);
                 return;
             };
@@ -3445,6 +3453,102 @@ fn mathRandomRange(runtime: *Runtime, minimum: Value, maximum: Value) !Value {
     const lower = try valueToNumberRuntime(runtime, minimum);
     const upper = try valueToNumberRuntime(runtime, maximum);
     return numberValue(@floor(random * (upper - lower + 1)) + lower);
+}
+
+const datetime_milliseconds_per_second: i64 = 1000;
+const datetime_milliseconds_per_minute: i64 = 60 * datetime_milliseconds_per_second;
+const datetime_milliseconds_per_hour: i64 = 60 * datetime_milliseconds_per_minute;
+const datetime_milliseconds_per_day: i64 = 24 * datetime_milliseconds_per_hour;
+const datetime_tokyo_offset_milliseconds: i64 = 9 * datetime_milliseconds_per_hour;
+
+const AotDateFields = struct {
+    year: i64,
+    month: i64,
+    day: i64,
+    hour: i64,
+    minute: i64,
+    second: i64,
+    weekday: u8,
+};
+
+fn datetimeBuiltin(runtime: *Runtime, command: aot_builtin.Command, _: []const Value) !Value {
+    const now = currentTimeMilliseconds(runtime);
+    return switch (command) {
+        .datetime_now => datetimeTimeString(runtime, datetimeFieldsFromEpoch(now)),
+        .datetime_system_time => numberValue(@floor(@as(f64, @floatFromInt(now)) / datetime_milliseconds_per_second)),
+        .datetime_system_time_milliseconds => numberValue(@as(f64, @floatFromInt(now))),
+        .datetime_today => datetimeDateString(runtime, datetimeFieldsFromEpoch(now)),
+        .datetime_tomorrow => datetimeDateString(runtime, datetimeFieldsFromEpoch(now + datetime_milliseconds_per_day)),
+        .datetime_yesterday => datetimeDateString(runtime, datetimeFieldsFromEpoch(now - datetime_milliseconds_per_day)),
+        .datetime_current_year => numberValue(@as(f64, @floatFromInt(datetimeFieldsFromEpoch(now).year))),
+        .datetime_next_year => numberValue(@as(f64, @floatFromInt(datetimeFieldsFromEpoch(now).year + 1))),
+        .datetime_last_year => numberValue(@as(f64, @floatFromInt(datetimeFieldsFromEpoch(now).year - 1))),
+        .datetime_current_month => numberValue(@as(f64, @floatFromInt(datetimeFieldsFromEpoch(now).month))),
+        .datetime_next_month => numberValue(@as(f64, @floatFromInt(@mod(datetimeFieldsFromEpoch(now).month, 12) + 1))),
+        .datetime_previous_month => numberValue(@as(f64, @floatFromInt(@mod(datetimeFieldsFromEpoch(now).month + 10, 12) + 1))),
+        else => error.UnknownCommand,
+    };
+}
+
+fn currentTimeMilliseconds(runtime: *Runtime) i64 {
+    if (runtime.clock_milliseconds) |value| return value;
+    if (std.c.getenv("LNAKO_TEST_NOW_MS")) |environment| {
+        return std.fmt.parseInt(i64, std.mem.span(environment), 10) catch hostWallClockMilliseconds();
+    }
+    return hostWallClockMilliseconds();
+}
+
+fn hostWallClockMilliseconds() i64 {
+    const seconds = time(null);
+    return std.math.mul(i64, seconds, datetime_milliseconds_per_second) catch if (seconds < 0) std.math.minInt(i64) else std.math.maxInt(i64);
+}
+
+fn datetimeFieldsFromEpoch(milliseconds: i64) AotDateFields {
+    const local = milliseconds + datetime_tokyo_offset_milliseconds;
+    const days = @divFloor(local, datetime_milliseconds_per_day);
+    const within_day = @mod(local, datetime_milliseconds_per_day);
+    const civil = datetimeCivilFromDays(days);
+    return .{
+        .year = civil.year,
+        .month = civil.month,
+        .day = civil.day,
+        .hour = @divTrunc(within_day, datetime_milliseconds_per_hour),
+        .minute = @divTrunc(@mod(within_day, datetime_milliseconds_per_hour), datetime_milliseconds_per_minute),
+        .second = @divTrunc(@mod(within_day, datetime_milliseconds_per_minute), datetime_milliseconds_per_second),
+        .weekday = @intCast(@mod(days + 4, 7)),
+    };
+}
+
+fn datetimeDateString(runtime: *Runtime, fields: AotDateFields) !Value {
+    const text = try std.fmt.allocPrint(runtime.allocator, "{d}/{:02}/{:02}", .{ fields.year, @as(u64, @intCast(fields.month)), @as(u64, @intCast(fields.day)) });
+    defer runtime.allocator.free(text);
+    return runtimeUtf8String(runtime, text);
+}
+
+fn datetimeTimeString(runtime: *Runtime, fields: AotDateFields) !Value {
+    const text = try std.fmt.allocPrint(runtime.allocator, "{:02}:{:02}:{:02}", .{ @as(u64, @intCast(fields.hour)), @as(u64, @intCast(fields.minute)), @as(u64, @intCast(fields.second)) });
+    defer runtime.allocator.free(text);
+    return runtimeUtf8String(runtime, text);
+}
+
+fn runtimeUtf8String(runtime: *Runtime, text: []const u8) !Value {
+    const units = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, text);
+    defer runtime.allocator.free(units);
+    return runtime.createString(units);
+}
+
+fn datetimeCivilFromDays(days_input: i64) struct { year: i64, month: i64, day: i64 } {
+    const days = days_input + 719468;
+    const era = @divFloor(days, 146097);
+    const day_of_era = days - era * 146097;
+    const year_of_era = @divFloor(day_of_era - @divFloor(day_of_era, 1460) + @divFloor(day_of_era, 36524) - @divFloor(day_of_era, 146096), 365);
+    var year = year_of_era + era * 400;
+    const day_of_year = day_of_era - (365 * year_of_era + @divFloor(year_of_era, 4) - @divFloor(year_of_era, 100));
+    const month_prime = @divFloor(5 * day_of_year + 2, 153);
+    const day = day_of_year - @divFloor(153 * month_prime + 2, 5) + 1;
+    const month = month_prime + (if (month_prime < 10) @as(i64, 3) else -9);
+    year += @intFromBool(month <= 2);
+    return .{ .year = year, .month = month, .day = day };
 }
 
 fn mathCoordinateAngle(runtime: *Runtime, source: Value) !f64 {
@@ -6475,6 +6579,40 @@ test "AOT乱数命令は固定シードの数値・配列・辞書・範囲を�
     var range_arguments = [_]Value{ roots[6], roots[7] };
     lnako_aot_builtin_call(&roots[8], &range_arguments, range_arguments.len, @intFromEnum(aot_builtin.Command.math_random_range));
     try std.testing.expectEqual(@as(f64, 10), @as(f64, @bitCast(roots[8].payload)));
+}
+
+test "AOT日時の現在時刻・日付・年月命令を固定時計で処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator, .clock_milliseconds = 1_735_689_845_678 };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 12;
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try datetimeBuiltin(&runtime, .datetime_now, &.{});
+    try expectUtf16String(&runtime, roots[0], "09:04:05");
+    roots[1] = try datetimeBuiltin(&runtime, .datetime_system_time, &.{});
+    try std.testing.expectEqual(@as(f64, 1_735_689_845), @as(f64, @bitCast(roots[1].payload)));
+    roots[2] = try datetimeBuiltin(&runtime, .datetime_system_time_milliseconds, &.{});
+    try std.testing.expectEqual(@as(f64, 1_735_689_845_678), @as(f64, @bitCast(roots[2].payload)));
+    roots[3] = try datetimeBuiltin(&runtime, .datetime_today, &.{});
+    try expectUtf16String(&runtime, roots[3], "2025/01/01");
+    roots[4] = try datetimeBuiltin(&runtime, .datetime_tomorrow, &.{});
+    try expectUtf16String(&runtime, roots[4], "2025/01/02");
+    roots[5] = try datetimeBuiltin(&runtime, .datetime_yesterday, &.{});
+    try expectUtf16String(&runtime, roots[5], "2024/12/31");
+    roots[6] = try datetimeBuiltin(&runtime, .datetime_current_year, &.{});
+    try std.testing.expectEqual(@as(f64, 2025), @as(f64, @bitCast(roots[6].payload)));
+    roots[7] = try datetimeBuiltin(&runtime, .datetime_next_year, &.{});
+    try std.testing.expectEqual(@as(f64, 2026), @as(f64, @bitCast(roots[7].payload)));
+    roots[8] = try datetimeBuiltin(&runtime, .datetime_last_year, &.{});
+    try std.testing.expectEqual(@as(f64, 2024), @as(f64, @bitCast(roots[8].payload)));
+    roots[9] = try datetimeBuiltin(&runtime, .datetime_current_month, &.{});
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(roots[9].payload)));
+    roots[10] = try datetimeBuiltin(&runtime, .datetime_next_month, &.{});
+    try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(roots[10].payload)));
+    roots[11] = try datetimeBuiltin(&runtime, .datetime_previous_month, &.{});
+    try std.testing.expectEqual(@as(f64, 12), @as(f64, @bitCast(roots[11].payload)));
 }
 
 test "AOT整数実数変換はJavaScript接頭辞規則を共有する" {

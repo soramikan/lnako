@@ -174,6 +174,18 @@ pub const Command = enum(u16) {
     math_floor,
     math_random,
     math_random_range,
+    datetime_now,
+    datetime_system_time,
+    datetime_system_time_milliseconds,
+    datetime_today,
+    datetime_tomorrow,
+    datetime_yesterday,
+    datetime_current_year,
+    datetime_next_year,
+    datetime_last_year,
+    datetime_current_month,
+    datetime_next_month,
+    datetime_previous_month,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -357,6 +369,18 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "FLOOR") or std.mem.eql(u8, name, "切捨")) return .math_floor;
     if (std.mem.eql(u8, name, "乱数")) return .math_random;
     if (std.mem.eql(u8, name, "乱数範囲")) return .math_random_range;
+    if (std.mem.eql(u8, name, "今")) return .datetime_now;
+    if (std.mem.eql(u8, name, "システム時間")) return .datetime_system_time;
+    if (std.mem.eql(u8, name, "システム時間ミリ秒")) return .datetime_system_time_milliseconds;
+    if (std.mem.eql(u8, name, "今日")) return .datetime_today;
+    if (std.mem.eql(u8, name, "明日")) return .datetime_tomorrow;
+    if (std.mem.eql(u8, name, "昨日")) return .datetime_yesterday;
+    if (std.mem.eql(u8, name, "今年")) return .datetime_current_year;
+    if (std.mem.eql(u8, name, "来年")) return .datetime_next_year;
+    if (std.mem.eql(u8, name, "去年")) return .datetime_last_year;
+    if (std.mem.eql(u8, name, "今月")) return .datetime_current_month;
+    if (std.mem.eql(u8, name, "来月")) return .datetime_next_month;
+    if (std.mem.eql(u8, name, "先月")) return .datetime_previous_month;
     return null;
 }
 
@@ -528,6 +552,9 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.number_sequence_predicate, lookup("数列判定").?);
     try std.testing.expectEqual(Command.math_random, lookup("乱数").?);
     try std.testing.expectEqual(Command.math_random_range, lookup("乱数範囲").?);
+    try std.testing.expectEqual(Command.datetime_now, lookup("今").?);
+    try std.testing.expectEqual(Command.datetime_system_time_milliseconds, lookup("システム時間ミリ秒").?);
+    try std.testing.expectEqual(Command.datetime_today, lookup("今日").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }
 

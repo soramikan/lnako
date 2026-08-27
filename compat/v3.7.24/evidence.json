@@ -8,14 +8,14 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 222,
-    "nativeAot": 117,
+    "total": 223,
+    "nativeAot": 118,
     "interpreter": 96,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
-    "paired": 212,
-    "interpreter-only": 311,
+    "paired": 235,
+    "interpreter-only": 288,
     "aot-only": 0,
     "none": 0,
     "compat-js-only": 4
@@ -7275,7 +7275,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -7284,15 +7286,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "差し替え可能な壁時計で実装し、公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "差し替え可能な壁時計と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0229",
@@ -7302,7 +7309,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -7311,15 +7320,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "差し替え可能な壁時計で実装し、公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "差し替え可能な壁時計と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0230",
@@ -7329,7 +7343,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -7338,15 +7354,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "差し替え可能な壁時計で実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "差し替え可能な壁時計と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0231",
@@ -7356,7 +7377,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -7365,15 +7388,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0232",
@@ -7383,7 +7411,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -7392,15 +7422,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0233",
@@ -7410,7 +7445,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -7419,15 +7456,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0234",
@@ -7437,7 +7479,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -7446,15 +7490,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0235",
@@ -7464,7 +7513,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -7473,15 +7524,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0236",
@@ -7491,7 +7547,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -7500,15 +7558,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0237",
@@ -7518,7 +7581,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -7527,15 +7592,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0238",
@@ -7545,7 +7615,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -7554,15 +7626,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0239",
@@ -7572,7 +7649,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -7581,15 +7660,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0240",
@@ -15141,7 +15225,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -15150,15 +15236,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "差し替え可能な壁時計で実装し、公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "差し替え可能な壁時計と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0809",
@@ -15168,7 +15259,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -15177,15 +15270,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "差し替え可能な壁時計で実装し、公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "差し替え可能な壁時計と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0810",
@@ -15195,7 +15293,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -15204,15 +15304,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0811",
@@ -15222,7 +15327,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -15231,15 +15338,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0812",
@@ -15249,7 +15361,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -15258,15 +15372,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0813",
@@ -15276,7 +15395,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -15285,15 +15406,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0814",
@@ -15303,7 +15429,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -15312,15 +15440,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0815",
@@ -15330,7 +15463,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -15339,15 +15474,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0816",
@@ -15357,7 +15497,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -15366,15 +15508,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0817",
@@ -15384,7 +15531,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -15393,15 +15542,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0818",
@@ -15411,7 +15565,9 @@
       "interpreterFixtureIds": [
         "plugin-system-datetime"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-datetime-clock"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -15420,15 +15576,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-datetime-clock": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0819",

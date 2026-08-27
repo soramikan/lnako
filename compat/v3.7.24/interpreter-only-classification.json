@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "ed164dabc770bc3c77eb8377f59d23a1981771bd703cbd7782303a7c4ace55ae"
+    "sha256": "961b88f0f263589973d6cf7d088ed9ac27016d66bcef039f45021fe15febb591"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 311,
+    "count": 288,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 311
+      "unverified": 288
     }
   },
   "groups": [
@@ -102,22 +102,11 @@
       "group": "基本プラグイン",
       "category": "日時処理",
       "type": "関数",
-      "count": 27,
+      "count": 16,
       "executionEvidenceStates": {
-        "unverified": 27
+        "unverified": 16
       },
       "commandIds": [
-        "command-0808",
-        "command-0809",
-        "command-0810",
-        "command-0811",
-        "command-0812",
-        "command-0813",
-        "command-0814",
-        "command-0815",
-        "command-0816",
-        "command-0817",
-        "command-0818",
         "command-0819",
         "command-0820",
         "command-0821",
@@ -136,17 +125,6 @@
         "command-0834"
       ],
       "names": [
-        "今",
-        "システム時間",
-        "今日",
-        "明日",
-        "昨日",
-        "今年",
-        "来年",
-        "去年",
-        "今月",
-        "来月",
-        "先月",
         "曜日",
         "曜日番号取得",
         "UNIX時間変換",
@@ -1162,23 +1140,11 @@
       "group": "基本プラグイン",
       "category": "日時処理(簡易)",
       "type": "関数",
-      "count": 30,
+      "count": 18,
       "executionEvidenceStates": {
-        "unverified": 30
+        "unverified": 18
       },
       "commandIds": [
-        "command-0228",
-        "command-0229",
-        "command-0230",
-        "command-0231",
-        "command-0232",
-        "command-0233",
-        "command-0234",
-        "command-0235",
-        "command-0236",
-        "command-0237",
-        "command-0238",
-        "command-0239",
         "command-0240",
         "command-0241",
         "command-0242",
@@ -1199,18 +1165,6 @@
         "command-0257"
       ],
       "names": [
-        "今",
-        "システム時間",
-        "システム時間ミリ秒",
-        "今日",
-        "明日",
-        "昨日",
-        "今年",
-        "来年",
-        "去年",
-        "今月",
-        "来月",
-        "先月",
         "曜日",
         "曜日番号取得",
         "UNIXTIME変換",
@@ -2814,210 +2768,6 @@
       "group": "基本プラグイン",
       "category": "日時処理(簡易)",
       "type": "定数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0228",
-      "name": "今",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "日時処理(簡易)",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0229",
-      "name": "システム時間",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "日時処理(簡易)",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0230",
-      "name": "システム時間ミリ秒",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "日時処理(簡易)",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0231",
-      "name": "今日",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "日時処理(簡易)",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0232",
-      "name": "明日",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "日時処理(簡易)",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0233",
-      "name": "昨日",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "日時処理(簡易)",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0234",
-      "name": "今年",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "日時処理(簡易)",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0235",
-      "name": "来年",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "日時処理(簡易)",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0236",
-      "name": "去年",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "日時処理(簡易)",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0237",
-      "name": "今月",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "日時処理(簡易)",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0238",
-      "name": "来月",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "日時処理(簡易)",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0239",
-      "name": "先月",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "日時処理(簡易)",
-      "type": "関数",
       "plannedMode": "native",
       "status": "native",
       "identityResolution": "ambiguous-name",
@@ -6112,193 +5862,6 @@
       "group": "基本プラグイン",
       "category": "日時処理",
       "type": "定数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0808",
-      "name": "今",
-      "plugin": "plugin_datetime",
-      "group": "基本プラグイン",
-      "category": "日時処理",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0809",
-      "name": "システム時間",
-      "plugin": "plugin_datetime",
-      "group": "基本プラグイン",
-      "category": "日時処理",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0810",
-      "name": "今日",
-      "plugin": "plugin_datetime",
-      "group": "基本プラグイン",
-      "category": "日時処理",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0811",
-      "name": "明日",
-      "plugin": "plugin_datetime",
-      "group": "基本プラグイン",
-      "category": "日時処理",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0812",
-      "name": "昨日",
-      "plugin": "plugin_datetime",
-      "group": "基本プラグイン",
-      "category": "日時処理",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0813",
-      "name": "今年",
-      "plugin": "plugin_datetime",
-      "group": "基本プラグイン",
-      "category": "日時処理",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0814",
-      "name": "来年",
-      "plugin": "plugin_datetime",
-      "group": "基本プラグイン",
-      "category": "日時処理",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0815",
-      "name": "去年",
-      "plugin": "plugin_datetime",
-      "group": "基本プラグイン",
-      "category": "日時処理",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0816",
-      "name": "今月",
-      "plugin": "plugin_datetime",
-      "group": "基本プラグイン",
-      "category": "日時処理",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0817",
-      "name": "来月",
-      "plugin": "plugin_datetime",
-      "group": "基本プラグイン",
-      "category": "日時処理",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0818",
-      "name": "先月",
-      "plugin": "plugin_datetime",
-      "group": "基本プラグイン",
-      "category": "日時処理",
-      "type": "関数",
       "plannedMode": "native",
       "status": "native",
       "identityResolution": "ambiguous-name",

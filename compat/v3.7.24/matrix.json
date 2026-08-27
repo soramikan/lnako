@@ -6030,14 +6030,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "差し替え可能な壁時計で実装し、公式差分テストに成功"
+      "reason": "差し替え可能な壁時計と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0229",
@@ -6056,14 +6057,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "差し替え可能な壁時計で実装し、公式差分テストに成功"
+      "reason": "差し替え可能な壁時計と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0230",
@@ -6082,14 +6084,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "差し替え可能な壁時計で実装し、公式差分テストに成功"
+      "reason": "差し替え可能な壁時計と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0231",
@@ -6108,14 +6111,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0232",
@@ -6134,14 +6138,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0233",
@@ -6160,14 +6165,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0234",
@@ -6186,14 +6192,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0235",
@@ -6212,14 +6219,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0236",
@@ -6238,14 +6246,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0237",
@@ -6264,14 +6273,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0238",
@@ -6290,14 +6300,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0239",
@@ -6316,14 +6327,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0240",
@@ -18487,14 +18499,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "差し替え可能な壁時計で実装し、公式差分テストに成功"
+      "reason": "差し替え可能な壁時計と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0809",
@@ -18512,14 +18525,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "差し替え可能な壁時計で実装し、公式差分テストに成功"
+      "reason": "差し替え可能な壁時計と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0810",
@@ -18537,14 +18551,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0811",
@@ -18562,14 +18577,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0812",
@@ -18587,14 +18603,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0813",
@@ -18612,14 +18629,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0814",
@@ -18637,14 +18655,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0815",
@@ -18662,14 +18681,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0816",
@@ -18687,14 +18707,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0817",
@@ -18712,14 +18733,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0818",
@@ -18737,14 +18759,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-clock"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+      "reason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
       "id": "command-0819",
