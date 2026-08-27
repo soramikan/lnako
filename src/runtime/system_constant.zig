@@ -80,6 +80,10 @@ pub const dictionary_names = [_][]const u8{
     "ブラウザ名変換表",
 };
 
+pub const era_data_names = [_][]const u8{
+    "元号データ",
+};
+
 pub fn lookupScalar(name: []const u8) ?Scalar {
     for (scalar_entries) |entry| {
         if (std.mem.eql(u8, name, entry.name)) return entry.value;
@@ -108,6 +112,13 @@ pub fn isDictionary(name: []const u8) bool {
     return false;
 }
 
+pub fn isEraData(name: []const u8) bool {
+    for (era_data_names) |entry| {
+        if (std.mem.eql(u8, name, entry)) return true;
+    }
+    return false;
+}
+
 test "v3.7.24のスカラーシステム定数を解決する" {
     try std.testing.expect(lookupScalar("true").?.boolean);
     try std.testing.expect(!lookupScalar("FALSE").?.boolean);
@@ -124,4 +135,6 @@ test "v3.7.24のスカラーシステム定数を解決する" {
     try std.testing.expect(!isArray("空"));
     try std.testing.expect(isDictionary("ブラウザ名変換表"));
     try std.testing.expect(!isDictionary("対応ブラウザ一覧取得"));
+    try std.testing.expect(isEraData("元号データ"));
+    try std.testing.expect(!isEraData("曜日"));
 }

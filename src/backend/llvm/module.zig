@@ -282,6 +282,7 @@ const Emitter = struct {
     system_strings: std.ArrayList(SystemStringConstant) = .empty,
     system_arrays: std.ArrayList(usize) = .empty,
     system_dictionaries: std.ArrayList(usize) = .empty,
+    system_era_data: std.ArrayList(usize) = .empty,
     bigints: std.ArrayList(BigIntConstant) = .empty,
     locations: std.ArrayList(DebugLocation) = .empty,
     next_metadata: usize = 4,
@@ -294,6 +295,7 @@ const Emitter = struct {
         self.system_strings.deinit(self.allocator);
         self.system_arrays.deinit(self.allocator);
         self.system_dictionaries.deinit(self.allocator);
+        self.system_era_data.deinit(self.allocator);
         self.bigints.deinit(self.allocator);
         self.locations.deinit(self.allocator);
         self.output.deinit();
@@ -331,6 +333,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_array_new(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_dictionary_new(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_caniuse_agents_new(ptr)\n" ++
+                "declare void @lnako_aot_era_data_new(ptr)\n" ++
                 "declare void @lnako_aot_index_get(ptr, ptr, ptr)\n" ++
                 "declare i32 @lnako_aot_index_set(ptr, ptr, ptr)\n" ++
                 "declare void @lnako_aot_destructure_get(ptr, ptr, i64)\n" ++
@@ -490,6 +493,7 @@ const Emitter = struct {
         for (self.globals.items, 0..) |name, global_index| {
             if (system_constant.isArray(name)) try self.system_arrays.append(self.allocator, global_index);
             if (system_constant.isDictionary(name)) try self.system_dictionaries.append(self.allocator, global_index);
+            if (system_constant.isEraData(name)) try self.system_era_data.append(self.allocator, global_index);
         }
     }
 
@@ -1295,6 +1299,9 @@ const Emitter = struct {
         for (self.system_dictionaries.items) |global_index| {
             try self.output.writer.print("  call void @lnako_aot_caniuse_agents_new(ptr @lnako.global.{d})\n", .{global_index});
         }
+        for (self.system_era_data.items) |global_index| {
+            try self.output.writer.print("  call void @lnako_aot_era_data_new(ptr @lnako.global.{d})\n", .{global_index});
+        }
         for (self.program.functions) |function| if (self.globalIndex(function.name)) |global_index| {
             try self.output.writer.print("  call void @lnako_aot_function_new_named(ptr @lnako.global.{d}, ptr @lnako.wrapper.{d}, i64 {d}, ptr @lnako.function.name.{d}, i64 {d}, ptr null, i64 0)\n", .{ global_index, function.id, function.parameters.len, function.id, function.name.len });
         };
@@ -1832,6 +1839,26 @@ test "参照された辞書システム定数を専用AOT初期化子へ渡す" 
     var module = try generate(std.testing.allocator, program, "dictionary-constants.nako3", false);
     defer module.deinit(std.testing.allocator);
     const initialize = std.mem.indexOf(u8, module.text, "call void @lnako_aot_caniuse_agents_new(ptr @lnako.global.").?;
+    const entry = std.mem.indexOf(u8, module.text, "%entry.result.0 = call").?;
+    try std.testing.expect(initialize < entry);
+}
+
+test "参照された元号データを専用AOT初期化子へ渡す" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "JSON変換(元号データ)を表示\n", "era-data.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "era-data.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "era-data.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    var module = try generate(std.testing.allocator, program, "era-data.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    const initialize = std.mem.indexOf(u8, module.text, "call void @lnako_aot_era_data_new(ptr @lnako.global.").?;
     const entry = std.mem.indexOf(u8, module.text, "%entry.result.0 = call").?;
     try std.testing.expect(initialize < entry);
 }

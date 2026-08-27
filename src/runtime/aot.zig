@@ -251,6 +251,7 @@ const Runtime = struct {
     clock_milliseconds: ?i64 = null,
     caniuse_browsers: Value = .{},
     caniuse_agents: Value = .{},
+    era_data: Value = .{},
 
     fn deinit(self: *Runtime) void {
         self.dispatch_trace.deinit();
@@ -406,6 +407,7 @@ const Runtime = struct {
         self.markValue(self.system_context);
         self.markValue(self.caniuse_browsers);
         self.markValue(self.caniuse_agents);
+        self.markValue(self.era_data);
         while (self.grey) |object| {
             self.grey = object.grey_next;
             object.grey_next = null;
@@ -2552,6 +2554,15 @@ pub export fn lnako_aot_caniuse_agents_new(out: *Value) callconv(.c) void {
     };
 }
 
+pub export fn lnako_aot_era_data_new(out: *Value) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*value| value else return;
+    out.* = eraDataBuiltin(runtime) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+}
+
 pub export fn lnako_aot_index_get(out: *Value, container: *const Value, key: *const Value) callconv(.c) void {
     const container_value = container.*;
     const key_value = key.*;
@@ -3516,7 +3527,40 @@ fn caniuseAgentsBuiltin(runtime: *Runtime) !Value {
     return roots[0];
 }
 
+fn eraDataBuiltin(runtime: *Runtime) !Value {
+    if (runtime.era_data.tag != @intFromEnum(Tag.undefined)) return runtime.era_data;
+
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createArray(&.{});
+    for (era_data) |era| {
+        roots[1] = try runtime.createDictionary(&.{});
+        roots[2] = try runtimeUtf8String(runtime, "元号");
+        roots[3] = try runtimeUtf8String(runtime, era.name);
+        try runtime.setDictionary(&roots[1].object().?.payload.dictionary, roots[2], roots[3]);
+        roots[2] = try runtimeUtf8String(runtime, "改元日");
+        roots[4] = try runtimeUtf8String(runtime, era.date);
+        try runtime.setDictionary(&roots[1].object().?.payload.dictionary, roots[2], roots[4]);
+        try roots[0].object().?.payload.array.append(runtime.allocator, roots[1]);
+    }
+    runtime.era_data = roots[0];
+    return roots[0];
+}
+
 const CaniuseAgent = struct { key: []const u8, name: []const u8 };
+
+const AotEra = struct { name: []const u8, date: []const u8 };
+
+const era_data = [_]AotEra{
+    .{ .name = "令和", .date = "2019/05/01" },
+    .{ .name = "平成", .date = "1989/01/08" },
+    .{ .name = "昭和", .date = "1926/12/25" },
+    .{ .name = "大正", .date = "1912/07/30" },
+    .{ .name = "明治", .date = "1868/10/23" },
+};
 
 // This is the generated v3.7.24 browsers_agents.mjs snapshot. The AOT
 // runtime owns its copy so normal execution never loads the JavaScript
@@ -6756,6 +6800,27 @@ test "AOTブラウザ名変換表はv3.7.24の辞書をキャッシュする" {
     try std.testing.expectEqual(@as(usize, 19), roots[0].object().?.payload.dictionary.items.len);
     roots[2] = dictionaryProperty(roots[0], &.{ 'c', 'h', 'r', 'o', 'm', 'e' });
     try expectUtf16String(&runtime, roots[2], "Chrome");
+}
+
+test "AOT元号データはv3.7.24の配列・辞書をキャッシュする" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try eraDataBuiltin(&runtime);
+    roots[1] = try eraDataBuiltin(&runtime);
+    try std.testing.expectEqual(roots[0].payload, roots[1].payload);
+    try std.testing.expectEqual(Tag.array, @as(Tag, @enumFromInt(roots[0].tag)));
+    try std.testing.expectEqual(@as(usize, 5), roots[0].object().?.payload.array.items.len);
+    roots[2] = roots[0].object().?.payload.array.items[0];
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(roots[2].tag)));
+    roots[3] = dictionaryProperty(roots[2], &.{ '元', '号' });
+    roots[4] = dictionaryProperty(roots[2], &.{ '改', '元', '日' });
+    try expectUtf16String(&runtime, roots[3], "令和");
+    try expectUtf16String(&runtime, roots[4], "2019/05/01");
 }
 
 test "AOT整数実数変換はJavaScript接頭辞規則を共有する" {

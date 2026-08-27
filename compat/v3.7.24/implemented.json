@@ -1810,9 +1810,10 @@
   "元号データ": {
     "status": "native",
     "tests": [
-      "plugin-system-datetime"
+      "plugin-system-datetime",
+      "native-datetime-era-data"
     ],
-    "reason": "固定した元号表を実装し、公式差分テストに成功"
+    "reason": "固定した元号表をInterpreterと純LLVM AOTの起動時初期化へ実装し、公式差分テストに成功"
   },
   "今": {
     "status": "native",
