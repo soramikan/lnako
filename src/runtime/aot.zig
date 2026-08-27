@@ -9,6 +9,7 @@ const number_mod = @import("number.zig");
 const string_mod = @import("string.zig");
 const system_constant = @import("system_constant.zig");
 const regexp = @import("../plugins/system/regexp.zig");
+const markup = @import("../plugins/markup.zig");
 
 extern "c" fn fflush(stream: ?*std.c.FILE) c_int;
 extern "c" fn time(timer: ?*i64) i64;
@@ -2853,6 +2854,12 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         },
         .toml_parse, .toml_stringify => {
             out.* = tomlBuiltin(runtime, command, value) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .markdown_to_html, .html_pretty => {
+            out.* = markupBuiltin(runtime, command, value) catch |failure| {
                 runtime.setFailure(failure);
                 return;
             };
@@ -5790,6 +5797,20 @@ fn tomlAotIsArrayOfDictionaries(value: Value) bool {
         .array => |items| items.items.len > 0 and items.items[0].tag == @intFromEnum(Tag.dictionary),
         else => false,
     };
+}
+
+fn markupBuiltin(runtime: *Runtime, command: aot_builtin.Command, value: Value) !Value {
+    const units = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(units);
+    const source = try (string_mod.String{ .allocator = runtime.allocator, .units = units }).toUtf8Lossy(runtime.allocator);
+    defer runtime.allocator.free(source);
+    const output = switch (command) {
+        .markdown_to_html => try markup.markdownUtf8(runtime.allocator, source),
+        .html_pretty => try markup.prettyHtmlUtf8(runtime.allocator, source),
+        else => return error.UnknownCommand,
+    };
+    defer runtime.allocator.free(output);
+    return runtimeUtf8String(runtime, output);
 }
 
 fn nodeEnvironmentBuiltin(runtime: *Runtime, command: aot_builtin.Command) !Value {
@@ -9250,6 +9271,23 @@ test "AOT TOML命令は表・配列・インライン表を処理する" {
     roots[3] = try active_runtime.?.createDictionary(&.{ staticStringValue("a"), numberValue(1) });
     lnako_aot_builtin_call(&roots[4], @ptrCast(&roots[3]), 1, @intFromEnum(aot_builtin.Command.toml_stringify));
     try expectUtf16String(&active_runtime.?, roots[4], "a = 1\n");
+}
+
+test "AOTマークアップ命令はMarkdownとHTMLを純Zigで変換する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtimeUtf8String(&runtime, "# Heading\n\nplain *em* **strong**\n");
+    roots[1] = try markupBuiltin(&runtime, .markdown_to_html, roots[0]);
+    try expectUtf16String(&runtime, roots[1], "<h1>Heading</h1>\n<p>plain <em>em</em> <strong>strong</strong></p>\n");
+
+    roots[2] = try runtimeUtf8String(&runtime, "<div><p>A <strong>B</strong></p><p>C</p></div>");
+    roots[3] = try markupBuiltin(&runtime, .html_pretty, roots[2]);
+    try expectUtf16String(&runtime, roots[3], "<div>\n  <p>A <strong>B</strong>\n  </p>\n  <p>C</p>\n</div>");
 }
 
 test "AOT Node環境命令はコンパイル対象のOSとCPU名を返す" {

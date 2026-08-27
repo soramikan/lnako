@@ -606,5 +606,11 @@
     "oracle": "official-source",
     "commands": ["TOML取得", "TOML変換"],
     "source": "!「${PLUGIN_TOML}」を取り込む\nT=『title=\"x\"\nn=1_000\na=[1,2]\no={x=1}\n[server]\nport=8080\n[[products]]\nname=\"a\"\n[[products]]\nname=\"b\"』\nJSON変換(TOML取得(T))を表示\nTOML変換({\"a\":{\"b\":3}})を表示\n"
+  },
+  {
+    "id": "native-markup-commands",
+    "oracle": "official-source",
+    "commands": ["マークダウンHTML変換", "HTML整形"],
+    "source": "!「${PLUGIN_MARKUP}」を取り込む\nJSON変換(マークダウンHTML変換(『# Heading\\n\\nplain *em* **strong**』))を表示\nJSON変換(HTML整形(『<div><p>A <strong>B</strong></p><p>C</p></div>』))を表示\n"
   }
 ]

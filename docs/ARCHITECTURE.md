@@ -203,10 +203,11 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
   `tools/check_system_runtime_coverage.mjs` が実行器固有命令を同様に照合する。
   `tools/compare_plugin_system_oracle.mjs` が同じソースを公式cnako3と `lnako run` で実行する。
 
-## 数学・CSV・TOML・Promise標準命令
+## 数学・CSV・TOML・マークアップ・Promise標準命令
 
 - `plugins/math.zig` はbinary64演算とホスト注入乱数で`plugin_math`の38命令を実装する。
 - `plugins/csv.zig` はInterpreter単位のCSV設定を保持し、CSV/TSVの解析、引用、数値自動変換を実装する。AOTは`runtime/aot.zig`の`AotCsvState`と共通builtin dispatchで同じ7 entryを処理し、`native-csv-commands`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。
 - `plugins/toml.zig` は外部ランタイムへ依存せず、TOMLの表、配列テーブル、文字列、数値、配列、インライン表を扱う。AOTも同じ値境界を`runtime/aot.zig`で実装し、`native-toml-commands`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。
+- `plugins/markup.zig` はMarkdown/GFMのブロック・インライン変換とHTML整形を純Zigで実装する。AOTは共通UTF-8変換関数を`runtime/aot.zig`から呼び出し、`native-markup-commands`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。
 - Promiseの`束`は入力PromiseをFIFOマイクロタスクへ接続し、入力順の成功配列、空入力、最初の失敗を`Promise.all`と同じ順序で処理する。
 - `tests/oracle/standard-plugin-cases.json` が48命令を重複なく列挙し、カバレッジ検査と公式CLI差分テストを3環境CIで実行する。

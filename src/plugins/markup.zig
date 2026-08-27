@@ -18,6 +18,14 @@ pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Val
     return @as(?Value, try runtime.stringUtf8(output));
 }
 
+pub fn markdownUtf8(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
+    return markdown(allocator, source);
+}
+
+pub fn prettyHtmlUtf8(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
+    return prettyHtml(allocator, source);
+}
+
 fn markdown(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
     const normalized = try normalizeNewlines(allocator, source);
     defer allocator.free(normalized);

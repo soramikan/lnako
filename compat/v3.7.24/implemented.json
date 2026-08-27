@@ -3314,16 +3314,18 @@
   "マークダウンHTML変換": {
     "status": "native",
     "tests": [
-      "plugin-markup-all"
+      "plugin-markup-all",
+      "native-markup-commands"
     ],
-    "reason": "固定した公式プラグインとの差分テストに成功"
+    "reason": "固定した公式プラグインとの差分テストと純LLVM AOT dispatchの公式7経路差分テストに成功"
   },
   "HTML整形": {
     "status": "native",
     "tests": [
-      "plugin-markup-all"
+      "plugin-markup-all",
+      "native-markup-commands"
     ],
-    "reason": "固定した公式プラグインとの差分テストに成功"
+    "reason": "固定した公式プラグインとの差分テストと純LLVM AOT dispatchの公式7経路差分テストに成功"
   },
   "漢数字": {
     "status": "native",
