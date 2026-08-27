@@ -2728,6 +2728,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
+        .math_sin, .math_cos, .math_tan, .math_arcsin, .math_arccos, .math_arctan, .math_atan2, .math_coordinate_angle, .math_rad2deg, .math_deg2rad, .math_sign, .math_abs, .math_exp, .math_hypot, .math_log, .math_logn, .math_frac, .math_integer, .math_sqrt, .math_round, .math_decimal_ceil, .math_decimal_floor, .math_decimal_round, .math_ceil, .math_floor => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = mathBuiltin(runtime, command, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .to_string => {
             const units = valueUtf16Alloc(runtime, value) catch |failure| {
                 runtime.setFailure(failure);
@@ -3348,6 +3355,96 @@ fn parseFloatBuiltin(runtime: *Runtime, value: Value) !f64 {
             break :blk try number_mod.parseFloatPrefix(runtime.allocator, units);
         },
     };
+}
+
+fn mathBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    const a: Value = if (arguments.len > 0) arguments[0] else .{};
+    const b: Value = if (arguments.len > 1) arguments[1] else .{};
+    return switch (command) {
+        .math_sin => numberValue(@sin(try valueToNumberRuntime(runtime, a))),
+        .math_cos => numberValue(@cos(try valueToNumberRuntime(runtime, a))),
+        .math_tan => numberValue(@tan(try valueToNumberRuntime(runtime, a))),
+        .math_arcsin => numberValue(std.math.asin(try valueToNumberRuntime(runtime, a))),
+        .math_arccos => numberValue(std.math.acos(try valueToNumberRuntime(runtime, a))),
+        .math_arctan => numberValue(std.math.atan(try valueToNumberRuntime(runtime, a))),
+        .math_atan2 => numberValue(std.math.atan2(try valueToNumberRuntime(runtime, a), try valueToNumberRuntime(runtime, b))),
+        .math_coordinate_angle => numberValue(try mathCoordinateAngle(runtime, a)),
+        .math_rad2deg => numberValue(try valueToNumberRuntime(runtime, a) / std.math.pi * 180),
+        .math_deg2rad => numberValue(try valueToNumberRuntime(runtime, a) / 180 * std.math.pi),
+        .math_sign => numberValue(try mathSign(runtime, a)),
+        .math_abs => numberValue(@abs(try valueToNumberRuntime(runtime, a))),
+        .math_exp => numberValue(@exp(try valueToNumberRuntime(runtime, a))),
+        .math_hypot => numberValue(std.math.hypot(try valueToNumberRuntime(runtime, a), try valueToNumberRuntime(runtime, b))),
+        .math_log => numberValue(@log(try valueToNumberRuntime(runtime, a))),
+        .math_logn => numberValue(try mathLogarithm(runtime, a, b)),
+        .math_frac => numberValue(@rem(try valueToNumberRuntime(runtime, a), 1)),
+        .math_integer => numberValue(@trunc(try valueToNumberRuntime(runtime, a))),
+        .math_sqrt => numberValue(@sqrt(try valueToNumberRuntime(runtime, a))),
+        .math_round => numberValue(mathRound(try valueToNumberRuntime(runtime, a))),
+        .math_decimal_ceil => numberValue(try mathDecimalRound(runtime, a, b, .ceil)),
+        .math_decimal_floor => numberValue(try mathDecimalRound(runtime, a, b, .floor)),
+        .math_decimal_round => numberValue(try mathDecimalRound(runtime, a, b, .round)),
+        .math_ceil => numberValue(@ceil(try valueToNumberRuntime(runtime, a))),
+        .math_floor => numberValue(@floor(try valueToNumberRuntime(runtime, a))),
+        else => error.UnknownCommand,
+    };
+}
+
+fn mathCoordinateAngle(runtime: *Runtime, source: Value) !f64 {
+    if (source.tag != @intFromEnum(Tag.array)) return std.math.nan(f64);
+    const items = source.object().?.payload.array.items;
+    const x = try valueToNumberRuntime(runtime, if (items.len > 0) items[0] else .{});
+    const y = try valueToNumberRuntime(runtime, if (items.len > 1) items[1] else .{});
+    return std.math.atan2(y, x) / std.math.pi * 180;
+}
+
+fn mathParseFloat(runtime: *Runtime, value: Value) !f64 {
+    return switch (@as(Tag, @enumFromInt(value.tag))) {
+        .number => @bitCast(value.payload),
+        .bigint => value.object().?.payload.bigint.toF64(),
+        else => blk: {
+            const units = try valueUtf16Alloc(runtime, value);
+            defer runtime.allocator.free(units);
+            break :blk number_mod.parseFloatPrefix(runtime.allocator, units);
+        },
+    };
+}
+
+fn mathSign(runtime: *Runtime, source: Value) !f64 {
+    const parsed = try mathParseFloat(runtime, source);
+    if (parsed == 0) return 0;
+    const coerced = try valueToNumberRuntime(runtime, source);
+    return if (coerced > 0) 1 else -1;
+}
+
+fn mathLogarithm(runtime: *Runtime, base_value: Value, source_value: Value) !f64 {
+    const base = try valueToNumberRuntime(runtime, base_value);
+    const source = try valueToNumberRuntime(runtime, source_value);
+    if (base == 2) return std.math.log2e * @log(source);
+    if (base == 10) return std.math.log10e * @log(source);
+    return @log(source) / @log(base);
+}
+
+const MathDecimalMode = enum { ceil, floor, round };
+
+fn mathDecimalRound(runtime: *Runtime, source: Value, digits_value: Value, mode: MathDecimalMode) !f64 {
+    const value = try valueToNumberRuntime(runtime, source);
+    const digits = try valueToNumberRuntime(runtime, digits_value);
+    const base = std.math.pow(f64, 10, digits);
+    const scaled = value * base;
+    const rounded = switch (mode) {
+        .ceil => @ceil(scaled),
+        .floor => @floor(scaled),
+        .round => mathRound(scaled),
+    };
+    return rounded / base;
+}
+
+fn mathRound(value: f64) f64 {
+    if (!std.math.isFinite(value) or value == 0) return value;
+    const result = @floor(value + 0.5);
+    if (result == 0 and value < 0) return -0.0;
+    return result;
 }
 
 fn radixBuiltin(runtime: *Runtime, value: Value, radix_value: Value) !Value {
@@ -6253,6 +6350,42 @@ test "AOT型確認は動的値をJavaScript型名へ変換する" {
     defer lnako_aot_pop_roots(&frame);
     lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.type_of));
     try std.testing.expectEqualStrings("number", staticUtf8(roots[1]));
+}
+
+test "AOT数学命令dispatchは数値・配列・別名を処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = numberValue(0);
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.math_sin));
+    try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast(roots[1].payload)));
+
+    roots[2] = numberValue(2);
+    roots[3] = numberValue(8);
+    var logarithm_arguments = [_]Value{ roots[2], roots[3] };
+    lnako_aot_builtin_call(&roots[4], &logarithm_arguments, logarithm_arguments.len, @intFromEnum(aot_builtin.Command.math_logn));
+    try std.testing.expectApproxEqAbs(@as(f64, 3), @as(f64, @bitCast(roots[4].payload)), 1e-14);
+
+    roots[5] = try active_runtime.?.createArray(&.{ numberValue(0), numberValue(1) });
+    lnako_aot_builtin_call(&roots[6], @ptrCast(&roots[5]), 1, @intFromEnum(aot_builtin.Command.math_coordinate_angle));
+    try std.testing.expectApproxEqAbs(@as(f64, 90), @as(f64, @bitCast(roots[6].payload)), 1e-12);
+
+    roots[7] = numberValue(-1.2);
+    lnako_aot_builtin_call(&roots[8], @ptrCast(&roots[7]), 1, @intFromEnum(aot_builtin.Command.math_floor));
+    try std.testing.expectEqual(@as(f64, -2), @as(f64, @bitCast(roots[8].payload)));
+
+    roots[9] = numberValue(-1.5);
+    lnako_aot_builtin_call(&roots[10], @ptrCast(&roots[9]), 1, @intFromEnum(aot_builtin.Command.math_round));
+    try std.testing.expectEqual(@as(f64, -1), @as(f64, @bitCast(roots[10].payload)));
 }
 
 test "AOT整数実数変換はJavaScript接頭辞規則を共有する" {

@@ -508,5 +508,10 @@
     "id": "native-system-table-column-sum-bigint-error",
     "oracle": "official-generated",
     "source": "表列合計([[1n]],0)を表示\n"
+  },
+  {
+    "id": "native-math-deterministic",
+    "commands": ["SIN", "COS", "TAN", "ARCSIN", "ARCCOS", "ARCTAN", "ATAN2", "座標角度計算", "RAD2DEG", "DEG2RAD", "度変換", "ラジアン変換", "SIGN", "符号", "ABS", "絶対値", "EXP", "HYPOT", "斜辺", "LN", "LOG", "LOGN", "FRAC", "小数部分", "整数部分", "SQRT", "平方根", "ROUND", "四捨五入", "小数点切上", "小数点切下", "小数点四捨五入", "CEIL", "切上", "FLOOR", "切捨"],
+    "source": "SIN(0)を表示\nCOS(0)を表示\nTAN(0)を表示\nARCSIN(0)を表示\nARCCOS(1)を表示\nARCTAN(0)を表示\nATAN2(0,1)を表示\n座標角度計算([1,0])を表示\nRAD2DEG(PI)を表示\nDEG2RAD(180)を表示\n度変換(PI)を表示\nラジアン変換(180)を表示\nSIGN(-2)を表示\n符号(0)を表示\nABS(-3)を表示\n絶対値(-4)を表示\nEXP(0)を表示\nHYPOT(3,4)を表示\n斜辺(5,12)を表示\nLN(1)を表示\nLOG(1)を表示\nLOGN(2,8)を表示\nFRAC(-1.25)を表示\n小数部分(2.75)を表示\n整数部分(-2.75)を表示\nSQRT(9)を表示\n平方根(16)を表示\nROUND(-1.5)を表示\n四捨五入(1.5)を表示\n小数点切上(1.231,2)を表示\n小数点切下(1.239,2)を表示\n小数点四捨五入(1.235,2)を表示\nCEIL(1.2)を表示\n切上(-1.2)を表示\nFLOOR(1.8)を表示\n切捨(-1.2)を表示\n"
   }
 ]

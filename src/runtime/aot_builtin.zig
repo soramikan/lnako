@@ -147,6 +147,31 @@ pub const Command = enum(u16) {
     json_encode,
     json_encode_pretty,
     json_decode,
+    math_sin,
+    math_cos,
+    math_tan,
+    math_arcsin,
+    math_arccos,
+    math_arctan,
+    math_atan2,
+    math_coordinate_angle,
+    math_rad2deg,
+    math_deg2rad,
+    math_sign,
+    math_abs,
+    math_exp,
+    math_hypot,
+    math_log,
+    math_logn,
+    math_frac,
+    math_integer,
+    math_sqrt,
+    math_round,
+    math_decimal_ceil,
+    math_decimal_floor,
+    math_decimal_round,
+    math_ceil,
+    math_floor,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -303,6 +328,31 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "JSON変換") or std.mem.eql(u8, name, "JSONエンコード") or std.mem.eql(u8, name, "JSON_E")) return .json_encode;
     if (std.mem.eql(u8, name, "JSONエンコード整形") or std.mem.eql(u8, name, "JSON_ES")) return .json_encode_pretty;
     if (std.mem.eql(u8, name, "JSON取得") or std.mem.eql(u8, name, "JSONデコード") or std.mem.eql(u8, name, "JSON_D")) return .json_decode;
+    if (std.mem.eql(u8, name, "SIN")) return .math_sin;
+    if (std.mem.eql(u8, name, "COS")) return .math_cos;
+    if (std.mem.eql(u8, name, "TAN")) return .math_tan;
+    if (std.mem.eql(u8, name, "ARCSIN")) return .math_arcsin;
+    if (std.mem.eql(u8, name, "ARCCOS")) return .math_arccos;
+    if (std.mem.eql(u8, name, "ARCTAN")) return .math_arctan;
+    if (std.mem.eql(u8, name, "ATAN2")) return .math_atan2;
+    if (std.mem.eql(u8, name, "座標角度計算")) return .math_coordinate_angle;
+    if (std.mem.eql(u8, name, "RAD2DEG") or std.mem.eql(u8, name, "度変換")) return .math_rad2deg;
+    if (std.mem.eql(u8, name, "DEG2RAD") or std.mem.eql(u8, name, "ラジアン変換")) return .math_deg2rad;
+    if (std.mem.eql(u8, name, "SIGN") or std.mem.eql(u8, name, "符号")) return .math_sign;
+    if (std.mem.eql(u8, name, "ABS") or std.mem.eql(u8, name, "絶対値")) return .math_abs;
+    if (std.mem.eql(u8, name, "EXP")) return .math_exp;
+    if (std.mem.eql(u8, name, "HYPOT") or std.mem.eql(u8, name, "斜辺")) return .math_hypot;
+    if (std.mem.eql(u8, name, "LN") or std.mem.eql(u8, name, "LOG")) return .math_log;
+    if (std.mem.eql(u8, name, "LOGN")) return .math_logn;
+    if (std.mem.eql(u8, name, "FRAC") or std.mem.eql(u8, name, "小数部分")) return .math_frac;
+    if (std.mem.eql(u8, name, "整数部分")) return .math_integer;
+    if (std.mem.eql(u8, name, "SQRT") or std.mem.eql(u8, name, "平方根")) return .math_sqrt;
+    if (std.mem.eql(u8, name, "ROUND") or std.mem.eql(u8, name, "四捨五入")) return .math_round;
+    if (std.mem.eql(u8, name, "小数点切上")) return .math_decimal_ceil;
+    if (std.mem.eql(u8, name, "小数点切下")) return .math_decimal_floor;
+    if (std.mem.eql(u8, name, "小数点四捨五入")) return .math_decimal_round;
+    if (std.mem.eql(u8, name, "CEIL") or std.mem.eql(u8, name, "切上")) return .math_ceil;
+    if (std.mem.eql(u8, name, "FLOOR") or std.mem.eql(u8, name, "切捨")) return .math_floor;
     return null;
 }
 
@@ -334,6 +384,13 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.json_decode, lookup("JSON取得").?);
     try std.testing.expectEqual(Command.json_decode, lookup("JSONデコード").?);
     try std.testing.expectEqual(Command.json_decode, lookup("JSON_D").?);
+    try std.testing.expectEqual(Command.math_sin, lookup("SIN").?);
+    try std.testing.expectEqual(Command.math_rad2deg, lookup("度変換").?);
+    try std.testing.expectEqual(Command.math_rad2deg, lookup("RAD2DEG").?);
+    try std.testing.expectEqual(Command.math_sign, lookup("符号").?);
+    try std.testing.expectEqual(Command.math_sign, lookup("SIGN").?);
+    try std.testing.expectEqual(Command.math_floor, lookup("切捨").?);
+    try std.testing.expectEqual(Command.math_floor, lookup("FLOOR").?);
     try std.testing.expectEqual(Command.rgb, lookup("RGB").?);
     try std.testing.expectEqual(Command.bit_or, lookup("OR").?);
     try std.testing.expectEqual(Command.bit_and, lookup("AND").?);

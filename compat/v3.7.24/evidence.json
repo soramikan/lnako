@@ -8,14 +8,14 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 220,
-    "nativeAot": 115,
+    "total": 221,
+    "nativeAot": 116,
     "interpreter": 96,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
-    "paired": 174,
-    "interpreter-only": 349,
+    "paired": 210,
+    "interpreter-only": 313,
     "aot-only": 0,
     "none": 0,
     "compat-js-only": 4
@@ -10405,7 +10405,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10414,14 +10416,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -10432,7 +10438,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10441,14 +10449,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -10459,7 +10471,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10468,14 +10482,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -10486,7 +10504,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10495,14 +10515,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -10513,7 +10537,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10522,14 +10548,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -10540,7 +10570,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10549,14 +10581,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -10567,7 +10603,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10576,14 +10614,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -10594,7 +10636,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10603,14 +10647,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -10621,7 +10669,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10630,14 +10680,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -10648,7 +10702,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10657,14 +10713,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -10675,7 +10735,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10684,14 +10746,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -10702,7 +10768,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10711,14 +10779,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -10729,7 +10801,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10738,14 +10812,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -10756,7 +10834,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10765,14 +10845,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -10783,7 +10867,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10792,14 +10878,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -10810,7 +10900,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10819,14 +10911,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -10837,7 +10933,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10846,14 +10944,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -10864,7 +10966,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10873,14 +10977,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -10891,7 +10999,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10900,14 +11010,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -10918,7 +11032,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10927,14 +11043,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -10945,7 +11065,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10954,14 +11076,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -10972,7 +11098,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -10981,14 +11109,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -10999,7 +11131,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -11008,14 +11142,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -11026,7 +11164,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -11035,14 +11175,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -11053,7 +11197,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -11062,14 +11208,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -11134,7 +11284,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -11143,14 +11295,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -11161,7 +11317,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -11170,14 +11328,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -11188,7 +11350,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -11197,14 +11361,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -11215,7 +11383,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -11224,14 +11394,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -11242,7 +11416,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -11251,14 +11427,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -11269,7 +11449,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -11278,14 +11460,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -11296,7 +11482,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -11305,14 +11493,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -11323,7 +11515,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -11332,14 +11526,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -11350,7 +11548,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -11359,14 +11559,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -11377,7 +11581,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -11386,14 +11592,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
@@ -11404,7 +11614,9 @@
       "interpreterFixtureIds": [
         "plugin-math-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-math-deterministic"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -11413,14 +11625,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-math-deterministic": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製数学プラグインで実装し、公式差分テストに成功"
     },
     {
