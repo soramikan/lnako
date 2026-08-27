@@ -1861,14 +1861,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "system-runtime-catalog-and-namespace"
+        "system-runtime-catalog-and-namespace",
+        "native-system-global-function-names"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "Zig製plugin_system実装と純LLVM AOTの登録済み関数列挙を公式cnako3との差分テストで確認"
     },
     {
       "id": "command-0072",

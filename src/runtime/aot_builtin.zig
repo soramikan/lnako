@@ -255,6 +255,7 @@ pub const Command = enum(u16) {
     async_noop,
     system_await_execute,
     system_execute,
+    system_global_function_names,
     system_function_names,
     system_function_exists,
     plugin_names,
@@ -530,6 +531,7 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "ASYNC")) return .async_noop;
     if (std.mem.eql(u8, name, "AWAIT実行")) return .system_await_execute;
     if (std.mem.eql(u8, name, "実行")) return .system_execute;
+    if (std.mem.eql(u8, name, "グローバル関数一覧取得")) return .system_global_function_names;
     if (std.mem.eql(u8, name, "システム関数一覧取得")) return .system_function_names;
     if (std.mem.eql(u8, name, "システム関数存在")) return .system_function_exists;
     if (std.mem.eql(u8, name, "プラグイン一覧取得") or std.mem.eql(u8, name, "モジュール一覧取得")) return .plugin_names;
@@ -720,6 +722,7 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.async_noop, lookup("ASYNC").?);
     try std.testing.expectEqual(Command.system_await_execute, lookup("AWAIT実行").?);
     try std.testing.expectEqual(Command.system_execute, lookup("実行").?);
+    try std.testing.expectEqual(Command.system_global_function_names, lookup("グローバル関数一覧取得").?);
     try std.testing.expectEqual(Command.system_function_names, lookup("システム関数一覧取得").?);
     try std.testing.expectEqual(Command.system_function_exists, lookup("システム関数存在").?);
     try std.testing.expectEqual(Command.plugin_names, lookup("プラグイン一覧取得").?);

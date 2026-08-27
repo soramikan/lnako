@@ -686,5 +686,10 @@
     "id": "native-system-execute",
     "commands": ["AWAIT実行", "実行"],
     "source": "●七とは\n7で戻る\nここまで\n●(Aを)加算とは\nA+1で戻る\nここまで\n実行(\"七\")を表示\n実行(9)を表示\nAWAIT実行(\"加算\",[3])を表示\nF=関数(A)それはA+2;ここまで\nAWAIT実行(F,4)を表示\n"
+  },
+  {
+    "id": "native-system-global-function-names",
+    "commands": ["グローバル関数一覧取得"],
+    "source": "●甲とは\n1で戻る\nここまで\n●(Aを)乙とは\nAで戻る\nここまで\nJSON変換(グローバル関数一覧取得())を表示\n"
   }
 ]

@@ -2674,6 +2674,28 @@ test "AOTシステムカタログ命令は一覧の順序と存在判定を保�
     try std.testing.expectEqual(lexer.exported_reserved_words.len, roots[7].object().?.payload.array.items.len);
 }
 
+test "AOTグローバル関数一覧取得は登録済み関数を作成順で返す" {
+    var runtime = Runtime{ .allocator = std.testing.allocator, .next_collection = 1 };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try active_runtime.?.createNamedFunction(testAotFunction, 1, "module__甲", &.{});
+    roots[1] = try active_runtime.?.createNamedFunction(testAotFunction, 1, "module__乙", &.{});
+    lnako_aot_builtin_call(&roots[2], null, 0, @intFromEnum(aot_builtin.Command.system_global_function_names));
+    const names = roots[2].object().?.payload.array.items;
+    try std.testing.expectEqual(@as(usize, 2), names.len);
+    try expectUtf16String(&active_runtime.?, names[0], "module__甲");
+    try expectUtf16String(&active_runtime.?, names[1], "module__乙");
+}
+
 test "AOT ASSERT等はNodeのSameValue境界と戻り値を保つ" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -3258,7 +3280,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all and command != .namespace_pop and command != .async_noop and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all and command != .namespace_pop and command != .async_noop and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -3351,6 +3373,12 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         .system_await_execute, .system_execute => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = systemExecutionBuiltin(runtime, command, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .system_global_function_names => {
+            out.* = systemGlobalFunctionNamesBuiltin(runtime) catch |failure| {
                 runtime.setFailure(failure);
                 return;
             };
@@ -6424,6 +6452,20 @@ fn systemExecutionBuiltin(runtime: *Runtime, command: aot_builtin.Command, argum
         },
         else => return error.UnknownCommand,
     }
+}
+
+fn systemGlobalFunctionNamesBuiltin(runtime: *Runtime) !Value {
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createArray(&.{});
+    for (runtime.named_functions.items) |registered| {
+        roots[1] = try runtimeUtf8String(runtime, registered.name);
+        try roots[0].object().?.payload.array.append(runtime.allocator, roots[1]);
+    }
+    return roots[0];
 }
 
 fn nodeEnvironmentBuiltin(runtime: *Runtime, command: aot_builtin.Command) !Value {
