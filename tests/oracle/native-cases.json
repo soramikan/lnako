@@ -330,6 +330,11 @@
     "source": "UNIXTIME変換(\"1970/01/01 09:00:01\")を表示\nUNIX時間変換(\"1970/01/01 09:00:02\")を表示\n日時変換(3)を表示\n日時変換(\"3\")を表示\n"
   },
   {
+    "id": "native-system-url-and-base64",
+    "commands": ["URLエンコード", "URLデコード", "URLパラメータ解析", "BASE64エンコード", "BASE64デコード"],
+    "source": "URLエンコード(\"A あ/😀\")を表示\nURLデコード(\"A%20%E3%81%82%2F%F0%9F%98%80\")を表示\nJSON変換(URLパラメータ解析(\"https://example.test/?a=1&a=2&flag&x=%E3%81%82\"))を表示\nBASE64エンコード(\"こんにちは\")を表示\nBASE64デコード(\"44GT44KT44Gr44Gh44Gv\")を表示\nBASE64エンコード([65,300,-1])を表示\n"
+  },
+  {
     "id": "native-string-template",
     "source": "A=30\n「ab{A+1}cd｛A｝」を表示\nB=[2,3]\n「{B[0]}:{B[1]}」を表示\n「A{A}C}D」を表示\n『展開しない{A}』を表示\n●(Nを)整形とは\n「<<{N+1}>>」で戻る\nここまで\n整形(4)を表示\n"
   },

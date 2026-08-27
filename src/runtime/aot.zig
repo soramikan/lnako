@@ -2769,6 +2769,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
+        .url_encode, .url_decode, .url_parameters, .base64_encode, .base64_decode => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = urlBuiltin(runtime, command, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .caniuse_browsers => {
             out.* = caniuseBrowsersBuiltin(runtime) catch |failure| {
                 runtime.setFailure(failure);
@@ -3837,6 +3844,222 @@ fn runtimeUtf8String(runtime: *Runtime, text: []const u8) !Value {
     const units = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, text);
     defer runtime.allocator.free(units);
     return runtime.createString(units);
+}
+
+fn runtimeUtf8StringLossy(runtime: *Runtime, text: []const u8) !Value {
+    const decoded = try string_mod.String.fromUtf8Lossy(runtime.allocator, text);
+    return runtime.ownString(decoded.units);
+}
+
+fn urlBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    if (arguments.len < 1) return error.InvalidArgumentCount;
+    return switch (command) {
+        .url_encode => urlEncodeBuiltin(runtime, arguments[0]),
+        .url_decode => urlDecodeBuiltin(runtime, arguments[0]),
+        .url_parameters => urlParametersBuiltin(runtime, arguments[0]),
+        .base64_encode => base64EncodeBuiltin(runtime, arguments[0]),
+        .base64_decode => base64DecodeBuiltin(runtime, arguments[0]),
+        else => error.UnknownCommand,
+    };
+}
+
+fn urlEncodeBuiltin(runtime: *Runtime, source: Value) !Value {
+    const units = try valueUtf16Alloc(runtime, source);
+    defer runtime.allocator.free(units);
+    var output: std.ArrayList(u8) = .empty;
+    defer output.deinit(runtime.allocator);
+
+    var index: usize = 0;
+    while (index < units.len) {
+        const first = units[index];
+        const codepoint: u21 = switch (first) {
+            0xd800...0xdbff => blk: {
+                if (index + 1 >= units.len) return error.MalformedUriSequence;
+                const second = units[index + 1];
+                if (second < 0xdc00 or second > 0xdfff) return error.MalformedUriSequence;
+                index += 1;
+                break :blk @intCast(0x10000 + ((@as(u32, first) - 0xd800) << 10) + (@as(u32, second) - 0xdc00));
+            },
+            0xdc00...0xdfff => return error.MalformedUriSequence,
+            else => @intCast(first),
+        };
+        var encoded: [4]u8 = undefined;
+        const length = try std.unicode.utf8Encode(codepoint, &encoded);
+        for (encoded[0..length]) |byte| {
+            if (urlIsComponentByte(byte)) {
+                try output.append(runtime.allocator, byte);
+            } else {
+                try output.appendSlice(runtime.allocator, &.{ '%', urlHexDigit(byte >> 4), urlHexDigit(byte & 0xf) });
+            }
+        }
+        index += 1;
+    }
+    return runtimeUtf8String(runtime, output.items);
+}
+
+fn urlDecodeBuiltin(runtime: *Runtime, source: Value) !Value {
+    const units = try valueUtf16Alloc(runtime, source);
+    defer runtime.allocator.free(units);
+    return urlDecodeUnits(runtime, units);
+}
+
+fn urlDecodeUnits(runtime: *Runtime, units: []const u16) !Value {
+    var output: std.ArrayList(u8) = .empty;
+    defer output.deinit(runtime.allocator);
+    var index: usize = 0;
+    while (index < units.len) {
+        const unit = units[index];
+        if (unit == '%') {
+            if (index + 2 >= units.len) return error.MalformedUriSequence;
+            const high = urlHexValue(units[index + 1]) orelse return error.MalformedUriSequence;
+            const low = urlHexValue(units[index + 2]) orelse return error.MalformedUriSequence;
+            try output.append(runtime.allocator, high << 4 | low);
+            index += 3;
+            continue;
+        }
+        if (unit > 0x7f) {
+            var codepoint: u21 = undefined;
+            if (unit >= 0xd800 and unit <= 0xdbff) {
+                if (index + 1 >= units.len or units[index + 1] < 0xdc00 or units[index + 1] > 0xdfff) return error.MalformedUriSequence;
+                const second = units[index + 1];
+                codepoint = @intCast(0x10000 + ((@as(u32, unit) - 0xd800) << 10) + (@as(u32, second) - 0xdc00));
+                index += 2;
+            } else if (unit >= 0xdc00 and unit <= 0xdfff) {
+                return error.MalformedUriSequence;
+            } else {
+                codepoint = @intCast(unit);
+                index += 1;
+            }
+            var encoded: [4]u8 = undefined;
+            const length = try std.unicode.utf8Encode(codepoint, &encoded);
+            try output.appendSlice(runtime.allocator, encoded[0..length]);
+            continue;
+        }
+        try output.append(runtime.allocator, @intCast(unit));
+        index += 1;
+    }
+    if (!std.unicode.utf8ValidateSlice(output.items)) return error.MalformedUriSequence;
+    return runtimeUtf8String(runtime, output.items);
+}
+
+fn urlParametersBuiltin(runtime: *Runtime, source: Value) !Value {
+    var protected = [_]Value{ source, try runtime.createDictionary(&.{}) };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &protected, protected.len);
+    defer runtime.popRoots(&frame);
+    if (!isString(protected[0])) return protected[1];
+    const units = try valueUtf16Alloc(runtime, protected[0]);
+    defer runtime.allocator.free(units);
+    const question = std.mem.indexOfScalar(u16, units, '?') orelse return protected[1];
+    var cursor = question + 1;
+    while (cursor <= units.len) {
+        const ampersand = std.mem.indexOfScalarPos(u16, units, cursor, '&') orelse units.len;
+        const line = units[cursor..ampersand];
+        if (line.len > 0) {
+            const equal = std.mem.indexOfScalar(u16, line, '=');
+            const raw_key = if (equal) |position| line[0..position] else line;
+            const raw_value = if (equal) |position| line[position + 1 ..] else &.{};
+            var entry = [_]Value{ .{}, .{} };
+            var entry_frame = RootFrame{};
+            runtime.pushRoots(&entry_frame, &entry, entry.len);
+            defer runtime.popRoots(&entry_frame);
+            entry[0] = try urlDecodeUnits(runtime, raw_key);
+            entry[1] = try urlDecodeUnits(runtime, raw_value);
+            try runtime.setDictionary(&protected[1].object().?.payload.dictionary, entry[0], entry[1]);
+        }
+        if (ampersand == units.len) break;
+        cursor = ampersand + 1;
+    }
+    return protected[1];
+}
+
+fn base64EncodeBuiltin(runtime: *Runtime, source: Value) !Value {
+    var bytes: []u8 = undefined;
+    var owned = false;
+    switch (@as(Tag, @enumFromInt(source.tag))) {
+        .static_utf8_string, .utf16_string => {
+            const units = try valueUtf16Alloc(runtime, source);
+            defer runtime.allocator.free(units);
+            bytes = try (string_mod.String{ .allocator = runtime.allocator, .units = units }).toUtf8Lossy(runtime.allocator);
+            owned = true;
+        },
+        .array => {
+            const items = source.object().?.payload.array.items;
+            bytes = try runtime.allocator.alloc(u8, items.len);
+            owned = true;
+            for (items, bytes) |item, *byte| {
+                const number = try valueToNumberRuntime(runtime, item);
+                if (!std.math.isFinite(number) or number == 0) {
+                    byte.* = 0;
+                } else {
+                    const remainder = @mod(@trunc(number), @as(f64, 256));
+                    byte.* = @intFromFloat(if (remainder < 0) remainder + 256 else remainder);
+                }
+            }
+        },
+        else => return error.InvalidBase64Source,
+    }
+    defer if (owned) runtime.allocator.free(bytes);
+    const encoded = try runtime.allocator.alloc(u8, std.base64.standard.Encoder.calcSize(bytes.len));
+    defer runtime.allocator.free(encoded);
+    _ = std.base64.standard.Encoder.encode(encoded, bytes);
+    return runtimeUtf8String(runtime, encoded);
+}
+
+fn base64DecodeBuiltin(runtime: *Runtime, source: Value) !Value {
+    if (!isString(source)) return error.InvalidBase64Source;
+    const units = try valueUtf16Alloc(runtime, source);
+    defer runtime.allocator.free(units);
+    var decoded: std.ArrayList(u8) = .empty;
+    defer decoded.deinit(runtime.allocator);
+    var group: [4]u8 = undefined;
+    var length: usize = 0;
+    for (units) |unit| {
+        if (unit == '=') break;
+        const value = base64Digit(unit) orelse continue;
+        group[length] = value;
+        length += 1;
+        if (length == 4) {
+            try decoded.appendSlice(runtime.allocator, &.{
+                group[0] << 2 | group[1] >> 4,
+                group[1] << 4 | group[2] >> 2,
+                group[2] << 6 | group[3],
+            });
+            length = 0;
+        }
+    }
+    if (length >= 2) try decoded.append(runtime.allocator, group[0] << 2 | group[1] >> 4);
+    if (length >= 3) try decoded.append(runtime.allocator, group[1] << 4 | group[2] >> 2);
+    return runtimeUtf8StringLossy(runtime, decoded.items);
+}
+
+fn urlIsComponentByte(byte: u8) bool {
+    return std.ascii.isAlphanumeric(byte) or switch (byte) {
+        '-', '_', '.', '!', '~', '*', '\'', '(', ')' => true,
+        else => false,
+    };
+}
+
+fn urlHexDigit(value: u8) u8 {
+    return if (value < 10) '0' + value else 'A' + value - 10;
+}
+
+fn urlHexValue(unit: u16) ?u8 {
+    if (unit >= '0' and unit <= '9') return @intCast(unit - '0');
+    if (unit >= 'a' and unit <= 'f') return @intCast(unit - 'a' + 10);
+    if (unit >= 'A' and unit <= 'F') return @intCast(unit - 'A' + 10);
+    return null;
+}
+
+fn base64Digit(unit: u16) ?u8 {
+    return switch (unit) {
+        'A'...'Z' => @intCast(unit - 'A'),
+        'a'...'z' => @intCast(unit - 'a' + 26),
+        '0'...'9' => @intCast(unit - '0' + 52),
+        '+', '-' => 62,
+        '/', '_' => 63,
+        else => null,
+    };
 }
 
 fn datetimeCivilFromDays(days_input: i64) struct { year: i64, month: i64, day: i64 } {
@@ -6958,6 +7181,40 @@ test "AOT Unix日時変換は秒と日時文字列を相互変換する" {
     arguments[0] = try runtimeUtf8String(&runtime, "3");
     roots[3] = try datetimeBuiltin(&runtime, .datetime_date_time, &arguments);
     try expectUtf16String(&runtime, roots[3], "1970/01/01 09:00:03");
+}
+
+test "AOT URLとBase64命令はUTF-16文字列と配列を処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtimeUtf8String(&runtime, "A あ/😀");
+    var arguments = [_]Value{roots[0]};
+    roots[1] = try urlBuiltin(&runtime, .url_encode, &arguments);
+    try expectUtf16String(&runtime, roots[1], "A%20%E3%81%82%2F%F0%9F%98%80");
+    arguments[0] = roots[1];
+    roots[2] = try urlBuiltin(&runtime, .url_decode, &arguments);
+    try expectUtf16String(&runtime, roots[2], "A あ/😀");
+
+    arguments[0] = try runtimeUtf8String(&runtime, "https://example.test/?a=1&a=2&flag");
+    roots[3] = try urlBuiltin(&runtime, .url_parameters, &arguments);
+    try expectUtf16String(&runtime, dictionaryProperty(roots[3], &.{'a'}), "2");
+    try expectUtf16String(&runtime, dictionaryProperty(roots[3], &.{ 'f', 'l', 'a', 'g' }), "");
+
+    arguments[0] = try runtimeUtf8String(&runtime, "こんにちは");
+    roots[4] = try urlBuiltin(&runtime, .base64_encode, &arguments);
+    try expectUtf16String(&runtime, roots[4], "44GT44KT44Gr44Gh44Gv");
+    arguments[0] = roots[4];
+    roots[5] = try urlBuiltin(&runtime, .base64_decode, &arguments);
+    try expectUtf16String(&runtime, roots[5], "こんにちは");
+
+    roots[6] = try runtime.createArray(&.{ numberValue(65), numberValue(300), numberValue(-1) });
+    arguments[0] = roots[6];
+    roots[7] = try urlBuiltin(&runtime, .base64_encode, &arguments);
+    try expectUtf16String(&runtime, roots[7], "QSz/");
 }
 
 test "AOT対応ブラウザ一覧取得はv3.7.24の辞書をキャッシュする" {

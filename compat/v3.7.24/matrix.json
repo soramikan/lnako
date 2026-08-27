@@ -6828,14 +6828,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-url"
+        "plugin-system-url",
+        "native-system-url-and-base64"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "UTF-16サロゲート検証を含めて実装し、公式差分テストに成功"
+      "reason": "UTF-16サロゲート検証を含むURLエンコードを純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0259",
@@ -6854,14 +6855,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-url"
+        "plugin-system-url",
+        "native-system-url-and-base64"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "UTF-8とURI不正列検証を含めて実装し、公式差分テストに成功"
+      "reason": "UTF-8とURI不正列検証を含むURLデコードを純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0260",
@@ -6880,14 +6882,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-url"
+        "plugin-system-url",
+        "native-system-url-and-base64"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "重複キー末尾優先を含めて実装し、公式差分テストに成功"
+      "reason": "重複キー末尾優先を含むURLパラメータ解析を純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0261",
@@ -6906,14 +6909,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-url"
+        "plugin-system-url",
+        "native-system-url-and-base64"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "文字列と数値配列のNode互換Base64エンコードを純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0262",
@@ -6932,14 +6936,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-url"
+        "plugin-system-url",
+        "native-system-url-and-base64"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "寛容な字句規則とUTF-8置換を含むBase64デコードを純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0263",

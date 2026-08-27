@@ -191,6 +191,11 @@ pub const Command = enum(u16) {
     datetime_weekday_number,
     datetime_unix_time,
     datetime_date_time,
+    url_encode,
+    url_decode,
+    url_parameters,
+    base64_encode,
+    base64_decode,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -391,6 +396,11 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "曜日番号取得")) return .datetime_weekday_number;
     if (std.mem.eql(u8, name, "UNIXTIME変換") or std.mem.eql(u8, name, "UNIX時間変換")) return .datetime_unix_time;
     if (std.mem.eql(u8, name, "日時変換")) return .datetime_date_time;
+    if (std.mem.eql(u8, name, "URLエンコード")) return .url_encode;
+    if (std.mem.eql(u8, name, "URLデコード")) return .url_decode;
+    if (std.mem.eql(u8, name, "URLパラメータ解析")) return .url_parameters;
+    if (std.mem.eql(u8, name, "BASE64エンコード")) return .base64_encode;
+    if (std.mem.eql(u8, name, "BASE64デコード")) return .base64_decode;
     return null;
 }
 
@@ -571,6 +581,11 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.datetime_unix_time, lookup("UNIXTIME変換").?);
     try std.testing.expectEqual(Command.datetime_unix_time, lookup("UNIX時間変換").?);
     try std.testing.expectEqual(Command.datetime_date_time, lookup("日時変換").?);
+    try std.testing.expectEqual(Command.url_encode, lookup("URLエンコード").?);
+    try std.testing.expectEqual(Command.url_decode, lookup("URLデコード").?);
+    try std.testing.expectEqual(Command.url_parameters, lookup("URLパラメータ解析").?);
+    try std.testing.expectEqual(Command.base64_encode, lookup("BASE64エンコード").?);
+    try std.testing.expectEqual(Command.base64_decode, lookup("BASE64デコード").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }
 

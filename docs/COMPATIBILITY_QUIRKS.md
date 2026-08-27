@@ -326,7 +326,8 @@ ABI値の所有権と非同期スレッド制約は[`NATIVE_PLUGIN_ABI.md`](NATI
 
 | 命令 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID |
 |---|---|---|---|
-| `BASE64デコード` | Nodeの`Buffer.from(S, "base64")`規則により、空白などの非BASE64文字を無視し、URL-safeの`-` / `_`とpadding省略も受理する。復号バイトが不正UTF-8でも例外にせず`U+FFFD`へ置換する | 同じ寛容な字句規則とWHATWG互換UTF-8置換を使う | `plugin-system-url`、`BASE64のNode互換境界とUTF-8置換を再現する` |
+| `URLエンコード` / `URLデコード` / `URLパラメータ解析` | `URLエンコード`と`URLデコード`はUTF-16の文字列をURI component規則で変換し、`URLパラメータ解析`は`?`以降を`&`と`=`で分解して値を復号する。同じキーは後の値で上書きされる | Interpreterと純LLVM AOTは同じUTF-16・パーセント列・重複キー末尾優先の規則を使う。AOTのパラメータ解析は文字列を受け、URLエンコード/デコードは公式の文字列化境界を使う | `plugin-system-url`、`native-system-url-and-base64` |
+| `BASE64デコード` | Nodeの`Buffer.from(S, "base64")`規則により、空白などの非BASE64文字を無視し、URL-safeの`-` / `_`とpadding省略も受理する。復号バイトが不正UTF-8でも例外にせず`U+FFFD`へ置換する | Interpreterと純LLVM AOTは同じ寛容な字句規則とWHATWG互換UTF-8置換を使う。AOTはUTF-16文字列と数値配列のエンコード、および文字列のデコードを対象とし、Buffer値はAOT Valueに未導入のため`TODO: aot-buffer`として完成扱いにしない | `plugin-system-url`、`native-system-url-and-base64` |
 | `拡張子抽出` / `拡張子変更` | 拡張子として認識するのは末尾の`.`とASCII英数字・`_`・`-`・`+`だけ。`.bashrc`全体も拡張子になり、フォルダ区切りは現在のホストプラグインが設定した1種類だけを見る | 同じ文字集合と現在OSの区切り文字を使う | `plugin-system-url` |
 | `終端パス除去` / `終端パス削除` | 末尾の区切り文字を全削除せず、1文字だけ除去する。`a//`は`a/`になる | 同じく1文字だけ除去し、2命令を個別登録する | `plugin-system-url` |
 

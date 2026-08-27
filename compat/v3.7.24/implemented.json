@@ -2045,23 +2045,26 @@
   "URLエンコード": {
     "status": "native",
     "tests": [
-      "plugin-system-url"
+      "plugin-system-url",
+      "native-system-url-and-base64"
     ],
-    "reason": "UTF-16サロゲート検証を含めて実装し、公式差分テストに成功"
+    "reason": "UTF-16サロゲート検証を含むURLエンコードを純LLVM AOTへ実装し、公式差分テストに成功"
   },
   "URLデコード": {
     "status": "native",
     "tests": [
-      "plugin-system-url"
+      "plugin-system-url",
+      "native-system-url-and-base64"
     ],
-    "reason": "UTF-8とURI不正列検証を含めて実装し、公式差分テストに成功"
+    "reason": "UTF-8とURI不正列検証を含むURLデコードを純LLVM AOTへ実装し、公式差分テストに成功"
   },
   "URLパラメータ解析": {
     "status": "native",
     "tests": [
-      "plugin-system-url"
+      "plugin-system-url",
+      "native-system-url-and-base64"
     ],
-    "reason": "重複キー末尾優先を含めて実装し、公式差分テストに成功"
+    "reason": "重複キー末尾優先を含むURLパラメータ解析を純LLVM AOTへ実装し、公式差分テストに成功"
   },
   "表示": {
     "status": "native",
@@ -3360,16 +3363,18 @@
   "BASE64エンコード": {
     "status": "native",
     "tests": [
-      "plugin-system-url"
+      "plugin-system-url",
+      "native-system-url-and-base64"
     ],
-    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+    "reason": "文字列と数値配列のNode互換Base64エンコードを純LLVM AOTへ実装し、公式差分テストに成功"
   },
   "BASE64デコード": {
     "status": "native",
     "tests": [
-      "plugin-system-url"
+      "plugin-system-url",
+      "native-system-url-and-base64"
     ],
-    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+    "reason": "寛容な字句規則とUTF-8置換を含むBase64デコードを純LLVM AOTへ実装し、公式差分テストに成功"
   },
   "拡張子抽出": {
     "status": "native",

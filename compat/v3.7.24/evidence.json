@@ -8,14 +8,14 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 228,
-    "nativeAot": 123,
+    "total": 229,
+    "nativeAot": 124,
     "interpreter": 96,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
-    "paired": 298,
-    "interpreter-only": 225,
+    "paired": 303,
+    "interpreter-only": 220,
     "aot-only": 0,
     "none": 0,
     "compat-js-only": 4
@@ -8499,7 +8499,9 @@
       "interpreterFixtureIds": [
         "plugin-system-url"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-url-and-base64"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -8508,15 +8510,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-url-and-base64": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "UTF-16サロゲート検証を含めて実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "UTF-16サロゲート検証を含むURLエンコードを純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0259",
@@ -8526,7 +8533,9 @@
       "interpreterFixtureIds": [
         "plugin-system-url"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-url-and-base64"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -8535,15 +8544,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-url-and-base64": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "UTF-8とURI不正列検証を含めて実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "UTF-8とURI不正列検証を含むURLデコードを純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0260",
@@ -8553,7 +8567,9 @@
       "interpreterFixtureIds": [
         "plugin-system-url"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-url-and-base64"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -8562,15 +8578,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-url-and-base64": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "重複キー末尾優先を含めて実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "重複キー末尾優先を含むURLパラメータ解析を純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0261",
@@ -8580,7 +8601,9 @@
       "interpreterFixtureIds": [
         "plugin-system-url"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-url-and-base64"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -8589,15 +8612,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-url-and-base64": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "文字列と数値配列のNode互換Base64エンコードを純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0262",
@@ -8607,7 +8635,9 @@
       "interpreterFixtureIds": [
         "plugin-system-url"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-url-and-base64"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -8616,15 +8646,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-url-and-base64": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "寛容な字句規則とUTF-8置換を含むBase64デコードを純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0263",
