@@ -7,36 +7,20 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "fab15602c996d2cc0d83cd095951af44513e7e8ad3191ae337a1608698195cfc"
+    "sha256": "537253ea63c9a46170614b7a5754405a60d94ac901fdde63500cc5f33cd2b5d9"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 287,
+    "count": 286,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 287
+      "unverified": 286
     }
   },
   "groups": [
-    {
-      "plugin": "plugin_caniuse",
-      "group": "基本プラグイン",
-      "category": "ブラウザサポート",
-      "type": "定数",
-      "count": 1,
-      "executionEvidenceStates": {
-        "unverified": 1
-      },
-      "commandIds": [
-        "command-0835"
-      ],
-      "names": [
-        "ブラウザ名変換表"
-      ]
-    },
     {
       "plugin": "plugin_csv",
       "group": "基本プラグイン",
@@ -6125,23 +6109,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0835",
-      "name": "ブラウザ名変換表",
-      "plugin": "plugin_caniuse",
-      "group": "基本プラグイン",
-      "category": "ブラウザサポート",
-      "type": "定数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-caniuse-all"
       ],
       "aotFixtureIds": []
     },

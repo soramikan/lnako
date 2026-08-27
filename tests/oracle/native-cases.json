@@ -529,5 +529,11 @@
     "oracle": "official-source",
     "commands": ["対応ブラウザ一覧取得"],
     "source": "!「${PLUGIN_CANIUSE}」を取り込む\nJSON変換(対応ブラウザ一覧取得())を表示\nA=対応ブラウザ一覧取得()\nB=対応ブラウザ一覧取得()\n(A===B)を表示\n"
+  },
+  {
+    "id": "native-caniuse-agents",
+    "oracle": "official-source",
+    "commands": ["ブラウザ名変換表"],
+    "source": "!「${PLUGIN_CANIUSE}」を取り込む\nJSON変換(ブラウザ名変換表)を表示\nA=ブラウザ名変換表\nB=ブラウザ名変換表\n(A===B)を表示\n"
   }
 ]

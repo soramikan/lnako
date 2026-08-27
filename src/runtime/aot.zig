@@ -250,6 +250,7 @@ const Runtime = struct {
     random_state: u64 = 0,
     clock_milliseconds: ?i64 = null,
     caniuse_browsers: Value = .{},
+    caniuse_agents: Value = .{},
 
     fn deinit(self: *Runtime) void {
         self.dispatch_trace.deinit();
@@ -404,6 +405,7 @@ const Runtime = struct {
         if (self.has_pending_exception) self.markValue(self.pending_exception);
         self.markValue(self.system_context);
         self.markValue(self.caniuse_browsers);
+        self.markValue(self.caniuse_agents);
         while (self.grey) |object| {
             self.grey = object.grey_next;
             object.grey_next = null;
@@ -2541,6 +2543,15 @@ pub export fn lnako_aot_dictionary_new(out: *Value, values: ?[*]const Value, len
     out.* = runtime.createDictionary(source) catch return;
 }
 
+pub export fn lnako_aot_caniuse_agents_new(out: *Value) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*value| value else return;
+    out.* = caniuseAgentsBuiltin(runtime) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+}
+
 pub export fn lnako_aot_index_get(out: *Value, container: *const Value, key: *const Value) callconv(.c) void {
     const container_value = container.*;
     const key_value = key.*;
@@ -3486,6 +3497,51 @@ fn caniuseBrowsersBuiltin(runtime: *Runtime) !Value {
 }
 
 const CaniuseBrowser = struct { key: []const u8, versions: []const []const u8 };
+
+fn caniuseAgentsBuiltin(runtime: *Runtime) !Value {
+    if (runtime.caniuse_agents.tag != @intFromEnum(Tag.undefined)) return runtime.caniuse_agents;
+
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createDictionary(&.{});
+    for (caniuse_agents) |agent| {
+        roots[1] = try runtimeUtf8String(runtime, agent.key);
+        roots[2] = try runtimeUtf8String(runtime, agent.name);
+        try runtime.setDictionary(&roots[0].object().?.payload.dictionary, roots[1], roots[2]);
+    }
+    runtime.caniuse_agents = roots[0];
+    return roots[0];
+}
+
+const CaniuseAgent = struct { key: []const u8, name: []const u8 };
+
+// This is the generated v3.7.24 browsers_agents.mjs snapshot. The AOT
+// runtime owns its copy so normal execution never loads the JavaScript
+// caniuse plugin.
+const caniuse_agents = [_]CaniuseAgent{
+    .{ .key = "ie", .name = "IE" },
+    .{ .key = "edge", .name = "Edge" },
+    .{ .key = "firefox", .name = "Firefox" },
+    .{ .key = "chrome", .name = "Chrome" },
+    .{ .key = "safari", .name = "Safari" },
+    .{ .key = "opera", .name = "Opera" },
+    .{ .key = "ios_saf", .name = "Safari on iOS" },
+    .{ .key = "op_mini", .name = "Opera Mini" },
+    .{ .key = "android", .name = "Android Browser" },
+    .{ .key = "bb", .name = "Blackberry Browser" },
+    .{ .key = "op_mob", .name = "Opera Mobile" },
+    .{ .key = "and_chr", .name = "Chrome for Android" },
+    .{ .key = "and_ff", .name = "Firefox for Android" },
+    .{ .key = "ie_mob", .name = "IE Mobile" },
+    .{ .key = "and_uc", .name = "UC Browser for Android" },
+    .{ .key = "samsung", .name = "Samsung Internet" },
+    .{ .key = "and_qq", .name = "QQ Browser" },
+    .{ .key = "baidu", .name = "Baidu Browser" },
+    .{ .key = "kaios", .name = "KaiOS Browser" },
+};
 
 // This is the generated v3.7.24 browsers.mjs snapshot. The AOT runtime owns
 // its copy so normal execution never loads the JavaScript caniuse plugin.
@@ -6684,6 +6740,22 @@ test "AOT対応ブラウザ一覧取得はv3.7.24の辞書をキャッシュす�
     try std.testing.expectEqual(Tag.array, @as(Tag, @enumFromInt(roots[2].tag)));
     try std.testing.expectEqual(@as(usize, 10), roots[2].object().?.payload.array.items.len);
     try expectUtf16String(&runtime, roots[2].object().?.payload.array.items[0], "145");
+}
+
+test "AOTブラウザ名変換表はv3.7.24の辞書をキャッシュする" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try caniuseAgentsBuiltin(&runtime);
+    roots[1] = try caniuseAgentsBuiltin(&runtime);
+    try std.testing.expectEqual(roots[0].payload, roots[1].payload);
+    try std.testing.expectEqual(@as(usize, 19), roots[0].object().?.payload.dictionary.items.len);
+    roots[2] = dictionaryProperty(roots[0], &.{ 'c', 'h', 'r', 'o', 'm', 'e' });
+    try expectUtf16String(&runtime, roots[2], "Chrome");
 }
 
 test "AOT整数実数変換はJavaScript接頭辞規則を共有する" {

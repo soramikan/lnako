@@ -7,9 +7,14 @@ const implemented = JSON.parse(await readFile(implementationPath, "utf8"));
 const cases = JSON.parse(await readFile(resolve(root, "tests/oracle/supplemental-plugin-cases.json"), "utf8"));
 
 for (const testCase of cases) for (const name of testCase.commands) {
-  const tests = new Set(implemented[name]?.tests ?? []);
+  const current = implemented[name] ?? {};
+  const tests = new Set(current.tests ?? []);
   tests.add(testCase.id);
-  implemented[name] = { status: "native", tests: [...tests], reason: "固定した公式プラグインとの差分テストに成功" };
+  implemented[name] = {
+    status: current.status ?? "native",
+    tests: [...tests],
+    reason: current.reason ?? "固定した公式プラグインとの差分テストに成功",
+  };
 }
 
 const output = `${JSON.stringify(implemented, null, 2)}\n`;

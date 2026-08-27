@@ -3303,9 +3303,10 @@
   "ブラウザ名変換表": {
     "status": "native",
     "tests": [
-      "plugin-caniuse-all"
+      "plugin-caniuse-all",
+      "native-caniuse-agents"
     ],
-    "reason": "固定した公式プラグインとの差分テストに成功"
+    "reason": "固定した公式プラグインとの差分テストと純LLVM AOT定数初期化の差分テストに成功"
   },
   "対応ブラウザ一覧取得": {
     "status": "native",
