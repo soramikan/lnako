@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const aot_abi = @import("aot_abi.zig");
 const aot_builtin = @import("aot_builtin.zig");
 const BigInt = @import("bigint.zig").BigInt;
@@ -2733,7 +2734,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -2772,6 +2773,12 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         .url_encode, .url_decode, .url_parameters, .base64_encode, .base64_decode => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = urlBuiltin(runtime, command, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .node_os, .node_architecture => {
+            out.* = nodeEnvironmentBuiltin(runtime, command) catch |failure| {
                 runtime.setFailure(failure);
                 return;
             };
@@ -4059,6 +4066,28 @@ fn base64Digit(unit: u16) ?u8 {
         '+', '-' => 62,
         '/', '_' => 63,
         else => null,
+    };
+}
+
+fn nodeEnvironmentBuiltin(runtime: *Runtime, command: aot_builtin.Command) !Value {
+    return runtimeUtf8String(runtime, if (command == .node_os) aotOsName() else aotArchitectureName());
+}
+
+fn aotOsName() []const u8 {
+    return switch (builtin.os.tag) {
+        .macos => "darwin",
+        .windows => "win32",
+        .linux => "linux",
+        else => @tagName(builtin.os.tag),
+    };
+}
+
+fn aotArchitectureName() []const u8 {
+    return switch (builtin.cpu.arch) {
+        .aarch64 => "arm64",
+        .x86_64 => "x64",
+        .x86 => "ia32",
+        else => @tagName(builtin.cpu.arch),
     };
 }
 
@@ -7215,6 +7244,20 @@ test "AOT URLとBase64命令はUTF-16文字列と配列を処理する" {
     arguments[0] = roots[6];
     roots[7] = try urlBuiltin(&runtime, .base64_encode, &arguments);
     try expectUtf16String(&runtime, roots[7], "QSz/");
+}
+
+test "AOT Node環境命令はコンパイル対象のOSとCPU名を返す" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try nodeEnvironmentBuiltin(&runtime, .node_os);
+    try expectUtf16String(&runtime, roots[0], aotOsName());
+    roots[1] = try nodeEnvironmentBuiltin(&runtime, .node_architecture);
+    try expectUtf16String(&runtime, roots[1], aotArchitectureName());
 }
 
 test "AOT対応ブラウザ一覧取得はv3.7.24の辞書をキャッシュする" {

@@ -11441,14 +11441,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-path-host"
+        "plugin-node-path-host",
+        "native-node-os-identity"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "Node互換のOS名取得を純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0750",
@@ -11466,14 +11467,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-path-host"
+        "plugin-node-path-host",
+        "native-node-os-identity"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "Node互換のCPUアーキテクチャ名取得を純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0751",

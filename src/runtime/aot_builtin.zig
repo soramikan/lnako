@@ -196,6 +196,8 @@ pub const Command = enum(u16) {
     url_parameters,
     base64_encode,
     base64_decode,
+    node_os,
+    node_architecture,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -401,6 +403,8 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "URLパラメータ解析")) return .url_parameters;
     if (std.mem.eql(u8, name, "BASE64エンコード")) return .base64_encode;
     if (std.mem.eql(u8, name, "BASE64デコード")) return .base64_decode;
+    if (std.mem.eql(u8, name, "OS取得")) return .node_os;
+    if (std.mem.eql(u8, name, "OSアーキテクチャ取得")) return .node_architecture;
     return null;
 }
 
@@ -586,6 +590,8 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.url_parameters, lookup("URLパラメータ解析").?);
     try std.testing.expectEqual(Command.base64_encode, lookup("BASE64エンコード").?);
     try std.testing.expectEqual(Command.base64_decode, lookup("BASE64デコード").?);
+    try std.testing.expectEqual(Command.node_os, lookup("OS取得").?);
+    try std.testing.expectEqual(Command.node_architecture, lookup("OSアーキテクチャ取得").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }
 

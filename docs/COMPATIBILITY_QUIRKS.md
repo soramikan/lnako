@@ -335,6 +335,7 @@ ABI値の所有権と非同期スレッド制約は[`NATIVE_PLUGIN_ABI.md`](NATI
 
 | 命令 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID |
 |---|---|---|---|
+| `OS取得` / `OSアーキテクチャ取得` | Nodeの`process.platform`はmacOS/Linux/Windowsで`darwin`/`linux`/`win32`、`os.arch()`はarm64/x64/ia32を返す | Interpreterと純LLVM AOTはNode互換のOS・CPU名を使う。AOTは実行時ホストではなく、生成物のコンパイル対象を`builtin`から決定する | `plugin-node-path-host`、`native-node-os-identity` |
 | `一時フォルダ作成` | 引数を親フォルダとして扱わず、`fs.mkdtempSync`の接頭辞へそのまま渡す。例えば`work-`ならカレントディレクトリ直下の`work-XXXXXX`を作る。空なら`os.tmpdir()`自体を接頭辞にするため、通常は一時ディレクトリの「中」ではなく同じ親に作る | 同じ接頭辞規則で6文字を付加し、新規ディレクトリを作る | `plugin-node-temporary-directory` |
 | `ブラウザ起動` / `エクスプローラー起動` | `ブラウザ起動`はOSのランチャーを非同期起動して直ちに戻る。`エクスプローラー起動`はWindowsでは`explorer`を起動して戻るが、macOS/Linuxでは`open`/`xdg-open`を起動した後も公式実装が`対応していないOSです`を投げる | 本番はOS別ランチャーをhostへ委譲する。`plugin-node-host-open-external`の公式差分fixtureでは、実アプリを起動しない`LNAKO_TEST_OPEN_EXTERNAL` hookとNode child-process preloaderを使い、対象URL・reveal経路とOS別の成功/エラー結果だけを比較する | `plugin-node-host-open-external` |
 | `ファイル情報取得` | Nodeの`fs.Stats`を返すため、`isFile`と`isDirectory`は真偽値ではなくメソッド。メソッドだけを変数へ取り出して呼ぶと`this`が失われ、Node内部の`_checkModeProperty`参照で失敗する | メソッドとして公開する。なでしこ構文ではレシーバー付きメソッド呼び出しを直接表せないため、型とフィールド構成を差分検証する | `plugin-node-file-core` |

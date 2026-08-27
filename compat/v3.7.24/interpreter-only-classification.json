@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "654d895c22e9e739ed5a155d9977df1134ae2ca7fbc82c4b2dd54fc57447c77e"
+    "sha256": "ead86849f5285f86ba8de73223867f2805f2b24b3244a1f65a6410069775108d"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 220,
+    "count": 218,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 220
+      "unverified": 218
     }
   },
   "groups": [
@@ -256,25 +256,21 @@
       "group": "基本プラグイン",
       "category": "Nodeプロセス",
       "type": "関数",
-      "count": 6,
+      "count": 4,
       "executionEvidenceStates": {
-        "unverified": 6
+        "unverified": 4
       },
       "commandIds": [
         "command-0745",
         "command-0746",
         "command-0747",
-        "command-0748",
-        "command-0749",
-        "command-0750"
+        "command-0748"
       ],
       "names": [
         "終",
         "プロセス終",
         "強制終了時",
-        "終了",
-        "OS取得",
-        "OSアーキテクチャ取得"
+        "終了"
       ]
     },
     {
@@ -3550,40 +3546,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "plugin-node-exit-japanese-alias"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0749",
-      "name": "OS取得",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "Nodeプロセス",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-path-host"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0750",
-      "name": "OSアーキテクチャ取得",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "Nodeプロセス",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-path-host"
       ],
       "aotFixtureIds": []
     },

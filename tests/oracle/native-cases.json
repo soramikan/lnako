@@ -335,6 +335,11 @@
     "source": "URLエンコード(\"A あ/😀\")を表示\nURLデコード(\"A%20%E3%81%82%2F%F0%9F%98%80\")を表示\nJSON変換(URLパラメータ解析(\"https://example.test/?a=1&a=2&flag&x=%E3%81%82\"))を表示\nBASE64エンコード(\"こんにちは\")を表示\nBASE64デコード(\"44GT44KT44Gr44Gh44Gv\")を表示\nBASE64エンコード([65,300,-1])を表示\n"
   },
   {
+    "id": "native-node-os-identity",
+    "commands": ["OS取得", "OSアーキテクチャ取得"],
+    "source": "OS取得()を表示\nOSアーキテクチャ取得()を表示\n"
+  },
+  {
     "id": "native-string-template",
     "source": "A=30\n「ab{A+1}cd｛A｝」を表示\nB=[2,3]\n「{B[0]}:{B[1]}」を表示\n「A{A}C}D」を表示\n『展開しない{A}』を表示\n●(Nを)整形とは\n「<<{N+1}>>」で戻る\nここまで\n整形(4)を表示\n"
   },

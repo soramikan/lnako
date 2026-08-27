@@ -2491,16 +2491,18 @@
   "OS取得": {
     "status": "native",
     "tests": [
-      "plugin-node-path-host"
+      "plugin-node-path-host",
+      "native-node-os-identity"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "Node互換のOS名取得を純LLVM AOTへ実装し、公式差分テストに成功"
   },
   "OSアーキテクチャ取得": {
     "status": "native",
     "tests": [
-      "plugin-node-path-host"
+      "plugin-node-path-host",
+      "native-node-os-identity"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "Node互換のCPUアーキテクチャ名取得を純LLVM AOTへ実装し、公式差分テストに成功"
   },
   "カレントディレクトリ取得": {
     "status": "native",
