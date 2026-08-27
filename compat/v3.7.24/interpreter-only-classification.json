@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "33e2b36a25869cc5ff2c7855463fc3615bc725665746683d97d3fcc05297a3f1"
+    "sha256": "3f9ecdc3304d320bdec82212036596e9f9a825e226f526aee8ffeab51b73b3a1"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 174,
+    "count": 172,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 174
+      "unverified": 172
     }
   },
   "groups": [
@@ -825,24 +825,6 @@
         "配列関数適用",
         "配列マップ",
         "配列フィルタ"
-      ]
-    },
-    {
-      "plugin": "plugin_toml",
-      "group": "基本プラグイン",
-      "category": "TOML",
-      "type": "関数",
-      "count": 2,
-      "executionEvidenceStates": {
-        "unverified": 2
-      },
-      "commandIds": [
-        "command-0330",
-        "command-0331"
-      ],
-      "names": [
-        "TOML取得",
-        "TOML変換"
       ]
     }
   ],
@@ -1767,40 +1749,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "timer-stop-all"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0330",
-      "name": "TOML取得",
-      "plugin": "plugin_toml",
-      "group": "基本プラグイン",
-      "category": "TOML",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-toml-all"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0331",
-      "name": "TOML変換",
-      "plugin": "plugin_toml",
-      "group": "基本プラグイン",
-      "category": "TOML",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-toml-all"
       ],
       "aotFixtureIds": []
     },

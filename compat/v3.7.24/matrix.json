@@ -8758,14 +8758,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-toml-all"
+        "plugin-toml-all",
+        "native-toml-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製TOMLプラグインで実装し、公式差分テストに成功"
+      "reason": "Zig製TOMLプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
       "id": "command-0331",
@@ -8783,14 +8784,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-toml-all"
+        "plugin-toml-all",
+        "native-toml-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製TOMLプラグインで実装し、公式差分テストに成功"
+      "reason": "Zig製TOMLプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
       "id": "command-0332",

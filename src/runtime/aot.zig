@@ -2851,6 +2851,12 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
+        .toml_parse, .toml_stringify => {
+            out.* = tomlBuiltin(runtime, command, value) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .node_os, .node_architecture => {
             out.* = nodeEnvironmentBuiltin(runtime, command) catch |failure| {
                 runtime.setFailure(failure);
@@ -5229,6 +5235,559 @@ fn csvIsNumeric(units: []const u16) bool {
 fn csvIsWhitespace(unit: u16) bool {
     return switch (unit) {
         ' ', '\t', '\n', '\r', 0x0b, 0x0c, 0x00a0, 0x3000 => true,
+        else => false,
+    };
+}
+
+fn tomlBuiltin(runtime: *Runtime, command: aot_builtin.Command, value: Value) !Value {
+    return switch (command) {
+        .toml_parse => tomlParse(runtime, value),
+        .toml_stringify => tomlStringify(runtime, value),
+        else => error.UnknownCommand,
+    };
+}
+
+fn tomlParse(runtime: *Runtime, source: Value) !Value {
+    const units = try valueUtf16Alloc(runtime, source);
+    defer runtime.allocator.free(units);
+    const input = try (string_mod.String{ .allocator = runtime.allocator, .units = units }).toUtf8Lossy(runtime.allocator);
+    defer runtime.allocator.free(input);
+    var parser = TomlAotParser{ .runtime = runtime, .input = input };
+    return parser.document();
+}
+
+const TomlAotTerminator = enum { equal, bracket, double_bracket };
+
+const TomlAotKeyPath = struct {
+    allocator: std.mem.Allocator,
+    items: std.ArrayList([]u8) = .empty,
+
+    fn deinit(self: *TomlAotKeyPath) void {
+        for (self.items.items) |item| self.allocator.free(item);
+        self.items.deinit(self.allocator);
+    }
+};
+
+const TomlAotParser = struct {
+    runtime: *Runtime,
+    input: []const u8,
+    index: usize = 0,
+
+    fn document(self: *TomlAotParser) !Value {
+        var result = try self.runtime.createDictionary(&.{});
+        var roots = RootFrame{};
+        self.runtime.pushRoots(&roots, @ptrCast(&result), 1);
+        defer self.runtime.popRoots(&roots);
+        var current = result;
+        while (true) {
+            self.skipDocumentSpace();
+            if (self.index >= self.input.len) break;
+            if (self.input[self.index] == '[') {
+                const array_table = self.index + 1 < self.input.len and self.input[self.index + 1] == '[';
+                self.index += if (array_table) 2 else 1;
+                var path = try self.keyPath(if (array_table) .double_bracket else .bracket);
+                defer path.deinit();
+                current = try self.table(result, path.items.items, array_table);
+            } else {
+                var path = try self.keyPath(.equal);
+                defer path.deinit();
+                var parsed_value = try self.value();
+                var value_roots = RootFrame{};
+                self.runtime.pushRoots(&value_roots, @ptrCast(&parsed_value), 1);
+                defer self.runtime.popRoots(&value_roots);
+                try self.assign(current, path.items.items, parsed_value);
+            }
+            self.skipHorizontal();
+            if (self.index < self.input.len and self.input[self.index] == '#') self.skipComment();
+            if (self.index < self.input.len and self.input[self.index] != '\n' and self.input[self.index] != '\r') return error.InvalidTomlDocument;
+        }
+        return result;
+    }
+
+    fn keyPath(self: *TomlAotParser, terminator: TomlAotTerminator) !TomlAotKeyPath {
+        var result = TomlAotKeyPath{ .allocator = self.runtime.allocator };
+        errdefer result.deinit();
+        while (true) {
+            self.skipHorizontal();
+            if (self.index >= self.input.len) return error.InvalidTomlKey;
+            const key = if (self.input[self.index] == '"' or self.input[self.index] == '\'')
+                try self.stringBytes(self.input[self.index], false)
+            else blk: {
+                const start = self.index;
+                while (self.index < self.input.len and tomlAotIsBareKey(self.input[self.index])) self.index += 1;
+                if (start == self.index) return error.InvalidTomlKey;
+                break :blk try self.runtime.allocator.dupe(u8, self.input[start..self.index]);
+            };
+            try result.items.append(self.runtime.allocator, key);
+            self.skipHorizontal();
+            if (self.index < self.input.len and self.input[self.index] == '.') {
+                self.index += 1;
+                continue;
+            }
+            switch (terminator) {
+                .equal => {
+                    if (!self.consume('=')) return error.InvalidTomlKey;
+                },
+                .bracket => {
+                    if (!self.consume(']')) return error.InvalidTomlTable;
+                },
+                .double_bracket => {
+                    if (!self.consume(']') or !self.consume(']')) return error.InvalidTomlTable;
+                },
+            }
+            if (result.items.items.len == 0) return error.InvalidTomlKey;
+            return result;
+        }
+    }
+
+    fn value(self: *TomlAotParser) anyerror!Value {
+        self.skipHorizontal();
+        if (self.index >= self.input.len) return error.InvalidTomlValue;
+        return switch (self.input[self.index]) {
+            '"' => self.stringValue('"'),
+            '\'' => self.stringValue('\''),
+            '[' => self.array(),
+            '{' => self.inlineTable(),
+            else => self.bareValue(),
+        };
+    }
+
+    fn stringValue(self: *TomlAotParser, quote: u8) !Value {
+        const multiline = self.index + 2 < self.input.len and self.input[self.index + 1] == quote and self.input[self.index + 2] == quote;
+        const bytes = try self.stringBytes(quote, multiline);
+        defer self.runtime.allocator.free(bytes);
+        return runtimeUtf8String(self.runtime, bytes);
+    }
+
+    fn stringBytes(self: *TomlAotParser, quote: u8, multiline: bool) ![]u8 {
+        self.index += if (multiline) 3 else 1;
+        if (multiline) {
+            if (self.consume('\r')) _ = self.consume('\n') else _ = self.consume('\n');
+        }
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.runtime.allocator);
+        while (self.index < self.input.len) {
+            if (multiline) {
+                if (self.index + 2 < self.input.len and self.input[self.index] == quote and self.input[self.index + 1] == quote and self.input[self.index + 2] == quote) {
+                    self.index += 3;
+                    return output.toOwnedSlice(self.runtime.allocator);
+                }
+            } else if (self.input[self.index] == quote) {
+                self.index += 1;
+                return output.toOwnedSlice(self.runtime.allocator);
+            }
+            const byte = self.input[self.index];
+            self.index += 1;
+            if (!multiline and (byte == '\n' or byte == '\r')) return error.UnterminatedTomlString;
+            if (quote == '\'' or byte != '\\') {
+                try output.append(self.runtime.allocator, byte);
+                continue;
+            }
+            if (self.index >= self.input.len) return error.UnterminatedTomlString;
+            const escaped = self.input[self.index];
+            self.index += 1;
+            switch (escaped) {
+                'b' => try output.append(self.runtime.allocator, 0x08),
+                't' => try output.append(self.runtime.allocator, '\t'),
+                'n' => try output.append(self.runtime.allocator, '\n'),
+                'f' => try output.append(self.runtime.allocator, 0x0c),
+                'r' => try output.append(self.runtime.allocator, '\r'),
+                '"' => try output.append(self.runtime.allocator, '"'),
+                '\\' => try output.append(self.runtime.allocator, '\\'),
+                'u' => try self.appendUnicode(&output, 4),
+                'U' => try self.appendUnicode(&output, 8),
+                '\n', '\r' => if (multiline) {
+                    if (escaped == '\r') _ = self.consume('\n');
+                    while (self.index < self.input.len and (self.input[self.index] == ' ' or self.input[self.index] == '\t' or self.input[self.index] == '\n' or self.input[self.index] == '\r')) self.index += 1;
+                } else return error.InvalidTomlEscape,
+                else => return error.InvalidTomlEscape,
+            }
+        }
+        return error.UnterminatedTomlString;
+    }
+
+    fn appendUnicode(self: *TomlAotParser, output: *std.ArrayList(u8), digits: usize) !void {
+        if (self.index + digits > self.input.len) return error.InvalidTomlEscape;
+        const codepoint = std.fmt.parseInt(u21, self.input[self.index .. self.index + digits], 16) catch return error.InvalidTomlEscape;
+        self.index += digits;
+        if (!std.unicode.utf8ValidCodepoint(codepoint) or (codepoint >= 0xd800 and codepoint <= 0xdfff)) return error.InvalidTomlEscape;
+        var buffer: [4]u8 = undefined;
+        const length = try std.unicode.utf8Encode(codepoint, &buffer);
+        try output.appendSlice(self.runtime.allocator, buffer[0..length]);
+    }
+
+    fn array(self: *TomlAotParser) !Value {
+        self.index += 1;
+        var result = try self.runtime.createArray(&.{});
+        var roots = RootFrame{};
+        self.runtime.pushRoots(&roots, @ptrCast(&result), 1);
+        defer self.runtime.popRoots(&roots);
+        self.skipValueSpace();
+        if (self.consume(']')) return result;
+        while (true) {
+            const item = try self.value();
+            try result.object().?.payload.array.append(self.runtime.allocator, item);
+            self.skipValueSpace();
+            if (self.consume(']')) return result;
+            if (!self.consume(',')) return error.InvalidTomlArray;
+            self.skipValueSpace();
+            if (self.consume(']')) return result;
+        }
+    }
+
+    fn inlineTable(self: *TomlAotParser) !Value {
+        self.index += 1;
+        var result = try self.runtime.createDictionary(&.{});
+        var roots = RootFrame{};
+        self.runtime.pushRoots(&roots, @ptrCast(&result), 1);
+        defer self.runtime.popRoots(&roots);
+        self.skipHorizontal();
+        if (self.consume('}')) return result;
+        while (true) {
+            var path = try self.keyPath(.equal);
+            defer path.deinit();
+            var item = try self.value();
+            var item_roots = RootFrame{};
+            self.runtime.pushRoots(&item_roots, @ptrCast(&item), 1);
+            defer self.runtime.popRoots(&item_roots);
+            try self.assign(result, path.items.items, item);
+            self.skipHorizontal();
+            if (self.consume('}')) return result;
+            if (!self.consume(',')) return error.InvalidTomlInlineTable;
+            self.skipHorizontal();
+        }
+    }
+
+    fn bareValue(self: *TomlAotParser) !Value {
+        const start = self.index;
+        while (self.index < self.input.len) {
+            const byte = self.input[self.index];
+            if (byte == ',' or byte == ']' or byte == '}' or byte == '#' or byte == '\n' or byte == '\r' or byte == ' ' or byte == '\t') break;
+            self.index += 1;
+        }
+        if (start == self.index) return error.InvalidTomlValue;
+        const token = self.input[start..self.index];
+        if (std.mem.eql(u8, token, "true")) return .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 };
+        if (std.mem.eql(u8, token, "false")) return .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
+        if (std.mem.eql(u8, token, "inf") or std.mem.eql(u8, token, "+inf")) return numberValue(std.math.inf(f64));
+        if (std.mem.eql(u8, token, "-inf")) return numberValue(-std.math.inf(f64));
+        if (std.mem.eql(u8, token, "nan") or std.mem.eql(u8, token, "+nan")) return numberValue(std.math.nan(f64));
+        if (std.mem.eql(u8, token, "-nan")) return numberValue(-std.math.nan(f64));
+        if (tomlAotLooksTemporal(token)) return runtimeUtf8String(self.runtime, token);
+        const normalized = try tomlAotRemoveUnderscores(self.runtime.allocator, token);
+        defer self.runtime.allocator.free(normalized);
+        if (tomlAotParseInteger(normalized)) |integer| return numberValue(integer) else |_| {}
+        const number = std.fmt.parseFloat(f64, normalized) catch return error.InvalidTomlValue;
+        return numberValue(number);
+    }
+
+    fn table(self: *TomlAotParser, root: Value, path: []const []const u8, array_table: bool) !Value {
+        var current = root;
+        for (path, 0..) |segment, index| {
+            const last = index + 1 == path.len;
+            const existing = try tomlAotDictionaryGet(self.runtime, current.object().?.payload.dictionary.items, segment);
+            if (last and array_table) {
+                var array_value = existing orelse blk: {
+                    const created = try self.runtime.createArray(&.{});
+                    try tomlAotPut(self.runtime, current, segment, created);
+                    break :blk created;
+                };
+                if (array_value.tag != @intFromEnum(Tag.array)) return error.InvalidTomlTable;
+                const table_value = try self.runtime.createDictionary(&.{});
+                var table_roots = [_]Value{ array_value, table_value };
+                var roots = RootFrame{};
+                self.runtime.pushRoots(&roots, &table_roots, table_roots.len);
+                defer self.runtime.popRoots(&roots);
+                try array_value.object().?.payload.array.append(self.runtime.allocator, table_value);
+                return table_value;
+            }
+            if (existing) |found| {
+                if (found.tag == @intFromEnum(Tag.dictionary)) {
+                    current = found;
+                } else if (tomlAotLastArrayDictionary(found)) |last_table| {
+                    current = last_table;
+                } else return error.InvalidTomlTable;
+            } else {
+                const created = try self.runtime.createDictionary(&.{});
+                try tomlAotPut(self.runtime, current, segment, created);
+                current = created;
+            }
+        }
+        return current;
+    }
+
+    fn assign(self: *TomlAotParser, base: Value, path: []const []const u8, assigned_value: Value) !void {
+        if (path.len == 0) return error.InvalidTomlKey;
+        var current = base;
+        for (path[0 .. path.len - 1]) |segment| {
+            if (try tomlAotDictionaryGet(self.runtime, current.object().?.payload.dictionary.items, segment)) |found| {
+                if (found.tag != @intFromEnum(Tag.dictionary)) return error.InvalidTomlKey;
+                current = found;
+            } else {
+                const created = try self.runtime.createDictionary(&.{});
+                try tomlAotPut(self.runtime, current, segment, created);
+                current = created;
+            }
+        }
+        if (try tomlAotDictionaryGet(self.runtime, current.object().?.payload.dictionary.items, path[path.len - 1]) != null) return error.DuplicateTomlKey;
+        try tomlAotPut(self.runtime, current, path[path.len - 1], assigned_value);
+    }
+
+    fn skipDocumentSpace(self: *TomlAotParser) void {
+        while (self.index < self.input.len) switch (self.input[self.index]) {
+            ' ', '\t', '\n', '\r' => self.index += 1,
+            '#' => self.skipComment(),
+            else => return,
+        };
+    }
+
+    fn skipValueSpace(self: *TomlAotParser) void {
+        while (self.index < self.input.len) switch (self.input[self.index]) {
+            ' ', '\t', '\n', '\r' => self.index += 1,
+            '#' => self.skipComment(),
+            else => return,
+        };
+    }
+
+    fn skipHorizontal(self: *TomlAotParser) void {
+        while (self.index < self.input.len and (self.input[self.index] == ' ' or self.input[self.index] == '\t')) self.index += 1;
+    }
+
+    fn skipComment(self: *TomlAotParser) void {
+        while (self.index < self.input.len and self.input[self.index] != '\n') self.index += 1;
+    }
+
+    fn consume(self: *TomlAotParser, byte: u8) bool {
+        if (self.index >= self.input.len or self.input[self.index] != byte) return false;
+        self.index += 1;
+        return true;
+    }
+};
+
+fn tomlAotDictionaryGet(runtime: *Runtime, entries: []const DictionaryEntry, key: []const u8) !?Value {
+    for (entries) |entry| if (try tomlAotKeyEquals(runtime, entry.key, key)) return entry.value;
+    return null;
+}
+
+fn tomlAotKeyEquals(runtime: *Runtime, key: Value, expected: []const u8) !bool {
+    const actual = try tomlAotValueUtf8Alloc(runtime, key);
+    defer runtime.allocator.free(actual);
+    return std.mem.eql(u8, actual, expected);
+}
+
+fn tomlAotPut(runtime: *Runtime, dictionary: Value, key: []const u8, value: Value) !void {
+    var rooted = [_]Value{ value, .{} };
+    var roots = RootFrame{};
+    runtime.pushRoots(&roots, &rooted, rooted.len);
+    defer runtime.popRoots(&roots);
+    rooted[1] = try runtimeUtf8String(runtime, key);
+    try runtime.setDictionary(&dictionary.object().?.payload.dictionary, rooted[1], rooted[0]);
+}
+
+fn tomlAotParseInteger(token: []const u8) !f64 {
+    var sign: f64 = 1;
+    var digits = token;
+    if (digits.len > 0 and (digits[0] == '+' or digits[0] == '-')) {
+        if (digits[0] == '-') sign = -1;
+        digits = digits[1..];
+    }
+    var radix: u8 = 10;
+    if (digits.len > 2 and digits[0] == '0') switch (digits[1]) {
+        'x' => radix = 16,
+        'o' => radix = 8,
+        'b' => radix = 2,
+        else => {},
+    };
+    if (radix != 10) digits = digits[2..];
+    if (digits.len == 0 or (radix == 10 and digits.len > 1 and digits[0] == '0')) return error.InvalidTomlInteger;
+    const integer = try std.fmt.parseInt(u64, digits, radix);
+    if (integer > 9_007_199_254_740_991) return error.TomlIntegerPrecisionLoss;
+    return sign * @as(f64, @floatFromInt(integer));
+}
+
+fn tomlAotRemoveUnderscores(allocator: std.mem.Allocator, token: []const u8) ![]u8 {
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(allocator);
+    for (token, 0..) |byte, index| {
+        if (byte != '_') {
+            try output.append(allocator, byte);
+            continue;
+        }
+        if (index == 0 or index + 1 == token.len or !std.ascii.isAlphanumeric(token[index - 1]) or !std.ascii.isAlphanumeric(token[index + 1])) return error.InvalidTomlNumber;
+    }
+    return output.toOwnedSlice(allocator);
+}
+
+fn tomlAotLooksTemporal(token: []const u8) bool {
+    if (token.len < 5 or !std.ascii.isDigit(token[0])) return false;
+    return std.mem.indexOfScalar(u8, token, ':') != null or (token.len >= 10 and token[4] == '-' and token[7] == '-');
+}
+
+fn tomlAotIsBareKey(byte: u8) bool {
+    return std.ascii.isAlphanumeric(byte) or byte == '_' or byte == '-';
+}
+
+fn tomlAotLastArrayDictionary(value: Value) ?Value {
+    if (value.tag != @intFromEnum(Tag.array)) return null;
+    const object = value.object() orelse return null;
+    if (object.payload != .array or object.payload.array.items.len == 0) return null;
+    const item = object.payload.array.items[object.payload.array.items.len - 1];
+    return if (item.tag == @intFromEnum(Tag.dictionary)) item else null;
+}
+
+fn tomlStringify(runtime: *Runtime, source: Value) !Value {
+    if (source.tag != @intFromEnum(Tag.dictionary)) return error.DictionaryExpected;
+    var rooted_source = source;
+    var roots = RootFrame{};
+    runtime.pushRoots(&roots, @ptrCast(&rooted_source), 1);
+    defer runtime.popRoots(&roots);
+    var output: std.ArrayList(u8) = .empty;
+    defer output.deinit(runtime.allocator);
+    var active_dictionaries: std.AutoHashMapUnmanaged(*Object, void) = .empty;
+    defer active_dictionaries.deinit(runtime.allocator);
+    var active_arrays: std.AutoHashMapUnmanaged(*Object, void) = .empty;
+    defer active_arrays.deinit(runtime.allocator);
+    var path: std.ArrayList(Value) = .empty;
+    defer path.deinit(runtime.allocator);
+    try tomlAotWriteTable(runtime, &output, rooted_source.object().?, &path, false, &active_dictionaries, &active_arrays);
+    return runtimeUtf8String(runtime, output.items);
+}
+
+fn tomlAotWriteTable(runtime: *Runtime, output: *std.ArrayList(u8), dictionary: *Object, path: *std.ArrayList(Value), emit_header: bool, active_dictionaries: *std.AutoHashMapUnmanaged(*Object, void), active_arrays: *std.AutoHashMapUnmanaged(*Object, void)) !void {
+    if (active_dictionaries.contains(dictionary)) return error.CircularTomlValue;
+    try active_dictionaries.put(runtime.allocator, dictionary, {});
+    defer _ = active_dictionaries.remove(dictionary);
+    if (emit_header) {
+        try tomlAotWriteHeader(runtime, output, path.items, false);
+        try output.append(runtime.allocator, '\n');
+    }
+    for (dictionary.payload.dictionary.items) |entry| {
+        if (entry.value.tag == @intFromEnum(Tag.dictionary) or tomlAotIsArrayOfDictionaries(entry.value)) continue;
+        try tomlAotWriteKey(runtime, output, entry.key);
+        try output.appendSlice(runtime.allocator, " = ");
+        try tomlAotWriteValue(runtime, output, entry.value, active_dictionaries, active_arrays);
+        try output.append(runtime.allocator, '\n');
+    }
+    for (dictionary.payload.dictionary.items) |entry| {
+        if (entry.value.tag != @intFromEnum(Tag.dictionary) and !tomlAotIsArrayOfDictionaries(entry.value)) continue;
+        if (output.items.len > 0 and output.items[output.items.len - 1] != '\n') try output.append(runtime.allocator, '\n');
+        if (output.items.len > 0 and !(output.items.len >= 2 and output.items[output.items.len - 2] == '\n')) try output.append(runtime.allocator, '\n');
+        try path.append(runtime.allocator, entry.key);
+        defer _ = path.pop();
+        if (entry.value.tag == @intFromEnum(Tag.dictionary)) {
+            try tomlAotWriteTable(runtime, output, entry.value.object().?, path, true, active_dictionaries, active_arrays);
+        } else {
+            const array_object = entry.value.object().?;
+            if (active_arrays.contains(array_object)) return error.CircularTomlValue;
+            try active_arrays.put(runtime.allocator, array_object, {});
+            defer _ = active_arrays.remove(array_object);
+            for (array_object.payload.array.items, 0..) |item, index| {
+                if (item.tag != @intFromEnum(Tag.dictionary)) return error.UnsupportedTomlValue;
+                if (index > 0) try output.append(runtime.allocator, '\n');
+                try tomlAotWriteHeader(runtime, output, path.items, true);
+                try output.append(runtime.allocator, '\n');
+                try tomlAotWriteTable(runtime, output, item.object().?, path, false, active_dictionaries, active_arrays);
+            }
+        }
+    }
+}
+
+fn tomlAotWriteHeader(runtime: *Runtime, output: *std.ArrayList(u8), path: []const Value, array_table: bool) !void {
+    try output.appendSlice(runtime.allocator, if (array_table) "[[" else "[");
+    for (path, 0..) |key, index| {
+        if (index > 0) try output.append(runtime.allocator, '.');
+        try tomlAotWriteKey(runtime, output, key);
+    }
+    try output.appendSlice(runtime.allocator, if (array_table) "]]" else "]");
+}
+
+fn tomlAotValueUtf8Alloc(runtime: *Runtime, value: Value) ![]u8 {
+    const units = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(units);
+    return (string_mod.String{ .allocator = runtime.allocator, .units = units }).toUtf8Lossy(runtime.allocator);
+}
+
+fn tomlAotWriteKey(runtime: *Runtime, output: *std.ArrayList(u8), key: Value) !void {
+    const utf8 = try tomlAotValueUtf8Alloc(runtime, key);
+    defer runtime.allocator.free(utf8);
+    var bare = utf8.len > 0;
+    for (utf8) |byte| bare = bare and tomlAotIsBareKey(byte);
+    if (bare) return output.appendSlice(runtime.allocator, utf8);
+    try tomlAotWriteQuoted(runtime, output, utf8);
+}
+
+fn tomlAotWriteValue(runtime: *Runtime, output: *std.ArrayList(u8), value: Value, active_dictionaries: *std.AutoHashMapUnmanaged(*Object, void), active_arrays: *std.AutoHashMapUnmanaged(*Object, void)) !void {
+    switch (@as(Tag, @enumFromInt(value.tag))) {
+        .boolean => try output.appendSlice(runtime.allocator, if (value.payload != 0) "true" else "false"),
+        .number => {
+            const number: f64 = @bitCast(value.payload);
+            if (std.math.isNan(number)) return output.appendSlice(runtime.allocator, "nan");
+            if (std.math.isInf(number)) return output.appendSlice(runtime.allocator, if (number < 0) "-inf" else "inf");
+            const text = if (std.math.isFinite(number) and @trunc(number) == number and number >= @as(f64, @floatFromInt(std.math.minInt(i64))) and number <= @as(f64, @floatFromInt(std.math.maxInt(i64))))
+                try std.fmt.allocPrint(runtime.allocator, "{d}", .{@as(i64, @intFromFloat(number))})
+            else
+                try std.fmt.allocPrint(runtime.allocator, "{d}", .{number});
+            defer runtime.allocator.free(text);
+            try output.appendSlice(runtime.allocator, text);
+        },
+        .static_utf8_string, .utf16_string => {
+            const utf8 = try tomlAotValueUtf8Alloc(runtime, value);
+            defer runtime.allocator.free(utf8);
+            try tomlAotWriteQuoted(runtime, output, utf8);
+        },
+        .array => {
+            const object = value.object() orelse return error.UnsupportedTomlValue;
+            if (active_arrays.contains(object)) return error.CircularTomlValue;
+            try active_arrays.put(runtime.allocator, object, {});
+            defer _ = active_arrays.remove(object);
+            try output.appendSlice(runtime.allocator, "[ ");
+            for (object.payload.array.items, 0..) |item, index| {
+                if (index > 0) try output.appendSlice(runtime.allocator, ", ");
+                try tomlAotWriteValue(runtime, output, item, active_dictionaries, active_arrays);
+            }
+            try output.appendSlice(runtime.allocator, " ]");
+        },
+        .dictionary => {
+            const object = value.object() orelse return error.UnsupportedTomlValue;
+            if (active_dictionaries.contains(object)) return error.CircularTomlValue;
+            try active_dictionaries.put(runtime.allocator, object, {});
+            defer _ = active_dictionaries.remove(object);
+            try output.appendSlice(runtime.allocator, "{ ");
+            for (object.payload.dictionary.items, 0..) |entry, index| {
+                if (index > 0) try output.appendSlice(runtime.allocator, ", ");
+                try tomlAotWriteKey(runtime, output, entry.key);
+                try output.appendSlice(runtime.allocator, " = ");
+                try tomlAotWriteValue(runtime, output, entry.value, active_dictionaries, active_arrays);
+            }
+            try output.appendSlice(runtime.allocator, " }");
+        },
+        else => return error.UnsupportedTomlValue,
+    }
+}
+
+fn tomlAotWriteQuoted(runtime: *Runtime, output: *std.ArrayList(u8), bytes: []const u8) !void {
+    try output.append(runtime.allocator, '"');
+    for (bytes) |byte| switch (byte) {
+        '\n' => try output.appendSlice(runtime.allocator, "\\n"),
+        '\r' => try output.appendSlice(runtime.allocator, "\\r"),
+        '\t' => try output.appendSlice(runtime.allocator, "\\t"),
+        '\\' => try output.appendSlice(runtime.allocator, "\\\\"),
+        '"' => try output.appendSlice(runtime.allocator, "\\\""),
+        0x00...0x08, 0x0b, 0x0c, 0x0e...0x1f, 0x7f => {
+            const escaped = try std.fmt.allocPrint(runtime.allocator, "\\u{X:0>4}", .{byte});
+            defer runtime.allocator.free(escaped);
+            try output.appendSlice(runtime.allocator, escaped);
+        },
+        else => try output.append(runtime.allocator, byte),
+    };
+    try output.append(runtime.allocator, '"');
+}
+
+fn tomlAotIsArrayOfDictionaries(value: Value) bool {
+    if (value.tag != @intFromEnum(Tag.array)) return false;
+    const object = value.object() orelse return false;
+    return switch (object.payload) {
+        .array => |items| items.items.len > 0 and items.items[0].tag == @intFromEnum(Tag.dictionary),
         else => false,
     };
 }
@@ -8655,6 +9214,42 @@ test "AOT CSV命令は引用・数値変換・TSV・オプションを処理す�
     roots[12] = try active_runtime.?.createArray(&.{try active_runtime.?.createArray(&.{ numberValue(5), numberValue(6) })});
     lnako_aot_builtin_call(&roots[13], @ptrCast(&roots[12]), 1, @intFromEnum(aot_builtin.Command.tsv_stringify));
     try expectUtf16String(&runtime, roots[13], "5\t6|");
+}
+
+test "AOT TOML命令は表・配列・インライン表を処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try runtimeUtf8String(&active_runtime.?, "title=\"x\"\nn=1_000\na=[1,2]\no={x=1}\n[server]\nport=8080\n[[products]]\nname=\"a\"\n[[products]]\nname=\"b\"\n");
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.toml_parse));
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(roots[1].tag)));
+    try std.testing.expectEqual(@as(f64, 1000), @as(f64, @bitCast(dictionaryProperty(roots[1], &.{'n'}).payload)));
+    const server = dictionaryProperty(roots[1], &.{ 's', 'e', 'r', 'v', 'e', 'r' });
+    try std.testing.expectEqual(@as(f64, 8080), @as(f64, @bitCast(dictionaryProperty(server, &.{ 'p', 'o', 'r', 't' }).payload)));
+    const products = dictionaryProperty(roots[1], &.{ 'p', 'r', 'o', 'd', 'u', 'c', 't', 's' });
+    try std.testing.expectEqual(@as(usize, 2), products.object().?.payload.array.items.len);
+    try expectUtf16String(&active_runtime.?, dictionaryProperty(products.object().?.payload.array.items[0], &.{ 'n', 'a', 'm', 'e' }), "a");
+    try expectUtf16String(&active_runtime.?, dictionaryProperty(products.object().?.payload.array.items[1], &.{ 'n', 'a', 'm', 'e' }), "b");
+
+    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[1]), 1, @intFromEnum(aot_builtin.Command.toml_stringify));
+    const encoded_units = try valueUtf16Alloc(&active_runtime.?, roots[2]);
+    defer active_runtime.?.allocator.free(encoded_units);
+    const products_header = try std.unicode.utf8ToUtf16LeAlloc(active_runtime.?.allocator, "[[products]]");
+    defer active_runtime.?.allocator.free(products_header);
+    try std.testing.expect(std.mem.indexOf(u16, encoded_units, products_header) != null);
+
+    roots[3] = try active_runtime.?.createDictionary(&.{ staticStringValue("a"), numberValue(1) });
+    lnako_aot_builtin_call(&roots[4], @ptrCast(&roots[3]), 1, @intFromEnum(aot_builtin.Command.toml_stringify));
+    try expectUtf16String(&active_runtime.?, roots[4], "a = 1\n");
 }
 
 test "AOT Node環境命令はコンパイル対象のOSとCPU名を返す" {

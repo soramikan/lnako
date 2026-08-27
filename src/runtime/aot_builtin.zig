@@ -229,6 +229,8 @@ pub const Command = enum(u16) {
     table_tsv_stringify,
     tsv_stringify,
     csv_options,
+    toml_parse,
+    toml_stringify,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -467,6 +469,8 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "表TSV変換")) return .table_tsv_stringify;
     if (std.mem.eql(u8, name, "TSV変換")) return .tsv_stringify;
     if (std.mem.eql(u8, name, "CSVオプション設定")) return .csv_options;
+    if (std.mem.eql(u8, name, "TOML取得")) return .toml_parse;
+    if (std.mem.eql(u8, name, "TOML変換")) return .toml_stringify;
     return null;
 }
 
@@ -687,6 +691,8 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.table_tsv_stringify, lookup("表TSV変換").?);
     try std.testing.expectEqual(Command.tsv_stringify, lookup("TSV変換").?);
     try std.testing.expectEqual(Command.csv_options, lookup("CSVオプション設定").?);
+    try std.testing.expectEqual(Command.toml_parse, lookup("TOML取得").?);
+    try std.testing.expectEqual(Command.toml_stringify, lookup("TOML変換").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }
 

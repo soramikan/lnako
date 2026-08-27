@@ -600,5 +600,11 @@
     "oracle": "official-source",
     "commands": ["CSV取得", "TSV取得", "表CSV変換", "CSV変換", "表TSV変換", "TSV変換", "CSVオプション設定"],
     "source": "!「${PLUGIN_CSV}」を取り込む\nJSON変換(CSV取得(『1,\"a,b\",3\n4,5,6』))を表示\nJSON変換(TSV取得(『1\\t2\n3\\t4』))を表示\nA=[[1,\"a,b\"],[2,\"x\"]]; 表CSV変換(A)を表示; JSON変換(A)を表示\nCSV変換([[\"a\",\"b\"]])を表示\n表TSV変換([[1,2]])を表示\nTSV変換([[3,4]])を表示\nCSVオプション設定({\"eol\":\"|\",\"auto_convert_number\":false})\nJSON変換(CSV取得(『7,8』))を表示\nCSV変換([[\"x\",\"y\"]])を表示\n"
+  },
+  {
+    "id": "native-toml-commands",
+    "oracle": "official-source",
+    "commands": ["TOML取得", "TOML変換"],
+    "source": "!「${PLUGIN_TOML}」を取り込む\nT=『title=\"x\"\nn=1_000\na=[1,2]\no={x=1}\n[server]\nport=8080\n[[products]]\nname=\"a\"\n[[products]]\nname=\"b\"』\nJSON変換(TOML取得(T))を表示\nTOML変換({\"a\":{\"b\":3}})を表示\n"
   }
 ]
