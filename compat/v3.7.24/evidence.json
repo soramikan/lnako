@@ -8,14 +8,14 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 245,
-    "nativeAot": 140,
+    "total": 246,
+    "nativeAot": 141,
     "interpreter": 96,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
-    "paired": 373,
-    "interpreter-only": 150,
+    "paired": 379,
+    "interpreter-only": 144,
     "aot-only": 0,
     "none": 0,
     "compat-js-only": 4
@@ -2322,7 +2322,9 @@
       "interpreterFixtureIds": [
         "system-runtime-catalog-and-namespace"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-catalog-lists"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -2331,15 +2333,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-catalog-lists": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Zig製plugin_system実装と純LLVM AOTで公式cnako3の7経路差分テストに成功"
     },
     {
       "id": "command-0073",
@@ -2349,7 +2356,9 @@
       "interpreterFixtureIds": [
         "system-runtime-catalog-and-namespace"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-catalog-lists"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -2358,15 +2367,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-catalog-lists": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Zig製plugin_system実装と純LLVM AOTで公式cnako3の7経路差分テストに成功"
     },
     {
       "id": "command-0074",
@@ -2376,7 +2390,9 @@
       "interpreterFixtureIds": [
         "system-runtime-catalog-and-namespace"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-catalog-lists"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -2385,15 +2401,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-catalog-lists": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Zig製plugin_system実装と純LLVM AOTで公式cnako3の7経路差分テストに成功"
     },
     {
       "id": "command-0075",
@@ -2403,7 +2424,9 @@
       "interpreterFixtureIds": [
         "system-runtime-catalog-and-namespace"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-catalog-lists"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -2412,15 +2435,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-catalog-lists": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Zig製plugin_system実装と純LLVM AOTで公式cnako3の7経路差分テストに成功"
     },
     {
       "id": "command-0076",
@@ -2430,7 +2458,9 @@
       "interpreterFixtureIds": [
         "system-runtime-catalog-and-namespace"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-catalog-lists"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -2439,15 +2469,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-catalog-lists": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Zig製plugin_system実装と純LLVM AOTで公式cnako3の7経路差分テストに成功"
     },
     {
       "id": "command-0077",
@@ -2457,7 +2492,9 @@
       "interpreterFixtureIds": [
         "system-runtime-catalog-and-namespace"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-catalog-lists"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -2466,15 +2503,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-catalog-lists": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Zig製plugin_system実装と純LLVM AOTで公式cnako3の7経路差分テストに成功"
     },
     {
       "id": "command-0078",

@@ -249,6 +249,11 @@ pub const Command = enum(u16) {
     namespace_set,
     namespace_pop,
     async_noop,
+    system_function_names,
+    system_function_exists,
+    plugin_names,
+    josi_names,
+    reserved_words,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -507,6 +512,11 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "名前空間設定")) return .namespace_set;
     if (std.mem.eql(u8, name, "名前空間ポップ")) return .namespace_pop;
     if (std.mem.eql(u8, name, "ASYNC")) return .async_noop;
+    if (std.mem.eql(u8, name, "システム関数一覧取得")) return .system_function_names;
+    if (std.mem.eql(u8, name, "システム関数存在")) return .system_function_exists;
+    if (std.mem.eql(u8, name, "プラグイン一覧取得") or std.mem.eql(u8, name, "モジュール一覧取得")) return .plugin_names;
+    if (std.mem.eql(u8, name, "助詞一覧取得")) return .josi_names;
+    if (std.mem.eql(u8, name, "予約語一覧取得")) return .reserved_words;
     return null;
 }
 
@@ -684,6 +694,12 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.namespace_set, lookup("名前空間設定").?);
     try std.testing.expectEqual(Command.namespace_pop, lookup("名前空間ポップ").?);
     try std.testing.expectEqual(Command.async_noop, lookup("ASYNC").?);
+    try std.testing.expectEqual(Command.system_function_names, lookup("システム関数一覧取得").?);
+    try std.testing.expectEqual(Command.system_function_exists, lookup("システム関数存在").?);
+    try std.testing.expectEqual(Command.plugin_names, lookup("プラグイン一覧取得").?);
+    try std.testing.expectEqual(Command.plugin_names, lookup("モジュール一覧取得").?);
+    try std.testing.expectEqual(Command.josi_names, lookup("助詞一覧取得").?);
+    try std.testing.expectEqual(Command.reserved_words, lookup("予約語一覧取得").?);
     try std.testing.expectEqual(Command.datetime_now, lookup("今").?);
     try std.testing.expectEqual(Command.datetime_system_time_milliseconds, lookup("システム時間ミリ秒").?);
     try std.testing.expectEqual(Command.datetime_today, lookup("今日").?);

@@ -3539,44 +3539,50 @@
   "システム関数一覧取得": {
     "status": "native",
     "tests": [
-      "system-runtime-catalog-and-namespace"
+      "system-runtime-catalog-and-namespace",
+      "native-system-catalog-lists"
     ],
-    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+    "reason": "Zig製plugin_system実装と純LLVM AOTで公式cnako3の7経路差分テストに成功"
   },
   "システム関数存在": {
     "status": "native",
     "tests": [
-      "system-runtime-catalog-and-namespace"
+      "system-runtime-catalog-and-namespace",
+      "native-system-catalog-lists"
     ],
-    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+    "reason": "Zig製plugin_system実装と純LLVM AOTで公式cnako3の7経路差分テストに成功"
   },
   "プラグイン一覧取得": {
     "status": "native",
     "tests": [
-      "system-runtime-catalog-and-namespace"
+      "system-runtime-catalog-and-namespace",
+      "native-system-catalog-lists"
     ],
-    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+    "reason": "Zig製plugin_system実装と純LLVM AOTで公式cnako3の7経路差分テストに成功"
   },
   "モジュール一覧取得": {
     "status": "native",
     "tests": [
-      "system-runtime-catalog-and-namespace"
+      "system-runtime-catalog-and-namespace",
+      "native-system-catalog-lists"
     ],
-    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+    "reason": "Zig製plugin_system実装と純LLVM AOTで公式cnako3の7経路差分テストに成功"
   },
   "助詞一覧取得": {
     "status": "native",
     "tests": [
-      "system-runtime-catalog-and-namespace"
+      "system-runtime-catalog-and-namespace",
+      "native-system-catalog-lists"
     ],
-    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+    "reason": "Zig製plugin_system実装と純LLVM AOTで公式cnako3の7経路差分テストに成功"
   },
   "予約語一覧取得": {
     "status": "native",
     "tests": [
-      "system-runtime-catalog-and-namespace"
+      "system-runtime-catalog-and-namespace",
+      "native-system-catalog-lists"
     ],
-    "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+    "reason": "Zig製plugin_system実装と純LLVM AOTで公式cnako3の7経路差分テストに成功"
   },
   "プラグイン名": {
     "status": "native",

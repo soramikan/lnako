@@ -1885,14 +1885,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "system-runtime-catalog-and-namespace"
+        "system-runtime-catalog-and-namespace",
+        "native-system-catalog-lists"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "Zig製plugin_system実装と純LLVM AOTで公式cnako3の7経路差分テストに成功"
     },
     {
       "id": "command-0073",
@@ -1911,14 +1912,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "system-runtime-catalog-and-namespace"
+        "system-runtime-catalog-and-namespace",
+        "native-system-catalog-lists"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "Zig製plugin_system実装と純LLVM AOTで公式cnako3の7経路差分テストに成功"
     },
     {
       "id": "command-0074",
@@ -1937,14 +1939,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "system-runtime-catalog-and-namespace"
+        "system-runtime-catalog-and-namespace",
+        "native-system-catalog-lists"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "Zig製plugin_system実装と純LLVM AOTで公式cnako3の7経路差分テストに成功"
     },
     {
       "id": "command-0075",
@@ -1963,14 +1966,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "system-runtime-catalog-and-namespace"
+        "system-runtime-catalog-and-namespace",
+        "native-system-catalog-lists"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "Zig製plugin_system実装と純LLVM AOTで公式cnako3の7経路差分テストに成功"
     },
     {
       "id": "command-0076",
@@ -1989,14 +1993,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "system-runtime-catalog-and-namespace"
+        "system-runtime-catalog-and-namespace",
+        "native-system-catalog-lists"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "Zig製plugin_system実装と純LLVM AOTで公式cnako3の7経路差分テストに成功"
     },
     {
       "id": "command-0077",
@@ -2015,14 +2020,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "system-runtime-catalog-and-namespace"
+        "system-runtime-catalog-and-namespace",
+        "native-system-catalog-lists"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "Zig製plugin_system実装と純LLVM AOTで公式cnako3の7経路差分テストに成功"
     },
     {
       "id": "command-0078",

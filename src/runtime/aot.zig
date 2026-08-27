@@ -10,6 +10,9 @@ const string_mod = @import("string.zig");
 const system_constant = @import("system_constant.zig");
 const regexp = @import("../plugins/system/regexp.zig");
 const markup = @import("../plugins/markup.zig");
+const lexer = @import("../frontend/lexer.zig");
+const josi = @import("../frontend/josi.zig");
+const builtin_catalog = @import("../semantic/builtin_catalog.zig");
 
 extern "c" fn fflush(stream: ?*std.c.FILE) c_int;
 extern "c" fn time(timer: ?*i64) i64;
@@ -191,6 +194,16 @@ const AotCsvDelimiterDefault = enum { comma, tab };
 const aot_csv_comma = [_]u16{','};
 const aot_csv_tab = [_]u16{'\t'};
 const aot_csv_crlf = [_]u16{ '\r', '\n' };
+
+const default_plugin_names = [_][]const u8{
+    "plugin_system",
+    "plugin_math",
+    "plugin_promise",
+    "plugin_test",
+    "plugin_csv",
+    "plugin_toml",
+    "plugin_node",
+};
 
 /// CSV options are process-local in the official plugin. Keep the same
 /// lifetime as the AOT runtime so separate builtin calls observe updates from
@@ -2561,6 +2574,67 @@ fn pluginManagementBuiltin(
     }
 }
 
+fn stringArrayBuiltin(runtime: *Runtime, names: []const []const u8) !Value {
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createArray(&.{});
+    for (names) |name| {
+        roots[1] = try runtimeUtf8String(runtime, name);
+        try roots[0].object().?.payload.array.append(runtime.allocator, roots[1]);
+    }
+    return roots[0];
+}
+
+fn systemFunctionExistsBuiltin(runtime: *Runtime, values: []const Value) !Value {
+    const source = if (values.len > 0) values[values.len - 1] else Value{};
+    const text = try valueUtf8LossyAlloc(runtime, source);
+    defer runtime.allocator.free(text);
+    for (builtin_catalog.default_names) |candidate| {
+        if (std.mem.eql(u8, text, candidate)) return .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 };
+    }
+    return .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
+}
+
+test "AOTシステムカタログ命令は一覧の順序と存在判定を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    lnako_aot_builtin_call(&roots[0], null, 0, @intFromEnum(aot_builtin.Command.system_function_names));
+    try std.testing.expectEqual(builtin_catalog.default_names.len, roots[0].object().?.payload.array.items.len);
+    try expectUtf16String(&active_runtime.?, roots[0].object().?.payload.array.items[0], "ナデシコバージョン");
+    try expectUtf16String(&active_runtime.?, roots[0].object().?.payload.array.items[builtin_catalog.default_names.len - 1], "AJAX:ONERROR");
+
+    roots[1] = try runtimeUtf8String(&active_runtime.?, "表示");
+    var existing_arguments = [_]Value{ numberValue(0), roots[1] };
+    lnako_aot_builtin_call(&roots[2], &existing_arguments, existing_arguments.len, @intFromEnum(aot_builtin.Command.system_function_exists));
+    try std.testing.expectEqual(Tag.boolean, @as(Tag, @enumFromInt(roots[2].tag)));
+    try std.testing.expectEqual(@as(u64, 1), roots[2].payload);
+
+    roots[3] = try runtimeUtf8String(&active_runtime.?, "不存在");
+    lnako_aot_builtin_call(&roots[4], @ptrCast(&roots[3]), 1, @intFromEnum(aot_builtin.Command.system_function_exists));
+    try std.testing.expectEqual(@as(u64, 0), roots[4].payload);
+
+    lnako_aot_builtin_call(&roots[5], null, 0, @intFromEnum(aot_builtin.Command.plugin_names));
+    try std.testing.expectEqual(default_plugin_names.len, roots[5].object().?.payload.array.items.len);
+    try expectUtf16String(&active_runtime.?, roots[5].object().?.payload.array.items[0], "plugin_system");
+    lnako_aot_builtin_call(&roots[6], null, 0, @intFromEnum(aot_builtin.Command.josi_names));
+    try std.testing.expectEqual(josi.exported_list.len, roots[6].object().?.payload.array.items.len);
+    lnako_aot_builtin_call(&roots[7], null, 0, @intFromEnum(aot_builtin.Command.reserved_words));
+    try std.testing.expectEqual(lexer.exported_reserved_words.len, roots[7].object().?.payload.array.items.len);
+}
+
 test "AOTプラグイン管理命令は文字列化と名前空間スタックをGC越しに保つ" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -3115,7 +3189,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all and command != .namespace_pop and command != .async_noop) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all and command != .namespace_pop and command != .async_noop and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -3205,6 +3279,37 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
             return;
         },
         .async_noop => out.* = .{},
+        .system_function_names => {
+            out.* = stringArrayBuiltin(runtime, &builtin_catalog.default_names) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .system_function_exists => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = systemFunctionExistsBuiltin(runtime, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .plugin_names => {
+            out.* = stringArrayBuiltin(runtime, &default_plugin_names) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .josi_names => {
+            out.* = stringArrayBuiltin(runtime, &josi.exported_list) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .reserved_words => {
+            out.* = stringArrayBuiltin(runtime, &lexer.exported_reserved_words) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .node_os, .node_architecture => {
             out.* = nodeEnvironmentBuiltin(runtime, command) catch |failure| {
                 runtime.setFailure(failure);
