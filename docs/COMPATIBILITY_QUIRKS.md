@@ -207,7 +207,13 @@ lnakoは実行結果の互換性とテストの再現性を両立するため、
 公式CLIの依存モジュール`shell-quote`は、読み込み時に内部識別子生成のため`Math.random`を4回呼びます。
 これはなでしこプログラムの乱数ではないため、固定ホストはコンパイラ内部の乱数と同様に別ストリームへ
 分離します。分離しない場合、同じソースでも公式CLI経由とAPI経由で最初の`乱数`が変わります。
-差分テストIDは`plugin-math-all`です。
+差分テストIDは`plugin-math-all`です。AOTランタイムも`LNAKO_TEST_RANDOM_SEED`を受け取り、固定ホストと同じ
+xorshift64*系列を使うため、AOT乱数の差分fixtureでは全経路の乱数列を再現できます。未指定時はAOTランタイムが
+時刻とプロセス内アドレスから初期状態を作り、通常実行では固定値へ制限しません。
+
+| 境界 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID | TODO識別子 |
+|---|---|---|---|---|
+| 乱数の再現性 | `Math.random`は通常実行では非決定的だが、テストの固定ホストでは`LNAKO_TEST_RANDOM_SEED`から同じ乱数列を生成する。`乱数`は数値・`[先頭,末尾]`配列・辞書の`先頭`/`末尾`を整数範囲へ変換し、`乱数範囲`は2引数の整数範囲を使う | InterpreterとAOTはホスト注入乱数を使い、AOTは同じ固定シード系列をランタイム内で再現する。AOTの未指定シードは時刻とプロセス内アドレスで初期化するため、非決定性を保つ。通常モードへJSランタイムは混入しない | `plugin-math-all`、`native-math-random` | なし |
 
 ## マークアップと漢数字
 
@@ -277,7 +283,7 @@ ABI値の所有権と非同期スレッド制約は[`NATIVE_PLUGIN_ABI.md`](NATI
 | AOT compile manifestの証明範囲 | 最適化前IRにbuiltin callがあること、LLVM最適化後もcallが残ること、実行時に成功することは別の事実である。生成途中で止まったJSONLも完了artifactにはできない | `LNAKO_COMPILE_MANIFEST`はNako最適化前の命令名・numeric opcode・canonical opcode・LLVM emitter route・決定的な16桁site ID・位置を記録し、link成功後の`complete` recordがある場合だけ受理する。site ID衝突はbuildエラーとする。pluginやcatalog IDはmanifest自身へ持たせずchecker側で限定解決する。失敗時は部分ファイルを削除し、runtime traceと公式差分結果を別途照合する | `check_dispatch_trace.mjs`、`lnako.aot.builtin-manifest.v1` |
 | dispatch evidenceのattestation境界 | JSONのdigestだけではGitHub Actionsの実行者や対象commitを証明できず、未署名の単体ファイルを`verified`へ上げると差し替えを検出できない。署名検証済みという文字列を持つmetadataだけでも偽造できる。fork PRではOIDC／attest権限も与えられない | AOT各正式OSのdispatch JSONを公式`actions/attest`のmulti-subject artifact attestationへ結び付け、専用jobとcatalog同期処理の双方で、生成されたSigstore bundleを公式`gh attestation verify`へ渡す。`--signer-workflow`・`--signer-digest`・`--source-digest`・`--source-ref`・公式OIDC issuer・`--deny-self-hosted-runners`を強制し、bundle SHA-256、3 OSの証拠digest、commit、workflow identityがすべて一致した場合だけ一時catalog evidenceを`verified`として生成する。追跡JSONはnull attestationのままにし、未attest、metadataだけ、権限不足、digest／identity不一致は昇格しない。Actions artifactの30日保持後も検証できるよう、run `32983175945`の3 OS JSON、bundle、metadata、historical catalogを`compat/v3.7.24/attestations/32983175945/`へ固定し、manifestとbundle payloadのidentity／digestをcheckerで再検査する。target commitと追跡を追加する後続commitは別で、現在の`evidence.json`はverified 0のまま | `tools/verify_dispatch_attestation.mjs`、`tools/sync_compat_evidence.mjs`、`tools/check_tracked_dispatch_attestation.mjs`、GitHub Actions `actions/attest@v4.2.2`（SHA固定）、`gh attestation verify` |
 | 追跡bundle改変テストの診断範囲 | 改変後の`gh attestation verify`が非成功になることはfail-closedを確認するが、テスト単体では署名不一致と`gh`未導入・認証・通信障害を区別しない | mainのattestation jobで正規bundleのオンライン検証を先に独立して成功させる。改変テストのログは暗号学的拒否の単独証明とは表現せず、正規bundle検証と組み合わせた回帰防止として扱う | `tools/check_tracked_dispatch_attestation.mjs`、`tools/check_tracked_dispatch_attestation_security.mjs`、GitHub Actions `attest-dispatch-evidence` |
-| Windowsのdispatch証拠と改行 | Windowsでは公式cnako3・生成JavaScript・InterpreterがLFを出しても、MSVCリンクしたAOT実行ファイルの標準出力はCRLFになる。生bytes比較では同じ表示結果を不一致にし、Windows証拠だけ生成できない | 全116件のAOT差分と同じく、公式比較に使うstdout/stderrはCRLFをLFへ正規化してから比較・SHA-256化する。trace有無の同一実行比較とraw trace／manifest hashは生bytesのまま保持する | `tools/check_dispatch_trace.mjs`、`tools/compare_native_oracle.mjs`、Windows x86_64 `aot` |
+| Windowsのdispatch証拠と改行 | Windowsでは公式cnako3・生成JavaScript・InterpreterがLFを出しても、MSVCリンクしたAOT実行ファイルの標準出力はCRLFになる。生bytes比較では同じ表示結果を不一致にし、Windows証拠だけ生成できない | 全117件のAOT差分と同じく、公式比較に使うstdout/stderrはCRLFをLFへ正規化してから比較・SHA-256化する。trace有無の同一実行比較とraw trace／manifest hashは生bytesのまま保持する | `tools/check_dispatch_trace.mjs`、`tools/compare_native_oracle.mjs`、Windows x86_64 `aot` |
 | dispatch evidenceのraw hashと意味内容 | `compileManifestSha256`はraw manifest headerに含まれる一時`sourcePath`もhashするため、同じ意味内容でも実行ごとに変わり得るrun固有provenanceである | 証拠JSON自体にはsourcePath本文を保存せず、site・opcode・canonical opcode・routeなどの意味内容を再生成して一致確認する。今回の再生成ではraw hash以外の証拠内容が完全一致し、Interpreter/AOT trace hashも一致した | `dispatch-evidence.json`、`check_dispatch_trace.mjs`、`sync_compat_evidence.mjs` |
 | AOT差分artifactの完全allowlist | schema、hash、route、fixture、compile status/manifest要約まで全object階層の既知keyを検査し、stdout/stderr・引数・値・ポインタ・sourcePath・cwdとネストされたenvironment、未知key、未知status/route値を拒否する。トップレベルのprovenance environmentは正規フィールドとして維持する | 生成側の`lnako.native-oracle-artifact.v1`形状とvalidatorを同じfeature単位で更新し、schema変更時はallowlistを同時移行する | `tools/compare_native_oracle.mjs`、`DEVELOPMENT.md` |
 | 公式oracle tree hashのmodeとsymlink | ファイルmodeはNode CLIが読むJS内容の意味に影響しない一方、OSごとに異なるためhash対象外。production treeにsymlinkが残ると外部ファイル参照の穴になり得る | stagingのproduction prune後に全階層`node_modules/.bin`と`.package-lock.json`を明示削除し、tree hashはmarker以外を全てhashしてsymlinkを拒否する。mode・mtime・絶対パスは記録しない | `tools/setup_oracle.mjs`、`tools/oracle_tree_hash.mjs`、`compat/upstream.lock.json` |

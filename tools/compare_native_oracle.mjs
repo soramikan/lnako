@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { execFile, spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -17,6 +18,7 @@ if (standardCatalog.commandCount !== 527 || !Array.isArray(standardCatalog.comma
 const standardCommandNames = new Set(standardCatalog.commands.map((command) => command.name));
 const executable = resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
 const officialCli = resolve(oracleRoot, "src/cnako3.mjs");
+const fixedHost = resolve(root, "tools/oracle/fixed_host.mjs");
 const artifactPath = parseArtifactPath();
 if (artifactPath !== null) await ensureArtifactDestinationFree(artifactPath);
 const artifactBaseline = artifactPath === null ? null : JSON.parse(await readFile(resolve(root, "compat/upstream.lock.json"), "utf8")).nadesiko3;
@@ -175,12 +177,13 @@ async function runCase(testCase, index, temporary, executable, officialCli, coll
   await writeFile(sourcePath, testCase.source, "utf8");
   const options = {
     cwd: fixtureDirectory,
-    env: { ...process.env, TZ: "Asia/Tokyo", LNAKO_LLVM_TRACE: "1" },
+    env: { ...process.env, TZ: "Asia/Tokyo", LNAKO_TEST_RANDOM_SEED: "5573589319906701683", LNAKO_LLVM_TRACE: "1" },
     maxBuffer,
   };
-  const officialSource = await runProcess(process.execPath, [officialCli, sourcePath], options);
-  const officialCompile = await runProcess(process.execPath, [officialCli, "--compile", "--silent", "--output", generatedJavaScript, sourcePath], options);
-  const officialGenerated = officialCompile.status === 0 ? await runProcess(process.execPath, [generatedJavaScript], options) : officialCompile;
+  const fixedHostArgument = ["--import", pathToFileURL(fixedHost).href];
+  const officialSource = await runProcess(process.execPath, [...fixedHostArgument, officialCli, sourcePath], options);
+  const officialCompile = await runProcess(process.execPath, [...fixedHostArgument, officialCli, "--compile", "--silent", "--output", generatedJavaScript, sourcePath], options);
+  const officialGenerated = officialCompile.status === 0 ? await runProcess(process.execPath, [...fixedHostArgument, generatedJavaScript], options) : officialCompile;
   const generatedJavaScriptSha256 = collectManifest && officialCompile.status === 0 ? sha256(await readFile(generatedJavaScript)) : null;
   const interpreted = await runProcess(executable, ["run", sourcePath], options);
   const results = {

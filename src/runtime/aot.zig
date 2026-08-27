@@ -10,6 +10,7 @@ const system_constant = @import("system_constant.zig");
 const regexp = @import("../plugins/system/regexp.zig");
 
 extern "c" fn fflush(stream: ?*std.c.FILE) c_int;
+extern "c" fn time(timer: ?*i64) i64;
 
 pub const Tag = aot_abi.Tag;
 
@@ -246,6 +247,7 @@ const Runtime = struct {
     failure_epoch: u64 = 0,
     system_context: Value = .{},
     dispatch_trace: DispatchTrace = .{},
+    random_state: u64 = 0,
 
     fn deinit(self: *Runtime) void {
         self.dispatch_trace.deinit();
@@ -2337,7 +2339,7 @@ fn runtimeFailure(failure: anyerror) noreturn {
 var active_runtime: ?Runtime = null;
 
 pub export fn lnako_aot_runtime_init() callconv(.c) c_int {
-    if (active_runtime == null) active_runtime = .{ .allocator = std.heap.c_allocator };
+    if (active_runtime == null) active_runtime = .{ .allocator = std.heap.c_allocator, .random_state = initialRandomState() };
     return 0;
 }
 
@@ -2706,7 +2708,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -2728,7 +2730,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
-        .math_sin, .math_cos, .math_tan, .math_arcsin, .math_arccos, .math_arctan, .math_atan2, .math_coordinate_angle, .math_rad2deg, .math_deg2rad, .math_sign, .math_abs, .math_exp, .math_hypot, .math_log, .math_logn, .math_frac, .math_integer, .math_sqrt, .math_round, .math_decimal_ceil, .math_decimal_floor, .math_decimal_round, .math_ceil, .math_floor => {
+        .math_sin, .math_cos, .math_tan, .math_arcsin, .math_arccos, .math_arctan, .math_atan2, .math_coordinate_angle, .math_rad2deg, .math_deg2rad, .math_sign, .math_abs, .math_exp, .math_hypot, .math_log, .math_logn, .math_frac, .math_integer, .math_sqrt, .math_round, .math_decimal_ceil, .math_decimal_floor, .math_decimal_round, .math_ceil, .math_floor, .math_random, .math_random_range => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = mathBuiltin(runtime, command, actual) catch |failure| {
                 runtime.setFailure(failure);
@@ -3386,8 +3388,63 @@ fn mathBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []con
         .math_decimal_round => numberValue(try mathDecimalRound(runtime, a, b, .round)),
         .math_ceil => numberValue(@ceil(try valueToNumberRuntime(runtime, a))),
         .math_floor => numberValue(@floor(try valueToNumberRuntime(runtime, a))),
+        .math_random => try mathRandom(runtime, a),
+        .math_random_range => try mathRandomRange(runtime, a, b),
         else => error.UnknownCommand,
     };
+}
+
+const default_random_seed: u64 = 5573589319906701683;
+
+fn initialRandomState() u64 {
+    const environment = std.c.getenv("LNAKO_TEST_RANDOM_SEED") orelse {
+        const timestamp: u64 = @bitCast(time(null));
+        const mixed = timestamp ^ @intFromPtr(&active_runtime);
+        return if (mixed == 0) default_random_seed else mixed;
+    };
+    const parsed = std.fmt.parseInt(u64, std.mem.span(environment), 10) catch return default_random_seed;
+    return if (parsed == 0) default_random_seed else parsed;
+}
+
+fn nextRandom(runtime: *Runtime) f64 {
+    if (runtime.random_state == 0) runtime.random_state = initialRandomState();
+    var value = runtime.random_state;
+    value ^= value >> 12;
+    value ^= value << 25;
+    value ^= value >> 27;
+    runtime.random_state = value;
+    const bits = (value *% 0x2545f4914f6cdd1d) >> 11;
+    return @as(f64, @floatFromInt(bits)) / 9007199254740992.0;
+}
+
+fn mathRandom(runtime: *Runtime, source: Value) !Value {
+    const random = nextRandom(runtime);
+    if (source.tag == @intFromEnum(Tag.number)) return numberValue(@floor(random * @as(f64, @bitCast(source.payload))));
+
+    var minimum: Value = .{};
+    var maximum: Value = .{};
+    switch (@as(Tag, @enumFromInt(source.tag))) {
+        .array => {
+            const items = source.object().?.payload.array.items;
+            minimum = if (items.len > 0) items[0] else .{};
+            maximum = if (items.len > 1) items[1] else .{};
+        },
+        .dictionary => {
+            minimum = runtime.indexGet(source, staticStringValue("先頭"));
+            maximum = runtime.indexGet(source, staticStringValue("末尾"));
+        },
+        else => return .{},
+    }
+    const lower = try valueToNumberRuntime(runtime, minimum);
+    const upper = try valueToNumberRuntime(runtime, maximum);
+    return numberValue(@floor(random * (upper - lower + 1)) + lower);
+}
+
+fn mathRandomRange(runtime: *Runtime, minimum: Value, maximum: Value) !Value {
+    const random = nextRandom(runtime);
+    const lower = try valueToNumberRuntime(runtime, minimum);
+    const upper = try valueToNumberRuntime(runtime, maximum);
+    return numberValue(@floor(random * (upper - lower + 1)) + lower);
 }
 
 fn mathCoordinateAngle(runtime: *Runtime, source: Value) !f64 {
@@ -6386,6 +6443,38 @@ test "AOT数学命令dispatchは数値・配列・別名を処理する" {
     roots[9] = numberValue(-1.5);
     lnako_aot_builtin_call(&roots[10], @ptrCast(&roots[9]), 1, @intFromEnum(aot_builtin.Command.math_round));
     try std.testing.expectEqual(@as(f64, -1), @as(f64, @bitCast(roots[10].payload)));
+}
+
+test "AOT乱数命令は固定シードの数値・配列・辞書・範囲を処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator, .random_state = default_random_seed };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = numberValue(10);
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.math_random));
+    try std.testing.expectEqual(@as(f64, 8), @as(f64, @bitCast(roots[1].payload)));
+
+    roots[2] = try active_runtime.?.createArray(&.{ numberValue(2), numberValue(4) });
+    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[2]), 1, @intFromEnum(aot_builtin.Command.math_random));
+    try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(roots[3].payload)));
+
+    roots[4] = try active_runtime.?.createDictionary(&.{ staticStringValue("先頭"), numberValue(7), staticStringValue("末尾"), numberValue(9) });
+    lnako_aot_builtin_call(&roots[5], @ptrCast(&roots[4]), 1, @intFromEnum(aot_builtin.Command.math_random));
+    try std.testing.expectEqual(@as(f64, 7), @as(f64, @bitCast(roots[5].payload)));
+
+    roots[6] = numberValue(10);
+    roots[7] = numberValue(12);
+    var range_arguments = [_]Value{ roots[6], roots[7] };
+    lnako_aot_builtin_call(&roots[8], &range_arguments, range_arguments.len, @intFromEnum(aot_builtin.Command.math_random_range));
+    try std.testing.expectEqual(@as(f64, 10), @as(f64, @bitCast(roots[8].payload)));
 }
 
 test "AOT整数実数変換はJavaScript接頭辞規則を共有する" {

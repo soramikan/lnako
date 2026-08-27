@@ -172,6 +172,8 @@ pub const Command = enum(u16) {
     math_decimal_round,
     math_ceil,
     math_floor,
+    math_random,
+    math_random_range,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -353,6 +355,8 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "小数点四捨五入")) return .math_decimal_round;
     if (std.mem.eql(u8, name, "CEIL") or std.mem.eql(u8, name, "切上")) return .math_ceil;
     if (std.mem.eql(u8, name, "FLOOR") or std.mem.eql(u8, name, "切捨")) return .math_floor;
+    if (std.mem.eql(u8, name, "乱数")) return .math_random;
+    if (std.mem.eql(u8, name, "乱数範囲")) return .math_random_range;
     return null;
 }
 
@@ -522,6 +526,8 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.katakana_predicate, lookup("カタカナ判定").?);
     try std.testing.expectEqual(Command.digit_predicate, lookup("数字判定").?);
     try std.testing.expectEqual(Command.number_sequence_predicate, lookup("数列判定").?);
+    try std.testing.expectEqual(Command.math_random, lookup("乱数").?);
+    try std.testing.expectEqual(Command.math_random_range, lookup("乱数範囲").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }
 
