@@ -248,6 +248,7 @@ pub const Command = enum(u16) {
     plugin_name_set,
     namespace_set,
     namespace_pop,
+    async_noop,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -505,6 +506,7 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "プラグイン名設定")) return .plugin_name_set;
     if (std.mem.eql(u8, name, "名前空間設定")) return .namespace_set;
     if (std.mem.eql(u8, name, "名前空間ポップ")) return .namespace_pop;
+    if (std.mem.eql(u8, name, "ASYNC")) return .async_noop;
     return null;
 }
 
@@ -681,6 +683,7 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.plugin_name_set, lookup("プラグイン名設定").?);
     try std.testing.expectEqual(Command.namespace_set, lookup("名前空間設定").?);
     try std.testing.expectEqual(Command.namespace_pop, lookup("名前空間ポップ").?);
+    try std.testing.expectEqual(Command.async_noop, lookup("ASYNC").?);
     try std.testing.expectEqual(Command.datetime_now, lookup("今").?);
     try std.testing.expectEqual(Command.datetime_system_time_milliseconds, lookup("システム時間ミリ秒").?);
     try std.testing.expectEqual(Command.datetime_today, lookup("今日").?);

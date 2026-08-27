@@ -316,6 +316,11 @@
     "source": "名前空間を表示\nプラグイン名を表示\nプラグイン名設定(123)\n名前空間設定(456)\nプラグイン名設定(\"孫\")\n名前空間を表示\nプラグイン名を表示\n名前空間ポップ()\n名前空間を表示\nプラグイン名を表示\n名前空間ポップ()\n名前空間を表示\nプラグイン名を表示\n"
   },
   {
+    "id": "native-system-async",
+    "commands": ["ASYNC"],
+    "source": "ASYNC()\n\"async-ok\"を表示\n"
+  },
+  {
     "id": "native-array-system-constants",
     "commands": ["抽出文字列", "__DEBUGブレイクポイント一覧"],
     "source": "抽出文字列[0]=\"A\"\n__DEBUGブレイクポイント一覧[0]=\"B\"\n抽出文字列を表示\n__DEBUGブレイクポイント一覧を表示\n"

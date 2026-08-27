@@ -214,5 +214,6 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
 - `plugins/system` の敬語6命令は、未定義相当の礼節レベル、`拝啓`によるリセット、`敬具`による加点、3つの加算別名、取得時のfalsey正規化を共有する。AOTは`courtesy_increment`/`courtesy_begin`/`courtesy_end`/`courtesy_level` dispatchへ接続し、`native-system-courtesy`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。
 - `plugins/system` の標準出力6命令は、単一値の出力プール、可変引数の連結、表示ログのクリア、全引数の改行出力を共有する。AOTはdirect-displayと`stdio_*` dispatchへ接続し、`native-system-stdio`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。
 - `plugins/system` のプラグイン管理3命令は、文字列化したプラグイン名・名前空間の設定と、両方を対で保存・復元するスタック操作を共有する。AOTは`lnako_aot_plugin_management_call`とGC追跡対象の名前空間スタックへ接続し、`native-system-plugin-management`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。
+- `plugins/system` の`ASYNC`は同期実行時に値を返さないno-opである。AOTは`async_noop` builtin dispatchへ接続し、`native-system-async`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。Promiseを待機する`AWAIT実行`は別境界である。
 - Promiseの`束`は入力PromiseをFIFOマイクロタスクへ接続し、入力順の成功配列、空入力、最初の失敗を`Promise.all`と同じ順序で処理する。
 - `tests/oracle/standard-plugin-cases.json` が48命令を重複なく列挙し、カバレッジ検査と公式CLI差分テストを3環境CIで実行する。
