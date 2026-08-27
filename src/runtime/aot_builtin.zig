@@ -241,6 +241,10 @@ pub const Command = enum(u16) {
     courtesy_begin,
     courtesy_end,
     courtesy_level,
+    stdio_continue_display,
+    stdio_continue_display_many,
+    stdio_clear_log,
+    stdio_write_all,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -491,6 +495,10 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "拝啓")) return .courtesy_begin;
     if (std.mem.eql(u8, name, "敬具")) return .courtesy_end;
     if (std.mem.eql(u8, name, "礼節レベル取得")) return .courtesy_level;
+    if (std.mem.eql(u8, name, "継続表示")) return .stdio_continue_display;
+    if (std.mem.eql(u8, name, "連続無改行表示")) return .stdio_continue_display_many;
+    if (std.mem.eql(u8, name, "表示ログクリア")) return .stdio_clear_log;
+    if (std.mem.eql(u8, name, "言") or std.mem.eql(u8, name, "コンソール表示")) return .stdio_write_all;
     return null;
 }
 
@@ -725,6 +733,11 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.courtesy_begin, lookup("拝啓").?);
     try std.testing.expectEqual(Command.courtesy_end, lookup("敬具").?);
     try std.testing.expectEqual(Command.courtesy_level, lookup("礼節レベル取得").?);
+    try std.testing.expectEqual(Command.stdio_continue_display, lookup("継続表示").?);
+    try std.testing.expectEqual(Command.stdio_continue_display_many, lookup("連続無改行表示").?);
+    try std.testing.expectEqual(Command.stdio_clear_log, lookup("表示ログクリア").?);
+    try std.testing.expectEqual(Command.stdio_write_all, lookup("言").?);
+    try std.testing.expectEqual(Command.stdio_write_all, lookup("コンソール表示").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }
 

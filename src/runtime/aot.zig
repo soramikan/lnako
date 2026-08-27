@@ -302,6 +302,7 @@ const Runtime = struct {
     failure_epoch: u64 = 0,
     system_context: Value = .{},
     courtesy_level: f64 = std.math.nan(f64),
+    print_pool: std.ArrayList(u8) = .empty,
     dispatch_trace: DispatchTrace = .{},
     random_state: u64 = 0,
     clock_milliseconds: ?i64 = null,
@@ -314,6 +315,7 @@ const Runtime = struct {
     fn deinit(self: *Runtime) void {
         self.dispatch_trace.deinit();
         self.csv_state.deinit(self.allocator);
+        self.print_pool.deinit(self.allocator);
         var current = self.objects;
         while (current) |object| {
             const next = object.next;
@@ -2392,6 +2394,117 @@ fn writeUtf16(units: []const u16, newline: bool) void {
     if (newline) _ = putchar('\n');
 }
 
+fn valueUtf8LossyAlloc(runtime: *Runtime, value: Value) ![]u8 {
+    const units = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(units);
+    return utf16UnitsToUtf8LossyAlloc(runtime.allocator, units);
+}
+
+fn utf16UnitsToUtf8LossyAlloc(allocator: std.mem.Allocator, units: []const u16) ![]u8 {
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(allocator);
+    var index: usize = 0;
+    while (index < units.len) {
+        const first = units[index];
+        var codepoint: u21 = undefined;
+        if (first >= 0xd800 and first <= 0xdbff and index + 1 < units.len and units[index + 1] >= 0xdc00 and units[index + 1] <= 0xdfff) {
+            const second = units[index + 1];
+            codepoint = @intCast(0x10000 + ((@as(u32, first) - 0xd800) << 10) + (@as(u32, second) - 0xdc00));
+            index += 2;
+        } else {
+            codepoint = if (first >= 0xd800 and first <= 0xdfff) 0xfffd else @intCast(first);
+            index += 1;
+        }
+        var encoded: [4]u8 = undefined;
+        const length = std.unicode.utf8Encode(codepoint, &encoded) catch return error.InvalidUnicodeScalar;
+        try output.appendSlice(allocator, encoded[0..length]);
+    }
+    return output.toOwnedSlice(allocator);
+}
+
+fn appendDisplayLog(runtime: *Runtime, display_log: ?*Value, line: []const u8) !void {
+    const pointer = display_log orelse return;
+    const current = try valueUtf8LossyAlloc(runtime, pointer.*);
+    defer runtime.allocator.free(current);
+    var output: std.ArrayList(u8) = .empty;
+    defer output.deinit(runtime.allocator);
+    try output.appendSlice(runtime.allocator, current);
+    try output.appendSlice(runtime.allocator, line);
+    try output.append(runtime.allocator, '\n');
+    pointer.* = try runtimeUtf8String(runtime, output.items);
+}
+
+fn emitDisplayLine(runtime: *Runtime, text: []const u8, newline: bool, display_log: ?*Value) !void {
+    var output: std.ArrayList(u8) = .empty;
+    defer output.deinit(runtime.allocator);
+    try output.appendSlice(runtime.allocator, runtime.print_pool.items);
+    try output.appendSlice(runtime.allocator, text);
+    runtime.print_pool.clearRetainingCapacity();
+    writeBytes(output.items, newline);
+    if (newline) try appendDisplayLog(runtime, display_log, output.items);
+}
+
+fn displayValue(runtime: *Runtime, value: Value, newline: bool, display_log: ?*Value) !void {
+    const text = try valueUtf8LossyAlloc(runtime, value);
+    defer runtime.allocator.free(text);
+    try emitDisplayLine(runtime, text, newline, display_log);
+}
+
+fn continueDisplayValue(runtime: *Runtime, value: Value) !void {
+    const text = try valueUtf8LossyAlloc(runtime, value);
+    defer runtime.allocator.free(text);
+    try runtime.print_pool.appendSlice(runtime.allocator, text);
+}
+
+fn joinValuesUtf8Alloc(runtime: *Runtime, values: []const Value) ![]u8 {
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(runtime.allocator);
+    for (values) |value| {
+        const text = try valueUtf8LossyAlloc(runtime, value);
+        defer runtime.allocator.free(text);
+        try output.appendSlice(runtime.allocator, text);
+    }
+    return output.toOwnedSlice(runtime.allocator);
+}
+
+fn displayMany(runtime: *Runtime, values: []const Value, display_log: ?*Value) !void {
+    const text = try joinValuesUtf8Alloc(runtime, values);
+    defer runtime.allocator.free(text);
+    try emitDisplayLine(runtime, text, true, display_log);
+}
+
+fn writeAllValues(runtime: *Runtime, values: []const Value) !void {
+    for (values) |value| {
+        const text = try valueUtf8LossyAlloc(runtime, value);
+        defer runtime.allocator.free(text);
+        writeBytes(text, false);
+    }
+    writeBytes("", true);
+}
+
+fn isStdioCommand(command: aot_builtin.Command) bool {
+    return switch (command) {
+        .stdio_continue_display, .stdio_continue_display_many, .stdio_clear_log, .stdio_write_all => true,
+        else => false,
+    };
+}
+
+fn stdioBuiltin(runtime: *Runtime, command: aot_builtin.Command, values: []const Value, display_log: ?*Value) !void {
+    switch (command) {
+        .stdio_continue_display => try continueDisplayValue(runtime, if (values.len > 0) values[values.len - 1] else .{}),
+        .stdio_continue_display_many => {
+            const text = try joinValuesUtf8Alloc(runtime, values);
+            defer runtime.allocator.free(text);
+            try runtime.print_pool.appendSlice(runtime.allocator, text);
+        },
+        .stdio_clear_log => {
+            if (display_log) |pointer| pointer.* = try runtimeUtf8String(runtime, "");
+        },
+        .stdio_write_all => try writeAllValues(runtime, values),
+        else => return error.UnknownCommand,
+    }
+}
+
 /// Convert a UTF-16 exception message to UTF-8 without rejecting lone
 /// surrogates.  JavaScript strings can contain unpaired surrogates, while the
 /// process stderr stream is UTF-8; use U+FFFD for an unpaired code unit just
@@ -2561,6 +2674,56 @@ pub export fn lnako_aot_print_collection(value: *const Value, newline: bool) cal
     };
     defer runtime.allocator.free(units);
     writeUtf16(units, newline);
+}
+
+pub export fn lnako_aot_display_value(value: *const Value, newline: bool, display_log: ?*Value) callconv(.c) void {
+    const runtime = if (active_runtime) |*active| active else return;
+    displayValue(runtime, value.*, newline, display_log) catch |failure| runtime.setFailure(failure);
+}
+
+pub export fn lnako_aot_display_many(values: ?[*]const Value, len: usize, display_log: ?*Value) callconv(.c) void {
+    const runtime = if (active_runtime) |*active| active else return;
+    if (values == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const actual = if (values) |pointer| pointer[0..len] else &.{};
+    displayMany(runtime, actual, display_log) catch |failure| runtime.setFailure(failure);
+}
+
+pub export fn lnako_aot_stdio_call(
+    out: *Value,
+    display_log: ?*Value,
+    values: ?[*]const Value,
+    len: usize,
+    opcode: u16,
+    site_id: u64,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    if (values == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
+        runtime.setFailure(error.UnknownCommand);
+        return;
+    };
+    if (!isStdioCommand(command)) {
+        runtime.setFailure(error.UnknownCommand);
+        return;
+    }
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "builtin", site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "builtin", site_id, success);
+    const actual = if (values) |pointer| pointer[0..len] else &.{};
+    stdioBuiltin(runtime, command, actual, display_log) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    success = runtime.failure_epoch == start_epoch;
 }
 
 pub export fn lnako_aot_bigint_truthy(value: *const Value) callconv(.c) c_int {
@@ -2827,7 +2990,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -2904,6 +3067,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         },
         .courtesy_increment, .courtesy_begin, .courtesy_end, .courtesy_level => {
             out.* = courtesyBuiltin(runtime, command);
+        },
+        .stdio_continue_display, .stdio_continue_display_many, .stdio_clear_log, .stdio_write_all => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            stdioBuiltin(runtime, command, actual, null) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
         },
         .node_os, .node_architecture => {
             out.* = nodeEnvironmentBuiltin(runtime, command) catch |failure| {
@@ -8959,6 +9129,34 @@ test "AOT標準命令ディスパッチで値を文字列へ変換する" {
     defer lnako_aot_pop_roots(&frame);
     lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.to_string));
     try std.testing.expectEqualSlices(u16, &.{ 't', 'r', 'u', 'e' }, roots[1].object().?.payload.utf16_string);
+}
+
+test "AOT標準出力ABIは出力プールと表示履歴の境界を保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
+    roots[0] = try createJsonTestString(&runtime, "old\n");
+    roots[1] = try createJsonTestString(&runtime, "A");
+    roots[2] = try createJsonTestString(&runtime, "B");
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    const active = &active_runtime.?;
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    lnako_aot_stdio_call(&roots[3], &roots[0], @ptrCast(&roots[1]), 1, @intFromEnum(aot_builtin.Command.stdio_continue_display), 0);
+    lnako_aot_stdio_call(&roots[3], &roots[0], @ptrCast(&roots[2]), 1, @intFromEnum(aot_builtin.Command.stdio_continue_display_many), 0);
+    try std.testing.expectEqualStrings("AB", active.print_pool.items);
+
+    try appendDisplayLog(active, &roots[0], active.print_pool.items);
+    try expectUtf16String(active, roots[0], "old\nAB\n");
+    lnako_aot_stdio_call(&roots[3], &roots[0], null, 0, @intFromEnum(aot_builtin.Command.stdio_clear_log), 0);
+    try expectUtf16String(active, roots[0], "");
+    try std.testing.expectEqualStrings("AB", active.print_pool.items);
 }
 
 test "AOT型確認は動的値をJavaScript型名へ変換する" {

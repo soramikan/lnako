@@ -324,6 +324,9 @@ const Emitter = struct {
                 "declare void @lnako_aot_bigint_new(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_print_bigint(ptr, i1)\n" ++
                 "declare void @lnako_aot_print_collection(ptr, i1)\n" ++
+                "declare void @lnako_aot_display_value(ptr, i1, ptr)\n" ++
+                "declare void @lnako_aot_display_many(ptr, i64, ptr)\n" ++
+                "declare void @lnako_aot_stdio_call(ptr, ptr, ptr, i64, i16, i64)\n" ++
                 "declare i32 @lnako_aot_bigint_truthy(ptr)\n" ++
                 "declare void @lnako_aot_arithmetic(ptr, ptr, ptr, i8)\n" ++
                 "declare void @lnako_aot_compare(ptr, ptr, ptr, i8)\n" ++
@@ -452,6 +455,9 @@ const Emitter = struct {
                 try self.globals.append(self.allocator, "エラーメッセージ");
             }
             if (instruction.opcode == .call and instruction.direct_callee == null) {
+                if (instruction.is_builtin_call and requiresDisplayLog(instruction.name) and self.globalIndex("表示ログ") == null) {
+                    try self.globals.append(self.allocator, "表示ログ");
+                }
                 if (aot_builtin.lookup(instruction.name)) |command| if (command == .cut or command == .cut_range) {
                     if (self.globalIndex("対象") == null) try self.globals.append(self.allocator, "対象");
                 };
@@ -551,44 +557,22 @@ const Emitter = struct {
                 "  %inline.result = call i32 (ptr, ...) @printf(ptr @.lnako.fmt.text.inline, ptr %text)\n" ++
                 "  ret void\n" ++
                 "}\n\n" ++
-                "define internal %lnako.Value @lnako.display(%lnako.Value %value, i1 %newline, i64 %site_id) {\n" ++
+                "define internal %lnako.Value @lnako.display(%lnako.Value %value, i1 %newline, i64 %site_id, ptr %display_log) {\n" ++
                 "entry:\n" ++
                 "  %display.failure_epoch = alloca i64\n" ++
                 "  %display.call_id = call i64 @lnako_aot_dispatch_display_begin_with_epoch(i64 %site_id, ptr %display.failure_epoch)\n" ++
                 "  %display.value = alloca %lnako.Value\n" ++
                 "  store %lnako.Value %value, ptr %display.value\n" ++
-                "  %tag = extractvalue %lnako.Value %value, 0\n" ++
-                "  switch i8 %tag, label %undefined [ i8 1, label %null i8 2, label %boolean i8 3, label %number i8 4, label %static_string i8 5, label %heap_string i8 6, label %collection i8 7, label %collection i8 9, label %bigint ]\n" ++
-                "undefined:\n" ++
-                "  call void @lnako.print_text(ptr @.lnako.undefined, i1 %newline)\n" ++
-                "  br label %done\n" ++
-                "null:\n" ++
-                "  call void @lnako.print_text(ptr @.lnako.null, i1 %newline)\n" ++
-                "  br label %done\n" ++
-                "boolean:\n" ++
-                "  %bool.bits = extractvalue %lnako.Value %value, 1\n" ++
-                "  %bool = icmp ne i64 %bool.bits, 0\n" ++
-                "  %bool.text = select i1 %bool, ptr @.lnako.true, ptr @.lnako.false\n" ++
-                "  call void @lnako.print_text(ptr %bool.text, i1 %newline)\n" ++
-                "  br label %done\n" ++
-                "number:\n" ++
-                "  call void @lnako_aot_print_number(ptr %display.value, i1 %newline)\n" ++
-                "  br label %done\n" ++
-                "static_string:\n" ++
-                "  %string.bits = extractvalue %lnako.Value %value, 1\n" ++
-                "  %string.ptr = inttoptr i64 %string.bits to ptr\n" ++
-                "  call void @lnako.print_text(ptr %string.ptr, i1 %newline)\n" ++
-                "  br label %done\n" ++
-                "heap_string:\n" ++
-                "  call void @lnako_aot_print_utf16(ptr %display.value, i1 %newline)\n" ++
-                "  br label %done\n" ++
-                "collection:\n" ++
-                "  call void @lnako_aot_print_collection(ptr %display.value, i1 %newline)\n" ++
-                "  br label %done\n" ++
-                "bigint:\n" ++
-                "  call void @lnako_aot_print_bigint(ptr %display.value, i1 %newline)\n" ++
-                "  br label %done\n" ++
-                "done:\n" ++
+                "  call void @lnako_aot_display_value(ptr %display.value, i1 %newline, ptr %display_log)\n" ++
+                "  %display.start_epoch = load i64, ptr %display.failure_epoch\n" ++
+                "  call void @lnako_aot_dispatch_result(i64 %display.call_id, i64 %site_id, i64 %display.start_epoch)\n" ++
+                "  ret %lnako.Value { i8 0, i64 0 }\n" ++
+                "}\n\n" ++
+                "define internal %lnako.Value @lnako.display_many(ptr %arguments, i64 %count, i64 %site_id, ptr %display_log) {\n" ++
+                "entry:\n" ++
+                "  %display.failure_epoch = alloca i64\n" ++
+                "  %display.call_id = call i64 @lnako_aot_dispatch_display_begin_with_epoch(i64 %site_id, ptr %display.failure_epoch)\n" ++
+                "  call void @lnako_aot_display_many(ptr %arguments, i64 %count, ptr %display_log)\n" ++
                 "  %display.start_epoch = load i64, ptr %display.failure_epoch\n" ++
                 "  call void @lnako_aot_dispatch_result(i64 %display.call_id, i64 %site_id, i64 %display.start_epoch)\n" ++
                 "  ret %lnako.Value { i8 0, i64 0 }\n" ++
@@ -1046,13 +1030,7 @@ const Emitter = struct {
     fn writeCall(self: *Emitter, function: ir.Function, locals: []const []const u8, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
         const result = instruction.result orelse return error.MissingInstructionResult;
         if (instruction.direct_callee == null and instruction.is_builtin_call and isDisplayCall(instruction.name)) {
-            if (instruction.operands.len == 0) return error.InvalidCall;
-            const site_id = instruction.site_id orelse return error.MissingDispatchSiteId;
-            try self.output.writer.print("  %v{d} = call %lnako.Value @lnako.display(%lnako.Value ", .{result});
-            try self.writeValueRef(function, instruction.operands[instruction.operands.len - 1]);
-            try self.output.writer.print(", i1 true, i64 {d})", .{site_id});
-            try self.debugSuffix(instruction.span, scope);
-            return;
+            return self.writeDisplayCall(function, instruction, scope, aggregate_count);
         }
         if (instruction.direct_callee == null and instruction.is_builtin_call) if (aot_builtin.lookup(instruction.name)) |command| {
             if (command == .regexp_match or command == .regexp_extract or command == .regexp_replace or command == .regexp_split) {
@@ -1083,6 +1061,32 @@ const Emitter = struct {
         try self.writeCallResult(result, instruction.span, scope);
     }
 
+    fn writeDisplayCall(self: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
+        const result = instruction.result orelse return error.MissingInstructionResult;
+        const site_id = instruction.site_id orelse return error.MissingDispatchSiteId;
+        const display_log_index = self.globalIndex("表示ログ") orelse return error.MissingDisplayLogGlobal;
+        if (std.mem.eql(u8, instruction.name, "連続表示")) {
+            if (instruction.operands.len > aggregate_count) return error.InvalidCallScratch;
+            for (instruction.operands, 0..) |argument, index| {
+                try self.output.writer.print("  %display.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+                try self.debugSuffix(instruction.span, scope);
+                try self.output.writer.writeAll("  store %lnako.Value ");
+                try self.writeValueRef(function, argument);
+                try self.output.writer.print(", ptr %display.{d}.slot.{d}", .{ result, index });
+                try self.debugSuffix(instruction.span, scope);
+            }
+            try self.output.writer.print("  %v{d} = call %lnako.Value @lnako.display_many(ptr ", .{result});
+            if (instruction.operands.len > 0) try self.output.writer.print("%display.{d}.slot.0", .{result}) else try self.output.writer.writeAll("null");
+            try self.output.writer.print(", i64 {d}, i64 {d}, ptr @lnako.global.{d})", .{ instruction.operands.len, site_id, display_log_index });
+        } else {
+            if (instruction.operands.len == 0) return error.InvalidCall;
+            try self.output.writer.print("  %v{d} = call %lnako.Value @lnako.display(%lnako.Value ", .{result});
+            try self.writeValueRef(function, instruction.operands[instruction.operands.len - 1]);
+            try self.output.writer.print(", i1 true, i64 {d}, ptr @lnako.global.{d})", .{ site_id, display_log_index });
+        }
+        try self.debugSuffix(instruction.span, scope);
+    }
+
     fn writeCallValue(self: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
         if (instruction.operands.len == 0) return error.InvalidCall;
         try self.writeDynamicCall(function, &.{}, instruction, .{ .value = instruction.operands[0] }, instruction.operands[1..], scope, aggregate_count);
@@ -1092,6 +1096,24 @@ const Emitter = struct {
         const result = instruction.result orelse return error.MissingInstructionResult;
         const site_id = instruction.site_id orelse return error.MissingDispatchSiteId;
         if (instruction.operands.len > aggregate_count) return error.InvalidCallScratch;
+        if (isStdioCommand(command)) {
+            const display_log_index = self.globalIndex("表示ログ") orelse return error.MissingDisplayLogGlobal;
+            for (instruction.operands, 0..) |argument, index| {
+                try self.output.writer.print("  %stdio.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+                try self.debugSuffix(instruction.span, scope);
+                try self.output.writer.writeAll("  store %lnako.Value ");
+                try self.writeValueRef(function, argument);
+                try self.output.writer.print(", ptr %stdio.{d}.slot.{d}", .{ result, index });
+                try self.debugSuffix(instruction.span, scope);
+            }
+            try self.output.writer.print("  call void @lnako_aot_stdio_call(ptr %root.slot.{d}, ptr @lnako.global.{d}, ptr ", .{ result, display_log_index });
+            if (instruction.operands.len > 0) try self.output.writer.print("%stdio.{d}.slot.0", .{result}) else try self.output.writer.writeAll("null");
+            try self.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+            try self.debugSuffix(instruction.span, scope);
+            try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+            try self.debugSuffix(instruction.span, scope);
+            return;
+        }
         for (instruction.operands, 0..) |argument, index| {
             try self.output.writer.print("  %builtin.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
             try self.debugSuffix(instruction.span, scope);
@@ -1522,6 +1544,18 @@ fn maxClosureCaptureCount(program: ir.Program, function: ir.Function) usize {
 
 fn isDisplayCall(name: []const u8) bool {
     return std.mem.eql(u8, name, "表示") or std.mem.eql(u8, name, "表示する") or std.mem.eql(u8, name, "連続表示");
+}
+
+fn isStdioCommand(command: aot_builtin.Command) bool {
+    return switch (command) {
+        .stdio_continue_display, .stdio_continue_display_many, .stdio_clear_log, .stdio_write_all => true,
+        else => false,
+    };
+}
+
+fn requiresDisplayLog(name: []const u8) bool {
+    if (isDisplayCall(name)) return true;
+    return if (aot_builtin.lookup(name)) |command| isStdioCommand(command) else false;
 }
 
 fn nameIndex(names: []const []const u8, name: []const u8) ?usize {
@@ -2008,7 +2042,7 @@ test "動的算術とBigInt比較をAOTランタイムへ接続する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_shift") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_concat") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "binary.has.bigint.") == null);
-    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_print_number") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_display_value") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@.lnako.fmt.number") == null);
 }
 

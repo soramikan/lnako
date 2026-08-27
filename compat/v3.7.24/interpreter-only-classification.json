@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "6b530756c65ac1c0808d28defa42d75459571d6ccda87ed9cd4f7c6c6b0c2499"
+    "sha256": "0596280e0a248e82a552ffc1594d57fa505f4a9e3b1b9b2dc6c689836f53a202"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 160,
+    "count": 154,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 160
+      "unverified": 154
     }
   },
   "groups": [
@@ -672,32 +672,6 @@
     {
       "plugin": "plugin_system",
       "group": "基本プラグイン",
-      "category": "標準出力",
-      "type": "関数",
-      "count": 6,
-      "executionEvidenceStates": {
-        "unverified": 6
-      },
-      "commandIds": [
-        "command-0308",
-        "command-0309",
-        "command-0310",
-        "command-0312",
-        "command-0313",
-        "command-0314"
-      ],
-      "names": [
-        "継続表示",
-        "連続表示",
-        "連続無改行表示",
-        "表示ログクリア",
-        "言",
-        "コンソール表示"
-      ]
-    },
-    {
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
       "category": "特殊命令",
       "type": "関数",
       "count": 7,
@@ -1256,108 +1230,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "plugin-node-path-host"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0308",
-      "name": "継続表示",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "標準出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-stdio"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0309",
-      "name": "連続表示",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "標準出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-stdio"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0310",
-      "name": "連続無改行表示",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "標準出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-stdio"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0312",
-      "name": "表示ログクリア",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "標準出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-stdio"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0313",
-      "name": "言",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "標準出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-stdio"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0314",
-      "name": "コンソール表示",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "標準出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-stdio"
       ],
       "aotFixtureIds": []
     },

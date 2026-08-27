@@ -212,5 +212,6 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
 - `plugins/system/math.zig` の`一致`/`不一致`は配列・辞書を再帰的に内容比較し、スカラーはstrict equalityへ委譲する。AOTは`Comparison.deep_equal`/`deep_not_equal`へ接続し、`native-system-deep-comparison`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。QuickJS互換モードは対象外である。
 - `plugins/system/arrays.zig` の`表ソート`/`表数値ソート`は指定列の行propertyを文字列順・数値順で比較し、元表を安定・破壊的に更新する。AOTは`table_sort`/`table_numeric_sort` dispatchへ接続し、`native-system-table-sort`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。疎配列・複雑な行property境界は未fixtureである。
 - `plugins/system` の敬語6命令は、未定義相当の礼節レベル、`拝啓`によるリセット、`敬具`による加点、3つの加算別名、取得時のfalsey正規化を共有する。AOTは`courtesy_increment`/`courtesy_begin`/`courtesy_end`/`courtesy_level` dispatchへ接続し、`native-system-courtesy`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。
+- `plugins/system` の標準出力6命令は、単一値の出力プール、可変引数の連結、表示ログのクリア、全引数の改行出力を共有する。AOTはdirect-displayと`stdio_*` dispatchへ接続し、`native-system-stdio`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。
 - Promiseの`束`は入力PromiseをFIFOマイクロタスクへ接続し、入力順の成功配列、空入力、最初の失敗を`Promise.all`と同じ順序で処理する。
 - `tests/oracle/standard-plugin-cases.json` が48命令を重複なく列挙し、カバレッジ検査と公式CLI差分テストを3環境CIで実行する。

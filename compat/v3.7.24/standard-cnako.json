@@ -8192,14 +8192,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-stdio"
+        "plugin-system-stdio",
+        "native-system-stdio"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "内部出力プールを実装し、公式差分テストに成功"
+      "reason": "内部出力プールをInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0309",
@@ -8218,14 +8219,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-stdio"
+        "plugin-system-stdio",
+        "native-system-stdio"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "可変個引数の連結表示を実装し、公式差分テストに成功"
+      "reason": "可変引数の連結表示と出力プールを純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0310",
@@ -8244,14 +8246,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-stdio"
+        "plugin-system-stdio",
+        "native-system-stdio"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "可変個引数の継続表示を実装し、公式差分テストに成功"
+      "reason": "可変引数の無改行出力プールを純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0311",
@@ -8296,14 +8299,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-stdio"
+        "plugin-system-stdio",
+        "native-system-stdio"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "表示履歴の初期化を実装し、公式差分テストに成功"
+      "reason": "表示履歴システム変数のクリアをInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0313",
@@ -8322,14 +8326,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-stdio"
+        "plugin-system-stdio",
+        "native-system-stdio"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "CLIロガーの改行規則を含めて実装し、公式差分テストに成功"
+      "reason": "全引数の改行出力をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0314",
@@ -8348,14 +8353,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-stdio"
+        "plugin-system-stdio",
+        "native-system-stdio"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "標準出力への行表示を実装し、公式差分テストに成功"
+      "reason": "全引数の改行出力をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0315",
