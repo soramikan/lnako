@@ -202,6 +202,19 @@ pub const Command = enum(u16) {
     node_environment_list,
     node_current_directory,
     node_change_directory,
+    datetime_format,
+    datetime_era,
+    datetime_year_difference,
+    datetime_month_difference,
+    datetime_day_difference,
+    datetime_hour_difference,
+    datetime_minute_difference,
+    datetime_second_difference,
+    datetime_difference,
+    datetime_add_time,
+    datetime_add_date,
+    datetime_add_datetime,
+    datetime_monotonic_milliseconds,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -413,6 +426,19 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "環境変数一覧取得")) return .node_environment_list;
     if (std.mem.eql(u8, name, "カレントディレクトリ取得") or std.mem.eql(u8, name, "作業フォルダ取得")) return .node_current_directory;
     if (std.mem.eql(u8, name, "カレントディレクトリ変更") or std.mem.eql(u8, name, "作業フォルダ変更")) return .node_change_directory;
+    if (std.mem.eql(u8, name, "日時書式変換")) return .datetime_format;
+    if (std.mem.eql(u8, name, "和暦変換")) return .datetime_era;
+    if (std.mem.eql(u8, name, "年数差")) return .datetime_year_difference;
+    if (std.mem.eql(u8, name, "月数差")) return .datetime_month_difference;
+    if (std.mem.eql(u8, name, "日数差")) return .datetime_day_difference;
+    if (std.mem.eql(u8, name, "時間差")) return .datetime_hour_difference;
+    if (std.mem.eql(u8, name, "分差")) return .datetime_minute_difference;
+    if (std.mem.eql(u8, name, "秒差")) return .datetime_second_difference;
+    if (std.mem.eql(u8, name, "日時差")) return .datetime_difference;
+    if (std.mem.eql(u8, name, "時間加算")) return .datetime_add_time;
+    if (std.mem.eql(u8, name, "日付加算")) return .datetime_add_date;
+    if (std.mem.eql(u8, name, "日時加算")) return .datetime_add_datetime;
+    if (std.mem.eql(u8, name, "時間ミリ秒取得")) return .datetime_monotonic_milliseconds;
     return null;
 }
 
@@ -606,6 +632,19 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.node_current_directory, lookup("作業フォルダ取得").?);
     try std.testing.expectEqual(Command.node_change_directory, lookup("カレントディレクトリ変更").?);
     try std.testing.expectEqual(Command.node_change_directory, lookup("作業フォルダ変更").?);
+    try std.testing.expectEqual(Command.datetime_format, lookup("日時書式変換").?);
+    try std.testing.expectEqual(Command.datetime_era, lookup("和暦変換").?);
+    try std.testing.expectEqual(Command.datetime_year_difference, lookup("年数差").?);
+    try std.testing.expectEqual(Command.datetime_month_difference, lookup("月数差").?);
+    try std.testing.expectEqual(Command.datetime_day_difference, lookup("日数差").?);
+    try std.testing.expectEqual(Command.datetime_hour_difference, lookup("時間差").?);
+    try std.testing.expectEqual(Command.datetime_minute_difference, lookup("分差").?);
+    try std.testing.expectEqual(Command.datetime_second_difference, lookup("秒差").?);
+    try std.testing.expectEqual(Command.datetime_difference, lookup("日時差").?);
+    try std.testing.expectEqual(Command.datetime_add_time, lookup("時間加算").?);
+    try std.testing.expectEqual(Command.datetime_add_date, lookup("日付加算").?);
+    try std.testing.expectEqual(Command.datetime_add_datetime, lookup("日時加算").?);
+    try std.testing.expectEqual(Command.datetime_monotonic_milliseconds, lookup("時間ミリ秒取得").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }
 

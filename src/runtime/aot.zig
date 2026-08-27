@@ -250,6 +250,7 @@ const Runtime = struct {
     dispatch_trace: DispatchTrace = .{},
     random_state: u64 = 0,
     clock_milliseconds: ?i64 = null,
+    monotonic_milliseconds: ?f64 = null,
     caniuse_browsers: Value = .{},
     caniuse_agents: Value = .{},
     era_data: Value = .{},
@@ -2734,7 +2735,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .datetime_monotonic_milliseconds) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -2763,7 +2764,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
-        .datetime_now, .datetime_system_time, .datetime_system_time_milliseconds, .datetime_today, .datetime_tomorrow, .datetime_yesterday, .datetime_current_year, .datetime_next_year, .datetime_last_year, .datetime_current_month, .datetime_next_month, .datetime_previous_month, .datetime_weekday, .datetime_weekday_number, .datetime_unix_time, .datetime_date_time => {
+        .datetime_now, .datetime_system_time, .datetime_system_time_milliseconds, .datetime_today, .datetime_tomorrow, .datetime_yesterday, .datetime_current_year, .datetime_next_year, .datetime_last_year, .datetime_current_month, .datetime_next_month, .datetime_previous_month, .datetime_weekday, .datetime_weekday_number, .datetime_unix_time, .datetime_date_time, .datetime_format, .datetime_era, .datetime_year_difference, .datetime_month_difference, .datetime_day_difference, .datetime_hour_difference, .datetime_minute_difference, .datetime_second_difference, .datetime_difference, .datetime_add_time, .datetime_add_date, .datetime_add_datetime, .datetime_monotonic_milliseconds => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = datetimeBuiltin(runtime, command, actual) catch |failure| {
                 runtime.setFailure(failure);
@@ -3661,8 +3662,11 @@ const AotDateFields = struct {
     hour: i64,
     minute: i64,
     second: i64,
+    millisecond: i64,
     weekday: u8,
 };
+
+const AotDateDifferenceUnit = enum { year, month, day, hour, minute, second };
 
 fn datetimeBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     const now = currentTimeMilliseconds(runtime);
@@ -3695,6 +3699,28 @@ fn datetimeBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: [
             error.InvalidArgumentCount
         else
             datetimeDateTimeString(runtime, try valueToNumberRuntime(runtime, arguments[0]) * datetime_milliseconds_per_second),
+        .datetime_format => if (arguments.len < 2)
+            error.InvalidArgumentCount
+        else
+            datetimeFormatCustom(runtime, try datetimeParseDate(runtime, arguments[0], now), arguments[1]),
+        .datetime_era => if (arguments.len < 1)
+            error.InvalidArgumentCount
+        else
+            datetimeJapaneseEra(runtime, try datetimeParseDate(runtime, arguments[0], now)),
+        .datetime_year_difference => datetimeDifferenceBuiltin(runtime, .year, arguments, now),
+        .datetime_month_difference => datetimeDifferenceBuiltin(runtime, .month, arguments, now),
+        .datetime_day_difference => datetimeDifferenceBuiltin(runtime, .day, arguments, now),
+        .datetime_hour_difference => datetimeDifferenceBuiltin(runtime, .hour, arguments, now),
+        .datetime_minute_difference => datetimeDifferenceBuiltin(runtime, .minute, arguments, now),
+        .datetime_second_difference => datetimeDifferenceBuiltin(runtime, .second, arguments, now),
+        .datetime_difference => if (arguments.len < 3)
+            error.InvalidArgumentCount
+        else
+            datetimeDifferenceWithUnitBuiltin(runtime, arguments, now),
+        .datetime_add_time => datetimeAddTimeBuiltin(runtime, arguments, now),
+        .datetime_add_date => datetimeAddDateBuiltin(runtime, arguments, now),
+        .datetime_add_datetime => datetimeAddDateTimeBuiltin(runtime, arguments, now),
+        .datetime_monotonic_milliseconds => numberValue(monotonicTimeMilliseconds(runtime)),
         else => error.UnknownCommand,
     };
 }
@@ -3724,6 +3750,7 @@ fn datetimeFieldsFromEpoch(milliseconds: i64) AotDateFields {
         .hour = @divTrunc(within_day, datetime_milliseconds_per_hour),
         .minute = @divTrunc(@mod(within_day, datetime_milliseconds_per_hour), datetime_milliseconds_per_minute),
         .second = @divTrunc(@mod(within_day, datetime_milliseconds_per_minute), datetime_milliseconds_per_second),
+        .millisecond = @mod(within_day, datetime_milliseconds_per_second),
         .weekday = @intCast(@mod(days + 4, 7)),
     };
 }
@@ -3871,6 +3898,290 @@ fn datetimeDateTimeString(runtime: *Runtime, milliseconds: f64) !Value {
     const text = try std.fmt.allocPrint(runtime.allocator, "{d}/{:02}/{:02} {:02}:{:02}:{:02}", .{ fields.year, @as(u64, @intCast(fields.month)), @as(u64, @intCast(fields.day)), @as(u64, @intCast(fields.hour)), @as(u64, @intCast(fields.minute)), @as(u64, @intCast(fields.second)) });
     defer runtime.allocator.free(text);
     return runtimeUtf8String(runtime, text);
+}
+
+const AotDateOutputShape = enum { date_time, date, time };
+
+fn datetimeFormatDateTimeFor(runtime: *Runtime, fields: AotDateFields, shape: AotDateOutputShape) !Value {
+    return switch (shape) {
+        .date => datetimeDateString(runtime, fields),
+        .time => datetimeTimeString(runtime, fields),
+        .date_time => blk: {
+            const text = try std.fmt.allocPrint(runtime.allocator, "{d}/{:02}/{:02} {:02}:{:02}:{:02}", .{ fields.year, @as(u64, @intCast(fields.month)), @as(u64, @intCast(fields.day)), @as(u64, @intCast(fields.hour)), @as(u64, @intCast(fields.minute)), @as(u64, @intCast(fields.second)) });
+            defer runtime.allocator.free(text);
+            break :blk runtimeUtf8String(runtime, text);
+        },
+    };
+}
+
+fn datetimeOutputShape(runtime: *Runtime, original: Value) !AotDateOutputShape {
+    const text = try datetimeValueUtf8Alloc(runtime, original);
+    defer runtime.allocator.free(text);
+    if (datetimeLooksDateTime(text)) return .date_time;
+    if (datetimeLooksDate(text)) return .date;
+    if (datetimeIsTimeText(text)) return .time;
+    return .date_time;
+}
+
+fn datetimeFormatCustom(runtime: *Runtime, milliseconds: f64, format_value: Value) !Value {
+    if (!std.math.isFinite(milliseconds)) return runtimeUtf8String(runtime, "Invalid Date");
+    const fields = datetimeFieldsFromEpoch(datetimeFloatToEpoch(milliseconds));
+    const format = try datetimeValueUtf8Alloc(runtime, format_value);
+    defer runtime.allocator.free(format);
+    var output: std.Io.Writer.Allocating = .init(runtime.allocator);
+    defer output.deinit();
+    var index: usize = 0;
+    while (index < format.len) {
+        if (datetimeMatchToken(format, index, "YYYY")) {
+            try output.writer.print("{d}", .{fields.year});
+            index += 4;
+        } else if (datetimeMatchToken(format, index, "ccc")) {
+            try output.writer.print("{:03}", .{@as(u64, @intCast(fields.millisecond))});
+            index += 3;
+        } else if (datetimeMatchToken(format, index, "WWW")) {
+            const names = [_][]const u8{ "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+            try output.writer.writeAll(names[fields.weekday]);
+            index += 3;
+        } else if (datetimeMatchToken(format, index, "MMM")) {
+            const names = [_][]const u8{ "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+            try output.writer.writeAll(names[@intCast(fields.month - 1)]);
+            index += 3;
+        } else if (index + 2 <= format.len and datetimeIsTwoToken(format[index .. index + 2])) {
+            const token = format[index .. index + 2];
+            if (std.mem.eql(u8, token, "YY"))
+                try output.writer.print("{:02}", .{@as(u64, @intCast(@mod(fields.year, 100)))})
+            else if (std.mem.eql(u8, token, "MM"))
+                try output.writer.print("{:02}", .{@as(u64, @intCast(fields.month))})
+            else if (std.mem.eql(u8, token, "DD"))
+                try output.writer.print("{:02}", .{@as(u64, @intCast(fields.day))})
+            else if (std.mem.eql(u8, token, "HH"))
+                try output.writer.print("{:02}", .{@as(u64, @intCast(fields.hour))})
+            else if (std.mem.eql(u8, token, "mm"))
+                try output.writer.print("{:02}", .{@as(u64, @intCast(fields.minute))})
+            else
+                try output.writer.print("{:02}", .{@as(u64, @intCast(fields.second))});
+            index += 2;
+        } else switch (format[index]) {
+            'M' => {
+                try output.writer.print("{d}", .{fields.month});
+                index += 1;
+            },
+            'D' => {
+                try output.writer.print("{d}", .{fields.day});
+                index += 1;
+            },
+            'H' => {
+                try output.writer.print("{d}", .{fields.hour});
+                index += 1;
+            },
+            'm' => {
+                try output.writer.print("{d}", .{fields.minute});
+                index += 1;
+            },
+            's' => {
+                try output.writer.print("{d}", .{fields.second});
+                index += 1;
+            },
+            'W' => {
+                const names = [_][]const u8{ "日", "月", "火", "水", "木", "金", "土" };
+                try output.writer.writeAll(names[fields.weekday]);
+                index += 1;
+            },
+            else => {
+                try output.writer.writeByte(format[index]);
+                index += 1;
+            },
+        }
+    }
+    return runtimeUtf8String(runtime, output.written());
+}
+
+fn datetimeJapaneseEra(runtime: *Runtime, milliseconds: f64) !Value {
+    if (!std.math.isFinite(milliseconds)) return error.InvalidDate;
+    const fields = datetimeFieldsFromEpoch(datetimeFloatToEpoch(milliseconds));
+    const day_number = datetimeDaysFromCivil(fields.year, fields.month, fields.day);
+    for (era_data) |era| {
+        const era_date = datetimeEraDateFields(era.date);
+        if (day_number < datetimeDaysFromCivil(era_date.year, era_date.month, era_date.day)) continue;
+        const era_year = fields.year - era_date.year + 1;
+        const text = if (era_year == 1)
+            try std.fmt.allocPrint(runtime.allocator, "{s}元年{:02}月{:02}日", .{ era.name, @as(u64, @intCast(fields.month)), @as(u64, @intCast(fields.day)) })
+        else
+            try std.fmt.allocPrint(runtime.allocator, "{s}{d}年{:02}月{:02}日", .{ era.name, era_year, @as(u64, @intCast(fields.month)), @as(u64, @intCast(fields.day)) });
+        defer runtime.allocator.free(text);
+        return runtimeUtf8String(runtime, text);
+    }
+    return error.DateBeforeMeiji;
+}
+
+fn datetimeEraDateFields(date: []const u8) struct { year: i64, month: i64, day: i64 } {
+    var iterator = std.mem.splitScalar(u8, date, '/');
+    return .{
+        .year = datetimeParseIntPrefix(iterator.next() orelse "0") orelse 0,
+        .month = datetimeParseIntPrefix(iterator.next() orelse "0") orelse 0,
+        .day = datetimeParseIntPrefix(iterator.next() orelse "0") orelse 0,
+    };
+}
+
+fn datetimeDifferenceBuiltin(runtime: *Runtime, unit: AotDateDifferenceUnit, arguments: []const Value, now: i64) !Value {
+    if (arguments.len < 2) return error.InvalidArgumentCount;
+    const first = try datetimeParseDate(runtime, arguments[0], now);
+    const second = try datetimeParseDate(runtime, arguments[1], now);
+    if (unit == .year or unit == .month) {
+        if (!std.math.isFinite(first) or !std.math.isFinite(second)) return numberValue(std.math.nan(f64));
+        const left = datetimeFieldsFromEpoch(datetimeFloatToEpoch(first));
+        const right = datetimeFieldsFromEpoch(datetimeFloatToEpoch(second));
+        const difference = if (unit == .year)
+            right.year - left.year
+        else
+            right.year * 12 + right.month - 1 - (left.year * 12 + left.month - 1);
+        return numberValue(@floatFromInt(difference));
+    }
+    const first_seconds = @ceil(first / datetime_milliseconds_per_second);
+    const second_seconds = @ceil(second / datetime_milliseconds_per_second);
+    const divisor: f64 = switch (unit) {
+        .day => 86400,
+        .hour => 3600,
+        .minute => 60,
+        .second => 1,
+        else => unreachable,
+    };
+    return numberValue(@ceil((second_seconds - first_seconds) / divisor));
+}
+
+fn datetimeDifferenceWithUnitBuiltin(runtime: *Runtime, arguments: []const Value, now: i64) !Value {
+    const unit = try datetimeDifferenceUnit(runtime, arguments[2]);
+    return datetimeDifferenceBuiltin(runtime, unit, arguments[0..2], now);
+}
+
+fn datetimeDifferenceUnit(runtime: *Runtime, value: Value) !AotDateDifferenceUnit {
+    const text = try datetimeValueUtf8Alloc(runtime, value);
+    defer runtime.allocator.free(text);
+    if (std.mem.eql(u8, text, "年")) return .year;
+    if (std.mem.eql(u8, text, "月")) return .month;
+    if (std.mem.eql(u8, text, "日")) return .day;
+    if (std.mem.eql(u8, text, "時間")) return .hour;
+    if (std.mem.eql(u8, text, "分")) return .minute;
+    if (std.mem.eql(u8, text, "秒")) return .second;
+    return error.UnknownDateUnit;
+}
+
+fn datetimeAddTimeBuiltin(runtime: *Runtime, arguments: []const Value, now: i64) !Value {
+    if (arguments.len < 2) return error.InvalidArgumentCount;
+    const addition = try datetimeValueUtf8Alloc(runtime, arguments[1]);
+    defer runtime.allocator.free(addition);
+    return datetimeAddTimeText(runtime, arguments[0], addition, now);
+}
+
+fn datetimeAddTimeText(runtime: *Runtime, source: Value, addition: []const u8, now: i64) !Value {
+    var text = addition;
+    var sign: i64 = 1;
+    if (text.len > 0 and (text[0] == '+' or text[0] == '-')) {
+        if (text[0] == '-') sign = -1;
+        text = text[1..];
+    }
+    const parts = try datetimeParseDelimited(text, ':');
+    const seconds = sign * (parts[0] * 3600 + parts[1] * 60 + parts[2]);
+    const original = try datetimeParseDate(runtime, source, now);
+    if (!std.math.isFinite(original)) return error.InvalidDate;
+    return datetimeFormatDateTimeFor(runtime, datetimeFieldsFromEpoch(datetimeFloatToEpoch(original) + seconds * 1000), try datetimeOutputShape(runtime, source));
+}
+
+fn datetimeAddDateBuiltin(runtime: *Runtime, arguments: []const Value, now: i64) !Value {
+    if (arguments.len < 2) return error.InvalidArgumentCount;
+    const addition = try datetimeValueUtf8Alloc(runtime, arguments[1]);
+    defer runtime.allocator.free(addition);
+    return datetimeAddDateText(runtime, arguments[0], addition, now);
+}
+
+fn datetimeAddDateText(runtime: *Runtime, source: Value, addition: []const u8, now: i64) !Value {
+    var text = addition;
+    var sign: i64 = 1;
+    if (text.len > 0 and (text[0] == '+' or text[0] == '-')) {
+        if (text[0] == '-') sign = -1;
+        text = text[1..];
+    }
+    const parts = try datetimeParseDelimited(text, '/');
+    const original = try datetimeParseDate(runtime, source, now);
+    if (!std.math.isFinite(original)) return error.InvalidDate;
+    var fields = datetimeFieldsFromEpoch(datetimeFloatToEpoch(original));
+    var epoch = datetimeConstructLocal(fields.year + parts[0] * sign, fields.month - 1, fields.day, fields.hour, fields.minute, fields.second, fields.millisecond, false);
+    fields = datetimeFieldsFromEpoch(epoch);
+    epoch = datetimeConstructLocal(fields.year, fields.month - 1 + parts[1] * sign, fields.day, fields.hour, fields.minute, fields.second, fields.millisecond, false);
+    fields = datetimeFieldsFromEpoch(epoch);
+    epoch = datetimeConstructLocal(fields.year, fields.month - 1, fields.day + parts[2] * sign, fields.hour, fields.minute, fields.second, fields.millisecond, false);
+    return datetimeFormatDateTimeFor(runtime, datetimeFieldsFromEpoch(epoch), try datetimeOutputShape(runtime, source));
+}
+
+fn datetimeAddDateTimeBuiltin(runtime: *Runtime, arguments: []const Value, now: i64) !Value {
+    if (arguments.len < 2) return error.InvalidArgumentCount;
+    const addition = try datetimeValueUtf8Alloc(runtime, arguments[1]);
+    defer runtime.allocator.free(addition);
+    var text = addition;
+    var sign: i64 = 1;
+    var cursor: usize = 0;
+    if (text.len > 0 and (text[0] == '+' or text[0] == '-')) {
+        if (text[0] == '-') sign = -1;
+        cursor = 1;
+    }
+    const number_start = cursor;
+    while (cursor < text.len and std.ascii.isDigit(text[cursor])) cursor += 1;
+    if (cursor == number_start) return error.InvalidDateAddition;
+    const amount = (std.fmt.parseInt(i64, text[number_start..cursor], 10) catch return error.InvalidDateAddition) * sign;
+    const unit = text[cursor..];
+    if (std.mem.eql(u8, unit, "年")) return datetimeAddDateTimeWithAffix(runtime, arguments[0], now, amount, "/0/0", false);
+    if (std.mem.eql(u8, unit, "ヶ月")) return datetimeAddDateTimeAround(runtime, arguments[0], now, amount, "0/", "/0", false);
+    if (std.mem.eql(u8, unit, "週間")) return datetimeAddDateTimeWithAffix(runtime, arguments[0], now, amount * 7, "0/0/", false);
+    if (std.mem.eql(u8, unit, "日")) return datetimeAddDateTimeWithAffix(runtime, arguments[0], now, amount, "0/0/", false);
+    if (std.mem.eql(u8, unit, "時間")) return datetimeAddDateTimeWithAffix(runtime, arguments[0], now, amount, ":0:0", true);
+    if (std.mem.eql(u8, unit, "分")) return datetimeAddDateTimeAround(runtime, arguments[0], now, amount, "0:", ":0", true);
+    if (std.mem.eql(u8, unit, "秒")) return datetimeAddDateTimeWithAffix(runtime, arguments[0], now, amount, "0:0:", true);
+    return error.InvalidDateAddition;
+}
+
+fn datetimeAddDateTimeWithAffix(runtime: *Runtime, source: Value, now: i64, amount: i64, prefix_or_suffix: []const u8, is_time: bool) !Value {
+    const text = if (prefix_or_suffix.len > 0 and (prefix_or_suffix[0] == '/' or prefix_or_suffix[0] == ':'))
+        try std.fmt.allocPrint(runtime.allocator, "{d}{s}", .{ amount, prefix_or_suffix })
+    else
+        try std.fmt.allocPrint(runtime.allocator, "{s}{d}", .{ prefix_or_suffix, amount });
+    defer runtime.allocator.free(text);
+    return if (is_time) datetimeAddTimeText(runtime, source, text, now) else datetimeAddDateText(runtime, source, text, now);
+}
+
+fn datetimeAddDateTimeAround(runtime: *Runtime, source: Value, now: i64, amount: i64, prefix: []const u8, suffix: []const u8, is_time: bool) !Value {
+    const text = try std.fmt.allocPrint(runtime.allocator, "{s}{d}{s}", .{ prefix, amount, suffix });
+    defer runtime.allocator.free(text);
+    return if (is_time) datetimeAddTimeText(runtime, source, text, now) else datetimeAddDateText(runtime, source, text, now);
+}
+
+fn monotonicTimeMilliseconds(runtime: *Runtime) f64 {
+    if (runtime.monotonic_milliseconds) |value| return value;
+    if (std.c.getenv("LNAKO_TEST_MONOTONIC_MS")) |environment| {
+        if (std.fmt.parseFloat(f64, std.mem.span(environment))) |value| return value else |_| {}
+    }
+    const timestamp = std.Io.Timestamp.now(std.Io.Threaded.global_single_threaded.io(), .awake);
+    return @as(f64, @floatFromInt(timestamp.nanoseconds)) / 1_000_000.0;
+}
+
+fn datetimeLooksDate(text: []const u8) bool {
+    var separators: usize = 0;
+    for (text) |byte| {
+        if (byte == '/') separators += 1 else if (!std.ascii.isDigit(byte)) return false;
+    }
+    return separators == 2;
+}
+
+fn datetimeLooksDateTime(text: []const u8) bool {
+    const space = std.mem.indexOfAny(u8, text, " \t") orelse return false;
+    return datetimeLooksDate(text[0..space]) and datetimeIsTimeText(std.mem.trim(u8, text[space..], " \t"));
+}
+
+fn datetimeIsTwoToken(token: []const u8) bool {
+    return std.mem.eql(u8, token, "YY") or std.mem.eql(u8, token, "MM") or std.mem.eql(u8, token, "DD") or std.mem.eql(u8, token, "HH") or std.mem.eql(u8, token, "mm") or std.mem.eql(u8, token, "ss");
+}
+
+fn datetimeMatchToken(text: []const u8, index: usize, token: []const u8) bool {
+    return index + token.len <= text.len and std.mem.eql(u8, text[index .. index + token.len], token);
 }
 
 fn runtimeUtf8String(runtime: *Runtime, text: []const u8) !Value {
@@ -7301,6 +7612,51 @@ test "AOT Unix日時変換は秒と日時文字列を相互変換する" {
     arguments[0] = try runtimeUtf8String(&runtime, "3");
     roots[3] = try datetimeBuiltin(&runtime, .datetime_date_time, &arguments);
     try expectUtf16String(&runtime, roots[3], "1970/01/01 09:00:03");
+}
+
+test "AOT日時書式差分加算と単調時計を処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator, .clock_milliseconds = 1_735_689_845_678, .monotonic_milliseconds = 123.5 };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 16;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtimeUtf8String(&runtime, "2024/02/29 03:04:05");
+    roots[1] = try runtimeUtf8String(&runtime, "YYYY-MM-DD WWW HH:mm:ss ccc MMM W YY MM DD HH mm ss M D H m s");
+    var arguments = [_]Value{ roots[0], roots[1] };
+    roots[2] = try datetimeBuiltin(&runtime, .datetime_format, &arguments);
+    try expectUtf16String(&runtime, roots[2], "2024-02-29 Thu 03:04:05 000 Feb 木 24 02 29 03 04 05 2 29 3 4 5");
+
+    roots[3] = try runtimeUtf8String(&runtime, "2019/05/01");
+    arguments[0] = roots[3];
+    roots[4] = try datetimeBuiltin(&runtime, .datetime_era, arguments[0..1]);
+    try expectUtf16String(&runtime, roots[4], "令和元年05月01日");
+
+    roots[5] = try runtimeUtf8String(&runtime, "2020/01/01");
+    roots[6] = try runtimeUtf8String(&runtime, "2024/01/01");
+    arguments = .{ roots[5], roots[6] };
+    roots[7] = try datetimeBuiltin(&runtime, .datetime_year_difference, &arguments);
+    try std.testing.expectEqual(@as(f64, 4), @as(f64, @bitCast(roots[7].payload)));
+
+    roots[8] = try runtimeUtf8String(&runtime, "日");
+    var unit_arguments = [_]Value{ roots[5], roots[6], roots[8] };
+    roots[9] = try datetimeBuiltin(&runtime, .datetime_difference, &unit_arguments);
+    try std.testing.expectEqual(@as(f64, 1461), @as(f64, @bitCast(roots[9].payload)));
+
+    roots[10] = try runtimeUtf8String(&runtime, "2024/01/01 23:30:00");
+    roots[11] = try runtimeUtf8String(&runtime, "+01:00:00");
+    arguments = .{ roots[10], roots[11] };
+    roots[12] = try datetimeBuiltin(&runtime, .datetime_add_time, &arguments);
+    try expectUtf16String(&runtime, roots[12], "2024/01/02 00:30:00");
+
+    roots[13] = try runtimeUtf8String(&runtime, "2024/01/31");
+    roots[14] = try runtimeUtf8String(&runtime, "0/1/0");
+    arguments = .{ roots[13], roots[14] };
+    roots[15] = try datetimeBuiltin(&runtime, .datetime_add_date, &arguments);
+    try expectUtf16String(&runtime, roots[15], "2024/03/02");
+
+    try std.testing.expectEqual(@as(f64, 123.5), @as(f64, @bitCast((try datetimeBuiltin(&runtime, .datetime_monotonic_milliseconds, &.{})).payload)));
 }
 
 test "AOT URLとBase64命令はUTF-16文字列と配列を処理する" {

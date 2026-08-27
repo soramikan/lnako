@@ -6490,14 +6490,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式書式トークンを実装し、公式差分テストに成功"
+      "reason": "公式書式トークンをInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0246",
@@ -6516,14 +6517,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "明治以降の元号変換を実装し、公式差分テストに成功"
+      "reason": "明治以降の元号変換をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0247",
@@ -6542,14 +6544,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
+      "reason": "JavaScript Date互換規則の日時差分をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0248",
@@ -6568,14 +6571,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
+      "reason": "JavaScript Date互換規則の日時差分をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0249",
@@ -6594,14 +6598,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
+      "reason": "JavaScript Date互換規則の日時差分をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0250",
@@ -6620,14 +6625,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
+      "reason": "JavaScript Date互換規則の日時差分をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0251",
@@ -6646,14 +6652,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
+      "reason": "JavaScript Date互換規則の日時差分をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0252",
@@ -6672,14 +6679,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
+      "reason": "JavaScript Date互換規則の日時差分をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0253",
@@ -6698,14 +6706,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "単位指定の日時間隔を実装し、公式差分テストに成功"
+      "reason": "単位指定の日時間隔をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0254",
@@ -6724,14 +6733,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "JavaScript Date正規化規則で実装し、公式差分テストに成功"
+      "reason": "JavaScript Date正規化規則の日時加算をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0255",
@@ -6750,14 +6760,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "JavaScript Date正規化規則で実装し、公式差分テストに成功"
+      "reason": "JavaScript Date正規化規則の日時加算をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0256",
@@ -6776,14 +6787,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "日本語単位の日付時刻加算を実装し、公式差分テストに成功"
+      "reason": "日本語単位の日付時刻加算をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0257",
@@ -6802,14 +6814,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "差し替え可能な単調時計で実装し、公式差分テストに成功"
+      "reason": "差し替え可能な単調時計をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0258",
@@ -13337,14 +13350,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "明治以降の元号変換を実装し、公式差分テストに成功"
+      "reason": "明治以降の元号変換をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0825",
@@ -13362,14 +13376,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
+      "reason": "JavaScript Date互換規則の日時差分をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0826",
@@ -13387,14 +13402,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
+      "reason": "JavaScript Date互換規則の日時差分をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0827",
@@ -13412,14 +13428,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
+      "reason": "JavaScript Date互換規則の日時差分をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0828",
@@ -13437,14 +13454,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "単位指定の日時間隔を実装し、公式差分テストに成功"
+      "reason": "単位指定の日時間隔をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0829",
@@ -13462,14 +13480,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
+      "reason": "JavaScript Date互換規則の日時差分をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0830",
@@ -13487,14 +13506,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
+      "reason": "JavaScript Date互換規則の日時差分をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0831",
@@ -13512,14 +13532,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
+      "reason": "JavaScript Date互換規則の日時差分をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0832",
@@ -13537,14 +13558,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "JavaScript Date正規化規則で実装し、公式差分テストに成功"
+      "reason": "JavaScript Date正規化規則の日時加算をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0833",
@@ -13562,14 +13584,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "JavaScript Date正規化規則で実装し、公式差分テストに成功"
+      "reason": "JavaScript Date正規化規則の日時加算をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0834",
@@ -13587,14 +13610,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-format-difference-and-addition"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "日本語単位の日付時刻加算を実装し、公式差分テストに成功"
+      "reason": "日本語単位の日付時刻加算をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0835",

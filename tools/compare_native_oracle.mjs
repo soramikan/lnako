@@ -178,7 +178,7 @@ async function runCase(testCase, index, temporary, executable, officialCli, coll
   await writeFile(sourcePath, source, "utf8");
   const options = {
     cwd: fixtureDirectory,
-    env: { ...process.env, TZ: "Asia/Tokyo", LNAKO_TEST_NOW_MS: "1735689845678", LNAKO_TEST_RANDOM_SEED: "5573589319906701683", LNAKO_LLVM_TRACE: "1" },
+    env: { ...process.env, TZ: "Asia/Tokyo", LNAKO_TEST_NOW_MS: "1735689845678", LNAKO_TEST_MONOTONIC_MS: "123.5", LNAKO_TEST_RANDOM_SEED: "5573589319906701683", LNAKO_LLVM_TRACE: "1" },
     maxBuffer,
   };
   const fixedHostArgument = ["--import", pathToFileURL(fixedHost).href];
