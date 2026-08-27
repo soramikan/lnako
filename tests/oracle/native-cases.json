@@ -676,5 +676,10 @@
     "id": "native-node-path-resolve",
     "commands": ["絶対パス変換", "相対パス展開"],
     "source": "絶対パス変換(\"a/../b.txt\")を表示\n相対パス展開(\"a\",\"b/../c.txt\")を表示\n"
+  },
+  {
+    "id": "native-node-path-components",
+    "commands": ["ファイル名抽出", "パス抽出"],
+    "source": "ファイル名抽出(\"a/b.txt\")を表示\nパス抽出(\"a/b.txt\")を表示\nファイル名抽出(\"/\")を表示\nパス抽出(\"/\")を表示\nファイル名抽出(\"a//b//\")を表示\nパス抽出(\"a//b//\")を表示\n"
   }
 ]

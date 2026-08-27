@@ -202,6 +202,8 @@ pub const Command = enum(u16) {
     node_environment_list,
     node_current_directory,
     node_change_directory,
+    node_path_basename,
+    node_path_dirname,
     node_path_absolute,
     node_path_resolve,
     datetime_format,
@@ -475,6 +477,8 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "環境変数一覧取得")) return .node_environment_list;
     if (std.mem.eql(u8, name, "カレントディレクトリ取得") or std.mem.eql(u8, name, "作業フォルダ取得")) return .node_current_directory;
     if (std.mem.eql(u8, name, "カレントディレクトリ変更") or std.mem.eql(u8, name, "作業フォルダ変更")) return .node_change_directory;
+    if (std.mem.eql(u8, name, "ファイル名抽出")) return .node_path_basename;
+    if (std.mem.eql(u8, name, "パス抽出")) return .node_path_dirname;
     if (std.mem.eql(u8, name, "絶対パス変換")) return .node_path_absolute;
     if (std.mem.eql(u8, name, "相対パス展開")) return .node_path_resolve;
     if (std.mem.eql(u8, name, "日時書式変換")) return .datetime_format;
@@ -746,6 +750,8 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.node_current_directory, lookup("作業フォルダ取得").?);
     try std.testing.expectEqual(Command.node_change_directory, lookup("カレントディレクトリ変更").?);
     try std.testing.expectEqual(Command.node_change_directory, lookup("作業フォルダ変更").?);
+    try std.testing.expectEqual(Command.node_path_basename, lookup("ファイル名抽出").?);
+    try std.testing.expectEqual(Command.node_path_dirname, lookup("パス抽出").?);
     try std.testing.expectEqual(Command.node_path_absolute, lookup("絶対パス変換").?);
     try std.testing.expectEqual(Command.node_path_resolve, lookup("相対パス展開").?);
     try std.testing.expectEqual(Command.datetime_format, lookup("日時書式変換").?);

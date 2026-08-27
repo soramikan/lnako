@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "dfe5e1cc30531792318c8ebd9edf60be3f20a978e56a383ae169e722437db063"
+    "sha256": "0bcfa4b43e4644f28e2f5c93cbd892731e8f36e0b3ba36f8924f0c654e73c448"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 131,
+    "count": 127,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 131
+      "unverified": 127
     }
   },
   "groups": [
@@ -193,24 +193,6 @@
       "names": [
         "自分IPアドレス取得",
         "自分IPV6アドレス取得"
-      ]
-    },
-    {
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "パス操作",
-      "type": "関数",
-      "count": 2,
-      "executionEvidenceStates": {
-        "unverified": 2
-      },
-      "commandIds": [
-        "command-0722",
-        "command-0723"
-      ],
-      "names": [
-        "ファイル名抽出",
-        "パス抽出"
       ]
     },
     {
@@ -564,24 +546,6 @@
     {
       "plugin": "plugin_system",
       "group": "基本プラグイン",
-      "category": "パス操作",
-      "type": "関数",
-      "count": 2,
-      "executionEvidenceStates": {
-        "unverified": 2
-      },
-      "commandIds": [
-        "command-0268",
-        "command-0269"
-      ],
-      "names": [
-        "ファイル名抽出",
-        "パス抽出"
-      ]
-    },
-    {
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
       "category": "特殊命令",
       "type": "関数",
       "count": 6,
@@ -825,40 +789,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "system-runtime-catalog-and-namespace"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0268",
-      "name": "ファイル名抽出",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "パス操作",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-path-host"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0269",
-      "name": "パス抽出",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "パス操作",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-path-host"
       ],
       "aotFixtureIds": []
     },
@@ -1703,40 +1633,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "plugin-node-file-core"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0722",
-      "name": "ファイル名抽出",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "パス操作",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-path-host"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0723",
-      "name": "パス抽出",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "パス操作",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-path-host"
       ],
       "aotFixtureIds": []
     },

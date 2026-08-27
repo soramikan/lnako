@@ -3426,6 +3426,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
+        .node_path_basename, .node_path_dirname => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = nodePathComponentBuiltin(runtime, command, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .node_path_absolute, .node_path_resolve => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = nodePathBuiltin(runtime, command, actual) catch |failure| {
@@ -6479,6 +6486,45 @@ fn nodePathBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: [
     };
     defer runtime.allocator.free(resolved);
     return runtimeUtf8StringLossy(runtime, resolved);
+}
+
+fn nodePathComponentBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    if (arguments.len < 1) return error.InvalidArgumentCount;
+    const path = try valueUtf8LossyAlloc(runtime, arguments[0]);
+    defer runtime.allocator.free(path);
+    const component = switch (command) {
+        .node_path_basename => nodeBasename(path),
+        .node_path_dirname => nodeDirname(path),
+        else => return error.UnknownCommand,
+    };
+    return runtimeUtf8StringLossy(runtime, component);
+}
+
+fn nodeBasename(path: []const u8) []const u8 {
+    var end = path.len;
+    while (end > 0 and nodePathSeparator(path[end - 1])) end -= 1;
+    if (end == 0) return "";
+    var start = end;
+    while (start > 0 and !nodePathSeparator(path[start - 1])) start -= 1;
+    return path[start..end];
+}
+
+fn nodeDirname(path: []const u8) []const u8 {
+    if (path.len == 0) return ".";
+    var end = path.len;
+    while (end > 0 and nodePathSeparator(path[end - 1])) end -= 1;
+    if (end == 0) return path[0..1];
+
+    var start = end;
+    while (start > 0 and !nodePathSeparator(path[start - 1])) start -= 1;
+    if (start == 0) return ".";
+    if (start == 1 and nodePathSeparator(path[0])) return path[0..1];
+    if (start == 2 and nodePathSeparator(path[0]) and nodePathSeparator(path[1]) and builtin.os.tag != .windows) return path[0..2];
+    return path[0 .. start - 1];
+}
+
+fn nodePathSeparator(byte: u8) bool {
+    return byte == std.fs.path.sep or (builtin.os.tag == .windows and (byte == '/' or byte == '\\'));
 }
 
 fn aotOsName() []const u8 {

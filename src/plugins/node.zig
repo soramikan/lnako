@@ -1268,7 +1268,7 @@ fn setDictionary(runtime: *Runtime, dictionary: *value_mod.Dictionary, key: []co
 fn nodeBasename(path: []const u8) []const u8 {
     var end = path.len;
     while (end > 0 and isSeparator(path[end - 1])) end -= 1;
-    if (end == 0) return if (path.len > 0) path[path.len - 1 ..] else "";
+    if (end == 0) return "";
     var start = end;
     while (start > 0 and !isSeparator(path[start - 1])) start -= 1;
     return path[start..end];
@@ -1277,12 +1277,14 @@ fn nodeBasename(path: []const u8) []const u8 {
 fn nodeDirname(path: []const u8) []const u8 {
     if (path.len == 0) return ".";
     var end = path.len;
-    while (end > 1 and isSeparator(path[end - 1])) end -= 1;
-    var index = end;
-    while (index > 0 and !isSeparator(path[index - 1])) index -= 1;
-    if (index == 0) return ".";
-    while (index > 1 and isSeparator(path[index - 1])) index -= 1;
-    return path[0..index];
+    while (end > 0 and isSeparator(path[end - 1])) end -= 1;
+    if (end == 0) return path[0..1];
+    var start = end;
+    while (start > 0 and !isSeparator(path[start - 1])) start -= 1;
+    if (start == 0) return ".";
+    if (start == 1 and isSeparator(path[0])) return path[0..1];
+    if (start == 2 and isSeparator(path[0]) and isSeparator(path[1]) and builtin.os.tag != .windows) return path[0..2];
+    return path[0 .. start - 1];
 }
 
 fn isSeparator(byte: u8) bool {
@@ -1342,6 +1344,13 @@ test "Node互換のパス・OS・環境変数命令を処理する" {
     const env_utf8 = try env.string.toUtf8Lossy(std.testing.allocator);
     defer std.testing.allocator.free(env_utf8);
     try std.testing.expectEqualStrings("ok", env_utf8);
+}
+
+test "Node互換のbasenameとdirnameはルートと連続区切りを処理する" {
+    try std.testing.expectEqualStrings("", nodeBasename("/"));
+    try std.testing.expectEqualStrings("/", nodeDirname("/"));
+    try std.testing.expectEqualStrings("b", nodeBasename("a//b//"));
+    try std.testing.expectEqualStrings("a/", nodeDirname("a//b//"));
 }
 
 test "ブラウザとファイルマネージャーの起動をホストへ委譲する" {
