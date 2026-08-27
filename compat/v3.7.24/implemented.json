@@ -1914,16 +1914,18 @@
   "曜日": {
     "status": "native",
     "tests": [
-      "plugin-system-datetime"
+      "plugin-system-datetime",
+      "native-datetime-weekday"
     ],
-    "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+    "reason": "Asia/Tokyoの日付正規化と日曜始まりの曜日番号を純LLVM AOTへ実装し、公式差分テストに成功"
   },
   "曜日番号取得": {
     "status": "native",
     "tests": [
-      "plugin-system-datetime"
+      "plugin-system-datetime",
+      "native-datetime-weekday"
     ],
-    "reason": "Asia/Tokyo規則で実装し、公式差分テストに成功"
+    "reason": "Asia/Tokyoの日付正規化と日曜始まりの曜日番号を純LLVM AOTへ実装し、公式差分テストに成功"
   },
   "UNIXTIME変換": {
     "status": "native",

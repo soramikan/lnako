@@ -2762,7 +2762,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
-        .datetime_now, .datetime_system_time, .datetime_system_time_milliseconds, .datetime_today, .datetime_tomorrow, .datetime_yesterday, .datetime_current_year, .datetime_next_year, .datetime_last_year, .datetime_current_month, .datetime_next_month, .datetime_previous_month => {
+        .datetime_now, .datetime_system_time, .datetime_system_time_milliseconds, .datetime_today, .datetime_tomorrow, .datetime_yesterday, .datetime_current_year, .datetime_next_year, .datetime_last_year, .datetime_current_month, .datetime_next_month, .datetime_previous_month, .datetime_weekday, .datetime_weekday_number => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = datetimeBuiltin(runtime, command, actual) catch |failure| {
                 runtime.setFailure(failure);
@@ -3624,7 +3624,7 @@ const AotDateFields = struct {
     weekday: u8,
 };
 
-fn datetimeBuiltin(runtime: *Runtime, command: aot_builtin.Command, _: []const Value) !Value {
+fn datetimeBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     const now = currentTimeMilliseconds(runtime);
     return switch (command) {
         .datetime_now => datetimeTimeString(runtime, datetimeFieldsFromEpoch(now)),
@@ -3639,6 +3639,14 @@ fn datetimeBuiltin(runtime: *Runtime, command: aot_builtin.Command, _: []const V
         .datetime_current_month => numberValue(@as(f64, @floatFromInt(datetimeFieldsFromEpoch(now).month))),
         .datetime_next_month => numberValue(@as(f64, @floatFromInt(@mod(datetimeFieldsFromEpoch(now).month, 12) + 1))),
         .datetime_previous_month => numberValue(@as(f64, @floatFromInt(@mod(datetimeFieldsFromEpoch(now).month + 10, 12) + 1))),
+        .datetime_weekday => if (arguments.len < 1)
+            error.InvalidArgumentCount
+        else
+            datetimeWeekdayName(runtime, try datetimeParseDate(runtime, arguments[0], now)),
+        .datetime_weekday_number => if (arguments.len < 1)
+            error.InvalidArgumentCount
+        else
+            datetimeWeekdayNumber(runtime, arguments[0]),
         else => error.UnknownCommand,
     };
 }
@@ -3670,6 +3678,132 @@ fn datetimeFieldsFromEpoch(milliseconds: i64) AotDateFields {
         .second = @divTrunc(@mod(within_day, datetime_milliseconds_per_minute), datetime_milliseconds_per_second),
         .weekday = @intCast(@mod(days + 4, 7)),
     };
+}
+
+fn datetimeValueUtf8Alloc(runtime: *Runtime, value: Value) ![]u8 {
+    const units = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(units);
+    return (string_mod.String{ .allocator = runtime.allocator, .units = units }).toUtf8Lossy(runtime.allocator);
+}
+
+fn datetimeParseDate(runtime: *Runtime, source: Value, now: i64) !f64 {
+    const utf8 = try datetimeValueUtf8Alloc(runtime, source);
+    defer runtime.allocator.free(utf8);
+    const text = std.mem.trim(u8, utf8, " \t\r\n");
+    if (datetimeIsUnsignedDecimal(text)) return std.math.trunc((std.fmt.parseFloat(f64, text) catch return std.math.nan(f64)) * 1000);
+    if (datetimeIsTimeText(text)) {
+        const parts = try datetimeParseDelimited(text, ':');
+        const today = datetimeFieldsFromEpoch(now);
+        return @floatFromInt(datetimeConstructLocal(today.year, today.month - 1, today.day, parts[0], parts[1], parts[2], 0, true));
+    }
+    const normalized = try runtime.allocator.dupe(u8, text);
+    defer runtime.allocator.free(normalized);
+    for (normalized) |*byte| if (byte.* == ' ' or byte.* == ':' or byte.* == '-' or byte.* == 'T') {
+        byte.* = '/';
+    };
+    var parts = [_]i64{ 0, 0, 0, 0, 0, 0 };
+    var iterator = std.mem.splitScalar(u8, normalized, '/');
+    var index: usize = 0;
+    while (iterator.next()) |part| {
+        if (index >= parts.len) break;
+        parts[index] = datetimeParseIntPrefix(part) orelse return std.math.nan(f64);
+        index += 1;
+    }
+    if (index < 3) return std.math.nan(f64);
+    return @floatFromInt(datetimeConstructLocal(parts[0], parts[1] - 1, parts[2], parts[3], parts[4], parts[5], 0, true));
+}
+
+fn datetimeWeekdayName(runtime: *Runtime, milliseconds: f64) !Value {
+    if (!std.math.isFinite(milliseconds)) return runtimeUtf8String(runtime, "日");
+    const names = [_][]const u8{ "日", "月", "火", "水", "木", "金", "土" };
+    return runtimeUtf8String(runtime, names[datetimeFieldsFromEpoch(datetimeFloatToEpoch(milliseconds)).weekday]);
+}
+
+fn datetimeWeekdayNumber(runtime: *Runtime, source: Value) !Value {
+    const text = try datetimeValueUtf8Alloc(runtime, source);
+    defer runtime.allocator.free(text);
+    var iterator = std.mem.splitScalar(u8, text, '/');
+    const year = datetimeParseIntPrefix(iterator.next() orelse return numberValue(std.math.nan(f64))) orelse return numberValue(std.math.nan(f64));
+    const month = datetimeParseIntPrefix(iterator.next() orelse return numberValue(std.math.nan(f64))) orelse return numberValue(std.math.nan(f64));
+    const day = datetimeParseIntPrefix(iterator.next() orelse return numberValue(std.math.nan(f64))) orelse return numberValue(std.math.nan(f64));
+    return numberValue(@floatFromInt(datetimeFieldsFromEpoch(datetimeConstructLocal(year, month - 1, day, 0, 0, 0, 0, true)).weekday));
+}
+
+fn datetimeConstructLocal(year_input: i64, month_zero_input: i64, day: i64, hour: i64, minute: i64, second: i64, millisecond: i64, constructor_year_rule: bool) i64 {
+    var year = year_input;
+    if (constructor_year_rule and year >= 0 and year <= 99) year += 1900;
+    year += @divFloor(month_zero_input, 12);
+    const month_zero = @mod(month_zero_input, 12);
+    const days = datetimeDaysFromCivil(year, month_zero + 1, 1) + day - 1;
+    return days * datetime_milliseconds_per_day + hour * datetime_milliseconds_per_hour + minute * datetime_milliseconds_per_minute + second * datetime_milliseconds_per_second + millisecond - datetime_tokyo_offset_milliseconds;
+}
+
+fn datetimeDaysFromCivil(year_input: i64, month: i64, day: i64) i64 {
+    var year = year_input;
+    year -= @intFromBool(month <= 2);
+    const era = @divFloor(year, 400);
+    const year_of_era = year - era * 400;
+    const adjusted_month = month + (if (month > 2) @as(i64, -3) else 9);
+    const day_of_year = @divFloor(153 * adjusted_month + 2, 5) + day - 1;
+    const day_of_era = year_of_era * 365 + @divFloor(year_of_era, 4) - @divFloor(year_of_era, 100) + day_of_year;
+    return era * 146097 + day_of_era - 719468;
+}
+
+fn datetimeParseDelimited(text: []const u8, delimiter: u8) ![3]i64 {
+    var result = [_]i64{ 0, 0, 0 };
+    var iterator = std.mem.splitScalar(u8, text, delimiter);
+    var index: usize = 0;
+    while (iterator.next()) |part| {
+        if (index >= result.len) break;
+        result[index] = datetimeParseIntPrefix(part) orelse 0;
+        index += 1;
+    }
+    if (index == 0) return error.InvalidDatePart;
+    return result;
+}
+
+fn datetimeParseIntPrefix(text: []const u8) ?i64 {
+    if (text.len == 0) return null;
+    var index: usize = 0;
+    var negative = false;
+    if (text[index] == '+' or text[index] == '-') {
+        negative = text[index] == '-';
+        index += 1;
+    }
+    const start = index;
+    var value: i64 = 0;
+    while (index < text.len and std.ascii.isDigit(text[index])) : (index += 1) {
+        value = std.math.mul(i64, value, 10) catch return null;
+        value = std.math.add(i64, value, text[index] - '0') catch return null;
+    }
+    if (index == start) return null;
+    return if (negative) -value else value;
+}
+
+fn datetimeIsUnsignedDecimal(text: []const u8) bool {
+    if (text.len == 0) return false;
+    var dot = false;
+    for (text) |byte| {
+        if (byte == '.' and !dot) {
+            dot = true;
+        } else if (!std.ascii.isDigit(byte)) return false;
+    }
+    return text[0] != '.' and text[text.len - 1] != '.';
+}
+
+fn datetimeIsTimeText(text: []const u8) bool {
+    var separators: usize = 0;
+    if (text.len == 0) return false;
+    for (text) |byte| {
+        if (byte == ':') separators += 1 else if (!std.ascii.isDigit(byte)) return false;
+    }
+    return separators == 1 or separators == 2;
+}
+
+fn datetimeFloatToEpoch(value: f64) i64 {
+    if (!std.math.isFinite(value)) return 0;
+    const clipped = std.math.clamp(std.math.trunc(value), @as(f64, @floatFromInt(std.math.minInt(i64) + 1)), @as(f64, @floatFromInt(std.math.maxInt(i64))));
+    return @intFromFloat(clipped);
 }
 
 fn datetimeDateString(runtime: *Runtime, fields: AotDateFields) !Value {
@@ -6766,6 +6900,27 @@ test "AOT日時の現在時刻・日付・年月命令を固定時計で処理�
     try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(roots[10].payload)));
     roots[11] = try datetimeBuiltin(&runtime, .datetime_previous_month, &.{});
     try std.testing.expectEqual(@as(f64, 12), @as(f64, @bitCast(roots[11].payload)));
+}
+
+test "AOT曜日命令はAsia/Tokyoの日曜始まり番号を処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator, .clock_milliseconds = 1_735_689_845_678 };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtimeUtf8String(&runtime, "2024/02/29");
+    var arguments = [_]Value{roots[0]};
+    roots[1] = try datetimeBuiltin(&runtime, .datetime_weekday, &arguments);
+    roots[2] = try datetimeBuiltin(&runtime, .datetime_weekday_number, &arguments);
+    try expectUtf16String(&runtime, roots[1], "木");
+    try std.testing.expectEqual(@as(f64, 4), @as(f64, @bitCast(roots[2].payload)));
+
+    roots[3] = try runtimeUtf8String(&runtime, "2024/02/30");
+    arguments[0] = roots[3];
+    roots[4] = try datetimeBuiltin(&runtime, .datetime_weekday, &arguments);
+    try expectUtf16String(&runtime, roots[4], "金");
 }
 
 test "AOT対応ブラウザ一覧取得はv3.7.24の辞書をキャッシュする" {
