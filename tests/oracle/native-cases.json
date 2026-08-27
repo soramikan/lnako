@@ -671,5 +671,10 @@
     "oracle": "official-source",
     "commands": ["ASSERT等"],
     "source": "ASSERT等(1,1)を表示\nASSERT等(非数,非数)を表示\n"
+  },
+  {
+    "id": "native-node-path-resolve",
+    "commands": ["絶対パス変換", "相対パス展開"],
+    "source": "絶対パス変換(\"a/../b.txt\")を表示\n相対パス展開(\"a\",\"b/../c.txt\")を表示\n"
   }
 ]

@@ -3426,6 +3426,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
+        .node_path_absolute, .node_path_resolve => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = nodePathBuiltin(runtime, command, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .caniuse_browsers => {
             out.* = caniuseBrowsersBuiltin(runtime) catch |failure| {
                 runtime.setFailure(failure);
@@ -6423,11 +6430,17 @@ fn nodeEnvironmentListBuiltin(runtime: *Runtime) !Value {
 }
 
 fn nodeCurrentDirectoryBuiltin(runtime: *Runtime) !Value {
+    const path = try currentDirectoryAlloc(runtime);
+    defer runtime.allocator.free(path);
+    return runtimeUtf8StringLossy(runtime, path);
+}
+
+fn currentDirectoryAlloc(runtime: *Runtime) ![]u8 {
     var size: usize = 256;
     while (size <= 1024 * 1024) : (size *= 2) {
         const buffer = try runtime.allocator.alloc(u8, size);
         defer runtime.allocator.free(buffer);
-        if (std.c.getcwd(buffer.ptr, buffer.len)) |path| return runtimeUtf8StringLossy(runtime, std.mem.sliceTo(path, 0));
+        if (std.c.getcwd(buffer.ptr, buffer.len)) |path| return runtime.allocator.dupe(u8, std.mem.sliceTo(path, 0));
     }
     return error.CurrentDirectoryUnavailable;
 }
@@ -6442,6 +6455,30 @@ fn nodeChangeDirectoryBuiltin(runtime: *Runtime, arguments: []const Value) !Valu
     defer runtime.allocator.free(path_z);
     if (std.c.chdir(path_z.ptr) != 0) return error.ChangeDirectoryFailed;
     return .{};
+}
+
+fn nodePathBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    const required: usize = if (command == .node_path_resolve) 2 else 1;
+    if (arguments.len < required) return error.InvalidArgumentCount;
+
+    const cwd = try currentDirectoryAlloc(runtime);
+    defer runtime.allocator.free(cwd);
+    const first = try valueUtf8LossyAlloc(runtime, arguments[0]);
+    defer runtime.allocator.free(first);
+
+    const resolved = switch (command) {
+        .node_path_absolute => try std.fs.path.resolve(runtime.allocator, &.{ cwd, first }),
+        .node_path_resolve => blk: {
+            const second = try valueUtf8LossyAlloc(runtime, arguments[1]);
+            defer runtime.allocator.free(second);
+            const joined = try std.fs.path.join(runtime.allocator, &.{ first, second });
+            defer runtime.allocator.free(joined);
+            break :blk try std.fs.path.resolve(runtime.allocator, &.{ cwd, joined });
+        },
+        else => return error.UnknownCommand,
+    };
+    defer runtime.allocator.free(resolved);
+    return runtimeUtf8StringLossy(runtime, resolved);
 }
 
 fn aotOsName() []const u8 {
@@ -10157,6 +10194,28 @@ test "AOTカレントディレクトリ取得は現在の作業フォルダを�
     try expectUtf16String(&runtime, roots[0], std.mem.sliceTo(expected, 0));
     roots[1] = try nodeCurrentDirectoryBuiltin(&runtime);
     try expectUtf16String(&runtime, roots[1], std.mem.sliceTo(expected, 0));
+}
+
+test "AOT Nodeパス解決はpath.resolveとpath.joinの規則を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    const cwd = try currentDirectoryAlloc(&runtime);
+    defer runtime.allocator.free(cwd);
+
+    roots[0] = try nodePathBuiltin(&runtime, .node_path_absolute, &.{staticStringValue("a/../b.txt")});
+    const absolute_expected = try std.fs.path.resolve(runtime.allocator, &.{ cwd, "a/../b.txt" });
+    defer runtime.allocator.free(absolute_expected);
+    try expectUtf16String(&runtime, roots[0], absolute_expected);
+
+    roots[1] = try nodePathBuiltin(&runtime, .node_path_resolve, &.{ staticStringValue("a"), staticStringValue("b/../c.txt") });
+    const relative_expected = try std.fs.path.resolve(runtime.allocator, &.{ cwd, "a/b/../c.txt" });
+    defer runtime.allocator.free(relative_expected);
+    try expectUtf16String(&runtime, roots[1], relative_expected);
 }
 
 test "AOTカレントディレクトリ変更は相対パスを受けてundefinedを返す" {
