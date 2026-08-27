@@ -55,6 +55,7 @@ node tools/check_dispatch_trace.mjs
 node tools/check_builtin_catalog.mjs
 node tools/sync_compat.mjs --check
 node tools/sync_compat_evidence.mjs --check
+node tools/check_interpreter_only_classification.mjs --check
 node tools/check_compat_report.mjs
 ```
 

@@ -74,6 +74,24 @@ fixtureのソース本文から命令名を推測することはしません。�
 - `none`: 明示fixtureがない
 - `compat-js-only`: compat-js fixtureだけに明示関連付けがある
 
+### interpreter-onlyの分類
+
+`compat/v3.7.24/interpreter-only-classification.json`は、現在の`evidence.json`から
+`fixtureCoverageState=interpreter-only`のentryだけをplugin・category・type単位へ分類した派生台帳です。
+各entryのcatalog ID、命令名、interpreter fixture ID、AOT fixture ID、
+`executionEvidenceState`も保持するため、次にAOT fixtureを追加する対象を命令系統ごとに選べます。
+この分類は実装完了、AOT実行、公式等価性、attestation済みの`verified`を意味しません。
+
+現行HEADでは、明示`commands`を追加した既存AOT fixtureを含めて、`paired` 174 entry、
+`interpreter-only` 349 entryです。execution evidenceは`verified` 0、
+`trace-confirmed-unattested` 4、`unverified` 523のままです。
+fixtureの関連付けを変更した場合は、次で派生台帳の生成と検査を行います。
+
+```sh
+node tools/check_interpreter_only_classification.mjs --generate
+node tools/check_interpreter_only_classification.mjs --check
+```
+
 `executionEvidenceState`は別の状態です。`verified`へ進めるには、dispatch証拠に記録されたcatalog IDが
 一意名として解決でき、明示fixtureの同一siteについてcompile manifest、Interpreterの成功result、
 AOTの成功attempt/result対、公式source・生成JavaScript・lnako run・AOT O0の終了結果が全て一致し、外部attestationが検証できなければなりません。
