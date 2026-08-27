@@ -1731,14 +1731,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "system-runtime-execution-and-debug"
+        "system-runtime-execution-and-debug",
+        "native-system-debug"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+      "reason": "Zig製実行時システム命令とAOTのデバッグ状態切替を公式cnako3との差分テストで確認"
     },
     {
       "id": "command-0067",

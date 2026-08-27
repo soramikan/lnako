@@ -30,7 +30,7 @@ const oracleIdentity = await readOracleIdentity(oracleRoot, officialCli, oracleB
 const artifactOracleIdentity = artifactPath === null ? null : oracleIdentity;
 const temporary = await mkdtemp(join(tmpdir(), "lnako-native-"));
 const maxBuffer = 16 * 1024 * 1024;
-const knownCaseFields = new Set(["id", "source", "oracle", "stderrIncludes", "commands"]);
+const knownCaseFields = new Set(["id", "source", "oracle", "stderrIncludes", "normalizeDebugDump", "commands"]);
 const routeNames = ["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0", "lnakoNativeO1", "lnakoNativeO2", "lnakoNativeO3"];
 let artifactLnakoBinarySha256 = null;
 
@@ -49,6 +49,9 @@ try {
     }
     if (testCase.stderrIncludes !== undefined && (typeof testCase.stderrIncludes !== "string" || testCase.stderrIncludes.length === 0)) {
       throw new Error(`stderrIncludesは空でない文字列を指定してください: ${testCase.id}`);
+    }
+    if (testCase.normalizeDebugDump !== undefined && typeof testCase.normalizeDebugDump !== "boolean") {
+      throw new Error(`normalizeDebugDumpはbooleanで指定してください: ${testCase.id}`);
     }
     if (testCase.commands !== undefined && (!Array.isArray(testCase.commands) || testCase.commands.length === 0 || testCase.commands.some((name) => typeof name !== "string" || name.length === 0 || !standardCommandNames.has(name)) || new Set(testCase.commands).size !== testCase.commands.length)) {
       throw new Error(`commandsは標準527命令の重複しない非空文字列配列で指定してください: ${testCase.id}`);
@@ -181,10 +184,11 @@ async function runCase(testCase, index, temporary, executable, officialCli, coll
     env: { ...process.env, TZ: "Asia/Tokyo", LNAKO_TEST_NOW_MS: "1735689845678", LNAKO_TEST_MONOTONIC_MS: "123.5", LNAKO_TEST_RANDOM_SEED: "5573589319906701683", LNAKO_LLVM_TRACE: "1" },
     maxBuffer,
   };
-  const fixedHostArgument = ["--import", pathToFileURL(fixedHost).href];
-  const officialSource = await runProcess(process.execPath, [...fixedHostArgument, officialCli, sourcePath], options);
-  const officialCompile = await runProcess(process.execPath, [...fixedHostArgument, officialCli, "--compile", "--silent", "--output", generatedJavaScript, sourcePath], options);
-  const officialGenerated = officialCompile.status === 0 ? await runProcess(process.execPath, [...fixedHostArgument, generatedJavaScript], options) : officialCompile;
+  const oracleHost = testCase.normalizeDebugDump ? resolve(root, "tools/oracle/normalize_debug_host.mjs") : fixedHost;
+  const oracleHostArgument = ["--import", pathToFileURL(oracleHost).href];
+  const officialSource = await runProcess(process.execPath, [...oracleHostArgument, officialCli, sourcePath], options);
+  const officialCompile = await runProcess(process.execPath, [...oracleHostArgument, officialCli, "--compile", "--silent", "--output", generatedJavaScript, sourcePath], options);
+  const officialGenerated = officialCompile.status === 0 ? await runProcess(process.execPath, [...oracleHostArgument, generatedJavaScript], options) : officialCompile;
   const generatedJavaScriptSha256 = collectManifest && officialCompile.status === 0 ? sha256(await readFile(generatedJavaScript)) : null;
   const interpreted = await runProcess(executable, ["run", sourcePath], options);
   const results = {

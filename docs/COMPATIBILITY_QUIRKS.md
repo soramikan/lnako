@@ -332,7 +332,7 @@ ABI値の所有権と非同期スレッド制約は[`NATIVE_PLUGIN_ABI.md`](NATI
 | `ハテナ関数設定`の配列 | 指定した関数を左から順に適用するが、`ハテナ関数実行`自体は最後の結果を返さず常に`undefined`。`JS:`で始まる要素はJavaScriptを評価する | 戻り値を次の関数へ渡し、命令自体は`undefined`を返す。`JS:`要素だけは通常モードで拒否し、`--compat-js`を要求する | `system-runtime-execution-and-debug`、`compat-js-hatena` |
 | `ハテナ関数設定`の文字列 | 非修飾のユーザー関数名を探索せず、システム変数表だけから取得する。ユーザー関数を指定するには関数値を渡す必要がある | 文字列はシステム命令名としてだけ呼び、ユーザー関数は関数値の場合だけ受け付ける | `system-runtime-execution-and-debug`、`system-runtime-hatena-user-name-error` |
 | `デバッグ表示` | `__line`の0始まり行番号へ1を加え、入力時のパスを含む`ファイル(行): 値`を表示する。配列・辞書などは先にJSON化する。Windowsではドライブ文字直後のコロンでパスを分割するため、`C:\\...`が`C(行): 値`になる | IRへモジュール名と入力パスを保持し、同じ行番号・JSON化規則・Windowsのドライブ名短縮を再現する | `system-runtime-execution-and-debug` |
-| `__DEBUG`の診断ダンプ | デバッグ有効化に加え、Nodeの`console.log`でNakoGlobal内部全体を出す。生成JavaScript全文、循環参照、Mapなどを含み、Nodeの検査表示に依存する | デバッグ状態は有効化するが、製品内部表現の巨大ダンプは標準出力へ出さない。差分テストでは両処理系の言語出力からこの診断だけを分離する | `system-runtime-execution-and-debug` |
+| `__DEBUG`の診断ダンプ | デバッグ有効化に加え、Nodeの`console.log`でNakoGlobal内部全体を出す。生成JavaScript全文、循環参照、Mapなどを含み、Nodeの検査表示に依存する | デバッグ状態は有効化するが、製品内部表現の巨大ダンプは標準出力へ出さない。AOTも内部フラグを有効化し、公式側の診断だけはoracle用hostで言語出力から分離して比較する | `system-runtime-execution-and-debug`、`native-system-debug` |
 | `__DEBUG_BP_WAIT`の非メインプラグイン | ブレイクポイントに一致しても`プラグイン名`が`メイン`でなければPromiseをresolveせず、その後の処理が進まない | 同じく未解決Promiseを返す。差分テストでは非該当の即時復帰と、待機フラグを事前設定した該当経路を検証する | `system-runtime-execution-and-debug` |
 | `ASSERT等`の成功時 | Nodeの`assert.strictEqual`を呼ぶため、比較成功時の戻り値は`true`でなく`undefined`。`NaN`同士は一致し、`+0`と`-0`は不一致になる | Interpreterと純LLVM AOTでSameValue相当の比較を行い、成功時は`undefined`を返す | `system-runtime-execution-and-debug`、`native-node-assert-equal` |
 
