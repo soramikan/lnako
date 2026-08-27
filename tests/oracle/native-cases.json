@@ -340,6 +340,11 @@
     "source": "URLエンコード(\"A あ/😀\")を表示\nURLデコード(\"A%20%E3%81%82%2F%F0%9F%98%80\")を表示\nJSON変換(URLパラメータ解析(\"https://example.test/?a=1&a=2&flag&x=%E3%81%82\"))を表示\nBASE64エンコード(\"こんにちは\")を表示\nBASE64デコード(\"44GT44KT44Gr44Gh44Gv\")を表示\nBASE64エンコード([65,300,-1])を表示\n"
   },
   {
+    "id": "native-system-path-commands",
+    "commands": ["拡張子抽出", "拡張子変更", "終端パス追加", "終端パス除去", "終端パス削除"],
+    "source": "拡張子抽出(\"/a/.b/c.c++\")を表示\n拡張子変更(\"/a/.b/c.txt\",\" docx \")を表示\n終端パス追加(\"a/b\")を表示\n終端パス除去(\"a/b//\")を表示\n終端パス削除(\"a/b/\")を表示\n"
+  },
+  {
     "id": "native-node-os-identity",
     "commands": ["OS取得", "OSアーキテクチャ取得"],
     "source": "OS取得()を表示\nOSアーキテクチャ取得()を表示\n"

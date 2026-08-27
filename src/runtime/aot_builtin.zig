@@ -215,6 +215,11 @@ pub const Command = enum(u16) {
     datetime_add_date,
     datetime_add_datetime,
     datetime_monotonic_milliseconds,
+    path_extract_extension,
+    path_change_extension,
+    path_add_trailing_separator,
+    path_remove_trailing_separator,
+    path_delete_trailing_separator,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -439,6 +444,11 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "日付加算")) return .datetime_add_date;
     if (std.mem.eql(u8, name, "日時加算")) return .datetime_add_datetime;
     if (std.mem.eql(u8, name, "時間ミリ秒取得")) return .datetime_monotonic_milliseconds;
+    if (std.mem.eql(u8, name, "拡張子抽出")) return .path_extract_extension;
+    if (std.mem.eql(u8, name, "拡張子変更")) return .path_change_extension;
+    if (std.mem.eql(u8, name, "終端パス追加")) return .path_add_trailing_separator;
+    if (std.mem.eql(u8, name, "終端パス除去")) return .path_remove_trailing_separator;
+    if (std.mem.eql(u8, name, "終端パス削除")) return .path_delete_trailing_separator;
     return null;
 }
 
@@ -645,6 +655,11 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.datetime_add_date, lookup("日付加算").?);
     try std.testing.expectEqual(Command.datetime_add_datetime, lookup("日時加算").?);
     try std.testing.expectEqual(Command.datetime_monotonic_milliseconds, lookup("時間ミリ秒取得").?);
+    try std.testing.expectEqual(Command.path_extract_extension, lookup("拡張子抽出").?);
+    try std.testing.expectEqual(Command.path_change_extension, lookup("拡張子変更").?);
+    try std.testing.expectEqual(Command.path_add_trailing_separator, lookup("終端パス追加").?);
+    try std.testing.expectEqual(Command.path_remove_trailing_separator, lookup("終端パス除去").?);
+    try std.testing.expectEqual(Command.path_delete_trailing_separator, lookup("終端パス削除").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }
 

@@ -6976,14 +6976,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-url"
+        "plugin-system-url",
+        "native-system-path-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "Interpreterと純LLVM AOTへ拡張子判定を実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0264",
@@ -7002,14 +7003,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-url"
+        "plugin-system-url",
+        "native-system-path-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "Interpreterと純LLVM AOTへ拡張子変更を実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0265",
@@ -7028,14 +7030,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-url"
+        "plugin-system-url",
+        "native-system-path-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "Interpreterと純LLVM AOTへ終端区切り文字追加を実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0266",
@@ -7054,14 +7057,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-url"
+        "plugin-system-url",
+        "native-system-path-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "Interpreterと純LLVM AOTへ終端区切り文字1文字除去を実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0267",
@@ -7080,14 +7084,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-url"
+        "plugin-system-url",
+        "native-system-path-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
+      "reason": "Interpreterと純LLVM AOTへ終端区切り文字削除の別名を実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0268",

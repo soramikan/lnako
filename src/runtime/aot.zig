@@ -2778,6 +2778,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
+        .path_extract_extension, .path_change_extension, .path_add_trailing_separator, .path_remove_trailing_separator, .path_delete_trailing_separator => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = pathBuiltin(runtime, command, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .node_os, .node_architecture => {
             out.* = nodeEnvironmentBuiltin(runtime, command) catch |failure| {
                 runtime.setFailure(failure);
@@ -4205,6 +4212,114 @@ fn urlBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []cons
         .base64_decode => base64DecodeBuiltin(runtime, arguments[0]),
         else => error.UnknownCommand,
     };
+}
+
+fn pathBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    const required: usize = if (command == .path_change_extension) 2 else 1;
+    if (arguments.len < required) return error.InvalidArgumentCount;
+    return switch (command) {
+        .path_extract_extension => pathExtractExtensionBuiltin(runtime, arguments[0]),
+        .path_change_extension => pathChangeExtensionBuiltin(runtime, arguments[0], arguments[1]),
+        .path_add_trailing_separator => pathAddTrailingSeparatorBuiltin(runtime, arguments[0]),
+        .path_remove_trailing_separator => pathRemoveTrailingSeparatorBuiltin(runtime, arguments[0]),
+        .path_delete_trailing_separator => pathRemoveTrailingSeparatorBuiltin(runtime, arguments[0]),
+        else => error.UnknownCommand,
+    };
+}
+
+fn pathExtractExtensionBuiltin(runtime: *Runtime, source: Value) !Value {
+    const source_tag: Tag = @enumFromInt(source.tag);
+    if (source_tag == .undefined or source_tag == .null_value) return runtimeUtf8String(runtime, "");
+    if (!isString(source)) return error.InvalidPathSource;
+    const units = try valueUtf16Alloc(runtime, source);
+    defer runtime.allocator.free(units);
+    const filename = pathBasenameUnits(units, pathSeparatorUnit());
+    const dot = std.mem.lastIndexOfScalar(u16, filename, '.') orelse return runtimeUtf8String(runtime, "");
+    if (dot + 1 == filename.len or !pathAllExtensionUnits(filename[dot + 1 ..])) return runtimeUtf8String(runtime, "");
+    return runtime.createString(filename[dot..]);
+}
+
+fn pathChangeExtensionBuiltin(runtime: *Runtime, source: Value, extension: Value) !Value {
+    const source_tag: Tag = @enumFromInt(source.tag);
+    if (source_tag == .undefined or source_tag == .null_value) return extension;
+    if (!isString(source)) return error.InvalidPathSource;
+    const source_units = try valueUtf16Alloc(runtime, source);
+    defer runtime.allocator.free(source_units);
+    if (extension.tag == @intFromEnum(Tag.undefined) or extension.tag == @intFromEnum(Tag.null_value)) {
+        return pathChangeExtensionUnits(runtime, source_units, &.{});
+    }
+    if (!isString(extension)) return error.InvalidPathSource;
+    const extension_units = try valueUtf16Alloc(runtime, extension);
+    defer runtime.allocator.free(extension_units);
+    return pathChangeExtensionUnits(runtime, source_units, extension_units);
+}
+
+fn pathChangeExtensionUnits(runtime: *Runtime, source: []const u16, extension: []const u16) !Value {
+    const raw_extension = string_mod.trimWhitespace(extension);
+    const separator = pathSeparatorUnit();
+    const last_separator = std.mem.lastIndexOfScalar(u16, source, separator);
+    const filename_start = if (last_separator) |index| index + 1 else 0;
+    const filename = source[filename_start..];
+    var filename_end = filename.len;
+    if (std.mem.lastIndexOfScalar(u16, filename, '.')) |dot| {
+        if (dot + 1 < filename.len and pathAllExtensionUnits(filename[dot + 1 ..])) filename_end = dot;
+    }
+
+    var output: std.ArrayList(u16) = .empty;
+    defer output.deinit(runtime.allocator);
+    if (filename_start > 0) try output.appendSlice(runtime.allocator, source[0..filename_start]);
+    try output.appendSlice(runtime.allocator, filename[0..filename_end]);
+    if (raw_extension.len > 0) {
+        if (raw_extension[0] != '.') try output.append(runtime.allocator, '.');
+        try output.appendSlice(runtime.allocator, raw_extension);
+    }
+    return runtime.createString(output.items);
+}
+
+fn pathAddTrailingSeparatorBuiltin(runtime: *Runtime, source: Value) !Value {
+    const source_tag: Tag = @enumFromInt(source.tag);
+    if (source_tag == .undefined or source_tag == .null_value) return runtimeUtf8String(runtime, "");
+    if (!isString(source)) return error.InvalidPathSource;
+    const units = try valueUtf16Alloc(runtime, source);
+    defer runtime.allocator.free(units);
+    if (units.len == 0 or units[units.len - 1] == pathSeparatorUnit()) return source;
+    var output = try runtime.allocator.alloc(u16, units.len + 1);
+    defer runtime.allocator.free(output);
+    @memcpy(output[0..units.len], units);
+    output[output.len - 1] = pathSeparatorUnit();
+    return runtime.createString(output);
+}
+
+fn pathRemoveTrailingSeparatorBuiltin(runtime: *Runtime, source: Value) !Value {
+    const source_tag: Tag = @enumFromInt(source.tag);
+    if (source_tag == .undefined or source_tag == .null_value or
+        source_tag == .boolean and source.payload == 0 or
+        source_tag == .number and (@as(f64, @bitCast(source.payload)) == 0 or std.math.isNan(@as(f64, @bitCast(source.payload)))))
+    {
+        return runtimeUtf8String(runtime, "");
+    }
+    if (!isString(source)) return error.InvalidPathSource;
+    const units = try valueUtf16Alloc(runtime, source);
+    defer runtime.allocator.free(units);
+    if (units.len == 0 or units[units.len - 1] != pathSeparatorUnit()) return source;
+    return runtime.createString(units[0 .. units.len - 1]);
+}
+
+fn pathSeparatorUnit() u16 {
+    return if (std.fs.path.sep_str.len > 0) std.fs.path.sep_str[0] else '/';
+}
+
+fn pathBasenameUnits(path: []const u16, separator: u16) []const u16 {
+    const index = std.mem.lastIndexOfScalar(u16, path, separator) orelse return path;
+    return path[index + 1 ..];
+}
+
+fn pathAllExtensionUnits(units: []const u16) bool {
+    for (units) |unit| switch (unit) {
+        'a'...'z', 'A'...'Z', '0'...'9', '_', '-', '+' => {},
+        else => return false,
+    };
+    return true;
 }
 
 fn urlEncodeBuiltin(runtime: *Runtime, source: Value) !Value {
@@ -7691,6 +7806,49 @@ test "AOT URLとBase64命令はUTF-16文字列と配列を処理する" {
     arguments[0] = roots[6];
     roots[7] = try urlBuiltin(&runtime, .base64_encode, &arguments);
     try expectUtf16String(&runtime, roots[7], "QSz/");
+}
+
+test "AOTパス命令は拡張子と終端区切り文字を処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtimeUtf8String(&runtime, "/a/.b/c.c++");
+    var arguments = [_]Value{ roots[0], .{} };
+    roots[1] = try pathBuiltin(&runtime, .path_extract_extension, &arguments);
+    try expectUtf16String(&runtime, roots[1], ".c++");
+
+    roots[2] = try runtimeUtf8String(&runtime, ".bashrc");
+    arguments[0] = roots[2];
+    roots[3] = try pathBuiltin(&runtime, .path_extract_extension, &arguments);
+    try expectUtf16String(&runtime, roots[3], ".bashrc");
+
+    const changed_source_text: []const u8 = if (comptime builtin.os.tag == .windows) "C:\\a\\b.txt" else "/a/.b/c.txt";
+    const changed_expected: []const u8 = if (comptime builtin.os.tag == .windows) "C:\\a\\b.docx" else "/a/.b/c.docx";
+    roots[4] = try runtimeUtf8String(&runtime, changed_source_text);
+    roots[5] = try runtimeUtf8String(&runtime, " docx ");
+    arguments = .{ roots[4], roots[5] };
+    roots[6] = try pathBuiltin(&runtime, .path_change_extension, &arguments);
+    try expectUtf16String(&runtime, roots[6], changed_expected);
+
+    const trailing_source: []const u8 = if (comptime builtin.os.tag == .windows) "a\\b" else "a/b";
+    const trailing_added: []const u8 = if (comptime builtin.os.tag == .windows) "a\\b\\" else "a/b/";
+    roots[7] = try runtimeUtf8String(&runtime, trailing_source);
+    arguments = .{ roots[7], .{} };
+    roots[8] = try pathBuiltin(&runtime, .path_add_trailing_separator, &arguments);
+    try expectUtf16String(&runtime, roots[8], trailing_added);
+
+    const repeated_separator_path: []const u8 = if (comptime builtin.os.tag == .windows) "a\\b\\\\" else "a/b//";
+    const removed_separator_path: []const u8 = if (comptime builtin.os.tag == .windows) "a\\b\\" else "a/b/";
+    roots[9] = try runtimeUtf8String(&runtime, repeated_separator_path);
+    arguments = .{ roots[9], .{} };
+    const removed = try pathBuiltin(&runtime, .path_remove_trailing_separator, &arguments);
+    try expectUtf16String(&runtime, removed, removed_separator_path);
+    const deleted = try pathBuiltin(&runtime, .path_delete_trailing_separator, &arguments);
+    try expectUtf16String(&runtime, deleted, removed_separator_path);
 }
 
 test "AOT Node環境命令はコンパイル対象のOSとCPU名を返す" {
