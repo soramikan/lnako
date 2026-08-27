@@ -14,8 +14,8 @@
     "compatJs": 9
   },
   "fixtureCoverageStates": {
-    "paired": 237,
-    "interpreter-only": 286,
+    "paired": 286,
+    "interpreter-only": 237,
     "aot-only": 0,
     "none": 0,
     "compat-js-only": 4
@@ -34,7 +34,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -43,14 +45,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -61,7 +67,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -70,14 +78,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -88,7 +100,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -97,14 +111,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -115,7 +133,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -124,14 +144,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -142,7 +166,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -151,14 +177,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -169,7 +199,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -178,14 +210,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -196,7 +232,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -205,14 +243,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -223,7 +265,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -232,14 +276,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -250,7 +298,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -259,14 +309,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -277,7 +331,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -286,14 +342,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -304,7 +364,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -313,14 +375,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -331,7 +397,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -340,14 +408,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -358,7 +430,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -367,14 +441,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -385,7 +463,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -394,14 +474,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -412,7 +496,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -421,14 +507,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -439,7 +529,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -448,14 +540,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -466,7 +562,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -475,14 +573,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -493,7 +595,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -502,14 +606,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -520,7 +628,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -529,14 +639,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -547,7 +661,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -556,14 +672,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -574,7 +694,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -583,14 +705,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -601,7 +727,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -610,14 +738,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -628,7 +760,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -637,14 +771,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -655,7 +793,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -664,14 +804,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -682,7 +826,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -691,14 +837,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -709,7 +859,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -718,14 +870,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -736,7 +892,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -745,14 +903,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -763,7 +925,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -772,14 +936,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -790,7 +958,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -799,14 +969,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -817,7 +991,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -826,14 +1002,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -844,7 +1024,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -853,14 +1035,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -871,7 +1057,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -880,14 +1068,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -898,7 +1090,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -907,14 +1101,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -925,7 +1123,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -934,14 +1134,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -952,7 +1156,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -961,14 +1167,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -979,7 +1189,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -988,14 +1200,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -1006,7 +1222,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -1015,14 +1233,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -1033,7 +1255,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -1042,14 +1266,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -1060,7 +1288,9 @@
       "interpreterFixtureIds": [
         "plugin-system-constants"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -1069,14 +1299,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -1886,7 +2120,9 @@
       "interpreterFixtureIds": [
         "system-runtime-catalog-and-namespace"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -1895,14 +2131,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
@@ -1913,7 +2153,9 @@
       "interpreterFixtureIds": [
         "system-runtime-catalog-and-namespace"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-array-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -1922,14 +2164,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-array-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
@@ -1940,7 +2186,9 @@
       "interpreterFixtureIds": [
         "system-runtime-catalog-and-namespace"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-scalar-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -1949,14 +2197,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-scalar-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
@@ -2183,7 +2435,9 @@
       "interpreterFixtureIds": [
         "system-runtime-catalog-and-namespace"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -2192,14 +2446,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
@@ -2237,7 +2495,9 @@
       "interpreterFixtureIds": [
         "system-runtime-catalog-and-namespace"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -2246,14 +2506,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製plugin_system実装で公式cnako3との差分テストに成功"
     },
     {
@@ -5197,7 +5461,9 @@
       "interpreterFixtureIds": [
         "plugin-system-string-conversion"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -5206,14 +5472,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -5224,7 +5494,9 @@
       "interpreterFixtureIds": [
         "plugin-system-string-conversion"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -5233,14 +5505,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -5251,7 +5527,9 @@
       "interpreterFixtureIds": [
         "plugin-system-string-conversion"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -5260,14 +5538,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -5278,7 +5560,9 @@
       "interpreterFixtureIds": [
         "plugin-system-string-conversion"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -5287,14 +5571,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -9425,6 +9713,7 @@
         "plugin-system-regexp"
       ],
       "aotFixtureIds": [
+        "native-array-system-constants",
         "native-system-regexp-commands",
         "native-system-regexp-error-preserves-captures"
       ],
@@ -9437,6 +9726,9 @@
           ]
         },
         "aot": {
+          "native-array-system-constants": [
+            "fixture.commands"
+          ],
           "native-system-regexp-commands": [
             "implemented.tests"
           ],
@@ -9450,7 +9742,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "AOTのマッチ・抽出からGCルート付きシステム変数を更新し、公式7経路差分テストに成功"
     },
     {
@@ -9910,7 +10202,9 @@
       "interpreterFixtureIds": [
         "plugin-system-stdio"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-string-system-constants"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -9919,14 +10213,18 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-string-system-constants": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "表示履歴システム変数として実装し、公式差分テストに成功"
     },
     {
