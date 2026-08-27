@@ -337,6 +337,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_binding_cell_new(ptr, ptr)\n" ++
                 "declare ptr @lnako_aot_binding_cell_value(ptr)\n" ++
                 "declare void @lnako_aot_function_new(ptr, ptr, i64, ptr, i64)\n" ++
+                "declare void @lnako_aot_function_new_named(ptr, ptr, i64, ptr, i64, ptr, i64)\n" ++
                 "declare void @lnako_aot_function_capture(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_function_call(ptr, ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_cut(ptr, ptr, ptr, i64, i8)\n" ++
@@ -378,6 +379,20 @@ const Emitter = struct {
             }
         }
         if (self.strings.items.len > 0) try writer.writeByte('\n');
+        for (self.program.functions) |function| {
+            try writer.print("@lnako.function.name.{d} = private unnamed_addr constant [{d} x i8] ", .{ function.id, function.name.len });
+            if (function.name.len == 0) {
+                try writer.writeAll("zeroinitializer\n");
+            } else {
+                try writer.writeByte('[');
+                for (function.name, 0..) |byte, index| {
+                    if (index > 0) try writer.writeAll(", ");
+                    try writer.print("i8 {d}", .{byte});
+                }
+                try writer.writeAll("]\n");
+            }
+        }
+        if (self.program.functions.len > 0) try writer.writeByte('\n');
         for (self.system_strings.items, 0..) |constant, index| {
             try writer.print("@lnako.system.string.{d} = private unnamed_addr constant [{d} x i16] ", .{ index, constant.units.len });
             if (constant.units.len == 0) {
@@ -1174,7 +1189,7 @@ const Emitter = struct {
             try self.output.writer.print("  store %lnako.Value %closure.capture.{d}.{d}, ptr %closure.capture.slot.{d}.{d}", .{ result, index, result, index });
             try self.debugSuffix(instruction.span, scope);
         }
-        try self.output.writer.print("  call void @lnako_aot_function_new(ptr %root.slot.{d}, ptr @lnako.wrapper.{d}, i64 {d}, ptr ", .{ result, function.id, function.parameters.len });
+        try self.output.writer.print("  call void @lnako_aot_function_new_named(ptr %root.slot.{d}, ptr @lnako.wrapper.{d}, i64 {d}, ptr @lnako.function.name.{d}, i64 {d}, ptr ", .{ result, function.id, function.parameters.len, function.id, function.name.len });
         if (function.captures.len > 0) {
             try self.output.writer.print("%closure.capture.slot.{d}.0", .{result});
         } else try self.output.writer.writeAll("null");
@@ -1274,7 +1289,7 @@ const Emitter = struct {
             try self.output.writer.print("  call void @lnako_aot_array_new(ptr @lnako.global.{d}, ptr null, i64 0)\n", .{global_index});
         }
         for (self.program.functions) |function| if (self.globalIndex(function.name)) |global_index| {
-            try self.output.writer.print("  call void @lnako_aot_function_new(ptr @lnako.global.{d}, ptr @lnako.wrapper.{d}, i64 {d}, ptr null, i64 0)\n", .{ global_index, function.id, function.parameters.len });
+            try self.output.writer.print("  call void @lnako_aot_function_new_named(ptr @lnako.global.{d}, ptr @lnako.wrapper.{d}, i64 {d}, ptr @lnako.function.name.{d}, i64 {d}, ptr null, i64 0)\n", .{ global_index, function.id, function.parameters.len, function.id, function.name.len });
         };
         var index = self.program.module_entries.len;
         var call_index: usize = 0;
@@ -2003,6 +2018,9 @@ test "非捕捉無名関数を統一ABIの関数値へ変換する" {
     var module = try generate(std.testing.allocator, program, "function-value.nako3", false);
     defer module.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_function_new") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_function_new_named") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.function.name.0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_function_new_named") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako_aot_function_call") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.wrapper.0") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "define internal void @lnako.wrapper.0(ptr %result.out") != null);

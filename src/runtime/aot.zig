@@ -176,6 +176,10 @@ const FunctionCallback = *const fn (*Value, *anyopaque, ?[*]const Value, usize) 
 const FunctionObject = struct {
     callback: FunctionCallback,
     arity: usize,
+    /// The generated wrapper name is retained as UTF-8 bytes so converting a
+    /// function value to a string can preserve the same observable name that
+    /// the interpreter exposes. The slice is owned by the function object.
+    name: []u8,
     captures: []Value,
 };
 
@@ -335,13 +339,19 @@ const Runtime = struct {
     }
 
     fn createFunction(self: *Runtime, callback: FunctionCallback, arity: usize, captures: []const Value) !Value {
+        return self.createNamedFunction(callback, arity, &.{}, captures);
+    }
+
+    fn createNamedFunction(self: *Runtime, callback: FunctionCallback, arity: usize, name: []const u8, captures: []const Value) !Value {
         var frame: RootFrame = .{};
         self.pushRoots(&frame, if (captures.len > 0) @constCast(captures.ptr) else null, captures.len);
         defer self.popRoots(&frame);
         try self.beforeAllocation();
+        const owned_name = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(owned_name);
         const owned_captures = try self.allocator.dupe(Value, captures);
         errdefer self.allocator.free(owned_captures);
-        return self.createObject(.{ .function = .{ .callback = callback, .arity = arity, .captures = owned_captures } }, .function);
+        return self.createObject(.{ .function = .{ .callback = callback, .arity = arity, .name = owned_name, .captures = owned_captures } }, .function);
     }
 
     fn createBindingCell(self: *Runtime, initial: Value) !Value {
@@ -478,7 +488,10 @@ const Runtime = struct {
             .bigint => |*value| value.deinit(),
             .array => |*items| items.deinit(self.allocator),
             .dictionary => |*entries| entries.deinit(self.allocator),
-            .function => |function| self.allocator.free(function.captures),
+            .function => |function| {
+                self.allocator.free(function.name);
+                self.allocator.free(function.captures);
+            },
             .iterator, .binding_cell => {},
         }
         self.allocator.destroy(object);
@@ -1821,6 +1834,7 @@ fn jsonTestDictionaryGet(value: Value, key: []const u16) Value {
 
 fn valueUtf16Alloc(runtime: *Runtime, value: Value) anyerror![]u16 {
     if (value.tag == @intFromEnum(Tag.utf16_string)) return runtime.allocator.dupe(u16, value.object().?.payload.utf16_string);
+    if (value.tag == @intFromEnum(Tag.function)) return functionStringUtf16Alloc(runtime, value.object().?.payload.function.name);
     const utf8 = switch (@as(Tag, @enumFromInt(value.tag))) {
         .undefined => try runtime.allocator.dupe(u8, "undefined"),
         .null_value => try runtime.allocator.dupe(u8, "null"),
@@ -1831,9 +1845,15 @@ fn valueUtf16Alloc(runtime: *Runtime, value: Value) anyerror![]u16 {
         .bigint => try value.object().?.payload.bigint.toString(runtime.allocator, 10),
         .array => return arrayUtf16Alloc(runtime, value.object().?),
         .dictionary, .iterator => try runtime.allocator.dupe(u8, "[object Object]"),
-        .function => try runtime.allocator.dupe(u8, "function () { [native code] }"),
+        .function => unreachable,
         .binding_cell => unreachable,
     };
+    defer runtime.allocator.free(utf8);
+    return std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, utf8);
+}
+
+fn functionStringUtf16Alloc(runtime: *Runtime, name: []const u8) ![]u16 {
+    const utf8 = try std.fmt.allocPrint(runtime.allocator, "function {s}() {{ [native code] }}", .{name});
     defer runtime.allocator.free(utf8);
     return std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, utf8);
 }
@@ -1862,7 +1882,11 @@ fn valueToPrimitive(runtime: *Runtime, value: Value) !Value {
             break :blk try runtime.createString(units);
         },
         .dictionary, .iterator => staticStringValue("[object Object]"),
-        .function => staticStringValue("function () { [native code] }"),
+        .function => blk: {
+            const units = try functionStringUtf16Alloc(runtime, value.object().?.payload.function.name);
+            defer runtime.allocator.free(units);
+            break :blk try runtime.createString(units);
+        },
         else => value,
     };
 }
@@ -2566,6 +2590,26 @@ pub export fn lnako_aot_function_new(out: *Value, callback: FunctionCallback, ar
     const source = if (captures) |pointer| pointer[0..capture_count] else if (capture_count == 0) &.{} else runtimeFailure(error.InvalidCaptures);
     for (source) |capture| if (capture.tag != @intFromEnum(Tag.binding_cell)) runtimeFailure(error.InvalidBindingCell);
     out.* = runtime.createFunction(callback, arity, source) catch |failure| runtimeFailure(failure);
+}
+
+/// Named variant used by LLVM-generated functions. The original ABI remains
+/// available for embedders and unit tests that intentionally create an
+/// anonymous native function.
+pub export fn lnako_aot_function_new_named(
+    out: *Value,
+    callback: FunctionCallback,
+    arity: usize,
+    name: ?[*]const u8,
+    name_len: usize,
+    captures: ?[*]const Value,
+    capture_count: usize,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*value| value else return;
+    const function_name = if (name) |pointer| pointer[0..name_len] else if (name_len == 0) &.{} else runtimeFailure(error.InvalidFunctionName);
+    const source = if (captures) |pointer| pointer[0..capture_count] else if (capture_count == 0) &.{} else runtimeFailure(error.InvalidCaptures);
+    for (source) |capture| if (capture.tag != @intFromEnum(Tag.binding_cell)) runtimeFailure(error.InvalidBindingCell);
+    out.* = runtime.createNamedFunction(callback, arity, function_name, source) catch |failure| runtimeFailure(failure);
 }
 
 pub export fn lnako_aot_function_capture(out: *Value, context: *anyopaque, index: usize) callconv(.c) void {
@@ -6128,6 +6172,32 @@ test "AOT関数値を呼び出しGCで回収する" {
     try std.testing.expectEqual(argument.payload, result.payload);
     try std.testing.expectEqual(@as(usize, 1), active_runtime.?.object_count);
     try std.testing.expectEqual(@as(usize, 1), lnako_aot_collect());
+}
+
+test "AOT関数値の文字列化は生成ABIの関数名を保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    const name = "試験123";
+    const expected = "function 試験123() { [native code] }";
+    lnako_aot_function_new_named(&roots[0], testAotFunction, 0, name.ptr, name.len, null, 0);
+    const text = try valueUtf16Alloc(&active_runtime.?, roots[0]);
+    defer active_runtime.?.allocator.free(text);
+    const expected_units = try std.unicode.utf8ToUtf16LeAlloc(std.testing.allocator, expected);
+    defer std.testing.allocator.free(expected_units);
+    try std.testing.expectEqualSlices(u16, expected_units, text);
+
+    roots[1] = try valueToPrimitive(&active_runtime.?, roots[0]);
+    try std.testing.expectEqualSlices(u16, expected_units, roots[1].object().?.payload.utf16_string);
 }
 
 test "AOT動的関数の不足引数へ共有システム文脈を追加し超過引数を無視する" {
