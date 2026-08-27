@@ -235,6 +235,8 @@ pub const Command = enum(u16) {
     html_pretty,
     deep_equal,
     deep_not_equal,
+    table_sort,
+    table_numeric_sort,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -324,6 +326,8 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "配列入替")) return .array_swap;
     if (std.mem.eql(u8, name, "配列連番作成")) return .array_sequence;
     if (std.mem.eql(u8, name, "配列要素作成")) return .array_fill;
+    if (std.mem.eql(u8, name, "表ソート")) return .table_sort;
+    if (std.mem.eql(u8, name, "表数値ソート")) return .table_numeric_sort;
     if (std.mem.eql(u8, name, "表ピックアップ")) return .table_pickup;
     if (std.mem.eql(u8, name, "表完全一致ピックアップ")) return .table_exact_pickup;
     if (std.mem.eql(u8, name, "表検索")) return .table_search;
@@ -503,6 +507,8 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.array_swap, lookup("配列入替").?);
     try std.testing.expectEqual(Command.array_sequence, lookup("配列連番作成").?);
     try std.testing.expectEqual(Command.array_fill, lookup("配列要素作成").?);
+    try std.testing.expectEqual(Command.table_sort, lookup("表ソート").?);
+    try std.testing.expectEqual(Command.table_numeric_sort, lookup("表数値ソート").?);
     try std.testing.expectEqual(Command.radix16, lookup("HEX").?);
     try std.testing.expectEqual(Command.radix, lookup("進数変換").?);
     try std.testing.expectEqual(Command.radix2, lookup("二進").?);

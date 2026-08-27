@@ -617,5 +617,10 @@
     "id": "native-system-deep-comparison",
     "commands": ["一致", "不一致"],
     "source": "A={\"x\":[1,2]}\nB={\"x\":[1,2]}\nC={\"x\":[1,3]}\n一致(A,B)を表示\n不一致(A,C)を表示\n一致(1,1)を表示\n不一致(1,\"1\")を表示\n"
+  },
+  {
+    "id": "native-system-table-sort",
+    "commands": ["表ソート", "表数値ソート"],
+    "source": "A=[[\"b\",2],[\"a\",10],[\"a\",1]]\nR=表ソート(A,0)\n(R===A)を表示\nJSON変換(A)を表示\nB=[[\"x\",\"10\"],[\"y\",\"2\"],[\"z\",\"30\"]]\nS=表数値ソート(B,1)\n(S===B)を表示\nJSON変換(B)を表示\nC=[{\"name\":\"b\"},{\"name\":\"a\"}]\n表ソート(C,\"name\")\nJSON変換(C)を表示\nD=[{\"name\":\"x\",\"score\":\"10\"},{\"name\":\"y\",\"score\":\"2\"},{\"name\":\"z\",\"score\":\"30\"}]\n表数値ソート(D,\"score\")\nJSON変換(D)を表示\n"
   }
 ]

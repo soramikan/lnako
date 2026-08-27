@@ -8,14 +8,14 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 240,
-    "nativeAot": 135,
+    "total": 241,
+    "nativeAot": 136,
     "interpreter": 96,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
-    "paired": 355,
-    "interpreter-only": 168,
+    "paired": 357,
+    "interpreter-only": 166,
     "aot-only": 0,
     "none": 0,
     "compat-js-only": 4
@@ -7002,7 +7002,9 @@
       "interpreterFixtureIds": [
         "plugin-system-table"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-table-sort"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -7011,15 +7013,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-table-sort": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製ランタイムで実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Zig製ランタイムと純LLVM AOT dispatchを実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0212",
@@ -7029,7 +7036,9 @@
       "interpreterFixtureIds": [
         "plugin-system-table"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-table-sort"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -7038,15 +7047,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-table-sort": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製ランタイムで実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Zig製ランタイムと純LLVM AOT dispatchを実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0213",

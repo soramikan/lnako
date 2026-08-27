@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "2bee63efdf298d993308c485eda232f344a631387db92c786b0438720339cf06"
+    "sha256": "055056af69f042b659eb70ace617d193c6922159de6effd10467fbca4a340fc9"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 168,
+    "count": 166,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 168
+      "unverified": 166
     }
   },
   "groups": [
@@ -667,24 +667,6 @@
         "プラグイン名設定",
         "名前空間設定",
         "名前空間ポップ"
-      ]
-    },
-    {
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "二次元配列処理",
-      "type": "関数",
-      "count": 2,
-      "executionEvidenceStates": {
-        "unverified": 2
-      },
-      "commandIds": [
-        "command-0211",
-        "command-0212"
-      ],
-      "names": [
-        "表ソート",
-        "表数値ソート"
       ]
     },
     {
@@ -1368,40 +1350,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "plugin-system-array-callbacks"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0211",
-      "name": "表ソート",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "二次元配列処理",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-table"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0212",
-      "name": "表数値ソート",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "二次元配列処理",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-table"
       ],
       "aotFixtureIds": []
     },

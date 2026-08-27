@@ -3315,7 +3315,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
-        .table_pickup, .table_exact_pickup, .table_search, .table_column_count, .table_row_count, .table_column, .table_transpose, .table_rotate, .table_unique, .table_insert_column, .table_delete_column, .table_column_sum, .table_regexp_search, .table_regexp_pickup => {
+        .table_sort, .table_numeric_sort, .table_pickup, .table_exact_pickup, .table_search, .table_column_count, .table_row_count, .table_column, .table_transpose, .table_rotate, .table_unique, .table_insert_column, .table_delete_column, .table_column_sum, .table_regexp_search, .table_regexp_pickup => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = tableBuiltin(runtime, command, actual) catch |failure| {
                 runtime.setFailure(failure);
@@ -7572,10 +7572,45 @@ fn incrementTableSearchRow(runtime: *Runtime, row: Value) !Value {
     return numberValue(try valueToNumberRuntime(runtime, row) + 1);
 }
 
+fn tableSortBuiltin(runtime: *Runtime, source: Value, column: Value, numeric: bool) !Value {
+    // The official commands mutate and return the original table.  Keep the
+    // current row and both compared cells rooted because property lookup and
+    // ToPrimitive/Number conversion may allocate and trigger collection.
+    var roots = [_]Value{ source, column, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    const rows = try arrayItems(roots[0]);
+    var index: usize = 1;
+    while (index < rows.items.len) : (index += 1) {
+        roots[2] = rows.items[index];
+        var cursor = index;
+        while (cursor > 0) {
+            roots[3] = try tableRowProperty(runtime, rows.items[cursor - 1], roots[1]);
+            roots[4] = try tableRowProperty(runtime, roots[2], roots[1]);
+            const order = if (numeric) blk: {
+                const left_number = try valueToNumberRuntime(runtime, roots[3]);
+                const right_number = try valueToNumberRuntime(runtime, roots[4]);
+                break :blk if (std.math.isNan(left_number) or std.math.isNan(right_number)) .eq else std.math.order(left_number, right_number);
+            } else (try relationalOrder(runtime, roots[3], roots[4])) orelse .eq;
+            if (order != .gt) break;
+            rows.items[cursor] = rows.items[cursor - 1];
+            cursor -= 1;
+        }
+        rows.items[cursor] = roots[2];
+    }
+    return roots[0];
+}
+
 fn tableBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     const source: Value = if (arguments.len > 0) arguments[0] else .{};
     if (source.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
     switch (command) {
+        .table_sort, .table_numeric_sort => {
+            if (arguments.len < 2) return error.InvalidArgumentCount;
+            return tableSortBuiltin(runtime, source, arguments[1], command == .table_numeric_sort);
+        },
         .table_row_count => return numberValue(@floatFromInt((try arrayItems(source)).items.len)),
         .table_column_count => return tableColumnCountBuiltin(runtime, source),
         .table_column => {
@@ -11215,6 +11250,40 @@ test "AOT配列ソート系は安定mergeとundefined末尾と同一配列を保
     try std.testing.expect(std.math.isNan(valueToNumber((try arrayItems(roots[3])).items[5])));
     try std.testing.expectEqual(roots[3].payload, (try arrayOrderingBuiltin(&runtime, .array_reverse, roots[3])).payload);
     try std.testing.expect(std.math.isNan(valueToNumber((try arrayItems(roots[3])).items[0])));
+}
+
+test "AOT表ソートは指定列を比較して同じ配列を安定ソートする" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    runtime.next_collection = 1;
+    var roots = [_]Value{.{}} ** 10;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createArray(&.{ staticStringValue("b"), numberValue(2) });
+    roots[1] = try runtime.createArray(&.{ staticStringValue("a"), numberValue(10) });
+    roots[2] = try runtime.createArray(&.{ staticStringValue("a"), numberValue(1) });
+    roots[3] = try runtime.createArray(&.{ roots[0], roots[1], roots[2] });
+    const sorted = try tableBuiltin(&runtime, .table_sort, &.{ roots[3], numberValue(0) });
+    try std.testing.expectEqual(roots[3].payload, sorted.payload);
+    const sorted_rows = (try arrayItems(roots[3])).items;
+    try expectUtf16String(&runtime, try tableRowProperty(&runtime, sorted_rows[0], numberValue(0)), "a");
+    try expectUtf16String(&runtime, try tableRowProperty(&runtime, sorted_rows[1], numberValue(0)), "a");
+    try expectUtf16String(&runtime, try tableRowProperty(&runtime, sorted_rows[2], numberValue(0)), "b");
+    try std.testing.expectEqual(roots[1].payload, sorted_rows[0].payload);
+    try std.testing.expectEqual(roots[2].payload, sorted_rows[1].payload);
+
+    roots[4] = try runtime.createArray(&.{ staticStringValue("x"), staticStringValue("10") });
+    roots[5] = try runtime.createArray(&.{ staticStringValue("y"), staticStringValue("2") });
+    roots[6] = try runtime.createArray(&.{ staticStringValue("z"), staticStringValue("30") });
+    roots[7] = try runtime.createArray(&.{ roots[4], roots[5], roots[6] });
+    const numeric = try tableBuiltin(&runtime, .table_numeric_sort, &.{ roots[7], numberValue(1) });
+    try std.testing.expectEqual(roots[7].payload, numeric.payload);
+    const numeric_rows = (try arrayItems(roots[7])).items;
+    try expectUtf16String(&runtime, try tableRowProperty(&runtime, numeric_rows[0], numberValue(0)), "y");
+    try expectUtf16String(&runtime, try tableRowProperty(&runtime, numeric_rows[1], numberValue(0)), "x");
+    try expectUtf16String(&runtime, try tableRowProperty(&runtime, numeric_rows[2], numberValue(0)), "z");
 }
 
 test "AOT表検索系は行プロパティとraw開始値を公式どおり処理する" {
