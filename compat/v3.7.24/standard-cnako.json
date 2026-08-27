@@ -11727,7 +11727,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "system-runtime-execution-and-debug"
+        "system-runtime-execution-and-debug",
+        "native-node-assert-equal"
       ],
       "platforms": [
         "macos-aarch64",

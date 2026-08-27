@@ -2019,6 +2019,21 @@ fn strictEqual(runtime: *Runtime, left: Value, right: Value) !bool {
     };
 }
 
+/// Node's `assert.strictEqual` uses SameValue semantics rather than the
+/// language `===` operator: NaN compares equal to NaN and signed zeroes stay
+/// distinct. Objects retain reference identity just like strictEqual.
+fn sameValue(runtime: *Runtime, left: Value, right: Value) !bool {
+    if (isString(left) and isString(right)) return stringEqual(runtime, left, right);
+    if (left.tag != right.tag) return false;
+    if (@as(Tag, @enumFromInt(left.tag)) == .number) {
+        const left_number: f64 = @bitCast(left.payload);
+        const right_number: f64 = @bitCast(right.payload);
+        if (std.math.isNan(left_number) and std.math.isNan(right_number)) return true;
+        return @as(u64, @bitCast(left_number)) == @as(u64, @bitCast(right_number));
+    }
+    return strictEqual(runtime, left, right);
+}
+
 /// Array.prototype.includes uses SameValueZero: NaN matches NaN and signed
 /// zeroes compare equal, while objects retain reference identity.
 fn sameValueZero(runtime: *Runtime, left: Value, right: Value) !bool {
@@ -2633,6 +2648,36 @@ test "AOTシステムカタログ命令は一覧の順序と存在判定を保�
     try std.testing.expectEqual(josi.exported_list.len, roots[6].object().?.payload.array.items.len);
     lnako_aot_builtin_call(&roots[7], null, 0, @intFromEnum(aot_builtin.Command.reserved_words));
     try std.testing.expectEqual(lexer.exported_reserved_words.len, roots[7].object().?.payload.array.items.len);
+}
+
+test "AOT ASSERT等はNodeのSameValue境界と戻り値を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    var equal_arguments = [_]Value{ numberValue(1), numberValue(1) };
+    lnako_aot_builtin_call(&roots[0], &equal_arguments, equal_arguments.len, @intFromEnum(aot_builtin.Command.assert_strict_equal));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[0].tag)));
+    try std.testing.expect(!active_runtime.?.has_pending_exception);
+
+    var nan_arguments = [_]Value{ numberValue(std.math.nan(f64)), numberValue(std.math.nan(f64)) };
+    lnako_aot_builtin_call(&roots[1], &nan_arguments, nan_arguments.len, @intFromEnum(aot_builtin.Command.assert_strict_equal));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[1].tag)));
+    try std.testing.expect(!active_runtime.?.has_pending_exception);
+
+    var signed_zero_arguments = [_]Value{ numberValue(0), numberValue(-0.0) };
+    lnako_aot_builtin_call(&roots[2], &signed_zero_arguments, signed_zero_arguments.len, @intFromEnum(aot_builtin.Command.assert_strict_equal));
+    try std.testing.expect(active_runtime.?.has_pending_exception);
+    lnako_aot_exception_take(&roots[3]);
+    try std.testing.expect(!active_runtime.?.has_pending_exception);
 }
 
 test "AOTプラグイン管理命令は文字列化と名前空間スタックをGC越しに保つ" {
@@ -3309,6 +3354,21 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 runtime.setFailure(failure);
                 return;
             };
+        },
+        .assert_strict_equal => {
+            if (len < 2) {
+                runtime.setFailure(error.InvalidArgumentCount);
+                return;
+            }
+            const values = arguments.?;
+            const equal = sameValue(runtime, values[0], values[1]) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+            if (!equal) {
+                runtime.setFailure(error.AssertionFailed);
+                return;
+            }
         },
         .node_os, .node_architecture => {
             out.* = nodeEnvironmentBuiltin(runtime, command) catch |failure| {

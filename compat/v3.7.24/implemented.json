@@ -3717,7 +3717,8 @@
   "ASSERT等": {
     "status": "native",
     "tests": [
-      "system-runtime-execution-and-debug"
+      "system-runtime-execution-and-debug",
+      "native-node-assert-equal"
     ],
     "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
   }

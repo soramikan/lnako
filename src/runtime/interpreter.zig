@@ -809,7 +809,7 @@ pub const Interpreter = struct {
             return arguments[arguments.len - 1];
         }
         if (std.mem.eql(u8, name, "ASSERT等") or std.mem.eql(u8, name, "テスト実行") or std.mem.eql(u8, name, "テスト等")) {
-            if (arguments.len < 2 or !Value.strictEqual(arguments[0], arguments[1])) return error.AssertionFailed;
+            if (arguments.len < 2 or !Value.sameValue(arguments[0], arguments[1])) return error.AssertionFailed;
             return .undefined;
         }
         if (std.mem.eql(u8, name, "秒待") or std.mem.eql(u8, name, "秒待機") or std.mem.eql(u8, name, "秒逐次待機")) {
@@ -2086,6 +2086,22 @@ test "特殊実行とデバッグ支援命令を実行する" {
         "6\n7\n9\n0\nmain.nako3(15): {\"a\":1}\nmain.nako3(16): 5\nmain.nako3(18): 6\n故意\n12\nundefined\n",
         host.written(),
     );
+}
+
+test "ASSERT等はNodeのSameValue境界を保つ" {
+    var fixture = try compileForTest(std.testing.allocator, "ASSERT等(非数,非数)を表示\n");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("undefined\n", host.written());
 }
 
 test "AWAIT実行でPromiseを完了させブレイクポイント待機を解除する" {

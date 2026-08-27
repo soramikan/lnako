@@ -254,6 +254,7 @@ pub const Command = enum(u16) {
     plugin_names,
     josi_names,
     reserved_words,
+    assert_strict_equal,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -517,6 +518,7 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "プラグイン一覧取得") or std.mem.eql(u8, name, "モジュール一覧取得")) return .plugin_names;
     if (std.mem.eql(u8, name, "助詞一覧取得")) return .josi_names;
     if (std.mem.eql(u8, name, "予約語一覧取得")) return .reserved_words;
+    if (std.mem.eql(u8, name, "ASSERT等") or std.mem.eql(u8, name, "テスト実行") or std.mem.eql(u8, name, "テスト等")) return .assert_strict_equal;
     return null;
 }
 
@@ -700,6 +702,9 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.plugin_names, lookup("モジュール一覧取得").?);
     try std.testing.expectEqual(Command.josi_names, lookup("助詞一覧取得").?);
     try std.testing.expectEqual(Command.reserved_words, lookup("予約語一覧取得").?);
+    try std.testing.expectEqual(Command.assert_strict_equal, lookup("ASSERT等").?);
+    try std.testing.expectEqual(Command.assert_strict_equal, lookup("テスト実行").?);
+    try std.testing.expectEqual(Command.assert_strict_equal, lookup("テスト等").?);
     try std.testing.expectEqual(Command.datetime_now, lookup("今").?);
     try std.testing.expectEqual(Command.datetime_system_time_milliseconds, lookup("システム時間ミリ秒").?);
     try std.testing.expectEqual(Command.datetime_today, lookup("今日").?);

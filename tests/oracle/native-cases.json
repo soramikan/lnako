@@ -655,5 +655,11 @@
     "id": "native-system-stdio",
     "commands": ["継続表示", "連続表示", "連続無改行表示", "表示ログクリア", "言", "コンソール表示"],
     "source": "継続表示(\"A\")\n連続無改行表示(\"B\",\"C\")\n連続表示(\"D\",\"E\")\n表示(\"F\")\n表示ログクリア()\n表示(\"G\")\nJSON変換(表示ログ)を表示\n言(\"H\")\nコンソール表示(\"I\")\n"
+  },
+  {
+    "id": "native-node-assert-equal",
+    "oracle": "official-source",
+    "commands": ["ASSERT等"],
+    "source": "ASSERT等(1,1)を表示\nASSERT等(非数,非数)を表示\n"
   }
 ]
