@@ -3643,9 +3643,10 @@
   "AWAIT実行": {
     "status": "native",
     "tests": [
-      "system-runtime-execution-and-debug"
+      "system-runtime-execution-and-debug",
+      "native-system-execute"
     ],
-    "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+    "reason": "Zig製実行時システム命令と純LLVM AOTの同期呼出しを公式cnako3との差分テストで確認"
   },
   "ナデシコ": {
     "status": "native",
@@ -3664,9 +3665,10 @@
   "実行": {
     "status": "native",
     "tests": [
-      "system-runtime-execution-and-debug"
+      "system-runtime-execution-and-debug",
+      "native-system-execute"
     ],
-    "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+    "reason": "Zig製実行時システム命令と純LLVM AOTの同期呼出しを公式cnako3との差分テストで確認"
   },
   "実行時間計測": {
     "status": "native",

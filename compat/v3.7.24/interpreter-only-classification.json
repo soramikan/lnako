@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "0bcfa4b43e4644f28e2f5c93cbd892731e8f36e0b3ba36f8924f0c654e73c448"
+    "sha256": "00ed3edcdc3c4f7e5aec6da611f8792e02b211eb074830701883277d9ec1aa28"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 127,
+    "count": 125,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 127
+      "unverified": 125
     }
   },
   "groups": [
@@ -548,46 +548,25 @@
       "group": "基本プラグイン",
       "category": "特殊命令",
       "type": "関数",
-      "count": 6,
+      "count": 4,
       "executionEvidenceStates": {
-        "unverified": 6
+        "unverified": 4
       },
       "commandIds": [
-        "command-0055",
         "command-0057",
         "command-0058",
-        "command-0059",
         "command-0060",
         "command-0061"
       ],
       "names": [
-        "AWAIT実行",
         "ナデシコ",
         "ナデシコ続",
-        "実行",
         "実行時間計測",
         "終"
       ]
     }
   ],
   "entries": [
-    {
-      "id": "command-0055",
-      "name": "AWAIT実行",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "特殊命令",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "system-runtime-execution-and-debug"
-      ],
-      "aotFixtureIds": []
-    },
     {
       "id": "command-0057",
       "name": "ナデシコ",
@@ -608,23 +587,6 @@
     {
       "id": "command-0058",
       "name": "ナデシコ続",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "特殊命令",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "system-runtime-execution-and-debug"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0059",
-      "name": "実行",
       "plugin": "plugin_system",
       "group": "基本プラグイン",
       "category": "特殊命令",

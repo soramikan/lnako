@@ -3348,6 +3348,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
             return;
         },
         .async_noop => out.* = .{},
+        .system_await_execute, .system_execute => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = systemExecutionBuiltin(runtime, command, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .system_function_names => {
             out.* = stringArrayBuiltin(runtime, &builtin_catalog.default_names) catch |failure| {
                 runtime.setFailure(failure);
@@ -6386,6 +6393,36 @@ fn courtesyBuiltin(runtime: *Runtime, command: aot_builtin.Command) Value {
             return numberValue(runtime.courtesy_level);
         },
         else => unreachable,
+    }
+}
+
+fn systemExecutionBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    switch (command) {
+        .system_execute => {
+            if (arguments.len == 0) return .{};
+            const candidate = arguments[arguments.len - 1];
+            if (candidate.tag == @intFromEnum(Tag.function)) return invokeAotCallback(runtime, candidate, null, 0);
+            if (isString(candidate)) {
+                const callable = try resolveAotCallback(runtime, candidate);
+                return invokeAotCallback(runtime, callable, null, 0);
+            }
+            return candidate;
+        },
+        .system_await_execute => {
+            if (arguments.len < 2) return error.InvalidAwaitArguments;
+            var roots = [_]Value{ arguments[0], arguments[1], .{} };
+            var frame = RootFrame{};
+            runtime.pushRoots(&frame, &roots, roots.len);
+            defer runtime.popRoots(&frame);
+            roots[0] = try resolveAotCallback(runtime, roots[0]);
+            if (roots[1].tag == @intFromEnum(Tag.array)) {
+                const call_arguments = try arrayItems(roots[1]);
+                const pointer = if (call_arguments.items.len > 0) @as(?[*]const Value, call_arguments.items.ptr) else null;
+                roots[2] = try invokeAotCallback(runtime, roots[0], pointer, call_arguments.items.len);
+            } else roots[2] = try invokeAotCallback(runtime, roots[0], @ptrCast(&roots[1]), 1);
+            return roots[2];
+        },
+        else => return error.UnknownCommand,
     }
 }
 
@@ -9592,6 +9629,10 @@ fn testAotFunction(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: 
     out.* = if (arguments == null or len != 1) .{} else arguments.?[0];
 }
 
+fn testAotConstantSeven(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    out.* = numberValue(7);
+}
+
 fn testAotSecondArgument(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
     out.* = if (arguments == null or len != 2) .{} else arguments.?[1];
 }
@@ -12144,6 +12185,33 @@ test "AOT配列コールバックは関数値・名前解決と新配列規則�
     var filter_arguments = [_]Value{ staticStringValue("偶数判定関数"), roots[9] };
     roots[10] = try arrayCallbackBuiltin(active, .array_filter, &filter_arguments);
     try std.testing.expectEqualSlices(Value, &.{ numberValue(2), numberValue(4) }, (try arrayItems(roots[10])).items);
+}
+
+test "AOT同期実行は関数値・名前解決・AWAIT引数展開を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try active_runtime.?.createNamedFunction(testAotConstantSeven, 0, "main__七", &.{});
+    roots[1] = try systemExecutionBuiltin(&active_runtime.?, .system_execute, &.{roots[0]});
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[1]));
+    roots[2] = try systemExecutionBuiltin(&active_runtime.?, .system_execute, &.{staticStringValue("七")});
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[2]));
+    roots[3] = try systemExecutionBuiltin(&active_runtime.?, .system_execute, &.{numberValue(9)});
+    try std.testing.expectEqual(@as(f64, 9), valueToNumber(roots[3]));
+
+    roots[4] = try active_runtime.?.createNamedFunction(testAotFunction, 1, "main__待機値", &.{});
+    roots[5] = try active_runtime.?.createArray(&.{numberValue(4)});
+    const awaited = try systemExecutionBuiltin(&active_runtime.?, .system_await_execute, &.{ roots[4], roots[5] });
+    try std.testing.expectEqual(@as(f64, 4), valueToNumber(awaited));
 }
 
 test "AOT表ソートは指定列を比較して同じ配列を安定ソートする" {
