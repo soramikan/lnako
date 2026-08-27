@@ -202,7 +202,22 @@ pub fn main(init: std.process.Init) !void {
             }
         },
         .compat => try lnako.compat.report.write(stdout),
-        else => try stdout.print("{s}: 実装準備中です\n", .{@tagName(command)}),
+        .benchmark => {
+            const options = parseBenchmarkOptions(args[1..]) catch |err| {
+                try stderr.print("benchmark: コマンドラインエラー: {s}\n", .{@errorName(err)});
+                try stderr.flush();
+                std.process.exit(2);
+            };
+            if (options.help) {
+                try writeBenchmarkUsage(stdout);
+                return;
+            }
+            runBenchmark(allocator, init.io, executable_path, init.environ_map, options, stdout, stderr) catch |err| {
+                try stderr.print("benchmark: 性能計測に失敗しました: {s}\n", .{@errorName(err)});
+                try stderr.flush();
+                std.process.exit(1);
+            };
+        },
     }
 }
 
@@ -213,6 +228,356 @@ const BuildOptions = struct {
     emit: lnako.backend.llvm.compiler.Emit = .executable,
     compat_js: bool = false,
 };
+
+const BenchmarkOptions = struct {
+    suite_path: []const u8 = "benchmarks/suite.json",
+    output_path: []const u8 = "benchmarks/results/latest.json",
+    markdown_path: []const u8 = "benchmarks/results/latest.md",
+    iterations: usize = 5,
+    warmup: usize = 1,
+    help: bool = false,
+};
+
+const BenchmarkSuite = struct {
+    schema_version: u32,
+    name: []const u8,
+    cases: []BenchmarkSuiteCase,
+};
+
+const BenchmarkSuiteCase = struct {
+    id: []const u8,
+    source: []const u8,
+    expected_stdout: []const u8,
+};
+
+const BenchmarkTarget = struct {
+    os: []const u8,
+    arch: []const u8,
+};
+
+const BenchmarkToolchain = struct {
+    zig: []const u8,
+    llvm: []const u8,
+};
+
+const BenchmarkMeasurement = struct {
+    mode: []const u8,
+    samples_ns: []u64,
+    min_ns: u64,
+    median_ns: u64,
+    max_ns: u64,
+};
+
+const BenchmarkCaseReport = struct {
+    id: []const u8,
+    source: []const u8,
+    expected_stdout: []const u8,
+    measurements: []BenchmarkMeasurement,
+};
+
+const BenchmarkReport = struct {
+    schema_version: u32,
+    project: []const u8,
+    version: []const u8,
+    git_commit: []const u8,
+    generated_at_unix_ms: i64,
+    target: BenchmarkTarget,
+    toolchain: BenchmarkToolchain,
+    suite_name: []const u8,
+    suite: []const u8,
+    optimization: []const u8,
+    iterations: usize,
+    warmup: usize,
+    cases: []BenchmarkCaseReport,
+};
+
+const BenchmarkMode = enum { interpreter, aot_compile, aot_run };
+
+fn parseBenchmarkOptions(arguments: []const []const u8) !BenchmarkOptions {
+    var options = BenchmarkOptions{};
+    var index: usize = 0;
+    while (index < arguments.len) : (index += 1) {
+        const argument = arguments[index];
+        if (std.mem.eql(u8, argument, "--help") or std.mem.eql(u8, argument, "-h")) {
+            options.help = true;
+        } else if (std.mem.eql(u8, argument, "--suite")) {
+            index += 1;
+            if (index >= arguments.len) return error.MissingBenchmarkSuite;
+            options.suite_path = arguments[index];
+        } else if (std.mem.eql(u8, argument, "--output")) {
+            index += 1;
+            if (index >= arguments.len) return error.MissingBenchmarkOutput;
+            options.output_path = arguments[index];
+        } else if (std.mem.eql(u8, argument, "--markdown")) {
+            index += 1;
+            if (index >= arguments.len) return error.MissingBenchmarkMarkdown;
+            options.markdown_path = arguments[index];
+        } else if (std.mem.eql(u8, argument, "--iterations")) {
+            index += 1;
+            if (index >= arguments.len) return error.MissingBenchmarkIterations;
+            options.iterations = std.fmt.parseUnsigned(usize, arguments[index], 10) catch return error.InvalidBenchmarkIterations;
+            if (options.iterations == 0) return error.InvalidBenchmarkIterations;
+        } else if (std.mem.eql(u8, argument, "--warmup")) {
+            index += 1;
+            if (index >= arguments.len) return error.MissingBenchmarkWarmup;
+            options.warmup = std.fmt.parseUnsigned(usize, arguments[index], 10) catch return error.InvalidBenchmarkWarmup;
+        } else return error.UnknownBenchmarkOption;
+    }
+    return options;
+}
+
+fn writeBenchmarkUsage(writer: *std.Io.Writer) !void {
+    try writer.writeAll(
+        \\使い方: lnako benchmark [options]
+        \\
+        \\  --suite <path>       ベンチマークsuite JSON（既定: benchmarks/suite.json）
+        \\  --output <path>      JSON結果の出力先（既定: benchmarks/results/latest.json）
+        \\  --markdown <path>    Markdown結果の出力先（既定: benchmarks/results/latest.md）
+        \\  --iterations <n>     計測回数（既定: 5）
+        \\  --warmup <n>         ウォームアップ回数（既定: 1）
+        \\
+    );
+}
+
+fn runBenchmark(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    executable_path: []const u8,
+    environment: *const std.process.Environ.Map,
+    options: BenchmarkOptions,
+    stdout: *std.Io.Writer,
+    stderr: *std.Io.Writer,
+) !void {
+    const suite_bytes = try std.Io.Dir.cwd().readFileAlloc(io, options.suite_path, allocator, .limited(4 * 1024 * 1024));
+    defer allocator.free(suite_bytes);
+    const parsed = std.json.parseFromSlice(BenchmarkSuite, allocator, suite_bytes, .{}) catch return error.InvalidBenchmarkSuite;
+    defer parsed.deinit();
+    const suite = parsed.value;
+    if (suite.schema_version != 1 or suite.name.len == 0 or suite.cases.len == 0) return error.InvalidBenchmarkSuite;
+    for (suite.cases, 0..) |item, index| {
+        if (item.id.len == 0 or item.source.len == 0) return error.InvalidBenchmarkSuite;
+        for (suite.cases[0..index]) |previous| if (std.mem.eql(u8, item.id, previous.id)) return error.DuplicateBenchmarkCase;
+    }
+
+    const nonce: u96 = @truncate(@as(u96, @bitCast(std.Io.Timestamp.now(io, .awake).nanoseconds)));
+    const temporary_root = temporaryDirectory(environment);
+    const temporary_directory = try std.fmt.allocPrint(allocator, "{s}{c}lnako-benchmark-{x}", .{
+        std.mem.trimEnd(u8, temporary_root, "/\\"),
+        std.fs.path.sep,
+        nonce,
+    });
+    defer allocator.free(temporary_directory);
+    if (std.fs.path.isAbsolute(temporary_directory))
+        try std.Io.Dir.createDirAbsolute(io, temporary_directory, .default_dir)
+    else
+        try std.Io.Dir.cwd().createDirPath(io, temporary_directory);
+    defer std.Io.Dir.cwd().deleteTree(io, temporary_directory) catch {};
+
+    const binary_name = if (builtin.os.tag == .windows) "benchmark-program.exe" else "benchmark-program";
+    const binary_path = try std.fs.path.join(allocator, &.{ temporary_directory, binary_name });
+    defer allocator.free(binary_path);
+
+    var case_reports: std.ArrayList(BenchmarkCaseReport) = .empty;
+    for (suite.cases) |item| {
+        var measurements: std.ArrayList(BenchmarkMeasurement) = .empty;
+        for ([_]BenchmarkMode{ .interpreter, .aot_compile, .aot_run }) |mode| {
+            const samples = try collectBenchmarkSamples(allocator, io, executable_path, item, binary_path, options, mode, stderr);
+            try measurements.append(allocator, summarizeBenchmarkSamples(@tagName(mode), samples));
+        }
+        try case_reports.append(allocator, .{
+            .id = item.id,
+            .source = item.source,
+            .expected_stdout = item.expected_stdout,
+            .measurements = try measurements.toOwnedSlice(allocator),
+        });
+    }
+
+    const generated_at_unix_ms = std.math.cast(i64, @divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000)) orelse 0;
+    const git_commit = try benchmarkGitCommit(allocator, io, environment);
+    const report = BenchmarkReport{
+        .schema_version = 1,
+        .project = "lnako",
+        .version = lnako.version,
+        .git_commit = git_commit,
+        .generated_at_unix_ms = generated_at_unix_ms,
+        .target = .{ .os = @tagName(builtin.os.tag), .arch = @tagName(builtin.cpu.arch) },
+        .toolchain = .{ .zig = "0.16.0", .llvm = "22.1.8" },
+        .suite_name = suite.name,
+        .suite = options.suite_path,
+        .optimization = "O2",
+        .iterations = options.iterations,
+        .warmup = options.warmup,
+        .cases = try case_reports.toOwnedSlice(allocator),
+    };
+
+    var json_output: std.Io.Writer.Allocating = .init(allocator);
+    defer json_output.deinit();
+    try std.json.Stringify.value(report, .{}, &json_output.writer);
+    try json_output.writer.writeByte('\n');
+    const json_bytes = try json_output.toOwnedSlice();
+    defer allocator.free(json_bytes);
+    try writeBenchmarkFile(io, options.output_path, json_bytes);
+
+    var markdown_output: std.Io.Writer.Allocating = .init(allocator);
+    defer markdown_output.deinit();
+    try writeBenchmarkMarkdown(&markdown_output.writer, report);
+    const markdown_bytes = try markdown_output.toOwnedSlice();
+    defer allocator.free(markdown_bytes);
+    try writeBenchmarkFile(io, options.markdown_path, markdown_bytes);
+
+    try stdout.print("ベンチマーク結果を記録しました: {s}, {s}\n", .{ options.output_path, options.markdown_path });
+}
+
+fn benchmarkGitCommit(allocator: std.mem.Allocator, io: std.Io, environment: *const std.process.Environ.Map) ![]const u8 {
+    if (environment.get("LNAKO_BENCHMARK_COMMIT")) |commit| return commit;
+    const result = std.process.run(allocator, io, .{
+        .argv = &.{ "git", "rev-parse", "--verify", "HEAD" },
+        .stdout_limit = .limited(256),
+        .stderr_limit = .limited(256),
+    }) catch return "unknown";
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    const succeeded = switch (result.term) {
+        .exited => |code| code == 0,
+        else => false,
+    };
+    if (!succeeded) return "unknown";
+    const commit = std.mem.trim(u8, result.stdout, " \t\r\n");
+    return if (commit.len > 0) try allocator.dupe(u8, commit) else "unknown";
+}
+
+fn collectBenchmarkSamples(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    executable_path: []const u8,
+    item: BenchmarkSuiteCase,
+    binary_path: []const u8,
+    options: BenchmarkOptions,
+    mode: BenchmarkMode,
+    stderr: *std.Io.Writer,
+) ![]u64 {
+    const validates_output = mode == .interpreter or mode == .aot_run;
+    for (0..options.warmup) |_| _ = try benchmarkProcess(allocator, io, executable_path, item, binary_path, mode, validates_output, stderr);
+    const samples = try allocator.alloc(u64, options.iterations);
+    for (samples) |*sample| sample.* = try benchmarkProcess(allocator, io, executable_path, item, binary_path, mode, validates_output, stderr);
+    return samples;
+}
+
+fn benchmarkProcess(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    executable_path: []const u8,
+    item: BenchmarkSuiteCase,
+    binary_path: []const u8,
+    mode: BenchmarkMode,
+    validates_output: bool,
+    stderr: *std.Io.Writer,
+) !u64 {
+    var argv: [5][]const u8 = undefined;
+    const arguments: []const []const u8 = switch (mode) {
+        .interpreter => blk: {
+            argv = .{ executable_path, "run", item.source, undefined, undefined };
+            break :blk argv[0..3];
+        },
+        .aot_compile => blk: {
+            argv = .{ executable_path, "build", item.source, "-o", binary_path };
+            break :blk argv[0..5];
+        },
+        .aot_run => blk: {
+            argv = .{ binary_path, undefined, undefined, undefined, undefined };
+            break :blk argv[0..1];
+        },
+    };
+    var timed_argv: [6][]const u8 = undefined;
+    const actual_arguments = if (mode == .aot_compile) blk: {
+        timed_argv = .{ executable_path, "build", item.source, "-o", binary_path, "-O2" };
+        break :blk timed_argv[0..6];
+    } else arguments;
+    const started = std.Io.Timestamp.now(io, .awake).nanoseconds;
+    const result = std.process.run(allocator, io, .{
+        .argv = actual_arguments,
+        .stdout_limit = .limited(64 * 1024 * 1024),
+        .stderr_limit = .limited(64 * 1024 * 1024),
+    }) catch |err| {
+        try stderr.print("{s}: {s}プロセス起動失敗: {s}\n", .{ item.id, @tagName(mode), @errorName(err) });
+        return error.BenchmarkProcessFailed;
+    };
+    const finished = std.Io.Timestamp.now(io, .awake).nanoseconds;
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    const succeeded = switch (result.term) {
+        .exited => |code| code == 0,
+        else => false,
+    };
+    if (!succeeded) {
+        try stderr.print("{s}: {s}が終了コード0になりませんでした\nstdout: {s}\nstderr: {s}\n", .{ item.id, @tagName(mode), result.stdout, result.stderr });
+        return error.BenchmarkProcessFailed;
+    }
+    if (validates_output and !benchmarkOutputMatches(result.stdout, item.expected_stdout)) {
+        try stderr.print("{s}: {s}の出力がsuiteの期待値と一致しませんでした\n期待値: {s}\n実際: {s}\n", .{ item.id, @tagName(mode), item.expected_stdout, result.stdout });
+        return error.BenchmarkOutputMismatch;
+    }
+    return if (finished > started) std.math.cast(u64, finished - started) orelse std.math.maxInt(u64) else 0;
+}
+
+fn summarizeBenchmarkSamples(mode: []const u8, samples: []u64) BenchmarkMeasurement {
+    std.mem.sort(u64, samples, {}, std.sort.asc(u64));
+    var total = samples[samples.len / 2];
+    if (samples.len % 2 == 0) total = samples[samples.len / 2 - 1] / 2 + samples[samples.len / 2] / 2 + (samples[samples.len / 2 - 1] % 2 + samples[samples.len / 2] % 2) / 2;
+    return .{
+        .mode = mode,
+        .samples_ns = samples,
+        .min_ns = samples[0],
+        .median_ns = total,
+        .max_ns = samples[samples.len - 1],
+    };
+}
+
+fn benchmarkOutputMatches(actual: []const u8, expected: []const u8) bool {
+    var actual_index: usize = 0;
+    var expected_index: usize = 0;
+    while (true) {
+        while (actual_index + 1 < actual.len and actual[actual_index] == '\r' and actual[actual_index + 1] == '\n') actual_index += 1;
+        while (expected_index + 1 < expected.len and expected[expected_index] == '\r' and expected[expected_index + 1] == '\n') expected_index += 1;
+        const actual_byte = if (actual_index < actual.len) actual[actual_index] else null;
+        const expected_byte = if (expected_index < expected.len) expected[expected_index] else null;
+        if (actual_byte == null or expected_byte == null) return actual_byte == null and expected_byte == null;
+        if (actual_byte.? != expected_byte.?) return false;
+        actual_index += 1;
+        expected_index += 1;
+    }
+}
+
+fn writeBenchmarkMarkdown(writer: *std.Io.Writer, report: BenchmarkReport) !void {
+    try writer.print("# lnako benchmark\n\n- schema: `{d}`\n- generated_at_unix_ms: `{d}`\n- git_commit: `{s}`\n- target: `{s}/{s}`\n- toolchain: Zig `{s}`, LLVM/LLD `{s}`\n- suite_name: `{s}`\n- suite: `{s}`\n- optimization: `{s}`\n- iterations: `{d}`\n- warmup: `{d}`\n\n", .{
+        report.schema_version,
+        report.generated_at_unix_ms,
+        report.git_commit,
+        report.target.os,
+        report.target.arch,
+        report.toolchain.zig,
+        report.toolchain.llvm,
+        report.suite_name,
+        report.suite,
+        report.optimization,
+        report.iterations,
+        report.warmup,
+    });
+    try writer.writeAll("| case | mode | samples | min (ns) | median (ns) | max (ns) |\n|---|---|---:|---:|---:|---:|\n");
+    for (report.cases) |item| for (item.measurements) |measurement| {
+        try writer.print("| `{s}` | `{s}` | {d} | {d} | {d} | {d} |\n", .{ item.id, measurement.mode, measurement.samples_ns.len, measurement.min_ns, measurement.median_ns, measurement.max_ns });
+    };
+    try writer.writeAll("\n測定値は各sampleの子プロセス完了までのwall-clock nanosecondsです。`interpreter`は`lnako run`、`aot_compile`はLLVM O2生成、`aot_run`は生成実行ファイルを測定します。suiteの期待stdoutとの一致を各sampleで確認しています。\n");
+}
+
+fn writeBenchmarkFile(io: std.Io, path: []const u8, bytes: []const u8) !void {
+    if (std.fs.path.dirname(path)) |parent| if (parent.len > 0) try std.Io.Dir.cwd().createDirPath(io, parent);
+    if (std.fs.path.isAbsolute(path)) {
+        var file = try std.Io.Dir.createFileAbsolute(io, path, .{});
+        defer file.close(io);
+        try file.writeStreamingAll(io, bytes);
+    } else try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = bytes });
+}
 
 fn parseBuildOptions(arguments: []const []const u8) !BuildOptions {
     if (arguments.len == 0) return error.MissingInput;
@@ -1447,4 +1812,33 @@ test "buildの出力形式と最適化レベルを解析する" {
     try std.testing.expectEqual(lnako.backend.llvm.compiler.Emit.object, options.emit);
     try std.testing.expectError(error.MissingOutput, parseBuildOptions(&.{"main.nako3"}));
     try std.testing.expectError(error.InvalidEmitKind, parseBuildOptions(&.{ "main.nako3", "-o", "main", "--emit", "asm" }));
+}
+
+test "benchmarkの計測条件と出力先を解析する" {
+    const options = try parseBenchmarkOptions(&.{ "--iterations", "9", "--warmup", "2", "--suite", "suite.json", "--output", "result.json", "--markdown", "result.md" });
+    try std.testing.expectEqual(@as(usize, 9), options.iterations);
+    try std.testing.expectEqual(@as(usize, 2), options.warmup);
+    try std.testing.expectEqualStrings("suite.json", options.suite_path);
+    try std.testing.expectEqualStrings("result.json", options.output_path);
+    try std.testing.expectEqualStrings("result.md", options.markdown_path);
+    try std.testing.expectError(error.InvalidBenchmarkIterations, parseBenchmarkOptions(&.{ "--iterations", "0" }));
+    try std.testing.expectError(error.UnknownBenchmarkOption, parseBenchmarkOptions(&.{"--unknown"}));
+}
+
+test "benchmarkのCRLFをLFとして期待値と比較する" {
+    try std.testing.expect(benchmarkOutputMatches("10000\r\n", "10000\n"));
+    try std.testing.expect(!benchmarkOutputMatches("1000\r\n", "10000\n"));
+}
+
+test "benchmarkの中央値を昇順sampleから計算する" {
+    const samples = try std.testing.allocator.alloc(u64, 4);
+    samples[0] = 9;
+    samples[1] = 1;
+    samples[2] = 7;
+    samples[3] = 3;
+    const measurement = summarizeBenchmarkSamples("test", samples);
+    defer std.testing.allocator.free(measurement.samples_ns);
+    try std.testing.expectEqual(@as(u64, 5), measurement.median_ns);
+    try std.testing.expectEqual(@as(u64, 1), measurement.min_ns);
+    try std.testing.expectEqual(@as(u64, 9), measurement.max_ns);
 }

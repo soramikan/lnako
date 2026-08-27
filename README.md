@@ -99,9 +99,12 @@ lnako compat report
 lnako benchmark
 ```
 
-現時点では `build`、`run`、`check`、`test`、`compat report`、ヘルプ、バージョン表示を利用できます。
-`compat report`はビルド時の正本`compat/v3.7.24/summary.json`を機械可読JSONで出力します。`benchmark`は
-後続の性能記録実装とともに有効化します。`run --compat-js` はQuickJS 2026-06-04で
+現時点では `build`、`run`、`check`、`test`、`compat report`、`benchmark`、ヘルプ、バージョン表示を利用できます。
+`compat report`はビルド時の正本`compat/v3.7.24/summary.json`を機械可読JSONで出力します。
+`benchmark`は固定suiteをInterpreter、LLVM O2コンパイル、AOT実行の3経路で計測し、各sampleの期待stdoutを確認したうえで
+JSONとMarkdownへ保存します。既定の出力先は`benchmarks/results/latest.json`と`benchmarks/results/latest.md`です。
+`--iterations`、`--warmup`、`--suite`、`--output`、`--markdown`で計測条件と出力先を指定できます。
+`run --compat-js` はQuickJS 2026-06-04で
 4つのJS命令とESモジュール形式プラグインを実行します。`build --compat-js` は検証済みのなでしこ・JSソースを
 QuickJS対応ランタイムへ埋め込み、元ソース、Zig、LLVMを実行先で要求しない単一実行ファイルを生成します。
 互換生成物はランタイムを内包するため`--emit exe`専用です。

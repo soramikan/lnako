@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "name": "lnako-core-v1",
+  "cases": [
+    {
+      "id": "arithmetic-loop",
+      "source": "benchmarks/programs/arithmetic-loop.nako3",
+      "expected_stdout": "10000\n"
+    },
+    {
+      "id": "array-mutation",
+      "source": "benchmarks/programs/array-mutation.nako3",
+      "expected_stdout": "1000\n"
+    },
+    {
+      "id": "closure-loop",
+      "source": "benchmarks/programs/closure-loop.nako3",
+      "expected_stdout": "10000\n"
+    }
+  ]
+}

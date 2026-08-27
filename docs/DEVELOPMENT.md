@@ -124,6 +124,22 @@ HIRから生成したNako SSA IRは、次の開発用プローブで確認でき
 zig build ir-probe -- $'A=1\nAを表示\n'
 ```
 
+## ベンチマーク
+
+`benchmarks/suite.json`を正本とし、各fixtureの`expected_stdout`を全sampleで照合します。
+`lnako benchmark`は同じsuiteを`interpreter`、`aot_compile`（LLVM O2での生成）、`aot_run`（生成実行ファイル）で計測し、
+`benchmarks/results/latest.json`と`benchmarks/results/latest.md`へ保存します。JSONにはsuite、対象OS/CPU、固定toolchain、
+commit（`LNAKO_BENCHMARK_COMMIT`指定時）、iteration/warmup、個別sampleとmin/median/maxを含めます。
+値は子プロセス完了までのwall-clock値であり、CIの壁時計やrunner合計時間とは別の指標です。
+
+```sh
+LNAKO_BENCHMARK_COMMIT="$(git rev-parse HEAD)" zig build run -- benchmark
+zig build run -- benchmark --iterations 10 --warmup 2 \
+  --output /tmp/lnako-benchmark.json --markdown /tmp/lnako-benchmark.md
+```
+
+ベンチマーク結果は対象OS・CPUごとに分けて比較し、異なるOSの値を単純に横並びで性能回帰と解釈しません。
+
 ## コミット
 
 - 機能と対応テストを同じコミットに含める。

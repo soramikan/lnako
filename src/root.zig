@@ -172,6 +172,7 @@ test {
 test "コマンドを解析できる" {
     try std.testing.expectEqual(Command.build, try parseCommand(&.{"build"}));
     try std.testing.expectEqual(Command.run, try parseCommand(&.{"run"}));
+    try std.testing.expectEqual(Command.benchmark, try parseCommand(&.{"benchmark"}));
     try std.testing.expectEqual(Command.compat, try parseCommand(&.{ "compat", "report" }));
     try std.testing.expectEqual(Command.help, try parseCommand(&.{}));
 }
