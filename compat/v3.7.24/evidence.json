@@ -13677,7 +13677,7 @@
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
       "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "Node互換の環境変数取得を純LLVM AOTへ実装し、公式差分テストに成功"
+      "implementationReason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0738",
@@ -14008,7 +14008,7 @@
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
       "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "Node互換のOS名取得を純LLVM AOTへ実装し、公式差分テストに成功"
+      "implementationReason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0750",
@@ -14042,7 +14042,7 @@
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
       "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "Node互換のCPUアーキテクチャ名取得を純LLVM AOTへ実装し、公式差分テストに成功"
+      "implementationReason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0751",

@@ -2494,7 +2494,7 @@
       "plugin-node-path-host",
       "native-node-os-identity"
     ],
-    "reason": "Node互換のOS名取得を純LLVM AOTへ実装し、公式差分テストに成功"
+    "reason": "公式cnako3とのNodeホスト差分テストに成功"
   },
   "OSアーキテクチャ取得": {
     "status": "native",
@@ -2502,7 +2502,7 @@
       "plugin-node-path-host",
       "native-node-os-identity"
     ],
-    "reason": "Node互換のCPUアーキテクチャ名取得を純LLVM AOTへ実装し、公式差分テストに成功"
+    "reason": "公式cnako3とのNodeホスト差分テストに成功"
   },
   "カレントディレクトリ取得": {
     "status": "native",
@@ -2580,7 +2580,7 @@
       "plugin-node-path-host",
       "native-node-environment"
     ],
-    "reason": "Node互換の環境変数取得を純LLVM AOTへ実装し、公式差分テストに成功"
+    "reason": "公式cnako3とのNodeホスト差分テストに成功"
   },
   "環境変数一覧取得": {
     "status": "native",
