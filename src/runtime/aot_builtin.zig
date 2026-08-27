@@ -220,6 +220,8 @@ pub const Command = enum(u16) {
     path_add_trailing_separator,
     path_remove_trailing_separator,
     path_delete_trailing_separator,
+    kansuji_to_kanji,
+    kansuji_to_arabic,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -449,6 +451,8 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "終端パス追加")) return .path_add_trailing_separator;
     if (std.mem.eql(u8, name, "終端パス除去")) return .path_remove_trailing_separator;
     if (std.mem.eql(u8, name, "終端パス削除")) return .path_delete_trailing_separator;
+    if (std.mem.eql(u8, name, "漢数字")) return .kansuji_to_kanji;
+    if (std.mem.eql(u8, name, "算用数字")) return .kansuji_to_arabic;
     return null;
 }
 
@@ -660,6 +664,8 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.path_add_trailing_separator, lookup("終端パス追加").?);
     try std.testing.expectEqual(Command.path_remove_trailing_separator, lookup("終端パス除去").?);
     try std.testing.expectEqual(Command.path_delete_trailing_separator, lookup("終端パス削除").?);
+    try std.testing.expectEqual(Command.kansuji_to_kanji, lookup("漢数字").?);
+    try std.testing.expectEqual(Command.kansuji_to_arabic, lookup("算用数字").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }
 

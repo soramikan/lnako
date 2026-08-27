@@ -8,14 +8,14 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 235,
-    "nativeAot": 130,
+    "total": 236,
+    "nativeAot": 131,
     "interpreter": 96,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
-    "paired": 340,
-    "interpreter-only": 183,
+    "paired": 342,
+    "interpreter-only": 181,
     "aot-only": 0,
     "none": 0,
     "compat-js-only": 4
@@ -16775,7 +16775,9 @@
       "interpreterFixtureIds": [
         "plugin-kansuji-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-kansuji-commands"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -16784,15 +16786,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-kansuji-commands": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "固定した公式プラグインとの差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "固定した公式プラグインとの差分テストと純LLVM AOT dispatchの公式7経路差分テストに成功"
     },
     {
       "id": "command-0838",
@@ -16802,7 +16809,9 @@
       "interpreterFixtureIds": [
         "plugin-kansuji-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-kansuji-commands"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -16811,15 +16820,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-kansuji-commands": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "固定した公式プラグインとの差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "固定した公式プラグインとの差分テストと純LLVM AOT dispatchの公式7経路差分テストに成功"
     }
   ]
 }

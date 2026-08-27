@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "7f31e65f6b62f109d25cb74d84737570842bdc54402a54c9a6573d8ee7b58935"
+    "sha256": "68fa199f10698965936b0198426941f5695de3a452326c6aafd84309509256e1"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 183,
+    "count": 181,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 183
+      "unverified": 181
     }
   },
   "groups": [
@@ -95,24 +95,6 @@
         "簡易HTTPサーバ出力",
         "簡易HTTPサーバヘッダ出力",
         "簡易HTTPサーバ移動"
-      ]
-    },
-    {
-      "plugin": "plugin_kansuji",
-      "group": "基本プラグイン",
-      "category": "漢数字関連",
-      "type": "関数",
-      "count": 2,
-      "executionEvidenceStates": {
-        "unverified": 2
-      },
-      "commandIds": [
-        "command-0837",
-        "command-0838"
-      ],
-      "names": [
-        "漢数字",
-        "算用数字"
       ]
     },
     {
@@ -3984,40 +3966,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "plugin-markup-all"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0837",
-      "name": "漢数字",
-      "plugin": "plugin_kansuji",
-      "group": "基本プラグイン",
-      "category": "漢数字関連",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-kansuji-all"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0838",
-      "name": "算用数字",
-      "plugin": "plugin_kansuji",
-      "group": "基本プラグイン",
-      "category": "漢数字関連",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-kansuji-all"
       ],
       "aotFixtureIds": []
     }

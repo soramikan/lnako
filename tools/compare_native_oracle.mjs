@@ -223,6 +223,7 @@ async function runCase(testCase, index, temporary, executable, officialCli, coll
 function replaceNativePluginPlaceholders(source, oracleRoot, fixtureDirectory) {
   const replacements = {
     "${PLUGIN_CANIUSE}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_caniuse.mjs")).replaceAll("\\", "/"),
+    "${PLUGIN_KANSUJI}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_kansuji.mjs")).replaceAll("\\", "/"),
   };
   return Object.entries(replacements).reduce((result, [placeholder, path]) => result.replaceAll(placeholder, path), source);
 }

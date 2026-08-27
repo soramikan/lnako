@@ -13693,14 +13693,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-kansuji-all"
+        "plugin-kansuji-all",
+        "native-kansuji-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "固定した公式プラグインとの差分テストに成功"
+      "reason": "固定した公式プラグインとの差分テストと純LLVM AOT dispatchの公式7経路差分テストに成功"
     },
     {
       "id": "command-0838",
@@ -13718,14 +13719,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-kansuji-all"
+        "plugin-kansuji-all",
+        "native-kansuji-commands"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "固定した公式プラグインとの差分テストに成功"
+      "reason": "固定した公式プラグインとの差分テストと純LLVM AOT dispatchの公式7経路差分テストに成功"
     }
   ]
 }
