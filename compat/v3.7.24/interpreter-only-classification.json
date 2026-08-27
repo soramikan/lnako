@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "9c5cd09cb81dad6b2cb4cadf5528335e12d3197ee0a7610db1906116db996414"
+    "sha256": "807f3d747b6ec921a1c28791be5a1203fe902a156d5e2e718164229d0ac63a79"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 216,
+    "count": 214,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 216
+      "unverified": 214
     }
   },
   "groups": [
@@ -510,14 +510,12 @@
       "group": "基本プラグイン",
       "category": "フォルダ取得",
       "type": "関数",
-      "count": 10,
+      "count": 8,
       "executionEvidenceStates": {
-        "unverified": 10
+        "unverified": 8
       },
       "commandIds": [
-        "command-0726",
         "command-0727",
-        "command-0728",
         "command-0729",
         "command-0730",
         "command-0731",
@@ -527,9 +525,7 @@
         "command-0736"
       ],
       "names": [
-        "カレントディレクトリ取得",
         "カレントディレクトリ変更",
-        "作業フォルダ取得",
         "作業フォルダ変更",
         "ホームディレクトリ取得",
         "デスクトップ",
@@ -3141,42 +3137,8 @@
       "aotFixtureIds": []
     },
     {
-      "id": "command-0726",
-      "name": "カレントディレクトリ取得",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "フォルダ取得",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-path-host"
-      ],
-      "aotFixtureIds": []
-    },
-    {
       "id": "command-0727",
       "name": "カレントディレクトリ変更",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "フォルダ取得",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-path-host"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0728",
-      "name": "作業フォルダ取得",
       "plugin": "plugin_node",
       "group": "基本プラグイン",
       "category": "フォルダ取得",

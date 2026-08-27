@@ -2734,7 +2734,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -2792,6 +2792,12 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         },
         .node_environment_list => {
             out.* = nodeEnvironmentListBuiltin(runtime) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .node_current_directory => {
+            out.* = nodeCurrentDirectoryBuiltin(runtime) catch |failure| {
                 runtime.setFailure(failure);
                 return;
             };
@@ -4127,6 +4133,16 @@ fn nodeEnvironmentListBuiltin(runtime: *Runtime) !Value {
         }
     }
     return roots[0];
+}
+
+fn nodeCurrentDirectoryBuiltin(runtime: *Runtime) !Value {
+    var size: usize = 256;
+    while (size <= 1024 * 1024) : (size *= 2) {
+        const buffer = try runtime.allocator.alloc(u8, size);
+        defer runtime.allocator.free(buffer);
+        if (std.c.getcwd(buffer.ptr, buffer.len)) |path| return runtimeUtf8StringLossy(runtime, std.mem.sliceTo(path, 0));
+    }
+    return error.CurrentDirectoryUnavailable;
 }
 
 fn aotOsName() []const u8 {
@@ -7345,6 +7361,22 @@ test "AOT環境変数一覧取得はPATHを含む辞書を生成する" {
     const path = std.c.getenv("PATH") orelse return error.EnvironmentUnavailable;
     roots[0] = try nodeEnvironmentListBuiltin(&runtime);
     try expectUtf16String(&runtime, dictionaryProperty(roots[0], &.{ 'P', 'A', 'T', 'H' }), std.mem.span(path));
+}
+
+test "AOTカレントディレクトリ取得は現在の作業フォルダを返す" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    var expected_buffer: [4096]u8 = undefined;
+    const expected = std.c.getcwd(&expected_buffer, expected_buffer.len) orelse return error.CurrentDirectoryUnavailable;
+    roots[0] = try nodeCurrentDirectoryBuiltin(&runtime);
+    try expectUtf16String(&runtime, roots[0], std.mem.sliceTo(expected, 0));
+    roots[1] = try nodeCurrentDirectoryBuiltin(&runtime);
+    try expectUtf16String(&runtime, roots[1], std.mem.sliceTo(expected, 0));
 }
 
 test "AOT対応ブラウザ一覧取得はv3.7.24の辞書をキャッシュする" {

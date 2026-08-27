@@ -200,6 +200,7 @@ pub const Command = enum(u16) {
     node_architecture,
     node_environment_get,
     node_environment_list,
+    node_current_directory,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -409,6 +410,7 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "OSアーキテクチャ取得")) return .node_architecture;
     if (std.mem.eql(u8, name, "環境変数取得")) return .node_environment_get;
     if (std.mem.eql(u8, name, "環境変数一覧取得")) return .node_environment_list;
+    if (std.mem.eql(u8, name, "カレントディレクトリ取得") or std.mem.eql(u8, name, "作業フォルダ取得")) return .node_current_directory;
     return null;
 }
 
@@ -598,6 +600,8 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.node_architecture, lookup("OSアーキテクチャ取得").?);
     try std.testing.expectEqual(Command.node_environment_get, lookup("環境変数取得").?);
     try std.testing.expectEqual(Command.node_environment_list, lookup("環境変数一覧取得").?);
+    try std.testing.expectEqual(Command.node_current_directory, lookup("カレントディレクトリ取得").?);
+    try std.testing.expectEqual(Command.node_current_directory, lookup("作業フォルダ取得").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }
 

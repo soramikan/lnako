@@ -16464,7 +16464,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-path-host"
+        "plugin-node-path-host",
+        "native-node-current-directory"
       ],
       "platforms": [
         "macos-aarch64",
@@ -16514,7 +16515,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-path-host"
+        "plugin-node-path-host",
+        "native-node-current-directory"
       ],
       "platforms": [
         "macos-aarch64",
