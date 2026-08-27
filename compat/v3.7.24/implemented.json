@@ -1930,23 +1930,26 @@
   "UNIXTIME変換": {
     "status": "native",
     "tests": [
-      "plugin-system-datetime"
+      "plugin-system-datetime",
+      "native-datetime-unix-and-format"
     ],
-    "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
+    "reason": "日時解析とUnix秒変換を純LLVM AOTへ実装し、公式差分テストに成功"
   },
   "UNIX時間変換": {
     "status": "native",
     "tests": [
-      "plugin-system-datetime"
+      "plugin-system-datetime",
+      "native-datetime-unix-and-format"
     ],
-    "reason": "UNIXTIME変換の別名として実装し、公式差分テストに成功"
+    "reason": "UNIXTIME変換の別名を純LLVM AOTへ実装し、公式差分テストに成功"
   },
   "日時変換": {
     "status": "native",
     "tests": [
-      "plugin-system-datetime"
+      "plugin-system-datetime",
+      "native-datetime-unix-and-format"
     ],
-    "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
+    "reason": "Unix秒からAsia/Tokyoの日時文字列への変換を純LLVM AOTへ実装し、公式差分テストに成功"
   },
   "日時書式変換": {
     "status": "native",

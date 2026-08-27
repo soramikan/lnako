@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "12168997cbad5b7f89a217725038d399141b413300fd0b6ce273bff78dc983c9"
+    "sha256": "7d1dbdf344ed8c8015ae6c164f803650214ba95736539fba78ed57e9f9706971"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 231,
+    "count": 225,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 231
+      "unverified": 225
     }
   },
   "groups": [
@@ -54,14 +54,11 @@
       "group": "基本プラグイン",
       "category": "日時処理",
       "type": "関数",
-      "count": 14,
+      "count": 11,
       "executionEvidenceStates": {
-        "unverified": 14
+        "unverified": 11
       },
       "commandIds": [
-        "command-0821",
-        "command-0822",
-        "command-0823",
         "command-0824",
         "command-0825",
         "command-0826",
@@ -75,9 +72,6 @@
         "command-0834"
       ],
       "names": [
-        "UNIX時間変換",
-        "UNIXTIME変換",
-        "日時変換",
         "和暦変換",
         "年数差",
         "月数差",
@@ -920,14 +914,11 @@
       "group": "基本プラグイン",
       "category": "日時処理(簡易)",
       "type": "関数",
-      "count": 16,
+      "count": 13,
       "executionEvidenceStates": {
-        "unverified": 16
+        "unverified": 13
       },
       "commandIds": [
-        "command-0242",
-        "command-0243",
-        "command-0244",
         "command-0245",
         "command-0246",
         "command-0247",
@@ -943,9 +934,6 @@
         "command-0257"
       ],
       "names": [
-        "UNIXTIME変換",
-        "UNIX時間変換",
-        "日時変換",
         "日時書式変換",
         "和暦変換",
         "年数差",
@@ -1702,57 +1690,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "plugin-system-table"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0242",
-      "name": "UNIXTIME変換",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "日時処理(簡易)",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0243",
-      "name": "UNIX時間変換",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "日時処理(簡易)",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0244",
-      "name": "日時変換",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "日時処理(簡易)",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
       ],
       "aotFixtureIds": []
     },
@@ -4728,57 +4665,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "plugin-markup-all"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0821",
-      "name": "UNIX時間変換",
-      "plugin": "plugin_datetime",
-      "group": "基本プラグイン",
-      "category": "日時処理",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0822",
-      "name": "UNIXTIME変換",
-      "plugin": "plugin_datetime",
-      "group": "基本プラグイン",
-      "category": "日時処理",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0823",
-      "name": "日時変換",
-      "plugin": "plugin_datetime",
-      "group": "基本プラグイン",
-      "category": "日時処理",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-system-datetime"
       ],
       "aotFixtureIds": []
     },

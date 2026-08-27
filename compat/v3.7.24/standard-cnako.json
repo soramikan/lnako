@@ -6409,14 +6409,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-unix-and-format"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
+      "reason": "日時解析とUnix秒変換を純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0243",
@@ -6435,14 +6436,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-unix-and-format"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "UNIXTIME変換の別名として実装し、公式差分テストに成功"
+      "reason": "UNIXTIME変換の別名を純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0244",
@@ -6461,14 +6463,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-unix-and-format"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
+      "reason": "Unix秒からAsia/Tokyoの日時文字列への変換を純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0245",
@@ -13243,14 +13246,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-unix-and-format"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "UNIXTIME変換の別名として実装し、公式差分テストに成功"
+      "reason": "UNIXTIME変換の別名を純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0822",
@@ -13268,14 +13272,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-unix-and-format"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
+      "reason": "日時解析とUnix秒変換を純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0823",
@@ -13293,14 +13298,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-datetime"
+        "plugin-system-datetime",
+        "native-datetime-unix-and-format"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "JavaScript Date互換規則で実装し、公式差分テストに成功"
+      "reason": "Unix秒からAsia/Tokyoの日時文字列への変換を純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0824",

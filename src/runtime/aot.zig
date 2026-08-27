@@ -2762,7 +2762,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
-        .datetime_now, .datetime_system_time, .datetime_system_time_milliseconds, .datetime_today, .datetime_tomorrow, .datetime_yesterday, .datetime_current_year, .datetime_next_year, .datetime_last_year, .datetime_current_month, .datetime_next_month, .datetime_previous_month, .datetime_weekday, .datetime_weekday_number => {
+        .datetime_now, .datetime_system_time, .datetime_system_time_milliseconds, .datetime_today, .datetime_tomorrow, .datetime_yesterday, .datetime_current_year, .datetime_next_year, .datetime_last_year, .datetime_current_month, .datetime_next_month, .datetime_previous_month, .datetime_weekday, .datetime_weekday_number, .datetime_unix_time, .datetime_date_time => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = datetimeBuiltin(runtime, command, actual) catch |failure| {
                 runtime.setFailure(failure);
@@ -3647,6 +3647,14 @@ fn datetimeBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: [
             error.InvalidArgumentCount
         else
             datetimeWeekdayNumber(runtime, arguments[0]),
+        .datetime_unix_time => if (arguments.len < 1)
+            error.InvalidArgumentCount
+        else
+            numberValue(try datetimeParseDate(runtime, arguments[0], now) / datetime_milliseconds_per_second),
+        .datetime_date_time => if (arguments.len < 1)
+            error.InvalidArgumentCount
+        else
+            datetimeDateTimeString(runtime, try valueToNumberRuntime(runtime, arguments[0]) * datetime_milliseconds_per_second),
         else => error.UnknownCommand,
     };
 }
@@ -3814,6 +3822,13 @@ fn datetimeDateString(runtime: *Runtime, fields: AotDateFields) !Value {
 
 fn datetimeTimeString(runtime: *Runtime, fields: AotDateFields) !Value {
     const text = try std.fmt.allocPrint(runtime.allocator, "{:02}:{:02}:{:02}", .{ @as(u64, @intCast(fields.hour)), @as(u64, @intCast(fields.minute)), @as(u64, @intCast(fields.second)) });
+    defer runtime.allocator.free(text);
+    return runtimeUtf8String(runtime, text);
+}
+
+fn datetimeDateTimeString(runtime: *Runtime, milliseconds: f64) !Value {
+    const fields = datetimeFieldsFromEpoch(datetimeFloatToEpoch(milliseconds));
+    const text = try std.fmt.allocPrint(runtime.allocator, "{d}/{:02}/{:02} {:02}:{:02}:{:02}", .{ fields.year, @as(u64, @intCast(fields.month)), @as(u64, @intCast(fields.day)), @as(u64, @intCast(fields.hour)), @as(u64, @intCast(fields.minute)), @as(u64, @intCast(fields.second)) });
     defer runtime.allocator.free(text);
     return runtimeUtf8String(runtime, text);
 }
@@ -6921,6 +6936,28 @@ test "AOT曜日命令はAsia/Tokyoの日曜始まり番号を処理する" {
     arguments[0] = roots[3];
     roots[4] = try datetimeBuiltin(&runtime, .datetime_weekday, &arguments);
     try expectUtf16String(&runtime, roots[4], "金");
+}
+
+test "AOT Unix日時変換は秒と日時文字列を相互変換する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator, .clock_milliseconds = 1_735_689_845_678 };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtimeUtf8String(&runtime, "1970/01/01 09:00:01");
+    var arguments = [_]Value{roots[0]};
+    roots[1] = try datetimeBuiltin(&runtime, .datetime_unix_time, &arguments);
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(roots[1].payload)));
+
+    arguments[0] = numberValue(3);
+    roots[2] = try datetimeBuiltin(&runtime, .datetime_date_time, &arguments);
+    try expectUtf16String(&runtime, roots[2], "1970/01/01 09:00:03");
+
+    arguments[0] = try runtimeUtf8String(&runtime, "3");
+    roots[3] = try datetimeBuiltin(&runtime, .datetime_date_time, &arguments);
+    try expectUtf16String(&runtime, roots[3], "1970/01/01 09:00:03");
 }
 
 test "AOT対応ブラウザ一覧取得はv3.7.24の辞書をキャッシュする" {

@@ -189,6 +189,8 @@ pub const Command = enum(u16) {
     caniuse_browsers,
     datetime_weekday,
     datetime_weekday_number,
+    datetime_unix_time,
+    datetime_date_time,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -387,6 +389,8 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "対応ブラウザ一覧取得")) return .caniuse_browsers;
     if (std.mem.eql(u8, name, "曜日")) return .datetime_weekday;
     if (std.mem.eql(u8, name, "曜日番号取得")) return .datetime_weekday_number;
+    if (std.mem.eql(u8, name, "UNIXTIME変換") or std.mem.eql(u8, name, "UNIX時間変換")) return .datetime_unix_time;
+    if (std.mem.eql(u8, name, "日時変換")) return .datetime_date_time;
     return null;
 }
 
@@ -564,6 +568,9 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.caniuse_browsers, lookup("対応ブラウザ一覧取得").?);
     try std.testing.expectEqual(Command.datetime_weekday, lookup("曜日").?);
     try std.testing.expectEqual(Command.datetime_weekday_number, lookup("曜日番号取得").?);
+    try std.testing.expectEqual(Command.datetime_unix_time, lookup("UNIXTIME変換").?);
+    try std.testing.expectEqual(Command.datetime_unix_time, lookup("UNIX時間変換").?);
+    try std.testing.expectEqual(Command.datetime_date_time, lookup("日時変換").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }
 
