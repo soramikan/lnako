@@ -2783,6 +2783,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
+        .node_environment_get => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = nodeEnvironmentValueBuiltin(runtime, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .caniuse_browsers => {
             out.* = caniuseBrowsersBuiltin(runtime) catch |failure| {
                 runtime.setFailure(failure);
@@ -4071,6 +4078,18 @@ fn base64Digit(unit: u16) ?u8 {
 
 fn nodeEnvironmentBuiltin(runtime: *Runtime, command: aot_builtin.Command) !Value {
     return runtimeUtf8String(runtime, if (command == .node_os) aotOsName() else aotArchitectureName());
+}
+
+fn nodeEnvironmentValueBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    if (arguments.len < 1) return error.InvalidArgumentCount;
+    const key_units = try valueUtf16Alloc(runtime, arguments[0]);
+    defer runtime.allocator.free(key_units);
+    const key = try (string_mod.String{ .allocator = runtime.allocator, .units = key_units }).toUtf8Lossy(runtime.allocator);
+    defer runtime.allocator.free(key);
+    const key_z = try runtime.allocator.dupeZ(u8, key);
+    defer runtime.allocator.free(key_z);
+    const environment = std.c.getenv(key_z.ptr) orelse return .{};
+    return runtimeUtf8String(runtime, std.mem.span(environment));
 }
 
 fn aotOsName() []const u8 {
@@ -7258,6 +7277,24 @@ test "AOT Node環境命令はコンパイル対象のOSとCPU名を返す" {
     try expectUtf16String(&runtime, roots[0], aotOsName());
     roots[1] = try nodeEnvironmentBuiltin(&runtime, .node_architecture);
     try expectUtf16String(&runtime, roots[1], aotArchitectureName());
+}
+
+test "AOT環境変数取得はC環境から値を読み未設定をundefinedにする" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    const path = std.c.getenv("PATH") orelse return error.EnvironmentUnavailable;
+    var arguments = [_]Value{try runtimeUtf8String(&runtime, "PATH")};
+    roots[0] = try nodeEnvironmentValueBuiltin(&runtime, &arguments);
+    try expectUtf16String(&runtime, roots[0], std.mem.span(path));
+
+    arguments[0] = try runtimeUtf8String(&runtime, "LNAKO_ENVIRONMENT_VARIABLE_THAT_DOES_NOT_EXIST_7F4B");
+    roots[1] = try nodeEnvironmentValueBuiltin(&runtime, &arguments);
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[1].tag)));
 }
 
 test "AOT対応ブラウザ一覧取得はv3.7.24の辞書をキャッシュする" {

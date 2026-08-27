@@ -340,6 +340,11 @@
     "source": "OS取得()を表示\nOSアーキテクチャ取得()を表示\n"
   },
   {
+    "id": "native-node-environment",
+    "commands": ["環境変数取得"],
+    "source": "環境変数取得(\"LNAKO_TEST_NOW_MS\")を表示\n"
+  },
+  {
     "id": "native-string-template",
     "source": "A=30\n「ab{A+1}cd｛A｝」を表示\nB=[2,3]\n「{B[0]}:{B[1]}」を表示\n「A{A}C}D」を表示\n『展開しない{A}』を表示\n●(Nを)整形とは\n「<<{N+1}>>」で戻る\nここまで\n整形(4)を表示\n"
   },

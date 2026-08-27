@@ -2577,9 +2577,10 @@
   "環境変数取得": {
     "status": "native",
     "tests": [
-      "plugin-node-path-host"
+      "plugin-node-path-host",
+      "native-node-environment"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "Node互換の環境変数取得を純LLVM AOTへ実装し、公式差分テストに成功"
   },
   "環境変数一覧取得": {
     "status": "native",

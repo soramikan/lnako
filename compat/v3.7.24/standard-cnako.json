@@ -11141,14 +11141,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-path-host"
+        "plugin-node-path-host",
+        "native-node-environment"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "Node互換の環境変数取得を純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0738",
