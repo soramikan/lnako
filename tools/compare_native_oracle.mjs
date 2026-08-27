@@ -2,7 +2,7 @@ import { constants as fsConstants } from "node:fs";
 import { access, link, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { execFile, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
@@ -174,7 +174,8 @@ async function runCase(testCase, index, temporary, executable, officialCli, coll
   await mkdir(fixtureDirectory);
   const sourcePath = resolve(fixtureDirectory, `${stem}.nako3`);
   const generatedJavaScript = resolve(fixtureDirectory, `${stem}.mjs`);
-  await writeFile(sourcePath, testCase.source, "utf8");
+  const source = replaceNativePluginPlaceholders(testCase.source, oracleRoot, fixtureDirectory);
+  await writeFile(sourcePath, source, "utf8");
   const options = {
     cwd: fixtureDirectory,
     env: { ...process.env, TZ: "Asia/Tokyo", LNAKO_TEST_NOW_MS: "1735689845678", LNAKO_TEST_RANDOM_SEED: "5573589319906701683", LNAKO_LLVM_TRACE: "1" },
@@ -217,6 +218,13 @@ async function runCase(testCase, index, temporary, executable, officialCli, coll
   }
   if (manifestPath !== null) await rm(manifestPath, { force: true });
   return { testCase, results, stderrResults, officialCompile, compileErrors, manifestSummary, generatedJavaScriptSha256, compileStatuses };
+}
+
+function replaceNativePluginPlaceholders(source, oracleRoot, fixtureDirectory) {
+  const replacements = {
+    "${PLUGIN_CANIUSE}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_caniuse.mjs")).replaceAll("\\", "/"),
+  };
+  return Object.entries(replacements).reduce((result, [placeholder, path]) => result.replaceAll(placeholder, path), source);
 }
 
 function runProcess(command, arguments_, options) {

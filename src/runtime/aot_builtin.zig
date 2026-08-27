@@ -186,6 +186,7 @@ pub const Command = enum(u16) {
     datetime_current_month,
     datetime_next_month,
     datetime_previous_month,
+    caniuse_browsers,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -381,6 +382,7 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "今月")) return .datetime_current_month;
     if (std.mem.eql(u8, name, "来月")) return .datetime_next_month;
     if (std.mem.eql(u8, name, "先月")) return .datetime_previous_month;
+    if (std.mem.eql(u8, name, "対応ブラウザ一覧取得")) return .caniuse_browsers;
     return null;
 }
 
@@ -555,6 +557,7 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.datetime_now, lookup("今").?);
     try std.testing.expectEqual(Command.datetime_system_time_milliseconds, lookup("システム時間ミリ秒").?);
     try std.testing.expectEqual(Command.datetime_today, lookup("今日").?);
+    try std.testing.expectEqual(Command.caniuse_browsers, lookup("対応ブラウザ一覧取得").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }
 

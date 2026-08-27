@@ -228,6 +228,16 @@ xorshift64*系列を使うため、AOT乱数の差分fixtureでは全経路の�
 | `算用数字`の非標準表記 | 連続する基本漢数字は10進の桁列ではなく、内部の2要素組を乗算する。そのため`一二万`は20,000、`一二`は0になる | 一般的な漢数字に加え、この組化アルゴリズムも再現する | `plugin-kansuji-all` |
 | `算用数字`の大単位 | `万`や`無量大数`のように係数を書かない大単位は1倍ではなく0を返す。`一無量大数`はBigIntを返す | 係数の既定値とNumber/BigInt境界を同じにする | `plugin-kansuji-all` |
 
+## Caniuse標準プラグイン
+
+公式v3.7.24の`plugin_caniuse.mjs`は、ビルド時に生成した`browsers.mjs`をモジュールの共有オブジェクトとして返します。
+このデータは実行時にネットワークやJavaScriptを読み込むものではなく、固定した公式oracleの生成物に含まれるスナップショットです。
+
+| 境界 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 対象経路 | 差分テストID | TODO識別子 |
+|---|---|---|---|---|---|
+| `対応ブラウザ一覧取得`のデータとidentity | `対応ブラウザ一覧取得()`は`browsers.mjs`の16キー・各バージョン配列を返し、同じプラグイン状態では呼出しごとに同じオブジェクトを返す。キーは生成ファイルの順序で列挙される。公式`--compile`のstandalone JavaScriptはimportしたcaniuse pluginを登録しないため、このfixtureでは公式CLI実行をoracleにする | InterpreterはZig製caniuse plugin state、AOTはv3.7.24生成データを純Zigで構築したランタイムキャッシュを返す。AOTは通常モードへJavaScriptを混入させず、同一Runtime内の呼出しidentityを保持する | 公式CLI source、Interpreter/AOT。公式生成JavaScriptとQuickJSは対象外 | `plugin-caniuse-all`、`native-caniuse-browsers` | なし（公式生成経路の制約） |
+| `ブラウザ名変換表`のAOT定数 | 公式は同じ`browsers_agents.mjs`の19キー辞書を定数として公開する | Interpreterのプラグイン定数は対応済みだが、AOTのグローバル定数初期化は今回の対象外で、`対応ブラウザ一覧取得`とは別に未実装として扱う | Interpreter対応、AOT未実装。QuickJSは対象外 | `plugin-caniuse-all` | `AOT-CANIUSE-AGENTS` |
+
 ## モジュール取り込み
 
 | 構文 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID |

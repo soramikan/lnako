@@ -249,6 +249,7 @@ const Runtime = struct {
     dispatch_trace: DispatchTrace = .{},
     random_state: u64 = 0,
     clock_milliseconds: ?i64 = null,
+    caniuse_browsers: Value = .{},
 
     fn deinit(self: *Runtime) void {
         self.dispatch_trace.deinit();
@@ -402,6 +403,7 @@ const Runtime = struct {
         }
         if (self.has_pending_exception) self.markValue(self.pending_exception);
         self.markValue(self.system_context);
+        self.markValue(self.caniuse_browsers);
         while (self.grey) |object| {
             self.grey = object.grey_next;
             object.grey_next = null;
@@ -2709,7 +2711,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -2741,6 +2743,12 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         .datetime_now, .datetime_system_time, .datetime_system_time_milliseconds, .datetime_today, .datetime_tomorrow, .datetime_yesterday, .datetime_current_year, .datetime_next_year, .datetime_last_year, .datetime_current_month, .datetime_next_month, .datetime_previous_month => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = datetimeBuiltin(runtime, command, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .caniuse_browsers => {
+            out.* = caniuseBrowsersBuiltin(runtime) catch |failure| {
                 runtime.setFailure(failure);
                 return;
             };
@@ -3454,6 +3462,51 @@ fn mathRandomRange(runtime: *Runtime, minimum: Value, maximum: Value) !Value {
     const upper = try valueToNumberRuntime(runtime, maximum);
     return numberValue(@floor(random * (upper - lower + 1)) + lower);
 }
+
+fn caniuseBrowsersBuiltin(runtime: *Runtime) !Value {
+    if (runtime.caniuse_browsers.tag != @intFromEnum(Tag.undefined)) return runtime.caniuse_browsers;
+
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createDictionary(&.{});
+    for (caniuse_browsers) |browser| {
+        roots[1] = try runtime.createArray(&.{});
+        for (browser.versions) |version| {
+            const value = try runtimeUtf8String(runtime, version);
+            try roots[1].object().?.payload.array.append(runtime.allocator, value);
+        }
+        roots[2] = try runtimeUtf8String(runtime, browser.key);
+        try runtime.setDictionary(&roots[0].object().?.payload.dictionary, roots[2], roots[1]);
+    }
+    runtime.caniuse_browsers = roots[0];
+    return roots[0];
+}
+
+const CaniuseBrowser = struct { key: []const u8, versions: []const []const u8 };
+
+// This is the generated v3.7.24 browsers.mjs snapshot. The AOT runtime owns
+// its copy so normal execution never loads the JavaScript caniuse plugin.
+const caniuse_browsers = [_]CaniuseBrowser{
+    .{ .key = "and_chr", .versions = &.{"145"} },
+    .{ .key = "and_ff", .versions = &.{"147"} },
+    .{ .key = "and_qq", .versions = &.{"14.9"} },
+    .{ .key = "and_uc", .versions = &.{"15.5"} },
+    .{ .key = "android", .versions = &.{"145"} },
+    .{ .key = "chrome", .versions = &.{ "145", "144", "143", "142", "139", "133", "131", "125", "112", "109" } },
+    .{ .key = "edge", .versions = &.{ "145", "144", "143", "142" } },
+    .{ .key = "firefox", .versions = &.{ "147", "146", "145", "140" } },
+    .{ .key = "ios_saf", .versions = &.{ "26.3", "26.2", "26.1", "18.5-18.7", "16.6-16.7" } },
+    .{ .key = "kaios", .versions = &.{ "3.0-3.1", "2.5" } },
+    .{ .key = "node", .versions = &.{ "25.1.0", "24.11.0", "22.21.0" } },
+    .{ .key = "op_mini", .versions = &.{"all"} },
+    .{ .key = "op_mob", .versions = &.{"80"} },
+    .{ .key = "opera", .versions = &.{ "125", "124" } },
+    .{ .key = "safari", .versions = &.{ "26.3", "26.2" } },
+    .{ .key = "samsung", .versions = &.{ "29", "28" } },
+};
 
 const datetime_milliseconds_per_second: i64 = 1000;
 const datetime_milliseconds_per_minute: i64 = 60 * datetime_milliseconds_per_second;
@@ -6613,6 +6666,24 @@ test "AOT日時の現在時刻・日付・年月命令を固定時計で処理�
     try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(roots[10].payload)));
     roots[11] = try datetimeBuiltin(&runtime, .datetime_previous_month, &.{});
     try std.testing.expectEqual(@as(f64, 12), @as(f64, @bitCast(roots[11].payload)));
+}
+
+test "AOT対応ブラウザ一覧取得はv3.7.24の辞書をキャッシュする" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try caniuseBrowsersBuiltin(&runtime);
+    roots[1] = try caniuseBrowsersBuiltin(&runtime);
+    try std.testing.expectEqual(roots[0].payload, roots[1].payload);
+    try std.testing.expectEqual(@as(usize, 16), roots[0].object().?.payload.dictionary.items.len);
+    roots[2] = dictionaryProperty(roots[0], &.{ 'c', 'h', 'r', 'o', 'm', 'e' });
+    try std.testing.expectEqual(Tag.array, @as(Tag, @enumFromInt(roots[2].tag)));
+    try std.testing.expectEqual(@as(usize, 10), roots[2].object().?.payload.array.items.len);
+    try expectUtf16String(&runtime, roots[2].object().?.payload.array.items[0], "145");
 }
 
 test "AOT整数実数変換はJavaScript接頭辞規則を共有する" {

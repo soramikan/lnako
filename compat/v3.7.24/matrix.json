@@ -19210,14 +19210,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-caniuse-all"
+        "plugin-caniuse-all",
+        "native-caniuse-browsers"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "固定した公式プラグインとの差分テストに成功"
+      "reason": "固定した公式プラグインとの差分テストと純LLVM AOT dispatchの差分テストに成功"
     },
     {
       "id": "command-0837",

@@ -3310,9 +3310,10 @@
   "対応ブラウザ一覧取得": {
     "status": "native",
     "tests": [
-      "plugin-caniuse-all"
+      "plugin-caniuse-all",
+      "native-caniuse-browsers"
     ],
-    "reason": "固定した公式プラグインとの差分テストに成功"
+    "reason": "固定した公式プラグインとの差分テストと純LLVM AOT dispatchの差分テストに成功"
   },
   "JS実行": {
     "status": "compat-js",

@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "961b88f0f263589973d6cf7d088ed9ac27016d66bcef039f45021fe15febb591"
+    "sha256": "fab15602c996d2cc0d83cd095951af44513e7e8ad3191ae337a1608698195cfc"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 288,
+    "count": 287,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 288
+      "unverified": 287
     }
   },
   "groups": [
@@ -35,22 +35,6 @@
       ],
       "names": [
         "ブラウザ名変換表"
-      ]
-    },
-    {
-      "plugin": "plugin_caniuse",
-      "group": "基本プラグイン",
-      "category": "ブラウザサポート",
-      "type": "関数",
-      "count": 1,
-      "executionEvidenceStates": {
-        "unverified": 1
-      },
-      "commandIds": [
-        "command-0836"
-      ],
-      "names": [
-        "対応ブラウザ一覧取得"
       ]
     },
     {
@@ -6151,23 +6135,6 @@
       "group": "基本プラグイン",
       "category": "ブラウザサポート",
       "type": "定数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-caniuse-all"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0836",
-      "name": "対応ブラウザ一覧取得",
-      "plugin": "plugin_caniuse",
-      "group": "基本プラグイン",
-      "category": "ブラウザサポート",
-      "type": "関数",
       "plannedMode": "native",
       "status": "native",
       "identityResolution": "unique-name",

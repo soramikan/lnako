@@ -82,9 +82,9 @@ fixtureのソース本文から命令名を推測することはしません。�
 `executionEvidenceState`も保持するため、次にAOT fixtureを追加する対象を命令系統ごとに選べます。
 この分類は実装完了、AOT実行、公式等価性、attestation済みの`verified`を意味しません。
 
-現行HEADでは、明示`commands`を追加した既存AOT fixtureと数学・日時fixtureを含めて、fixture inventoryは
-全223件（AOT 118件、Interpreter 96件、QuickJS 9件）です。命令のfixture coverageは`paired` 235 entry、
-`interpreter-only` 288 entryです。execution evidenceは`verified` 0、
+現行HEADでは、明示`commands`を追加した既存AOT fixtureと数学・日時・caniuse fixtureを含めて、fixture inventoryは
+全224件（AOT 119件、Interpreter 96件、QuickJS 9件）です。命令のfixture coverageは`paired` 236 entry、
+`interpreter-only` 287 entryです。execution evidenceは`verified` 0、
 `trace-confirmed-unattested` 4、`unverified` 523のままです。
 fixtureの関連付けを変更した場合は、次で派生台帳の生成と検査を行います。
 
