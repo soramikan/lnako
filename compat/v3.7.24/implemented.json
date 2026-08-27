@@ -3130,7 +3130,7 @@
       "plugin-node-http-options-and-promises",
       "native-node-http-initial-constants"
     ],
-    "reason": "Nodeホストの初期空文字を共有システム定数として純LLVM AOTへ接続し、公式7経路差分テストに成功"
+    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
   },
   "AJAXオプション設定": {
     "status": "native",
@@ -3258,7 +3258,7 @@
       "plugin-httpserver-all",
       "native-node-http-initial-constants"
     ],
-    "reason": "HTTPサーバー未取り込み時のnull初期値を共有システム定数として純LLVM AOTへ接続し、公式7経路差分テストに成功"
+    "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
   },
   "GETデータ": {
     "status": "native",
@@ -3266,7 +3266,7 @@
       "plugin-httpserver-all",
       "native-node-http-initial-constants"
     ],
-    "reason": "HTTPサーバー未取り込み時のnull初期値を共有システム定数として純LLVM AOTへ接続し、公式7経路差分テストに成功"
+    "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
   },
   "POSTデータ": {
     "status": "native",
@@ -3274,7 +3274,7 @@
       "plugin-httpserver-all",
       "native-node-http-initial-constants"
     ],
-    "reason": "HTTPサーバー未取り込み時のnull初期値を共有システム定数として純LLVM AOTへ接続し、公式7経路差分テストに成功"
+    "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
   },
   "FILESデータ": {
     "status": "native",
@@ -3282,7 +3282,7 @@
       "plugin-httpserver-all",
       "native-node-http-initial-constants"
     ],
-    "reason": "HTTPサーバー未取り込み時のnull初期値を共有システム定数として純LLVM AOTへ接続し、公式7経路差分テストに成功"
+    "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
   },
   "簡易HTTPサーバ起動時": {
     "status": "native",

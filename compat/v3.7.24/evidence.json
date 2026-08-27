@@ -14924,7 +14924,7 @@
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
       "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "Nodeホストの初期空文字を共有システム定数として純LLVM AOTへ接続し、公式7経路差分テストに成功"
+      "implementationReason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0768",
@@ -15707,7 +15707,7 @@
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
       "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "HTTPサーバー未取り込み時のnull初期値を共有システム定数として純LLVM AOTへ接続し、公式7経路差分テストに成功"
+      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0796",
@@ -15741,7 +15741,7 @@
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
       "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "HTTPサーバー未取り込み時のnull初期値を共有システム定数として純LLVM AOTへ接続し、公式7経路差分テストに成功"
+      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0797",
@@ -15775,7 +15775,7 @@
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
       "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "HTTPサーバー未取り込み時のnull初期値を共有システム定数として純LLVM AOTへ接続し、公式7経路差分テストに成功"
+      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0798",
@@ -15809,7 +15809,7 @@
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
       "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "HTTPサーバー未取り込み時のnull初期値を共有システム定数として純LLVM AOTへ接続し、公式7経路差分テストに成功"
+      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0799",

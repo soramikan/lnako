@@ -11962,7 +11962,7 @@
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Nodeホストの初期空文字を共有システム定数として純LLVM AOTへ接続し、公式7経路差分テストに成功"
+      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
       "id": "command-0768",
@@ -12666,7 +12666,7 @@
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "HTTPサーバー未取り込み時のnull初期値を共有システム定数として純LLVM AOTへ接続し、公式7経路差分テストに成功"
+      "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0796",
@@ -12691,7 +12691,7 @@
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "HTTPサーバー未取り込み時のnull初期値を共有システム定数として純LLVM AOTへ接続し、公式7経路差分テストに成功"
+      "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0797",
@@ -12716,7 +12716,7 @@
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "HTTPサーバー未取り込み時のnull初期値を共有システム定数として純LLVM AOTへ接続し、公式7経路差分テストに成功"
+      "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0798",
@@ -12741,7 +12741,7 @@
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "HTTPサーバー未取り込み時のnull初期値を共有システム定数として純LLVM AOTへ接続し、公式7経路差分テストに成功"
+      "reason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
       "id": "command-0799",
