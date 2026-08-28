@@ -22,6 +22,7 @@ extern "c" fn time(timer: ?*i64) i64;
 pub const Tag = aot_abi.Tag;
 
 const safe_array_element_limit: usize = 1_000_000;
+const aot_timer_event_limit: usize = 100_000;
 
 /// AOT dispatch tracing is opt-in through LNAKO_DISPATCH_TRACE. It records
 /// only static dispatch metadata; arguments, values, and addresses never
@@ -170,6 +171,13 @@ const ByteKind = enum { buffer, uint8_array, array_buffer };
 const ByteBuffer = struct {
     bytes: []u8,
     kind: ByteKind,
+};
+const AotTimer = struct {
+    id: u64,
+    due_milliseconds: u64,
+    interval_milliseconds: u64,
+    repeating: bool,
+    callback: Value,
 };
 const IteratorKind = enum { repeat, range, bytes, string, array, dictionary };
 const Iterator = struct {
@@ -346,12 +354,17 @@ const Runtime = struct {
     csv_state: AotCsvState = .{},
     namespace_stack: std.ArrayList(NamespaceFrame) = .empty,
     named_functions: std.ArrayList(RegisteredFunction) = .empty,
+    timers: std.ArrayList(AotTimer) = .empty,
+    elapsed_milliseconds: u64 = 0,
+    next_timer_id: u64 = 1,
+    timer_event_count: usize = 0,
 
     fn deinit(self: *Runtime) void {
         self.dispatch_trace.deinit();
         self.csv_state.deinit(self.allocator);
         self.print_pool.deinit(self.allocator);
         self.namespace_stack.deinit(self.allocator);
+        self.timers.deinit(self.allocator);
         if (self.aot_source_directory) |path| self.allocator.free(path);
         var current = self.objects;
         while (current) |object| {
@@ -560,6 +573,7 @@ const Runtime = struct {
             self.markValue(entry.namespace);
             self.markValue(entry.plugin_name);
         }
+        for (self.timers.items) |timer| self.markValue(timer.callback);
         while (self.grey) |object| {
             self.grey = object.grey_next;
             object.grey_next = null;
@@ -2827,21 +2841,126 @@ fn pluginManagementBuiltin(
     }
 }
 
-fn timerWaitBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
-    const source = if (arguments.len > 0) arguments[arguments.len - 1] else Value{};
-    const seconds = try valueToNumberRuntime(runtime, source);
-    if (!std.math.isFinite(seconds) or seconds <= 0) return .{};
+fn aotDelayMilliseconds(runtime: *Runtime, value: Value) !u64 {
+    const seconds = try valueToNumberRuntime(runtime, value);
+    if (!std.math.isFinite(seconds) or seconds <= 0) return 0;
     const milliseconds = @floor(seconds * 1000.0);
     if (milliseconds >= @as(f64, @floatFromInt(std.math.maxInt(u64)))) return error.TimerOverflow;
-    const delay: u64 = @intFromFloat(milliseconds);
+    return @intFromFloat(milliseconds);
+}
+
+fn sleepAotUntil(runtime: *Runtime, target: u64) !void {
+    if (target <= runtime.elapsed_milliseconds) return;
+    const delay = target - runtime.elapsed_milliseconds;
     if (delay > @as(u64, std.math.maxInt(i64))) return error.TimerOverflow;
-    if (delay > 0) {
-        try std.Io.sleep(
-            std.Io.Threaded.global_single_threaded.io(),
-            std.Io.Duration.fromMilliseconds(@intCast(delay)),
-            .awake,
-        );
+    try std.Io.sleep(
+        std.Io.Threaded.global_single_threaded.io(),
+        std.Io.Duration.fromMilliseconds(@intCast(delay)),
+        .awake,
+    );
+    runtime.elapsed_milliseconds = target;
+}
+
+fn earliestAotTimerIndex(runtime: *const Runtime) ?usize {
+    if (runtime.timers.items.len == 0) return null;
+    var earliest: usize = 0;
+    for (runtime.timers.items[1..], 1..) |timer, index| {
+        if (timer.due_milliseconds < runtime.timers.items[earliest].due_milliseconds) earliest = index;
     }
+    return earliest;
+}
+
+fn executeAotTimer(runtime: *Runtime, index: usize) !void {
+    if (runtime.timer_event_count >= aot_timer_event_limit) return error.EventLoopLimitExceeded;
+    runtime.timer_event_count += 1;
+    const timer = runtime.timers.orderedRemove(index);
+    var callback = timer.callback;
+    var root = RootFrame{};
+    runtime.pushRoots(&root, @ptrCast(&callback), 1);
+    defer runtime.popRoots(&root);
+    try sleepAotUntil(runtime, timer.due_milliseconds);
+    if (timer.repeating) {
+        const next_due = std.math.add(u64, runtime.elapsed_milliseconds, timer.interval_milliseconds) catch return error.TimerOverflow;
+        try runtime.timers.append(runtime.allocator, .{
+            .id = timer.id,
+            .due_milliseconds = next_due,
+            .interval_milliseconds = timer.interval_milliseconds,
+            .repeating = true,
+            .callback = callback,
+        });
+    }
+    var id = numberValue(@floatFromInt(timer.id));
+    _ = try invokeAotCallback(runtime, callback, @ptrCast(&id), 1);
+}
+
+fn drainAotTimers(runtime: *Runtime) !void {
+    while (earliestAotTimerIndex(runtime)) |index| try executeAotTimer(runtime, index);
+}
+
+fn waitAotMilliseconds(runtime: *Runtime, milliseconds: u64) !void {
+    const target = std.math.add(u64, runtime.elapsed_milliseconds, milliseconds) catch return error.TimerOverflow;
+    while (earliestAotTimerIndex(runtime)) |index| {
+        if (runtime.timers.items[index].due_milliseconds > target) break;
+        try executeAotTimer(runtime, index);
+    }
+    try sleepAotUntil(runtime, target);
+}
+
+fn scheduleAotTimer(runtime: *Runtime, arguments: []const Value, repeating: bool, target: ?*Value) !Value {
+    if (arguments.len < 2) return error.InvalidArgumentCount;
+    var values = [_]Value{ arguments[0], arguments[1], .{} };
+    var root = RootFrame{};
+    runtime.pushRoots(&root, &values, values.len);
+    defer runtime.popRoots(&root);
+    values[0] = try resolveAotCallback(runtime, values[0]);
+    const delay = try aotDelayMilliseconds(runtime, values[1]);
+    const id = runtime.next_timer_id;
+    runtime.next_timer_id = std.math.add(u64, runtime.next_timer_id, 1) catch return error.TimerOverflow;
+    const due = std.math.add(u64, runtime.elapsed_milliseconds, delay) catch return error.TimerOverflow;
+    try runtime.timers.append(runtime.allocator, .{
+        .id = id,
+        .due_milliseconds = due,
+        .interval_milliseconds = if (repeating) delay else 0,
+        .repeating = repeating,
+        .callback = values[0],
+    });
+    values[2] = numberValue(@floatFromInt(id));
+    if (target) |pointer| pointer.* = values[2];
+    return values[2];
+}
+
+fn timerBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value, target: ?*Value) !Value {
+    switch (command) {
+        .timer_after => return scheduleAotTimer(runtime, arguments, false, target),
+        .timer_every => return scheduleAotTimer(runtime, arguments, true, target),
+        .timer_stop => {
+            if (arguments.len == 0 or arguments[arguments.len - 1].tag != @intFromEnum(Tag.number)) {
+                return .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
+            }
+            const number = @as(f64, @bitCast(arguments[arguments.len - 1].payload));
+            if (!std.math.isFinite(number) or number < 0 or number > @as(f64, @floatFromInt(std.math.maxInt(u64)))) {
+                return .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
+            }
+            const id: u64 = @intFromFloat(@trunc(number));
+            for (runtime.timers.items, 0..) |timer, index| {
+                if (timer.id != id) continue;
+                _ = runtime.timers.orderedRemove(index);
+                return .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 };
+            }
+            return .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
+        },
+        .timer_stop_all => {
+            runtime.timers.clearRetainingCapacity();
+            return .{};
+        },
+        else => return error.UnknownCommand,
+    }
+}
+
+fn timerWaitBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    const source = if (arguments.len > 0) arguments[arguments.len - 1] else Value{};
+    const delay = try aotDelayMilliseconds(runtime, source);
+    try waitAotMilliseconds(runtime, delay);
     return .{};
 }
 
@@ -2852,6 +2971,46 @@ test "AOT秒待は0秒・負数・非数をundefinedで完了する" {
     try std.testing.expectEqual(Value{}, try timerWaitBuiltin(&runtime, &.{}));
     try std.testing.expectEqual(Value{}, try timerWaitBuiltin(&runtime, &.{numberValue(-1)}));
     try std.testing.expectEqual(Value{}, try timerWaitBuiltin(&runtime, &.{numberValue(std.math.nan(f64))}));
+}
+
+test "AOTタイマーはコールバックを保持し順序・停止・周期を処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try active_runtime.?.createBindingCell(numberValue(0));
+    roots[1] = try active_runtime.?.createFunction(testAotCapturedIncrement, 0, &.{roots[0]});
+    var target = Value{};
+    var one_shot_arguments = [_]Value{ roots[1], numberValue(0) };
+    const active = &active_runtime.?;
+    roots[2] = try timerBuiltin(active, .timer_after, &one_shot_arguments, &target);
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(target));
+    roots[1] = .{};
+    try std.testing.expectEqual(@as(usize, 1), active_runtime.?.timers.items.len);
+    _ = active.collect();
+    try drainAotTimers(active);
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(roots[0].object().?.payload.binding_cell));
+    try std.testing.expectEqual(@as(usize, 0), active_runtime.?.timers.items.len);
+
+    roots[3] = try active_runtime.?.createFunction(testAotTimerStop, 1, &.{});
+    var repeating_arguments = [_]Value{ roots[3], numberValue(0) };
+    _ = try timerBuiltin(active, .timer_every, &repeating_arguments, null);
+    try drainAotTimers(active);
+    try std.testing.expectEqual(@as(usize, 0), active_runtime.?.timers.items.len);
+
+    var pending_arguments = [_]Value{ roots[3], numberValue(1) };
+    _ = try timerBuiltin(active, .timer_after, &pending_arguments, null);
+    _ = try timerBuiltin(active, .timer_stop_all, &.{}, null);
+    try std.testing.expectEqual(@as(usize, 0), active_runtime.?.timers.items.len);
 }
 
 fn stringArrayBuiltin(runtime: *Runtime, names: []const []const u8) !Value {
@@ -3180,6 +3339,14 @@ pub export fn lnako_aot_node_mother_path_init(
 pub export fn lnako_aot_runtime_deinit() callconv(.c) void {
     if (active_runtime) |*runtime| runtime.deinit();
     active_runtime = null;
+}
+
+/// Runs callbacks that were registered by the generated program before its
+/// global roots are removed. This gives AOT the same top-level timer drain as
+/// the Interpreter while keeping callback values inside the native runtime.
+pub export fn lnako_aot_runtime_drain_events() callconv(.c) void {
+    const runtime = if (active_runtime) |*active| active else return;
+    drainAotTimers(runtime) catch |failure| runtimeFailure(failure);
 }
 
 /// Site-aware display hooks used by generated LLVM.  The hooks are additive;
@@ -3908,6 +4075,46 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
     lnako_aot_builtin_call_site(out, arguments, len, opcode, 0);
 }
 
+/// Dedicated ABI for timer commands. Timer registration updates the shared
+/// `対象` value, so generated LLVM passes that global explicitly instead of
+/// relying on a runtime-local lookup.
+pub export fn lnako_aot_timer_call_site(
+    out: *Value,
+    target: *Value,
+    arguments: ?[*]const Value,
+    len: usize,
+    opcode: u16,
+    site_id: u64,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
+        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "timer", site_id);
+        runtime.setFailure(error.UnknownCommand);
+        runtime.dispatch_trace.result(call_id, "unknown", opcode, "timer", site_id, false);
+        return;
+    };
+    if (command != .timer_after and command != .timer_every and command != .timer_stop and command != .timer_stop_all) {
+        runtime.setFailure(error.UnknownCommand);
+        return;
+    }
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "timer", site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "timer", site_id, success);
+    if (arguments == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+    out.* = timerBuiltin(runtime, command, actual, target) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    success = runtime.failure_epoch == start_epoch;
+}
+
 pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Value, len: usize, opcode: u16, site_id: u64) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*active| active else return;
@@ -3926,7 +4133,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all and command != .namespace_pop and command != .timer_wait and command != .async_noop and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit and command != .node_hash_names and command != .node_random_uuid and command != .node_stdin_all and command != .node_network_ipv4 and command != .node_network_ipv6) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .namespace_pop and command != .timer_wait and command != .timer_stop_all and command != .async_noop and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit and command != .node_hash_names and command != .node_random_uuid and command != .node_stdin_all and command != .node_network_ipv4 and command != .node_network_ipv6) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -4031,6 +4238,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         .timer_wait => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = timerWaitBuiltin(runtime, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .timer_after, .timer_every, .timer_stop, .timer_stop_all => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = timerBuiltin(runtime, command, actual, null) catch |failure| {
                 runtime.setFailure(failure);
                 return;
             };
@@ -10617,8 +10831,10 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, *const Value, ?[*]const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_function_call));
     try std.testing.expectEqual(*const fn (*Value, *Value, ?[*]const Value, usize, u8) callconv(.c) void, @TypeOf(&lnako_aot_cut));
     try std.testing.expectEqual(*const fn (*Value, *Value, ?[*]const Value, usize, u8, u64) callconv(.c) void, @TypeOf(&lnako_aot_cut_site));
+    try std.testing.expectEqual(*const fn () callconv(.c) void, @TypeOf(&lnako_aot_runtime_drain_events));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16) callconv(.c) void, @TypeOf(&lnako_aot_builtin_call));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_builtin_call_site));
+    try std.testing.expectEqual(*const fn (*Value, *Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_timer_call_site));
     try std.testing.expectEqual(*const fn (*Value, ?*const Value, u64, ?[*]const u8, usize, ?*Value, u64) callconv(.c) void, @TypeOf(&lnako_aot_debug_display));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, *Value, u64) callconv(.c) void, @TypeOf(&lnako_aot_archive_tool_path_set));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, *Value, u64) callconv(.c) void, @TypeOf(&lnako_aot_archive_tool_path_set));
@@ -10787,6 +11003,14 @@ test "AOT切取はUTF-16検索と元値lengthの遅延評価を再現する" {
 
 fn testAotFunction(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
     out.* = if (arguments == null or len != 1) .{} else arguments.?[0];
+}
+
+fn testAotTimerStop(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
+    if (arguments != null and len > 0) {
+        var ignored = Value{};
+        lnako_aot_builtin_call(&ignored, arguments, 1, @intFromEnum(aot_builtin.Command.timer_stop));
+    }
+    out.* = .{};
 }
 
 fn testAotConstantSeven(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {

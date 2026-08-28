@@ -33,6 +33,19 @@ for (const testCase of compatCases) for (const name of testCase.relatedCommands 
   implemented[name] = { ...current, tests: [...tests] };
 }
 
+register("秒後", "native-system-timers", "公式7経路の単発タイマー順序・停止・終了時ドレイン差分テストに成功");
+register("秒毎", "native-system-timers", "公式7経路の周期タイマーとコールバック内停止差分テストに成功");
+register("秒タイマー開始時", "native-system-timers", "公式7経路の秒毎別名とコールバック内停止差分テストに成功");
+register("タイマー停止", "native-system-timers", "公式7経路の個別タイマー停止差分テストに成功");
+register("全タイマー停止", "native-system-timers", "公式7経路の一括タイマー停止差分テストに成功");
+
+function register(name, testId, reason) {
+  const current = implemented[name];
+  const tests = new Set(current?.tests ?? []);
+  tests.add(testId);
+  implemented[name] = { status: "native", tests: [...tests], reason };
+}
+
 const output = `${JSON.stringify(implemented, null, 2)}\n`;
 if (process.argv.includes("--check")) {
   if (await readFile(implementationPath, "utf8") !== output) throw new Error("plugin_system実装台帳が最新ではありません");

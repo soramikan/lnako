@@ -297,6 +297,10 @@ pub const Command = enum(u16) {
     node_hash_value,
     node_random_uuid,
     node_random_array,
+    timer_after,
+    timer_every,
+    timer_stop,
+    timer_stop_all,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -559,6 +563,10 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "名前空間設定")) return .namespace_set;
     if (std.mem.eql(u8, name, "名前空間ポップ")) return .namespace_pop;
     if (std.mem.eql(u8, name, "秒待") or std.mem.eql(u8, name, "秒待機") or std.mem.eql(u8, name, "秒逐次待機")) return .timer_wait;
+    if (std.mem.eql(u8, name, "秒後")) return .timer_after;
+    if (std.mem.eql(u8, name, "秒毎") or std.mem.eql(u8, name, "秒タイマー開始時")) return .timer_every;
+    if (std.mem.eql(u8, name, "タイマー停止")) return .timer_stop;
+    if (std.mem.eql(u8, name, "全タイマー停止")) return .timer_stop_all;
     if (std.mem.eql(u8, name, "ASYNC")) return .async_noop;
     if (std.mem.eql(u8, name, "AWAIT実行")) return .system_await_execute;
     if (std.mem.eql(u8, name, "実行")) return .system_execute;
@@ -783,6 +791,11 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.timer_wait, lookup("秒待").?);
     try std.testing.expectEqual(Command.timer_wait, lookup("秒待機").?);
     try std.testing.expectEqual(Command.timer_wait, lookup("秒逐次待機").?);
+    try std.testing.expectEqual(Command.timer_after, lookup("秒後").?);
+    try std.testing.expectEqual(Command.timer_every, lookup("秒毎").?);
+    try std.testing.expectEqual(Command.timer_every, lookup("秒タイマー開始時").?);
+    try std.testing.expectEqual(Command.timer_stop, lookup("タイマー停止").?);
+    try std.testing.expectEqual(Command.timer_stop_all, lookup("全タイマー停止").?);
     try std.testing.expectEqual(Command.async_noop, lookup("ASYNC").?);
     try std.testing.expectEqual(Command.system_await_execute, lookup("AWAIT実行").?);
     try std.testing.expectEqual(Command.system_execute, lookup("実行").?);

@@ -85,6 +85,7 @@ pub fn manifestCall(name: []const u8, direct_callee: ?ir.FunctionId, is_builtin_
     const route = switch (command) {
         .cut, .cut_range => "cut",
         .regexp_match, .regexp_extract, .regexp_replace, .regexp_split => "regexp",
+        .timer_after, .timer_every, .timer_stop, .timer_stop_all => "timer",
         .system_debug_display => "debug-display",
         .system_hatena_execute => "hatena-default",
         .node_archive_tool_path_set => "archive-tool-path",
@@ -323,6 +324,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_node_directory_constants_init(ptr, ptr, ptr)\n" ++
                 "declare void @lnako_aot_node_mother_path_init(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_runtime_deinit()\n" ++
+                "declare void @lnako_aot_runtime_drain_events()\n" ++
                 "declare void @lnako_aot_push_roots(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_pop_roots(ptr)\n" ++
                 "declare void @lnako_aot_exception_set(ptr)\n" ++
@@ -370,6 +372,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_cut_site(ptr, ptr, ptr, i64, i8, i64)\n" ++
                 "declare void @lnako_aot_builtin_call(ptr, ptr, i64, i16)\n" ++
                 "declare void @lnako_aot_builtin_call_site(ptr, ptr, i64, i16, i64)\n" ++
+                "declare void @lnako_aot_timer_call_site(ptr, ptr, ptr, i64, i16, i64)\n" ++
                 "declare void @lnako_aot_regexp_call(ptr, ptr, ptr, i64, i16)\n" ++
                 "declare void @lnako_aot_regexp_call_site(ptr, ptr, ptr, i64, i16, i64)\n" ++
                 "declare void @lnako_aot_hatena_execute(ptr, ptr, i64, ptr, i64, ptr, i64)\n" ++
@@ -513,6 +516,9 @@ const Emitter = struct {
                     if (self.debugPathIndex(path) == null) try self.debug_paths.append(self.allocator, .{ .path = path });
                 };
                 if (aot_builtin.lookup(instruction.name)) |command| if (command == .cut or command == .cut_range) {
+                    if (self.globalIndex("対象") == null) try self.globals.append(self.allocator, "対象");
+                };
+                if (aot_builtin.lookup(instruction.name)) |command| if (isTimerCommand(command)) {
                     if (self.globalIndex("対象") == null) try self.globals.append(self.allocator, "対象");
                 };
                 if (aot_builtin.lookup(instruction.name)) |command| if (command == .regexp_match or command == .regexp_extract) {
@@ -1192,6 +1198,26 @@ const Emitter = struct {
             try self.debugSuffix(instruction.span, scope);
             return;
         }
+        if (isTimerCommand(command)) {
+            const target_index = self.globalIndex("対象") orelse return error.MissingTargetGlobal;
+            for (instruction.operands, 0..) |argument, index| {
+                try self.output.writer.print("  %timer.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+                try self.debugSuffix(instruction.span, scope);
+                try self.output.writer.writeAll("  store %lnako.Value ");
+                try self.writeValueRef(function, argument);
+                try self.output.writer.print(", ptr %timer.{d}.slot.{d}", .{ result, index });
+                try self.debugSuffix(instruction.span, scope);
+            }
+            try self.output.writer.print("  call void @lnako_aot_timer_call_site(ptr %root.slot.{d}, ptr @lnako.global.{d}, ptr ", .{ result, target_index });
+            if (instruction.operands.len > 0) {
+                try self.output.writer.print("%timer.{d}.slot.0", .{result});
+            } else try self.output.writer.writeAll("null");
+            try self.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+            try self.debugSuffix(instruction.span, scope);
+            try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+            try self.debugSuffix(instruction.span, scope);
+            return;
+        }
         if (isPluginManagementCommand(command)) {
             const plugin_name_index = self.globalIndex("プラグイン名") orelse return error.MissingPluginNameGlobal;
             const namespace_index = self.globalIndex("名前空間") orelse return error.MissingNamespaceGlobal;
@@ -1540,6 +1566,11 @@ const Emitter = struct {
             try self.output.writer.print("entry.exception.abort.{d}:\n  call void @lnako_aot_exception_abort()\n  unreachable\nentry.continue.{d}:\n", .{ call_index, call_index });
             call_index += 1;
         }
+        try self.output.writer.writeAll("  call void @lnako_aot_runtime_drain_events()\n");
+        try self.output.writer.writeAll("  %entry.timer.exception.pending = call i32 @lnako_aot_exception_pending()\n");
+        try self.output.writer.writeAll("  %entry.timer.exception.is-pending = icmp ne i32 %entry.timer.exception.pending, 0\n");
+        try self.output.writer.writeAll("  br i1 %entry.timer.exception.is-pending, label %entry.timer.exception.abort, label %entry.timer.continue\n");
+        try self.output.writer.writeAll("entry.timer.exception.abort:\n  call void @lnako_aot_exception_abort()\n  unreachable\nentry.timer.continue:\n");
         var global_index = self.globals.items.len;
         while (global_index > 0) {
             global_index -= 1;
@@ -1781,6 +1812,13 @@ fn isStdioCommand(command: aot_builtin.Command) bool {
     };
 }
 
+fn isTimerCommand(command: aot_builtin.Command) bool {
+    return switch (command) {
+        .timer_after, .timer_every, .timer_stop, .timer_stop_all => true,
+        else => false,
+    };
+}
+
 fn isPluginManagementCommand(command: aot_builtin.Command) bool {
     return switch (command) {
         .plugin_name_set, .namespace_set, .namespace_pop => true,
@@ -1967,6 +2005,9 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     defer module.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "define i32 @main(i32 %argc, ptr %argv)") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call i32 @lnako_aot_runtime_init()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_runtime_drain_events()\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_runtime_drain_events()\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_timer_call_site(ptr, ptr, ptr, i64, i16, i64)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_constants_init(ptr, ptr, ptr, i32, ptr)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_node_constants_init(ptr ") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_directory_constants_init(ptr, ptr, ptr)\n") != null);
@@ -2038,6 +2079,11 @@ test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {
     try std.testing.expectEqualStrings("timer_wait", timer_wait.canonical_opcode);
     try std.testing.expectEqualStrings("builtin", timer_wait.route);
     try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.timer_wait), timer_wait.opcode);
+
+    const timer = manifestCall("秒後", null, true).?;
+    try std.testing.expectEqualStrings("timer_after", timer.canonical_opcode);
+    try std.testing.expectEqualStrings("timer", timer.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.timer_after), timer.opcode);
 
     try std.testing.expect(manifestCall("利用者関数", 0, false) == null);
     try std.testing.expect(manifestCall("未知命令", null, false) == null);

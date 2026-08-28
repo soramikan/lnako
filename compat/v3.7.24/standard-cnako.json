@@ -8488,14 +8488,15 @@
         "timer-order",
         "timer-stop",
         "timer-wait-interleaving",
-        "promise-async-timer"
+        "promise-async-timer",
+        "native-system-timers"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "単発タイマーの順序と停止を公式cnako3差分テストで確認"
+      "reason": "公式7経路の単発タイマー順序・停止・終了時ドレイン差分テストに成功"
     },
     {
       "id": "command-0319",
@@ -8514,14 +8515,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "timer-interval"
+        "timer-interval",
+        "native-system-timers"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "周期タイマーの実行とコールバック内停止を公式cnako3差分テストで確認"
+      "reason": "公式7経路の周期タイマーとコールバック内停止差分テストに成功"
     },
     {
       "id": "command-0320",
@@ -8540,14 +8542,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "timer-interval-alias"
+        "timer-interval-alias",
+        "native-system-timers"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "秒毎の別名として公式cnako3差分テストに成功"
+      "reason": "公式7経路の秒毎別名とコールバック内停止差分テストに成功"
     },
     {
       "id": "command-0321",
@@ -8567,14 +8570,15 @@
       "status": "native",
       "tests": [
         "timer-stop",
-        "timer-interval"
+        "timer-interval",
+        "native-system-timers"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "単発タイマーと周期タイマーの停止を公式cnako3差分テストで確認"
+      "reason": "公式7経路の個別タイマー停止差分テストに成功"
     },
     {
       "id": "command-0322",
@@ -8593,14 +8597,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "timer-stop-all"
+        "timer-stop-all",
+        "native-system-timers"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "登録済みタイマーの一括停止を公式cnako3差分テストで確認"
+      "reason": "公式7経路の一括タイマー停止差分テストに成功"
     },
     {
       "id": "command-0323",

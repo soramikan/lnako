@@ -733,6 +733,12 @@
     "source": "0.001秒待\n0秒待機\n0秒逐次待機\n「待機完了」を表示\n"
   },
   {
+    "id": "native-system-timers",
+    "oracle": "official-source",
+    "commands": ["秒後", "秒毎", "秒タイマー開始時", "タイマー停止", "全タイマー停止"],
+    "source": "0.003秒後には\n「三」を表示\nここまで\n0.001秒後には\n「一」を表示\nここまで\n0.004秒待\n0.001秒後には\n「停止されない」を表示\nここまで\n対象のタイマー停止\n「停止成功」を表示\n0秒毎には(TID)\n「毎」を表示\nTIDのタイマー停止\nここまで\n0.001秒タイマー開始した時には(TID2)\n「開始」を表示\nTID2のタイマー停止\nここまで\n0.001秒後には\n「全停止対象」を表示\nここまで\n全タイマー停止\n「全停止」を表示\n"
+  },
+  {
     "id": "native-node-line-message-discontinued",
     "oracle": "official-generated",
     "commands": ["LINE送信"],

@@ -101,38 +101,43 @@
       "timer-order",
       "timer-stop",
       "timer-wait-interleaving",
-      "promise-async-timer"
+      "promise-async-timer",
+      "native-system-timers"
     ],
-    "reason": "単発タイマーの順序と停止を公式cnako3差分テストで確認"
+    "reason": "公式7経路の単発タイマー順序・停止・終了時ドレイン差分テストに成功"
   },
   "秒毎": {
     "status": "native",
     "tests": [
-      "timer-interval"
+      "timer-interval",
+      "native-system-timers"
     ],
-    "reason": "周期タイマーの実行とコールバック内停止を公式cnako3差分テストで確認"
+    "reason": "公式7経路の周期タイマーとコールバック内停止差分テストに成功"
   },
   "秒タイマー開始時": {
     "status": "native",
     "tests": [
-      "timer-interval-alias"
+      "timer-interval-alias",
+      "native-system-timers"
     ],
-    "reason": "秒毎の別名として公式cnako3差分テストに成功"
+    "reason": "公式7経路の秒毎別名とコールバック内停止差分テストに成功"
   },
   "タイマー停止": {
     "status": "native",
     "tests": [
       "timer-stop",
-      "timer-interval"
+      "timer-interval",
+      "native-system-timers"
     ],
-    "reason": "単発タイマーと周期タイマーの停止を公式cnako3差分テストで確認"
+    "reason": "公式7経路の個別タイマー停止差分テストに成功"
   },
   "全タイマー停止": {
     "status": "native",
     "tests": [
-      "timer-stop-all"
+      "timer-stop-all",
+      "native-system-timers"
     ],
-    "reason": "登録済みタイマーの一括停止を公式cnako3差分テストで確認"
+    "reason": "公式7経路の一括タイマー停止差分テストに成功"
   },
   "そ": {
     "status": "native",
