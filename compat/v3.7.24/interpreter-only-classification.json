@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "9687c1d08ab5951513cd9ec78d5ee3aa6bad1f4ced03a7bfe69c883feea87e23"
+    "sha256": "12a9fccaf460bfd5bf8701db072c481a1705cbd98f634f39c029058c47bcbb72"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 103,
+    "count": 101,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 103
+      "unverified": 101
     }
   },
   "groups": [
@@ -269,33 +269,15 @@
       "plugin": "plugin_node",
       "group": "基本プラグイン",
       "category": "フォルダ取得",
-      "type": "定数",
+      "type": "関数",
       "count": 1,
       "executionEvidenceStates": {
         "unverified": 1
       },
       "commandIds": [
-        "command-0733"
-      ],
-      "names": [
-        "母艦パス"
-      ]
-    },
-    {
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "フォルダ取得",
-      "type": "関数",
-      "count": 2,
-      "executionEvidenceStates": {
-        "unverified": 2
-      },
-      "commandIds": [
-        "command-0734",
         "command-0736"
       ],
       "names": [
-        "母艦パス取得",
         "一時フォルダ作成"
       ]
     },
@@ -1352,40 +1334,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "plugin-node-file-core"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0733",
-      "name": "母艦パス",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "フォルダ取得",
-      "type": "定数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-path-host"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0734",
-      "name": "母艦パス取得",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "フォルダ取得",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-path-host"
       ],
       "aotFixtureIds": []
     },

@@ -2603,16 +2603,18 @@
   "母艦パス": {
     "status": "native",
     "tests": [
-      "plugin-node-path-host"
+      "plugin-node-path-host",
+      "native-node-mother-path"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路の母艦パス差分テストに成功"
   },
   "母艦パス取得": {
     "status": "native",
     "tests": [
-      "plugin-node-path-host"
+      "plugin-node-path-host",
+      "native-node-mother-path"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路の母艦パス取得差分テストに成功"
   },
   "テンポラリフォルダ": {
     "status": "native",

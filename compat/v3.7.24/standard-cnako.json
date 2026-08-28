@@ -11119,14 +11119,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-path-host"
+        "plugin-node-path-host",
+        "native-node-mother-path"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路の母艦パス差分テストに成功"
     },
     {
       "id": "command-0734",
@@ -11144,14 +11145,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-path-host"
+        "plugin-node-path-host",
+        "native-node-mother-path"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路の母艦パス取得差分テストに成功"
     },
     {
       "id": "command-0735",

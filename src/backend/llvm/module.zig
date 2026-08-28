@@ -317,6 +317,7 @@ const Emitter = struct {
                 "declare i32 @lnako_aot_runtime_init()\n" ++
                 "declare void @lnako_aot_node_constants_init(ptr, ptr, ptr, i32, ptr)\n" ++
                 "declare void @lnako_aot_node_directory_constants_init(ptr, ptr, ptr)\n" ++
+                "declare void @lnako_aot_node_mother_path_init(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_runtime_deinit()\n" ++
                 "declare void @lnako_aot_push_roots(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_pop_roots(ptr)\n" ++
@@ -439,6 +440,20 @@ const Emitter = struct {
             }
         }
         if (self.system_strings.items.len > 0) try writer.writeByte('\n');
+        if (self.needsNodeMotherPath()) {
+            try writer.print("@lnako.node.source.path = private unnamed_addr constant [{d} x i8] ", .{self.source_path.len});
+            if (self.source_path.len == 0) {
+                try writer.writeAll("zeroinitializer\n");
+            } else {
+                try writer.writeByte('[');
+                for (self.source_path, 0..) |byte, index| {
+                    if (index > 0) try writer.writeAll(", ");
+                    try writer.print("i8 {d}", .{byte});
+                }
+                try writer.writeAll("]\n");
+            }
+            try writer.writeByte('\n');
+        }
         for (self.bigints.items) |constant| {
             try writer.print("@lnako.bigint.{d} = private unnamed_addr constant [{d} x i8] ", .{ constant.index, constant.text.len });
             if (constant.text.len == 0) {
@@ -1431,6 +1446,13 @@ const Emitter = struct {
             if (self.globalIndex("テンポラリフォルダ")) |global_index| try self.output.writer.print("@lnako.global.{d}", .{global_index}) else try self.output.writer.writeAll("null");
             try self.output.writer.writeAll(")\n");
         }
+        if (self.needsNodeMotherPath()) {
+            try self.output.writer.writeAll("  call void @lnako_aot_node_mother_path_init(ptr ");
+            if (self.globalIndex("母艦パス")) |global_index| try self.output.writer.print("@lnako.global.{d}", .{global_index}) else try self.output.writer.writeAll("null");
+            try self.output.writer.writeAll(", ptr ");
+            if (self.source_path.len > 0) try self.output.writer.writeAll("@lnako.node.source.path") else try self.output.writer.writeAll("null");
+            try self.output.writer.print(", i64 {d})\n", .{self.source_path.len});
+        }
         for (self.program.functions) |function| if (self.globalIndex(function.name)) |global_index| {
             try self.output.writer.print("  call void @lnako_aot_function_new_named(ptr @lnako.global.{d}, ptr @lnako.wrapper.{d}, i64 {d}, ptr @lnako.function.name.{d}, i64 {d}, ptr null, i64 0)\n", .{ global_index, function.id, function.parameters.len, function.id, function.name.len });
         };
@@ -1570,6 +1592,18 @@ const Emitter = struct {
 
     fn globalIndex(self: Emitter, name: []const u8) ?usize {
         return nameIndex(self.globals.items, name);
+    }
+
+    fn hasBuiltinCall(self: Emitter, command: aot_builtin.Command) bool {
+        for (self.program.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
+            if (instruction.opcode != .call or instruction.direct_callee != null or !instruction.is_builtin_call) continue;
+            if (aot_builtin.lookup(instruction.name) == command) return true;
+        };
+        return false;
+    }
+
+    fn needsNodeMotherPath(self: Emitter) bool {
+        return self.globalIndex("母艦パス") != null or self.hasBuiltinCall(.node_mother_path);
     }
 
     fn systemStringValue(self: Emitter, name: []const u8) ?[]const u8 {
@@ -1849,7 +1883,7 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     const semantic = @import("../../semantic/analyzer.zig");
     const hir = @import("../../ir/hir.zig");
     const lower = @import("../../ir/lower_ssa.zig");
-    var parsed = try parser.parse(std.testing.allocator, "A=1\nB=A+2\nBを表示\nコマンドラインを表示\nデバッグ表示({\"a\":1})\n", "main.nako3");
+    var parsed = try parser.parse(std.testing.allocator, "A=1\nB=A+2\nBを表示\nコマンドラインを表示\n母艦パスを表示\n母艦パス取得()を表示\nデバッグ表示({\"a\":1})\n", "main.nako3");
     defer parsed.deinit();
     var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
     defer analyzed.deinit();
@@ -1864,6 +1898,9 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_constants_init(ptr, ptr, ptr, i32, ptr)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_node_constants_init(ptr ") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_directory_constants_init(ptr, ptr, ptr)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_mother_path_init(ptr, ptr, i64)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.node.source.path") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_node_mother_path_init(ptr ") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_runtime_deinit()") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.global.0") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "!llvm.dbg.cu") != null);

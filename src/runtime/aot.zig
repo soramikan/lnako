@@ -331,6 +331,7 @@ const Runtime = struct {
     clock_milliseconds: ?i64 = null,
     monotonic_milliseconds: ?f64 = null,
     debug_enabled: bool = false,
+    aot_source_directory: ?[]u8 = null,
     caniuse_browsers: Value = .{},
     caniuse_agents: Value = .{},
     era_data: Value = .{},
@@ -343,6 +344,7 @@ const Runtime = struct {
         self.csv_state.deinit(self.allocator);
         self.print_pool.deinit(self.allocator);
         self.namespace_stack.deinit(self.allocator);
+        if (self.aot_source_directory) |path| self.allocator.free(path);
         var current = self.objects;
         while (current) |object| {
             const next = object.next;
@@ -359,6 +361,12 @@ const Runtime = struct {
         const owned = try self.allocator.dupe(u16, units);
         errdefer self.allocator.free(owned);
         return self.createObject(.{ .utf16_string = owned }, .utf16_string);
+    }
+
+    fn setAotSourceDirectory(self: *Runtime, path: []const u8) !void {
+        const owned = try self.allocator.dupe(u8, path);
+        if (self.aot_source_directory) |previous| self.allocator.free(previous);
+        self.aot_source_directory = owned;
     }
 
     fn ownString(self: *Runtime, source: []u16) !Value {
@@ -2934,6 +2942,29 @@ pub export fn lnako_aot_node_directory_constants_init(
     if (temporary) |out| out.* = nodeDirectoryBuiltin(runtime, .node_temporary_directory) catch |failure| runtimeFailure(failure);
 }
 
+/// Initializes the source directory used by Node's mother-path global and
+/// function. Relative source paths are resolved against the executable's
+/// current working directory, matching the interpreter host context.
+pub export fn lnako_aot_node_mother_path_init(
+    mother_path: ?*Value,
+    source_path: ?[*]const u8,
+    source_len: u64,
+) callconv(.c) void {
+    const runtime = if (active_runtime) |*active| active else return;
+    const source = if (source_path) |pointer| pointer[0..@as(usize, @intCast(source_len))] else &.{};
+    const absolute_source = if (std.fs.path.isAbsolute(source))
+        runtime.allocator.dupe(u8, source) catch |failure| runtimeFailure(failure)
+    else blk: {
+        const cwd = currentDirectoryAlloc(runtime) catch |failure| runtimeFailure(failure);
+        defer runtime.allocator.free(cwd);
+        break :blk std.fs.path.resolve(runtime.allocator, &.{ cwd, source }) catch |failure| runtimeFailure(failure);
+    };
+    defer runtime.allocator.free(absolute_source);
+    const directory = nodeDirname(absolute_source);
+    runtime.setAotSourceDirectory(directory) catch |failure| runtimeFailure(failure);
+    if (mother_path) |out| out.* = runtimeUtf8StringLossy(runtime, directory) catch |failure| runtimeFailure(failure);
+}
+
 pub export fn lnako_aot_runtime_deinit() callconv(.c) void {
     if (active_runtime) |*runtime| runtime.deinit();
     active_runtime = null;
@@ -3462,7 +3493,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all and command != .namespace_pop and command != .timer_wait and command != .async_noop and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all and command != .namespace_pop and command != .timer_wait and command != .async_noop and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -3677,6 +3708,12 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         },
         .node_home_directory, .node_desktop, .node_documents, .node_temporary_directory => {
             out.* = nodeDirectoryBuiltin(runtime, command) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .node_mother_path => {
+            out.* = nodeMotherPathBuiltin(runtime) catch |failure| {
                 runtime.setFailure(failure);
                 return;
             };
@@ -6735,6 +6772,11 @@ fn nodeDirectoryBuiltin(runtime: *Runtime, command: aot_builtin.Command) !Value 
     return runtimeUtf8StringLossy(runtime, path);
 }
 
+fn nodeMotherPathBuiltin(runtime: *Runtime) !Value {
+    const path = runtime.aot_source_directory orelse return error.SourcePathUnavailable;
+    return runtimeUtf8StringLossy(runtime, path);
+}
+
 fn nodeEnvironmentValueBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
     const key_units = try valueUtf16Alloc(runtime, arguments[0]);
@@ -9782,6 +9824,7 @@ test "LLVM側の値ABIと同じ16バイト配置を保つ" {
 test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (?*Value, ?*Value, ?*Value, i32, ?*const anyopaque) callconv(.c) void, @TypeOf(&lnako_aot_node_constants_init));
     try std.testing.expectEqual(*const fn (?*Value, ?*Value, ?*Value) callconv(.c) void, @TypeOf(&lnako_aot_node_directory_constants_init));
+    try std.testing.expectEqual(*const fn (?*Value, ?[*]const u8, u64) callconv(.c) void, @TypeOf(&lnako_aot_node_mother_path_init));
     try std.testing.expectEqual(*const fn (*Value, *anyopaque, ?[*]const Value, usize) callconv(.c) void, FunctionCallback);
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_array_new));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_index_get));
@@ -10616,6 +10659,32 @@ test "AOT Nodeの環境依存ディレクトリ命令はOSの環境値を使う"
     const temporary = std.mem.span(raw);
     const trimmed = std.mem.trimEnd(u8, temporary, "/\\");
     try expectUtf16String(&runtime, roots[3], if (trimmed.len == 0) temporary else trimmed);
+}
+
+test "AOT Node母艦パスはソースパスのディレクトリを保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    const source_path = "fixtures/main.nako3";
+    lnako_aot_node_mother_path_init(&roots[0], @ptrCast(source_path.ptr), source_path.len);
+    const cwd = try currentDirectoryAlloc(&active_runtime.?);
+    defer active_runtime.?.allocator.free(cwd);
+    const absolute_source = try std.fs.path.resolve(active_runtime.?.allocator, &.{ cwd, source_path });
+    defer active_runtime.?.allocator.free(absolute_source);
+    const expected = nodeDirname(absolute_source);
+    try expectUtf16String(&active_runtime.?, roots[0], expected);
+
+    roots[1] = try nodeMotherPathBuiltin(&active_runtime.?);
+    try expectUtf16String(&active_runtime.?, roots[1], expected);
 }
 
 test "AOT環境変数取得はC環境から値を読み未設定をundefinedにする" {

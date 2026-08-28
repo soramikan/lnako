@@ -8,14 +8,14 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 266,
-    "nativeAot": 161,
+    "total": 267,
+    "nativeAot": 162,
     "interpreter": 96,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
-    "paired": 420,
-    "interpreter-only": 103,
+    "paired": 422,
+    "interpreter-only": 101,
     "aot-only": 0,
     "none": 0,
     "compat-js-only": 4
@@ -14125,7 +14125,9 @@
       "interpreterFixtureIds": [
         "plugin-node-path-host"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-node-mother-path"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -14134,15 +14136,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-node-mother-path": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "公式7経路の母艦パス差分テストに成功"
     },
     {
       "id": "command-0734",
@@ -14152,7 +14159,9 @@
       "interpreterFixtureIds": [
         "plugin-node-path-host"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-node-mother-path"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -14161,15 +14170,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-node-mother-path": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "公式7経路の母艦パス取得差分テストに成功"
     },
     {
       "id": "command-0735",
