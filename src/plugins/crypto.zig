@@ -83,21 +83,7 @@ pub fn call(runtime: *Runtime, context: ?Context, name: []const u8, arguments: [
         const actual = context orelse return error.SecureRandomUnavailable;
         var bytes: [16]u8 = undefined;
         try actual.randomBytes(&bytes);
-        bytes[6] = bytes[6] & 0x0f | 0x40;
-        bytes[8] = bytes[8] & 0x3f | 0x80;
-        var uuid: [36]u8 = undefined;
-        const alphabet = "0123456789abcdef";
-        var source_index: usize = 0;
-        var output_index: usize = 0;
-        while (source_index < bytes.len) : (source_index += 1) {
-            if (output_index == 8 or output_index == 13 or output_index == 18 or output_index == 23) {
-                uuid[output_index] = '-';
-                output_index += 1;
-            }
-            uuid[output_index] = alphabet[bytes[source_index] >> 4];
-            uuid[output_index + 1] = alphabet[bytes[source_index] & 0x0f];
-            output_index += 2;
-        }
+        const uuid = formatUuid(bytes);
         return try runtime.stringUtf8(&uuid);
     }
     if (std.mem.eql(u8, name, "ランダム配列生成")) {
@@ -113,74 +99,48 @@ pub fn call(runtime: *Runtime, context: ?Context, name: []const u8, arguments: [
     return null;
 }
 
+pub fn formatUuid(raw: [16]u8) [36]u8 {
+    var bytes = raw;
+    bytes[6] = bytes[6] & 0x0f | 0x40;
+    bytes[8] = bytes[8] & 0x3f | 0x80;
+    var uuid: [36]u8 = undefined;
+    const alphabet = "0123456789abcdef";
+    var source_index: usize = 0;
+    var output_index: usize = 0;
+    while (source_index < bytes.len) : (source_index += 1) {
+        if (output_index == 8 or output_index == 13 or output_index == 18 or output_index == 23) {
+            uuid[output_index] = '-';
+            output_index += 1;
+        }
+        uuid[output_index] = alphabet[bytes[source_index] >> 4];
+        uuid[output_index + 1] = alphabet[bytes[source_index] & 0x0f];
+        output_index += 2;
+    }
+    return uuid;
+}
+
 fn calculateHash(runtime: *Runtime, arguments: []const Value) !Value {
     const input = try valueBytes(runtime, common.argument(arguments, 0));
     defer runtime.allocator().free(input);
     const algorithm = try valueUtf8(runtime, common.argument(arguments, 1));
     defer runtime.allocator().free(algorithm);
-    var normalized: [96]u8 = undefined;
-    const key = normalize(algorithm, &normalized) orelse return error.UnsupportedHashAlgorithm;
-    var digest: std.ArrayList(u8) = .empty;
-    defer digest.deinit(runtime.allocator());
-    if (isAny(key, &.{ "md5", "rsamd5", "md5withrsaencryption", "ssl3md5" })) {
-        try appendHash(std.crypto.hash.Md5, runtime.allocator(), &digest, input);
-    } else if (std.mem.eql(u8, key, "md5sha1")) {
-        try appendHash(std.crypto.hash.Md5, runtime.allocator(), &digest, input);
-        try appendHash(std.crypto.hash.Sha1, runtime.allocator(), &digest, input);
-    } else if (isAny(key, &.{ "sha1", "rsasha1", "rsasha12", "sha1withrsaencryption", "ssl3sha1" })) {
-        try appendHash(std.crypto.hash.Sha1, runtime.allocator(), &digest, input);
-    } else if (isAny(key, &.{ "sha224", "rsasha224", "sha224withrsaencryption" })) {
-        try appendHash(std.crypto.hash.sha2.Sha224, runtime.allocator(), &digest, input);
-    } else if (isAny(key, &.{ "sha256", "rsasha256", "sha256withrsaencryption" })) {
-        try appendHash(std.crypto.hash.sha2.Sha256, runtime.allocator(), &digest, input);
-    } else if (isAny(key, &.{ "sha384", "rsasha384", "sha384withrsaencryption" })) {
-        try appendHash(std.crypto.hash.sha2.Sha384, runtime.allocator(), &digest, input);
-    } else if (isAny(key, &.{ "sha512", "rsasha512", "sha512withrsaencryption" })) {
-        try appendHash(std.crypto.hash.sha2.Sha512, runtime.allocator(), &digest, input);
-    } else if (isAny(key, &.{ "sha512224", "rsasha512224", "sha512224withrsaencryption" })) {
-        try appendHash(std.crypto.hash.sha2.Sha512_224, runtime.allocator(), &digest, input);
-    } else if (isAny(key, &.{ "sha512256", "rsasha512256", "sha512256withrsaencryption" })) {
-        try appendHash(std.crypto.hash.sha2.Sha512_256, runtime.allocator(), &digest, input);
-    } else if (isAny(key, &.{ "sha3224", "rsasha3224", "idrsassapkcs1v15withsha3224" })) {
-        try appendHash(std.crypto.hash.sha3.Sha3_224, runtime.allocator(), &digest, input);
-    } else if (isAny(key, &.{ "sha3256", "rsasha3256", "idrsassapkcs1v15withsha3256" })) {
-        try appendHash(std.crypto.hash.sha3.Sha3_256, runtime.allocator(), &digest, input);
-    } else if (isAny(key, &.{ "sha3384", "rsasha3384", "idrsassapkcs1v15withsha3384" })) {
-        try appendHash(std.crypto.hash.sha3.Sha3_384, runtime.allocator(), &digest, input);
-    } else if (isAny(key, &.{ "sha3512", "rsasha3512", "idrsassapkcs1v15withsha3512" })) {
-        try appendHash(std.crypto.hash.sha3.Sha3_512, runtime.allocator(), &digest, input);
-    } else if (std.mem.eql(u8, key, "blake2b512")) {
-        try appendHash(std.crypto.hash.blake2.Blake2b512, runtime.allocator(), &digest, input);
-    } else if (std.mem.eql(u8, key, "blake2s256")) {
-        try appendHash(std.crypto.hash.blake2.Blake2s256, runtime.allocator(), &digest, input);
-    } else if (std.mem.eql(u8, key, "shake128")) {
-        const output = try digest.addManyAsSlice(runtime.allocator(), 16);
-        std.crypto.hash.sha3.Shake128.hash(input, output, .{});
-    } else if (std.mem.eql(u8, key, "shake256")) {
-        const output = try digest.addManyAsSlice(runtime.allocator(), 32);
-        std.crypto.hash.sha3.Shake256.hash(input, output, .{});
-    } else if (isAny(key, &.{ "ripemd", "ripemd160", "ripemd160withrsa", "rmd160", "rsaripemd160" })) {
-        const output = try digest.addManyAsSlice(runtime.allocator(), 20);
-        ripemd160(input, output[0..20]);
-    } else if (isAny(key, &.{ "sm3", "sm3withrsaencryption", "rsasm3" })) {
-        const output = try digest.addManyAsSlice(runtime.allocator(), 32);
-        sm3(input, output[0..32]);
-    } else return error.UnsupportedHashAlgorithm;
+    const digest = try calculateDigest(runtime.allocator(), input, algorithm);
+    defer runtime.allocator().free(digest);
 
     const encoding_value = common.argument(arguments, 2);
-    if (encoding_value == .undefined or encoding_value == .null_value) return runtime.createBytes(digest.items);
+    if (encoding_value == .undefined or encoding_value == .null_value) return runtime.createBytes(digest);
     const encoding = try valueUtf8(runtime, encoding_value);
     defer runtime.allocator().free(encoding);
     if (std.ascii.eqlIgnoreCase(encoding, "hex")) {
-        const result = try runtime.allocator().alloc(u8, digest.items.len * 2);
+        const result = try runtime.allocator().alloc(u8, digest.len * 2);
         defer runtime.allocator().free(result);
-        _ = std.fmt.bufPrint(result, "{x}", .{digest.items}) catch unreachable;
+        _ = std.fmt.bufPrint(result, "{x}", .{digest}) catch unreachable;
         return runtime.stringUtf8(result);
     }
     if (std.ascii.eqlIgnoreCase(encoding, "base64") or std.ascii.eqlIgnoreCase(encoding, "base64url")) {
-        const result = try runtime.allocator().alloc(u8, std.base64.standard.Encoder.calcSize(digest.items.len));
+        const result = try runtime.allocator().alloc(u8, std.base64.standard.Encoder.calcSize(digest.len));
         defer runtime.allocator().free(result);
-        _ = std.base64.standard.Encoder.encode(result, digest.items);
+        _ = std.base64.standard.Encoder.encode(result, digest);
         if (std.ascii.eqlIgnoreCase(encoding, "base64")) return runtime.stringUtf8(result);
         for (result) |*byte| byte.* = switch (byte.*) {
             '+' => '-',
@@ -192,13 +152,68 @@ fn calculateHash(runtime: *Runtime, arguments: []const Value) !Value {
         return runtime.stringUtf8(result[0..length]);
     }
     if (std.ascii.eqlIgnoreCase(encoding, "latin1") or std.ascii.eqlIgnoreCase(encoding, "binary")) {
-        const units = try runtime.allocator().alloc(u16, digest.items.len);
+        const units = try runtime.allocator().alloc(u16, digest.len);
         defer runtime.allocator().free(units);
-        for (digest.items, 0..) |byte, index| units[index] = byte;
+        for (digest, 0..) |byte, index| units[index] = byte;
         return runtime.stringCodeUnits(units);
     }
-    if (std.ascii.eqlIgnoreCase(encoding, "utf8") or std.ascii.eqlIgnoreCase(encoding, "utf-8")) return runtime.stringUtf8Lossy(digest.items);
+    if (std.ascii.eqlIgnoreCase(encoding, "utf8") or std.ascii.eqlIgnoreCase(encoding, "utf-8")) return runtime.stringUtf8Lossy(digest);
     return error.UnsupportedDigestEncoding;
+}
+
+/// Calculate a Node-compatible digest without depending on the Interpreter
+/// value model.  AOT uses this same implementation so every supported alias
+/// and digest length has one source of truth.
+pub fn calculateDigest(allocator: std.mem.Allocator, input: []const u8, algorithm: []const u8) ![]u8 {
+    var normalized: [96]u8 = undefined;
+    const key = normalize(algorithm, &normalized) orelse return error.UnsupportedHashAlgorithm;
+    var digest: std.ArrayList(u8) = .empty;
+    errdefer digest.deinit(allocator);
+    if (isAny(key, &.{ "md5", "rsamd5", "md5withrsaencryption", "ssl3md5" })) {
+        try appendHash(std.crypto.hash.Md5, allocator, &digest, input);
+    } else if (std.mem.eql(u8, key, "md5sha1")) {
+        try appendHash(std.crypto.hash.Md5, allocator, &digest, input);
+        try appendHash(std.crypto.hash.Sha1, allocator, &digest, input);
+    } else if (isAny(key, &.{ "sha1", "rsasha1", "rsasha12", "sha1withrsaencryption", "ssl3sha1" })) {
+        try appendHash(std.crypto.hash.Sha1, allocator, &digest, input);
+    } else if (isAny(key, &.{ "sha224", "rsasha224", "sha224withrsaencryption" })) {
+        try appendHash(std.crypto.hash.sha2.Sha224, allocator, &digest, input);
+    } else if (isAny(key, &.{ "sha256", "rsasha256", "sha256withrsaencryption" })) {
+        try appendHash(std.crypto.hash.sha2.Sha256, allocator, &digest, input);
+    } else if (isAny(key, &.{ "sha384", "rsasha384", "sha384withrsaencryption" })) {
+        try appendHash(std.crypto.hash.sha2.Sha384, allocator, &digest, input);
+    } else if (isAny(key, &.{ "sha512", "rsasha512", "sha512withrsaencryption" })) {
+        try appendHash(std.crypto.hash.sha2.Sha512, allocator, &digest, input);
+    } else if (isAny(key, &.{ "sha512224", "rsasha512224", "sha512224withrsaencryption" })) {
+        try appendHash(std.crypto.hash.sha2.Sha512_224, allocator, &digest, input);
+    } else if (isAny(key, &.{ "sha512256", "rsasha512256", "sha512256withrsaencryption" })) {
+        try appendHash(std.crypto.hash.sha2.Sha512_256, allocator, &digest, input);
+    } else if (isAny(key, &.{ "sha3224", "rsasha3224", "idrsassapkcs1v15withsha3224" })) {
+        try appendHash(std.crypto.hash.sha3.Sha3_224, allocator, &digest, input);
+    } else if (isAny(key, &.{ "sha3256", "rsasha3256", "idrsassapkcs1v15withsha3256" })) {
+        try appendHash(std.crypto.hash.sha3.Sha3_256, allocator, &digest, input);
+    } else if (isAny(key, &.{ "sha3384", "rsasha3384", "idrsassapkcs1v15withsha3384" })) {
+        try appendHash(std.crypto.hash.sha3.Sha3_384, allocator, &digest, input);
+    } else if (isAny(key, &.{ "sha3512", "rsasha3512", "idrsassapkcs1v15withsha3512" })) {
+        try appendHash(std.crypto.hash.sha3.Sha3_512, allocator, &digest, input);
+    } else if (std.mem.eql(u8, key, "blake2b512")) {
+        try appendHash(std.crypto.hash.blake2.Blake2b512, allocator, &digest, input);
+    } else if (std.mem.eql(u8, key, "blake2s256")) {
+        try appendHash(std.crypto.hash.blake2.Blake2s256, allocator, &digest, input);
+    } else if (std.mem.eql(u8, key, "shake128")) {
+        const output = try digest.addManyAsSlice(allocator, 16);
+        std.crypto.hash.sha3.Shake128.hash(input, output, .{});
+    } else if (std.mem.eql(u8, key, "shake256")) {
+        const output = try digest.addManyAsSlice(allocator, 32);
+        std.crypto.hash.sha3.Shake256.hash(input, output, .{});
+    } else if (isAny(key, &.{ "ripemd", "ripemd160", "ripemd160withrsa", "rmd160", "rsaripemd160" })) {
+        const output = try digest.addManyAsSlice(allocator, 20);
+        ripemd160(input, output[0..20]);
+    } else if (isAny(key, &.{ "sm3", "sm3withrsaencryption", "rsasm3" })) {
+        const output = try digest.addManyAsSlice(allocator, 32);
+        sm3(input, output[0..32]);
+    } else return error.UnsupportedHashAlgorithm;
+    return digest.toOwnedSlice(allocator);
 }
 
 fn appendHash(comptime Hash: type, allocator: std.mem.Allocator, output: *std.ArrayList(u8), input: []const u8) !void {

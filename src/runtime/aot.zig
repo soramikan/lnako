@@ -153,7 +153,7 @@ pub const Value = extern struct {
     pub fn object(self: Value) ?*Object {
         if (self.payload == 0) return null;
         return switch (@as(Tag, @enumFromInt(self.tag))) {
-            .utf16_string, .array, .dictionary, .iterator, .bigint, .function, .binding_cell => @ptrFromInt(self.payload),
+            .utf16_string, .array, .dictionary, .iterator, .bigint, .function, .binding_cell, .byte_buffer => @ptrFromInt(self.payload),
             else => null,
         };
     }
@@ -166,7 +166,12 @@ pub const RootFrame = extern struct {
 };
 
 const DictionaryEntry = struct { key: Value, value: Value };
-const IteratorKind = enum { repeat, range, string, array, dictionary };
+const ByteKind = enum { buffer, uint8_array, array_buffer };
+const ByteBuffer = struct {
+    bytes: []u8,
+    kind: ByteKind,
+};
+const IteratorKind = enum { repeat, range, bytes, string, array, dictionary };
 const Iterator = struct {
     kind: IteratorKind,
     source: Value = .{},
@@ -286,6 +291,7 @@ const ShiftOperator = enum(u8) {
 
 const Payload = union(enum) {
     utf16_string: []u16,
+    byte_buffer: ByteBuffer,
     bigint: BigInt,
     array: std.ArrayList(Value),
     dictionary: std.ArrayList(DictionaryEntry),
@@ -365,6 +371,25 @@ const Runtime = struct {
         return self.createObject(.{ .utf16_string = owned }, .utf16_string);
     }
 
+    fn createBytes(self: *Runtime, bytes: []const u8) !Value {
+        return self.createByteBuffer(bytes, .buffer);
+    }
+
+    fn createUint8Array(self: *Runtime, bytes: []const u8) !Value {
+        return self.createByteBuffer(bytes, .uint8_array);
+    }
+
+    fn createArrayBuffer(self: *Runtime, bytes: []const u8) !Value {
+        return self.createByteBuffer(bytes, .array_buffer);
+    }
+
+    fn createByteBuffer(self: *Runtime, bytes: []const u8, kind: ByteKind) !Value {
+        try self.beforeAllocation();
+        const owned = try self.allocator.dupe(u8, bytes);
+        errdefer self.allocator.free(owned);
+        return self.createObject(.{ .byte_buffer = .{ .bytes = owned, .kind = kind } }, .byte_buffer);
+    }
+
     fn setAotSourceDirectory(self: *Runtime, path: []const u8) !void {
         const owned = try self.allocator.dupe(u8, path);
         if (self.aot_source_directory) |previous| self.allocator.free(previous);
@@ -436,6 +461,7 @@ const Runtime = struct {
         } else switch (@as(Tag, @enumFromInt(values[0].tag))) {
             .number => .{ .kind = .repeat, .count = try repeatCount(valueToNumber(values[0])) },
             .utf16_string => .{ .kind = .string, .source = values[0], .count = values[0].object().?.payload.utf16_string.len },
+            .byte_buffer => .{ .kind = .bytes, .source = values[0], .count = values[0].object().?.payload.byte_buffer.bytes.len },
             .array => .{ .kind = .array, .source = values[0], .count = values[0].object().?.payload.array.items.len },
             .dictionary => .{ .kind = .dictionary, .source = values[0], .count = values[0].object().?.payload.dictionary.items.len },
             else => .{ .kind = .repeat, .count = 0 },
@@ -538,7 +564,7 @@ const Runtime = struct {
             self.grey = object.grey_next;
             object.grey_next = null;
             switch (object.payload) {
-                .utf16_string, .bigint => {},
+                .utf16_string, .byte_buffer, .bigint => {},
                 .function => |function| for (function.captures) |capture| self.markValue(capture),
                 .binding_cell => |value| self.markValue(value),
                 .array => |items| for (items.items) |value| self.markValue(value),
@@ -633,6 +659,7 @@ const Runtime = struct {
     fn destroyObject(self: *Runtime, object: *Object) void {
         switch (object.payload) {
             .utf16_string => |units| self.allocator.free(units),
+            .byte_buffer => |buffer| self.allocator.free(buffer.bytes),
             .bigint => |*value| value.deinit(),
             .array => |*items| items.deinit(self.allocator),
             .dictionary => |*entries| entries.deinit(self.allocator),
@@ -661,6 +688,13 @@ const Runtime = struct {
         }
         const object = container.object() orelse return .{};
         return switch (object.payload) {
+            .byte_buffer => |buffer| {
+                if (sameKey(key, staticStringValue("length"))) {
+                    return if (buffer.kind == .array_buffer) .{} else numberValue(@floatFromInt(buffer.bytes.len));
+                }
+                const index = valueIndex(key) orelse return .{};
+                return if (buffer.kind == .array_buffer or index >= buffer.bytes.len) .{} else numberValue(@floatFromInt(buffer.bytes[index]));
+            },
             .array => |items| if (valueIndex(key)) |index| if (index < items.items.len) items.items[index] else .{} else .{},
             .dictionary => |entries| blk: {
                 for (entries.items) |entry| if (sameKey(entry.key, key)) break :blk entry.value;
@@ -700,6 +734,16 @@ const Runtime = struct {
                 defer self.popRoots(&frame);
                 try self.setDictionary(entries, try self.propertyKey(rooted[1]), rooted[2]);
             },
+            .byte_buffer => |*buffer| {
+                if (buffer.kind == .array_buffer) return;
+                const index = valueIndex(key) orelse return error.InvalidIndex;
+                const number = try valueToNumberRuntime(self, value);
+                const byte: u8 = if (!std.math.isFinite(number) or number == 0)
+                    0
+                else
+                    @intFromFloat(@mod(@trunc(number), 256));
+                if (index < buffer.bytes.len) buffer.bytes[index] = byte;
+            },
             .utf16_string, .bigint, .function, .iterator, .binding_cell => {},
         }
     }
@@ -730,6 +774,13 @@ const Runtime = struct {
                 const result = numberValue(iterator.current);
                 iterator.current += iterator.step;
                 if (range_target) |target| target.* = result;
+                break :blk result;
+            },
+            .bytes => blk: {
+                const result = numberValue(@floatFromInt(iterator.source.object().?.payload.byte_buffer.bytes[iterator.index]));
+                if (key_target) |target| target.* = numberValue(@floatFromInt(iterator.index));
+                iterator.index += 1;
+                if (value_target) |target| target.* = result;
                 break :blk result;
             },
             .string => blk: {
@@ -851,7 +902,7 @@ fn valueToNumberRuntime(runtime: *Runtime, value: Value) !f64 {
         .number => @bitCast(value.payload),
         .static_utf8_string, .utf16_string => parseStringNumber(runtime, value),
         .bigint => error.CannotConvertBigIntToNumber,
-        .array, .dictionary, .iterator, .function => valueToNumberRuntime(runtime, try valueToPrimitive(runtime, value)),
+        .byte_buffer, .array, .dictionary, .iterator, .function => valueToNumberRuntime(runtime, try valueToPrimitive(runtime, value)),
         .binding_cell => unreachable,
     };
 }
@@ -872,7 +923,7 @@ fn valueToParseFloatRuntime(runtime: *Runtime, value: Value) !f64 {
             break :blk string_mod.parseFloatNumber(runtime.allocator, units);
         },
         .bigint => error.CannotConvertBigIntToNumber,
-        .array, .dictionary, .iterator, .function => valueToParseFloatRuntime(runtime, try valueToPrimitive(runtime, value)),
+        .byte_buffer, .array, .dictionary, .iterator, .function => valueToParseFloatRuntime(runtime, try valueToPrimitive(runtime, value)),
         .binding_cell => unreachable,
         .undefined, .null_value, .boolean => std.math.nan(f64),
     };
@@ -949,7 +1000,7 @@ fn isString(value: Value) bool {
 }
 
 fn isObject(value: Value) bool {
-    return value.tag == @intFromEnum(Tag.array) or value.tag == @intFromEnum(Tag.dictionary) or
+    return value.tag == @intFromEnum(Tag.byte_buffer) or value.tag == @intFromEnum(Tag.array) or value.tag == @intFromEnum(Tag.dictionary) or
         value.tag == @intFromEnum(Tag.iterator) or value.tag == @intFromEnum(Tag.function);
 }
 
@@ -1173,6 +1224,7 @@ fn jsonWriteValue(
             try jsonWriteQuotedString(writer, units);
         },
         .utf16_string => try jsonWriteQuotedString(writer, value.object().?.payload.utf16_string),
+        .byte_buffer => try jsonWriteByteBuffer(writer, value.object().?.payload.byte_buffer, pretty, depth),
         .iterator => try writer.writeAll("{}"),
         .binding_cell => unreachable,
         .array => {
@@ -1256,6 +1308,56 @@ fn jsonWriteValue(
             try writer.writeByte('}');
         },
     }
+}
+
+fn jsonWriteByteBuffer(writer: *std.Io.Writer, buffer: ByteBuffer, pretty: bool, depth: usize) !void {
+    if (buffer.kind == .array_buffer) return writer.writeAll("{}");
+    try writer.writeByte('{');
+    if (buffer.kind == .uint8_array) {
+        for (buffer.bytes, 0..) |byte, index| {
+            if (index > 0) try writer.writeByte(',');
+            if (pretty) {
+                try writer.writeByte('\n');
+                try jsonWriteIndent(writer, depth + 1);
+            }
+            try writer.print("\"{d}\":", .{index});
+            if (pretty) try writer.writeByte(' ');
+            try writer.print("{d}", .{byte});
+        }
+    } else {
+        if (pretty) {
+            try writer.writeByte('\n');
+            try jsonWriteIndent(writer, depth + 1);
+        }
+        try writer.writeAll("\"type\":");
+        if (pretty) try writer.writeByte(' ');
+        try writer.writeAll("\"Buffer\",");
+        if (pretty) {
+            try writer.writeByte('\n');
+            try jsonWriteIndent(writer, depth + 1);
+        }
+        try writer.writeAll("\"data\":");
+        if (pretty) try writer.writeByte(' ');
+        try writer.writeByte('[');
+        for (buffer.bytes, 0..) |byte, index| {
+            if (index > 0) try writer.writeByte(',');
+            if (pretty and buffer.bytes.len > 0) {
+                try writer.writeByte('\n');
+                try jsonWriteIndent(writer, depth + 2);
+            }
+            try writer.print("{d}", .{byte});
+        }
+        if (pretty and buffer.bytes.len > 0) {
+            try writer.writeByte('\n');
+            try jsonWriteIndent(writer, depth + 1);
+        }
+        try writer.writeByte(']');
+    }
+    if (pretty and buffer.bytes.len > 0) {
+        try writer.writeByte('\n');
+        try jsonWriteIndent(writer, depth);
+    }
+    try writer.writeByte('}');
 }
 
 fn jsonActiveIndex(objects: []JsonAotActive, object: *Object) ?usize {
@@ -2042,6 +2144,7 @@ fn valueUtf16Alloc(runtime: *Runtime, value: Value) anyerror![]u16 {
         .number => try numberString(runtime.allocator, @bitCast(value.payload)),
         .static_utf8_string => try runtime.allocator.dupe(u8, staticUtf8(value)),
         .utf16_string => unreachable,
+        .byte_buffer => return byteBufferUtf16Alloc(runtime, value.object().?.payload.byte_buffer),
         .bigint => try value.object().?.payload.bigint.toString(runtime.allocator, 10),
         .array => return arrayUtf16Alloc(runtime, value.object().?),
         .dictionary, .iterator => try runtime.allocator.dupe(u8, "[object Object]"),
@@ -2050,6 +2153,28 @@ fn valueUtf16Alloc(runtime: *Runtime, value: Value) anyerror![]u16 {
     };
     defer runtime.allocator.free(utf8);
     return std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, utf8);
+}
+
+fn byteBufferUtf16Alloc(runtime: *Runtime, buffer: ByteBuffer) ![]u16 {
+    return switch (buffer.kind) {
+        .buffer => blk: {
+            var string = try string_mod.String.fromUtf8Lossy(runtime.allocator, buffer.bytes);
+            defer string.deinit();
+            break :blk runtime.allocator.dupe(u16, string.units);
+        },
+        .uint8_array => blk: {
+            var output: std.ArrayList(u8) = .empty;
+            defer output.deinit(runtime.allocator);
+            for (buffer.bytes, 0..) |byte, index| {
+                if (index > 0) try output.append(runtime.allocator, ',');
+                var number: [3]u8 = undefined;
+                const rendered = std.fmt.bufPrint(&number, "{d}", .{byte}) catch unreachable;
+                try output.appendSlice(runtime.allocator, rendered);
+            }
+            break :blk std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, output.items);
+        },
+        .array_buffer => std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, "[object ArrayBuffer]"),
+    };
 }
 
 fn functionStringUtf16Alloc(runtime: *Runtime, name: []const u8) ![]u16 {
@@ -2076,6 +2201,11 @@ fn arrayUtf16Alloc(runtime: *Runtime, object: *Object) anyerror![]u16 {
 
 fn valueToPrimitive(runtime: *Runtime, value: Value) !Value {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
+        .byte_buffer => blk: {
+            const units = try byteBufferUtf16Alloc(runtime, value.object().?.payload.byte_buffer);
+            defer runtime.allocator.free(units);
+            break :blk try runtime.createString(units);
+        },
         .array => blk: {
             const units = try arrayUtf16Alloc(runtime, value.object().?);
             defer runtime.allocator.free(units);
@@ -2120,6 +2250,7 @@ fn strictEqual(runtime: *Runtime, left: Value, right: Value) !bool {
         },
         .bigint => BigInt.eql(left.object().?.payload.bigint, right.object().?.payload.bigint),
         .static_utf8_string, .utf16_string => unreachable,
+        .byte_buffer => left.payload == right.payload,
         .array, .dictionary, .iterator, .function => left.payload == right.payload,
         .binding_cell => unreachable,
     };
@@ -2412,7 +2543,7 @@ fn valueTruthy(value: Value) bool {
         .static_utf8_string => staticUtf8(value).len != 0,
         .utf16_string => value.object().?.payload.utf16_string.len != 0,
         .bigint => !value.object().?.payload.bigint.isZero(),
-        .array, .dictionary, .iterator, .function => true,
+        .byte_buffer, .array, .dictionary, .iterator, .function => true,
         .binding_cell => valueTruthy(value.object().?.payload.binding_cell),
     };
 }
@@ -2485,6 +2616,7 @@ fn sameKey(left: Value, right: Value) bool {
         .static_utf8_string => std.mem.eql(u8, staticUtf8(left), staticUtf8(right)),
         .utf16_string => std.mem.eql(u16, left.object().?.payload.utf16_string, right.object().?.payload.utf16_string),
         .bigint => BigInt.eql(left.object().?.payload.bigint, right.object().?.payload.bigint),
+        .byte_buffer => left.payload == right.payload,
         .array, .dictionary, .iterator, .function => left.payload == right.payload,
         .binding_cell => unreachable,
     };
@@ -3794,7 +3926,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all and command != .namespace_pop and command != .timer_wait and command != .async_noop and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit and command != .node_hash_names and command != .node_stdin_all and command != .node_network_ipv4 and command != .node_network_ipv6) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all and command != .namespace_pop and command != .timer_wait and command != .async_noop and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit and command != .node_hash_names and command != .node_random_uuid and command != .node_stdin_all and command != .node_network_ipv4 and command != .node_network_ipv6) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -4083,6 +4215,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         },
         .node_hash_names => {
             out.* = stringArrayBuiltin(runtime, &crypto.hash_names) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .node_hash_value, .node_random_uuid, .node_random_array => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = nodeCryptoBuiltin(runtime, command, actual) catch |failure| {
                 runtime.setFailure(failure);
                 return;
             };
@@ -4710,7 +4849,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
 fn typeNameValue(value: Value) Value {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
         .undefined => staticStringValue("undefined"),
-        .null_value, .array, .dictionary, .iterator => staticStringValue("object"),
+        .null_value, .byte_buffer, .array, .dictionary, .iterator => staticStringValue("object"),
         .boolean => staticStringValue("boolean"),
         .number => staticStringValue("number"),
         .static_utf8_string, .utf16_string => staticStringValue("string"),
@@ -7117,6 +7256,74 @@ fn nodeProcessExitCode(runtime: *Runtime, value: Value) !u8 {
     return @intFromFloat(@mod(@trunc(number), 256.0));
 }
 
+fn nodeCryptoBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    switch (command) {
+        .node_hash_value => {
+            if (arguments.len < 2) return error.InvalidArgumentCount;
+            const input = if (arguments[0].tag == @intFromEnum(Tag.byte_buffer))
+                try runtime.allocator.dupe(u8, arguments[0].object().?.payload.byte_buffer.bytes)
+            else
+                try valueUtf8LossyAlloc(runtime, arguments[0]);
+            defer runtime.allocator.free(input);
+            const algorithm = try valueUtf8LossyAlloc(runtime, arguments[1]);
+            defer runtime.allocator.free(algorithm);
+            const digest = try crypto.calculateDigest(runtime.allocator, input, algorithm);
+            defer runtime.allocator.free(digest);
+
+            const encoding_value: Value = if (arguments.len > 2) arguments[2] else .{};
+            if (encoding_value.tag == @intFromEnum(Tag.undefined) or encoding_value.tag == @intFromEnum(Tag.null_value)) return runtime.createBytes(digest);
+            const encoding_name = try valueUtf8LossyAlloc(runtime, encoding_value);
+            defer runtime.allocator.free(encoding_name);
+            if (std.ascii.eqlIgnoreCase(encoding_name, "hex")) {
+                const result = try runtime.allocator.alloc(u8, digest.len * 2);
+                defer runtime.allocator.free(result);
+                _ = std.fmt.bufPrint(result, "{x}", .{digest}) catch unreachable;
+                return runtimeUtf8String(runtime, result);
+            }
+            if (std.ascii.eqlIgnoreCase(encoding_name, "base64") or std.ascii.eqlIgnoreCase(encoding_name, "base64url")) {
+                const result = try runtime.allocator.alloc(u8, std.base64.standard.Encoder.calcSize(digest.len));
+                defer runtime.allocator.free(result);
+                _ = std.base64.standard.Encoder.encode(result, digest);
+                if (std.ascii.eqlIgnoreCase(encoding_name, "base64")) return runtimeUtf8String(runtime, result);
+                for (result) |*byte| byte.* = switch (byte.*) {
+                    '+' => '-',
+                    '/' => '_',
+                    else => byte.*,
+                };
+                var length = result.len;
+                while (length > 0 and result[length - 1] == '=') length -= 1;
+                return runtimeUtf8String(runtime, result[0..length]);
+            }
+            if (std.ascii.eqlIgnoreCase(encoding_name, "latin1") or std.ascii.eqlIgnoreCase(encoding_name, "binary")) {
+                const units = try runtime.allocator.alloc(u16, digest.len);
+                defer runtime.allocator.free(units);
+                for (digest, 0..) |byte, index| units[index] = byte;
+                return runtime.createString(units);
+            }
+            if (std.ascii.eqlIgnoreCase(encoding_name, "utf8") or std.ascii.eqlIgnoreCase(encoding_name, "utf-8")) return runtimeUtf8StringLossy(runtime, digest);
+            return error.UnsupportedDigestEncoding;
+        },
+        .node_random_uuid => {
+            if (arguments.len != 0) return error.InvalidArgumentCount;
+            var bytes: [16]u8 = undefined;
+            try std.Io.Threaded.global_single_threaded.io().randomSecure(&bytes);
+            const uuid = crypto.formatUuid(bytes);
+            return runtimeUtf8String(runtime, &uuid);
+        },
+        .node_random_array => {
+            const source: Value = if (arguments.len > 0) arguments[0] else .{};
+            const count_number = try valueToNumberRuntime(runtime, source);
+            if (std.math.isInf(count_number) or count_number < 0 or count_number > 65_536) return error.InvalidRandomByteCount;
+            const count: usize = if (std.math.isNan(count_number)) 0 else @intFromFloat(@trunc(count_number));
+            const bytes = try runtime.allocator.alloc(u8, count);
+            defer runtime.allocator.free(bytes);
+            try std.Io.Threaded.global_single_threaded.io().randomSecure(bytes);
+            return runtime.createUint8Array(bytes);
+        },
+        else => return error.UnknownCommand,
+    }
+}
+
 fn nodeFileExistenceBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
     const path = try valueUtf8LossyAlloc(runtime, arguments[0]);
@@ -7741,6 +7948,10 @@ fn appendSearchElements(runtime: *Runtime, value: Value) !SearchElements {
     errdefer elements.deinit();
     switch (tag) {
         .static_utf8_string, .utf16_string => try appendStringSearchElements(&elements, value),
+        .byte_buffer => {
+            const buffer = value.object().?.payload.byte_buffer;
+            if (buffer.kind != .array_buffer) for (buffer.bytes) |byte| try elements.appendValue(numberValue(@floatFromInt(byte)));
+        },
         .array => for (value.object().?.payload.array.items) |item| try elements.appendValue(item),
         .dictionary => try appendDictionarySearchElements(&elements, value),
         // The official generated function wrapper is not an iterable or
@@ -7825,6 +8036,7 @@ fn requireStringReceiver(value: Value, starts: bool) !void {
 
 fn elementCountBuiltin(runtime: *Runtime, value: Value) !usize {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
+        .byte_buffer => value.object().?.payload.byte_buffer.bytes.len,
         .array => value.object().?.payload.array.items.len,
         .dictionary => value.object().?.payload.dictionary.items.len,
         .static_utf8_string, .utf16_string => blk: {
@@ -7931,6 +8143,7 @@ fn cutLengthProperty(runtime: *Runtime, value: Value) !Value {
             break :blk numberValue(@floatFromInt(units.len));
         },
         .array => numberValue(@floatFromInt(value.object().?.payload.array.items.len)),
+        .byte_buffer => if (value.object().?.payload.byte_buffer.kind == .array_buffer) .{} else numberValue(@floatFromInt(value.object().?.payload.byte_buffer.bytes.len)),
         .function => numberValue(@floatFromInt(value.object().?.payload.function.arity)),
         .dictionary => dictionaryLengthValue(value),
         else => .{},
@@ -9398,6 +9611,14 @@ fn deepCloneValue(runtime: *Runtime, source: Value, state: *CloneState) !Value {
             break :blk if (std.math.isFinite(number)) numberValue(if (number == 0) 0 else number) else .{ .tag = @intFromEnum(Tag.null_value) };
         },
         .bigint => error.CannotSerializeBigInt,
+        .byte_buffer => blk: {
+            const serialized = try jsonEncodeBuiltin(runtime, source, false);
+            var roots = [_]Value{serialized};
+            var frame = RootFrame{};
+            runtime.pushRoots(&frame, &roots, roots.len);
+            defer runtime.popRoots(&frame);
+            break :blk try jsonDecodeBuiltin(runtime, roots[0]);
+        },
         .static_utf8_string, .utf16_string => blk: {
             const units = try valueUtf16Alloc(runtime, source);
             defer runtime.allocator.free(units);
@@ -13456,6 +13677,72 @@ test "AOTハッシュ関数一覧取得は固定したNode互換名を配列で�
     try std.testing.expectEqual(crypto.hash_names.len, result.object().?.payload.array.items.len);
     try expectUtf16String(&active_runtime.?, result.object().?.payload.array.items[0], crypto.hash_names[0]);
     try expectUtf16String(&active_runtime.?, result.object().?.payload.array.items[crypto.hash_names.len - 1], crypto.hash_names[crypto.hash_names.len - 1]);
+}
+
+test "AOT Node暗号はバイト値の型と境界を保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try runtimeUtf8String(&active_runtime.?, "abc");
+    roots[1] = try runtimeUtf8String(&active_runtime.?, "sha256");
+    var hash_arguments = [_]Value{ roots[0], roots[1], .{} };
+    roots[2] = try nodeCryptoBuiltin(&active_runtime.?, .node_hash_value, &hash_arguments);
+    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @enumFromInt(roots[2].tag)));
+    try std.testing.expectEqual(ByteKind.buffer, roots[2].object().?.payload.byte_buffer.kind);
+    const expected_digest = [_]u8{
+        0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea,
+        0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23,
+        0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c,
+        0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad,
+    };
+    try std.testing.expectEqualSlices(u8, &expected_digest, roots[2].object().?.payload.byte_buffer.bytes);
+    try std.testing.expectEqual(@as(f64, 186), valueToNumber(active_runtime.?.indexGet(roots[2], numberValue(0))));
+    try std.testing.expectEqual(@as(f64, 173), valueToNumber(active_runtime.?.indexGet(roots[2], numberValue(31))));
+
+    roots[3] = try jsonEncodeBuiltin(&active_runtime.?, roots[2], false);
+    try expectUtf16String(&active_runtime.?, roots[3], "{\"type\":\"Buffer\",\"data\":[186,120,22,191,143,1,207,234,65,65,64,222,93,174,34,35,176,3,97,163,150,23,122,156,180,16,255,97,242,0,21,173]}");
+
+    var random_arguments = [_]Value{numberValue(4)};
+    roots[4] = try nodeCryptoBuiltin(&active_runtime.?, .node_random_array, &random_arguments);
+    try std.testing.expectEqual(ByteKind.uint8_array, roots[4].object().?.payload.byte_buffer.kind);
+    try std.testing.expectEqual(@as(usize, 4), roots[4].object().?.payload.byte_buffer.bytes.len);
+    for (roots[4].object().?.payload.byte_buffer.bytes) |byte| try std.testing.expect(byte <= 255);
+    try active_runtime.?.indexSet(roots[4], numberValue(0), numberValue(258.9));
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(active_runtime.?.indexGet(roots[4], numberValue(0))));
+
+    roots[5] = try nodeCryptoBuiltin(&active_runtime.?, .node_random_uuid, &.{});
+    const uuid = try valueUtf16Alloc(&active_runtime.?, roots[5]);
+    defer active_runtime.?.allocator.free(uuid);
+    try std.testing.expectEqual(@as(usize, 36), uuid.len);
+    try std.testing.expectEqual(@as(u16, '4'), uuid[14]);
+    try std.testing.expect(uuid[19] == '8' or uuid[19] == '9' or uuid[19] == 'a' or uuid[19] == 'b');
+
+    roots[6] = try active_runtime.?.createIterator(&.{roots[4]}, false, 0);
+    var iterator_value = Value{};
+    var iterator_key = Value{};
+    _ = active_runtime.?.iteratorNext(roots[6], null, &iterator_value, &iterator_key, null);
+    try std.testing.expectEqual(@as(f64, 0), valueToNumber(iterator_key));
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(iterator_value));
+
+    roots[7] = try active_runtime.?.createArrayBuffer(&.{ 1, 2 });
+    try std.testing.expectEqual(ByteKind.array_buffer, roots[7].object().?.payload.byte_buffer.kind);
+    try expectUtf16String(&active_runtime.?, roots[7], "[object ArrayBuffer]");
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(active_runtime.?.indexGet(roots[7], numberValue(0)).tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(active_runtime.?.indexGet(roots[7], staticStringValue("length")).tag)));
+    var array_buffer_elements = try appendSearchElements(&active_runtime.?, roots[7]);
+    defer array_buffer_elements.deinit();
+    try std.testing.expectEqual(@as(usize, 0), array_buffer_elements.items.items.len);
+    roots[8] = try jsonEncodeBuiltin(&active_runtime.?, roots[7], false);
+    try expectUtf16String(&active_runtime.?, roots[8], "{}");
 }
 
 test "AOT圧縮解凍ツールパス変更は可変グローバルを更新する" {

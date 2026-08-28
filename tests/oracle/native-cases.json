@@ -802,6 +802,11 @@
     "source": "JSON変換(ハッシュ関数一覧取得())を表示\n"
   },
   {
+    "id": "native-node-crypto",
+    "commands": ["ハッシュ値計算", "ランダムUUID生成", "ランダム配列生成"],
+    "source": "H=ハッシュ値計算(\"abc\",\"sha256\",undefined)\nJSON変換(H)を表示\nH[0]を表示\nH[31]を表示\nJSON変換(ハッシュ値計算(\"abc\",\"sha256\",\"hex\"))を表示\nJSON変換(ハッシュ値計算(\"abc\",\"sha256\",\"base64\"))を表示\nJSON変換(ハッシュ値計算(\"abc\",\"sha256\",\"base64url\"))を表示\nR=4のランダム配列生成\nTYPEOF(R)を表示\n要素数(R)を表示\n((R[0]>=0)かつ(R[0]<=255))を表示\nU=ランダムUUID生成()\n(文字数(U)=36)を表示\nU[14]を表示\n(文字検索(\"89ab\",U[19],0)>=0)を表示\n"
+  },
+  {
     "id": "native-node-archive-tool-path",
     "commands": ["圧縮解凍ツールパス", "圧縮解凍ツールパス変更"],
     "source": "圧縮解凍ツールパスを表示\n圧縮解凍ツールパス変更(\"native-tool\")\n圧縮解凍ツールパスを表示\n"

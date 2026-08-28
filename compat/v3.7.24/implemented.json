@@ -3067,23 +3067,26 @@
   "ハッシュ値計算": {
     "status": "native",
     "tests": [
-      "plugin-node-crypto"
+      "plugin-node-crypto",
+      "native-node-crypto"
     ],
-    "reason": "Node 24との全ハッシュ別名・乱数境界の公式差分テストに成功"
+    "reason": "公式7経路のSHA-256・Buffer境界とエンコード形式の差分テストに成功"
   },
   "ランダムUUID生成": {
     "status": "native",
     "tests": [
-      "plugin-node-crypto"
+      "plugin-node-crypto",
+      "native-node-crypto"
     ],
-    "reason": "Node 24との全ハッシュ別名・乱数境界の公式差分テストに成功"
+    "reason": "公式7経路のUUID version・variantと形式の差分テストに成功"
   },
   "ランダム配列生成": {
     "status": "native",
     "tests": [
-      "plugin-node-crypto"
+      "plugin-node-crypto",
+      "native-node-crypto"
     ],
-    "reason": "Node 24との全ハッシュ別名・乱数境界の公式差分テストに成功"
+    "reason": "公式7経路のUint8Array長さ・要素境界の差分テストに成功"
   },
   "POSTデータ生成": {
     "status": "native",

@@ -11,4 +11,5 @@ pub const Tag = enum(u8) {
     bigint = 9,
     function = 10,
     binding_cell = 11,
+    byte_buffer = 12,
 };

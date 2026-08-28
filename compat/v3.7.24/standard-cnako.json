@@ -12626,14 +12626,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-crypto"
+        "plugin-node-crypto",
+        "native-node-crypto"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Node 24との全ハッシュ別名・乱数境界の公式差分テストに成功"
+      "reason": "公式7経路のSHA-256・Buffer境界とエンコード形式の差分テストに成功"
     },
     {
       "id": "command-0793",
@@ -12651,14 +12652,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-crypto"
+        "plugin-node-crypto",
+        "native-node-crypto"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Node 24との全ハッシュ別名・乱数境界の公式差分テストに成功"
+      "reason": "公式7経路のUUID version・variantと形式の差分テストに成功"
     },
     {
       "id": "command-0794",
@@ -12676,14 +12678,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-crypto"
+        "plugin-node-crypto",
+        "native-node-crypto"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Node 24との全ハッシュ別名・乱数境界の公式差分テストに成功"
+      "reason": "公式7経路のUint8Array長さ・要素境界の差分テストに成功"
     },
     {
       "id": "command-0795",

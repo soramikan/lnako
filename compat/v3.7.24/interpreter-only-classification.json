@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "473e0bd329d37696f97a09654db075d928ccf870959052d97761d12943a28395"
+    "sha256": "464d96230278dd644e0bc3e83c8a9a26dc609c5a989488ab4661318bef245d88"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 85,
+    "count": 82,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 85
+      "unverified": 82
     }
   },
   "groups": [
@@ -123,26 +123,6 @@
         "標準入力取得時",
         "尋",
         "文字尋"
-      ]
-    },
-    {
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ハッシュ関数",
-      "type": "関数",
-      "count": 3,
-      "executionEvidenceStates": {
-        "unverified": 3
-      },
-      "commandIds": [
-        "command-0792",
-        "command-0793",
-        "command-0794"
-      ],
-      "names": [
-        "ハッシュ値計算",
-        "ランダムUUID生成",
-        "ランダム配列生成"
       ]
     },
     {
@@ -1692,57 +1672,6 @@
       "interpreterFixtureIds": [
         "plugin-node-encoding",
         "plugin-node-encoding-special"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0792",
-      "name": "ハッシュ値計算",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ハッシュ関数",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-crypto"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0793",
-      "name": "ランダムUUID生成",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ハッシュ関数",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-crypto"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0794",
-      "name": "ランダム配列生成",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ハッシュ関数",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-crypto"
       ],
       "aotFixtureIds": []
     },

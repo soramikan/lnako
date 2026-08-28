@@ -294,6 +294,9 @@ pub const Command = enum(u16) {
     node_network_ipv4,
     node_network_ipv6,
     node_file_info,
+    node_hash_value,
+    node_random_uuid,
+    node_random_array,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -597,6 +600,9 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "AJAX失敗時")) return .node_ajax_onerror_set;
     if (std.mem.eql(u8, name, "自分IPアドレス取得")) return .node_network_ipv4;
     if (std.mem.eql(u8, name, "自分IPV6アドレス取得")) return .node_network_ipv6;
+    if (std.mem.eql(u8, name, "ハッシュ値計算")) return .node_hash_value;
+    if (std.mem.eql(u8, name, "ランダムUUID生成")) return .node_random_uuid;
+    if (std.mem.eql(u8, name, "ランダム配列生成")) return .node_random_array;
     return null;
 }
 
@@ -822,6 +828,9 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.node_ajax_onerror_set, lookup("AJAX失敗時").?);
     try std.testing.expectEqual(Command.node_network_ipv4, lookup("自分IPアドレス取得").?);
     try std.testing.expectEqual(Command.node_network_ipv6, lookup("自分IPV6アドレス取得").?);
+    try std.testing.expectEqual(Command.node_hash_value, lookup("ハッシュ値計算").?);
+    try std.testing.expectEqual(Command.node_random_uuid, lookup("ランダムUUID生成").?);
+    try std.testing.expectEqual(Command.node_random_array, lookup("ランダム配列生成").?);
     try std.testing.expectEqual(Command.datetime_now, lookup("今").?);
     try std.testing.expectEqual(Command.datetime_system_time_milliseconds, lookup("システム時間ミリ秒").?);
     try std.testing.expectEqual(Command.datetime_today, lookup("今日").?);

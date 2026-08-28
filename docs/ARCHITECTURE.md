@@ -236,6 +236,6 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
 - Nodeの`AJAXオプション設定`は、設定値を`AJAXオプション`グローバルへ保持し、戻り値を持たない。純LLVM AOTは専用ABIで同じグローバルへ値を直接保存し、`native-node-http-options-set`で設定後の辞書を公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3と比較する。実際のHTTP送信とPromise/callback経路は別の未実装境界である。
 - Nodeの`AJAX失敗時`は、失敗時コールバック値を`AJAX:ONERROR`グローバルへ保持し、戻り値を持たない。純LLVM AOTは専用ABIで関数値を同じGC管理グローバルへ保存し、`native-node-http-onerror-set`で設定後の型を公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3と比較する。実際のHTTP失敗時callback呼び出しとPromise/callback経路は別の未実装境界である。
 - Nodeの`圧縮解凍ツールパス`は`7z`を初期値とする可変システムグローバルで、`圧縮解凍ツールパス変更`はその値を更新する。純LLVM AOTは共有システム定数と専用`archive-tool-path` ABIでこの状態遷移を保持し、`native-node-archive-tool-path`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。外部7z実行を含む`圧縮`・`解凍`本体は`TODO: aot-node-archive-operations`として別境界に残す。
-- Nodeの`ハッシュ関数一覧取得`は、Node 24/OpenSSL互換の固定52名称を順序付き配列へ変換する。純LLVM AOTは`crypto.hash_names`をUTF-16配列へ生成し、`native-node-hash-names`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3と比較する。ハッシュ値計算や乱数のバイト型は別の未実装AOT境界である。
+- Nodeの暗号4命令は、Node 24/OpenSSL互換の固定52名称、全別名のハッシュ計算、version 4 UUID、Uint8Array乱数配列を提供する。純LLVM AOTは`crypto.calculateDigest`を共有し、ハッシュの生値を`buffer`、乱数配列を`uint8_array`、将来のArrayBuffer値を`array_buffer`としてGC管理する。添字・長さ・反復・ToPrimitive・JSON形状も種別ごとに保持し、`native-node-hash-names`と`native-node-crypto`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3と比較する。その他のBufferを返すエンコーディング変換、Bufferのslice/view identity、継承プロパティは別の未実装境界として追跡する。
 - Promiseの`束`は入力PromiseをFIFOマイクロタスクへ接続し、入力順の成功配列、空入力、最初の失敗を`Promise.all`と同じ順序で処理する。
 - `tests/oracle/standard-plugin-cases.json` が48命令を重複なく列挙し、カバレッジ検査と公式CLI差分テストを3環境CIで実行する。
