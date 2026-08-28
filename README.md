@@ -91,6 +91,8 @@ TargetMachineによるオブジェクト生成、LLD 22.1.8によるリンクを
 
 Node同期ファイル操作8 entry（`ファイル列挙`・`全ファイル列挙`・`フォルダ作成`・`ファイルコピー`・`ファイル上書コピー`・`ファイル移動`・`ファイル上書移動`・`ファイル削除`）は、純Zigの`node-file-operation` ABIへ接続し、glob列挙、再帰コピー／移動、上書き制御、削除を処理します。`native-node-file-operations`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較します。
 
+Nodeの`コンソールクリア`は、比較ハーネスのpipe出力では公式の`console.clear()`が表示内容を変更しないため、純LLVM AOTでは副作用のないno-opとして接続します。`native-node-console-clear`で前後の標準出力を公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3と比較します。
+
 ## CLI
 
 ```text

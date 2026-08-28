@@ -82,9 +82,9 @@ fixtureのソース本文から命令名を推測することはしません。�
 `executionEvidenceState`も保持するため、次にAOT fixtureを追加する対象を命令系統ごとに選べます。
 この分類は実装完了、AOT実行、公式等価性、attestation済みの`verified`を意味しません。
 
-現行HEADでは、明示`commands`を追加した既存AOT fixtureと数学・日時・caniuse・漢数字・CSV・TOML・マークアップ・比較・表・敬語・標準出力・プラグイン管理・ASYNC・システムカタログ・Node/AJAX初期定数・LINE Notify廃止エラー・Node終了・Nodeファイル存在・Nodeファイルサイズ・Nodeファイル情報・NodeファイルI/O・Node同期ファイル操作・Node文字コード変換・Node文字コードサポート判定・Node標準入力全取得・Node HTTPデータ生成・Node AJAXオプション設定・Node AJAX失敗時設定・Nodeネットワークアドレス・Nodeディレクトリ値・Node母艦パス・Node一時フォルダ作成・Nodeファイルコピーデフォルト動作・Nodeハッシュ名一覧・Node暗号（ハッシュ値・UUID・乱数配列）・Node圧縮解凍ツールパス・エラー発生・実行時間計測・デバッグ表示・既定ハテナ実行・タイマー待機・タイマー（単発・周期・停止）・Promise連鎖・Promise束ね・Promise待機fixtureを含めて、fixture inventoryは
-全291件（AOT 186件、Interpreter 96件、QuickJS 9件）です。命令のfixture coverageは`paired` 472 entry、
-`interpreter-only` 51 entryです。execution evidenceは`verified` 0、
+現行HEADでは、明示`commands`を追加した既存AOT fixtureと数学・日時・caniuse・漢数字・CSV・TOML・マークアップ・比較・表・敬語・標準出力・プラグイン管理・ASYNC・システムカタログ・Node/AJAX初期定数・LINE Notify廃止エラー・Node終了・Nodeファイル存在・Nodeファイルサイズ・Nodeファイル情報・NodeファイルI/O・Node同期ファイル操作・Nodeコンソールクリア・Node文字コード変換・Node文字コードサポート判定・Node標準入力全取得・Node HTTPデータ生成・Node AJAXオプション設定・Node AJAX失敗時設定・Nodeネットワークアドレス・Nodeディレクトリ値・Node母艦パス・Node一時フォルダ作成・Nodeファイルコピーデフォルト動作・Nodeハッシュ名一覧・Node暗号（ハッシュ値・UUID・乱数配列）・Node圧縮解凍ツールパス・エラー発生・実行時間計測・デバッグ表示・既定ハテナ実行・タイマー待機・タイマー（単発・周期・停止）・Promise連鎖・Promise束ね・Promise待機fixtureを含めて、fixture inventoryは
+全292件（AOT 187件、Interpreter 96件、QuickJS 9件）です。命令のfixture coverageは`paired` 474 entry、
+`interpreter-only` 49 entryです。execution evidenceは`verified` 0、
 `trace-confirmed-unattested` 4、`unverified` 523のままです。
 fixtureの関連付けを変更した場合は、次で派生台帳の生成と検査を行います。
 

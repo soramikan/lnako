@@ -40,6 +40,7 @@ register("ファイル情報取得", "native-node-file-info", "公式7経路の�
 for (const name of ["開", "読", "バイナリ読", "保存"]) register(name, "native-node-file-io", "公式7経路のファイル読み書きとBuffer境界の差分テストに成功");
 for (const name of ["SJISファイル読", "SJISファイル保存", "EUCファイル読", "EUCファイル保存", "SJIS変換", "SJIS取得", "エンコーディング変換", "エンコーディング取得"]) register(name, "native-node-encoding", "公式7経路の文字コード変換・SJIS/EUCファイルI/O差分テストに成功");
 for (const name of ["ファイル列挙", "全ファイル列挙", "フォルダ作成", "ファイルコピー", "ファイル上書コピー", "ファイル移動", "ファイル上書移動", "ファイル削除"]) register(name, "native-node-file-operations", "公式7経路のファイル列挙・再帰コピー・移動・削除差分テストに成功");
+register("コンソールクリア", "native-node-console-clear", "公式7経路の標準出力境界でコンソールクリア差分テストに成功");
 register("ハッシュ値計算", "native-node-crypto", "公式7経路のSHA-256・Buffer境界とエンコード形式の差分テストに成功");
 register("ランダムUUID生成", "native-node-crypto", "公式7経路のUUID version・variantと形式の差分テストに成功");
 register("ランダム配列生成", "native-node-crypto", "公式7経路のUint8Array長さ・要素境界の差分テストに成功");

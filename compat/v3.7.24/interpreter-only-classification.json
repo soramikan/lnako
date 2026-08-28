@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "a89b8e2eab7627bd3542c3e7e02baedecc306d3f1c64622d83a8616eb2372bea"
+    "sha256": "5c216c05757652ced43480ccab1eba315ea39222715d14d3992df76ac8ff9b4f"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 51,
+    "count": 49,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 51
+      "unverified": 49
     }
   },
   "groups": [
@@ -130,16 +130,15 @@
       "group": "基本プラグイン",
       "category": "ファイル入出力",
       "type": "関数",
-      "count": 13,
+      "count": 12,
       "executionEvidenceStates": {
-        "unverified": 13
+        "unverified": 12
       },
       "commandIds": [
         "command-0696",
         "command-0697",
         "command-0698",
         "command-0699",
-        "command-0700",
         "command-0701",
         "command-0702",
         "command-0703",
@@ -154,7 +153,6 @@
         "コマンド実行",
         "コマンド実行待機",
         "起動",
-        "コンソールクリア",
         "起動時",
         "ブラウザ起動",
         "エクスプローラー起動",
@@ -209,22 +207,6 @@
         "AJAXバイナリ取得",
         "DISCORD送信",
         "DISCORDファイル送信"
-      ]
-    },
-    {
-      "plugin": "plugin_promise",
-      "group": "基本プラグイン",
-      "category": "非同期処理の保証の定数",
-      "type": "定数",
-      "count": 1,
-      "executionEvidenceStates": {
-        "unverified": 1
-      },
-      "commandIds": [
-        "command-0370"
-      ],
-      "names": [
-        "そ"
       ]
     },
     {
@@ -334,23 +316,6 @@
       "aotFixtureIds": []
     },
     {
-      "id": "command-0370",
-      "name": "そ",
-      "plugin": "plugin_promise",
-      "group": "基本プラグイン",
-      "category": "非同期処理の保証の定数",
-      "type": "定数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "promise-reject"
-      ],
-      "aotFixtureIds": []
-    },
-    {
       "id": "command-0696",
       "name": "起動待機",
       "plugin": "plugin_node",
@@ -416,23 +381,6 @@
       "interpreterFixtureIds": [
         "plugin-node-process",
         "plugin-node-process-order"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0700",
-      "name": "コンソールクリア",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-process"
       ],
       "aotFixtureIds": []
     },

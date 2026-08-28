@@ -327,6 +327,7 @@ pub const Command = enum(u16) {
     node_file_move,
     node_file_move_overwrite,
     node_file_delete,
+    node_console_clear,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -663,6 +664,7 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "ファイル移動")) return .node_file_move;
     if (std.mem.eql(u8, name, "ファイル上書移動")) return .node_file_move_overwrite;
     if (std.mem.eql(u8, name, "ファイル削除")) return .node_file_delete;
+    if (std.mem.eql(u8, name, "コンソールクリア")) return .node_console_clear;
     return null;
 }
 
@@ -874,6 +876,7 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.node_file_move, lookup("ファイル移動").?);
     try std.testing.expectEqual(Command.node_file_move_overwrite, lookup("ファイル上書移動").?);
     try std.testing.expectEqual(Command.node_file_delete, lookup("ファイル削除").?);
+    try std.testing.expectEqual(Command.node_console_clear, lookup("コンソールクリア").?);
     try std.testing.expectEqual(Command.async_noop, lookup("ASYNC").?);
     try std.testing.expectEqual(Command.system_await_execute, lookup("AWAIT実行").?);
     try std.testing.expectEqual(Command.system_execute, lookup("実行").?);

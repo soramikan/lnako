@@ -753,7 +753,7 @@
   {
     "id": "native-system-promise-reject",
     "oracle": "official-source",
-    "commands": ["失敗時"],
+    "commands": ["失敗時", "そ"],
     "source": "動いた時には(成功,失敗)\n失敗(5)\nここまで\nF=そ\nFの失敗した時には\n対象を表示\nここまで\n"
   },
   {
@@ -827,6 +827,11 @@
     "id": "native-node-file-operations",
     "commands": ["ファイル列挙", "全ファイル列挙", "フォルダ作成", "ファイルコピー", "ファイル上書コピー", "ファイル移動", "ファイル上書移動", "ファイル削除"],
     "source": "ファイル削除(\"data\")\nファイル削除(\"tree-copy\")\nファイル削除(\"tree-move\")\nフォルダ作成(\"data/sub\")\n保存(\"abc\",\"data/a.txt\")\n保存(\"nested\",\"data/sub/nested.txt\")\nJSON変換(ファイル列挙(\"data/*.txt\"))を表示\n要素数(全ファイル列挙(\"data/*.txt\"))を表示\nファイルコピー(\"data/a.txt\",\"data/copy.txt\")\nファイル上書コピー(\"data/a.txt\",\"data/copy.txt\")\nファイル移動(\"data/copy.txt\",\"data/moved.txt\")\nファイル上書移動(\"data/moved.txt\",\"data/moved2.txt\")\nファイル削除(\"data/moved2.txt\")\n存在(\"data/moved2.txt\")を表示\n保存(\"old\",\"data/existing.txt\")\nファイルコピーデフォルト動作=\"上書\"\nファイルコピー(\"data/a.txt\",\"data/existing.txt\")\n読(\"data/existing.txt\")を表示\nファイルコピー(\"data\",\"tree-copy\")\nファイル上書移動(\"tree-copy\",\"tree-move\")\n要素数(全ファイル列挙(\"tree-move/*.txt\"))を表示\nファイル削除(\"tree-move\")\n"
+  },
+  {
+    "id": "native-node-console-clear",
+    "commands": ["コンソールクリア"],
+    "source": "\"before\"を表示\nコンソールクリア()\n\"after\"を表示\n"
   },
   {
     "id": "native-node-directory-values",

@@ -142,9 +142,10 @@
   "そ": {
     "status": "native",
     "tests": [
-      "promise-reject"
+      "promise-reject",
+      "native-system-promise-reject"
     ],
-    "reason": "直近のPromiseを保持するシステム定数として公式cnako3差分テストに成功"
+    "reason": "公式7経路の直近Promise定数参照差分テストに成功"
   },
   "動時": {
     "status": "native",
@@ -2925,9 +2926,10 @@
   "コンソールクリア": {
     "status": "native",
     "tests": [
-      "plugin-node-process"
+      "plugin-node-process",
+      "native-node-console-clear"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路の標準出力境界でコンソールクリア差分テストに成功"
   },
   "尋": {
     "status": "native",
