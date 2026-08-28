@@ -86,6 +86,7 @@ pub fn manifestCall(name: []const u8, direct_callee: ?ir.FunctionId, is_builtin_
         .cut, .cut_range => "cut",
         .regexp_match, .regexp_extract, .regexp_replace, .regexp_split => "regexp",
         .system_debug_display => "debug-display",
+        .system_hatena_execute => "hatena-default",
         else => "builtin",
     };
     return .{
@@ -365,6 +366,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_builtin_call_site(ptr, ptr, i64, i16, i64)\n" ++
                 "declare void @lnako_aot_regexp_call(ptr, ptr, ptr, i64, i16)\n" ++
                 "declare void @lnako_aot_regexp_call_site(ptr, ptr, ptr, i64, i16, i64)\n" ++
+                "declare void @lnako_aot_hatena_execute(ptr, ptr, i64, ptr, i64, ptr, i64)\n" ++
                 "declare i64 @lnako_aot_dispatch_display_begin(i64)\n" ++
                 "declare i64 @lnako_aot_dispatch_display_begin_with_epoch(i64, ptr)\n" ++
                 "declare void @lnako_aot_dispatch_result(i64, i64, i64)\n" ++
@@ -500,7 +502,7 @@ const Emitter = struct {
                 if (instruction.is_builtin_call and requiresDisplayLog(instruction.name) and self.globalIndex("表示ログ") == null) {
                     try self.globals.append(self.allocator, "表示ログ");
                 }
-                if (instruction.is_builtin_call) if (aot_builtin.lookup(instruction.name)) |command| if (command == .system_debug_display) {
+                if (instruction.is_builtin_call) if (aot_builtin.lookup(instruction.name)) |command| if (command == .system_debug_display or command == .system_hatena_execute) {
                     const path = self.sourcePathForFunction(function.name);
                     if (self.debugPathIndex(path) == null) try self.debug_paths.append(self.allocator, .{ .path = path });
                 };
@@ -1146,10 +1148,11 @@ const Emitter = struct {
         const result = instruction.result orelse return error.MissingInstructionResult;
         const site_id = instruction.site_id orelse return error.MissingDispatchSiteId;
         if (instruction.operands.len > aggregate_count) return error.InvalidCallScratch;
-        if (command == .system_debug_display) {
+        if (command == .system_debug_display or command == .system_hatena_execute) {
             const display_log_index = self.globalIndex("表示ログ") orelse return error.MissingDisplayLogGlobal;
             const source_path = self.sourcePathForFunction(function.name);
             const path_index = self.debugPathIndex(source_path) orelse return error.MissingDebugSourcePath;
+            const runtime_name = if (command == .system_hatena_execute) "lnako_aot_hatena_execute" else "lnako_aot_debug_display";
             if (instruction.operands.len > 0) {
                 try self.output.writer.print("  %debug-display.{d}.slot.0 = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 0", .{ result, aggregate_count });
                 try self.debugSuffix(instruction.span, scope);
@@ -1158,7 +1161,7 @@ const Emitter = struct {
                 try self.output.writer.print(", ptr %debug-display.{d}.slot.0", .{result});
                 try self.debugSuffix(instruction.span, scope);
             }
-            try self.output.writer.print("  call void @lnako_aot_debug_display(ptr %root.slot.{d}, ptr ", .{result});
+            try self.output.writer.print("  call void @{s}(ptr %root.slot.{d}, ptr ", .{ runtime_name, result });
             if (instruction.operands.len > 0) {
                 try self.output.writer.print("%debug-display.{d}.slot.0", .{result});
             } else try self.output.writer.writeAll("null");
@@ -1718,7 +1721,7 @@ fn isPluginManagementCommand(command: aot_builtin.Command) bool {
 
 fn requiresDisplayLog(name: []const u8) bool {
     if (isDisplayCall(name)) return true;
-    return if (aot_builtin.lookup(name)) |command| isStdioCommand(command) or command == .system_debug_display else false;
+    return if (aot_builtin.lookup(name)) |command| isStdioCommand(command) or command == .system_debug_display or command == .system_hatena_execute else false;
 }
 
 fn nameIndex(names: []const []const u8, name: []const u8) ?usize {
@@ -1941,6 +1944,11 @@ test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {
     try std.testing.expectEqualStrings("system_debug_display", debug.canonical_opcode);
     try std.testing.expectEqualStrings("debug-display", debug.route);
     try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.system_debug_display), debug.opcode);
+
+    const hatena = manifestCall("ハテナ関数実行", null, true).?;
+    try std.testing.expectEqualStrings("system_hatena_execute", hatena.canonical_opcode);
+    try std.testing.expectEqualStrings("hatena-default", hatena.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.system_hatena_execute), hatena.opcode);
 
     const timer_wait = manifestCall("秒待", null, true).?;
     try std.testing.expectEqualStrings("timer_wait", timer_wait.canonical_opcode);

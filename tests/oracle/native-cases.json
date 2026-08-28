@@ -721,6 +721,12 @@
     "source": "デバッグ表示({\"a\":1})\nデバッグ表示([1,2])\nデバッグ表示(\"text\")\nデバッグ表示(undefined)\n"
   },
   {
+    "id": "native-system-hatena-default",
+    "normalizeDebugDump": true,
+    "commands": ["ハテナ関数実行"],
+    "source": "??({\"a\":1})\n??([1,2])\n??(\"text\")\n??(undefined)\n"
+  },
+  {
     "id": "native-system-timer-wait",
     "oracle": "official-source",
     "commands": ["秒待", "秒待機", "秒逐次待機"],

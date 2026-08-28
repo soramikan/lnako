@@ -219,6 +219,7 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
 - `plugins/system` のプラグイン管理3命令は、文字列化したプラグイン名・名前空間の設定と、両方を対で保存・復元するスタック操作を共有する。AOTは`lnako_aot_plugin_management_call`とGC追跡対象の名前空間スタックへ接続し、`native-system-plugin-management`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。
 - `plugins/system` の`ASYNC`は同期実行時に値を返さないno-opである。AOTは`async_noop` builtin dispatchへ接続し、`native-system-async`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。Promiseを待機する`AWAIT実行`は別境界である。
 - `plugins/system` の`実行時間計測`は、関数名を解決して関数値を実行し、公式の`performance.now()`相当の経過ミリ秒を返す。AOTは名前解決・関数値呼び出しを`system_measure_time` builtinへ接続し、固定可能な単調時計で`native-system-measure-time`の公式7経路差分を検証する。
+- `plugins/system` の`ハテナ関数実行`は、カスタムコールバックが未設定の既定`??`動作を`デバッグ表示`と同じ位置付きJSON出力へ接続する。AOTは専用`hatena-default` ABIと`native-system-hatena-default`で公式7経路差分を検証する。`ハテナ関数設定`の任意関数・`JS:`コールバックは通常AOTへ持ち込まず、`TODO: aot-hatena-custom-callback`として残す。
 - `plugins/system` のシステムカタログ6命令は、標準関数名478件、既定プラグイン7件、公開助詞、公開予約語を固定順序で配列化し、存在確認は公式と同じ最後の引数を調べる。AOTは共通builtin dispatchとGCルート付き配列生成へ接続し、`native-system-catalog-lists`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。利用者関数一覧の`グローバル関数一覧取得`はInterpreter側の境界として残る。
 - Node/AJAXの初期定数5 entryは、`native-node-http-initial-constants`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。HTTPサーバーの実通信は`plugin-httpserver-all`で別に検証し、AOTのHTTPサーバー実装済みとは扱わない。
 - Nodeの`LINE送信` / `LINE画像送信`は廃止済みAPIを呼び出さず、InterpreterとAOTの両方で同じ廃止エラーへ接続する。公式CLIはstdoutへ表示して終了コード0、公式生成JavaScriptは実行時エラーで終了コード1になる既知の経路差があるため、`native-node-line-message-discontinued` / `native-node-line-image-discontinued`は公式生成JavaScriptをoracleにする。QuickJS互換モードはこの標準命令の証拠経路に含めない。

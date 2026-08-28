@@ -2779,6 +2779,26 @@ test "AOTデバッグ表示はオブジェクトをJSON化して位置付き表�
     try expectUtf16String(&active_runtime.?, roots[1], "main.nako3(4): {\"a\":1}\n");
 }
 
+test "AOTハテナ関数実行は既定のデバッグ表示として位置と値を保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try active_runtime.?.createArray(&.{ numberValue(1), numberValue(2) });
+    roots[1] = try active_runtime.?.createString(&.{});
+    lnako_aot_hatena_execute(&roots[2], &roots[0], 7, "main.nako3", "main.nako3".len, &roots[1], 0);
+    try expectUtf16String(&active_runtime.?, roots[1], "main.nako3(7): [1,2]\n");
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[2].tag)));
+}
+
 test "AOT ASSERT等はNodeのSameValue境界と戻り値を保つ" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -3139,6 +3159,37 @@ pub export fn lnako_aot_debug_display(
     const start_epoch = runtime.failure_epoch;
     var success = false;
     defer runtime.dispatch_trace.result(call_id, command_name, @intFromEnum(command), "debug-display", site_id, success);
+    debugDisplayBuiltin(runtime, if (value) |pointer| pointer.* else .{}, line, path, display_log) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    success = runtime.failure_epoch == start_epoch;
+}
+
+/// AOT版`ハテナ関数実行`は、カスタムコールバックを設定していない場合の
+/// 公式既定動作（`デバッグ表示`）を専用ABIで実行する。`ハテナ関数設定`の
+/// JS評価や任意のコールバックはこの経路へ持ち込まない。
+pub export fn lnako_aot_hatena_execute(
+    out: *Value,
+    value: ?*const Value,
+    line: u64,
+    source_path: ?[*]const u8,
+    source_len: usize,
+    display_log: ?*Value,
+    site_id: u64,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    const path = if (source_path) |pointer| pointer[0..source_len] else if (source_len == 0) &.{} else {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    };
+    const command = aot_builtin.Command.system_hatena_execute;
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    const call_id = runtime.dispatch_trace.begin(command_name, @intFromEnum(command), "hatena-default", site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, @intFromEnum(command), "hatena-default", site_id, success);
     debugDisplayBuiltin(runtime, if (value) |pointer| pointer.* else .{}, line, path, display_log) catch |failure| {
         runtime.setFailure(failure);
         return;
@@ -3620,6 +3671,10 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         },
         .system_debug_display => debugDisplayBuiltin(runtime, value, 1, &.{}, null) catch |failure| {
             runtime.setFailure(failure);
+            return;
+        },
+        .system_hatena_execute => {
+            runtime.setFailure(error.UnknownCommand);
             return;
         },
         .system_debug_enable => runtime.debug_enabled = true,
