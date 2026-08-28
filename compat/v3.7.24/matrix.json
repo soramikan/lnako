@@ -16385,14 +16385,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-file-core"
+        "plugin-node-file-core",
+        "native-node-file-info"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路のファイル情報とメソッド型差分テストに成功"
     },
     {
       "id": "command-0721",

@@ -448,6 +448,21 @@ const Runtime = struct {
     }
 
     fn createNamedFunction(self: *Runtime, callback: FunctionCallback, arity: usize, name: []const u8, captures: []const Value) !Value {
+        return self.createFunctionObject(callback, arity, name, captures, true);
+    }
+
+    fn createMethodFunction(self: *Runtime, callback: FunctionCallback, arity: usize, name: []const u8, captures: []const Value) !Value {
+        return self.createFunctionObject(callback, arity, name, captures, false);
+    }
+
+    fn createFunctionObject(
+        self: *Runtime,
+        callback: FunctionCallback,
+        arity: usize,
+        name: []const u8,
+        captures: []const Value,
+        register_global: bool,
+    ) !Value {
         var frame: RootFrame = .{};
         self.pushRoots(&frame, if (captures.len > 0) @constCast(captures.ptr) else null, captures.len);
         defer self.popRoots(&frame);
@@ -459,7 +474,7 @@ const Runtime = struct {
             errdefer self.allocator.free(owned_captures);
             break :blk try self.createObject(.{ .function = .{ .callback = callback, .arity = arity, .name = owned_name, .captures = owned_captures } }, .function);
         };
-        if (name.len > 0) {
+        if (register_global and name.len > 0) {
             const registered_name = try self.allocator.dupe(u8, name);
             errdefer self.allocator.free(registered_name);
             try self.named_functions.append(self.allocator, .{ .name = registered_name, .object = result.object().? });
@@ -4014,6 +4029,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
+        .node_file_info => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = nodeFileInfoBuiltin(runtime, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .node_encoding_supports => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = nodeEncodingSupportsBuiltin(runtime, actual) catch |failure| {
@@ -7112,6 +7134,59 @@ fn nodeFileSizeBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     defer runtime.allocator.free(path);
     const stat = try std.Io.Dir.cwd().statFile(std.Io.Threaded.global_single_threaded.io(), path, .{});
     return numberValue(@floatFromInt(stat.size));
+}
+
+fn nodeFileInfoBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    if (arguments.len < 1) return error.InvalidArgumentCount;
+    const path = try valueUtf8LossyAlloc(runtime, arguments[0]);
+    defer runtime.allocator.free(path);
+    const stat = try std.Io.Dir.cwd().statFile(std.Io.Threaded.global_single_threaded.io(), path, .{});
+
+    var result = try runtime.createDictionary(&.{});
+    var roots = RootFrame{};
+    runtime.pushRoots(&roots, @ptrCast(&result), 1);
+    defer runtime.popRoots(&roots);
+
+    try setNodeFileInfoValue(runtime, result, "size", numberValue(@floatFromInt(stat.size)));
+    try setNodeFileInfoValue(runtime, result, "mtimeMs", numberValue(@as(f64, @floatFromInt(stat.mtime.nanoseconds)) / 1_000_000.0));
+    try setNodeFileInfoValue(runtime, result, "ctimeMs", numberValue(@as(f64, @floatFromInt(stat.ctime.nanoseconds)) / 1_000_000.0));
+    try setNodeFileInfoValue(runtime, result, "atimeMs", numberValue(if (stat.atime) |access_time| @as(f64, @floatFromInt(access_time.nanoseconds)) / 1_000_000.0 else 0));
+    try setNodeFileInfoValue(runtime, result, "ino", numberValue(@floatFromInt(stat.inode)));
+    try setNodeFileInfoValue(runtime, result, "nlink", numberValue(@floatFromInt(stat.nlink)));
+    try setNodeFileInfoValue(runtime, result, "blksize", numberValue(@floatFromInt(stat.block_size)));
+    try setNodeFileInfoMethod(runtime, result, "isFile", stat.kind == .file);
+    try setNodeFileInfoMethod(runtime, result, "isDirectory", stat.kind == .directory);
+    for ([_][]const u8{ "isBlockDevice", "isCharacterDevice", "isSymbolicLink", "isFIFO", "isSocket" }) |name| {
+        try setNodeFileInfoMethod(runtime, result, name, false);
+    }
+    return result;
+}
+
+fn setNodeFileInfoValue(runtime: *Runtime, dictionary: Value, name: []const u8, value: Value) !void {
+    var rooted = [_]Value{ dictionary, value, .{} };
+    var roots = RootFrame{};
+    runtime.pushRoots(&roots, &rooted, rooted.len);
+    defer runtime.popRoots(&roots);
+    rooted[2] = try runtimeUtf8String(runtime, name);
+    try runtime.setDictionary(&rooted[0].object().?.payload.dictionary, rooted[2], rooted[1]);
+}
+
+fn setNodeFileInfoMethod(runtime: *Runtime, dictionary: Value, name: []const u8, result: bool) !void {
+    var rooted = [_]Value{ dictionary, .{}, .{} };
+    var roots = RootFrame{};
+    runtime.pushRoots(&roots, &rooted, rooted.len);
+    defer runtime.popRoots(&roots);
+    rooted[1] = try runtime.createMethodFunction(if (result) nodeFileInfoTrue else nodeFileInfoFalse, 0, name, &.{});
+    rooted[2] = try runtimeUtf8String(runtime, name);
+    try runtime.setDictionary(&rooted[0].object().?.payload.dictionary, rooted[2], rooted[1]);
+}
+
+fn nodeFileInfoTrue(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 };
+}
+
+fn nodeFileInfoFalse(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
 }
 
 fn nodeEncodingSupportsBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
@@ -11115,6 +11190,44 @@ test "AOT Nodeファイルサイズ取得はstatのサイズを返す" {
     const expected = try std.Io.Dir.cwd().statFile(std.Io.Threaded.global_single_threaded.io(), ".", .{});
     const result = try nodeFileSizeBuiltin(&runtime, &.{staticStringValue(".")});
     try std.testing.expectEqual(@as(f64, @floatFromInt(expected.size)), valueToNumber(result));
+}
+
+test "AOT Nodeファイル情報取得はstatフィールドとメソッドを保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    const expected = try std.Io.Dir.cwd().statFile(std.Io.Threaded.global_single_threaded.io(), ".", .{});
+    roots[0] = try nodeFileInfoBuiltin(&active_runtime.?, &.{staticStringValue(".")});
+    roots[1] = dictionaryProperty(roots[0], &.{ 's', 'i', 'z', 'e' });
+    try std.testing.expectEqual(@as(f64, @floatFromInt(expected.size)), valueToNumber(roots[1]));
+    const method_names = [_][]const u8{ "isFile", "isDirectory", "isSymbolicLink" };
+    for ([_][]const u16{
+        &.{ 'i', 's', 'F', 'i', 'l', 'e' },
+        &.{ 'i', 's', 'D', 'i', 'r', 'e', 'c', 't', 'o', 'r', 'y' },
+        &.{ 'i', 's', 'S', 'y', 'm', 'b', 'o', 'l', 'i', 'c', 'L', 'i', 'n', 'k' },
+    }, 2..) |key, index| {
+        roots[index] = dictionaryProperty(roots[0], key);
+        try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[index].tag)));
+        try std.testing.expectEqual(@as(usize, 0), roots[index].object().?.payload.function.captures.len);
+        try std.testing.expectEqualStrings(method_names[index - 2], roots[index].object().?.payload.function.name);
+    }
+    roots[5] = try invokeAotCallback(&active_runtime.?, roots[2], null, 0);
+    try std.testing.expectEqual(Tag.boolean, @as(Tag, @enumFromInt(roots[5].tag)));
+    try std.testing.expect(roots[5].payload == 0);
+    roots[5] = try invokeAotCallback(&active_runtime.?, roots[3], null, 0);
+    try std.testing.expect(roots[5].payload != 0);
+    roots[5] = try invokeAotCallback(&active_runtime.?, roots[4], null, 0);
+    try std.testing.expect(roots[5].payload == 0);
+    try std.testing.expectEqual(@as(usize, 0), active_runtime.?.named_functions.items.len);
 }
 
 test "AOT Nodeネットワーク命令はOSアドレスを文字列配列へ変換する" {

@@ -2803,9 +2803,10 @@
   "ファイル情報取得": {
     "status": "native",
     "tests": [
-      "plugin-node-file-core"
+      "plugin-node-file-core",
+      "native-node-file-info"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路のファイル情報とメソッド型差分テストに成功"
   },
   "ファイルサイズ取得": {
     "status": "native",

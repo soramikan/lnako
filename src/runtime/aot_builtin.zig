@@ -293,6 +293,7 @@ pub const Command = enum(u16) {
     node_ajax_onerror_set,
     node_network_ipv4,
     node_network_ipv6,
+    node_file_info,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -588,6 +589,7 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "ハッシュ関数一覧取得")) return .node_hash_names;
     if (std.mem.eql(u8, name, "圧縮解凍ツールパス変更")) return .node_archive_tool_path_set;
     if (std.mem.eql(u8, name, "ファイルサイズ取得")) return .node_file_size;
+    if (std.mem.eql(u8, name, "ファイル情報取得")) return .node_file_info;
     if (std.mem.eql(u8, name, "文字コード変換サポート判定")) return .node_encoding_supports;
     if (std.mem.eql(u8, name, "標準入力全取得")) return .node_stdin_all;
     if (std.mem.eql(u8, name, "POSTデータ生成")) return .node_post_data;
@@ -812,6 +814,7 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.node_hash_names, lookup("ハッシュ関数一覧取得").?);
     try std.testing.expectEqual(Command.node_archive_tool_path_set, lookup("圧縮解凍ツールパス変更").?);
     try std.testing.expectEqual(Command.node_file_size, lookup("ファイルサイズ取得").?);
+    try std.testing.expectEqual(Command.node_file_info, lookup("ファイル情報取得").?);
     try std.testing.expectEqual(Command.node_encoding_supports, lookup("文字コード変換サポート判定").?);
     try std.testing.expectEqual(Command.node_stdin_all, lookup("標準入力全取得").?);
     try std.testing.expectEqual(Command.node_post_data, lookup("POSTデータ生成").?);
