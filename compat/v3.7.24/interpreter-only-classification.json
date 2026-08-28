@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "b995dffd44de349ac8fa922d8739d36200ca4a79e34dc45b699248cd54d34d65"
+    "sha256": "7e74594dd5af4419d92fb9b9ec83f351497aaff2bafa132403a54db88ffaed49"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 37,
+    "count": 33,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 37
+      "unverified": 33
     }
   },
   "groups": [
@@ -99,28 +99,6 @@
         "ファイル処理強制停止",
         "ファイル移動時",
         "ファイル削除時"
-      ]
-    },
-    {
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "圧縮・解凍",
-      "type": "関数",
-      "count": 4,
-      "executionEvidenceStates": {
-        "unverified": 4
-      },
-      "commandIds": [
-        "command-0741",
-        "command-0742",
-        "command-0743",
-        "command-0744"
-      ],
-      "names": [
-        "解凍",
-        "解凍時",
-        "圧縮",
-        "圧縮時"
       ]
     },
     {
@@ -404,74 +382,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "plugin-node-file-callbacks"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0741",
-      "name": "解凍",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "圧縮・解凍",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-native-archive"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0742",
-      "name": "解凍時",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "圧縮・解凍",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-native-archive"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0743",
-      "name": "圧縮",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "圧縮・解凍",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-native-archive"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0744",
-      "name": "圧縮時",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "圧縮・解凍",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-native-archive"
       ],
       "aotFixtureIds": []
     },

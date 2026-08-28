@@ -10,6 +10,7 @@ const string_mod = @import("string.zig");
 const system_constant = @import("system_constant.zig");
 const crypto = @import("../plugins/crypto.zig");
 const encoding = @import("../plugins/encoding.zig");
+const zip_archive = @import("../archive/zip.zig");
 const regexp = @import("../plugins/system/regexp.zig");
 const markup = @import("../plugins/markup.zig");
 const lexer = @import("../frontend/lexer.zig");
@@ -303,6 +304,24 @@ const AotHttpServerState = struct {
     }
 };
 
+const AotArchiveOperation = enum { create, extract };
+
+const AotArchiveTask = struct {
+    operation: AotArchiveOperation,
+    use_external_tool: bool,
+    source: []u8,
+    destination: []u8,
+    tool_path: []u8,
+    callback: Value,
+
+    fn deinit(self: *AotArchiveTask, allocator: std.mem.Allocator) void {
+        allocator.free(self.source);
+        allocator.free(self.destination);
+        allocator.free(self.tool_path);
+        self.* = undefined;
+    }
+};
+
 const AotHttpGlobals = struct {
     method: ?*Value = null,
     get_data: ?*Value = null,
@@ -499,6 +518,8 @@ const Runtime = struct {
     held_http_connections: std.ArrayList(std.Io.net.Stream) = .empty,
     upload_sequence: u64 = 1,
     http_globals: ?AotHttpGlobals = null,
+    archive_tool_path_custom: bool = false,
+    archive_tasks: std.ArrayList(AotArchiveTask) = .empty,
 
     fn deinit(self: *Runtime) void {
         self.dispatch_trace.deinit();
@@ -508,6 +529,8 @@ const Runtime = struct {
         self.held_http_connections.deinit(self.allocator);
         if (self.http_server) |*server| server.deinit(io);
         self.http_server_state.deinit(self.allocator);
+        for (self.archive_tasks.items) |*task| task.deinit(self.allocator);
+        self.archive_tasks.deinit(self.allocator);
         self.csv_state.deinit(self.allocator);
         self.print_pool.deinit(self.allocator);
         self.namespace_stack.deinit(self.allocator);
@@ -745,6 +768,7 @@ const Runtime = struct {
         for (self.http_server_state.routes.items) |route| {
             if (route.kind == .callback) self.markValue(route.callback);
         }
+        for (self.archive_tasks.items) |task| self.markValue(task.callback);
         while (self.grey) |object| {
             self.grey = object.grey_next;
             object.grey_next = null;
@@ -3072,6 +3096,13 @@ fn isHttpServerCommand(command: aot_builtin.Command) bool {
     };
 }
 
+fn isArchiveCommand(command: aot_builtin.Command) bool {
+    return switch (command) {
+        .node_archive_extract, .node_archive_extract_callback, .node_archive_create, .node_archive_create_callback => true,
+        else => false,
+    };
+}
+
 fn isPluginManagementCommand(command: aot_builtin.Command) bool {
     return switch (command) {
         .plugin_name_set, .namespace_set, .namespace_pop => true,
@@ -3195,6 +3226,70 @@ fn executeAotTimer(runtime: *Runtime, index: usize) !void {
     _ = try invokeAotCallback(runtime, callback, @ptrCast(&id), 1);
 }
 
+fn aotArchiveExecute(
+    runtime: *Runtime,
+    operation: AotArchiveOperation,
+    use_external_tool: bool,
+    source: []const u8,
+    destination: []const u8,
+    tool_path: []const u8,
+) ![]u8 {
+    const allocator = runtime.allocator;
+    const io = std.Io.Threaded.global_single_threaded.io();
+    if (!use_external_tool) {
+        switch (operation) {
+            .create => try zip_archive.create(allocator, io, source, destination),
+            .extract => try zip_archive.extract(io, source, destination),
+        }
+        return allocator.alloc(u8, 0);
+    }
+
+    var output_option: ?[]u8 = null;
+    defer if (output_option) |option| allocator.free(option);
+    var argv_storage: [6][]const u8 = undefined;
+    const argv: []const []const u8 = switch (operation) {
+        .create => blk: {
+            argv_storage = .{ tool_path, "a", "-r", destination, source, "-y" };
+            break :blk argv_storage[0..6];
+        },
+        .extract => blk: {
+            output_option = try std.fmt.allocPrint(allocator, "-o{s}", .{destination});
+            argv_storage = .{ tool_path, "x", source, output_option.?, "-y", undefined };
+            break :blk argv_storage[0..5];
+        },
+    };
+    const result = try std.process.run(allocator, io, .{
+        .argv = argv,
+        .stdout_limit = .limited(64 * 1024 * 1024),
+        .stderr_limit = .limited(64 * 1024 * 1024),
+    });
+    allocator.free(result.stderr);
+    if (result.term != .exited or result.term.exited != 0) {
+        allocator.free(result.stdout);
+        return error.ArchiveToolFailed;
+    }
+    return result.stdout;
+}
+
+fn drainAotArchiveTasks(runtime: *Runtime) !void {
+    while (runtime.archive_tasks.items.len > 0) {
+        try countAotEvent(runtime);
+        var task = runtime.archive_tasks.orderedRemove(0);
+        defer task.deinit(runtime.allocator);
+        var callback = task.callback;
+        var callback_frame = RootFrame{};
+        runtime.pushRoots(&callback_frame, @ptrCast(&callback), 1);
+        defer runtime.popRoots(&callback_frame);
+        const output = try aotArchiveExecute(runtime, task.operation, task.use_external_tool, task.source, task.destination, task.tool_path);
+        defer runtime.allocator.free(output);
+        var result = try runtimeUtf8StringLossy(runtime, output);
+        var result_frame = RootFrame{};
+        runtime.pushRoots(&result_frame, @ptrCast(&result), 1);
+        defer runtime.popRoots(&result_frame);
+        _ = try invokeAotCallback(runtime, callback, @ptrCast(&result), 1);
+    }
+}
+
 fn drainAotPromiseTasks(runtime: *Runtime) !void {
     while (runtime.promise_tasks.items.len > 0) {
         try countAotEvent(runtime);
@@ -3205,6 +3300,7 @@ fn drainAotPromiseTasks(runtime: *Runtime) !void {
 
 fn drainAotEvents(runtime: *Runtime) !void {
     while (true) {
+        try drainAotArchiveTasks(runtime);
         try drainAotPromiseTasks(runtime);
         if (earliestAotTimerIndex(runtime)) |index| {
             try executeAotTimer(runtime, index);
@@ -3221,11 +3317,13 @@ fn drainAotTimers(runtime: *Runtime) !void {
 fn waitAotMilliseconds(runtime: *Runtime, milliseconds: u64) !void {
     const target = std.math.add(u64, runtime.elapsed_milliseconds, milliseconds) catch return error.TimerOverflow;
     while (true) {
+        try drainAotArchiveTasks(runtime);
         try drainAotPromiseTasks(runtime);
         const index = earliestAotTimerIndex(runtime) orelse break;
         if (runtime.timers.items[index].due_milliseconds > target) break;
         try executeAotTimer(runtime, index);
     }
+    try drainAotArchiveTasks(runtime);
     try drainAotPromiseTasks(runtime);
     try sleepAotUntil(runtime, target);
 }
@@ -4760,11 +4858,13 @@ pub export fn lnako_aot_runtime_drain_events() callconv(.c) void {
     const runtime = if (active_runtime) |*active| active else return;
     pollAotInterrupt(runtime) catch |failure| runtimeFailure(failure);
     drainAotTimers(runtime) catch |failure| runtimeFailure(failure);
+    drainAotArchiveTasks(runtime) catch |failure| runtimeFailure(failure);
     pollAotInterrupt(runtime) catch |failure| runtimeFailure(failure);
     if (runtime.http_server_state.started) {
         while (runtime.http_server_state.started) {
             _ = pollAotHttpServer(runtime) catch |failure| runtimeFailure(failure);
             drainAotPromiseTasks(runtime) catch |failure| runtimeFailure(failure);
+            drainAotArchiveTasks(runtime) catch |failure| runtimeFailure(failure);
             pollAotInterrupt(runtime) catch |failure| runtimeFailure(failure);
         }
     }
@@ -5156,6 +5256,117 @@ pub export fn lnako_aot_archive_tool_path_set(
         return;
     }
     archive_tool_path.* = values.?[0];
+    runtime.archive_tool_path_custom = true;
+    success = runtime.failure_epoch == start_epoch;
+}
+
+/// Dedicated ABI for Node's ZIP archive commands. The default path keeps the
+/// existing pure-Zig stored-ZIP implementation; an explicitly changed tool
+/// path is invoked with argv semantics, matching the command's external-tool
+/// boundary without introducing a JavaScript runtime into AOT.
+pub export fn lnako_aot_archive_call(
+    out: *Value,
+    archive_tool_path: *Value,
+    arguments: ?[*]const Value,
+    len: usize,
+    opcode: u16,
+    site_id: u64,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
+        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "node-archive", site_id);
+        runtime.setFailure(error.UnknownCommand);
+        runtime.dispatch_trace.result(call_id, "unknown", opcode, "node-archive", site_id, false);
+        return;
+    };
+    if (!isArchiveCommand(command)) {
+        runtime.setFailure(error.UnknownCommand);
+        return;
+    }
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "node-archive", site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "node-archive", site_id, success);
+    if (arguments == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const callback = command == .node_archive_extract_callback or command == .node_archive_create_callback;
+    const required: usize = if (callback) 3 else 2;
+    if (len < required) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const values = arguments.?;
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
+    for (0..@min(len, roots.len)) |index| roots[index] = values[index];
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    var callback_value: Value = .{};
+    if (callback) {
+        callback_value = resolveAotCallback(runtime, roots[0]) catch |failure| {
+            runtime.setFailure(failure);
+            return;
+        };
+        roots[0] = callback_value;
+    }
+    const source_index: usize = if (callback) 1 else 0;
+    const destination_index: usize = source_index + 1;
+    const source = valueUtf8LossyAlloc(runtime, roots[source_index]) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    defer runtime.allocator.free(source);
+    const destination = valueUtf8LossyAlloc(runtime, roots[destination_index]) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    defer runtime.allocator.free(destination);
+    const tool_path = valueUtf8LossyAlloc(runtime, archive_tool_path.*) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    defer runtime.allocator.free(tool_path);
+    const operation: AotArchiveOperation = if (command == .node_archive_extract or command == .node_archive_extract_callback) .extract else .create;
+    if (callback) {
+        const queued_source = runtime.allocator.dupe(u8, source) catch |failure| {
+            runtime.setFailure(failure);
+            return;
+        };
+        errdefer runtime.allocator.free(queued_source);
+        const queued_destination = runtime.allocator.dupe(u8, destination) catch |failure| {
+            runtime.setFailure(failure);
+            return;
+        };
+        errdefer runtime.allocator.free(queued_destination);
+        const queued_tool_path = runtime.allocator.dupe(u8, tool_path) catch |failure| {
+            runtime.setFailure(failure);
+            return;
+        };
+        errdefer runtime.allocator.free(queued_tool_path);
+        runtime.archive_tasks.append(runtime.allocator, .{
+            .operation = operation,
+            .use_external_tool = runtime.archive_tool_path_custom,
+            .source = queued_source,
+            .destination = queued_destination,
+            .tool_path = queued_tool_path,
+            .callback = callback_value,
+        }) catch |failure| {
+            runtime.setFailure(failure);
+            return;
+        };
+        success = runtime.failure_epoch == start_epoch;
+        return;
+    }
+    const output = aotArchiveExecute(runtime, operation, runtime.archive_tool_path_custom, source, destination, tool_path) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    defer runtime.allocator.free(output);
+    out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 };
     success = runtime.failure_epoch == start_epoch;
 }
 
@@ -5998,6 +6209,10 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
             return;
         },
         .node_archive_tool_path_set, .node_ajax_options_set, .node_ajax_onerror_set => {
+            runtime.setFailure(error.UnknownCommand);
+            return;
+        },
+        .node_archive_extract, .node_archive_extract_callback, .node_archive_create, .node_archive_create_callback => {
             runtime.setFailure(error.UnknownCommand);
             return;
         },
@@ -12964,6 +13179,7 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, *Value, ?[*]const Value, usize, u8) callconv(.c) void, @TypeOf(&lnako_aot_cut));
     try std.testing.expectEqual(*const fn (*Value, *Value, ?[*]const Value, usize, u8, u64) callconv(.c) void, @TypeOf(&lnako_aot_cut_site));
     try std.testing.expectEqual(*const fn (*Value, *Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_node_stdin_callback_call));
+    try std.testing.expectEqual(*const fn (*Value, *Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_archive_call));
     try std.testing.expectEqual(*const fn () callconv(.c) void, @TypeOf(&lnako_aot_runtime_drain_events));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16) callconv(.c) void, @TypeOf(&lnako_aot_builtin_call));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_builtin_call_site));
@@ -16199,6 +16415,73 @@ test "AOT実行時間計測は関数名と単調時計を使う" {
     try std.testing.expectEqual(@as(f64, 0), valueToNumber(roots[1]));
     roots[2] = try measureCallableBuiltin(&active_runtime.?, &.{roots[0]});
     try std.testing.expectEqual(@as(f64, 0), valueToNumber(roots[2]));
+}
+
+test "AOT圧縮解凍は内蔵ZIPとcallbackタスクを実行する" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "source.txt", .data = "日本語ABC" });
+    const base = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(base);
+    const source = try std.fs.path.join(std.testing.allocator, &.{ base, "source.txt" });
+    defer std.testing.allocator.free(source);
+    const archive = try std.fs.path.join(std.testing.allocator, &.{ base, "archive.zip" });
+    defer std.testing.allocator.free(archive);
+    const output = try std.fs.path.join(std.testing.allocator, &.{ base, "output" });
+    defer std.testing.allocator.free(output);
+    const callback_archive = try std.fs.path.join(std.testing.allocator, &.{ base, "callback.zip" });
+    defer std.testing.allocator.free(callback_archive);
+    const callback_output = try std.fs.path.join(std.testing.allocator, &.{ base, "callback-output" });
+    defer std.testing.allocator.free(callback_output);
+
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = staticStringValue("7z");
+    roots[1] = try runtimeUtf8String(&active_runtime.?, source);
+    roots[2] = try runtimeUtf8String(&active_runtime.?, archive);
+    roots[3] = try runtimeUtf8String(&active_runtime.?, output);
+    var direct_create = [_]Value{ roots[1], roots[2] };
+    lnako_aot_archive_call(&roots[8], &roots[0], &direct_create, direct_create.len, @intFromEnum(aot_builtin.Command.node_archive_create), 1);
+    try std.testing.expectEqual(Tag.boolean, @as(Tag, @enumFromInt(roots[8].tag)));
+    try std.testing.expectEqual(@as(usize, 0), active_runtime.?.archive_tasks.items.len);
+
+    var direct_extract = [_]Value{ roots[2], roots[3] };
+    lnako_aot_archive_call(&roots[8], &roots[0], &direct_extract, direct_extract.len, @intFromEnum(aot_builtin.Command.node_archive_extract), 2);
+    const extracted = try std.fs.path.join(std.testing.allocator, &.{ output, "source.txt" });
+    defer std.testing.allocator.free(extracted);
+    const extracted_bytes = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, extracted, std.testing.allocator, .limited(1024));
+    defer std.testing.allocator.free(extracted_bytes);
+    try std.testing.expectEqualStrings("日本語ABC", extracted_bytes);
+
+    roots[4] = try active_runtime.?.createBindingCell(numberValue(0));
+    roots[5] = try active_runtime.?.createFunction(testAotCapturedIncrement, 0, &.{roots[4]});
+    roots[6] = try runtimeUtf8String(&active_runtime.?, callback_archive);
+    roots[7] = try runtimeUtf8String(&active_runtime.?, callback_output);
+    var callback_create = [_]Value{ roots[5], roots[1], roots[6] };
+    lnako_aot_archive_call(&roots[8], &roots[0], &callback_create, callback_create.len, @intFromEnum(aot_builtin.Command.node_archive_create_callback), 3);
+    try std.testing.expectEqual(@as(usize, 1), active_runtime.?.archive_tasks.items.len);
+    try drainAotEvents(&active_runtime.?);
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(roots[4].object().?.payload.binding_cell));
+
+    var callback_extract = [_]Value{ roots[5], roots[6], roots[7] };
+    lnako_aot_archive_call(&roots[8], &roots[0], &callback_extract, callback_extract.len, @intFromEnum(aot_builtin.Command.node_archive_extract_callback), 4);
+    try drainAotEvents(&active_runtime.?);
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(roots[4].object().?.payload.binding_cell));
+    const callback_extracted = try std.fs.path.join(std.testing.allocator, &.{ callback_output, "source.txt" });
+    defer std.testing.allocator.free(callback_extracted);
+    const callback_bytes = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, callback_extracted, std.testing.allocator, .limited(1024));
+    defer std.testing.allocator.free(callback_bytes);
+    try std.testing.expectEqualStrings("日本語ABC", callback_bytes);
 }
 
 test "AOTハッシュ関数一覧取得は固定したNode互換名を配列で返す" {

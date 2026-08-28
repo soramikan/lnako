@@ -340,6 +340,10 @@ pub const Command = enum(u16) {
     http_server_output,
     http_server_headers,
     http_server_redirect,
+    node_archive_extract,
+    node_archive_extract_callback,
+    node_archive_create,
+    node_archive_create_callback,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -631,6 +635,10 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "簡易HTTPサーバ出力")) return .http_server_output;
     if (std.mem.eql(u8, name, "簡易HTTPサーバヘッダ出力")) return .http_server_headers;
     if (std.mem.eql(u8, name, "簡易HTTPサーバ移動")) return .http_server_redirect;
+    if (std.mem.eql(u8, name, "解凍")) return .node_archive_extract;
+    if (std.mem.eql(u8, name, "解凍時")) return .node_archive_extract_callback;
+    if (std.mem.eql(u8, name, "圧縮")) return .node_archive_create;
+    if (std.mem.eql(u8, name, "圧縮時")) return .node_archive_create_callback;
     if (std.mem.eql(u8, name, "グローバル関数一覧取得")) return .system_global_function_names;
     if (std.mem.eql(u8, name, "システム関数一覧取得")) return .system_function_names;
     if (std.mem.eql(u8, name, "システム関数存在")) return .system_function_exists;
@@ -1031,6 +1039,10 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.stdio_clear_log, lookup("表示ログクリア").?);
     try std.testing.expectEqual(Command.stdio_write_all, lookup("言").?);
     try std.testing.expectEqual(Command.stdio_write_all, lookup("コンソール表示").?);
+    try std.testing.expectEqual(Command.node_archive_extract, lookup("解凍").?);
+    try std.testing.expectEqual(Command.node_archive_extract_callback, lookup("解凍時").?);
+    try std.testing.expectEqual(Command.node_archive_create, lookup("圧縮").?);
+    try std.testing.expectEqual(Command.node_archive_create_callback, lookup("圧縮時").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }
 
