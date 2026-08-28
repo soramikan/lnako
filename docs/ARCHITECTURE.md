@@ -229,6 +229,7 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
 - Nodeの`ファイルコピーデフォルト動作`は、`上書禁止`を初期値とする可変システムグローバルである。純LLVM AOTは参照されたグローバルを同じ初期値で生成し、通常の代入を保持する。`native-node-file-copy-default`で初期値と`上書`/`overwrite`代入を公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3と比較する。ファイルコピー・移動本体のAOT routeは別の未実装境界である。
 - Nodeの`ファイルサイズ取得`は、指定pathを`std.Io.Dir.statFile`でstatし、`size`をbinary64へ変換する。stat失敗は実行時エラーとして伝播する。`native-node-file-size`で`.`の公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。
 - Nodeの`文字コード変換サポート判定`は、Interpreterと共有する正規化・別名・生成済みlegacy/single-byte表を使い、Bufferを生成せずbooleanだけを返す。純LLVM AOTは専用builtin dispatchへ接続し、`native-node-encoding-support`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。Bufferを返す4つのエンコーディング変換命令は別の未実装境界である。
+- Nodeの`標準入力全取得`は、標準入力を一度だけUTF-8バイト列として読み、UTF-16文字列へ変換する。純LLVM AOTはJS runtimeを使わず`std.Io.File.stdin`から同じ入力を読み、`native-node-stdin-all`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。`尋`・`文字尋`・`標準入力取得時`の行分割・コールバックは別の未実装境界である。
 - Nodeの`圧縮解凍ツールパス`は`7z`を初期値とする可変システムグローバルで、`圧縮解凍ツールパス変更`はその値を更新する。純LLVM AOTは共有システム定数と専用`archive-tool-path` ABIでこの状態遷移を保持し、`native-node-archive-tool-path`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。外部7z実行を含む`圧縮`・`解凍`本体は`TODO: aot-node-archive-operations`として別境界に残す。
 - Nodeの`ハッシュ関数一覧取得`は、Node 24/OpenSSL互換の固定52名称を順序付き配列へ変換する。純LLVM AOTは`crypto.hash_names`をUTF-16配列へ生成し、`native-node-hash-names`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3と比較する。ハッシュ値計算や乱数のバイト型は別の未実装AOT境界である。
 - Promiseの`束`は入力PromiseをFIFOマイクロタスクへ接続し、入力順の成功配列、空入力、最初の失敗を`Promise.all`と同じ順序で処理する。

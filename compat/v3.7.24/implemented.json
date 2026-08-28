@@ -2914,9 +2914,10 @@
   "標準入力全取得": {
     "status": "native",
     "tests": [
-      "plugin-node-stdin"
+      "plugin-node-stdin",
+      "native-node-stdin-all"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路の標準入力全取得差分テストに成功"
   },
   "標準入力取得時": {
     "status": "native",

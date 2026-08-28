@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "67a22da80f19a7298fd2aa126498f560fd0cb5f10f76cc5b9d79c3f92e5112be"
+    "sha256": "fbe17707598cda960884fbc8589c64655507cc3a15195efb7886e6790dcd3d13"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 92,
+    "count": 91,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 92
+      "unverified": 91
     }
   },
   "groups": [
@@ -116,21 +116,19 @@
       "group": "基本プラグイン",
       "category": "コマンドラインと標準入出力",
       "type": "関数",
-      "count": 4,
+      "count": 3,
       "executionEvidenceStates": {
-        "unverified": 4
+        "unverified": 3
       },
       "commandIds": [
         "command-0754",
         "command-0755",
-        "command-0756",
-        "command-0757"
+        "command-0756"
       ],
       "names": [
         "標準入力取得時",
         "尋",
-        "文字尋",
-        "標準入力全取得"
+        "文字尋"
       ]
     },
     {
@@ -1331,23 +1329,6 @@
     {
       "id": "command-0756",
       "name": "文字尋",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "コマンドラインと標準入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-stdin"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0757",
-      "name": "標準入力全取得",
       "plugin": "plugin_node",
       "group": "基本プラグイン",
       "category": "コマンドラインと標準入出力",

@@ -3,7 +3,7 @@ import { access, link, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "no
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { execFile, spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
 
@@ -30,7 +30,7 @@ const oracleIdentity = await readOracleIdentity(oracleRoot, officialCli, oracleB
 const artifactOracleIdentity = artifactPath === null ? null : oracleIdentity;
 const temporary = await mkdtemp(join(tmpdir(), "lnako-native-"));
 const maxBuffer = 16 * 1024 * 1024;
-const knownCaseFields = new Set(["id", "source", "sourceFileName", "oracle", "stderrIncludes", "normalizeDebugDump", "commands"]);
+const knownCaseFields = new Set(["id", "source", "sourceFileName", "oracle", "stderrIncludes", "normalizeDebugDump", "commands", "stdin"]);
 const routeNames = ["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0", "lnakoNativeO1", "lnakoNativeO2", "lnakoNativeO3"];
 let artifactLnakoBinarySha256 = null;
 
@@ -58,6 +58,9 @@ try {
     }
     if (testCase.commands !== undefined && (!Array.isArray(testCase.commands) || testCase.commands.length === 0 || testCase.commands.some((name) => typeof name !== "string" || name.length === 0 || !standardCommandNames.has(name)) || new Set(testCase.commands).size !== testCase.commands.length)) {
       throw new Error(`commandsは標準527命令の重複しない非空文字列配列で指定してください: ${testCase.id}`);
+    }
+    if (testCase.stdin !== undefined && typeof testCase.stdin !== "string") {
+      throw new Error(`stdinは文字列で指定してください: ${testCase.id}`);
     }
   }
   let completed;
@@ -187,13 +190,14 @@ async function runCase(testCase, index, temporary, executable, officialCli, coll
     env: { ...process.env, TZ: "Asia/Tokyo", LNAKO_TEST_NOW_MS: "1735689845678", LNAKO_TEST_MONOTONIC_MS: "123.5", LNAKO_TEST_RANDOM_SEED: "5573589319906701683", LNAKO_LLVM_TRACE: "1" },
     maxBuffer,
   };
+  const runOptions = testCase.stdin === undefined ? options : { ...options, input: testCase.stdin };
   const oracleHost = testCase.normalizeDebugDump ? resolve(root, "tools/oracle/normalize_debug_host.mjs") : fixedHost;
   const oracleHostArgument = ["--import", pathToFileURL(oracleHost).href];
-  const officialSource = await runProcess(process.execPath, [...oracleHostArgument, officialCli, sourcePath], options);
+  const officialSource = await runProcess(process.execPath, [...oracleHostArgument, officialCli, sourcePath], runOptions);
   const officialCompile = await runProcess(process.execPath, [...oracleHostArgument, officialCli, "--compile", "--silent", "--output", generatedJavaScript, sourcePath], options);
-  const officialGenerated = officialCompile.status === 0 ? await runProcess(process.execPath, [...oracleHostArgument, generatedJavaScript], options) : officialCompile;
+  const officialGenerated = officialCompile.status === 0 ? await runProcess(process.execPath, [...oracleHostArgument, generatedJavaScript], runOptions) : officialCompile;
   const generatedJavaScriptSha256 = collectManifest && officialCompile.status === 0 ? sha256(await readFile(generatedJavaScript)) : null;
-  const interpreted = await runProcess(executable, ["run", sourcePath], options);
+  const interpreted = await runProcess(executable, ["run", sourcePath], runOptions);
   const results = {
     officialSource: normalize(officialSource),
     officialGenerated: normalize(officialGenerated),
@@ -218,7 +222,7 @@ async function runCase(testCase, index, temporary, executable, officialCli, coll
     if (manifestPath !== null && optimization === "O0" && nativeCompile.status === 0) {
       manifestSummary = await readManifestSummary(manifestPath);
     }
-    const nativeResult = nativeCompile.status === 0 ? await runProcess(nativeExecutable, [], options) : nativeCompile;
+    const nativeResult = nativeCompile.status === 0 ? await runProcess(nativeExecutable, [], runOptions) : nativeCompile;
     results[`lnakoNative${optimization}`] = normalize(nativeResult);
     stderrResults[`lnakoNative${optimization}`] = normalizeStderr(nativeResult);
     if (nativeCompile.status !== 0) compileErrors.push(`${optimization}:\n${nativeCompile.stderr}`);
@@ -239,6 +243,37 @@ function replaceNativePluginPlaceholders(source, oracleRoot, fixtureDirectory) {
 }
 
 function runProcess(command, arguments_, options) {
+  if (Object.hasOwn(options, "input")) {
+    return new Promise((resolveProcess) => {
+      const child = spawn(command, arguments_, { cwd: options.cwd, env: options.env, windowsHide: true });
+      let stdout = "";
+      let stderr = "";
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        resolveProcess(result);
+      };
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString("utf8");
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString("utf8");
+      });
+      child.on("error", (error) => {
+        finish({
+          status: typeof error.code === "number" ? error.code : null,
+          signal: null,
+          stdout,
+          stderr: stderr || error.message,
+        });
+      });
+      child.on("close", (code, signal) => {
+        finish({ status: code, signal, stdout, stderr });
+      });
+      child.stdin.end(options.input);
+    });
+  }
   return new Promise((resolveProcess) => {
     execFile(command, arguments_, options, (error, stdout, stderr) => {
       resolveProcess({
