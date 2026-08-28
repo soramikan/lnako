@@ -46,6 +46,8 @@ register("終了時", "native-system-promise-reject-process-finally", "公式7�
 register("束", "native-system-promise-bundle", "公式7経路の入力順・空入力・失敗束ね差分テストに成功");
 register("そ", "native-system-promise-reject", "公式7経路の直近Promise定数参照差分テストに成功");
 register("__DEBUG_BP_WAIT", "native-system-debug-breakpoint-wait", "公式7経路の非該当ブレイクポイント即時復帰差分テストに成功");
+register("ハテナ関数設定", "native-system-hatena-custom", "公式7経路の命令名配列・関数値callback実行とGC保持差分テストに成功");
+register("ハテナ関数実行", "native-system-hatena-custom", "公式7経路の設定済みハテナcallback列実行差分テストに成功");
 
 function register(name, testId, reason) {
   const current = implemented[name];

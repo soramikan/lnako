@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "a40677733e720246a834a743100ba84d11adc5a10b76f11f97f7bc595a08bbbb"
+    "sha256": "a4239162dbba3a48c44d31cd40dbb20c2af789f9429a54fefd2ecf438db6c805"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 45,
+    "count": 44,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 45
+      "unverified": 44
     }
   },
   "groups": [
@@ -192,22 +192,6 @@
     {
       "plugin": "plugin_system",
       "group": "基本プラグイン",
-      "category": "デバッグ支援",
-      "type": "関数",
-      "count": 1,
-      "executionEvidenceStates": {
-        "unverified": 1
-      },
-      "commandIds": [
-        "command-0063"
-      ],
-      "names": [
-        "ハテナ関数設定"
-      ]
-    },
-    {
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
       "category": "特殊命令",
       "type": "関数",
       "count": 2,
@@ -248,23 +232,6 @@
       "plugin": "plugin_system",
       "group": "基本プラグイン",
       "category": "特殊命令",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "system-runtime-execution-and-debug"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0063",
-      "name": "ハテナ関数設定",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "デバッグ支援",
       "type": "関数",
       "plannedMode": "native",
       "status": "native",

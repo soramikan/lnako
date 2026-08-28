@@ -1654,14 +1654,15 @@
       "status": "native",
       "tests": [
         "system-runtime-execution-and-debug",
-        "compat-js-hatena"
+        "compat-js-hatena",
+        "native-system-hatena-custom"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+      "reason": "公式7経路の命令名配列・関数値callback実行とGC保持差分テストに成功"
     },
     {
       "id": "command-0064",
@@ -1681,14 +1682,15 @@
       "status": "native",
       "tests": [
         "system-runtime-execution-and-debug",
-        "compat-js-hatena"
+        "compat-js-hatena",
+        "native-system-hatena-custom"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+      "reason": "公式7経路の設定済みハテナcallback列実行差分テストに成功"
     },
     {
       "id": "command-0065",

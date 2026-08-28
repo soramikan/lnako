@@ -407,6 +407,7 @@ const Runtime = struct {
     csv_state: AotCsvState = .{},
     namespace_stack: std.ArrayList(NamespaceFrame) = .empty,
     named_functions: std.ArrayList(RegisteredFunction) = .empty,
+    hatena_callbacks: std.ArrayList(Value) = .empty,
     timers: std.ArrayList(AotTimer) = .empty,
     promise_tasks: std.ArrayList(AotPromiseTask) = .empty,
     promise_all_states: std.ArrayList(*AotPromiseAllState) = .empty,
@@ -421,6 +422,7 @@ const Runtime = struct {
         self.csv_state.deinit(self.allocator);
         self.print_pool.deinit(self.allocator);
         self.namespace_stack.deinit(self.allocator);
+        self.hatena_callbacks.deinit(self.allocator);
         self.timers.deinit(self.allocator);
         self.promise_tasks.deinit(self.allocator);
         for (self.promise_all_states.items) |state| self.allocator.destroy(state);
@@ -639,6 +641,7 @@ const Runtime = struct {
             self.markValue(entry.namespace);
             self.markValue(entry.plugin_name);
         }
+        for (self.hatena_callbacks.items) |callback| self.markValue(callback);
         for (self.timers.items) |timer| self.markValue(timer.callback);
         for (self.promise_tasks.items) |task| {
             self.markValue(task.callback);
@@ -2860,6 +2863,86 @@ fn displayMany(runtime: *Runtime, values: []const Value, display_log: ?*Value) !
     try emitDisplayLine(runtime, text, true, display_log);
 }
 
+fn configureHatenaBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    runtime.hatena_callbacks.clearRetainingCapacity();
+    if (arguments.len == 0) return .{};
+
+    var setting = arguments[arguments.len - 1];
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, @ptrCast(&setting), 1);
+    defer runtime.popRoots(&frame);
+
+    switch (@as(Tag, @enumFromInt(setting.tag))) {
+        .function, .static_utf8_string, .utf16_string => try runtime.hatena_callbacks.append(runtime.allocator, setting),
+        .array => {
+            const items = try arrayItems(setting);
+            for (items.items) |item| {
+                if (!isString(item)) return error.InvalidHatenaCallback;
+                const name = try stringUtf8Alloc(runtime, item);
+                defer runtime.allocator.free(name);
+                if (std.mem.startsWith(u8, name, "JS:")) return error.JavaScriptCompatibilityRequired;
+                try runtime.hatena_callbacks.append(runtime.allocator, item);
+            }
+        },
+        else => {},
+    }
+    return .{};
+}
+
+fn invokeHatenaNamedCallback(
+    runtime: *Runtime,
+    name_value: Value,
+    parameter: Value,
+    line: u64,
+    source_path: []const u8,
+    display_log: ?*Value,
+) !Value {
+    const name = try stringUtf8Alloc(runtime, name_value);
+    defer runtime.allocator.free(name);
+    if (std.mem.eql(u8, name, "表示") or std.mem.eql(u8, name, "表示する")) {
+        try displayValue(runtime, parameter, true, display_log);
+        return .{};
+    }
+    if (std.mem.eql(u8, name, "連続表示")) {
+        try displayMany(runtime, &.{parameter}, display_log);
+        return .{};
+    }
+    const command = aot_builtin.lookup(name) orelse return error.UnknownFunction;
+    if (command == .system_debug_display) {
+        try debugDisplayBuiltin(runtime, parameter, line, source_path, display_log);
+        return .{};
+    }
+    var argument = parameter;
+    var result = Value{};
+    const start_epoch = runtime.failure_epoch;
+    lnako_aot_builtin_call_site(&result, @ptrCast(&argument), 1, @intFromEnum(command), 0);
+    if (runtime.has_pending_exception and runtime.failure_epoch != start_epoch) return error.CallbackExecutionFailed;
+    return result;
+}
+
+fn invokeHatenaCallbacks(
+    runtime: *Runtime,
+    parameter: Value,
+    line: u64,
+    source_path: []const u8,
+    display_log: ?*Value,
+) !Value {
+    var roots = [_]Value{ parameter, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    for (runtime.hatena_callbacks.items) |callback| {
+        roots[1] = if (callback.tag == @intFromEnum(Tag.function))
+            try invokeAotCallback(runtime, callback, @ptrCast(&roots[0]), 1)
+        else if (isString(callback))
+            try invokeHatenaNamedCallback(runtime, callback, roots[0], line, source_path, display_log)
+        else
+            return error.InvalidHatenaCallback;
+        roots[0] = roots[1];
+    }
+    return roots[0];
+}
+
 fn writeAllValues(runtime: *Runtime, values: []const Value) !void {
     for (values) |value| {
         const text = try valueUtf8LossyAlloc(runtime, value);
@@ -3626,6 +3709,41 @@ test "AOTハテナ関数実行は既定のデバッグ表示として位置と�
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[2].tag)));
 }
 
+test "AOTハテナ関数設定は関数値と命令名配列を保持して実行する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try active_runtime.?.createFunction(testAotFunction, 1, &.{});
+    var function_setting = [_]Value{roots[0]};
+    roots[1] = try configureHatenaBuiltin(&active_runtime.?, &function_setting);
+    roots[0] = .{};
+    try std.testing.expectEqual(@as(usize, 1), active_runtime.?.hatena_callbacks.items.len);
+    _ = active_runtime.?.collect();
+    roots[2] = try invokeHatenaCallbacks(&active_runtime.?, numberValue(7), 4, "main.nako3", null);
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[2]));
+
+    roots[3] = try active_runtime.?.createArray(&.{staticStringValue("文字列変換")});
+    var named_setting = [_]Value{roots[3]};
+    roots[1] = try configureHatenaBuiltin(&active_runtime.?, &named_setting);
+    roots[3] = .{};
+    _ = active_runtime.?.collect();
+    roots[2] = try invokeHatenaCallbacks(&active_runtime.?, numberValue(8), 4, "main.nako3", null);
+    try expectUtf16String(&active_runtime.?, roots[2], "8");
+
+    roots[3] = try active_runtime.?.createArray(&.{staticStringValue("JS:callback")});
+    var js_setting = [_]Value{roots[3]};
+    try std.testing.expectError(error.JavaScriptCompatibilityRequired, configureHatenaBuiltin(&active_runtime.?, &js_setting));
+}
+
 test "AOT __DEBUG_BP_WAITは即時復帰と非メイン待機を保つ" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -4049,9 +4167,9 @@ pub export fn lnako_aot_debug_display(
     success = runtime.failure_epoch == start_epoch;
 }
 
-/// AOT版`ハテナ関数実行`は、カスタムコールバックを設定していない場合の
-/// 公式既定動作（`デバッグ表示`）を専用ABIで実行する。`ハテナ関数設定`の
-/// JS評価や任意のコールバックはこの経路へ持ち込まない。
+/// AOT版`ハテナ関数実行`は、カスタムコールバックが未設定なら公式既定動作
+/// （`デバッグ表示`）を、設定済みなら純Zigのコールバック列を専用ABIで実行する。
+/// `JS:`コールバックの評価だけは通常AOTへ持ち込まず、明示的なcompat-js境界に残す。
 pub export fn lnako_aot_hatena_execute(
     out: *Value,
     value: ?*const Value,
@@ -4073,6 +4191,14 @@ pub export fn lnako_aot_hatena_execute(
     const start_epoch = runtime.failure_epoch;
     var success = false;
     defer runtime.dispatch_trace.result(call_id, command_name, @intFromEnum(command), "hatena-default", site_id, success);
+    if (runtime.hatena_callbacks.items.len > 0) {
+        _ = invokeHatenaCallbacks(runtime, if (value) |pointer| pointer.* else .{}, line, path, display_log) catch |failure| {
+            runtime.setFailure(failure);
+            return;
+        };
+        success = runtime.failure_epoch == start_epoch;
+        return;
+    }
     debugDisplayBuiltin(runtime, if (value) |pointer| pointer.* else .{}, line, path, display_log) catch |failure| {
         runtime.setFailure(failure);
         return;
@@ -4853,7 +4979,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .namespace_pop and command != .timer_wait and command != .timer_stop_all and command != .promise_all and command != .async_noop and command != .node_console_clear and command != .system_debug_breakpoint_wait and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit and command != .node_hash_names and command != .node_random_uuid and command != .node_stdin_all and command != .node_stdin_line and command != .node_stdin_character and command != .node_network_ipv4 and command != .node_network_ipv6) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .namespace_pop and command != .timer_wait and command != .timer_stop_all and command != .promise_all and command != .async_noop and command != .node_console_clear and command != .system_debug_breakpoint_wait and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit and command != .node_hash_names and command != .node_random_uuid and command != .node_stdin_all and command != .node_stdin_line and command != .node_stdin_character and command != .node_network_ipv4 and command != .node_network_ipv6 and command != .system_hatena_configure) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -4998,6 +5124,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         .system_measure_time => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = measureCallableBuiltin(runtime, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .system_hatena_configure => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = configureHatenaBuiltin(runtime, actual) catch |failure| {
                 runtime.setFailure(failure);
                 return;
             };
@@ -11983,6 +12116,7 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, *Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_timer_call_site));
     try std.testing.expectEqual(*const fn (*Value, *Value, *Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_promise_call_site));
     try std.testing.expectEqual(*const fn (*Value, ?*const Value, u64, ?[*]const u8, usize, ?*Value, u64) callconv(.c) void, @TypeOf(&lnako_aot_debug_display));
+    try std.testing.expectEqual(*const fn (*Value, ?*const Value, u64, ?[*]const u8, usize, ?*Value, u64) callconv(.c) void, @TypeOf(&lnako_aot_hatena_execute));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, *Value, u64) callconv(.c) void, @TypeOf(&lnako_aot_archive_tool_path_set));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, *Value, u64) callconv(.c) void, @TypeOf(&lnako_aot_archive_tool_path_set));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, *Value, u64) callconv(.c) void, @TypeOf(&lnako_aot_ajax_options_set));

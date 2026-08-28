@@ -8,14 +8,14 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 295,
-    "nativeAot": 190,
+    "total": 296,
+    "nativeAot": 191,
     "interpreter": 96,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
-    "paired": 478,
-    "interpreter-only": 45,
+    "paired": 479,
+    "interpreter-only": 44,
     "aot-only": 0,
     "none": 0,
     "compat-js-only": 4
@@ -2087,7 +2087,9 @@
       "interpreterFixtureIds": [
         "system-runtime-execution-and-debug"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-hatena-custom"
+      ],
       "compatJsFixtureIds": [
         "compat-js-hatena"
       ],
@@ -2098,19 +2100,24 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-hatena-custom": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {
           "compat-js-hatena": [
             "implemented.tests"
           ]
         }
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。 compat-js補助fixture 1件も別記録した。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。 compat-js補助fixture 1件も別記録した。executionEvidenceState=unverified。",
+      "implementationReason": "公式7経路の命令名配列・関数値callback実行とGC保持差分テストに成功"
     },
     {
       "id": "command-0064",
@@ -2121,6 +2128,7 @@
         "system-runtime-execution-and-debug"
       ],
       "aotFixtureIds": [
+        "native-system-hatena-custom",
         "native-system-hatena-default"
       ],
       "compatJsFixtureIds": [
@@ -2134,6 +2142,10 @@
           ]
         },
         "aot": {
+          "native-system-hatena-custom": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
           "native-system-hatena-default": [
             "fixture.commands"
           ]
@@ -2148,8 +2160,8 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。 compat-js補助fixture 1件も別記録した。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。 compat-js補助fixture 1件も別記録した。executionEvidenceState=unverified。",
+      "implementationReason": "公式7経路の設定済みハテナcallback列実行差分テストに成功"
     },
     {
       "id": "command-0065",

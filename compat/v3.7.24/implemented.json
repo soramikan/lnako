@@ -3757,17 +3757,19 @@
     "status": "native",
     "tests": [
       "system-runtime-execution-and-debug",
-      "compat-js-hatena"
+      "compat-js-hatena",
+      "native-system-hatena-custom"
     ],
-    "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+    "reason": "公式7経路の命令名配列・関数値callback実行とGC保持差分テストに成功"
   },
   "ハテナ関数実行": {
     "status": "native",
     "tests": [
       "system-runtime-execution-and-debug",
-      "compat-js-hatena"
+      "compat-js-hatena",
+      "native-system-hatena-custom"
     ],
-    "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
+    "reason": "公式7経路の設定済みハテナcallback列実行差分テストに成功"
   },
   "エラー発生": {
     "status": "native",

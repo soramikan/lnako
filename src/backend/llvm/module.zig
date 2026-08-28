@@ -93,6 +93,7 @@ pub fn manifestCall(name: []const u8, direct_callee: ?ir.FunctionId, is_builtin_
         .node_file_list, .node_file_list_all, .node_folder_create, .node_file_copy, .node_file_copy_overwrite, .node_file_move, .node_file_move_overwrite, .node_file_delete => "node-file-operation",
         .system_debug_display => "debug-display",
         .system_hatena_execute => "hatena-default",
+        .system_hatena_configure => "hatena-configure",
         .system_debug_breakpoint_wait => "debug-breakpoint-wait",
         .node_stdin_line, .node_stdin_character, .node_stdin_callback => "node-stdin-lines",
         .node_archive_tool_path_set => "archive-tool-path",
@@ -2184,6 +2185,11 @@ test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {
     try std.testing.expectEqualStrings("system_hatena_execute", hatena.canonical_opcode);
     try std.testing.expectEqualStrings("hatena-default", hatena.route);
     try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.system_hatena_execute), hatena.opcode);
+
+    const hatena_configure = manifestCall("ハテナ関数設定", null, true).?;
+    try std.testing.expectEqualStrings("system_hatena_configure", hatena_configure.canonical_opcode);
+    try std.testing.expectEqualStrings("hatena-configure", hatena_configure.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.system_hatena_configure), hatena_configure.opcode);
 
     const breakpoint_wait = manifestCall("__DEBUG_BP_WAIT", null, true).?;
     try std.testing.expectEqualStrings("system_debug_breakpoint_wait", breakpoint_wait.canonical_opcode);
