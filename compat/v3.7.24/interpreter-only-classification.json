@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "5c216c05757652ced43480ccab1eba315ea39222715d14d3992df76ac8ff9b4f"
+    "sha256": "0b39e017bb71621f8d9459b472bd3f77a93f956f6394307533ea4fdd6cae6005"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 49,
+    "count": 48,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 49
+      "unverified": 48
     }
   },
   "groups": [
@@ -214,17 +214,15 @@
       "group": "基本プラグイン",
       "category": "デバッグ支援",
       "type": "関数",
-      "count": 2,
+      "count": 1,
       "executionEvidenceStates": {
-        "unverified": 2
+        "unverified": 1
       },
       "commandIds": [
-        "command-0063",
-        "command-0070"
+        "command-0063"
       ],
       "names": [
-        "ハテナ関数設定",
-        "__DEBUG_BP_WAIT"
+        "ハテナ関数設定"
       ]
     },
     {
@@ -284,23 +282,6 @@
     {
       "id": "command-0063",
       "name": "ハテナ関数設定",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "デバッグ支援",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "system-runtime-execution-and-debug"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0070",
-      "name": "__DEBUG_BP_WAIT",
       "plugin": "plugin_system",
       "group": "基本プラグイン",
       "category": "デバッグ支援",

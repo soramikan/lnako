@@ -328,6 +328,7 @@ pub const Command = enum(u16) {
     node_file_move_overwrite,
     node_file_delete,
     node_console_clear,
+    system_debug_breakpoint_wait,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -607,6 +608,7 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "デバッグ表示")) return .system_debug_display;
     if (std.mem.eql(u8, name, "ハテナ関数実行")) return .system_hatena_execute;
     if (std.mem.eql(u8, name, "__DEBUG")) return .system_debug_enable;
+    if (std.mem.eql(u8, name, "__DEBUG_BP_WAIT")) return .system_debug_breakpoint_wait;
     if (std.mem.eql(u8, name, "グローバル関数一覧取得")) return .system_global_function_names;
     if (std.mem.eql(u8, name, "システム関数一覧取得")) return .system_function_names;
     if (std.mem.eql(u8, name, "システム関数存在")) return .system_function_exists;
@@ -883,6 +885,7 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.system_debug_display, lookup("デバッグ表示").?);
     try std.testing.expectEqual(Command.system_hatena_execute, lookup("ハテナ関数実行").?);
     try std.testing.expectEqual(Command.system_debug_enable, lookup("__DEBUG").?);
+    try std.testing.expectEqual(Command.system_debug_breakpoint_wait, lookup("__DEBUG_BP_WAIT").?);
     try std.testing.expectEqual(Command.system_global_function_names, lookup("グローバル関数一覧取得").?);
     try std.testing.expectEqual(Command.system_function_names, lookup("システム関数一覧取得").?);
     try std.testing.expectEqual(Command.system_function_exists, lookup("システム関数存在").?);

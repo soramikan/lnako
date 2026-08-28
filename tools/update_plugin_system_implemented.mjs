@@ -45,6 +45,7 @@ register("失敗時", "native-system-promise-reject", "公式7経路の失敗連
 register("終了時", "native-system-promise-reject-process-finally", "公式7経路のfinally連鎖差分テストに成功");
 register("束", "native-system-promise-bundle", "公式7経路の入力順・空入力・失敗束ね差分テストに成功");
 register("そ", "native-system-promise-reject", "公式7経路の直近Promise定数参照差分テストに成功");
+register("__DEBUG_BP_WAIT", "native-system-debug-breakpoint-wait", "公式7経路の非該当ブレイクポイント即時復帰差分テストに成功");
 
 function register(name, testId, reason) {
   const current = implemented[name];

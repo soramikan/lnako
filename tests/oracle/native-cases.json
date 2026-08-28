@@ -727,6 +727,11 @@
     "source": "??({\"a\":1})\n??([1,2])\n??(\"text\")\n??(undefined)\n"
   },
   {
+    "id": "native-system-debug-breakpoint-wait",
+    "commands": ["__DEBUG_BP_WAIT"],
+    "source": "__DEBUG_BP_WAIT(12)を表示\n"
+  },
+  {
     "id": "native-system-timer-wait",
     "oracle": "official-source",
     "commands": ["秒待", "秒待機", "秒逐次待機"],

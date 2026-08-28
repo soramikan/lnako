@@ -93,6 +93,7 @@ pub fn manifestCall(name: []const u8, direct_callee: ?ir.FunctionId, is_builtin_
         .node_file_list, .node_file_list_all, .node_folder_create, .node_file_copy, .node_file_copy_overwrite, .node_file_move, .node_file_move_overwrite, .node_file_delete => "node-file-operation",
         .system_debug_display => "debug-display",
         .system_hatena_execute => "hatena-default",
+        .system_debug_breakpoint_wait => "debug-breakpoint-wait",
         .node_archive_tool_path_set => "archive-tool-path",
         .node_ajax_options_set => "ajax-options",
         .node_ajax_onerror_set => "ajax-onerror",
@@ -346,6 +347,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_display_value(ptr, i1, ptr)\n" ++
                 "declare void @lnako_aot_display_many(ptr, i64, ptr)\n" ++
                 "declare void @lnako_aot_debug_display(ptr, ptr, i64, ptr, i64, ptr, i64)\n" ++
+                "declare void @lnako_aot_debug_breakpoint_wait_call(ptr, ptr, ptr, ptr, ptr, ptr, i64, i16, i64)\n" ++
                 "declare void @lnako_aot_stdio_call(ptr, ptr, ptr, i64, i16, i64)\n" ++
                 "declare void @lnako_aot_plugin_management_call(ptr, ptr, i64, i16, ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_archive_tool_path_set(ptr, ptr, i64, ptr, i64)\n" ++
@@ -521,6 +523,11 @@ const Emitter = struct {
                 if (instruction.is_builtin_call) if (aot_builtin.lookup(instruction.name)) |command| if (command == .system_debug_display or command == .system_hatena_execute) {
                     const path = self.sourcePathForFunction(function.name);
                     if (self.debugPathIndex(path) == null) try self.debug_paths.append(self.allocator, .{ .path = path });
+                };
+                if (aot_builtin.lookup(instruction.name)) |command| if (command == .system_debug_breakpoint_wait) {
+                    for ([_][]const u8{ "__DEBUGブレイクポイント一覧", "__DEBUG強制待機", "__DEBUG待機フラグ", "プラグイン名" }) |name| {
+                        if (self.globalIndex(name) == null) try self.globals.append(self.allocator, name);
+                    }
                 };
                 if (aot_builtin.lookup(instruction.name)) |command| if (command == .cut or command == .cut_range) {
                     if (self.globalIndex("対象") == null) try self.globals.append(self.allocator, "対象");
@@ -1207,6 +1214,27 @@ const Emitter = struct {
                 display_log_index,
                 site_id,
             });
+            try self.debugSuffix(instruction.span, scope);
+            try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+            try self.debugSuffix(instruction.span, scope);
+            return;
+        }
+        if (command == .system_debug_breakpoint_wait) {
+            const breakpoints_index = self.globalIndex("__DEBUGブレイクポイント一覧") orelse return error.MissingDebugBreakpointsGlobal;
+            const force_wait_index = self.globalIndex("__DEBUG強制待機") orelse return error.MissingDebugForceWaitGlobal;
+            const wait_flag_index = self.globalIndex("__DEBUG待機フラグ") orelse return error.MissingDebugWaitFlagGlobal;
+            const plugin_name_index = self.globalIndex("プラグイン名") orelse return error.MissingPluginNameGlobal;
+            for (instruction.operands, 0..) |argument, index| {
+                try self.output.writer.print("  %debug-breakpoint-wait.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+                try self.debugSuffix(instruction.span, scope);
+                try self.output.writer.writeAll("  store %lnako.Value ");
+                try self.writeValueRef(function, argument);
+                try self.output.writer.print(", ptr %debug-breakpoint-wait.{d}.slot.{d}", .{ result, index });
+                try self.debugSuffix(instruction.span, scope);
+            }
+            try self.output.writer.print("  call void @lnako_aot_debug_breakpoint_wait_call(ptr %root.slot.{d}, ptr @lnako.global.{d}, ptr @lnako.global.{d}, ptr @lnako.global.{d}, ptr @lnako.global.{d}, ptr ", .{ result, breakpoints_index, force_wait_index, wait_flag_index, plugin_name_index });
+            if (instruction.operands.len > 0) try self.output.writer.print("%debug-breakpoint-wait.{d}.slot.0", .{result}) else try self.output.writer.writeAll("null");
+            try self.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
             try self.debugSuffix(instruction.span, scope);
             try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
             try self.debugSuffix(instruction.span, scope);
@@ -2060,7 +2088,7 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     const semantic = @import("../../semantic/analyzer.zig");
     const hir = @import("../../ir/hir.zig");
     const lower = @import("../../ir/lower_ssa.zig");
-    var parsed = try parser.parse(std.testing.allocator, "A=1\nB=A+2\nBを表示\nコマンドラインを表示\n母艦パスを表示\n母艦パス取得()を表示\nデバッグ表示({\"a\":1})\nフォルダ作成(\"data\")\n", "main.nako3");
+    var parsed = try parser.parse(std.testing.allocator, "A=1\nB=A+2\nBを表示\nコマンドラインを表示\n母艦パスを表示\n母艦パス取得()を表示\nデバッグ表示({\"a\":1})\nフォルダ作成(\"data\")\n__DEBUG_BP_WAIT(12)を表示\n", "main.nako3");
     defer parsed.deinit();
     var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
     defer analyzed.deinit();
@@ -2094,6 +2122,8 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_dispatch_result(i64, i64, i64)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_dispatch_result(i64 %display.call_id, i64 %site_id, i64 %display.start_epoch)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_debug_display(ptr, ptr, i64, ptr, i64, ptr, i64)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_debug_breakpoint_wait_call(ptr, ptr, ptr, ptr, ptr, ptr, i64, i16, i64)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_debug_breakpoint_wait_call(ptr ") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.debug.path.0") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_debug_display") != null);
 }
@@ -2129,6 +2159,11 @@ test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {
     try std.testing.expectEqualStrings("system_hatena_execute", hatena.canonical_opcode);
     try std.testing.expectEqualStrings("hatena-default", hatena.route);
     try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.system_hatena_execute), hatena.opcode);
+
+    const breakpoint_wait = manifestCall("__DEBUG_BP_WAIT", null, true).?;
+    try std.testing.expectEqualStrings("system_debug_breakpoint_wait", breakpoint_wait.canonical_opcode);
+    try std.testing.expectEqualStrings("debug-breakpoint-wait", breakpoint_wait.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.system_debug_breakpoint_wait), breakpoint_wait.opcode);
 
     const archive_tool_path = manifestCall("圧縮解凍ツールパス変更", null, true).?;
     try std.testing.expectEqualStrings("node_archive_tool_path_set", archive_tool_path.canonical_opcode);

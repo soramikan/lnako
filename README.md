@@ -93,6 +93,8 @@ Node同期ファイル操作8 entry（`ファイル列挙`・`全ファイル列
 
 Nodeの`コンソールクリア`は、比較ハーネスのpipe出力では公式の`console.clear()`が表示内容を変更しないため、純LLVM AOTでは副作用のないno-opとして接続します。`native-node-console-clear`で前後の標準出力を公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3と比較します。
 
+`__DEBUG_BP_WAIT`は、ブレイクポイント一覧・強制待機フラグ・待機フラグ・プラグイン名を専用`debug-breakpoint-wait` ABIへ渡し、純LLVM AOTでも非該当時の即時復帰、メインプラグインの待機解除、非メインプラグインの未解決Promiseを処理します。`native-system-debug-breakpoint-wait`では待機しない非該当経路を公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3と比較します。
+
 ## CLI
 
 ```text

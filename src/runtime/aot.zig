@@ -3623,6 +3623,54 @@ test "AOTハテナ関数実行は既定のデバッグ表示として位置と�
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[2].tag)));
 }
 
+test "AOT __DEBUG_BP_WAITは即時復帰と非メイン待機を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try active_runtime.?.createArray(&.{numberValue(99)});
+    roots[1] = numberValue(0);
+    roots[2] = numberValue(0);
+    roots[3] = staticStringValue("メイン");
+    var arguments = [_]Value{numberValue(12)};
+    lnako_aot_debug_breakpoint_wait_call(
+        &roots[4],
+        &roots[0],
+        &roots[1],
+        &roots[2],
+        &roots[3],
+        &arguments,
+        arguments.len,
+        @intFromEnum(aot_builtin.Command.system_debug_breakpoint_wait),
+        0,
+    );
+    try std.testing.expectEqual(@as(f64, 12), valueToNumber(roots[4]));
+    try std.testing.expectEqual(@as(f64, 0), valueToNumber(roots[1]));
+
+    try active_runtime.?.indexSet(roots[0], numberValue(0), numberValue(12));
+    roots[3] = staticStringValue("副");
+    lnako_aot_debug_breakpoint_wait_call(
+        &roots[5],
+        &roots[0],
+        &roots[1],
+        &roots[2],
+        &roots[3],
+        &arguments,
+        arguments.len,
+        @intFromEnum(aot_builtin.Command.system_debug_breakpoint_wait),
+        0,
+    );
+    try std.testing.expectEqual(Tag.promise, @as(Tag, @enumFromInt(roots[5].tag)));
+}
+
 test "AOT ASSERT等はNodeのSameValue境界と戻り値を保つ" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -4660,6 +4708,51 @@ pub export fn lnako_aot_promise_call_site(
     success = runtime.failure_epoch == start_epoch;
 }
 
+/// Dedicated ABI for `__DEBUG_BP_WAIT`. The debugger-facing system globals
+/// are generated values rather than runtime-owned name lookups, so LLVM passes
+/// their storage explicitly. This preserves the official immediate-return,
+/// main-plugin wait, and non-main pending-Promise branches without adding a
+/// JavaScript runtime to normal AOT execution.
+pub export fn lnako_aot_debug_breakpoint_wait_call(
+    out: *Value,
+    breakpoints: *Value,
+    force_wait: *Value,
+    wait_flag: *Value,
+    plugin_name: *Value,
+    arguments: ?[*]const Value,
+    len: usize,
+    opcode: u16,
+    site_id: u64,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
+        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "debug-breakpoint-wait", site_id);
+        runtime.setFailure(error.UnknownCommand);
+        runtime.dispatch_trace.result(call_id, "unknown", opcode, "debug-breakpoint-wait", site_id, false);
+        return;
+    };
+    if (command != .system_debug_breakpoint_wait) {
+        runtime.setFailure(error.UnknownCommand);
+        return;
+    }
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "debug-breakpoint-wait", site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "debug-breakpoint-wait", site_id, success);
+    if (arguments == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+    out.* = debugBreakpointWaitBuiltin(runtime, breakpoints, force_wait, wait_flag, plugin_name, actual) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    success = runtime.failure_epoch == start_epoch;
+}
+
 /// Dedicated ABI for synchronous Node file operations. The copy default is a
 /// mutable system global, so generated LLVM passes its storage explicitly.
 pub export fn lnako_aot_file_operation_call(
@@ -4717,7 +4810,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .namespace_pop and command != .timer_wait and command != .timer_stop_all and command != .promise_all and command != .async_noop and command != .node_console_clear and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit and command != .node_hash_names and command != .node_random_uuid and command != .node_stdin_all and command != .node_network_ipv4 and command != .node_network_ipv6) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .namespace_pop and command != .timer_wait and command != .timer_stop_all and command != .promise_all and command != .async_noop and command != .node_console_clear and command != .system_debug_breakpoint_wait and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit and command != .node_hash_names and command != .node_random_uuid and command != .node_stdin_all and command != .node_network_ipv4 and command != .node_network_ipv6) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -4841,6 +4934,17 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
             };
         },
         .async_noop, .node_console_clear => out.* = .{},
+        .system_debug_breakpoint_wait => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            var breakpoints = Value{};
+            var force_wait = numberValue(0);
+            var wait_flag = numberValue(0);
+            var plugin_name = staticStringValue("メイン");
+            out.* = debugBreakpointWaitBuiltin(runtime, &breakpoints, &force_wait, &wait_flag, &plugin_name, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .system_await_execute, .system_execute => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = systemExecutionBuiltin(runtime, command, actual) catch |failure| {
@@ -8065,6 +8169,45 @@ fn systemExecutionBuiltin(runtime: *Runtime, command: aot_builtin.Command, argum
             return roots[2];
         },
         else => return error.UnknownCommand,
+    }
+}
+
+fn debugBreakpointWaitBuiltin(
+    runtime: *Runtime,
+    breakpoints: *Value,
+    force_wait: *Value,
+    wait_flag: *Value,
+    plugin_name: *Value,
+    arguments: []const Value,
+) !Value {
+    const line_value = if (arguments.len > 0) arguments[arguments.len - 1] else Value{};
+    const line = try valueToNumberRuntime(runtime, line_value);
+    const force = valueTruthy(force_wait.*);
+    force_wait.* = numberValue(0);
+    var breakpoint_hit = false;
+    if (breakpoints.object()) |object| if (object.payload == .array) {
+        const line_number = numberValue(line);
+        for (object.payload.array.items) |candidate| if (try strictEqual(runtime, candidate, line_number)) {
+            breakpoint_hit = true;
+            break;
+        };
+    };
+    if (!force and !breakpoint_hit) return numberValue(line);
+    if (!(try strictEqual(runtime, plugin_name.*, staticStringValue("メイン")))) return createAotPromise(runtime);
+
+    const line_text = try numberString(runtime.allocator, line);
+    defer runtime.allocator.free(line_text);
+    const marker = try std.fmt.allocPrint(runtime.allocator, "@__DEBUG_BP_WAIT({s})", .{line_text});
+    defer runtime.allocator.free(marker);
+    writeBytes(marker, true);
+
+    while (true) {
+        const flag = wait_flag.*;
+        if (flag.tag == @intFromEnum(Tag.number) and @as(f64, @bitCast(flag.payload)) == 1) {
+            wait_flag.* = numberValue(0);
+            return numberValue(line);
+        }
+        try waitAotMilliseconds(runtime, 500);
     }
 }
 
