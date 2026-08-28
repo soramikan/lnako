@@ -26,6 +26,7 @@
   },
   {
     "id": "plugin-node-process",
+    "aot": true,
     "commands": ["起動待機", "起動", "コマンド実行", "コマンド実行待機", "起動時", "コンソールクリア"],
     "files": {
       "child-output.mjs": "process.stdout.write('CHILD')",
@@ -36,6 +37,7 @@
   },
   {
     "id": "plugin-node-process-order",
+    "aot": true,
     "commands": ["起動"],
     "files": {
       "child-delay.mjs": "setTimeout(() => process.stdout.write('LATE'), 30)"
@@ -44,6 +46,7 @@
   },
   {
     "id": "plugin-node-process-completion-order",
+    "aot": true,
     "commands": ["起動時"],
     "files": {
       "child-slow.mjs": "setTimeout(() => process.stdout.write('SLOW'), 200)",
@@ -75,6 +78,7 @@
   },
   {
     "id": "plugin-node-host-open-external",
+    "aot": true,
     "commands": ["ブラウザ起動", "エクスプローラー起動"],
     "safeExternalMock": true,
     "source": "エラー監視\n\"https://example.invalid/\"をブラウザ起動\n\"BROWSER:OK\"を表示\nエラーならば\n\"BROWSER:ERROR\"を表示\nここまで\nエラー監視\n\"fixture-target.txt\"をエクスプローラー起動\n\"EXPLORER:OK\"を表示\nエラーならば\n\"EXPLORER:ERROR\"を表示\nここまで\n"

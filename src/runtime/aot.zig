@@ -322,6 +322,53 @@ const AotArchiveTask = struct {
     }
 };
 
+const AotProcessMode = enum { command_output, output_callback };
+
+const AotCommandResult = struct {
+    stdout: []u8,
+    stderr: []u8,
+    exit_code: u8,
+
+    fn deinit(self: *AotCommandResult, allocator: std.mem.Allocator) void {
+        allocator.free(self.stdout);
+        allocator.free(self.stderr);
+        self.* = undefined;
+    }
+};
+
+const AotProcessTask = struct {
+    runtime: *Runtime,
+    command: []u8,
+    cwd: []u8,
+    mode: AotProcessMode,
+    callback: Value = .{},
+    thread: ?std.Thread = null,
+    complete: std.atomic.Value(bool) = .init(false),
+    completion_order: u64 = 0,
+    result: ?AotCommandResult = null,
+    failure: ?anyerror = null,
+
+    fn run(self: *@This()) void {
+        const result = runAotShellCommand(self.runtime, self.command, self.cwd) catch |failure| {
+            self.failure = failure;
+            self.completion_order = self.runtime.process_completion_sequence.fetchAdd(1, .monotonic);
+            self.complete.store(true, .release);
+            return;
+        };
+        self.result = result;
+        self.completion_order = self.runtime.process_completion_sequence.fetchAdd(1, .monotonic);
+        self.complete.store(true, .release);
+    }
+
+    fn deinit(self: *@This(), allocator: std.mem.Allocator, join: bool) void {
+        if (join) if (self.thread) |thread| thread.join();
+        if (self.result) |*result| result.deinit(allocator);
+        allocator.free(self.command);
+        allocator.free(self.cwd);
+        allocator.destroy(self);
+    }
+};
+
 const AotHttpGlobals = struct {
     method: ?*Value = null,
     get_data: ?*Value = null,
@@ -520,6 +567,10 @@ const Runtime = struct {
     http_globals: ?AotHttpGlobals = null,
     archive_tool_path_custom: bool = false,
     archive_tasks: std.ArrayList(AotArchiveTask) = .empty,
+    process_tasks: std.ArrayList(*AotProcessTask) = .empty,
+    process_completion_sequence: std.atomic.Value(u64) = .init(1),
+    process_io: std.Io.Threaded = .init_single_threaded,
+    process_io_initialized: bool = false,
 
     fn deinit(self: *Runtime) void {
         self.dispatch_trace.deinit();
@@ -531,6 +582,9 @@ const Runtime = struct {
         self.http_server_state.deinit(self.allocator);
         for (self.archive_tasks.items) |*task| task.deinit(self.allocator);
         self.archive_tasks.deinit(self.allocator);
+        while (self.process_tasks.pop()) |task| task.deinit(self.allocator, true);
+        self.process_tasks.deinit(self.allocator);
+        if (self.process_io_initialized) self.process_io.deinit();
         self.csv_state.deinit(self.allocator);
         self.print_pool.deinit(self.allocator);
         self.namespace_stack.deinit(self.allocator);
@@ -769,6 +823,7 @@ const Runtime = struct {
             if (route.kind == .callback) self.markValue(route.callback);
         }
         for (self.archive_tasks.items) |task| self.markValue(task.callback);
+        for (self.process_tasks.items) |task| self.markValue(task.callback);
         while (self.grey) |object| {
             self.grey = object.grey_next;
             object.grey_next = null;
@@ -3096,6 +3151,91 @@ fn isHttpServerCommand(command: aot_builtin.Command) bool {
     };
 }
 
+fn isNodeProcessCommand(command: aot_builtin.Command) bool {
+    return switch (command) {
+        .node_process_run_wait, .node_process_run, .node_process_start, .node_process_run_wait_output, .node_process_start_callback, .node_open_external_browser, .node_open_external_explorer => true,
+        else => false,
+    };
+}
+
+fn runAotExternal(runtime: *Runtime, target: []const u8, reveal: bool) !void {
+    // The fixture hook is intentionally an environment boundary, matching
+    // the CLI host without launching a desktop application during tests.
+    if (std.c.getenv("LNAKO_TEST_OPEN_EXTERNAL") != null) {
+        if (reveal and builtin.os.tag != .windows) return error.OpenExternalFailed;
+        return;
+    }
+    const argv: []const []const u8 = switch (builtin.os.tag) {
+        .macos => if (reveal) &.{ "/usr/bin/open", "-R", target } else &.{ "/usr/bin/open", target },
+        .windows => if (reveal)
+            &.{ "explorer.exe", "/select,", target }
+        else
+            &.{ "cmd.exe", "/d", "/s", "/c", "start", "", target },
+        else => if (reveal)
+            &.{ "xdg-open", std.fs.path.dirname(target) orelse "." }
+        else
+            &.{ "xdg-open", target },
+    };
+    const result = try std.process.run(runtime.allocator, runtime.process_io.io(), .{
+        .argv = argv,
+        .stdout_limit = .limited(1024 * 1024),
+        .stderr_limit = .limited(1024 * 1024),
+    });
+    runtime.allocator.free(result.stdout);
+    runtime.allocator.free(result.stderr);
+    if (result.term != .exited or result.term.exited != 0) return error.OpenExternalFailed;
+}
+
+fn nodeProcessBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    switch (command) {
+        .node_open_external_browser, .node_open_external_explorer => {
+            if (arguments.len < 1) return error.InvalidArgumentCount;
+            const target = try valueUtf8LossyAlloc(runtime, arguments[0]);
+            defer runtime.allocator.free(target);
+            try runAotExternal(runtime, target, command == .node_open_external_explorer);
+            return .{};
+        },
+        .node_process_run_wait, .node_process_run, .node_process_start, .node_process_run_wait_output => {
+            if (arguments.len < 1) return error.InvalidArgumentCount;
+            const command_text = try valueUtf8LossyAlloc(runtime, arguments[0]);
+            defer runtime.allocator.free(command_text);
+            if (command == .node_process_run_wait) {
+                const cwd = try currentDirectoryAlloc(runtime);
+                defer runtime.allocator.free(cwd);
+                var result = try runAotShellCommand(runtime, command_text, cwd);
+                defer result.deinit(runtime.allocator);
+                if (result.exit_code != 0) return error.CommandFailed;
+                return runtimeUtf8StringLossy(runtime, result.stdout);
+            }
+            if (command == .node_process_run_wait_output) {
+                const cwd = try currentDirectoryAlloc(runtime);
+                defer runtime.allocator.free(cwd);
+                var result = try runAotShellCommand(runtime, command_text, cwd);
+                defer result.deinit(runtime.allocator);
+                writeBytes(result.stdout, false);
+                writeAotStderr(result.stderr);
+                return numberValue(@floatFromInt(result.exit_code));
+            }
+            const mode = AotProcessMode.command_output;
+            try queueAotProcess(runtime, command_text, mode, .{});
+            return .{};
+        },
+        .node_process_start_callback => {
+            if (arguments.len < 2) return error.InvalidArgumentCount;
+            var roots = [_]Value{arguments[0]};
+            var frame = RootFrame{};
+            runtime.pushRoots(&frame, &roots, roots.len);
+            defer runtime.popRoots(&frame);
+            roots[0] = try resolveAotCallback(runtime, roots[0]);
+            const command_text = try valueUtf8LossyAlloc(runtime, arguments[1]);
+            defer runtime.allocator.free(command_text);
+            try queueAotProcess(runtime, command_text, .output_callback, roots[0]);
+            return .{};
+        },
+        else => return error.UnknownCommand,
+    }
+}
+
 fn isArchiveCommand(command: aot_builtin.Command) bool {
     return switch (command) {
         .node_archive_extract, .node_archive_extract_callback, .node_archive_create, .node_archive_create_callback => true,
@@ -3178,6 +3318,7 @@ fn sleepAotUntil(runtime: *Runtime, target: u64) !void {
     if (delay > @as(u64, std.math.maxInt(i64))) return error.TimerOverflow;
     while (runtime.elapsed_milliseconds < target) {
         try pollAotInterrupt(runtime);
+        try drainAotProcessTasks(runtime);
         const remaining = target - runtime.elapsed_milliseconds;
         const slice = @min(remaining, @as(u64, 20));
         try std.Io.sleep(
@@ -3187,6 +3328,95 @@ fn sleepAotUntil(runtime: *Runtime, target: u64) !void {
         );
         runtime.elapsed_milliseconds += slice;
         try pollAotInterrupt(runtime);
+        try drainAotProcessTasks(runtime);
+    }
+}
+
+fn runAotShellCommand(runtime: *Runtime, command: []const u8, cwd: []const u8) !AotCommandResult {
+    const argv: []const []const u8 = if (builtin.os.tag == .windows)
+        &.{ "cmd.exe", "/d", "/s", "/c", command }
+    else
+        &.{ "/bin/sh", "-c", command };
+    const result = try std.process.run(runtime.allocator, runtime.process_io.io(), .{
+        .argv = argv,
+        .cwd = .{ .path = cwd },
+        .stdout_limit = .limited(64 * 1024 * 1024),
+        .stderr_limit = .limited(64 * 1024 * 1024),
+    });
+    return .{
+        .stdout = result.stdout,
+        .stderr = result.stderr,
+        .exit_code = switch (result.term) {
+            .exited => |code| code,
+            else => 1,
+        },
+    };
+}
+
+fn queueAotProcess(runtime: *Runtime, command: []const u8, mode: AotProcessMode, callback: Value) !void {
+    const allocator = runtime.allocator;
+    const task = try allocator.create(AotProcessTask);
+    const owned_command = allocator.dupe(u8, command) catch |failure| {
+        allocator.destroy(task);
+        return failure;
+    };
+    const owned_cwd = currentDirectoryAlloc(runtime) catch |failure| {
+        allocator.free(owned_command);
+        allocator.destroy(task);
+        return failure;
+    };
+    task.* = .{
+        .runtime = runtime,
+        .command = owned_command,
+        .cwd = owned_cwd,
+        .mode = mode,
+        .callback = callback,
+    };
+    runtime.process_tasks.append(allocator, task) catch |failure| {
+        task.deinit(allocator, false);
+        return failure;
+    };
+    task.thread = std.Thread.spawn(.{}, AotProcessTask.run, .{task}) catch |failure| {
+        _ = runtime.process_tasks.pop();
+        task.deinit(allocator, false);
+        return failure;
+    };
+}
+
+fn readyAotProcessTaskIndex(runtime: *const Runtime) ?usize {
+    var selected: ?usize = null;
+    for (runtime.process_tasks.items, 0..) |task, index| {
+        if (!task.complete.load(.acquire)) continue;
+        if (selected == null or task.completion_order < runtime.process_tasks.items[selected.?].completion_order) selected = index;
+    }
+    return selected;
+}
+
+fn writeAotStderr(bytes: []const u8) void {
+    if (bytes.len > 0) std.debug.print("{s}", .{bytes});
+}
+
+fn drainAotProcessTasks(runtime: *Runtime) !void {
+    while (readyAotProcessTaskIndex(runtime)) |index| {
+        try countAotEvent(runtime);
+        const task = runtime.process_tasks.orderedRemove(index);
+        defer task.deinit(runtime.allocator, true);
+        if (task.failure) |failure| return failure;
+        const result = &(task.result orelse return error.AsyncCommandMissingResult);
+        switch (task.mode) {
+            .command_output => if (result.exit_code == 0) {
+                if (result.stdout.len > 0) writeBytes(result.stdout, true);
+            } else writeAotStderr(result.stderr),
+            .output_callback => {
+                if (result.exit_code != 0) return error.CommandFailed;
+                var rooted = [_]Value{ task.callback, .{} };
+                var roots = RootFrame{};
+                runtime.pushRoots(&roots, &rooted, rooted.len);
+                defer runtime.popRoots(&roots);
+                rooted[1] = try runtimeUtf8StringLossy(runtime, result.stdout);
+                _ = try invokeAotCallback(runtime, rooted[0], @ptrCast(&rooted[1]), 1);
+            },
+        }
     }
 }
 
@@ -3300,10 +3530,20 @@ fn drainAotPromiseTasks(runtime: *Runtime) !void {
 
 fn drainAotEvents(runtime: *Runtime) !void {
     while (true) {
+        try drainAotProcessTasks(runtime);
         try drainAotArchiveTasks(runtime);
         try drainAotPromiseTasks(runtime);
         if (earliestAotTimerIndex(runtime)) |index| {
             try executeAotTimer(runtime, index);
+            continue;
+        }
+        if (runtime.process_tasks.items.len > 0) {
+            try std.Io.sleep(
+                std.Io.Threaded.global_single_threaded.io(),
+                std.Io.Duration.fromMilliseconds(1),
+                .awake,
+            );
+            runtime.elapsed_milliseconds += 1;
             continue;
         }
         break;
@@ -3317,15 +3557,18 @@ fn drainAotTimers(runtime: *Runtime) !void {
 fn waitAotMilliseconds(runtime: *Runtime, milliseconds: u64) !void {
     const target = std.math.add(u64, runtime.elapsed_milliseconds, milliseconds) catch return error.TimerOverflow;
     while (true) {
+        try drainAotProcessTasks(runtime);
         try drainAotArchiveTasks(runtime);
         try drainAotPromiseTasks(runtime);
         const index = earliestAotTimerIndex(runtime) orelse break;
         if (runtime.timers.items[index].due_milliseconds > target) break;
         try executeAotTimer(runtime, index);
     }
+    try drainAotProcessTasks(runtime);
     try drainAotArchiveTasks(runtime);
     try drainAotPromiseTasks(runtime);
     try sleepAotUntil(runtime, target);
+    try drainAotProcessTasks(runtime);
 }
 
 fn scheduleAotTimer(runtime: *Runtime, arguments: []const Value, repeating: bool, target: ?*Value) !Value {
@@ -4766,7 +5009,12 @@ fn pollAotInterrupt(runtime: *Runtime) !void {
 
 pub export fn lnako_aot_runtime_init() callconv(.c) c_int {
     aot_interrupt_requested.store(false, .release);
-    if (active_runtime == null) active_runtime = .{ .allocator = std.heap.c_allocator, .random_state = initialRandomState() };
+    if (active_runtime == null) {
+        var runtime: Runtime = .{ .allocator = std.heap.c_allocator, .random_state = initialRandomState() };
+        runtime.process_io = std.Io.Threaded.init(std.heap.c_allocator, .{ .environ = aotProcessEnvironment() });
+        runtime.process_io_initialized = true;
+        active_runtime = runtime;
+    }
     return 0;
 }
 
@@ -6011,6 +6259,45 @@ pub export fn lnako_aot_file_operation_call(
     success = runtime.failure_epoch == start_epoch;
 }
 
+/// Dedicated ABI for Node process and desktop-launch commands.  Process
+/// callbacks are retained by the native event queue, so this path never
+/// falls back to a JavaScript runtime in normal AOT mode.
+pub export fn lnako_aot_node_process_call(
+    out: *Value,
+    arguments: ?[*]const Value,
+    len: usize,
+    opcode: u16,
+    site_id: u64,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
+        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "node-process", site_id);
+        runtime.setFailure(error.UnknownCommand);
+        runtime.dispatch_trace.result(call_id, "unknown", opcode, "node-process", site_id, false);
+        return;
+    };
+    if (!isNodeProcessCommand(command)) {
+        runtime.setFailure(error.UnknownCommand);
+        return;
+    }
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "node-process", site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "node-process", site_id, success);
+    if (arguments == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+    out.* = nodeProcessBuiltin(runtime, command, actual) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    success = runtime.failure_epoch == start_epoch;
+}
+
 pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Value, len: usize, opcode: u16, site_id: u64) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*active| active else return;
@@ -6215,6 +6502,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         .node_archive_extract, .node_archive_extract_callback, .node_archive_create, .node_archive_create_callback => {
             runtime.setFailure(error.UnknownCommand);
             return;
+        },
+        .node_process_run_wait, .node_process_run, .node_process_start, .node_process_run_wait_output, .node_process_start_callback, .node_open_external_browser, .node_open_external_explorer => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = nodeProcessBuiltin(runtime, command, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
         },
         .node_stdin_callback => {
             runtime.setFailure(error.UnknownCommand);
@@ -10155,6 +10449,13 @@ fn currentDirectoryAlloc(runtime: *Runtime) ![]u8 {
         if (std.c.getcwd(buffer.ptr, buffer.len)) |path| return runtime.allocator.dupe(u8, std.mem.sliceTo(path, 0));
     }
     return error.CurrentDirectoryUnavailable;
+}
+
+fn aotProcessEnvironment() std.process.Environ {
+    if (comptime builtin.os.tag == .windows) return .{ .block = .global };
+    var count: usize = 0;
+    while (std.c.environ[count] != null) : (count += 1) {}
+    return .{ .block = .{ .slice = std.c.environ[0..count :null] } };
 }
 
 fn nodeChangeDirectoryBuiltin(runtime: *Runtime, arguments: []const Value) !Value {

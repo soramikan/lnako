@@ -14,6 +14,7 @@ const officialCli = resolve(oracleRoot, "src/cnako3.mjs");
 const fixedHost = resolve(root, "tools/oracle/fixed_host.mjs");
 const safeExternalHost = resolve(root, "tools/oracle/safe_external_host.mjs");
 const temporary = await mkdtemp(join(tmpdir(), "lnako-node-file-"));
+const aotCaseCount = cases.filter((testCase) => testCase.aot === true).length;
 
 try {
   buildLnako();
@@ -21,16 +22,21 @@ try {
   for (const testCase of cases) {
     const officialDirectory = resolve(temporary, testCase.id, "official");
     const lnakoDirectory = resolve(temporary, testCase.id, "lnako");
+    const aotDirectory = resolve(temporary, testCase.id, "aot");
     await mkdir(officialDirectory, { recursive: true });
     await mkdir(lnakoDirectory, { recursive: true });
+    if (testCase.aot === true) await mkdir(aotDirectory, { recursive: true });
     for (const [name, contents] of Object.entries(testCase.files ?? {})) {
       await writeFile(resolve(officialDirectory, name), contents, "utf8");
       await writeFile(resolve(lnakoDirectory, name), contents, "utf8");
+      if (testCase.aot === true) await writeFile(resolve(aotDirectory, name), contents, "utf8");
     }
     const officialSource = resolve(officialDirectory, "case.nako3");
     const lnakoSource = resolve(lnakoDirectory, "case.nako3");
+    const aotSource = resolve(aotDirectory, "case.nako3");
     await writeFile(officialSource, testCase.source, "utf8");
     await writeFile(lnakoSource, testCase.source, "utf8");
+    if (testCase.aot === true) await writeFile(aotSource, testCase.source, "utf8");
     const environment = {
       ...process.env,
       TZ: "Asia/Tokyo",
@@ -52,15 +58,41 @@ try {
     const actualResult = normalize(actual);
     const expectedFiles = await snapshot(officialDirectory, basename(officialSource));
     const actualFiles = await snapshot(lnakoDirectory, basename(lnakoSource));
-    if (official.status !== 0 || actual.status !== 0 || JSON.stringify(expectedResult) !== JSON.stringify(actualResult) || JSON.stringify(expectedFiles) !== JSON.stringify(actualFiles)) {
+    const aotResults = {};
+    const aotStderr = {};
+    let aotCompileFailure = false;
+    if (testCase.aot === true) {
+      for (const optimization of ["O0", "O1", "O2", "O3"]) {
+        const nativeExecutable = resolve(temporary, `${testCase.id}-${optimization}${process.platform === "win32" ? ".exe" : ""}`);
+        const nativeCompile = spawnSync(executable, ["build", aotSource, "-o", nativeExecutable, `-${optimization}`], {
+          cwd: aotDirectory,
+          env: safeEnvironment,
+          encoding: "utf8",
+          maxBuffer: 16 * 1024 * 1024,
+        });
+        const nativeResult = nativeCompile.status === 0
+          ? spawnSync(nativeExecutable, [], { ...spawnOptions, env: safeEnvironment, cwd: aotDirectory })
+          : nativeCompile;
+        aotResults[`O${optimization.slice(1)}`] = normalize(nativeResult);
+        aotStderr[`O${optimization.slice(1)}`] = nativeResult.stderr;
+        if (nativeCompile.status !== 0) aotCompileFailure = true;
+      }
+    }
+    const aotFiles = testCase.aot === true ? await snapshot(aotDirectory, basename(aotSource)) : null;
+    const aotMismatch = testCase.aot === true && (
+      aotCompileFailure ||
+      Object.values(aotResults).some((result) => JSON.stringify(result) !== JSON.stringify(expectedResult)) ||
+      JSON.stringify(aotFiles) !== JSON.stringify(expectedFiles)
+    );
+    if (official.status !== 0 || actual.status !== 0 || JSON.stringify(expectedResult) !== JSON.stringify(actualResult) || JSON.stringify(expectedFiles) !== JSON.stringify(actualFiles) || aotMismatch) {
       failures += 1;
-      console.error(`Nodeファイル差分 ${testCase.id}:\nofficial=${JSON.stringify(expectedResult)}\nlnako  =${JSON.stringify(actualResult)}\nofficialFiles=${JSON.stringify(expectedFiles)}\nlnakoFiles  =${JSON.stringify(actualFiles)}`);
+      console.error(`Nodeファイル差分 ${testCase.id}:\nofficial=${JSON.stringify(expectedResult)}\nlnako  =${JSON.stringify(actualResult)}\nofficialFiles=${JSON.stringify(expectedFiles)}\nlnakoFiles  =${JSON.stringify(actualFiles)}${testCase.aot === true ? `\naot=${JSON.stringify(aotResults)}\naotStderr=${JSON.stringify(aotStderr)}\naotFiles=${JSON.stringify(aotFiles)}` : ""}`);
       if (official.stderr) console.error(`公式stderr:\n${official.stderr}`);
       if (actual.stderr) console.error(`lnako stderr:\n${actual.stderr}`);
     }
   }
   if (failures > 0) throw new Error(`Nodeファイル実行結果の差分が${failures}件あります`);
-  console.log(`Nodeパス・ホスト・ファイル公式差分テスト: ${cases.length}ケース・${new Set(cases.flatMap((testCase) => testCase.commands)).size}命令成功`);
+  console.log(`Nodeパス・ホスト・ファイル公式差分テスト: ${cases.length}ケース・${new Set(cases.flatMap((testCase) => testCase.commands)).size}命令成功（AOT O0〜O3: ${aotCaseCount}ケース）`);
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }

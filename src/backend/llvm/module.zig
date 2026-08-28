@@ -100,6 +100,7 @@ pub fn manifestCall(name: []const u8, direct_callee: ?ir.FunctionId, is_builtin_
         .node_stdin_line, .node_stdin_character, .node_stdin_callback => "node-stdin-lines",
         .node_archive_tool_path_set => "archive-tool-path",
         .node_archive_extract, .node_archive_extract_callback, .node_archive_create, .node_archive_create_callback => "node-archive",
+        .node_process_run_wait, .node_process_run, .node_process_start, .node_process_run_wait_output, .node_process_start_callback, .node_open_external_browser, .node_open_external_explorer => "node-process",
         .node_ajax_options_set => "ajax-options",
         .node_ajax_onerror_set => "ajax-onerror",
         else => "builtin",
@@ -357,6 +358,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_plugin_management_call(ptr, ptr, i64, i16, ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_archive_tool_path_set(ptr, ptr, i64, ptr, i64)\n" ++
                 "declare void @lnako_aot_archive_call(ptr, ptr, ptr, i64, i16, i64)\n" ++
+                "declare void @lnako_aot_node_process_call(ptr, ptr, i64, i16, i64)\n" ++
                 "declare void @lnako_aot_ajax_options_set(ptr, ptr, i64, ptr, i64)\n" ++
                 "declare void @lnako_aot_ajax_onerror_set(ptr, ptr, i64, ptr, i64)\n" ++
                 "declare void @lnako_aot_file_operation_call(ptr, ptr, ptr, i64, i16, i64)\n" ++
@@ -1403,6 +1405,23 @@ const Emitter = struct {
             try self.debugSuffix(instruction.span, scope);
             return;
         }
+        if (isNodeProcessCommand(command)) {
+            for (instruction.operands, 0..) |argument, index| {
+                try self.output.writer.print("  %node-process.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+                try self.debugSuffix(instruction.span, scope);
+                try self.output.writer.writeAll("  store %lnako.Value ");
+                try self.writeValueRef(function, argument);
+                try self.output.writer.print(", ptr %node-process.{d}.slot.{d}", .{ result, index });
+                try self.debugSuffix(instruction.span, scope);
+            }
+            try self.output.writer.print("  call void @lnako_aot_node_process_call(ptr %root.slot.{d}, ptr ", .{result});
+            if (instruction.operands.len > 0) try self.output.writer.print("%node-process.{d}.slot.0", .{result}) else try self.output.writer.writeAll("null");
+            try self.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+            try self.debugSuffix(instruction.span, scope);
+            try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+            try self.debugSuffix(instruction.span, scope);
+            return;
+        }
         if (command == .node_ajax_options_set) {
             const ajax_options_index = self.globalIndex("AJAXオプション") orelse return error.MissingAjaxOptionsGlobal;
             for (instruction.operands, 0..) |argument, index| {
@@ -2014,6 +2033,13 @@ fn isArchiveCommand(command: aot_builtin.Command) bool {
     };
 }
 
+fn isNodeProcessCommand(command: aot_builtin.Command) bool {
+    return switch (command) {
+        .node_process_run_wait, .node_process_run, .node_process_start, .node_process_run_wait_output, .node_process_start_callback, .node_open_external_browser, .node_open_external_explorer => true,
+        else => false,
+    };
+}
+
 fn isPluginManagementCommand(command: aot_builtin.Command) bool {
     return switch (command) {
         .plugin_name_set, .namespace_set, .namespace_pop => true,
@@ -2195,7 +2221,7 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     const semantic = @import("../../semantic/analyzer.zig");
     const hir = @import("../../ir/hir.zig");
     const lower = @import("../../ir/lower_ssa.zig");
-    var parsed = try parser.parse(std.testing.allocator, "A=1\nB=A+2\nBを表示\nコマンドラインを表示\n母艦パスを表示\n母艦パス取得()を表示\nデバッグ表示({\"a\":1})\nフォルダ作成(\"data\")\n圧縮(\"source.txt\",\"archive.zip\")を表示\n__DEBUG_BP_WAIT(12)を表示\n", "main.nako3");
+    var parsed = try parser.parse(std.testing.allocator, "A=1\nB=A+2\nBを表示\nコマンドラインを表示\n母艦パスを表示\n母艦パス取得()を表示\nデバッグ表示({\"a\":1})\nフォルダ作成(\"data\")\n圧縮(\"source.txt\",\"archive.zip\")を表示\n起動待機(\"printf process\")を表示\n__DEBUG_BP_WAIT(12)を表示\n", "main.nako3");
     defer parsed.deinit();
     var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
     defer analyzed.deinit();
@@ -2215,6 +2241,8 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_file_operation_call(ptr ") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_archive_call(ptr, ptr, ptr, i64, i16, i64)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_archive_call(ptr ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_process_call(ptr, ptr, i64, i16, i64)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_node_process_call(ptr ") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_constants_init(ptr, ptr, ptr, i32, ptr)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_node_constants_init(ptr ") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_directory_constants_init(ptr, ptr, ptr)\n") != null);
@@ -2303,6 +2331,16 @@ test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {
     try std.testing.expectEqualStrings("node_archive_extract_callback", archive_extract_callback.canonical_opcode);
     try std.testing.expectEqualStrings("node-archive", archive_extract_callback.route);
     try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_archive_extract_callback), archive_extract_callback.opcode);
+
+    const process_wait = manifestCall("起動待機", null, true).?;
+    try std.testing.expectEqualStrings("node_process_run_wait", process_wait.canonical_opcode);
+    try std.testing.expectEqualStrings("node-process", process_wait.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_process_run_wait), process_wait.opcode);
+
+    const process_start = manifestCall("起動", null, true).?;
+    try std.testing.expectEqualStrings("node_process_start", process_start.canonical_opcode);
+    try std.testing.expectEqualStrings("node-process", process_start.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_process_start), process_start.opcode);
 
     const ajax_options = manifestCall("AJAXオプション設定", null, true).?;
     try std.testing.expectEqualStrings("node_ajax_options_set", ajax_options.canonical_opcode);

@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "7e74594dd5af4419d92fb9b9ec83f351497aaff2bafa132403a54db88ffaed49"
+    "sha256": "42efb97b8dd964d934bf54ed90702a3b9513d3f54d81348d56f1c8a94f65bfc7"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 33,
+    "count": 26,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 33
+      "unverified": 26
     }
   },
   "groups": [
@@ -68,18 +68,11 @@
       "group": "基本プラグイン",
       "category": "ファイル入出力",
       "type": "関数",
-      "count": 12,
+      "count": 5,
       "executionEvidenceStates": {
-        "unverified": 12
+        "unverified": 5
       },
       "commandIds": [
-        "command-0696",
-        "command-0697",
-        "command-0698",
-        "command-0699",
-        "command-0701",
-        "command-0702",
-        "command-0703",
         "command-0712",
         "command-0715",
         "command-0716",
@@ -87,13 +80,6 @@
         "command-0719"
       ],
       "names": [
-        "起動待機",
-        "コマンド実行",
-        "コマンド実行待機",
-        "起動",
-        "起動時",
-        "ブラウザ起動",
-        "エクスプローラー起動",
         "ファイルコピー時",
         "ファイル処理時",
         "ファイル処理強制停止",
@@ -176,127 +162,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "system-runtime-execution-and-debug"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0696",
-      "name": "起動待機",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-process"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0697",
-      "name": "コマンド実行",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-process"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0698",
-      "name": "コマンド実行待機",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-process"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0699",
-      "name": "起動",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-process",
-        "plugin-node-process-order"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0701",
-      "name": "起動時",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-process",
-        "plugin-node-process-completion-order"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0702",
-      "name": "ブラウザ起動",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-host-open-external"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0703",
-      "name": "エクスプローラー起動",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-host-open-external"
       ],
       "aotFixtureIds": []
     },

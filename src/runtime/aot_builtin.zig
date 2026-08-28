@@ -344,6 +344,13 @@ pub const Command = enum(u16) {
     node_archive_extract_callback,
     node_archive_create,
     node_archive_create_callback,
+    node_process_run_wait,
+    node_process_run,
+    node_process_run_wait_output,
+    node_process_start,
+    node_process_start_callback,
+    node_open_external_browser,
+    node_open_external_explorer,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -639,6 +646,13 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "解凍時")) return .node_archive_extract_callback;
     if (std.mem.eql(u8, name, "圧縮")) return .node_archive_create;
     if (std.mem.eql(u8, name, "圧縮時")) return .node_archive_create_callback;
+    if (std.mem.eql(u8, name, "起動待機")) return .node_process_run_wait;
+    if (std.mem.eql(u8, name, "起動")) return .node_process_start;
+    if (std.mem.eql(u8, name, "コマンド実行")) return .node_process_run;
+    if (std.mem.eql(u8, name, "コマンド実行待機")) return .node_process_run_wait_output;
+    if (std.mem.eql(u8, name, "起動時")) return .node_process_start_callback;
+    if (std.mem.eql(u8, name, "ブラウザ起動")) return .node_open_external_browser;
+    if (std.mem.eql(u8, name, "エクスプローラー起動")) return .node_open_external_explorer;
     if (std.mem.eql(u8, name, "グローバル関数一覧取得")) return .system_global_function_names;
     if (std.mem.eql(u8, name, "システム関数一覧取得")) return .system_function_names;
     if (std.mem.eql(u8, name, "システム関数存在")) return .system_function_exists;
@@ -1043,6 +1057,13 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.node_archive_extract_callback, lookup("解凍時").?);
     try std.testing.expectEqual(Command.node_archive_create, lookup("圧縮").?);
     try std.testing.expectEqual(Command.node_archive_create_callback, lookup("圧縮時").?);
+    try std.testing.expectEqual(Command.node_process_run_wait, lookup("起動待機").?);
+    try std.testing.expectEqual(Command.node_process_start, lookup("起動").?);
+    try std.testing.expectEqual(Command.node_process_run, lookup("コマンド実行").?);
+    try std.testing.expectEqual(Command.node_process_run_wait_output, lookup("コマンド実行待機").?);
+    try std.testing.expectEqual(Command.node_process_start_callback, lookup("起動時").?);
+    try std.testing.expectEqual(Command.node_open_external_browser, lookup("ブラウザ起動").?);
+    try std.testing.expectEqual(Command.node_open_external_explorer, lookup("エクスプローラー起動").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }
 
