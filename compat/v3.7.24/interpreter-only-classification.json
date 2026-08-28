@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "a4239162dbba3a48c44d31cd40dbb20c2af789f9429a54fefd2ecf438db6c805"
+    "sha256": "257ef26af4eef15d8e371f0470ce7a1b997b299015ed4d9442ae62e9a2716871"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 44,
+    "count": 43,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 44
+      "unverified": 43
     }
   },
   "groups": [
@@ -87,22 +87,6 @@
         "AJAX受信",
         "POST送信",
         "POSTフォーム送信"
-      ]
-    },
-    {
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "Nodeプロセス",
-      "type": "関数",
-      "count": 1,
-      "executionEvidenceStates": {
-        "unverified": 1
-      },
-      "commandIds": [
-        "command-0747"
-      ],
-      "names": [
-        "強制終了時"
       ]
     },
     {
@@ -514,23 +498,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "plugin-node-native-archive"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0747",
-      "name": "強制終了時",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "Nodeプロセス",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-interrupt"
       ],
       "aotFixtureIds": []
     },

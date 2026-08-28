@@ -3075,9 +3075,10 @@
   "強制終了時": {
     "status": "native",
     "tests": [
-      "plugin-node-interrupt"
+      "plugin-node-interrupt",
+      "native-node-interrupt-registration"
     ],
-    "reason": "SIGINTコールバックと終了結果の公式差分テストに成功"
+    "reason": "公式7経路のSIGINTコールバック登録と偽結果の差分テストに成功"
   },
   "ブラウザ起動": {
     "status": "native",

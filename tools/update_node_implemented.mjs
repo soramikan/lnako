@@ -34,6 +34,7 @@ register(
 register("終", "native-node-exit-alias", "公式7経路の終了処理差分テストに成功");
 register("終了", "native-node-exit-japanese-alias", "公式7経路の終了処理差分テストに成功");
 register("プロセス終", "native-node-exit-code", "公式7経路の終了処理差分テストに成功");
+register("強制終了時", "native-node-interrupt-registration", "公式7経路のSIGINTコールバック登録と偽結果の差分テストに成功");
 register("存在", "native-node-file-existence", "公式7経路のファイル存在判定差分テストに成功");
 register("フォルダ存在", "native-node-file-existence", "公式7経路のフォルダ存在判定差分テストに成功");
 register("ファイル情報取得", "native-node-file-info", "公式7経路のファイル情報とメソッド型差分テストに成功");

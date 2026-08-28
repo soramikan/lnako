@@ -17108,14 +17108,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-interrupt"
+        "plugin-node-interrupt",
+        "native-node-interrupt-registration"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "SIGINTコールバックと終了結果の公式差分テストに成功"
+      "reason": "公式7経路のSIGINTコールバック登録と偽結果の差分テストに成功"
     },
     {
       "id": "command-0748",

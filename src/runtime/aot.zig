@@ -408,6 +408,7 @@ const Runtime = struct {
     namespace_stack: std.ArrayList(NamespaceFrame) = .empty,
     named_functions: std.ArrayList(RegisteredFunction) = .empty,
     hatena_callbacks: std.ArrayList(Value) = .empty,
+    interrupt_callback: Value = .{},
     timers: std.ArrayList(AotTimer) = .empty,
     promise_tasks: std.ArrayList(AotPromiseTask) = .empty,
     promise_all_states: std.ArrayList(*AotPromiseAllState) = .empty,
@@ -642,6 +643,7 @@ const Runtime = struct {
             self.markValue(entry.plugin_name);
         }
         for (self.hatena_callbacks.items) |callback| self.markValue(callback);
+        self.markValue(self.interrupt_callback);
         for (self.timers.items) |timer| self.markValue(timer.callback);
         for (self.promise_tasks.items) |task| {
             self.markValue(task.callback);
@@ -2889,6 +2891,19 @@ fn configureHatenaBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     return .{};
 }
 
+fn configureInterruptBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    if (arguments.len == 0) return error.InvalidArgumentCount;
+
+    var callback = arguments[0];
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, @ptrCast(&callback), 1);
+    defer runtime.popRoots(&frame);
+    callback = try resolveAotCallback(runtime, callback);
+    runtime.interrupt_callback = callback;
+    try installAotInterrupt();
+    return .{};
+}
+
 fn invokeHatenaNamedCallback(
     runtime: *Runtime,
     name_value: Value,
@@ -3032,12 +3047,18 @@ fn sleepAotUntil(runtime: *Runtime, target: u64) !void {
     if (target <= runtime.elapsed_milliseconds) return;
     const delay = target - runtime.elapsed_milliseconds;
     if (delay > @as(u64, std.math.maxInt(i64))) return error.TimerOverflow;
-    try std.Io.sleep(
-        std.Io.Threaded.global_single_threaded.io(),
-        std.Io.Duration.fromMilliseconds(@intCast(delay)),
-        .awake,
-    );
-    runtime.elapsed_milliseconds = target;
+    while (runtime.elapsed_milliseconds < target) {
+        try pollAotInterrupt(runtime);
+        const remaining = target - runtime.elapsed_milliseconds;
+        const slice = @min(remaining, @as(u64, 20));
+        try std.Io.sleep(
+            std.Io.Threaded.global_single_threaded.io(),
+            std.Io.Duration.fromMilliseconds(@intCast(slice)),
+            .awake,
+        );
+        runtime.elapsed_milliseconds += slice;
+        try pollAotInterrupt(runtime);
+    }
 }
 
 fn earliestAotTimerIndex(runtime: *const Runtime) ?usize {
@@ -3744,6 +3765,34 @@ test "AOTハテナ関数設定は関数値と命令名配列を保持して実�
     try std.testing.expectError(error.JavaScriptCompatibilityRequired, configureHatenaBuiltin(&active_runtime.?, &js_setting));
 }
 
+test "AOT強制終了時はコールバックを保持し偽の結果で継続する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+        aot_interrupt_requested.store(false, .release);
+    }
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try active_runtime.?.createFunction(testAotFunction, 1, &.{});
+    var arguments = [_]Value{roots[0]};
+    lnako_aot_builtin_call_site(&roots[1], &arguments, arguments.len, @intFromEnum(aot_builtin.Command.node_interrupt_callback), 0x1234);
+    try std.testing.expect(!active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(active_runtime.?.interrupt_callback.tag)));
+
+    roots[0] = .{};
+    _ = active_runtime.?.collect();
+    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(active_runtime.?.interrupt_callback.tag)));
+    aot_interrupt_requested.store(true, .release);
+    try pollAotInterrupt(&active_runtime.?);
+    try std.testing.expect(!aot_interrupt_requested.load(.acquire));
+}
+
 test "AOT __DEBUG_BP_WAITは即時復帰と非メイン待機を保つ" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -3898,8 +3947,51 @@ fn runtimeFailure(failure: anyerror) noreturn {
 }
 
 var active_runtime: ?Runtime = null;
+var aot_interrupt_requested = std.atomic.Value(bool).init(false);
+
+const AotPosixInterrupt = if (builtin.os.tag == .windows) struct {} else struct {
+    fn handler(_: std.posix.SIG) callconv(.c) void {
+        aot_interrupt_requested.store(true, .release);
+    }
+};
+
+const AotWindowsInterrupt = if (builtin.os.tag == .windows) struct {
+    extern "kernel32" fn SetConsoleCtrlHandler(handler_fn: ?*const fn (u32) callconv(.winapi) i32, add: i32) callconv(.winapi) i32;
+
+    fn handler(control_type: u32) callconv(.winapi) i32 {
+        if (control_type != 0 and control_type != 1) return 0;
+        aot_interrupt_requested.store(true, .release);
+        return 1;
+    }
+} else struct {};
+
+fn installAotInterrupt() !void {
+    if (builtin.os.tag == .windows) {
+        if (AotWindowsInterrupt.SetConsoleCtrlHandler(AotWindowsInterrupt.handler, 1) == 0) return error.InterruptHandlingUnavailable;
+    } else {
+        const action: std.posix.Sigaction = .{
+            .handler = .{ .handler = AotPosixInterrupt.handler },
+            .mask = std.posix.sigemptyset(),
+            .flags = 0,
+        };
+        std.posix.sigaction(.INT, &action, null);
+    }
+}
+
+fn pollAotInterrupt(runtime: *Runtime) !void {
+    if (!aot_interrupt_requested.swap(false, .acquire)) return;
+    if (runtime.interrupt_callback.tag != @intFromEnum(Tag.function)) return;
+
+    var undefined_value = Value{};
+    const result = try invokeAotCallback(runtime, runtime.interrupt_callback, @ptrCast(&undefined_value), 1);
+    if (valueTruthy(result)) {
+        _ = fflush(null);
+        std.process.exit(0);
+    }
+}
 
 pub export fn lnako_aot_runtime_init() callconv(.c) c_int {
+    aot_interrupt_requested.store(false, .release);
     if (active_runtime == null) active_runtime = .{ .allocator = std.heap.c_allocator, .random_state = initialRandomState() };
     return 0;
 }
@@ -3980,6 +4072,7 @@ pub export fn lnako_aot_node_mother_path_init(
 }
 
 pub export fn lnako_aot_runtime_deinit() callconv(.c) void {
+    aot_interrupt_requested.store(false, .release);
     if (active_runtime) |*runtime| runtime.deinit();
     active_runtime = null;
 }
@@ -3989,7 +4082,9 @@ pub export fn lnako_aot_runtime_deinit() callconv(.c) void {
 /// the Interpreter while keeping callback values inside the native runtime.
 pub export fn lnako_aot_runtime_drain_events() callconv(.c) void {
     const runtime = if (active_runtime) |*active| active else return;
+    pollAotInterrupt(runtime) catch |failure| runtimeFailure(failure);
     drainAotTimers(runtime) catch |failure| runtimeFailure(failure);
+    pollAotInterrupt(runtime) catch |failure| runtimeFailure(failure);
 }
 
 /// Site-aware display hooks used by generated LLVM.  The hooks are additive;
@@ -4972,9 +5067,10 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         return;
     };
     const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "builtin", site_id);
+    const route = if (command == .node_interrupt_callback) "node-interrupt" else "builtin";
+    const call_id = runtime.dispatch_trace.begin(command_name, opcode, route, site_id);
     var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "builtin", site_id, success);
+    defer runtime.dispatch_trace.result(call_id, command_name, opcode, route, site_id, success);
     if (arguments == null and len != 0) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
@@ -4997,6 +5093,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
             runtime.dispatch_trace.result(call_id, command_name, opcode, "builtin", site_id, true);
             _ = fflush(null);
             std.process.exit(exit_code);
+        },
+        .node_interrupt_callback => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = configureInterruptBuiltin(runtime, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
         },
         .regexp_match, .regexp_extract, .regexp_replace, .regexp_split => {
             runtime.setFailure(error.UnknownCommand);

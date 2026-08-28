@@ -23,10 +23,17 @@ try {
   } else {
     const official = await runInterrupted(process.execPath, ["--import", pathToFileURL(fixedHost).href, officialCli, source], environment);
     const actual = await runInterrupted(executable, ["run", source], environment);
-    if (JSON.stringify(official) !== JSON.stringify(actual) || actual.stdout !== "READY\n" || actual.exitCode !== 0) {
-      throw new Error(`Node強制終了差分: official=${JSON.stringify(official)} lnako=${JSON.stringify(actual)}`);
+    const nativeResults = [];
+    for (const optimization of ["-O0", "-O1", "-O2", "-O3"]) {
+      const native = join(temporary, `interrupt-${optimization.slice(1)}`);
+      buildAot(source, native, optimization);
+      nativeResults.push(await runInterrupted(native, [], environment));
     }
-    console.log(`Node強制終了公式差分テスト: 1ケース・${testCase.commands.length}命令成功`);
+    const results = [actual, ...nativeResults];
+    if (results.some((result) => JSON.stringify(official) !== JSON.stringify(result) || result.stdout !== "READY\n" || result.exitCode !== 0 || result.signal !== null)) {
+      throw new Error(`Node強制終了差分: official=${JSON.stringify(official)} results=${JSON.stringify(results)}`);
+    }
+    console.log(`Node強制終了公式差分テスト: 1ケース・公式/Interpreter/AOT O0〜O3・${testCase.commands.length}命令成功`);
   }
 } finally {
   await rm(temporary, { recursive: true, force: true });
@@ -35,6 +42,11 @@ try {
 function buildLnako() {
   const result = spawnSync("zig", ["build"], { cwd: root, encoding: "utf8", env: { ...process.env, ZIG_GLOBAL_CACHE_DIR: process.env.ZIG_GLOBAL_CACHE_DIR ?? resolve(root, ".zig-global-cache") } });
   if (result.status !== 0) throw new Error(`lnakoのビルドに失敗しました:\n${result.stderr}`);
+}
+
+function buildAot(source, output, optimization) {
+  const result = spawnSync(executable, ["build", source, "-o", output, optimization], { cwd: root, encoding: "utf8", env: process.env });
+  if (result.status !== 0) throw new Error(`AOT ${optimization} のビルドに失敗しました:\n${result.stderr}`);
 }
 
 function runInterrupted(command, args, environment) {

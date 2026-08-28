@@ -94,6 +94,7 @@ pub fn manifestCall(name: []const u8, direct_callee: ?ir.FunctionId, is_builtin_
         .system_debug_display => "debug-display",
         .system_hatena_execute => "hatena-default",
         .system_hatena_configure => "hatena-configure",
+        .node_interrupt_callback => "node-interrupt",
         .system_debug_breakpoint_wait => "debug-breakpoint-wait",
         .node_stdin_line, .node_stdin_character, .node_stdin_callback => "node-stdin-lines",
         .node_archive_tool_path_set => "archive-tool-path",
@@ -2190,6 +2191,11 @@ test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {
     try std.testing.expectEqualStrings("system_hatena_configure", hatena_configure.canonical_opcode);
     try std.testing.expectEqualStrings("hatena-configure", hatena_configure.route);
     try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.system_hatena_configure), hatena_configure.opcode);
+
+    const node_interrupt = manifestCall("強制終了時", null, true).?;
+    try std.testing.expectEqualStrings("node_interrupt_callback", node_interrupt.canonical_opcode);
+    try std.testing.expectEqualStrings("node-interrupt", node_interrupt.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_interrupt_callback), node_interrupt.opcode);
 
     const breakpoint_wait = manifestCall("__DEBUG_BP_WAIT", null, true).?;
     try std.testing.expectEqualStrings("system_debug_breakpoint_wait", breakpoint_wait.canonical_opcode);
