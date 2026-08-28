@@ -929,10 +929,31 @@ fn tableInsertColumn(runtime: *Runtime, source: Value, column_value: Value, valu
             const suffix = spliceIndex(try runtime.valueToNumber(rooted[1]), row.string.len());
             rooted[5] = try runtime.stringCodeUnits(row.string.units[suffix..]);
             _ = try rooted[4].array.push(rooted[5]);
+        } else if (row == .bytes) {
+            const length = row.bytes.bytes.len;
+            if (positive) {
+                const prefix = spliceIndex(try runtime.valueToNumber(rooted[1]), length);
+                rooted[5] = try byteBufferSlice(runtime, row.bytes, 0, prefix);
+                _ = try rooted[4].array.push(rooted[5]);
+            }
+            rooted[5] = if (rooted[2] == .array) rooted[2].array.get(index) else try indexed(runtime, rooted[2], .{ .number = @floatFromInt(index) });
+            _ = try rooted[4].array.push(rooted[5]);
+            const suffix = spliceIndex(try runtime.valueToNumber(rooted[1]), length);
+            rooted[5] = try byteBufferSlice(runtime, row.bytes, suffix, length);
+            _ = try rooted[4].array.push(rooted[5]);
         } else return error.ArrayExpected;
         _ = try rooted[3].array.push(rooted[4]);
     }
     return rooted[3];
+}
+
+fn byteBufferSlice(runtime: *Runtime, buffer: *value_mod.ByteBuffer, start: usize, end: usize) !Value {
+    const bytes = buffer.bytes[start..end];
+    return switch (buffer.kind) {
+        .buffer => runtime.createBytes(bytes),
+        .uint8_array => runtime.createUint8Array(bytes),
+        .array_buffer => runtime.createArrayBuffer(bytes),
+    };
 }
 
 fn isObjectPrototypeKey(units: []const u16) bool {
@@ -1478,6 +1499,19 @@ test "表変換系はGCストレス下で文字列行とJSキー規則を保持�
     try std.testing.expectEqualSlices(u16, &.{'a'}, inserted.array.get(0).array.get(0).string.units);
     try std.testing.expectEqualSlices(u16, &.{'Z'}, inserted.array.get(0).array.get(1).string.units);
     try std.testing.expectEqualSlices(u16, &.{ 'b', 'c' }, inserted.array.get(0).array.get(2).string.units);
+
+    var byte_row = try runtime.createBytes(&.{ 0x41, 0x42, 0x43 });
+    try roots.protect(&byte_row);
+    var byte_table = try common.arrayFromValues(&runtime, &.{byte_row});
+    try roots.protect(&byte_table);
+    var byte_values = try common.arrayFromValues(&runtime, &.{.{ .number = 9 }});
+    try roots.protect(&byte_values);
+    var byte_inserted = try tableInsertColumn(&runtime, byte_table, .{ .number = 1 }, byte_values);
+    try roots.protect(&byte_inserted);
+    try std.testing.expectEqual(@as(usize, 3), byte_inserted.array.get(0).array.len());
+    try std.testing.expectEqualSlices(u8, &.{0x41}, byte_inserted.array.get(0).array.get(0).bytes.bytes);
+    try std.testing.expectEqual(@as(f64, 9), byte_inserted.array.get(0).array.get(1).number);
+    try std.testing.expectEqualSlices(u8, &.{ 0x42, 0x43 }, byte_inserted.array.get(0).array.get(2).bytes.bytes);
 
     var prototype = try runtime.stringUtf8("__proto__");
     try roots.protect(&prototype);

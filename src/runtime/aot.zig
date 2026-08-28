@@ -13807,6 +13807,14 @@ fn tableInsertColumnBuiltin(runtime: *Runtime, source: Value, column: Value, val
                 roots[5] = try runtime.createString(row_units[0..prefix]);
                 try new_row.append(runtime.allocator, roots[5]);
             }
+        } else if (row_tag == .byte_buffer) {
+            const buffer = row.object().?.payload.byte_buffer;
+            try new_row.ensureTotalCapacity(runtime.allocator, 3);
+            if (positive) {
+                const prefix = try spliceIndexRuntime(runtime, roots[1], buffer.bytes.len);
+                roots[5] = try aotByteBufferSlice(runtime, buffer, 0, prefix);
+                try new_row.append(runtime.allocator, roots[5]);
+            }
         } else return error.ArrayExpected;
         if (roots[2].tag == @intFromEnum(Tag.array)) {
             const value_items = try arrayItems(roots[2]);
@@ -13819,16 +13827,30 @@ fn tableInsertColumnBuiltin(runtime: *Runtime, source: Value, column: Value, val
             const row_items = try arrayItems(row);
             const suffix = try spliceIndexRuntime(runtime, roots[1], row_items.items.len);
             try new_row.appendSlice(runtime.allocator, row_items.items[suffix..]);
-        } else {
+        } else if (isString(row)) {
             const row_units = try valueUtf16Alloc(runtime, row);
             defer runtime.allocator.free(row_units);
             const suffix = try spliceIndexRuntime(runtime, roots[1], row_units.len);
             roots[5] = try runtime.createString(row_units[suffix..]);
             try new_row.append(runtime.allocator, roots[5]);
+        } else {
+            const buffer = row.object().?.payload.byte_buffer;
+            const suffix = try spliceIndexRuntime(runtime, roots[1], buffer.bytes.len);
+            roots[5] = try aotByteBufferSlice(runtime, buffer, suffix, buffer.bytes.len);
+            try new_row.append(runtime.allocator, roots[5]);
         }
         try result.append(runtime.allocator, roots[4]);
     }
     return roots[3];
+}
+
+fn aotByteBufferSlice(runtime: *Runtime, buffer: ByteBuffer, start: usize, end: usize) !Value {
+    const bytes = buffer.bytes[start..end];
+    return switch (buffer.kind) {
+        .buffer => runtime.createBytes(bytes),
+        .uint8_array => runtime.createUint8Array(bytes),
+        .array_buffer => runtime.createArrayBuffer(bytes),
+    };
 }
 
 fn tableDeleteColumnBuiltin(runtime: *Runtime, source: Value, column: Value) !Value {
@@ -18895,6 +18917,26 @@ test "AOT表正規表現系はraw RegExpと浅いコピーを保つ" {
     roots[6] = try runtime.createArray(&.{});
     try std.testing.expectError(error.UnclosedCharacterClass, tableBuiltin(&runtime, .table_regexp_search, &.{ roots[6], numberValue(0), numberValue(0), staticStringValue("[") }));
     try std.testing.expectError(error.UnclosedCharacterClass, tableBuiltin(&runtime, .table_regexp_pickup, &.{ roots[6], numberValue(0), staticStringValue("[") }));
+}
+
+test "AOT表列挿入はbyte bufferの種類とslice内容を保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 8;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createBytes(&.{ 0x41, 0x42, 0x43 });
+    roots[1] = try runtime.createArray(&.{roots[0]});
+    roots[2] = try runtime.createArray(&.{numberValue(9)});
+    roots[3] = try tableBuiltin(&runtime, .table_insert_column, &.{ roots[1], numberValue(1), roots[2] });
+    const row = roots[3].object().?.payload.array.items[0].object().?.payload.array.items;
+    try std.testing.expectEqual(@as(usize, 3), row.len);
+    try std.testing.expectEqual(ByteKind.buffer, row[0].object().?.payload.byte_buffer.kind);
+    try std.testing.expectEqualSlices(u8, &.{0x41}, row[0].object().?.payload.byte_buffer.bytes);
+    try std.testing.expectEqual(@as(f64, 9), valueToNumber(row[1]));
+    try std.testing.expectEqualSlices(u8, &.{ 0x42, 0x43 }, row[2].object().?.payload.byte_buffer.bytes);
 }
 
 test "AOT表変換系は欠損列・負位置・JS加算を公式どおり処理する" {

@@ -5904,14 +5904,15 @@
       "tests": [
         "plugin-system-table",
         "native-system-table-transform-commands",
-        "native-system-table-insert-bigint-index-error"
+        "native-system-table-insert-bigint-index-error",
+        "native-system-table-byte-row-slice"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
+      "reason": "配列・文字列・byte buffer行のprefix/suffixをZig製ランタイムで実装し、公式差分テストに成功。Buffer slice/view identityはTODO: table-insert-byte-row-slice / aot-byte-buffer-value"
     },
     {
       "id": "command-0223",
