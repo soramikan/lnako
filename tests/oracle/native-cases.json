@@ -747,5 +747,10 @@
     "id": "native-node-exit-code",
     "commands": ["プロセス終"],
     "source": "\"BEFORE\"を表示\nプロセス終(7)\n\"AFTER\"を表示\n"
+  },
+  {
+    "id": "native-node-file-existence",
+    "commands": ["存在", "フォルダ存在"],
+    "source": "存在(\".\")を表示\nフォルダ存在(\".\")を表示\n存在(\"__lnako_native_missing_9e58f8a4__\")を表示\nフォルダ存在(\"__lnako_native_missing_9e58f8a4__\")を表示\n"
   }
 ]

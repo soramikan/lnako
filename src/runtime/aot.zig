@@ -3655,6 +3655,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
+        .node_file_exists, .node_folder_exists => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = nodeFileExistenceBuiltin(runtime, command, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .node_path_basename, .node_path_dirname => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = nodePathComponentBuiltin(runtime, command, actual) catch |failure| {
@@ -6670,6 +6677,17 @@ fn nodeProcessExitCode(runtime: *Runtime, value: Value) !u8 {
     const number = try valueToNumberRuntime(runtime, value);
     if (!std.math.isFinite(number)) return 0;
     return @intFromFloat(@mod(@trunc(number), 256.0));
+}
+
+fn nodeFileExistenceBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    if (arguments.len < 1) return error.InvalidArgumentCount;
+    const path = try valueUtf8LossyAlloc(runtime, arguments[0]);
+    defer runtime.allocator.free(path);
+    const stat = std.Io.Dir.cwd().statFile(std.Io.Threaded.global_single_threaded.io(), path, .{}) catch {
+        return .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
+    };
+    const result = command == .node_file_exists or stat.kind == .directory;
+    return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(result) };
 }
 
 fn nodeEnvironmentValueBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
@@ -10499,6 +10517,25 @@ test "AOT Node終了コードは有限値を符号なし8bitへ正規化する" 
     try std.testing.expectEqual(@as(u8, 7), try nodeProcessExitCode(&runtime, numberValue(7)));
     try std.testing.expectEqual(@as(u8, 255), try nodeProcessExitCode(&runtime, numberValue(-1)));
     try std.testing.expectEqual(@as(u8, 0), try nodeProcessExitCode(&runtime, numberValue(std.math.nan(f64))));
+}
+
+test "AOT Node存在判定はファイルとフォルダの存在を区別する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try nodeFileExistenceBuiltin(&runtime, .node_file_exists, &.{staticStringValue(".")});
+    roots[1] = try nodeFileExistenceBuiltin(&runtime, .node_folder_exists, &.{staticStringValue(".")});
+    roots[2] = try nodeFileExistenceBuiltin(&runtime, .node_file_exists, &.{staticStringValue("LNAKO_MISSING_PATH_7F4B")});
+    try std.testing.expectEqual(Tag.boolean, @as(Tag, @enumFromInt(roots[0].tag)));
+    try std.testing.expectEqual(Tag.boolean, @as(Tag, @enumFromInt(roots[1].tag)));
+    try std.testing.expectEqual(Tag.boolean, @as(Tag, @enumFromInt(roots[2].tag)));
+    try std.testing.expect(roots[0].payload != 0);
+    try std.testing.expect(roots[1].payload != 0);
+    try std.testing.expect(roots[2].payload == 0);
 }
 
 test "AOT環境変数取得はC環境から値を読み未設定をundefinedにする" {

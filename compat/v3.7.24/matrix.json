@@ -16033,14 +16033,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-file-core"
+        "plugin-node-file-core",
+        "native-node-file-existence"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路のファイル存在判定差分テストに成功"
     },
     {
       "id": "command-0707",
@@ -16058,14 +16059,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-file-core"
+        "plugin-node-file-core",
+        "native-node-file-existence"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路のフォルダ存在判定差分テストに成功"
     },
     {
       "id": "command-0708",

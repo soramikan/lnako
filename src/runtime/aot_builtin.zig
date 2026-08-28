@@ -273,6 +273,8 @@ pub const Command = enum(u16) {
     line_notify_discontinued,
     node_exit,
     node_process_exit,
+    node_file_exists,
+    node_folder_exists,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -555,6 +557,8 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "LINE送信") or std.mem.eql(u8, name, "LINE画像送信")) return .line_notify_discontinued;
     if (std.mem.eql(u8, name, "終") or std.mem.eql(u8, name, "終了")) return .node_exit;
     if (std.mem.eql(u8, name, "プロセス終")) return .node_process_exit;
+    if (std.mem.eql(u8, name, "存在")) return .node_file_exists;
+    if (std.mem.eql(u8, name, "フォルダ存在")) return .node_folder_exists;
     return null;
 }
 
@@ -759,6 +763,8 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.node_exit, lookup("終").?);
     try std.testing.expectEqual(Command.node_exit, lookup("終了").?);
     try std.testing.expectEqual(Command.node_process_exit, lookup("プロセス終").?);
+    try std.testing.expectEqual(Command.node_file_exists, lookup("存在").?);
+    try std.testing.expectEqual(Command.node_folder_exists, lookup("フォルダ存在").?);
     try std.testing.expectEqual(Command.datetime_now, lookup("今").?);
     try std.testing.expectEqual(Command.datetime_system_time_milliseconds, lookup("システム時間ミリ秒").?);
     try std.testing.expectEqual(Command.datetime_today, lookup("今日").?);

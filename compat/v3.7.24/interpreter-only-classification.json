@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "5ac25d347a221db604303c0855aa4175e988aab6dddfb9a655d9d51355299c1b"
+    "sha256": "373187c661c884ab97f9e524b24190162f642971b726a4e8442750b23a5678c8"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 109,
+    "count": 107,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 109
+      "unverified": 107
     }
   },
   "groups": [
@@ -194,9 +194,9 @@
       "group": "基本プラグイン",
       "category": "ファイル入出力",
       "type": "関数",
-      "count": 33,
+      "count": 31,
       "executionEvidenceStates": {
-        "unverified": 33
+        "unverified": 31
       },
       "commandIds": [
         "command-0688",
@@ -217,8 +217,6 @@
         "command-0703",
         "command-0704",
         "command-0705",
-        "command-0706",
-        "command-0707",
         "command-0708",
         "command-0710",
         "command-0711",
@@ -252,8 +250,6 @@
         "エクスプローラー起動",
         "ファイル列挙",
         "全ファイル列挙",
-        "存在",
-        "フォルダ存在",
         "フォルダ作成",
         "ファイルコピー",
         "ファイル上書コピー",
@@ -1115,40 +1111,6 @@
     {
       "id": "command-0705",
       "name": "全ファイル列挙",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-file-core"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0706",
-      "name": "存在",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-file-core"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0707",
-      "name": "フォルダ存在",
       "plugin": "plugin_node",
       "group": "基本プラグイン",
       "category": "ファイル入出力",
