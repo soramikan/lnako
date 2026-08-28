@@ -16002,14 +16002,15 @@
       "status": "native",
       "tests": [
         "plugin-node-file-core",
-        "plugin-node-file-pattern-regexp"
+        "plugin-node-file-pattern-regexp",
+        "native-node-file-operations"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路のファイル列挙・再帰コピー・移動・削除差分テストに成功"
     },
     {
       "id": "command-0705",
@@ -16027,14 +16028,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-file-core"
+        "plugin-node-file-core",
+        "native-node-file-operations"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路のファイル列挙・再帰コピー・移動・削除差分テストに成功"
     },
     {
       "id": "command-0706",
@@ -16104,14 +16106,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-file-core"
+        "plugin-node-file-core",
+        "native-node-file-operations"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路のファイル列挙・再帰コピー・移動・削除差分テストに成功"
     },
     {
       "id": "command-0709",
@@ -16154,14 +16157,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-file-core"
+        "plugin-node-file-core",
+        "native-node-file-operations"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路のファイル列挙・再帰コピー・移動・削除差分テストに成功"
     },
     {
       "id": "command-0711",
@@ -16179,14 +16183,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-file-core"
+        "plugin-node-file-core",
+        "native-node-file-operations"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路のファイル列挙・再帰コピー・移動・削除差分テストに成功"
     },
     {
       "id": "command-0712",
@@ -16229,14 +16234,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-file-core"
+        "plugin-node-file-core",
+        "native-node-file-operations"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路のファイル列挙・再帰コピー・移動・削除差分テストに成功"
     },
     {
       "id": "command-0714",
@@ -16254,14 +16260,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-file-core"
+        "plugin-node-file-core",
+        "native-node-file-operations"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路のファイル列挙・再帰コピー・移動・削除差分テストに成功"
     },
     {
       "id": "command-0715",
@@ -16354,14 +16361,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-file-core"
+        "plugin-node-file-core",
+        "native-node-file-operations"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路のファイル列挙・再帰コピー・移動・削除差分テストに成功"
     },
     {
       "id": "command-0719",

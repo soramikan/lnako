@@ -4660,6 +4660,45 @@ pub export fn lnako_aot_promise_call_site(
     success = runtime.failure_epoch == start_epoch;
 }
 
+/// Dedicated ABI for synchronous Node file operations. The copy default is a
+/// mutable system global, so generated LLVM passes its storage explicitly.
+pub export fn lnako_aot_file_operation_call(
+    out: *Value,
+    file_copy_default: *Value,
+    arguments: ?[*]const Value,
+    len: usize,
+    opcode: u16,
+    site_id: u64,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
+        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "node-file-operation", site_id);
+        runtime.setFailure(error.UnknownCommand);
+        runtime.dispatch_trace.result(call_id, "unknown", opcode, "node-file-operation", site_id, false);
+        return;
+    };
+    if (!isNodeFileOperationCommand(command)) {
+        runtime.setFailure(error.UnknownCommand);
+        return;
+    }
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "node-file-operation", site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "node-file-operation", site_id, success);
+    if (arguments == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+    out.* = nodeFileOperationBuiltin(runtime, command, actual, file_copy_default) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    success = runtime.failure_epoch == start_epoch;
+}
+
 pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Value, len: usize, opcode: u16, site_id: u64) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*active| active else return;
@@ -4937,6 +4976,14 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         .node_file_save => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = nodeFileSaveBuiltin(runtime, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .node_file_list, .node_file_list_all, .node_folder_create, .node_file_copy, .node_file_copy_overwrite, .node_file_move, .node_file_move_overwrite, .node_file_delete => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            var default_copy_mode = staticStringValue("上書禁止");
+            out.* = nodeFileOperationBuiltin(runtime, command, actual, &default_copy_mode) catch |failure| {
                 runtime.setFailure(failure);
                 return;
             };
@@ -8247,6 +8294,160 @@ fn nodeEncodedFileSaveBuiltin(runtime: *Runtime, command: aot_builtin.Command, a
     defer runtime.allocator.free(path);
     try std.Io.Dir.cwd().writeFile(std.Io.Threaded.global_single_threaded.io(), .{ .sub_path = path, .data = bytes });
     return .{};
+}
+
+fn isNodeFileOperationCommand(command: aot_builtin.Command) bool {
+    return switch (command) {
+        .node_file_list, .node_file_list_all, .node_folder_create, .node_file_copy, .node_file_copy_overwrite, .node_file_move, .node_file_move_overwrite, .node_file_delete => true,
+        else => false,
+    };
+}
+
+fn nodeFileOperationBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value, file_copy_default: *Value) !Value {
+    return switch (command) {
+        .node_file_list => nodeFileListBuiltin(runtime, arguments, false),
+        .node_file_list_all => nodeFileListBuiltin(runtime, arguments, true),
+        .node_folder_create => nodeFolderCreateBuiltin(runtime, arguments),
+        .node_file_copy, .node_file_copy_overwrite, .node_file_move, .node_file_move_overwrite => nodeFileCopyMoveBuiltin(runtime, command, arguments, file_copy_default),
+        .node_file_delete => nodeFileDeleteBuiltin(runtime, arguments),
+        else => error.UnknownCommand,
+    };
+}
+
+fn nodeFileListBuiltin(runtime: *Runtime, arguments: []const Value, recursive: bool) !Value {
+    if (arguments.len < 1) return error.InvalidArgumentCount;
+    const pattern = try valueUtf8LossyAlloc(runtime, arguments[0]);
+    defer runtime.allocator.free(pattern);
+    const has_wildcard = std.mem.indexOfScalar(u8, pattern, '*') != null;
+    const base = if (has_wildcard) nodeDirname(pattern) else pattern;
+    const mask = if (has_wildcard) nodeBasename(pattern) else "*";
+    const io = std.Io.Threaded.global_single_threaded.io();
+
+    var names: std.ArrayList([]u8) = .empty;
+    defer {
+        for (names.items) |name| runtime.allocator.free(name);
+        names.deinit(runtime.allocator);
+    }
+
+    var directory = try std.Io.Dir.cwd().openDir(io, base, .{ .iterate = true });
+    defer directory.close(io);
+    if (recursive) {
+        const current = try currentDirectoryAlloc(runtime);
+        defer runtime.allocator.free(current);
+        const absolute_base = try std.fs.path.resolve(runtime.allocator, &.{ current, base });
+        defer runtime.allocator.free(absolute_base);
+        var walker = try directory.walk(runtime.allocator);
+        defer walker.deinit();
+        while (try walker.next(io)) |entry| {
+            if (entry.kind != .file) continue;
+            if (!try nodeWildcardMatches(runtime, mask, nodeBasename(entry.path))) continue;
+            try names.append(runtime.allocator, try std.fs.path.join(runtime.allocator, &.{ absolute_base, entry.path }));
+        }
+    } else {
+        var iterator = directory.iterate();
+        while (try iterator.next(io)) |entry| {
+            if (!try nodeWildcardMatches(runtime, mask, entry.name)) continue;
+            try names.append(runtime.allocator, try runtime.allocator.dupe(u8, entry.name));
+        }
+    }
+    std.mem.sort([]u8, names.items, {}, lessThanNodeAotFileName);
+
+    var result = try runtime.createArray(&.{});
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, @ptrCast(&result), 1);
+    defer runtime.popRoots(&frame);
+    for (names.items) |name| {
+        const value = try runtimeUtf8String(runtime, name);
+        try result.object().?.payload.array.append(runtime.allocator, value);
+    }
+    return result;
+}
+
+fn nodeWildcardMatches(runtime: *Runtime, pattern: []const u8, name: []const u8) !bool {
+    var expression: std.ArrayList(u8) = .empty;
+    defer expression.deinit(runtime.allocator);
+    const multiple = std.mem.indexOfScalar(u8, pattern, ';') != null;
+    if (multiple) try expression.append(runtime.allocator, '(');
+    for (pattern) |byte| switch (byte) {
+        '.' => try expression.appendSlice(runtime.allocator, "\\."),
+        '*' => try expression.appendSlice(runtime.allocator, ".*"),
+        ';' => try expression.append(runtime.allocator, '|'),
+        else => try expression.append(runtime.allocator, byte),
+    };
+    if (multiple) try expression.append(runtime.allocator, ')');
+    try expression.append(runtime.allocator, '$');
+    var pattern_string = try string_mod.String.fromUtf8(runtime.allocator, expression.items);
+    defer pattern_string.deinit();
+    var name_string = try string_mod.String.fromUtf8Lossy(runtime.allocator, name);
+    defer name_string.deinit();
+    return regexp.testRaw(runtime.allocator, pattern_string.units, name_string.units, true);
+}
+
+fn lessThanNodeAotFileName(_: void, left: []u8, right: []u8) bool {
+    return std.mem.order(u8, left, right) == .lt;
+}
+
+fn nodeFolderCreateBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    if (arguments.len < 1) return error.InvalidArgumentCount;
+    const path = try valueUtf8LossyAlloc(runtime, arguments[0]);
+    defer runtime.allocator.free(path);
+    try std.Io.Dir.cwd().createDirPath(std.Io.Threaded.global_single_threaded.io(), path);
+    return .{};
+}
+
+fn nodeFileDeleteBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    if (arguments.len < 1) return error.InvalidArgumentCount;
+    const path = try valueUtf8LossyAlloc(runtime, arguments[0]);
+    defer runtime.allocator.free(path);
+    try std.Io.Dir.cwd().deleteTree(std.Io.Threaded.global_single_threaded.io(), path);
+    return .{};
+}
+
+fn nodeFileCopyDefaultOverwrite(runtime: *Runtime, value: Value) !bool {
+    const mode = try valueUtf8LossyAlloc(runtime, value);
+    defer runtime.allocator.free(mode);
+    return std.mem.eql(u8, mode, "上書き") or std.mem.eql(u8, mode, "上書") or std.mem.eql(u8, mode, "overwrite");
+}
+
+fn nodeFileCopyMoveBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value, file_copy_default: *Value) !Value {
+    if (arguments.len < 2) return error.InvalidArgumentCount;
+    const source = try valueUtf8LossyAlloc(runtime, arguments[0]);
+    defer runtime.allocator.free(source);
+    const destination = try valueUtf8LossyAlloc(runtime, arguments[1]);
+    defer runtime.allocator.free(destination);
+    const explicit_overwrite = command == .node_file_copy_overwrite or command == .node_file_move_overwrite;
+    const overwrite = if (explicit_overwrite) true else try nodeFileCopyDefaultOverwrite(runtime, file_copy_default.*);
+    const io = std.Io.Threaded.global_single_threaded.io();
+    if (!overwrite and nodeAotPathExists(io, destination)) return error.CopyDestinationExists;
+
+    const stat = try std.Io.Dir.cwd().statFile(io, source, .{});
+    if (stat.kind != .directory) {
+        try std.Io.Dir.cwd().copyFile(source, std.Io.Dir.cwd(), destination, io, .{ .replace = overwrite, .make_path = true });
+    } else {
+        try std.Io.Dir.cwd().createDirPath(io, destination);
+        var directory = try std.Io.Dir.cwd().openDir(io, source, .{ .iterate = true });
+        defer directory.close(io);
+        var walker = try directory.walk(runtime.allocator);
+        defer walker.deinit();
+        while (try walker.next(io)) |entry| {
+            const target = try std.fs.path.join(runtime.allocator, &.{ destination, entry.path });
+            defer runtime.allocator.free(target);
+            if (entry.kind == .directory) {
+                try std.Io.Dir.cwd().createDirPath(io, target);
+            } else if (entry.kind == .file) {
+                const from = try std.fs.path.join(runtime.allocator, &.{ source, entry.path });
+                defer runtime.allocator.free(from);
+                try std.Io.Dir.cwd().copyFile(from, std.Io.Dir.cwd(), target, io, .{ .replace = overwrite, .make_path = true });
+            }
+        }
+    }
+    if (command == .node_file_move or command == .node_file_move_overwrite) try std.Io.Dir.cwd().deleteTree(io, source);
+    return .{};
+}
+
+fn nodeAotPathExists(io: std.Io, path: []const u8) bool {
+    _ = std.Io.Dir.cwd().statFile(io, path, .{}) catch return false;
+    return true;
 }
 
 fn nodeFileSizeBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
@@ -12391,6 +12592,85 @@ test "AOT Node文字コード命令は共有codecへ接続する" {
     try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @enumFromInt(roots[3].tag)));
     try expectUtf16String(&runtime, roots[4], "日本語ABC");
     try std.testing.expectError(error.InvalidArgumentCount, nodeEncodingBuiltin(&runtime, .node_encoding_encode, &.{roots[0]}));
+}
+
+test "AOT Node同期ファイル操作は列挙・再帰コピー・移動・削除を処理する" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(std.testing.io, "data/sub");
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "data/a.txt", .data = "abc" });
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "data/sub/nested.txt", .data = "nested" });
+
+    const root_path = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(root_path);
+    const data_path = try std.fs.path.join(std.testing.allocator, &.{ root_path, "data" });
+    defer std.testing.allocator.free(data_path);
+    const source_path = try std.fs.path.join(std.testing.allocator, &.{ data_path, "a.txt" });
+    defer std.testing.allocator.free(source_path);
+    const copy_path = try std.fs.path.join(std.testing.allocator, &.{ data_path, "copy.txt" });
+    defer std.testing.allocator.free(copy_path);
+    const moved_path = try std.fs.path.join(std.testing.allocator, &.{ data_path, "moved.txt" });
+    defer std.testing.allocator.free(moved_path);
+    const tree_copy_path = try std.fs.path.join(std.testing.allocator, &.{ root_path, "tree-copy" });
+    defer std.testing.allocator.free(tree_copy_path);
+    const tree_move_path = try std.fs.path.join(std.testing.allocator, &.{ root_path, "tree-move" });
+    defer std.testing.allocator.free(tree_move_path);
+    const nested_copy_path = try std.fs.path.join(std.testing.allocator, &.{ tree_move_path, "sub", "nested.txt" });
+    defer std.testing.allocator.free(nested_copy_path);
+    const created_path = try std.fs.path.join(std.testing.allocator, &.{ root_path, "created", "deep" });
+    defer std.testing.allocator.free(created_path);
+    const pattern_path = try std.fs.path.join(std.testing.allocator, &.{ data_path, "*.txt" });
+    defer std.testing.allocator.free(pattern_path);
+
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtimeUtf8String(&runtime, "上書禁止");
+    roots[1] = try runtimeUtf8String(&runtime, pattern_path);
+    roots[2] = try nodeFileOperationBuiltin(&runtime, .node_file_list, &.{roots[1]}, &roots[0]);
+    roots[3] = try nodeFileOperationBuiltin(&runtime, .node_file_list_all, &.{roots[1]}, &roots[0]);
+    try std.testing.expectEqual(@as(usize, 1), roots[2].object().?.payload.array.items.len);
+    try expectUtf16String(&runtime, roots[2].object().?.payload.array.items[0], "a.txt");
+    try std.testing.expectEqual(@as(usize, 2), roots[3].object().?.payload.array.items.len);
+    for (roots[3].object().?.payload.array.items) |item| {
+        const item_path = try valueUtf8LossyAlloc(&runtime, item);
+        defer runtime.allocator.free(item_path);
+        try std.testing.expect(std.mem.startsWith(u8, item_path, data_path));
+    }
+
+    roots[4] = try runtimeUtf8String(&runtime, source_path);
+    roots[5] = try runtimeUtf8String(&runtime, copy_path);
+    _ = try nodeFileOperationBuiltin(&runtime, .node_file_copy, &.{ roots[4], roots[5] }, &roots[0]);
+    try std.testing.expectError(error.CopyDestinationExists, nodeFileOperationBuiltin(&runtime, .node_file_copy, &.{ roots[4], roots[5] }, &roots[0]));
+    _ = try nodeFileOperationBuiltin(&runtime, .node_file_copy_overwrite, &.{ roots[4], roots[5] }, &roots[0]);
+
+    roots[0] = try runtimeUtf8String(&runtime, "上書");
+    roots[6] = try runtimeUtf8String(&runtime, moved_path);
+    _ = try nodeFileOperationBuiltin(&runtime, .node_file_move, &.{ roots[5], roots[6] }, &roots[0]);
+    try std.testing.expect((try nodeFileExistenceBuiltin(&runtime, .node_file_exists, &.{roots[6]})).payload != 0);
+    _ = try nodeFileOperationBuiltin(&runtime, .node_file_copy, &.{ roots[4], roots[6] }, &roots[0]);
+    roots[13] = try nodeFileReadBuiltin(&runtime, .node_file_read, &.{roots[6]});
+    try expectUtf16String(&runtime, roots[13], "abc");
+
+    roots[7] = try runtimeUtf8String(&runtime, data_path);
+    roots[8] = try runtimeUtf8String(&runtime, tree_copy_path);
+    roots[9] = try runtimeUtf8String(&runtime, tree_move_path);
+    _ = try nodeFileOperationBuiltin(&runtime, .node_file_copy, &.{ roots[7], roots[8] }, &roots[0]);
+    _ = try nodeFileOperationBuiltin(&runtime, .node_file_move_overwrite, &.{ roots[8], roots[9] }, &roots[0]);
+    roots[10] = try runtimeUtf8String(&runtime, nested_copy_path);
+    try std.testing.expect((try nodeFileExistenceBuiltin(&runtime, .node_file_exists, &.{roots[10]})).payload != 0);
+    _ = try nodeFileOperationBuiltin(&runtime, .node_file_delete, &.{roots[9]}, &roots[0]);
+    try std.testing.expect((try nodeFileExistenceBuiltin(&runtime, .node_file_exists, &.{roots[9]})).payload == 0);
+
+    roots[11] = try runtimeUtf8String(&runtime, created_path);
+    _ = try nodeFileOperationBuiltin(&runtime, .node_folder_create, &.{roots[11]}, &roots[0]);
+    try std.testing.expect((try nodeFileExistenceBuiltin(&runtime, .node_folder_exists, &.{roots[11]})).payload != 0);
+    _ = try nodeFileOperationBuiltin(&runtime, .node_file_delete, &.{roots[6]}, &roots[0]);
+    try std.testing.expect((try nodeFileExistenceBuiltin(&runtime, .node_file_exists, &.{roots[6]})).payload == 0);
 }
 
 test "AOT Nodeファイルサイズ取得はstatのサイズを返す" {

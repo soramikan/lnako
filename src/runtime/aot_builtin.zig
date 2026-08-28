@@ -319,6 +319,14 @@ pub const Command = enum(u16) {
     node_encoding_sjis_decode,
     node_encoding_encode,
     node_encoding_decode,
+    node_file_list,
+    node_file_list_all,
+    node_folder_create,
+    node_file_copy,
+    node_file_copy_overwrite,
+    node_file_move,
+    node_file_move_overwrite,
+    node_file_delete,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -647,6 +655,14 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "SJIS取得")) return .node_encoding_sjis_decode;
     if (std.mem.eql(u8, name, "エンコーディング変換")) return .node_encoding_encode;
     if (std.mem.eql(u8, name, "エンコーディング取得")) return .node_encoding_decode;
+    if (std.mem.eql(u8, name, "ファイル列挙")) return .node_file_list;
+    if (std.mem.eql(u8, name, "全ファイル列挙")) return .node_file_list_all;
+    if (std.mem.eql(u8, name, "フォルダ作成")) return .node_folder_create;
+    if (std.mem.eql(u8, name, "ファイルコピー")) return .node_file_copy;
+    if (std.mem.eql(u8, name, "ファイル上書コピー")) return .node_file_copy_overwrite;
+    if (std.mem.eql(u8, name, "ファイル移動")) return .node_file_move;
+    if (std.mem.eql(u8, name, "ファイル上書移動")) return .node_file_move_overwrite;
+    if (std.mem.eql(u8, name, "ファイル削除")) return .node_file_delete;
     return null;
 }
 
@@ -850,6 +866,14 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.node_encoding_sjis_decode, lookup("SJIS取得").?);
     try std.testing.expectEqual(Command.node_encoding_encode, lookup("エンコーディング変換").?);
     try std.testing.expectEqual(Command.node_encoding_decode, lookup("エンコーディング取得").?);
+    try std.testing.expectEqual(Command.node_file_list, lookup("ファイル列挙").?);
+    try std.testing.expectEqual(Command.node_file_list_all, lookup("全ファイル列挙").?);
+    try std.testing.expectEqual(Command.node_folder_create, lookup("フォルダ作成").?);
+    try std.testing.expectEqual(Command.node_file_copy, lookup("ファイルコピー").?);
+    try std.testing.expectEqual(Command.node_file_copy_overwrite, lookup("ファイル上書コピー").?);
+    try std.testing.expectEqual(Command.node_file_move, lookup("ファイル移動").?);
+    try std.testing.expectEqual(Command.node_file_move_overwrite, lookup("ファイル上書移動").?);
+    try std.testing.expectEqual(Command.node_file_delete, lookup("ファイル削除").?);
     try std.testing.expectEqual(Command.async_noop, lookup("ASYNC").?);
     try std.testing.expectEqual(Command.system_await_execute, lookup("AWAIT実行").?);
     try std.testing.expectEqual(Command.system_execute, lookup("実行").?);

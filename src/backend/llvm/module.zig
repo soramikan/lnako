@@ -90,6 +90,7 @@ pub fn manifestCall(name: []const u8, direct_callee: ?ir.FunctionId, is_builtin_
         .node_file_open, .node_file_read, .node_file_binary_read, .node_file_save => "node-file-io",
         .node_file_sjis_read, .node_file_sjis_save, .node_file_euc_read, .node_file_euc_save => "node-file-encoding",
         .node_encoding_sjis_encode, .node_encoding_sjis_decode, .node_encoding_encode, .node_encoding_decode => "node-encoding",
+        .node_file_list, .node_file_list_all, .node_folder_create, .node_file_copy, .node_file_copy_overwrite, .node_file_move, .node_file_move_overwrite, .node_file_delete => "node-file-operation",
         .system_debug_display => "debug-display",
         .system_hatena_execute => "hatena-default",
         .node_archive_tool_path_set => "archive-tool-path",
@@ -350,6 +351,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_archive_tool_path_set(ptr, ptr, i64, ptr, i64)\n" ++
                 "declare void @lnako_aot_ajax_options_set(ptr, ptr, i64, ptr, i64)\n" ++
                 "declare void @lnako_aot_ajax_onerror_set(ptr, ptr, i64, ptr, i64)\n" ++
+                "declare void @lnako_aot_file_operation_call(ptr, ptr, ptr, i64, i16, i64)\n" ++
                 "declare i32 @lnako_aot_bigint_truthy(ptr)\n" ++
                 "declare void @lnako_aot_arithmetic(ptr, ptr, ptr, i8)\n" ++
                 "declare void @lnako_aot_compare(ptr, ptr, ptr, i8)\n" ++
@@ -545,6 +547,9 @@ const Emitter = struct {
                 };
                 if (aot_builtin.lookup(instruction.name)) |command| if (command == .node_ajax_onerror_set) {
                     if (self.globalIndex("AJAX:ONERROR") == null) try self.globals.append(self.allocator, "AJAX:ONERROR");
+                };
+                if (aot_builtin.lookup(instruction.name)) |command| if (isNodeFileOperationCommand(command)) {
+                    if (self.globalIndex("ファイルコピーデフォルト動作") == null) try self.globals.append(self.allocator, "ファイルコピーデフォルト動作");
                 };
             }
             if (instruction.opcode == .const_string) {
@@ -1327,6 +1332,24 @@ const Emitter = struct {
             try self.debugSuffix(instruction.span, scope);
             return;
         }
+        if (isNodeFileOperationCommand(command)) {
+            const copy_default_index = self.globalIndex("ファイルコピーデフォルト動作") orelse return error.MissingFileCopyDefaultGlobal;
+            for (instruction.operands, 0..) |argument, index| {
+                try self.output.writer.print("  %file-operation.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+                try self.debugSuffix(instruction.span, scope);
+                try self.output.writer.writeAll("  store %lnako.Value ");
+                try self.writeValueRef(function, argument);
+                try self.output.writer.print(", ptr %file-operation.{d}.slot.{d}", .{ result, index });
+                try self.debugSuffix(instruction.span, scope);
+            }
+            try self.output.writer.print("  call void @lnako_aot_file_operation_call(ptr %root.slot.{d}, ptr @lnako.global.{d}, ptr ", .{ result, copy_default_index });
+            if (instruction.operands.len > 0) try self.output.writer.print("%file-operation.{d}.slot.0", .{result}) else try self.output.writer.writeAll("null");
+            try self.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+            try self.debugSuffix(instruction.span, scope);
+            try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+            try self.debugSuffix(instruction.span, scope);
+            return;
+        }
         if (isStdioCommand(command)) {
             const display_log_index = self.globalIndex("表示ログ") orelse return error.MissingDisplayLogGlobal;
             for (instruction.operands, 0..) |argument, index| {
@@ -1863,6 +1886,13 @@ fn isPluginManagementCommand(command: aot_builtin.Command) bool {
     };
 }
 
+fn isNodeFileOperationCommand(command: aot_builtin.Command) bool {
+    return switch (command) {
+        .node_file_list, .node_file_list_all, .node_folder_create, .node_file_copy, .node_file_copy_overwrite, .node_file_move, .node_file_move_overwrite, .node_file_delete => true,
+        else => false,
+    };
+}
+
 fn requiresDisplayLog(name: []const u8) bool {
     if (isDisplayCall(name)) return true;
     return if (aot_builtin.lookup(name)) |command| isStdioCommand(command) or command == .system_debug_display or command == .system_hatena_execute else false;
@@ -2030,7 +2060,7 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     const semantic = @import("../../semantic/analyzer.zig");
     const hir = @import("../../ir/hir.zig");
     const lower = @import("../../ir/lower_ssa.zig");
-    var parsed = try parser.parse(std.testing.allocator, "A=1\nB=A+2\nBを表示\nコマンドラインを表示\n母艦パスを表示\n母艦パス取得()を表示\nデバッグ表示({\"a\":1})\n", "main.nako3");
+    var parsed = try parser.parse(std.testing.allocator, "A=1\nB=A+2\nBを表示\nコマンドラインを表示\n母艦パスを表示\n母艦パス取得()を表示\nデバッグ表示({\"a\":1})\nフォルダ作成(\"data\")\n", "main.nako3");
     defer parsed.deinit();
     var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
     defer analyzed.deinit();
@@ -2046,6 +2076,8 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_runtime_drain_events()\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_timer_call_site(ptr, ptr, ptr, i64, i16, i64)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_promise_call_site(ptr, ptr, ptr, ptr, i64, i16, i64)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_file_operation_call(ptr, ptr, ptr, i64, i16, i64)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_file_operation_call(ptr ") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_constants_init(ptr, ptr, ptr, i32, ptr)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_node_constants_init(ptr ") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_directory_constants_init(ptr, ptr, ptr)\n") != null);
@@ -2127,6 +2159,16 @@ test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {
     try std.testing.expectEqualStrings("node_encoding_sjis_encode", sjis.canonical_opcode);
     try std.testing.expectEqualStrings("node-encoding", sjis.route);
     try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_encoding_sjis_encode), sjis.opcode);
+
+    const file_list = manifestCall("ファイル列挙", null, true).?;
+    try std.testing.expectEqualStrings("node_file_list", file_list.canonical_opcode);
+    try std.testing.expectEqualStrings("node-file-operation", file_list.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_file_list), file_list.opcode);
+
+    const file_copy = manifestCall("ファイル上書コピー", null, true).?;
+    try std.testing.expectEqualStrings("node_file_copy_overwrite", file_copy.canonical_opcode);
+    try std.testing.expectEqualStrings("node-file-operation", file_copy.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_file_copy_overwrite), file_copy.opcode);
 
     const timer_wait = manifestCall("秒待", null, true).?;
     try std.testing.expectEqualStrings("timer_wait", timer_wait.canonical_opcode);

@@ -2743,16 +2743,18 @@
     "status": "native",
     "tests": [
       "plugin-node-file-core",
-      "plugin-node-file-pattern-regexp"
+      "plugin-node-file-pattern-regexp",
+      "native-node-file-operations"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路のファイル列挙・再帰コピー・移動・削除差分テストに成功"
   },
   "全ファイル列挙": {
     "status": "native",
     "tests": [
-      "plugin-node-file-core"
+      "plugin-node-file-core",
+      "native-node-file-operations"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路のファイル列挙・再帰コピー・移動・削除差分テストに成功"
   },
   "存在": {
     "status": "native",
@@ -2773,9 +2775,10 @@
   "フォルダ作成": {
     "status": "native",
     "tests": [
-      "plugin-node-file-core"
+      "plugin-node-file-core",
+      "native-node-file-operations"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路のファイル列挙・再帰コピー・移動・削除差分テストに成功"
   },
   "ファイルコピーデフォルト動作": {
     "status": "native",
@@ -2787,37 +2790,42 @@
   "ファイルコピー": {
     "status": "native",
     "tests": [
-      "plugin-node-file-core"
+      "plugin-node-file-core",
+      "native-node-file-operations"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路のファイル列挙・再帰コピー・移動・削除差分テストに成功"
   },
   "ファイル上書コピー": {
     "status": "native",
     "tests": [
-      "plugin-node-file-core"
+      "plugin-node-file-core",
+      "native-node-file-operations"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路のファイル列挙・再帰コピー・移動・削除差分テストに成功"
   },
   "ファイル移動": {
     "status": "native",
     "tests": [
-      "plugin-node-file-core"
+      "plugin-node-file-core",
+      "native-node-file-operations"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路のファイル列挙・再帰コピー・移動・削除差分テストに成功"
   },
   "ファイル上書移動": {
     "status": "native",
     "tests": [
-      "plugin-node-file-core"
+      "plugin-node-file-core",
+      "native-node-file-operations"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路のファイル列挙・再帰コピー・移動・削除差分テストに成功"
   },
   "ファイル削除": {
     "status": "native",
     "tests": [
-      "plugin-node-file-core"
+      "plugin-node-file-core",
+      "native-node-file-operations"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路のファイル列挙・再帰コピー・移動・削除差分テストに成功"
   },
   "ファイル情報取得": {
     "status": "native",

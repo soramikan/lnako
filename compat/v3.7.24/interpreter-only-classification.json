@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "b6e88430b44313036456cdd747f9381e25bdbcf773db7b9467e96d6761e2aaf1"
+    "sha256": "a89b8e2eab7627bd3542c3e7e02baedecc306d3f1c64622d83a8616eb2372bea"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 59,
+    "count": 51,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 59
+      "unverified": 51
     }
   },
   "groups": [
@@ -130,9 +130,9 @@
       "group": "基本プラグイン",
       "category": "ファイル入出力",
       "type": "関数",
-      "count": 21,
+      "count": 13,
       "executionEvidenceStates": {
-        "unverified": 21
+        "unverified": 13
       },
       "commandIds": [
         "command-0696",
@@ -143,18 +143,10 @@
         "command-0701",
         "command-0702",
         "command-0703",
-        "command-0704",
-        "command-0705",
-        "command-0708",
-        "command-0710",
-        "command-0711",
         "command-0712",
-        "command-0713",
-        "command-0714",
         "command-0715",
         "command-0716",
         "command-0717",
-        "command-0718",
         "command-0719"
       ],
       "names": [
@@ -166,18 +158,10 @@
         "起動時",
         "ブラウザ起動",
         "エクスプローラー起動",
-        "ファイル列挙",
-        "全ファイル列挙",
-        "フォルダ作成",
-        "ファイルコピー",
-        "ファイル上書コピー",
         "ファイルコピー時",
-        "ファイル移動",
-        "ファイル上書移動",
         "ファイル処理時",
         "ファイル処理強制停止",
         "ファイル移動時",
-        "ファイル削除",
         "ファイル削除時"
       ]
     },
@@ -505,92 +489,6 @@
       "aotFixtureIds": []
     },
     {
-      "id": "command-0704",
-      "name": "ファイル列挙",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-file-core",
-        "plugin-node-file-pattern-regexp"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0705",
-      "name": "全ファイル列挙",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-file-core"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0708",
-      "name": "フォルダ作成",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-file-core"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0710",
-      "name": "ファイルコピー",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-file-core"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0711",
-      "name": "ファイル上書コピー",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-file-core"
-      ],
-      "aotFixtureIds": []
-    },
-    {
       "id": "command-0712",
       "name": "ファイルコピー時",
       "plugin": "plugin_node",
@@ -604,40 +502,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "plugin-node-file-callbacks"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0713",
-      "name": "ファイル移動",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-file-core"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0714",
-      "name": "ファイル上書移動",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-file-core"
       ],
       "aotFixtureIds": []
     },
@@ -689,23 +553,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "plugin-node-file-callbacks"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0718",
-      "name": "ファイル削除",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-file-core"
       ],
       "aotFixtureIds": []
     },
