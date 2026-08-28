@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "0423caf0d9c98aba4da9a5cfedd4ea4112a3eee028fb712c8672eba9b38efdaa"
+    "sha256": "44f4ec2d2e2ff5088be8d2ab80211d37900148ac8a219a181a5ad2d7638b2158"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 115,
+    "count": 113,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 115
+      "unverified": 113
     }
   },
   "groups": [
@@ -93,24 +93,6 @@
         "POSTデータ生成",
         "POST送信",
         "POSTフォーム送信"
-      ]
-    },
-    {
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "LINE",
-      "type": "関数",
-      "count": 2,
-      "executionEvidenceStates": {
-        "unverified": 2
-      },
-      "commandIds": [
-        "command-0784",
-        "command-0785"
-      ],
-      "names": [
-        "LINE送信",
-        "LINE画像送信"
       ]
     },
     {
@@ -2209,40 +2191,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "plugin-node-http-discord-file"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0784",
-      "name": "LINE送信",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "LINE",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-http-line-message-discontinued"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0785",
-      "name": "LINE画像送信",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "LINE",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-http-line-image-discontinued"
       ],
       "aotFixtureIds": []
     },

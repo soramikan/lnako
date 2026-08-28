@@ -3252,16 +3252,18 @@
   "LINE送信": {
     "status": "native",
     "tests": [
-      "plugin-node-http-line-message-discontinued"
+      "plugin-node-http-line-message-discontinued",
+      "native-node-line-message-discontinued"
     ],
-    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+    "reason": "公式生成JavaScript・lnako Interpreter/AOTの廃止エラー差分テストに成功（公式CLIは既知の経路差）"
   },
   "LINE画像送信": {
     "status": "native",
     "tests": [
-      "plugin-node-http-line-image-discontinued"
+      "plugin-node-http-line-image-discontinued",
+      "native-node-line-image-discontinued"
     ],
-    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+    "reason": "公式生成JavaScript・lnako Interpreter/AOTの廃止エラー差分テストに成功（公式CLIは既知の経路差）"
   },
   "HTTPメソッド": {
     "status": "native",

@@ -270,6 +270,7 @@ pub const Command = enum(u16) {
     array_function_apply,
     array_map,
     array_filter,
+    line_notify_discontinued,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -549,6 +550,7 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "配列関数適用")) return .array_function_apply;
     if (std.mem.eql(u8, name, "配列マップ")) return .array_map;
     if (std.mem.eql(u8, name, "配列フィルタ")) return .array_filter;
+    if (std.mem.eql(u8, name, "LINE送信") or std.mem.eql(u8, name, "LINE画像送信")) return .line_notify_discontinued;
     return null;
 }
 
@@ -748,6 +750,8 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.array_function_apply, lookup("配列関数適用").?);
     try std.testing.expectEqual(Command.array_map, lookup("配列マップ").?);
     try std.testing.expectEqual(Command.array_filter, lookup("配列フィルタ").?);
+    try std.testing.expectEqual(Command.line_notify_discontinued, lookup("LINE送信").?);
+    try std.testing.expectEqual(Command.line_notify_discontinued, lookup("LINE画像送信").?);
     try std.testing.expectEqual(Command.datetime_now, lookup("今").?);
     try std.testing.expectEqual(Command.datetime_system_time_milliseconds, lookup("システム時間ミリ秒").?);
     try std.testing.expectEqual(Command.datetime_today, lookup("今日").?);

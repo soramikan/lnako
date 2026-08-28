@@ -720,5 +720,17 @@
     "oracle": "official-source",
     "commands": ["秒待", "秒待機", "秒逐次待機"],
     "source": "0.001秒待\n0秒待機\n0秒逐次待機\n「待機完了」を表示\n"
+  },
+  {
+    "id": "native-node-line-message-discontinued",
+    "oracle": "official-generated",
+    "commands": ["LINE送信"],
+    "source": "LINE送信(\"token\",\"message\")\n"
+  },
+  {
+    "id": "native-node-line-image-discontinued",
+    "oracle": "official-generated",
+    "commands": ["LINE画像送信"],
+    "source": "LINE画像送信(\"token\",\"image.png\",\"message\")\n"
   }
 ]

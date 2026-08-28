@@ -17998,14 +17998,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-http-line-message-discontinued"
+        "plugin-node-http-line-message-discontinued",
+        "native-node-line-message-discontinued"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+      "reason": "公式生成JavaScript・lnako Interpreter/AOTの廃止エラー差分テストに成功（公式CLIは既知の経路差）"
     },
     {
       "id": "command-0785",
@@ -18023,14 +18024,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-http-line-image-discontinued"
+        "plugin-node-http-line-image-discontinued",
+        "native-node-line-image-discontinued"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+      "reason": "公式生成JavaScript・lnako Interpreter/AOTの廃止エラー差分テストに成功（公式CLIは既知の経路差）"
     },
     {
       "id": "command-0786",

@@ -21,6 +21,17 @@ for (const [path, reason] of sources) {
 const interrupt = JSON.parse(await readFile(resolve(root, "tests/oracle/node-interrupt-case.json"), "utf8"));
 for (const name of interrupt.commands) register(name, interrupt.id, "SIGINTコールバックと終了結果の公式差分テストに成功");
 
+register(
+  "LINE送信",
+  "native-node-line-message-discontinued",
+  "公式生成JavaScript・lnako Interpreter/AOTの廃止エラー差分テストに成功（公式CLIは既知の経路差）",
+);
+register(
+  "LINE画像送信",
+  "native-node-line-image-discontinued",
+  "公式生成JavaScript・lnako Interpreter/AOTの廃止エラー差分テストに成功（公式CLIは既知の経路差）",
+);
+
 const output = `${JSON.stringify(implemented, null, 2)}\n`;
 if (process.argv.includes("--check")) {
   const current = await readFile(implementationPath, "utf8");
