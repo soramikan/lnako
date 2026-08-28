@@ -356,6 +356,25 @@ pub const Command = enum(u16) {
     node_file_copy_callback,
     node_file_move_callback,
     node_file_delete_callback,
+    node_ajax_send_callback,
+    node_ajax_receive_callback,
+    node_get_send_callback,
+    node_post_send_callback,
+    node_post_form_send_callback,
+    node_ajax_response_promise,
+    node_http_response_promise,
+    node_get_response_promise,
+    node_post_response_promise,
+    node_post_form_response_promise,
+    node_ajax_content_get,
+    node_ajax_receive,
+    node_post_send,
+    node_post_form_send,
+    node_ajax_text_get,
+    node_ajax_json_get,
+    node_ajax_binary_get,
+    node_discord_send,
+    node_discord_file_send,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -695,6 +714,25 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "POSTデータ生成")) return .node_post_data;
     if (std.mem.eql(u8, name, "AJAXオプション設定")) return .node_ajax_options_set;
     if (std.mem.eql(u8, name, "AJAX失敗時")) return .node_ajax_onerror_set;
+    if (std.mem.eql(u8, name, "AJAX送信時")) return .node_ajax_send_callback;
+    if (std.mem.eql(u8, name, "AJAX受信時")) return .node_ajax_receive_callback;
+    if (std.mem.eql(u8, name, "GET送信時")) return .node_get_send_callback;
+    if (std.mem.eql(u8, name, "POST送信時")) return .node_post_send_callback;
+    if (std.mem.eql(u8, name, "POSTフォーム送信時")) return .node_post_form_send_callback;
+    if (std.mem.eql(u8, name, "AJAX保障送信")) return .node_ajax_response_promise;
+    if (std.mem.eql(u8, name, "HTTP保障取得")) return .node_http_response_promise;
+    if (std.mem.eql(u8, name, "GET保障送信")) return .node_get_response_promise;
+    if (std.mem.eql(u8, name, "POST保障送信")) return .node_post_response_promise;
+    if (std.mem.eql(u8, name, "POSTフォーム保障送信")) return .node_post_form_response_promise;
+    if (std.mem.eql(u8, name, "AJAX内容取得")) return .node_ajax_content_get;
+    if (std.mem.eql(u8, name, "AJAX受信")) return .node_ajax_receive;
+    if (std.mem.eql(u8, name, "POST送信")) return .node_post_send;
+    if (std.mem.eql(u8, name, "POSTフォーム送信")) return .node_post_form_send;
+    if (std.mem.eql(u8, name, "AJAXテキスト取得")) return .node_ajax_text_get;
+    if (std.mem.eql(u8, name, "AJAX_JSON取得")) return .node_ajax_json_get;
+    if (std.mem.eql(u8, name, "AJAXバイナリ取得")) return .node_ajax_binary_get;
+    if (std.mem.eql(u8, name, "DISCORD送信")) return .node_discord_send;
+    if (std.mem.eql(u8, name, "DISCORDファイル送信")) return .node_discord_file_send;
     if (std.mem.eql(u8, name, "自分IPアドレス取得")) return .node_network_ipv4;
     if (std.mem.eql(u8, name, "自分IPV6アドレス取得")) return .node_network_ipv6;
     if (std.mem.eql(u8, name, "ハッシュ値計算")) return .node_hash_value;
@@ -988,6 +1026,25 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.node_post_data, lookup("POSTデータ生成").?);
     try std.testing.expectEqual(Command.node_ajax_options_set, lookup("AJAXオプション設定").?);
     try std.testing.expectEqual(Command.node_ajax_onerror_set, lookup("AJAX失敗時").?);
+    try std.testing.expectEqual(Command.node_ajax_send_callback, lookup("AJAX送信時").?);
+    try std.testing.expectEqual(Command.node_ajax_receive_callback, lookup("AJAX受信時").?);
+    try std.testing.expectEqual(Command.node_get_send_callback, lookup("GET送信時").?);
+    try std.testing.expectEqual(Command.node_post_send_callback, lookup("POST送信時").?);
+    try std.testing.expectEqual(Command.node_post_form_send_callback, lookup("POSTフォーム送信時").?);
+    try std.testing.expectEqual(Command.node_ajax_response_promise, lookup("AJAX保障送信").?);
+    try std.testing.expectEqual(Command.node_http_response_promise, lookup("HTTP保障取得").?);
+    try std.testing.expectEqual(Command.node_get_response_promise, lookup("GET保障送信").?);
+    try std.testing.expectEqual(Command.node_post_response_promise, lookup("POST保障送信").?);
+    try std.testing.expectEqual(Command.node_post_form_response_promise, lookup("POSTフォーム保障送信").?);
+    try std.testing.expectEqual(Command.node_ajax_content_get, lookup("AJAX内容取得").?);
+    try std.testing.expectEqual(Command.node_ajax_receive, lookup("AJAX受信").?);
+    try std.testing.expectEqual(Command.node_post_send, lookup("POST送信").?);
+    try std.testing.expectEqual(Command.node_post_form_send, lookup("POSTフォーム送信").?);
+    try std.testing.expectEqual(Command.node_ajax_text_get, lookup("AJAXテキスト取得").?);
+    try std.testing.expectEqual(Command.node_ajax_json_get, lookup("AJAX_JSON取得").?);
+    try std.testing.expectEqual(Command.node_ajax_binary_get, lookup("AJAXバイナリ取得").?);
+    try std.testing.expectEqual(Command.node_discord_send, lookup("DISCORD送信").?);
+    try std.testing.expectEqual(Command.node_discord_file_send, lookup("DISCORDファイル送信").?);
     try std.testing.expectEqual(Command.node_network_ipv4, lookup("自分IPアドレス取得").?);
     try std.testing.expectEqual(Command.node_network_ipv6, lookup("自分IPV6アドレス取得").?);
     try std.testing.expectEqual(Command.node_hash_value, lookup("ハッシュ値計算").?);

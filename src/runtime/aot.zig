@@ -403,6 +403,86 @@ const AotFileTask = struct {
     }
 };
 
+const AotClientHttpHeader = struct {
+    name: []u8,
+    value: []u8,
+};
+
+const AotClientHttpRequest = struct {
+    allocator: std.mem.Allocator,
+    method: []u8,
+    url: []u8,
+    headers: std.ArrayList(AotClientHttpHeader) = .empty,
+    body: []u8,
+    has_body: bool,
+
+    fn init(allocator: std.mem.Allocator, method: []const u8, url: []const u8, body: []const u8, has_body: bool) !AotClientHttpRequest {
+        const owned_method = try allocator.dupe(u8, method);
+        errdefer allocator.free(owned_method);
+        const owned_url = try allocator.dupe(u8, url);
+        errdefer allocator.free(owned_url);
+        const owned_body = try allocator.dupe(u8, body);
+        errdefer allocator.free(owned_body);
+        return .{
+            .allocator = allocator,
+            .method = owned_method,
+            .url = owned_url,
+            .body = owned_body,
+            .has_body = has_body,
+        };
+    }
+
+    fn deinit(self: *AotClientHttpRequest) void {
+        self.allocator.free(self.method);
+        self.allocator.free(self.url);
+        for (self.headers.items) |header| {
+            self.allocator.free(header.name);
+            self.allocator.free(header.value);
+        }
+        self.headers.deinit(self.allocator);
+        self.allocator.free(self.body);
+        self.* = undefined;
+    }
+
+    fn addHeader(self: *AotClientHttpRequest, name: []const u8, value: []const u8) !void {
+        const owned_name = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(owned_name);
+        const owned_value = try self.allocator.dupe(u8, value);
+        errdefer self.allocator.free(owned_value);
+        try self.headers.append(self.allocator, .{ .name = owned_name, .value = owned_value });
+    }
+};
+
+const AotClientHttpResult = struct {
+    body: []u8,
+    status: u16 = 0,
+    content_length_zero: bool = false,
+    failure: ?anyerror = null,
+
+    fn deinit(self: *AotClientHttpResult, allocator: std.mem.Allocator) void {
+        allocator.free(self.body);
+        self.* = undefined;
+    }
+};
+
+const AotClientHttpMode = enum { callback, set_target, response_promise };
+
+const AotClientHttpBodyKind = enum { text, json, binary };
+
+const AotClientHttpTask = struct {
+    result: AotClientHttpResult,
+    mode: AotClientHttpMode,
+    callback: Value = .{},
+    promise: Value = .{},
+    target: ?*Value = null,
+    onerror: ?*Value = null,
+
+    fn deinit(self: *AotClientHttpTask, allocator: std.mem.Allocator) void {
+        self.result.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
 const AotHttpGlobals = struct {
     method: ?*Value = null,
     get_data: ?*Value = null,
@@ -601,6 +681,7 @@ const Runtime = struct {
     http_globals: ?AotHttpGlobals = null,
     archive_tool_path_custom: bool = false,
     archive_tasks: std.ArrayList(AotArchiveTask) = .empty,
+    client_http_tasks: std.ArrayList(AotClientHttpTask) = .empty,
     file_process_callback: Value = .{},
     file_process_target: ?*Value = null,
     file_process_stop: bool = false,
@@ -620,6 +701,11 @@ const Runtime = struct {
         self.http_server_state.deinit(self.allocator);
         for (self.archive_tasks.items) |*task| task.deinit(self.allocator);
         self.archive_tasks.deinit(self.allocator);
+        while (self.client_http_tasks.pop()) |task| {
+            var owned = task;
+            owned.deinit(self.allocator);
+        }
+        self.client_http_tasks.deinit(self.allocator);
         while (self.file_tasks.pop()) |task| task.deinit(self.allocator, true);
         self.file_tasks.deinit(self.allocator);
         while (self.process_tasks.pop()) |task| task.deinit(self.allocator, true);
@@ -863,6 +949,12 @@ const Runtime = struct {
             if (route.kind == .callback) self.markValue(route.callback);
         }
         for (self.archive_tasks.items) |task| self.markValue(task.callback);
+        for (self.client_http_tasks.items) |task| {
+            self.markValue(task.callback);
+            self.markValue(task.promise);
+            if (task.target) |target| self.markValue(target.*);
+            if (task.onerror) |onerror| self.markValue(onerror.*);
+        }
         self.markValue(self.file_process_callback);
         for (self.file_tasks.items) |task| self.markValue(task.callback);
         for (self.process_tasks.items) |task| self.markValue(task.callback);
@@ -1577,6 +1669,7 @@ fn jsonWriteValue(
             try writer.writeByte(']');
         },
         .dictionary => {
+            if (isAotHttpResponse(value)) return writer.writeAll("{}");
             const object = value.object().?;
             if (jsonActiveIndex(active_objects.items, object)) |cycle_start| {
                 try jsonSetCircularFailureMessage(runtime, active_objects.items, cycle_start, path);
@@ -2472,7 +2565,8 @@ fn valueUtf16Alloc(runtime: *Runtime, value: Value) anyerror![]u16 {
         .byte_buffer => return byteBufferUtf16Alloc(runtime, value.object().?.payload.byte_buffer),
         .bigint => try value.object().?.payload.bigint.toString(runtime.allocator, 10),
         .array => return arrayUtf16Alloc(runtime, value.object().?),
-        .dictionary, .iterator => try runtime.allocator.dupe(u8, "[object Object]"),
+        .dictionary => try runtime.allocator.dupe(u8, if (isAotHttpResponse(value)) "[object Response]" else "[object Object]"),
+        .iterator => try runtime.allocator.dupe(u8, "[object Object]"),
         .promise => try runtime.allocator.dupe(u8, "[object Promise]"),
         .function => unreachable,
         .binding_cell => unreachable,
@@ -2537,7 +2631,8 @@ fn valueToPrimitive(runtime: *Runtime, value: Value) !Value {
             defer runtime.allocator.free(units);
             break :blk try runtime.createString(units);
         },
-        .dictionary, .iterator => staticStringValue("[object Object]"),
+        .dictionary => if (isAotHttpResponse(value)) staticStringValue("[object Response]") else staticStringValue("[object Object]"),
+        .iterator => staticStringValue("[object Object]"),
         .promise => staticStringValue("[object Promise]"),
         .function => blk: {
             const units = try functionStringUtf16Alloc(runtime, value.object().?.payload.function.name);
@@ -3200,6 +3295,13 @@ fn isNodeProcessCommand(command: aot_builtin.Command) bool {
     };
 }
 
+fn isNodeHttpCommand(command: aot_builtin.Command) bool {
+    return switch (command) {
+        .node_ajax_send_callback, .node_ajax_receive_callback, .node_get_send_callback, .node_post_send_callback, .node_post_form_send_callback, .node_ajax_response_promise, .node_http_response_promise, .node_get_response_promise, .node_post_response_promise, .node_post_form_response_promise, .node_ajax_content_get, .node_ajax_receive, .node_post_send, .node_post_form_send, .node_ajax_text_get, .node_ajax_json_get, .node_ajax_binary_get, .node_discord_send, .node_discord_file_send => true,
+        else => false,
+    };
+}
+
 fn runAotExternal(runtime: *Runtime, target: []const u8, reveal: bool) !void {
     // The fixture hook is intentionally an environment boundary, matching
     // the CLI host without launching a desktop application during tests.
@@ -3630,17 +3732,79 @@ fn drainAotPromiseTasks(runtime: *Runtime) !void {
     }
 }
 
+fn drainAotClientHttpTasks(runtime: *Runtime) !void {
+    while (runtime.client_http_tasks.items.len > 0) {
+        try countAotEvent(runtime);
+        var task = runtime.client_http_tasks.orderedRemove(0);
+        defer task.deinit(runtime.allocator);
+
+        if (task.result.failure) |failure| {
+            switch (task.mode) {
+                .callback => {
+                    const handler: Value = if (task.onerror) |pointer| pointer.* else .{};
+                    if (handler.tag == @intFromEnum(Tag.function)) {
+                        var rooted = [_]Value{ handler, .{} };
+                        var frame = RootFrame{};
+                        runtime.pushRoots(&frame, &rooted, rooted.len);
+                        defer runtime.popRoots(&frame);
+                        rooted[1] = try runtimeUtf8StringLossy(runtime, @errorName(failure));
+                        _ = try invokeAotCallback(runtime, rooted[0], @ptrCast(&rooted[1]), 1);
+                    } else return error.HttpRequestFailed;
+                },
+                .set_target => {},
+                .response_promise => {
+                    if (task.promise.tag != @intFromEnum(Tag.promise)) return error.InvalidPendingPromise;
+                    var reason = try runtimeUtf8StringLossy(runtime, @errorName(failure));
+                    var frame = RootFrame{};
+                    runtime.pushRoots(&frame, @ptrCast(&reason), 1);
+                    defer runtime.popRoots(&frame);
+                    try rejectAotPromise(runtime, task.promise.object().?, reason);
+                },
+            }
+            continue;
+        }
+
+        switch (task.mode) {
+            .callback => {
+                var rooted = [_]Value{ task.callback, .{} };
+                var frame = RootFrame{};
+                runtime.pushRoots(&frame, &rooted, rooted.len);
+                defer runtime.popRoots(&frame);
+                rooted[1] = try runtimeUtf8StringLossy(runtime, task.result.body);
+                if (task.target) |target| target.* = rooted[1];
+                _ = try invokeAotCallback(runtime, rooted[0], @ptrCast(&rooted[1]), 1);
+            },
+            .set_target => {
+                const status = task.result.status;
+                if (status >= 200 and status < 300) if (task.target) |target| {
+                    target.* = try runtimeUtf8StringLossy(runtime, task.result.body);
+                };
+            },
+            .response_promise => {
+                if (task.promise.tag != @intFromEnum(Tag.promise)) return error.InvalidPendingPromise;
+                var rooted = [_]Value{ task.promise, .{} };
+                var frame = RootFrame{};
+                runtime.pushRoots(&frame, &rooted, rooted.len);
+                defer runtime.popRoots(&frame);
+                rooted[1] = try aotClientHttpResponseValue(runtime, task.result);
+                try resolveAotPromise(runtime, rooted[0].object().?, rooted[1]);
+            },
+        }
+    }
+}
+
 fn drainAotEvents(runtime: *Runtime) !void {
     while (true) {
         try drainAotProcessTasks(runtime);
         try drainAotFileTasks(runtime);
+        try drainAotClientHttpTasks(runtime);
         try drainAotArchiveTasks(runtime);
         try drainAotPromiseTasks(runtime);
         if (earliestAotTimerIndex(runtime)) |index| {
             try executeAotTimer(runtime, index);
             continue;
         }
-        if (runtime.process_tasks.items.len > 0 or runtime.file_tasks.items.len > 0) {
+        if (runtime.process_tasks.items.len > 0 or runtime.file_tasks.items.len > 0 or runtime.client_http_tasks.items.len > 0) {
             try std.Io.sleep(
                 std.Io.Threaded.global_single_threaded.io(),
                 std.Io.Duration.fromMilliseconds(1),
@@ -3662,6 +3826,7 @@ fn waitAotMilliseconds(runtime: *Runtime, milliseconds: u64) !void {
     while (true) {
         try drainAotProcessTasks(runtime);
         try drainAotFileTasks(runtime);
+        try drainAotClientHttpTasks(runtime);
         try drainAotArchiveTasks(runtime);
         try drainAotPromiseTasks(runtime);
         const index = earliestAotTimerIndex(runtime) orelse break;
@@ -3670,11 +3835,13 @@ fn waitAotMilliseconds(runtime: *Runtime, milliseconds: u64) !void {
     }
     try drainAotProcessTasks(runtime);
     try drainAotFileTasks(runtime);
+    try drainAotClientHttpTasks(runtime);
     try drainAotArchiveTasks(runtime);
     try drainAotPromiseTasks(runtime);
     try sleepAotUntil(runtime, target);
     try drainAotProcessTasks(runtime);
     try drainAotFileTasks(runtime);
+    try drainAotClientHttpTasks(runtime);
 }
 
 fn scheduleAotTimer(runtime: *Runtime, arguments: []const Value, repeating: bool, target: ?*Value) !Value {
@@ -5788,6 +5955,49 @@ pub export fn lnako_aot_ajax_onerror_set(
     success = runtime.failure_epoch == start_epoch;
 }
 
+/// Dedicated ABI for Node's HTTP client commands. Requests use Zig's native
+/// HTTP client; callback and Response-Promise results are returned through the
+/// AOT event queue so their observable ordering remains compatible with the
+/// interpreter without embedding a JavaScript runtime.
+pub export fn lnako_aot_node_http_call(
+    out: *Value,
+    ajax_options: ?*Value,
+    ajax_onerror: ?*Value,
+    target: ?*Value,
+    arguments: ?[*]const Value,
+    len: usize,
+    opcode: u16,
+    site_id: u64,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
+        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "node-http", site_id);
+        runtime.setFailure(error.UnknownCommand);
+        runtime.dispatch_trace.result(call_id, "unknown", opcode, "node-http", site_id, false);
+        return;
+    };
+    if (!isNodeHttpCommand(command)) {
+        runtime.setFailure(error.UnknownCommand);
+        return;
+    }
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "node-http", site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "node-http", site_id, success);
+    if (arguments == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+    out.* = nodeHttpBuiltin(runtime, ajax_options, ajax_onerror, target, command, actual) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    success = runtime.failure_epoch == start_epoch;
+}
+
 fn nodeNetworkAddressesBuiltin(runtime: *Runtime, ipv6: bool) !Value {
     var addresses = if (builtin.os.tag == .windows)
         try aotWindowsNetworkAddresses(runtime.allocator, ipv6)
@@ -6647,6 +6857,10 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
             return;
         },
         .node_archive_tool_path_set, .node_ajax_options_set, .node_ajax_onerror_set => {
+            runtime.setFailure(error.UnknownCommand);
+            return;
+        },
+        .node_ajax_send_callback, .node_ajax_receive_callback, .node_get_send_callback, .node_post_send_callback, .node_post_form_send_callback, .node_ajax_response_promise, .node_http_response_promise, .node_get_response_promise, .node_post_response_promise, .node_post_form_response_promise, .node_ajax_content_get, .node_ajax_receive, .node_post_send, .node_post_form_send, .node_ajax_text_get, .node_ajax_json_get, .node_ajax_binary_get, .node_discord_send, .node_discord_file_send => {
             runtime.setFailure(error.UnknownCommand);
             return;
         },
@@ -10570,6 +10784,449 @@ fn nodePostDataBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
         }
     }
     return runtimeUtf8String(runtime, output.written());
+}
+
+fn aotClientDictionaryGetAscii(value: Value, name: []const u8) ?Value {
+    if (value.tag != @intFromEnum(Tag.dictionary)) return null;
+    const object = value.object() orelse return null;
+    if (object.payload != .dictionary) return null;
+    for (object.payload.dictionary.items) |entry| {
+        const matches = switch (@as(Tag, @enumFromInt(entry.key.tag))) {
+            .static_utf8_string => std.mem.eql(u8, staticUtf8(entry.key), name),
+            .utf16_string => if (entry.key.object()) |key_object| blk: {
+                const units = key_object.payload.utf16_string;
+                if (units.len != name.len) break :blk false;
+                for (units, name) |unit, byte| if (unit != byte) break :blk false;
+                break :blk true;
+            } else false,
+            else => false,
+        };
+        if (matches) return entry.value;
+    }
+    return null;
+}
+
+fn aotClientValueBytes(runtime: *Runtime, value: Value) ![]u8 {
+    if (value.tag == @intFromEnum(Tag.byte_buffer)) {
+        const object = value.object() orelse return error.InvalidByteBuffer;
+        if (object.payload != .byte_buffer) return error.InvalidByteBuffer;
+        return runtime.allocator.dupe(u8, object.payload.byte_buffer.bytes);
+    }
+    return valueUtf8LossyAlloc(runtime, value);
+}
+
+fn aotClientPrepareAjax(runtime: *Runtime, ajax_options: ?*Value, url_value: Value) !AotClientHttpRequest {
+    const url = try valueUtf8LossyAlloc(runtime, url_value);
+    defer runtime.allocator.free(url);
+    var request = try AotClientHttpRequest.init(runtime.allocator, "GET", url, &.{}, false);
+    errdefer request.deinit();
+    if (ajax_options) |pointer| if (aotClientDictionaryGetAscii(pointer.*, "method")) |method_value| {
+        const method = try valueUtf8LossyAlloc(runtime, method_value);
+        defer runtime.allocator.free(method);
+        const upper = try runtime.allocator.dupe(u8, method);
+        for (upper) |*byte| byte.* = std.ascii.toUpper(byte.*);
+        runtime.allocator.free(request.method);
+        request.method = upper;
+    };
+    if (ajax_options) |pointer| if (aotClientDictionaryGetAscii(pointer.*, "body")) |body_value| {
+        const body = try aotClientValueBytes(runtime, body_value);
+        runtime.allocator.free(request.body);
+        request.body = body;
+        request.has_body = true;
+    };
+    if (ajax_options) |pointer| if (aotClientDictionaryGetAscii(pointer.*, "headers")) |headers_value| {
+        if (headers_value.tag != @intFromEnum(Tag.dictionary)) return request;
+        const headers_object = headers_value.object() orelse return request;
+        if (headers_object.payload != .dictionary) return request;
+        for (headers_object.payload.dictionary.items) |entry| {
+            const name = try valueUtf8LossyAlloc(runtime, entry.key);
+            defer runtime.allocator.free(name);
+            const value = try valueUtf8LossyAlloc(runtime, entry.value);
+            defer runtime.allocator.free(value);
+            try request.addHeader(name, value);
+        }
+    };
+    return request;
+}
+
+fn aotClientAppendUriComponent(writer: *std.Io.Writer, source: []const u8) !void {
+    const hex = "0123456789ABCDEF";
+    for (source) |byte| {
+        if (std.ascii.isAlphanumeric(byte) or std.mem.indexOfScalar(u8, "-_.!~*'()", byte) != null) {
+            try writer.writeByte(byte);
+        } else {
+            try writer.writeByte('%');
+            try writer.writeByte(hex[byte >> 4]);
+            try writer.writeByte(hex[byte & 0x0f]);
+        }
+    }
+}
+
+fn aotClientFormEncodedBody(runtime: *Runtime, parameters: Value) ![]u8 {
+    var output: std.Io.Writer.Allocating = .init(runtime.allocator);
+    defer output.deinit();
+    if (parameters.tag == @intFromEnum(Tag.dictionary)) {
+        const object = parameters.object() orelse return error.InvalidDictionary;
+        if (object.payload != .dictionary) return error.InvalidDictionary;
+        for (object.payload.dictionary.items, 0..) |entry, index| {
+            if (index > 0) try output.writer.writeByte('&');
+            const key = try valueUtf8LossyAlloc(runtime, entry.key);
+            defer runtime.allocator.free(key);
+            const value = try valueUtf8LossyAlloc(runtime, entry.value);
+            defer runtime.allocator.free(value);
+            try aotClientAppendUriComponent(&output.writer, key);
+            try output.writer.writeByte('=');
+            try aotClientAppendUriComponent(&output.writer, value);
+        }
+    }
+    return output.toOwnedSlice();
+}
+
+fn aotClientMultipartFields(runtime: *Runtime, parameters: Value, boundary: []const u8) ![]u8 {
+    var output: std.Io.Writer.Allocating = .init(runtime.allocator);
+    defer output.deinit();
+    if (parameters.tag == @intFromEnum(Tag.dictionary)) {
+        const object = parameters.object() orelse return error.InvalidDictionary;
+        if (object.payload != .dictionary) return error.InvalidDictionary;
+        for (object.payload.dictionary.items) |entry| {
+            const key = try valueUtf8LossyAlloc(runtime, entry.key);
+            defer runtime.allocator.free(key);
+            const value = try valueUtf8LossyAlloc(runtime, entry.value);
+            defer runtime.allocator.free(value);
+            try output.writer.print("--{s}\r\nContent-Disposition: form-data; name=\"{s}\"\r\n\r\n{s}\r\n", .{ boundary, key, value });
+        }
+    }
+    try output.writer.print("--{s}--\r\n", .{boundary});
+    return output.toOwnedSlice();
+}
+
+fn aotClientPreparePost(runtime: *Runtime, url_value: Value, parameters: Value, multipart: bool, omit_boundary_header: bool) !AotClientHttpRequest {
+    const url = try valueUtf8LossyAlloc(runtime, url_value);
+    defer runtime.allocator.free(url);
+    if (!multipart) {
+        const body = try aotClientFormEncodedBody(runtime, parameters);
+        defer runtime.allocator.free(body);
+        var request = try AotClientHttpRequest.init(runtime.allocator, "POST", url, body, true);
+        errdefer request.deinit();
+        try request.addHeader("Content-Type", "application/x-www-form-urlencoded");
+        return request;
+    }
+    const boundary = "----lnako-form-boundary-3.7.24";
+    const body = try aotClientMultipartFields(runtime, parameters, boundary);
+    defer runtime.allocator.free(body);
+    var request = try AotClientHttpRequest.init(runtime.allocator, "POST", url, body, true);
+    errdefer request.deinit();
+    if (omit_boundary_header) {
+        try request.addHeader("Content-Type", "multipart/form-data");
+    } else {
+        const content_type = try std.fmt.allocPrint(runtime.allocator, "multipart/form-data; boundary={s}", .{boundary});
+        defer runtime.allocator.free(content_type);
+        try request.addHeader("Content-Type", content_type);
+    }
+    return request;
+}
+
+fn aotClientPrepareDiscord(runtime: *Runtime, url_value: Value, message_value: Value) !AotClientHttpRequest {
+    const url = try valueUtf8LossyAlloc(runtime, url_value);
+    defer runtime.allocator.free(url);
+    var roots = [_]Value{ message_value, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[1] = try runtime.createDictionary(&.{});
+    try aotHttpDictionarySetUtf8(runtime, roots[1], "content", roots[0]);
+    roots[2] = try jsonEncodeBuiltin(runtime, roots[1], false);
+    const body = try valueUtf8LossyAlloc(runtime, roots[2]);
+    defer runtime.allocator.free(body);
+    var request = try AotClientHttpRequest.init(runtime.allocator, "POST", url, body, true);
+    errdefer request.deinit();
+    try request.addHeader("Content-Type", "application/json");
+    return request;
+}
+
+fn aotClientPrepareDiscordFile(runtime: *Runtime, url_value: Value, file_value: Value, message_value: Value) !AotClientHttpRequest {
+    const url = try valueUtf8LossyAlloc(runtime, url_value);
+    defer runtime.allocator.free(url);
+    const path = try valueUtf8LossyAlloc(runtime, file_value);
+    defer runtime.allocator.free(path);
+    const message = try valueUtf8LossyAlloc(runtime, message_value);
+    defer runtime.allocator.free(message);
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(aotRuntimeIo(runtime), path, runtime.allocator, .limited(1024 * 1024 * 1024));
+    defer runtime.allocator.free(bytes);
+    const boundary = "----lnako-discord-boundary-3.7.24";
+    var body: std.Io.Writer.Allocating = .init(runtime.allocator);
+    defer body.deinit();
+    try body.writer.print("--{s}\r\nContent-Disposition: form-data; name=\"content\"\r\n\r\n{s}\r\n", .{ boundary, message });
+    try body.writer.print("--{s}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{s}\"\r\nContent-Type: application/octet-stream\r\n\r\n", .{ boundary, nodeBasename(path) });
+    try body.writer.writeAll(bytes);
+    try body.writer.print("\r\n--{s}--\r\n", .{boundary});
+    var request = try AotClientHttpRequest.init(runtime.allocator, "POST", url, body.written(), true);
+    errdefer request.deinit();
+    const content_type = try std.fmt.allocPrint(runtime.allocator, "multipart/form-data; boundary={s}", .{boundary});
+    defer runtime.allocator.free(content_type);
+    try request.addHeader("Content-Type", content_type);
+    return request;
+}
+
+fn aotClientHttpMethod(source: []const u8) !std.http.Method {
+    inline for (@typeInfo(std.http.Method).@"enum".fields) |field| {
+        if (std.ascii.eqlIgnoreCase(source, field.name)) return @enumFromInt(field.value);
+    }
+    return error.UnsupportedHttpMethod;
+}
+
+fn aotClientHttpRequest(runtime: *Runtime, request: *const AotClientHttpRequest) !AotClientHttpResult {
+    var client: std.http.Client = .{ .allocator = runtime.allocator, .io = aotRuntimeIo(runtime) };
+    defer client.deinit();
+    const headers = try runtime.allocator.alloc(std.http.Header, request.headers.items.len);
+    defer runtime.allocator.free(headers);
+    for (request.headers.items, headers) |source, *target| target.* = .{ .name = source.name, .value = source.value };
+    var output: std.Io.Writer.Allocating = .init(runtime.allocator);
+    errdefer output.deinit();
+    const fetched = try client.fetch(.{
+        .location = .{ .url = request.url },
+        .method = try aotClientHttpMethod(request.method),
+        .payload = if (request.has_body) request.body else null,
+        .extra_headers = headers,
+        .response_writer = &output.writer,
+    });
+    const body = try output.toOwnedSlice();
+    return .{
+        .body = body,
+        .status = @intFromEnum(fetched.status),
+        .content_length_zero = body.len == 0,
+    };
+}
+
+fn aotClientHttpBodyValue(runtime: *Runtime, body: []const u8, kind: AotClientHttpBodyKind, status: u16, content_length_zero: bool) !Value {
+    return switch (kind) {
+        .text => runtimeUtf8StringLossy(runtime, body),
+        .binary => runtime.createArrayBuffer(body),
+        .json => blk: {
+            if (body.len == 0 and (status == 204 or status == 205 or content_length_zero)) break :blk .{ .tag = @intFromEnum(Tag.null_value) };
+            var source = try runtimeUtf8StringLossy(runtime, body);
+            var frame = RootFrame{};
+            runtime.pushRoots(&frame, @ptrCast(&source), 1);
+            defer runtime.popRoots(&frame);
+            break :blk try jsonDecodeBuiltin(runtime, source);
+        },
+    };
+}
+
+fn aotClientHttpResponseValue(runtime: *Runtime, result: AotClientHttpResult) !Value {
+    var roots = [_]Value{ try runtime.createDictionary(&.{}), .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[1] = numberValue(@floatFromInt(result.status));
+    try aotHttpDictionarySetUtf8(runtime, roots[0], "status", roots[1]);
+    roots[2] = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(result.status >= 200 and result.status < 300) };
+    try aotHttpDictionarySetUtf8(runtime, roots[0], "ok", roots[2]);
+    roots[3] = .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 };
+    try aotHttpDictionarySetUtf8(runtime, roots[0], "__lnako_http_response", roots[3]);
+    roots[4] = try runtime.createBytes(result.body);
+    try aotHttpDictionarySetUtf8(runtime, roots[0], "__lnako_body", roots[4]);
+    return roots[0];
+}
+
+fn isAotHttpResponse(value: Value) bool {
+    const marker = aotClientDictionaryGetAscii(value, "__lnako_http_response") orelse return false;
+    return marker.tag == @intFromEnum(Tag.boolean) and marker.payload != 0;
+}
+
+fn aotClientHttpResponseBody(value: Value) !Value {
+    if (!isAotHttpResponse(value)) return error.HttpResponseExpected;
+    const body = aotClientDictionaryGetAscii(value, "__lnako_body") orelse return error.HttpResponseExpected;
+    if (body.tag != @intFromEnum(Tag.byte_buffer)) return error.HttpResponseExpected;
+    return body;
+}
+
+fn aotClientHttpResponseStatus(value: Value) u16 {
+    const status = aotClientDictionaryGetAscii(value, "status") orelse return 0;
+    if (status.tag != @intFromEnum(Tag.number)) return 0;
+    const number: f64 = @bitCast(status.payload);
+    return if (std.math.isFinite(number) and number >= 0 and number <= 999) @intFromFloat(number) else 0;
+}
+
+fn aotClientHttpBodyKind(runtime: *Runtime, value: Value) !?AotClientHttpBodyKind {
+    const text = try valueUtf8LossyAlloc(runtime, value);
+    defer runtime.allocator.free(text);
+    if (std.ascii.eqlIgnoreCase(text, "TEXT") or std.mem.eql(u8, text, "テキスト")) return .text;
+    if (std.ascii.eqlIgnoreCase(text, "JSON")) return .json;
+    if (std.ascii.eqlIgnoreCase(text, "BLOB") or std.ascii.eqlIgnoreCase(text, "ARRAY") or std.mem.eql(u8, text, "配列")) return .binary;
+    if (std.ascii.eqlIgnoreCase(text, "BODY") or std.mem.eql(u8, text, "本体")) return null;
+    return error.InvalidAjaxContentType;
+}
+
+fn aotClientPrepareHttpCommand(runtime: *Runtime, ajax_options: ?*Value, command: aot_builtin.Command, arguments: []const Value) !AotClientHttpRequest {
+    return switch (command) {
+        .node_ajax_send_callback, .node_ajax_receive_callback, .node_get_send_callback => blk: {
+            if (arguments.len < 2) return error.InvalidArgumentCount;
+            break :blk try aotClientPrepareAjax(runtime, ajax_options, arguments[1]);
+        },
+        .node_post_send_callback => blk: {
+            if (arguments.len < 3) return error.InvalidArgumentCount;
+            break :blk try aotClientPreparePost(runtime, arguments[1], arguments[2], false, false);
+        },
+        .node_post_form_send_callback => blk: {
+            if (arguments.len < 3) return error.InvalidArgumentCount;
+            break :blk try aotClientPreparePost(runtime, arguments[1], arguments[2], true, true);
+        },
+        .node_ajax_response_promise, .node_http_response_promise, .node_get_response_promise => blk: {
+            if (arguments.len < 1) return error.InvalidArgumentCount;
+            break :blk try aotClientPrepareAjax(runtime, ajax_options, arguments[0]);
+        },
+        .node_post_response_promise => blk: {
+            if (arguments.len < 2) return error.InvalidArgumentCount;
+            break :blk try aotClientPreparePost(runtime, arguments[0], arguments[1], false, false);
+        },
+        .node_post_form_response_promise => blk: {
+            if (arguments.len < 2) return error.InvalidArgumentCount;
+            break :blk try aotClientPreparePost(runtime, arguments[0], arguments[1], true, false);
+        },
+        .node_ajax_receive, .node_ajax_text_get, .node_ajax_json_get, .node_ajax_binary_get => blk: {
+            if (arguments.len < 1) return error.InvalidArgumentCount;
+            break :blk try aotClientPrepareAjax(runtime, ajax_options, arguments[0]);
+        },
+        .node_post_send, .node_post_form_send => blk: {
+            if (arguments.len < 2) return error.InvalidArgumentCount;
+            break :blk try aotClientPreparePost(runtime, arguments[0], arguments[1], command == .node_post_form_send, false);
+        },
+        .node_discord_send => blk: {
+            if (arguments.len < 2) return error.InvalidArgumentCount;
+            break :blk try aotClientPrepareDiscord(runtime, arguments[0], arguments[1]);
+        },
+        .node_discord_file_send => blk: {
+            if (arguments.len < 3) return error.InvalidArgumentCount;
+            break :blk try aotClientPrepareDiscordFile(runtime, arguments[0], arguments[1], arguments[2]);
+        },
+        else => error.UnknownCommand,
+    };
+}
+
+fn aotClientIsCallbackCommand(command: aot_builtin.Command) bool {
+    return switch (command) {
+        .node_ajax_send_callback, .node_ajax_receive_callback, .node_get_send_callback, .node_post_send_callback, .node_post_form_send_callback => true,
+        else => false,
+    };
+}
+
+fn aotClientIsResponsePromiseCommand(command: aot_builtin.Command) bool {
+    return switch (command) {
+        .node_ajax_response_promise, .node_http_response_promise, .node_get_response_promise, .node_post_response_promise, .node_post_form_response_promise => true,
+        else => false,
+    };
+}
+
+fn nodeHttpBuiltin(runtime: *Runtime, ajax_options: ?*Value, ajax_onerror: ?*Value, target: ?*Value, command: aot_builtin.Command, arguments: []const Value) !Value {
+    var arguments_frame = RootFrame{};
+    if (arguments.len > 0) runtime.pushRoots(&arguments_frame, @constCast(arguments.ptr), arguments.len);
+    defer if (arguments.len > 0) runtime.popRoots(&arguments_frame);
+
+    if (command == .node_ajax_content_get) {
+        if (arguments.len < 2) return error.InvalidArgumentCount;
+        const body = try aotClientHttpResponseBody(arguments[0]);
+        const kind = try aotClientHttpBodyKind(runtime, arguments[1]);
+        if (kind == null) return body;
+        var roots = [_]Value{ try createAotPromise(runtime), .{} };
+        var frame = RootFrame{};
+        runtime.pushRoots(&frame, &roots, roots.len);
+        defer runtime.popRoots(&frame);
+        const body_buffer = body.object().?.payload.byte_buffer;
+        roots[1] = aotClientHttpBodyValue(runtime, body_buffer.bytes, kind.?, aotClientHttpResponseStatus(arguments[0]), body_buffer.bytes.len == 0) catch |failure| {
+            roots[1] = try callbackFailureReason(runtime, failure);
+            try rejectAotPromise(runtime, roots[0].object().?, roots[1]);
+            return roots[0];
+        };
+        try resolveAotPromise(runtime, roots[0].object().?, roots[1]);
+        return roots[0];
+    }
+
+    if (aotClientIsCallbackCommand(command)) {
+        if (arguments.len < 2) return error.InvalidArgumentCount;
+        var callback = try resolveAotCallback(runtime, arguments[0]);
+        var callback_frame = RootFrame{};
+        runtime.pushRoots(&callback_frame, @ptrCast(&callback), 1);
+        defer runtime.popRoots(&callback_frame);
+        var request = try aotClientPrepareHttpCommand(runtime, ajax_options, command, arguments);
+        defer request.deinit();
+        var result = aotClientHttpRequest(runtime, &request) catch |failure| AotClientHttpResult{
+            .body = try runtime.allocator.dupe(u8, &.{}),
+            .failure = failure,
+        };
+        runtime.client_http_tasks.append(runtime.allocator, .{
+            .result = result,
+            .mode = .callback,
+            .callback = callback,
+            .target = target,
+            .onerror = ajax_onerror,
+        }) catch |failure| {
+            result.deinit(runtime.allocator);
+            return failure;
+        };
+        return .{};
+    }
+
+    if (aotClientIsResponsePromiseCommand(command)) {
+        var roots = [_]Value{ try createAotPromise(runtime), .{} };
+        var frame = RootFrame{};
+        runtime.pushRoots(&frame, &roots, roots.len);
+        defer runtime.popRoots(&frame);
+        var request = try aotClientPrepareHttpCommand(runtime, ajax_options, command, arguments);
+        defer request.deinit();
+        var result = aotClientHttpRequest(runtime, &request) catch |failure| AotClientHttpResult{
+            .body = try runtime.allocator.dupe(u8, &.{}),
+            .failure = failure,
+        };
+        runtime.client_http_tasks.append(runtime.allocator, .{
+            .result = result,
+            .mode = .response_promise,
+            .promise = roots[0],
+        }) catch |failure| {
+            result.deinit(runtime.allocator);
+            return failure;
+        };
+        return roots[0];
+    }
+
+    if (command == .node_ajax_receive) {
+        var request = try aotClientPrepareHttpCommand(runtime, ajax_options, command, arguments);
+        defer request.deinit();
+        var result = aotClientHttpRequest(runtime, &request) catch |failure| AotClientHttpResult{
+            .body = try runtime.allocator.dupe(u8, &.{}),
+            .failure = failure,
+        };
+        runtime.client_http_tasks.append(runtime.allocator, .{ .result = result, .mode = .set_target, .target = target }) catch |failure| {
+            result.deinit(runtime.allocator);
+            return failure;
+        };
+        return .{};
+    }
+
+    if (command == .node_discord_send or command == .node_discord_file_send) {
+        var request = try aotClientPrepareHttpCommand(runtime, ajax_options, command, arguments);
+        defer request.deinit();
+        var result = try aotClientHttpRequest(runtime, &request);
+        defer result.deinit(runtime.allocator);
+        if (result.status < 200 or result.status >= 300) return error.DiscordRequestFailed;
+        return .{};
+    }
+
+    const result_kind: ?AotClientHttpBodyKind = switch (command) {
+        .node_post_send, .node_post_form_send, .node_ajax_text_get => .text,
+        .node_ajax_json_get => .json,
+        .node_ajax_binary_get => .binary,
+        else => null,
+    };
+    if (result_kind) |kind| {
+        var request = try aotClientPrepareHttpCommand(runtime, ajax_options, command, arguments);
+        defer request.deinit();
+        var result = try aotClientHttpRequest(runtime, &request);
+        defer result.deinit(runtime.allocator);
+        if (result.failure) |failure| return failure;
+        return aotClientHttpBodyValue(runtime, result.body, kind, result.status, result.content_length_zero);
+    }
+    return error.UnknownCommand;
 }
 
 fn appendNodeUriComponent(writer: *std.Io.Writer, source: []const u8) !void {
@@ -17347,6 +18004,50 @@ test "AOT AJAX失敗時はコールバック値をグローバルへ保持する
     lnako_aot_ajax_onerror_set(&roots[1], &arguments, arguments.len, &roots[2], 11);
     try std.testing.expectEqual(roots[0].payload, roots[2].payload);
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[1].tag)));
+}
+
+test "AOT HTTP clientはrequest準備とResponse境界を保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 8;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtimeUtf8String(&runtime, "{\"method\":\"PUT\",\"headers\":{\"X-Test\":\"yes\"},\"body\":\"payload\"}");
+    roots[1] = try jsonDecodeBuiltin(&runtime, roots[0]);
+    var ajax_request = try aotClientPrepareAjax(&runtime, &roots[1], staticStringValue("http://127.0.0.1/options"));
+    defer ajax_request.deinit();
+    try std.testing.expectEqualStrings("PUT", ajax_request.method);
+    try std.testing.expectEqualStrings("http://127.0.0.1/options", ajax_request.url);
+    try std.testing.expectEqualStrings("payload", ajax_request.body);
+    try std.testing.expectEqual(@as(usize, 1), ajax_request.headers.items.len);
+    try std.testing.expectEqualStrings("X-Test", ajax_request.headers.items[0].name);
+    try std.testing.expectEqualStrings("yes", ajax_request.headers.items[0].value);
+
+    roots[2] = try runtimeUtf8String(&runtime, "{\"a\":\"x y\",\"日本\":\"語\"}");
+    roots[3] = try jsonDecodeBuiltin(&runtime, roots[2]);
+    var form_request = try aotClientPreparePost(&runtime, staticStringValue("http://127.0.0.1/post"), roots[3], true, true);
+    defer form_request.deinit();
+    try std.testing.expect(std.mem.indexOf(u8, form_request.body, "name=\"日本\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, form_request.body, "語") != null);
+    try std.testing.expectEqualStrings("multipart/form-data", form_request.headers.items[0].value);
+
+    var result = AotClientHttpResult{ .body = try runtime.allocator.dupe(u8, "{\"ok\":true}"), .status = 200 };
+    defer result.deinit(runtime.allocator);
+    roots[4] = try aotClientHttpResponseValue(&runtime, result);
+    try std.testing.expect(isAotHttpResponse(roots[4]));
+    const response_text = try valueUtf8LossyAlloc(&runtime, roots[4]);
+    defer runtime.allocator.free(response_text);
+    try std.testing.expectEqualStrings("[object Response]", response_text);
+    roots[5] = try jsonEncodeBuiltin(&runtime, roots[4], false);
+    try expectUtf16String(&runtime, roots[5], "{}");
+    roots[6] = try aotClientHttpResponseBody(roots[4]);
+    try std.testing.expectEqualStrings("{\"ok\":true}", roots[6].object().?.payload.byte_buffer.bytes);
+    try std.testing.expectEqual(@as(u16, 200), aotClientHttpResponseStatus(roots[4]));
+    try std.testing.expectEqual(AotClientHttpBodyKind.text, (try aotClientHttpBodyKind(&runtime, staticStringValue("テキスト"))).?);
+    try std.testing.expectEqual(AotClientHttpBodyKind.json, (try aotClientHttpBodyKind(&runtime, staticStringValue("JSON"))).?);
+    try std.testing.expect((try aotClientHttpBodyKind(&runtime, staticStringValue("BODY"))) == null);
 }
 
 test "AOT表ソートは指定列を比較して同じ配列を安定ソートする" {

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -20,23 +20,66 @@ try {
   buildLnako();
   let failures = 0;
   for (const testCase of cases) {
-    const sourcePath = resolve(temporary, `${testCase.id}.nako3`);
-    await writeFile(sourcePath, testCase.source.replaceAll("${BASE}", base).replaceAll("${FILE}", discordFile.replaceAll("\\", "/")), "utf8");
-    const options = { cwd: temporary, encoding: "utf8", maxBuffer: 16 * 1024 * 1024, env: { ...process.env, TZ: "Asia/Tokyo", NAKO3_DISABLE_NEW_CONSOLE: "1" } };
-    const official = spawnSync(process.execPath, [officialCli, sourcePath], options);
-    const actual = spawnSync(executable, ["run", sourcePath], options);
+    const officialDirectory = resolve(temporary, testCase.id, "official");
+    const lnakoDirectory = resolve(temporary, testCase.id, "lnako");
+    await mkdir(officialDirectory, { recursive: true });
+    await mkdir(lnakoDirectory, { recursive: true });
+    const aotDirectories = {};
+    if (testCase.aot === true) {
+      for (const optimization of ["O0", "O1", "O2", "O3"]) {
+        const directory = resolve(temporary, testCase.id, `aot-${optimization}`);
+        aotDirectories[optimization] = directory;
+        await mkdir(directory, { recursive: true });
+      }
+    }
+    const source = testCase.source.replaceAll("${BASE}", base).replaceAll("${FILE}", discordFile.replaceAll("\\", "/"));
+    const officialSource = resolve(officialDirectory, "case.nako3");
+    const lnakoSource = resolve(lnakoDirectory, "case.nako3");
+    await writeFile(officialSource, source, "utf8");
+    await writeFile(lnakoSource, source, "utf8");
+    for (const directory of Object.values(aotDirectories)) await writeFile(resolve(directory, "case.nako3"), source, "utf8");
+    const environment = { ...process.env, TZ: "Asia/Tokyo", NAKO3_DISABLE_NEW_CONSOLE: "1" };
+    const options = { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, env: environment };
+    const official = spawnSync(process.execPath, [officialCli, officialSource], { ...options, cwd: officialDirectory });
+    const actual = spawnSync(executable, ["run", lnakoSource], { ...options, cwd: lnakoDirectory });
     const expected = normalize(official);
     const received = normalize(actual);
     const expectedError = classifyError(official);
     const receivedError = classifyError(actual);
-    const mismatch = testCase.expectError ? !expectedError || !receivedError : official.status !== 0 || actual.status !== 0 || JSON.stringify(expected) !== JSON.stringify(received);
+    const aotResults = {};
+    const aotStderr = {};
+    let aotCompileFailure = false;
+    if (testCase.aot === true) {
+      for (const optimization of ["O0", "O1", "O2", "O3"]) {
+        const aotDirectory = aotDirectories[optimization];
+        const aotSource = resolve(aotDirectory, "case.nako3");
+        const nativeExecutable = resolve(temporary, `${testCase.id}-${optimization}${process.platform === "win32" ? ".exe" : ""}`);
+        const nativeCompile = spawnSync(executable, ["build", aotSource, "-o", nativeExecutable, `-${optimization}`], {
+          ...options,
+          cwd: aotDirectory,
+        });
+        const nativeResult = nativeCompile.status === 0
+          ? spawnSync(nativeExecutable, [], { ...options, cwd: aotDirectory })
+          : nativeCompile;
+        aotResults[optimization] = normalize(nativeResult);
+        aotStderr[optimization] = nativeResult.stderr;
+        if (nativeCompile.status !== 0) aotCompileFailure = true;
+      }
+    }
+    const aotError = Object.values(aotResults).every((result) => result.exitCode !== 0);
+    const aotSuccess = Object.values(aotResults).every((result) => result.exitCode === 0);
+    const aotOutputMatches = Object.values(aotResults).every((result) => JSON.stringify(result) === JSON.stringify(expected));
+    const mismatch = testCase.expectError
+      ? !expectedError || !receivedError || (testCase.aot === true && (!aotError || aotCompileFailure))
+      : official.status !== 0 || actual.status !== 0 || JSON.stringify(expected) !== JSON.stringify(received) ||
+        (testCase.aot === true && (!aotSuccess || aotCompileFailure || !aotOutputMatches));
     if (mismatch) {
       failures += 1;
-      console.error(`Node HTTP差分 ${testCase.id}:\nofficial=${JSON.stringify(expected)}\nlnako  =${JSON.stringify(received)}\nofficial stderr=${official.stderr}\nlnako stderr=${actual.stderr}`);
+      console.error(`Node HTTP差分 ${testCase.id}:\nofficial=${JSON.stringify(expected)}\nlnako  =${JSON.stringify(received)}\nofficial stderr=${official.stderr}\nlnako stderr=${actual.stderr}${testCase.aot === true ? `\naot=${JSON.stringify(aotResults)}\naotStderr=${JSON.stringify(aotStderr)}` : ""}`);
     }
   }
   if (failures > 0) throw new Error(`Node HTTP公式差分が${failures}件あります`);
-  console.log(`Node HTTP公式差分テスト: ${cases.length}ケース・${new Set(cases.flatMap((item) => item.commands)).size}命令成功`);
+  console.log(`Node HTTP公式差分テスト: ${cases.length}ケース・${new Set(cases.flatMap((item) => item.commands)).size}命令成功（AOT O0〜O3: ${cases.filter((item) => item.aot === true).length}ケース）`);
 } finally {
   server.kill("SIGTERM");
   await rm(temporary, { recursive: true, force: true });

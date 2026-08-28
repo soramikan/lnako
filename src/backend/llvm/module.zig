@@ -104,6 +104,7 @@ pub fn manifestCall(name: []const u8, direct_callee: ?ir.FunctionId, is_builtin_
         .node_file_process_callback, .node_file_process_stop, .node_file_copy_callback, .node_file_move_callback, .node_file_delete_callback => "node-file-callback",
         .node_ajax_options_set => "ajax-options",
         .node_ajax_onerror_set => "ajax-onerror",
+        .node_ajax_send_callback, .node_ajax_receive_callback, .node_get_send_callback, .node_post_send_callback, .node_post_form_send_callback, .node_ajax_response_promise, .node_http_response_promise, .node_get_response_promise, .node_post_response_promise, .node_post_form_response_promise, .node_ajax_content_get, .node_ajax_receive, .node_post_send, .node_post_form_send, .node_ajax_text_get, .node_ajax_json_get, .node_ajax_binary_get, .node_discord_send, .node_discord_file_send => "node-http",
         else => "builtin",
     };
     return .{
@@ -362,6 +363,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_node_process_call(ptr, ptr, i64, i16, i64)\n" ++
                 "declare void @lnako_aot_ajax_options_set(ptr, ptr, i64, ptr, i64)\n" ++
                 "declare void @lnako_aot_ajax_onerror_set(ptr, ptr, i64, ptr, i64)\n" ++
+                "declare void @lnako_aot_node_http_call(ptr, ptr, ptr, ptr, ptr, i64, i16, i64)\n" ++
                 "declare void @lnako_aot_file_operation_call(ptr, ptr, ptr, i64, i16, i64)\n" ++
                 "declare void @lnako_aot_node_file_callback_call(ptr, ptr, ptr, i64, i16, i64)\n" ++
                 "declare void @lnako_aot_http_server_init(ptr, ptr, ptr, ptr)\n" ++
@@ -576,6 +578,11 @@ const Emitter = struct {
                 };
                 if (aot_builtin.lookup(instruction.name)) |command| if (command == .node_ajax_onerror_set) {
                     if (self.globalIndex("AJAX:ONERROR") == null) try self.globals.append(self.allocator, "AJAX:ONERROR");
+                };
+                if (aot_builtin.lookup(instruction.name)) |command| if (isNodeHttpCommand(command)) {
+                    for ([_][]const u8{ "AJAXオプション", "AJAX:ONERROR", "対象" }) |name| {
+                        if (self.globalIndex(name) == null) try self.globals.append(self.allocator, name);
+                    }
                 };
                 if (aot_builtin.lookup(instruction.name)) |command| if (isNodeFileOperationCommand(command)) {
                     if (self.globalIndex("ファイルコピーデフォルト動作") == null) try self.globals.append(self.allocator, "ファイルコピーデフォルト動作");
@@ -1463,6 +1470,28 @@ const Emitter = struct {
             try self.debugSuffix(instruction.span, scope);
             return;
         }
+        if (isNodeHttpCommand(command)) {
+            const ajax_options_index = self.globalIndex("AJAXオプション") orelse return error.MissingAjaxOptionsGlobal;
+            const ajax_onerror_index = self.globalIndex("AJAX:ONERROR") orelse return error.MissingAjaxOnerrorGlobal;
+            const target_index = self.globalIndex("対象") orelse return error.MissingTargetGlobal;
+            for (instruction.operands, 0..) |argument, index| {
+                try self.output.writer.print("  %node-http.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+                try self.debugSuffix(instruction.span, scope);
+                try self.output.writer.writeAll("  store %lnako.Value ");
+                try self.writeValueRef(function, argument);
+                try self.output.writer.print(", ptr %node-http.{d}.slot.{d}", .{ result, index });
+                try self.debugSuffix(instruction.span, scope);
+            }
+            try self.output.writer.print("  call void @lnako_aot_node_http_call(ptr %root.slot.{d}, ptr @lnako.global.{d}, ptr @lnako.global.{d}, ptr @lnako.global.{d}, ptr ", .{ result, ajax_options_index, ajax_onerror_index, target_index });
+            if (instruction.operands.len > 0) {
+                try self.output.writer.print("%node-http.{d}.slot.0", .{result});
+            } else try self.output.writer.writeAll("null");
+            try self.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+            try self.debugSuffix(instruction.span, scope);
+            try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+            try self.debugSuffix(instruction.span, scope);
+            return;
+        }
         if (isNodeFileOperationCommand(command)) {
             const copy_default_index = self.globalIndex("ファイルコピーデフォルト動作") orelse return error.MissingFileCopyDefaultGlobal;
             for (instruction.operands, 0..) |argument, index| {
@@ -2070,6 +2099,13 @@ fn isNodeFileCallbackCommand(command: aot_builtin.Command) bool {
     };
 }
 
+fn isNodeHttpCommand(command: aot_builtin.Command) bool {
+    return switch (command) {
+        .node_ajax_send_callback, .node_ajax_receive_callback, .node_get_send_callback, .node_post_send_callback, .node_post_form_send_callback, .node_ajax_response_promise, .node_http_response_promise, .node_get_response_promise, .node_post_response_promise, .node_post_form_response_promise, .node_ajax_content_get, .node_ajax_receive, .node_post_send, .node_post_form_send, .node_ajax_text_get, .node_ajax_json_get, .node_ajax_binary_get, .node_discord_send, .node_discord_file_send => true,
+        else => false,
+    };
+}
+
 fn isPluginManagementCommand(command: aot_builtin.Command) bool {
     return switch (command) {
         .plugin_name_set, .namespace_set, .namespace_pop => true,
@@ -2251,7 +2287,7 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     const semantic = @import("../../semantic/analyzer.zig");
     const hir = @import("../../ir/hir.zig");
     const lower = @import("../../ir/lower_ssa.zig");
-    var parsed = try parser.parse(std.testing.allocator, "A=1\nB=A+2\nBを表示\nコマンドラインを表示\n母艦パスを表示\n母艦パス取得()を表示\nデバッグ表示({\"a\":1})\nフォルダ作成(\"data\")\n圧縮(\"source.txt\",\"archive.zip\")を表示\n起動待機(\"printf process\")を表示\nF=関数(P)それはP;ここまで\nFでファイル処理時\nファイル処理強制停止\n__DEBUG_BP_WAIT(12)を表示\n", "main.nako3");
+    var parsed = try parser.parse(std.testing.allocator, "A=1\nB=A+2\nBを表示\nコマンドラインを表示\n母艦パスを表示\n母艦パス取得()を表示\nデバッグ表示({\"a\":1})\nフォルダ作成(\"data\")\n圧縮(\"source.txt\",\"archive.zip\")を表示\n起動待機(\"printf process\")を表示\nF=関数(P)それはP;ここまで\nFでファイル処理時\nファイル処理強制停止\nAJAXテキスト取得(\"http://127.0.0.1/\")を表示\n__DEBUG_BP_WAIT(12)を表示\n", "main.nako3");
     defer parsed.deinit();
     var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
     defer analyzed.deinit();
@@ -2275,6 +2311,8 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_node_process_call(ptr ") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_file_callback_call(ptr, ptr, ptr, i64, i16, i64)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_node_file_callback_call(ptr ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_http_call(ptr, ptr, ptr, ptr, ptr, i64, i16, i64)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_node_http_call(ptr ") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_constants_init(ptr, ptr, ptr, i32, ptr)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_node_constants_init(ptr ") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_directory_constants_init(ptr, ptr, ptr)\n") != null);
@@ -2388,6 +2426,11 @@ test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {
     try std.testing.expectEqualStrings("node_ajax_onerror_set", ajax_onerror.canonical_opcode);
     try std.testing.expectEqualStrings("ajax-onerror", ajax_onerror.route);
     try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_ajax_onerror_set), ajax_onerror.opcode);
+
+    const ajax_http = manifestCall("AJAXテキスト取得", null, true).?;
+    try std.testing.expectEqualStrings("node_ajax_text_get", ajax_http.canonical_opcode);
+    try std.testing.expectEqualStrings("node-http", ajax_http.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_ajax_text_get), ajax_http.opcode);
 
     const file_open = manifestCall("開", null, true).?;
     try std.testing.expectEqualStrings("node_file_open", file_open.canonical_opcode);

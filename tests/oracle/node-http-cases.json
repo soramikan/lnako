@@ -11,37 +11,44 @@
   },
   {
     "id": "plugin-node-http-callbacks",
+    "aot": true,
     "commands": ["AJAX送信時", "AJAX受信時", "GET送信時", "POST送信時", "POSTフォーム送信時", "AJAX失敗時"],
     "source": "C=[]\nF=関数(S)それは配列追加(C,S);ここまで\nAJAX送信時(F,\"${BASE}/text?q=ajax\")\n0.15秒待\nAJAX受信時(F,\"${BASE}/text?q=receive\")\n0.15秒待\nGET送信時(F,\"${BASE}/text?q=get\")\n0.15秒待\nPOST送信時(F,\"${BASE}/post\",{\"a\":\"x y\",\"日本\":\"語\"})\n0.15秒待\nPOSTフォーム送信時(F,\"${BASE}/post\",{\"a\":\"x\",\"日本\":\"語\"})\n0.15秒待\nJSON変換(C)を表示\n"
   },
   {
     "id": "plugin-node-http-options-and-promises",
+    "aot": true,
     "commands": ["AJAXオプション", "AJAXオプション設定", "AJAX保障送信", "HTTP保障取得", "GET保障送信", "POST保障送信", "POSTフォーム保障送信", "AJAX内容取得"],
     "source": "AJAXオプション設定({\"method\":\"PUT\",\"headers\":{\"X-Lnako\":\"yes\"},\"body\":\"payload\"})\nP=AJAX保障送信(\"${BASE}/options\")\nPの成功した時には\nR=対象\nRを表示\nJSON変換(R)を表示\nAJAX内容取得(R,\"TEXT\")の成功した時には\n対象を表示\nここまで\nここまで\n0.15秒待\nAJAXオプション設定(\"\")\nP2=HTTP保障取得(\"${BASE}/text?q=http\")\nP2の成功した時には\nAJAX内容取得(対象,\"テキスト\")の成功した時には\n対象を表示\nここまで\nここまで\n0.15秒待\nP3=GET保障送信(\"${BASE}/text?q=get-promise\")\nP3の成功した時には\nAJAX内容取得(対象,\"TEXT\")の成功した時には\n対象を表示\nここまで\nここまで\n0.15秒待\nP4=POST保障送信(\"${BASE}/post\",{\"a\":\"A\",\"日本\":\"B\"})\nP4の成功した時には\nAJAX内容取得(対象,\"TEXT\")の成功した時には\n対象を表示\nここまで\nここまで\n0.15秒待\nP5=POSTフォーム保障送信(\"${BASE}/post\",{\"a\":\"A\",\"日本\":\"B\"})\nP5の成功した時には\nAJAX内容取得(対象,\"TEXT\")の成功した時には\n対象を表示\nここまで\nここまで\n0.15秒待\n"
   },
   {
     "id": "plugin-node-http-async-values",
+    "aot": true,
     "commands": ["AJAX受信", "POST送信", "POSTフォーム送信", "AJAXテキスト取得", "AJAX_JSON取得", "AJAXバイナリ取得"],
     "source": "R1=POST送信(\"${BASE}/post\",{\"a\":\"P\",\"日本\":\"Q\"})\nR1を表示\nR2=POSTフォーム送信(\"${BASE}/post\",{\"a\":\"P\",\"日本\":\"Q\"})\nR2を表示\nR3=AJAXテキスト取得(\"${BASE}/text?q=text\")\nR3を表示\nR4=AJAX_JSON取得(\"${BASE}/json\")\nJSON変換(R4)を表示\nR5=AJAX_JSON取得(\"${BASE}/empty\")\nJSON変換(R5)を表示\nR6=AJAXバイナリ取得(\"${BASE}/binary\")\nR6を表示\nJSON変換(R6)を表示\nエンコーディング取得(R6,\"latin1\")をJSON変換して表示\nAJAX受信(\"${BASE}/text?q=target\")\n0.2秒待\n対象を表示\n"
   },
   {
     "id": "plugin-node-http-discord",
+    "aot": true,
     "commands": ["DISCORD送信"],
     "source": "DISCORD送信(\"${BASE}/discord-ok\",\"hello\")\n\"OK\"を表示\n"
   },
   {
     "id": "plugin-node-http-discord-file",
+    "aot": true,
     "commands": ["DISCORDファイル送信"],
     "source": "DISCORDファイル送信(\"${BASE}/discord-file\",\"${FILE}\",\"hello discord\")\n\"OK\"を表示\n"
   },
   {
     "id": "plugin-node-http-discord-failure",
+    "aot": true,
     "commands": ["DISCORD送信"],
     "expectError": true,
     "source": "DISCORD送信(\"${BASE}/discord-fail\",\"failure\")\n"
   },
   {
     "id": "plugin-node-http-onerror",
+    "aot": true,
     "commands": ["AJAX失敗時", "POST送信時"],
     "source": "S=関数(X)それはX;ここまで\nAJAX失敗時には\n\"ERROR\"を表示\nここまで\nPOST送信時(S,\"${BASE}/abort\",{\"a\":1})\n0.3秒待\n"
   },
