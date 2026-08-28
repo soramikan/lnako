@@ -11575,7 +11575,7 @@
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト・純LLVM AOT差分テストに成功"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0752",
@@ -11601,7 +11601,7 @@
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト・純LLVM AOT差分テストに成功"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0753",
@@ -11627,7 +11627,7 @@
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト・純LLVM AOT差分テストに成功"
+      "reason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0754",

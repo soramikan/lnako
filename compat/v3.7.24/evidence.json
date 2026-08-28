@@ -14621,7 +14621,7 @@
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
       "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "公式cnako3とのNodeホスト・純LLVM AOT差分テストに成功"
+      "implementationReason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0752",
@@ -14655,7 +14655,7 @@
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
       "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "公式cnako3とのNodeホスト・純LLVM AOT差分テストに成功"
+      "implementationReason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0753",
@@ -14689,7 +14689,7 @@
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
       "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "公式cnako3とのNodeホスト・純LLVM AOT差分テストに成功"
+      "implementationReason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
       "id": "command-0754",
