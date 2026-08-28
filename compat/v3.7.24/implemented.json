@@ -2961,23 +2961,26 @@
   "終": {
     "status": "native",
     "tests": [
-      "plugin-node-exit-alias"
+      "plugin-node-exit-alias",
+      "native-node-exit-alias"
     ],
-    "reason": "独立プロセスで標準出力と終了コードの公式差分テストに成功"
+    "reason": "公式7経路の終了処理差分テストに成功"
   },
   "終了": {
     "status": "native",
     "tests": [
-      "plugin-node-exit-japanese-alias"
+      "plugin-node-exit-japanese-alias",
+      "native-node-exit-japanese-alias"
     ],
-    "reason": "独立プロセスで標準出力と終了コードの公式差分テストに成功"
+    "reason": "公式7経路の終了処理差分テストに成功"
   },
   "プロセス終": {
     "status": "native",
     "tests": [
-      "plugin-node-exit-code"
+      "plugin-node-exit-code",
+      "native-node-exit-code"
     ],
-    "reason": "独立プロセスで標準出力と終了コードの公式差分テストに成功"
+    "reason": "公式7経路の終了処理差分テストに成功"
   },
   "圧縮解凍ツールパス": {
     "status": "native",

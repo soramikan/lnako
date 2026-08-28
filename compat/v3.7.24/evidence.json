@@ -8,14 +8,14 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 261,
-    "nativeAot": 156,
+    "total": 264,
+    "nativeAot": 159,
     "interpreter": 96,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
-    "paired": 410,
-    "interpreter-only": 113,
+    "paired": 414,
+    "interpreter-only": 109,
     "aot-only": 0,
     "none": 0,
     "compat-js-only": 4
@@ -2009,7 +2009,9 @@
       "interpreterFixtureIds": [
         "plugin-node-exit-alias"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-node-exit-alias"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -2018,15 +2020,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-node-exit-alias": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "独立プロセスで標準出力と終了コードの公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "公式7経路の終了処理差分テストに成功"
     },
     {
       "id": "command-0062",
@@ -14421,7 +14428,9 @@
       "interpreterFixtureIds": [
         "plugin-node-exit-alias"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-node-exit-alias"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -14430,15 +14439,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-node-exit-alias": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "ambiguous-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "独立プロセスで標準出力と終了コードの公式差分テストに成功"
+      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "公式7経路の終了処理差分テストに成功"
     },
     {
       "id": "command-0746",
@@ -14448,7 +14462,9 @@
       "interpreterFixtureIds": [
         "plugin-node-exit-code"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-node-exit-code"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -14457,15 +14473,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-node-exit-code": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "独立プロセスで標準出力と終了コードの公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "公式7経路の終了処理差分テストに成功"
     },
     {
       "id": "command-0747",
@@ -14502,7 +14523,9 @@
       "interpreterFixtureIds": [
         "plugin-node-exit-japanese-alias"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-node-exit-japanese-alias"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -14511,15 +14534,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-node-exit-japanese-alias": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "独立プロセスで標準出力と終了コードの公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "公式7経路の終了処理差分テストに成功"
     },
     {
       "id": "command-0749",

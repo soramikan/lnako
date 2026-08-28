@@ -3449,7 +3449,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all and command != .namespace_pop and command != .timer_wait and command != .async_noop and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all and command != .namespace_pop and command != .timer_wait and command != .async_noop and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -3458,6 +3458,15 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         .line_notify_discontinued => {
             runtime.setFailure(error.LineNotifyDiscontinued);
             return;
+        },
+        .node_exit, .node_process_exit => {
+            const exit_code = if (command == .node_process_exit) nodeProcessExitCode(runtime, value) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            } else 0;
+            runtime.dispatch_trace.result(call_id, command_name, opcode, "builtin", site_id, true);
+            _ = fflush(null);
+            std.process.exit(exit_code);
         },
         .regexp_match, .regexp_extract, .regexp_replace, .regexp_split => {
             runtime.setFailure(error.UnknownCommand);
@@ -6655,6 +6664,12 @@ fn systemGlobalFunctionNamesBuiltin(runtime: *Runtime) !Value {
 
 fn nodeEnvironmentBuiltin(runtime: *Runtime, command: aot_builtin.Command) !Value {
     return runtimeUtf8String(runtime, if (command == .node_os) aotOsName() else aotArchitectureName());
+}
+
+fn nodeProcessExitCode(runtime: *Runtime, value: Value) !u8 {
+    const number = try valueToNumberRuntime(runtime, value);
+    if (!std.math.isFinite(number)) return 0;
+    return @intFromFloat(@mod(@trunc(number), 256.0));
 }
 
 fn nodeEnvironmentValueBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
@@ -10476,6 +10491,14 @@ test "AOT Node環境命令はコンパイル対象のOSとCPU名を返す" {
     try expectUtf16String(&runtime, roots[0], aotOsName());
     roots[1] = try nodeEnvironmentBuiltin(&runtime, .node_architecture);
     try expectUtf16String(&runtime, roots[1], aotArchitectureName());
+}
+
+test "AOT Node終了コードは有限値を符号なし8bitへ正規化する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    try std.testing.expectEqual(@as(u8, 7), try nodeProcessExitCode(&runtime, numberValue(7)));
+    try std.testing.expectEqual(@as(u8, 255), try nodeProcessExitCode(&runtime, numberValue(-1)));
+    try std.testing.expectEqual(@as(u8, 0), try nodeProcessExitCode(&runtime, numberValue(std.math.nan(f64))));
 }
 
 test "AOT環境変数取得はC環境から値を読み未設定をundefinedにする" {

@@ -1599,14 +1599,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-exit-alias"
+        "plugin-node-exit-alias",
+        "native-node-exit-alias"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "独立プロセスで標準出力と終了コードの公式差分テストに成功"
+      "reason": "公式7経路の終了処理差分テストに成功"
     },
     {
       "id": "command-0062",
@@ -11415,14 +11416,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-exit-alias"
+        "plugin-node-exit-alias",
+        "native-node-exit-alias"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "独立プロセスで標準出力と終了コードの公式差分テストに成功"
+      "reason": "公式7経路の終了処理差分テストに成功"
     },
     {
       "id": "command-0746",
@@ -11440,14 +11442,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-exit-code"
+        "plugin-node-exit-code",
+        "native-node-exit-code"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "独立プロセスで標準出力と終了コードの公式差分テストに成功"
+      "reason": "公式7経路の終了処理差分テストに成功"
     },
     {
       "id": "command-0747",
@@ -11490,14 +11493,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-exit-japanese-alias"
+        "plugin-node-exit-japanese-alias",
+        "native-node-exit-japanese-alias"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "独立プロセスで標準出力と終了コードの公式差分テストに成功"
+      "reason": "公式7経路の終了処理差分テストに成功"
     },
     {
       "id": "command-0749",

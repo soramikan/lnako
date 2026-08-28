@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "44f4ec2d2e2ff5088be8d2ab80211d37900148ac8a219a181a5ad2d7638b2158"
+    "sha256": "5ac25d347a221db604303c0855aa4175e988aab6dddfb9a655d9d51355299c1b"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 113,
+    "count": 109,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 113
+      "unverified": 109
     }
   },
   "groups": [
@@ -100,21 +100,15 @@
       "group": "基本プラグイン",
       "category": "Nodeプロセス",
       "type": "関数",
-      "count": 4,
+      "count": 1,
       "executionEvidenceStates": {
-        "unverified": 4
+        "unverified": 1
       },
       "commandIds": [
-        "command-0745",
-        "command-0746",
-        "command-0747",
-        "command-0748"
+        "command-0747"
       ],
       "names": [
-        "終",
-        "プロセス終",
-        "強制終了時",
-        "終了"
+        "強制終了時"
       ]
     },
     {
@@ -496,21 +490,19 @@
       "group": "基本プラグイン",
       "category": "特殊命令",
       "type": "関数",
-      "count": 4,
+      "count": 3,
       "executionEvidenceStates": {
-        "unverified": 4
+        "unverified": 3
       },
       "commandIds": [
         "command-0057",
         "command-0058",
-        "command-0060",
-        "command-0061"
+        "command-0060"
       ],
       "names": [
         "ナデシコ",
         "ナデシコ続",
-        "実行時間計測",
-        "終"
+        "実行時間計測"
       ]
     }
   ],
@@ -563,23 +555,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "system-runtime-execution-and-debug"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0061",
-      "name": "終",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "特殊命令",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-exit-alias"
       ],
       "aotFixtureIds": []
     },
@@ -1648,40 +1623,6 @@
       "aotFixtureIds": []
     },
     {
-      "id": "command-0745",
-      "name": "終",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "Nodeプロセス",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "ambiguous-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-exit-alias"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0746",
-      "name": "プロセス終",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "Nodeプロセス",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-exit-code"
-      ],
-      "aotFixtureIds": []
-    },
-    {
       "id": "command-0747",
       "name": "強制終了時",
       "plugin": "plugin_node",
@@ -1695,23 +1636,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "plugin-node-interrupt"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0748",
-      "name": "終了",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "Nodeプロセス",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-exit-japanese-alias"
       ],
       "aotFixtureIds": []
     },
