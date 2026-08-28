@@ -3488,7 +3488,7 @@
       "plugin-system-url",
       "native-system-url-and-base64"
     ],
-    "reason": "文字列と数値配列のNode互換Base64エンコードを純LLVM AOTへ実装し、公式差分テストに成功"
+    "reason": "文字列・数値配列・byte bufferのNode互換Base64エンコードを純LLVM AOTへ実装し、公式差分テストに成功"
   },
   "BASE64デコード": {
     "status": "native",

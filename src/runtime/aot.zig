@@ -9802,6 +9802,7 @@ fn base64EncodeBuiltin(runtime: *Runtime, source: Value) !Value {
             bytes = try (string_mod.String{ .allocator = runtime.allocator, .units = units }).toUtf8Lossy(runtime.allocator);
             owned = true;
         },
+        .byte_buffer => bytes = source.object().?.payload.byte_buffer.bytes,
         .array => {
             const items = source.object().?.payload.array.items;
             bytes = try runtime.allocator.alloc(u8, items.len);
@@ -15659,6 +15660,31 @@ test "AOT URLとBase64命令はUTF-16文字列と配列を処理する" {
     arguments[0] = roots[6];
     roots[7] = try urlBuiltin(&runtime, .base64_encode, &arguments);
     try expectUtf16String(&runtime, roots[7], "QSz/");
+}
+
+test "AOT Base64エンコードは3種のbyte bufferを入力にする" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    var arguments = [_]Value{.{}};
+    roots[0] = try runtime.createBytes(&.{ 0x41, 0x42, 0xff });
+    arguments[0] = roots[0];
+    roots[1] = try urlBuiltin(&runtime, .base64_encode, &arguments);
+    try expectUtf16String(&runtime, roots[1], "QUL/");
+
+    roots[2] = try runtime.createUint8Array(&.{ 0x41, 0x42, 0xff });
+    arguments[0] = roots[2];
+    roots[3] = try urlBuiltin(&runtime, .base64_encode, &arguments);
+    try expectUtf16String(&runtime, roots[3], "QUL/");
+
+    roots[4] = try runtime.createArrayBuffer(&.{ 0x41, 0x42, 0xff });
+    arguments[0] = roots[4];
+    roots[5] = try urlBuiltin(&runtime, .base64_encode, &arguments);
+    try expectUtf16String(&runtime, roots[5], "QUL/");
 }
 
 test "AOTパス命令は拡張子と終端区切り文字を処理する" {

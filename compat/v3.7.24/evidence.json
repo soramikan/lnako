@@ -8994,7 +8994,7 @@
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
       "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "文字列と数値配列のNode互換Base64エンコードを純LLVM AOTへ実装し、公式差分テストに成功"
+      "implementationReason": "文字列・数値配列・byte bufferのNode互換Base64エンコードを純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0262",
@@ -16597,7 +16597,8 @@
         "plugin-node-crypto"
       ],
       "aotFixtureIds": [
-        "native-node-crypto"
+        "native-node-crypto",
+        "native-system-url-and-base64"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -16611,6 +16612,9 @@
           "native-node-crypto": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-system-url-and-base64": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
@@ -16619,7 +16623,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式7経路のSHA-256・Buffer境界とエンコード形式の差分テストに成功"
     },
     {

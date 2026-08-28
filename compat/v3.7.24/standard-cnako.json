@@ -6968,7 +6968,7 @@
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "文字列と数値配列のNode互換Base64エンコードを純LLVM AOTへ実装し、公式差分テストに成功"
+      "reason": "文字列・数値配列・byte bufferのNode互換Base64エンコードを純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0262",

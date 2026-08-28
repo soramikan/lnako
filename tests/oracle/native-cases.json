@@ -369,8 +369,8 @@
   },
   {
     "id": "native-system-url-and-base64",
-    "commands": ["URLエンコード", "URLデコード", "URLパラメータ解析", "BASE64エンコード", "BASE64デコード"],
-    "source": "URLエンコード(\"A あ/😀\")を表示\nURLデコード(\"A%20%E3%81%82%2F%F0%9F%98%80\")を表示\nJSON変換(URLパラメータ解析(\"https://example.test/?a=1&a=2&flag&x=%E3%81%82\"))を表示\nBASE64エンコード(\"こんにちは\")を表示\nBASE64デコード(\"44GT44KT44Gr44Gh44Gv\")を表示\nBASE64エンコード([65,300,-1])を表示\n"
+    "commands": ["URLエンコード", "URLデコード", "URLパラメータ解析", "BASE64エンコード", "BASE64デコード", "ハッシュ値計算"],
+    "source": "URLエンコード(\"A あ/😀\")を表示\nURLデコード(\"A%20%E3%81%82%2F%F0%9F%98%80\")を表示\nJSON変換(URLパラメータ解析(\"https://example.test/?a=1&a=2&flag&x=%E3%81%82\"))を表示\nBASE64エンコード(\"こんにちは\")を表示\nBASE64デコード(\"44GT44KT44Gr44Gh44Gv\")を表示\nBASE64エンコード([65,300,-1])を表示\nBASE64エンコード(ハッシュ値計算(\"abc\",\"sha256\",undefined))を表示\n"
   },
   {
     "id": "native-system-path-commands",
