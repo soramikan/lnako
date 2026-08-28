@@ -290,6 +290,7 @@ pub const Command = enum(u16) {
     node_stdin_all,
     node_post_data,
     node_ajax_options_set,
+    node_ajax_onerror_set,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -589,6 +590,7 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "標準入力全取得")) return .node_stdin_all;
     if (std.mem.eql(u8, name, "POSTデータ生成")) return .node_post_data;
     if (std.mem.eql(u8, name, "AJAXオプション設定")) return .node_ajax_options_set;
+    if (std.mem.eql(u8, name, "AJAX失敗時")) return .node_ajax_onerror_set;
     return null;
 }
 
@@ -810,6 +812,7 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.node_stdin_all, lookup("標準入力全取得").?);
     try std.testing.expectEqual(Command.node_post_data, lookup("POSTデータ生成").?);
     try std.testing.expectEqual(Command.node_ajax_options_set, lookup("AJAXオプション設定").?);
+    try std.testing.expectEqual(Command.node_ajax_onerror_set, lookup("AJAX失敗時").?);
     try std.testing.expectEqual(Command.datetime_now, lookup("今").?);
     try std.testing.expectEqual(Command.datetime_system_time_milliseconds, lookup("システム時間ミリ秒").?);
     try std.testing.expectEqual(Command.datetime_today, lookup("今日").?);

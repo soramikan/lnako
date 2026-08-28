@@ -17560,14 +17560,15 @@
       "status": "native",
       "tests": [
         "plugin-node-http-callbacks",
-        "plugin-node-http-onerror"
+        "plugin-node-http-onerror",
+        "native-node-http-onerror-set"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+      "reason": "公式7経路のAJAX失敗時設定差分テストに成功"
     },
     {
       "id": "command-0767",
