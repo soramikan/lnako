@@ -328,6 +328,7 @@ pub const Interpreter = struct {
     current_source_path: []const u8 = "",
     debug_enabled: bool = false,
     system_initialized: bool = false,
+    external_root_provider: bool = false,
     dispatch_trace: DispatchTrace = .{},
     dispatch_route_stack: [64][]const u8 = undefined,
     dispatch_route_depth: usize = 0,
@@ -338,6 +339,7 @@ pub const Interpreter = struct {
     }
 
     pub fn deinit(self: *Interpreter) void {
+        self.deactivateExternalRuntime();
         self.dispatch_trace.finish();
         // Native plugins may retain host handles and stop worker threads from
         // deinitialize, so tear them down while all interpreter services exist.
@@ -417,6 +419,47 @@ pub const Interpreter = struct {
         try self.initializeSystem();
         if (prepare) |hook| try hook(context orelse return error.MissingDynamicPreparationContext, self);
         return self.executeDynamicValue(try self.runtime.stringUtf8(source));
+    }
+
+    /// Keeps the interpreter's GC roots active while an embedding runtime
+    /// invokes plugin commands outside a normal `run`/`runTests` call.  AOT
+    /// uses this boundary for the native-plugin bridge so plugin-owned values
+    /// and asynchronous promises remain visible to the embedded runtime GC.
+    pub fn activateExternalRuntime(self: *Interpreter) !void {
+        const newly_registered = !self.external_root_provider;
+        if (newly_registered) {
+            try self.runtime.registerRootProvider(.{ .context = self, .traceFn = traceRoots });
+            self.external_root_provider = true;
+        }
+        self.initializeSystem() catch |failure| {
+            if (newly_registered) {
+                self.runtime.unregisterRootProvider(self);
+                self.external_root_provider = false;
+            }
+            return failure;
+        };
+    }
+
+    pub fn deactivateExternalRuntime(self: *Interpreter) void {
+        if (!self.external_root_provider) return;
+        self.runtime.unregisterRootProvider(self);
+        self.external_root_provider = false;
+    }
+
+    /// Invokes the ordinary interpreter dispatch table while the caller owns
+    /// the external-runtime root provider.  This includes `plugin_native`
+    /// and the same host callbacks used by `lnako run`.
+    pub fn callExternalCommand(self: *Interpreter, name: []const u8, arguments: []const Value) !Value {
+        try self.activateExternalRuntime();
+        return self.callBuiltin(name, arguments, null);
+    }
+
+    /// Polls native-plugin asynchronous completions without draining the
+    /// interpreter's own promise queue.  The AOT runtime mirrors the settled
+    /// promise into its native promise queue at the next event boundary.
+    pub fn pollExternalPlugins(self: *Interpreter) !bool {
+        try self.activateExternalRuntime();
+        return plugin_native.poll(self.runtime, &self.native_plugin_state);
     }
 
     fn runEntries(self: *Interpreter) !Value {

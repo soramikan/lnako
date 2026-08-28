@@ -62,7 +62,8 @@ catalog ID単位で別に扱います。これらの分類・台帳・fixture関
 `compat/v3.7.24/summary.json`、`implemented.json`、`evidence.json`を正本とし、現行の実行証拠は
 `verified` 0件、`trace-confirmed-unattested` 4件、`unverified` 523件です。分類やfixtureの存在は、全entryのAOT実行証明を意味しません。
 外部ネイティブ拡張向けには、Cの公開ヘッダ、opaque値、sync・async・pure属性、Promise、host callbackを持つ
-`lnako_plugin_v1` ABIを実装しています。
+`lnako_plugin_v1` ABIを実装しています。`lnako run`とLLVM AOT `-O0`〜`-O3`の両方が同じloaderを使い、
+AOTではJavaScriptを使わず埋め込みZig Interpreterでhost callbackとPromiseを橋渡しします。
 
 ```sh
 zig build run -- check program.nako3

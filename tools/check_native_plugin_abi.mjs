@@ -91,12 +91,23 @@ native failure
     throw new Error(`非同期workerの終了順序が不正です: status=${teardown.status} stderr=${teardown.stderr}`);
   }
 
-  const output = resolve(temporary, process.platform === "win32" ? "native-aot.exe" : "native-aot");
-  const aot = spawnSync(executable, ["build", source, "-o", output], { cwd: root, encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
-  if (aot.status !== 2 || !aot.stderr.includes("LLVM AOTランタイム")) {
-    throw new Error(`未対応のネイティブABI AOTを明示的に拒否しませんでした: status=${aot.status} stderr=${aot.stderr}`);
+  for (const optimization of ["O0", "O1", "O2", "O3"]) {
+    const output = resolve(temporary, `native-aot-${optimization}${process.platform === "win32" ? ".exe" : ""}`);
+    const aot = spawnSync(executable, ["build", source, "-o", output, `-${optimization}`], {
+      cwd: root,
+      encoding: "utf8",
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    if (aot.status !== 0) {
+      throw new Error(`ネイティブプラグインABI AOT ${optimization}のビルドに失敗しました: status=${aot.status} stderr=${aot.stderr}`);
+    }
+    const native = spawnSync(output, [], { cwd: root, encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
+    const nativeStdout = native.stdout.replaceAll("\r\n", "\n");
+    if (native.status !== 0 || nativeStdout !== expected) {
+      throw new Error(`ネイティブプラグインABI AOT ${optimization}の実行結果が不正です: status=${native.status} stdout=${JSON.stringify(nativeStdout)} stderr=${native.stderr}`);
+    }
   }
-  console.log("ネイティブプラグインABI: 8命令・opaque値・ホスト呼出・Promise・失敗境界成功");
+  console.log("ネイティブプラグインABI: 8命令・opaque値・ホスト呼出・Promise・失敗境界・AOT O0〜O3成功");
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }

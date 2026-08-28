@@ -66,8 +66,11 @@ ABI不一致、エントリ欠落、ロード失敗、引数数不一致はlnako
 ネイティブプラグインはlnakoプロセスと同じ権限で動作します。署名・ハッシュ・配布元を確認できない
 ライブラリを取り込まないでください。クラッシュやメモリ破壊を隔離するsandbox ABIではありません。
 
-現在、動的ABIはIR実行器を使う`lnako run`と`lnako test`へ接続済みです。LLVM AOT生成物からの動的ABI呼び出しは
-LLVMランタイム統合の完了まで未対応で、暗黙に別実装へ置き換えません。
+動的ABIはIR実行器を使う`lnako run`と`lnako test`に加え、LLVM AOT生成物からも同じ`lnako_plugin_v1`
+ローダーへ接続しています。AOTの生成`main`は意味解析で解決した絶対plugin pathをランタイムへ登録し、
+最初のplugin命令時に遅延ロードします。AOT側のhost callbackは通常のZig Interpreterを永続的に埋め込んで
+実行し、関数値はAOT callbackへ、PromiseはAOTのFIFOイベントドレインへ橋渡しします。値の変換はUTF-16、
+BigInt、Buffer、配列、辞書を含むAOT heap間のコピーで行い、通常モードへJavaScript runtimeを持ち込みません。
 `lnako check`は静的検査中に任意のネイティブ初期化コードを実行せず、ライブラリの存在・ABIは`run` / `test`で
 検証します。
 
@@ -82,3 +85,6 @@ zig build native-plugin-fixture
 node tools/check_native_plugin_abi.mjs
 node tools/check_native_plugin_abi.mjs --release-safe
 ```
+
+fixtureはInterpreterとAOT `-O0` / `-O1` / `-O2` / `-O3`の各実行で、8命令、opaque値、hostの標準命令・
+関数再入、同期値、別スレッドPromise、即時Promise、拒否理由、GCルートを同じ期待出力へ照合します。

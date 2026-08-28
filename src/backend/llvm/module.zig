@@ -248,7 +248,7 @@ pub fn findUnsupported(program: ir.Program) ?UnsupportedFeature {
                 .unary => std.mem.eql(u8, instruction.operator, "!") or std.mem.eql(u8, instruction.operator, "not") or
                     std.mem.eql(u8, instruction.operator, "+") or std.mem.eql(u8, instruction.operator, "-"),
                 .call => isDisplayCall(instruction.name) or aot_builtin.lookup(instruction.name) != null or validDirectCallee(program, instruction) or lookupFunction(program, instruction.name) != null or
-                    isDynamicNamedCall(function, instruction.name),
+                    isDynamicNamedCall(function, instruction.name) or isNativePluginCall(program, function, instruction),
                 .call_value => instruction.operands.len > 0,
                 .make_closure => closureSupported(program, function, instruction.name),
                 .iterator_begin => iteratorSourceSupported(function, instruction),
@@ -303,6 +303,7 @@ const Emitter = struct {
     strings: std.ArrayList(StringConstant) = .empty,
     debug_paths: std.ArrayList(DebugPathConstant) = .empty,
     system_strings: std.ArrayList(SystemStringConstant) = .empty,
+    native_plugin_names: std.ArrayList([]const u8) = .empty,
     system_arrays: std.ArrayList(usize) = .empty,
     system_dictionaries: std.ArrayList(usize) = .empty,
     system_era_data: std.ArrayList(usize) = .empty,
@@ -317,6 +318,7 @@ const Emitter = struct {
         self.debug_paths.deinit(self.allocator);
         for (self.system_strings.items) |constant| self.allocator.free(constant.units);
         self.system_strings.deinit(self.allocator);
+        self.native_plugin_names.deinit(self.allocator);
         self.system_arrays.deinit(self.allocator);
         self.system_dictionaries.deinit(self.allocator);
         self.system_era_data.deinit(self.allocator);
@@ -403,6 +405,8 @@ const Emitter = struct {
                 "declare void @lnako_aot_hatena_execute(ptr, ptr, i64, ptr, i64, ptr, i64)\n" ++
                 "declare void @lnako_aot_dynamic_global_register(ptr, i64, ptr)\n" ++
                 "declare void @lnako_aot_dynamic_call(ptr, ptr, i64, i16, i64)\n" ++
+                "declare void @lnako_aot_native_plugin_register(ptr, i64)\n" ++
+                "declare void @lnako_aot_native_plugin_call(ptr, ptr, i64, ptr, i64, i64)\n" ++
                 "declare i64 @lnako_aot_dispatch_display_begin(i64)\n" ++
                 "declare i64 @lnako_aot_dispatch_display_begin_with_epoch(i64, ptr)\n" ++
                 "declare void @lnako_aot_dispatch_result(i64, i64, i64)\n" ++
@@ -436,6 +440,33 @@ const Emitter = struct {
             }
         };
         if (self.hasDynamicBuiltin() and self.globals.items.len > 0) try writer.writeByte('\n');
+        for (self.native_plugin_names.items, 0..) |name, index| {
+            try writer.print("@lnako.native.plugin.name.{d} = private unnamed_addr constant [{d} x i8] ", .{ index, name.len });
+            if (name.len == 0) {
+                try writer.writeAll("zeroinitializer\n");
+            } else {
+                try writer.writeByte('[');
+                for (name, 0..) |byte, byte_index| {
+                    if (byte_index > 0) try writer.writeAll(", ");
+                    try writer.print("i8 {d}", .{byte});
+                }
+                try writer.writeAll("]\n");
+            }
+        }
+        for (self.program.native_plugin_paths, 0..) |path, index| {
+            try writer.print("@lnako.native.plugin.path.{d} = private unnamed_addr constant [{d} x i8] ", .{ index, path.len });
+            if (path.len == 0) {
+                try writer.writeAll("zeroinitializer\n");
+            } else {
+                try writer.writeByte('[');
+                for (path, 0..) |byte, byte_index| {
+                    if (byte_index > 0) try writer.writeAll(", ");
+                    try writer.print("i8 {d}", .{byte});
+                }
+                try writer.writeAll("]\n");
+            }
+        }
+        if (self.native_plugin_names.items.len > 0 or self.program.native_plugin_paths.len > 0) try writer.writeByte('\n');
         for (self.strings.items) |constant| {
             try writer.print("@lnako.string.{d} = private unnamed_addr constant [{d} x i16] ", .{ constant.index, constant.units.len });
             if (constant.units.len == 0) {
@@ -549,6 +580,9 @@ const Emitter = struct {
                 try self.globals.append(self.allocator, "エラーメッセージ");
             }
             if (instruction.opcode == .call and instruction.direct_callee == null) {
+                if (isNativePluginCall(self.program, function, instruction) and self.nativePluginNameIndex(instruction.name) == null) {
+                    try self.native_plugin_names.append(self.allocator, instruction.name);
+                }
                 if (instruction.is_builtin_call and requiresDisplayLog(instruction.name) and self.globalIndex("表示ログ") == null) {
                     try self.globals.append(self.allocator, "表示ログ");
                 }
@@ -1192,7 +1226,11 @@ const Emitter = struct {
         else
             self.findFunction(instruction.name);
         if (callee == null) {
-            try self.writeDynamicCall(function, locals, instruction, .{ .name = instruction.name }, instruction.operands, scope, aggregate_count);
+            if (isNativePluginCall(self.program, function, instruction)) {
+                try self.writeNativePluginCall(function, instruction, scope, aggregate_count);
+            } else {
+                try self.writeDynamicCall(function, locals, instruction, .{ .name = instruction.name }, instruction.operands, scope, aggregate_count);
+            }
             try self.writeCallResult(result, instruction.span, scope);
             return;
         }
@@ -1672,6 +1710,29 @@ const Emitter = struct {
         try self.debugSuffix(instruction.span, scope);
     }
 
+    fn writeNativePluginCall(self: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
+        const result = instruction.result orelse return error.MissingInstructionResult;
+        const name_index = self.nativePluginNameIndex(instruction.name) orelse return error.MissingNativePluginName;
+        const site_id = instruction.site_id orelse 0;
+        if (instruction.operands.len > aggregate_count) return error.InvalidCallScratch;
+        for (instruction.operands, 0..) |argument, index| {
+            try self.output.writer.print("  %native-plugin.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+            try self.debugSuffix(instruction.span, scope);
+            try self.output.writer.writeAll("  store %lnako.Value ");
+            try self.writeValueRef(function, argument);
+            try self.output.writer.print(", ptr %native-plugin.{d}.slot.{d}", .{ result, index });
+            try self.debugSuffix(instruction.span, scope);
+        }
+        try self.output.writer.print("  call void @lnako_aot_native_plugin_call(ptr %root.slot.{d}, ptr ", .{result});
+        if (instruction.operands.len > 0) {
+            try self.output.writer.print("%native-plugin.{d}.slot.0", .{result});
+        } else try self.output.writer.writeAll("null");
+        try self.output.writer.print(", i64 {d}, ptr @lnako.native.plugin.name.{d}, i64 {d}, i64 {d})", .{ instruction.operands.len, name_index, instruction.name.len, site_id });
+        try self.debugSuffix(instruction.span, scope);
+        try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+        try self.debugSuffix(instruction.span, scope);
+    }
+
     fn writeMakeClosure(self: *Emitter, caller: ir.Function, locals: []const []const u8, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
         const result = instruction.result orelse return error.MissingInstructionResult;
         const function = lookupFunction(self.program, instruction.name) orelse return error.UnknownClosureFunction;
@@ -1773,6 +1834,9 @@ const Emitter = struct {
         const scope = 4 + self.program.functions.len;
         try self.output.writer.print("define i32 @main(i32 %argc, ptr %argv) !dbg !{d} {{\nentry:\n", .{scope});
         try self.output.writer.writeAll("  %runtime.status = call i32 @lnako_aot_runtime_init()\n");
+        for (self.program.native_plugin_paths, 0..) |path, index| {
+            try self.output.writer.print("  call void @lnako_aot_native_plugin_register(ptr @lnako.native.plugin.path.{d}, i64 {d})\n", .{ index, path.len });
+        }
         for (self.globals.items, 0..) |_, global_index| {
             try self.output.writer.print("  %global.root.frame.{d} = alloca %lnako.RootFrame\n", .{global_index});
             try self.output.writer.print("  call void @lnako_aot_push_roots(ptr %global.root.frame.{d}, ptr @lnako.global.{d}, i64 1)\n", .{ global_index, global_index });
@@ -1978,6 +2042,11 @@ const Emitter = struct {
         return nameIndex(self.globals.items, name);
     }
 
+    fn nativePluginNameIndex(self: Emitter, name: []const u8) ?usize {
+        for (self.native_plugin_names.items, 0..) |candidate, index| if (std.mem.eql(u8, candidate, name)) return index;
+        return null;
+    }
+
     fn hasBuiltinCall(self: Emitter, command: aot_builtin.Command) bool {
         for (self.program.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
             if (instruction.opcode != .call or instruction.direct_callee != null or !instruction.is_builtin_call) continue;
@@ -2053,6 +2122,16 @@ fn validDirectCallee(program: ir.Program, instruction: ir.Instruction) bool {
 
 fn isDynamicNamedCall(function: ir.Function, name: []const u8) bool {
     return isQualifiedGlobal(name) or hasLocalName(function, name);
+}
+
+fn isNativePluginCall(program: ir.Program, function: ir.Function, instruction: ir.Instruction) bool {
+    return program.native_plugin_paths.len > 0 and
+        instruction.opcode == .call and
+        instruction.direct_callee == null and
+        !instruction.is_builtin_call and
+        instruction.name.len > 0 and
+        lookupFunction(program, instruction.name) == null and
+        !isDynamicNamedCall(function, instruction.name);
 }
 
 fn hasLocalName(function: ir.Function, name: []const u8) bool {
@@ -2376,6 +2455,52 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_debug_breakpoint_wait_call(ptr ") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.debug.path.0") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_debug_display") != null);
+}
+
+test "ネイティブプラグイン命令をAOT ABIへ出力する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "外部追加(1)を表示\n", "native-plugin.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyzeModules(std.testing.allocator, &.{.{
+        .name = "native-plugin",
+        .path = "native-plugin.nako3",
+        .root = parsed.root.?,
+        .allows_dynamic_commands = true,
+    }});
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lower(std.testing.allocator, &.{parsed.root.?}, &.{"native-plugin"}, &.{"native-plugin.nako3"}, analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    const path_allocator = program.arena.allocator();
+    const paths = try path_allocator.alloc([]const u8, 1);
+    paths[0] = try path_allocator.dupe(u8, "/tmp/liblnako_test_plugin.dylib");
+    program.native_plugin_paths = paths;
+
+    var native_call_found = false;
+    for (program.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
+        if (instruction.opcode != .call or !std.mem.eql(u8, instruction.name, "外部追加")) continue;
+        native_call_found = true;
+        try std.testing.expect(!instruction.is_builtin_call);
+        try std.testing.expect(instruction.direct_callee == null);
+        try std.testing.expect(instruction.site_id == null);
+    };
+    try std.testing.expect(native_call_found);
+    try std.testing.expect(findUnsupported(program) == null);
+
+    var module = try generate(std.testing.allocator, program, "native-plugin.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_native_plugin_register(ptr, i64)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_native_plugin_call(ptr, ptr, i64, ptr, i64, i64)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.native.plugin.name.0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.native.plugin.path.0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_native_plugin_register(ptr @lnako.native.plugin.path.0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_native_plugin_call(ptr %root.slot.") != null);
 }
 
 test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {

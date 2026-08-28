@@ -637,6 +637,18 @@ const DynamicGlobal = struct {
     slot: ?*Value = null,
 };
 
+const DynamicPromiseBridge = struct {
+    state: *DynamicInterpreterState,
+    promise: *dynamic_value.Promise,
+    aot_promise: Value,
+};
+
+const AotFunctionBridge = struct {
+    owner: *Runtime,
+    state: *DynamicInterpreterState,
+    value: Value,
+};
+
 const NamespaceFrame = struct {
     namespace: Value,
     plugin_name: Value,
@@ -699,8 +711,11 @@ const Runtime = struct {
     process_completion_sequence: std.atomic.Value(u64) = .init(1),
     process_io: std.Io.Threaded = .init_single_threaded,
     process_io_initialized: bool = false,
+    native_plugin_paths: std.ArrayList([]u8) = .empty,
     dynamic_globals: std.ArrayList(DynamicGlobal) = .empty,
     dynamic_state: ?*DynamicInterpreterState = null,
+    dynamic_promise_bridges: std.ArrayList(*DynamicPromiseBridge) = .empty,
+    dynamic_function_bridges: std.ArrayList(*AotFunctionBridge) = .empty,
 
     fn deinit(self: *Runtime) void {
         self.dispatch_trace.deinit();
@@ -726,6 +741,12 @@ const Runtime = struct {
             state.deinit();
             self.allocator.destroy(state);
         }
+        for (self.dynamic_promise_bridges.items) |bridge| self.allocator.destroy(bridge);
+        self.dynamic_promise_bridges.deinit(self.allocator);
+        for (self.dynamic_function_bridges.items) |bridge| self.allocator.destroy(bridge);
+        self.dynamic_function_bridges.deinit(self.allocator);
+        for (self.native_plugin_paths.items) |path| self.allocator.free(path);
+        self.native_plugin_paths.deinit(self.allocator);
         for (self.dynamic_globals.items) |entry| self.allocator.free(entry.name);
         self.dynamic_globals.deinit(self.allocator);
         self.csv_state.deinit(self.allocator);
@@ -944,6 +965,8 @@ const Runtime = struct {
         if (self.has_pending_exception) self.markValue(self.pending_exception);
         self.markValue(self.system_context);
         for (self.dynamic_globals.items) |entry| self.markValue(entry.value);
+        for (self.dynamic_promise_bridges.items) |bridge| self.markValue(bridge.aot_promise);
+        for (self.dynamic_function_bridges.items) |bridge| self.markValue(bridge.value);
         self.markValue(self.caniuse_browsers);
         self.markValue(self.caniuse_agents);
         self.markValue(self.era_data);
@@ -1327,11 +1350,22 @@ const DynamicInterpreterState = struct {
         state.allocator = allocator;
         state.owner = owner;
         state.value_runtime = dynamic_value.Runtime.init(allocator);
+        var value_runtime_initialized = true;
+        errdefer if (value_runtime_initialized) state.value_runtime.deinit();
+        try state.value_runtime.registerRootProvider(.{ .context = state, .traceFn = traceDynamicBridges });
+        var dynamic_bridge_provider_initialized = true;
+        errdefer if (dynamic_bridge_provider_initialized) state.value_runtime.unregisterRootProvider(state);
         state.program = .{
             .arena = std.heap.ArenaAllocator.init(allocator),
             .functions = &.{},
             .module_entries = &.{},
         };
+        var program_initialized = true;
+        errdefer if (program_initialized) state.program.deinit();
+        const path_allocator = state.program.arena.allocator();
+        const paths = try path_allocator.alloc([]const u8, owner.native_plugin_paths.items.len);
+        for (owner.native_plugin_paths.items, paths) |path, *copy| copy.* = try path_allocator.dupe(u8, path);
+        state.program.native_plugin_paths = paths;
         state.host_context = .{ .owner = owner };
         state.interpreter = dynamic_interpreter.Interpreter.init(
             allocator,
@@ -1339,16 +1373,32 @@ const DynamicInterpreterState = struct {
             state.program,
             state.host_context.host(),
         );
+        var interpreter_initialized = true;
+        errdefer if (interpreter_initialized) state.interpreter.deinit();
+        try state.interpreter.activateExternalRuntime();
+        interpreter_initialized = false;
+        dynamic_bridge_provider_initialized = false;
+        program_initialized = false;
+        value_runtime_initialized = false;
         return state;
     }
 
     fn deinit(self: *@This()) void {
+        self.interpreter.deactivateExternalRuntime();
         self.interpreter.deinit();
+        self.value_runtime.unregisterRootProvider(self);
         self.program.deinit();
         self.value_runtime.deinit();
         self.* = undefined;
     }
 };
+
+fn traceDynamicBridges(context: *anyopaque, runtime: *dynamic_value.Runtime) !void {
+    const state: *DynamicInterpreterState = @ptrCast(@alignCast(context));
+    for (state.owner.dynamic_promise_bridges.items) |bridge| {
+        if (bridge.state == state) try runtime.traceExternal(.{ .promise = bridge.promise });
+    }
+}
 
 fn dynamicGlobal(runtime: *Runtime, name: []const u8) ?*DynamicGlobal {
     for (runtime.dynamic_globals.items) |*entry| if (std.mem.eql(u8, entry.name, name)) return entry;
@@ -1364,6 +1414,84 @@ fn upsertDynamicGlobal(runtime: *Runtime, name: []const u8, value: Value) !void 
     const owned_name = try runtime.allocator.dupe(u8, name);
     errdefer runtime.allocator.free(owned_name);
     try runtime.dynamic_globals.append(runtime.allocator, .{ .name = owned_name, .value = value });
+}
+
+fn removeAotFunctionBridge(owner: *Runtime, bridge: *AotFunctionBridge) void {
+    for (owner.dynamic_function_bridges.items, 0..) |candidate, index| {
+        if (candidate != bridge) continue;
+        _ = owner.dynamic_function_bridges.swapRemove(index);
+        owner.allocator.destroy(bridge);
+        return;
+    }
+}
+
+fn releaseAotFunctionBridge(context: *anyopaque, handle: *anyopaque) void {
+    const owner: *Runtime = @ptrCast(@alignCast(context));
+    const bridge: *AotFunctionBridge = @ptrCast(@alignCast(handle));
+    removeAotFunctionBridge(owner, bridge);
+}
+
+fn callAotFunctionBridge(
+    context: *anyopaque,
+    handle: *anyopaque,
+    _: *dynamic_value.Runtime,
+    arguments: []const dynamic_value.Value,
+) anyerror!dynamic_value.Value {
+    const owner: *Runtime = @ptrCast(@alignCast(context));
+    const bridge: *AotFunctionBridge = @ptrCast(@alignCast(handle));
+    const aot_arguments = try owner.allocator.alloc(Value, arguments.len);
+    defer owner.allocator.free(aot_arguments);
+    @memset(aot_arguments, .{});
+    var aot_roots = RootFrame{};
+    owner.pushRoots(&aot_roots, aot_arguments.ptr, aot_arguments.len);
+    defer owner.popRoots(&aot_roots);
+    for (arguments, aot_arguments) |argument, *converted| converted.* = try dynamicToAotValue(bridge.state, argument);
+    const result = try invokeAotCallback(owner, bridge.value, if (aot_arguments.len > 0) aot_arguments.ptr else null, aot_arguments.len);
+    return aotToDynamicValue(bridge.state, result);
+}
+
+fn aotFunctionToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror!dynamic_value.Value {
+    const object = value.object() orelse return error.DynamicValueUnsupported;
+    if (object.payload != .function) return error.DynamicValueUnsupported;
+    const function = object.payload.function;
+    var dynamic_name = try state.value_runtime.stringUtf8(function.name);
+    var name_roots = state.value_runtime.rootFrame();
+    defer name_roots.deinit();
+    try name_roots.protect(&dynamic_name);
+    const bridge = try state.owner.allocator.create(AotFunctionBridge);
+    bridge.* = .{ .owner = state.owner, .state = state, .value = value };
+    errdefer state.owner.allocator.destroy(bridge);
+    try state.owner.dynamic_function_bridges.append(state.owner.allocator, bridge);
+    errdefer removeAotFunctionBridge(state.owner, bridge);
+    return state.value_runtime.createExternalFunction(
+        dynamic_name.string,
+        function.arity,
+        .{
+            .binding = .{
+                .context = @ptrCast(state.owner),
+                .handle = @ptrCast(bridge),
+                .releaseFn = releaseAotFunctionBridge,
+            },
+            .callFn = callAotFunctionBridge,
+        },
+    );
+}
+
+fn dynamicPromiseToAotValue(state: *DynamicInterpreterState, promise: *dynamic_value.Promise) !Value {
+    for (state.owner.dynamic_promise_bridges.items) |bridge| {
+        if (bridge.state == state and bridge.promise == promise) return bridge.aot_promise;
+    }
+
+    var aot_promise = try createAotPromise(state.owner);
+    var roots = RootFrame{};
+    state.owner.pushRoots(&roots, @ptrCast(&aot_promise), 1);
+    defer state.owner.popRoots(&roots);
+
+    const bridge = try state.owner.allocator.create(DynamicPromiseBridge);
+    bridge.* = .{ .state = state, .promise = promise, .aot_promise = aot_promise };
+    errdefer state.owner.allocator.destroy(bridge);
+    try state.owner.dynamic_promise_bridges.append(state.owner.allocator, bridge);
+    return aot_promise;
 }
 
 fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror!dynamic_value.Value {
@@ -1411,7 +1539,8 @@ fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror!dyn
             }
             return result;
         },
-        .function, .promise, .iterator, .binding_cell => return error.DynamicValueUnsupported,
+        .function => return aotFunctionToDynamicValue(state, value),
+        .promise, .iterator, .binding_cell => return error.DynamicValueUnsupported,
     }
 }
 
@@ -1459,7 +1588,8 @@ fn dynamicToAotValue(state: *DynamicInterpreterState, value: dynamic_value.Value
             }
             break :blk result;
         },
-        .function, .promise => error.DynamicValueUnsupported,
+        .function => error.DynamicValueUnsupported,
+        .promise => |promise| dynamicPromiseToAotValue(state, promise),
     };
 }
 
@@ -1499,13 +1629,33 @@ fn syncDynamicGlobals(state: *DynamicInterpreterState) anyerror!void {
     }
 }
 
-fn dynamicBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
-    if (arguments.len == 0) return .{};
-    const state = if (runtime.dynamic_state) |existing| existing else blk: {
+fn dynamicInterpreterState(runtime: *Runtime) !*DynamicInterpreterState {
+    return if (runtime.dynamic_state) |existing| existing else blk: {
         const created = try DynamicInterpreterState.init(runtime.allocator, runtime);
         runtime.dynamic_state = created;
         break :blk created;
     };
+}
+
+fn nativePluginBuiltin(runtime: *Runtime, name: []const u8, arguments: []const Value) !Value {
+    const state = try dynamicInterpreterState(runtime);
+    const dynamic_arguments = try runtime.allocator.alloc(dynamic_value.Value, arguments.len);
+    defer runtime.allocator.free(dynamic_arguments);
+    @memset(dynamic_arguments, .undefined);
+    var roots = state.value_runtime.rootFrame();
+    defer roots.deinit();
+    for (arguments, dynamic_arguments) |argument, *converted| {
+        converted.* = try aotToDynamicValue(state, argument);
+        try roots.protect(converted);
+    }
+    var result = try state.interpreter.callExternalCommand(name, dynamic_arguments);
+    try roots.protect(&result);
+    return dynamicToAotValue(state, result);
+}
+
+fn dynamicBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    if (arguments.len == 0) return .{};
+    const state = try dynamicInterpreterState(runtime);
     const source = try valueUtf8LossyAlloc(runtime, arguments[arguments.len - 1]);
     defer runtime.allocator.free(source);
     state.reset_display_log = true;
@@ -4032,6 +4182,35 @@ fn drainAotPromiseTasks(runtime: *Runtime) !void {
     }
 }
 
+fn drainAotNativePluginTasks(runtime: *Runtime) !bool {
+    const state = runtime.dynamic_state orelse return false;
+    const native_pending = try state.interpreter.pollExternalPlugins();
+    var pending_bridge = false;
+    var index: usize = 0;
+    while (index < runtime.dynamic_promise_bridges.items.len) {
+        const bridge = runtime.dynamic_promise_bridges.items[index];
+        if (bridge.state != state or bridge.promise.state == .pending) {
+            pending_bridge = pending_bridge or bridge.state == state;
+            index += 1;
+            continue;
+        }
+
+        var rooted = [_]Value{ bridge.aot_promise, .{} };
+        var frame = RootFrame{};
+        runtime.pushRoots(&frame, &rooted, rooted.len);
+        defer runtime.popRoots(&frame);
+        rooted[1] = try dynamicToAotValue(state, bridge.promise.result);
+        if (bridge.promise.state == .fulfilled) {
+            try resolveAotPromise(runtime, rooted[0].object().?, rooted[1]);
+        } else {
+            try rejectAotPromise(runtime, rooted[0].object().?, rooted[1]);
+        }
+        _ = runtime.dynamic_promise_bridges.orderedRemove(index);
+        runtime.allocator.destroy(bridge);
+    }
+    return native_pending or pending_bridge;
+}
+
 fn drainAotClientHttpTasks(runtime: *Runtime) !void {
     while (runtime.client_http_tasks.items.len > 0) {
         try countAotEvent(runtime);
@@ -4099,12 +4278,13 @@ fn drainAotEvents(runtime: *Runtime) !void {
         try drainAotFileTasks(runtime);
         try drainAotClientHttpTasks(runtime);
         try drainAotArchiveTasks(runtime);
+        const native_plugins_pending = try drainAotNativePluginTasks(runtime);
         try drainAotPromiseTasks(runtime);
         if (earliestAotTimerIndex(runtime)) |index| {
             try executeAotTimer(runtime, index);
             continue;
         }
-        if (runtime.process_tasks.items.len > 0 or runtime.file_tasks.items.len > 0 or runtime.client_http_tasks.items.len > 0) {
+        if (runtime.process_tasks.items.len > 0 or runtime.file_tasks.items.len > 0 or runtime.client_http_tasks.items.len > 0 or native_plugins_pending) {
             try std.Io.sleep(
                 std.Io.Threaded.global_single_threaded.io(),
                 std.Io.Duration.fromMilliseconds(1),
@@ -4128,6 +4308,7 @@ fn waitAotMilliseconds(runtime: *Runtime, milliseconds: u64) !void {
         try drainAotFileTasks(runtime);
         try drainAotClientHttpTasks(runtime);
         try drainAotArchiveTasks(runtime);
+        _ = try drainAotNativePluginTasks(runtime);
         try drainAotPromiseTasks(runtime);
         const index = earliestAotTimerIndex(runtime) orelse break;
         if (runtime.timers.items[index].due_milliseconds > target) break;
@@ -4137,11 +4318,13 @@ fn waitAotMilliseconds(runtime: *Runtime, milliseconds: u64) !void {
     try drainAotFileTasks(runtime);
     try drainAotClientHttpTasks(runtime);
     try drainAotArchiveTasks(runtime);
+    _ = try drainAotNativePluginTasks(runtime);
     try drainAotPromiseTasks(runtime);
     try sleepAotUntil(runtime, target);
     try drainAotProcessTasks(runtime);
     try drainAotFileTasks(runtime);
     try drainAotClientHttpTasks(runtime);
+    _ = try drainAotNativePluginTasks(runtime);
 }
 
 fn scheduleAotTimer(runtime: *Runtime, arguments: []const Value, repeating: bool, target: ?*Value) !Value {
@@ -4490,6 +4673,7 @@ fn awaitAotPromise(runtime: *Runtime, value: Value) !Value {
     runtime.pushRoots(&frame, @ptrCast(&rooted), 1);
     defer runtime.popRoots(&frame);
     while (promise.payload.promise.state == .pending) {
+        _ = try drainAotNativePluginTasks(runtime);
         try drainAotPromiseTasks(runtime);
         if (promise.payload.promise.state != .pending) break;
         if (earliestAotTimerIndex(runtime)) |index| {
@@ -4604,6 +4788,43 @@ test "AOT Promiseは解決・連鎖・失敗・束ねをマイクロタスクで
     try std.testing.expectEqual(@as(f64, 7), valueToNumber(bundled.object().?.payload.array.items[0]));
     try std.testing.expectEqual(@as(f64, 2), valueToNumber(bundled.object().?.payload.array.items[1]));
     try std.testing.expectEqual(@as(f64, 1), valueToNumber(bundled.object().?.payload.array.items[2]));
+}
+
+test "AOTネイティブABI橋渡しは関数とPromiseをAOT値へ変換する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    const active = &active_runtime.?;
+    const state = try DynamicInterpreterState.init(std.testing.allocator, active);
+    active.dynamic_state = state;
+
+    var dynamic_roots = state.value_runtime.rootFrame();
+    defer dynamic_roots.deinit();
+    var dynamic_promise = try state.value_runtime.createPromise();
+    try dynamic_roots.protect(&dynamic_promise);
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+
+    roots[0] = try dynamicPromiseToAotValue(state, dynamic_promise.promise);
+    try state.value_runtime.resolvePromise(dynamic_promise.promise, .{ .number = 42 });
+    _ = try drainAotNativePluginTasks(active);
+    try std.testing.expectEqual(AotPromiseState.fulfilled, roots[0].object().?.payload.promise.state);
+    try std.testing.expectEqual(@as(f64, 42), valueToNumber(roots[0].object().?.payload.promise.result));
+    try std.testing.expectEqual(@as(usize, 0), active.dynamic_promise_bridges.items.len);
+
+    roots[1] = try active.createNamedFunction(testAotFunction, 1, "main__native_bridge", &.{});
+    var dynamic_function = try aotToDynamicValue(state, roots[1]);
+    try dynamic_roots.protect(&dynamic_function);
+    const dynamic_result = try state.value_runtime.call(dynamic_function, &.{.{ .number = 7 }});
+    try std.testing.expectEqual(@as(f64, 7), dynamic_result.number);
+    _ = active.collect();
+    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[1].tag)));
 }
 
 fn stringArrayBuiltin(runtime: *Runtime, names: []const []const u8) !Value {
@@ -5591,6 +5812,32 @@ pub export fn lnako_aot_runtime_init() callconv(.c) c_int {
     return 0;
 }
 
+/// Registers one absolute native-plugin path embedded by the LLVM module.
+/// Loading is deferred until the first plugin command so AOT startup retains
+/// the same lazy behavior as the Interpreter while keeping the normal path
+/// free of JavaScript runtime code.
+pub export fn lnako_aot_native_plugin_register(path: ?[*]const u8, len: usize) callconv(.c) void {
+    const runtime = if (active_runtime) |*active| active else return;
+    const path_pointer = path orelse {
+        if (len != 0) runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    };
+    const path_slice = path_pointer[0..len];
+    if (path_slice.len == 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    for (runtime.native_plugin_paths.items) |candidate| if (std.mem.eql(u8, candidate, path_slice)) return;
+    const owned_path = runtime.allocator.dupe(u8, path_slice) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    runtime.native_plugin_paths.append(runtime.allocator, owned_path) catch |failure| {
+        runtime.allocator.free(owned_path);
+        runtime.setFailure(failure);
+    };
+}
+
 /// Registers a generated global with the embedded Zig interpreter used by
 /// `ナデシコ` and `ナデシコ続`. The pointer remains valid for the generated
 /// program lifetime and lets dynamic code observe and update ordinary AOT
@@ -5758,6 +6005,41 @@ pub export fn lnako_aot_dynamic_call(
     }
     const actual = if (arguments) |pointer| pointer[0..len] else &.{};
     out.* = dynamicBuiltin(runtime, command, actual) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    success = runtime.failure_epoch == start_epoch;
+}
+
+/// Invokes a named native-plugin command through the same `lnako_plugin_v1`
+/// ABI used by the Interpreter. The adapter owns a persistent ordinary Zig
+/// Interpreter for plugin host callbacks, while values and settled promises
+/// are copied into the AOT heap; no JavaScript compatibility runtime is used.
+pub export fn lnako_aot_native_plugin_call(
+    out: *Value,
+    arguments: ?[*]const Value,
+    len: usize,
+    name: ?[*]const u8,
+    name_len: usize,
+    site_id: u64,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    const name_pointer = name orelse {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    };
+    const command_name = name_pointer[0..name_len];
+    const call_id = runtime.dispatch_trace.begin(command_name, 0, "native-plugin", site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, 0, "native-plugin", site_id, success);
+    if (arguments == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+    out.* = nativePluginBuiltin(runtime, command_name, actual) catch |failure| {
         runtime.setFailure(failure);
         return;
     };

@@ -102,6 +102,9 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
   標準命令を同じ実行器上で再入呼び出しできる。
 - 非同期完了だけを別スレッドから許可し、atomicなtask境界を通してメインイベントループ上でPromiseを解決する。
   値生成・参照・再入呼び出しはランタイム所有スレッドに限定する。
+- LLVM AOTは生成mainで解決済みplugin pathを登録し、`lnako_aot_native_plugin_call`から同じloaderへ接続する。
+  host callbackの実行にはJavaScriptを使わず、埋め込みZig Interpreterをadapterとして使う。AOT関数値は
+  callback bridge、native PromiseはAOT Promiseとイベントドレインへ変換し、opaque値はAOT heapへコピーする。
 
 ## 動的な値
 
