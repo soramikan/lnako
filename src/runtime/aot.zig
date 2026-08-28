@@ -8,6 +8,7 @@ const unicode_case = @import("unicode_case");
 const number_mod = @import("number.zig");
 const string_mod = @import("string.zig");
 const system_constant = @import("system_constant.zig");
+const crypto = @import("../plugins/crypto.zig");
 const regexp = @import("../plugins/system/regexp.zig");
 const markup = @import("../plugins/markup.zig");
 const lexer = @import("../frontend/lexer.zig");
@@ -3493,7 +3494,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all and command != .namespace_pop and command != .timer_wait and command != .async_noop and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all and command != .namespace_pop and command != .timer_wait and command != .async_noop and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit and command != .node_hash_names) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -3728,6 +3729,12 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         .node_temporary_directory_create => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = nodeCreateTemporaryDirectoryBuiltin(runtime, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .node_hash_names => {
+            out.* = stringArrayBuiltin(runtime, &crypto.hash_names) catch |failure| {
                 runtime.setFailure(failure);
                 return;
             };
@@ -12849,6 +12856,25 @@ test "AOT実行時間計測は関数名と単調時計を使う" {
     try std.testing.expectEqual(@as(f64, 0), valueToNumber(roots[1]));
     roots[2] = try measureCallableBuiltin(&active_runtime.?, &.{roots[0]});
     try std.testing.expectEqual(@as(f64, 0), valueToNumber(roots[2]));
+}
+
+test "AOTハッシュ関数一覧取得は固定したNode互換名を配列で返す" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var result = Value{};
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, @ptrCast(&result), 1);
+    defer lnako_aot_pop_roots(&frame);
+
+    lnako_aot_builtin_call(&result, null, 0, @intFromEnum(aot_builtin.Command.node_hash_names));
+    try std.testing.expectEqual(crypto.hash_names.len, result.object().?.payload.array.items.len);
+    try expectUtf16String(&active_runtime.?, result.object().?.payload.array.items[0], crypto.hash_names[0]);
+    try expectUtf16String(&active_runtime.?, result.object().?.payload.array.items[crypto.hash_names.len - 1], crypto.hash_names[crypto.hash_names.len - 1]);
 }
 
 test "AOT表ソートは指定列を比較して同じ配列を安定ソートする" {

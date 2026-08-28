@@ -375,7 +375,7 @@ ABI値の所有権と非同期スレッド制約は[`NATIVE_PLUGIN_ABI.md`](NATI
 | `ハッシュ値計算` / `ランダム配列生成`のバイト列 | エンコーディングを省略したハッシュ値は`Buffer`だが、乱数は`Uint8Array`。前者のJSONは`{"type":"Buffer","data":[...]}`、後者は`{"0":値,...}`となる。暗黙文字列化も前者はUTF-8復号、後者は10進値のカンマ区切り | バイト列の種類を内部で保持し、添字・反復は共通化しつつ、JSONと文字列化は種類ごとに同じ規則を使う | `plugin-node-crypto` |
 | `ランダム配列生成`の個数 | `NaN`は0件、小数は0方向に切り捨てる。負数は`RangeError`、65,536件超は`crypto.getRandomValues`の`QuotaExceededError`になる | 0〜65,536件を許可し、同じ変換と拒否境界にする | `plugin-node-crypto` |
 | 暗号命令の実行時例外と公式CLI終了コード | 公式`cnako3`は乱数個数の`RangeError`などをエラー表示しても、呼び出し経路によってプロセス終了コードが0のままになる | `lnako`は実行時エラーを非0終了にする。差分テストでは、公式側だけはエラー表示も失敗分類として扱う | `plugin-node-crypto` |
-| `ハッシュ関数一覧取得` | Node 24がリンクするOpenSSLの`crypto.getHashes()`をそのまま返すため、利用可能な別名と順序はNode/OpenSSLのビルドに依存し得る | 正式3環境のNode 24オラクルで一覧を比較し、一覧中の全名称を5出力形式で検証する | `plugin-node-crypto` |
+| `ハッシュ関数一覧取得` | Node 24がリンクするOpenSSLの`crypto.getHashes()`をそのまま返すため、利用可能な別名と順序はNode/OpenSSLのビルドに依存し得る | Interpreterと純LLVM AOTは製品へNode/JSを組み込まず、Node 24/OpenSSLの正式fixtureで固定した52名称を同じ順序の配列へ変換する。ハッシュ値計算を含む全名称・5出力形式のInterpreter検証と、一覧のAOT 7経路差分は分離して記録する | `plugin-node-crypto`、`native-node-hash-names` |
 | `自分IPV6アドレス取得` | link-localアドレスも返すが、OSのscope名（`%en0`など）は戻り値に含めない | OS APIから得たscopeを除去し、公式のアドレス文字列と一致させる | `plugin-node-network-addresses` |
 | `自分IPアドレス取得` / `自分IPV6アドレス取得`の対象 | Nodeの`os.networkInterfaces()`はlibuv経由でUPかつRUNNINGのインターフェイスだけを列挙する。Linuxで停止中のDocker bridgeにIPが残っていても結果に入らない | POSIXの`getifaddrs`結果をUP/RUNNINGフラグで絞り、単にアドレスがあるだけの停止インターフェイスは除外する | `plugin-node-network-addresses` |
 | 簡易HTTPサーバの未登録URL | callbackにも静的パスにも一致しないURLでは404を送らず、接続を開いたままにする。静的パスに一致した後でファイルがなければ404を返す | 通常の404検証は静的パス内の不存在で行う。未登録URLの接続保留は専用回帰テストで扱う | `plugin-httpserver-all` |

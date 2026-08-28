@@ -777,5 +777,10 @@
     "id": "native-node-file-copy-default",
     "commands": ["ファイルコピーデフォルト動作"],
     "source": "ファイルコピーデフォルト動作を表示\nファイルコピーデフォルト動作=\"上書\"\nファイルコピーデフォルト動作を表示\nファイルコピーデフォルト動作=\"overwrite\"\nファイルコピーデフォルト動作を表示\n"
+  },
+  {
+    "id": "native-node-hash-names",
+    "commands": ["ハッシュ関数一覧取得"],
+    "source": "JSON変換(ハッシュ関数一覧取得())を表示\n"
   }
 ]
