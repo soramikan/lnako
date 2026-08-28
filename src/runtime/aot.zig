@@ -2921,6 +2921,19 @@ pub export fn lnako_aot_node_constants_init(
     if (runtime_name) |out| out.* = runtimeUtf8StringLossy(runtime, nodeBasename(first)) catch |failure| runtimeFailure(failure);
 }
 
+/// Initializes Node directory values that are exposed as globals when a
+/// program uses the shorthand form without parentheses.
+pub export fn lnako_aot_node_directory_constants_init(
+    desktop: ?*Value,
+    documents: ?*Value,
+    temporary: ?*Value,
+) callconv(.c) void {
+    const runtime = if (active_runtime) |*active| active else return;
+    if (desktop) |out| out.* = nodeDirectoryBuiltin(runtime, .node_desktop) catch |failure| runtimeFailure(failure);
+    if (documents) |out| out.* = nodeDirectoryBuiltin(runtime, .node_documents) catch |failure| runtimeFailure(failure);
+    if (temporary) |out| out.* = nodeDirectoryBuiltin(runtime, .node_temporary_directory) catch |failure| runtimeFailure(failure);
+}
+
 pub export fn lnako_aot_runtime_deinit() callconv(.c) void {
     if (active_runtime) |*runtime| runtime.deinit();
     active_runtime = null;
@@ -3449,7 +3462,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all and command != .namespace_pop and command != .timer_wait and command != .async_noop and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all and command != .namespace_pop and command != .timer_wait and command != .async_noop and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -3658,6 +3671,12 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         .node_file_exists, .node_folder_exists => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = nodeFileExistenceBuiltin(runtime, command, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .node_home_directory, .node_desktop, .node_documents, .node_temporary_directory => {
+            out.* = nodeDirectoryBuiltin(runtime, command) catch |failure| {
                 runtime.setFailure(failure);
                 return;
             };
@@ -6688,6 +6707,32 @@ fn nodeFileExistenceBuiltin(runtime: *Runtime, command: aot_builtin.Command, arg
     };
     const result = command == .node_file_exists or stat.kind == .directory;
     return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(result) };
+}
+
+fn nodeDirectoryBuiltin(runtime: *Runtime, command: aot_builtin.Command) !Value {
+    if (command == .node_temporary_directory) {
+        const fallback = if (builtin.os.tag == .windows) "." else "/tmp";
+        const raw = if (builtin.os.tag == .windows)
+            std.c.getenv("TEMP") orelse std.c.getenv("TMP") orelse fallback
+        else
+            std.c.getenv("TMPDIR") orelse fallback;
+        const value = std.mem.span(raw);
+        const trimmed = std.mem.trimEnd(u8, value, "/\\");
+        return runtimeUtf8StringLossy(runtime, if (trimmed.len == 0) value else trimmed);
+    }
+
+    const home_name = if (builtin.os.tag == .windows) "USERPROFILE" else "HOME";
+    const home = std.c.getenv(home_name) orelse return .{};
+    const home_path = std.mem.span(home);
+    if (command == .node_home_directory) return runtimeUtf8StringLossy(runtime, home_path);
+    const child = switch (command) {
+        .node_desktop => "Desktop",
+        .node_documents => "Documents",
+        else => return error.UnknownCommand,
+    };
+    const path = try std.fs.path.join(runtime.allocator, &.{ home_path, child });
+    defer runtime.allocator.free(path);
+    return runtimeUtf8StringLossy(runtime, path);
 }
 
 fn nodeEnvironmentValueBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
@@ -9736,6 +9781,7 @@ test "LLVM側の値ABIと同じ16バイト配置を保つ" {
 
 test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (?*Value, ?*Value, ?*Value, i32, ?*const anyopaque) callconv(.c) void, @TypeOf(&lnako_aot_node_constants_init));
+    try std.testing.expectEqual(*const fn (?*Value, ?*Value, ?*Value) callconv(.c) void, @TypeOf(&lnako_aot_node_directory_constants_init));
     try std.testing.expectEqual(*const fn (*Value, *anyopaque, ?[*]const Value, usize) callconv(.c) void, FunctionCallback);
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_array_new));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_index_get));
@@ -10536,6 +10582,40 @@ test "AOT Node存在判定はファイルとフォルダの存在を区別する
     try std.testing.expect(roots[0].payload != 0);
     try std.testing.expect(roots[1].payload != 0);
     try std.testing.expect(roots[2].payload == 0);
+}
+
+test "AOT Nodeの環境依存ディレクトリ命令はOSの環境値を使う" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    const home_name = if (builtin.os.tag == .windows) "USERPROFILE" else "HOME";
+    const home = std.c.getenv(home_name) orelse return error.HomeDirectoryUnavailable;
+    const home_path = std.mem.span(home);
+    roots[0] = try nodeDirectoryBuiltin(&runtime, .node_home_directory);
+    roots[1] = try nodeDirectoryBuiltin(&runtime, .node_desktop);
+    roots[2] = try nodeDirectoryBuiltin(&runtime, .node_documents);
+    roots[3] = try nodeDirectoryBuiltin(&runtime, .node_temporary_directory);
+    try expectUtf16String(&runtime, roots[0], home_path);
+
+    const desktop = try std.fs.path.join(runtime.allocator, &.{ home_path, "Desktop" });
+    defer runtime.allocator.free(desktop);
+    try expectUtf16String(&runtime, roots[1], desktop);
+    const documents = try std.fs.path.join(runtime.allocator, &.{ home_path, "Documents" });
+    defer runtime.allocator.free(documents);
+    try expectUtf16String(&runtime, roots[2], documents);
+
+    const fallback = if (builtin.os.tag == .windows) "." else "/tmp";
+    const raw = if (builtin.os.tag == .windows)
+        std.c.getenv("TEMP") orelse std.c.getenv("TMP") orelse fallback
+    else
+        std.c.getenv("TMPDIR") orelse fallback;
+    const temporary = std.mem.span(raw);
+    const trimmed = std.mem.trimEnd(u8, temporary, "/\\");
+    try expectUtf16String(&runtime, roots[3], if (trimmed.len == 0) temporary else trimmed);
 }
 
 test "AOT環境変数取得はC環境から値を読み未設定をundefinedにする" {

@@ -752,5 +752,10 @@
     "id": "native-node-file-existence",
     "commands": ["存在", "フォルダ存在"],
     "source": "存在(\".\")を表示\nフォルダ存在(\".\")を表示\n存在(\"__lnako_native_missing_9e58f8a4__\")を表示\nフォルダ存在(\"__lnako_native_missing_9e58f8a4__\")を表示\n"
+  },
+  {
+    "id": "native-node-directory-values",
+    "commands": ["ホームディレクトリ取得", "デスクトップ", "マイドキュメント", "テンポラリフォルダ"],
+    "source": "ホームディレクトリ取得()を表示\nデスクトップを表示\nマイドキュメントを表示\nテンポラリフォルダを表示\n"
   }
 ]

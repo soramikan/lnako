@@ -316,6 +316,7 @@ const Emitter = struct {
                 "%lnako.RootFrame = type { ptr, ptr, i64 }\n\n" ++
                 "declare i32 @lnako_aot_runtime_init()\n" ++
                 "declare void @lnako_aot_node_constants_init(ptr, ptr, ptr, i32, ptr)\n" ++
+                "declare void @lnako_aot_node_directory_constants_init(ptr, ptr, ptr)\n" ++
                 "declare void @lnako_aot_runtime_deinit()\n" ++
                 "declare void @lnako_aot_push_roots(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_pop_roots(ptr)\n" ++
@@ -1421,6 +1422,15 @@ const Emitter = struct {
             if (self.globalIndex("ナデシコランタイムパス")) |global_index| try self.output.writer.print("@lnako.global.{d}", .{global_index}) else try self.output.writer.writeAll("null");
             try self.output.writer.writeAll(", i32 %argc, ptr %argv)\n");
         }
+        if (self.globalIndex("デスクトップ") != null or self.globalIndex("マイドキュメント") != null or self.globalIndex("テンポラリフォルダ") != null) {
+            try self.output.writer.writeAll("  call void @lnako_aot_node_directory_constants_init(ptr ");
+            if (self.globalIndex("デスクトップ")) |global_index| try self.output.writer.print("@lnako.global.{d}", .{global_index}) else try self.output.writer.writeAll("null");
+            try self.output.writer.writeAll(", ptr ");
+            if (self.globalIndex("マイドキュメント")) |global_index| try self.output.writer.print("@lnako.global.{d}", .{global_index}) else try self.output.writer.writeAll("null");
+            try self.output.writer.writeAll(", ptr ");
+            if (self.globalIndex("テンポラリフォルダ")) |global_index| try self.output.writer.print("@lnako.global.{d}", .{global_index}) else try self.output.writer.writeAll("null");
+            try self.output.writer.writeAll(")\n");
+        }
         for (self.program.functions) |function| if (self.globalIndex(function.name)) |global_index| {
             try self.output.writer.print("  call void @lnako_aot_function_new_named(ptr @lnako.global.{d}, ptr @lnako.wrapper.{d}, i64 {d}, ptr @lnako.function.name.{d}, i64 {d}, ptr null, i64 0)\n", .{ global_index, function.id, function.parameters.len, function.id, function.name.len });
         };
@@ -1853,6 +1863,7 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call i32 @lnako_aot_runtime_init()") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_constants_init(ptr, ptr, ptr, i32, ptr)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_node_constants_init(ptr ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_directory_constants_init(ptr, ptr, ptr)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_runtime_deinit()") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.global.0") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "!llvm.dbg.cu") != null);

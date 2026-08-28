@@ -2579,23 +2579,26 @@
   "ホームディレクトリ取得": {
     "status": "native",
     "tests": [
-      "plugin-node-path-host"
+      "plugin-node-path-host",
+      "native-node-directory-values"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路のホームディレクトリ差分テストに成功"
   },
   "デスクトップ": {
     "status": "native",
     "tests": [
-      "plugin-node-path-host"
+      "plugin-node-path-host",
+      "native-node-directory-values"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路のデスクトップパス差分テストに成功"
   },
   "マイドキュメント": {
     "status": "native",
     "tests": [
-      "plugin-node-path-host"
+      "plugin-node-path-host",
+      "native-node-directory-values"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路のドキュメントパス差分テストに成功"
   },
   "母艦パス": {
     "status": "native",
@@ -2614,9 +2617,10 @@
   "テンポラリフォルダ": {
     "status": "native",
     "tests": [
-      "plugin-node-path-host"
+      "plugin-node-path-host",
+      "native-node-directory-values"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路の一時フォルダパス差分テストに成功"
   },
   "環境変数取得": {
     "status": "native",

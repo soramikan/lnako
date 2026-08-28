@@ -11041,14 +11041,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-path-host"
+        "plugin-node-path-host",
+        "native-node-directory-values"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路のホームディレクトリ差分テストに成功"
     },
     {
       "id": "command-0731",
@@ -11066,14 +11067,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-path-host"
+        "plugin-node-path-host",
+        "native-node-directory-values"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路のデスクトップパス差分テストに成功"
     },
     {
       "id": "command-0732",
@@ -11091,14 +11093,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-path-host"
+        "plugin-node-path-host",
+        "native-node-directory-values"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路のドキュメントパス差分テストに成功"
     },
     {
       "id": "command-0733",
@@ -11166,14 +11169,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-path-host"
+        "plugin-node-path-host",
+        "native-node-directory-values"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路の一時フォルダパス差分テストに成功"
     },
     {
       "id": "command-0736",

@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "373187c661c884ab97f9e524b24190162f642971b726a4e8442750b23a5678c8"
+    "sha256": "9687c1d08ab5951513cd9ec78d5ee3aa6bad1f4ced03a7bfe69c883feea87e23"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 107,
+    "count": 103,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 107
+      "unverified": 103
     }
   },
   "groups": [
@@ -286,24 +286,16 @@
       "group": "基本プラグイン",
       "category": "フォルダ取得",
       "type": "関数",
-      "count": 6,
+      "count": 2,
       "executionEvidenceStates": {
-        "unverified": 6
+        "unverified": 2
       },
       "commandIds": [
-        "command-0730",
-        "command-0731",
-        "command-0732",
         "command-0734",
-        "command-0735",
         "command-0736"
       ],
       "names": [
-        "ホームディレクトリ取得",
-        "デスクトップ",
-        "マイドキュメント",
         "母艦パス取得",
-        "テンポラリフォルダ",
         "一時フォルダ作成"
       ]
     },
@@ -1364,57 +1356,6 @@
       "aotFixtureIds": []
     },
     {
-      "id": "command-0730",
-      "name": "ホームディレクトリ取得",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "フォルダ取得",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-path-host"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0731",
-      "name": "デスクトップ",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "フォルダ取得",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-path-host"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0732",
-      "name": "マイドキュメント",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "フォルダ取得",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-path-host"
-      ],
-      "aotFixtureIds": []
-    },
-    {
       "id": "command-0733",
       "name": "母艦パス",
       "plugin": "plugin_node",
@@ -1434,23 +1375,6 @@
     {
       "id": "command-0734",
       "name": "母艦パス取得",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "フォルダ取得",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-path-host"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0735",
-      "name": "テンポラリフォルダ",
       "plugin": "plugin_node",
       "group": "基本プラグイン",
       "category": "フォルダ取得",

@@ -36,6 +36,10 @@ register("終了", "native-node-exit-japanese-alias", "公式7経路の終了処
 register("プロセス終", "native-node-exit-code", "公式7経路の終了処理差分テストに成功");
 register("存在", "native-node-file-existence", "公式7経路のファイル存在判定差分テストに成功");
 register("フォルダ存在", "native-node-file-existence", "公式7経路のフォルダ存在判定差分テストに成功");
+register("ホームディレクトリ取得", "native-node-directory-values", "公式7経路のホームディレクトリ差分テストに成功");
+register("デスクトップ", "native-node-directory-values", "公式7経路のデスクトップパス差分テストに成功");
+register("マイドキュメント", "native-node-directory-values", "公式7経路のドキュメントパス差分テストに成功");
+register("テンポラリフォルダ", "native-node-directory-values", "公式7経路の一時フォルダパス差分テストに成功");
 
 const output = `${JSON.stringify(implemented, null, 2)}\n`;
 if (process.argv.includes("--check")) {

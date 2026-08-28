@@ -275,6 +275,10 @@ pub const Command = enum(u16) {
     node_process_exit,
     node_file_exists,
     node_folder_exists,
+    node_home_directory,
+    node_desktop,
+    node_documents,
+    node_temporary_directory,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -559,6 +563,10 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "プロセス終")) return .node_process_exit;
     if (std.mem.eql(u8, name, "存在")) return .node_file_exists;
     if (std.mem.eql(u8, name, "フォルダ存在")) return .node_folder_exists;
+    if (std.mem.eql(u8, name, "ホームディレクトリ取得")) return .node_home_directory;
+    if (std.mem.eql(u8, name, "デスクトップ")) return .node_desktop;
+    if (std.mem.eql(u8, name, "マイドキュメント")) return .node_documents;
+    if (std.mem.eql(u8, name, "テンポラリフォルダ")) return .node_temporary_directory;
     return null;
 }
 
@@ -765,6 +773,10 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.node_process_exit, lookup("プロセス終").?);
     try std.testing.expectEqual(Command.node_file_exists, lookup("存在").?);
     try std.testing.expectEqual(Command.node_folder_exists, lookup("フォルダ存在").?);
+    try std.testing.expectEqual(Command.node_home_directory, lookup("ホームディレクトリ取得").?);
+    try std.testing.expectEqual(Command.node_desktop, lookup("デスクトップ").?);
+    try std.testing.expectEqual(Command.node_documents, lookup("マイドキュメント").?);
+    try std.testing.expectEqual(Command.node_temporary_directory, lookup("テンポラリフォルダ").?);
     try std.testing.expectEqual(Command.datetime_now, lookup("今").?);
     try std.testing.expectEqual(Command.datetime_system_time_milliseconds, lookup("システム時間ミリ秒").?);
     try std.testing.expectEqual(Command.datetime_today, lookup("今日").?);
