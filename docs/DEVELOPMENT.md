@@ -86,12 +86,16 @@ AOT差分ケースは `tests/oracle/native-cases.json` に置きます。公式C
 `toolchain.lock.json` のURLとSHA-256から構築し、CIでは `LNAKO_LLVM_DIR` とアーカイブ内で検出した
 `LNAKO_LLVM_LIBRARY` を自動設定します。
 
+簡易HTTPサーバの実通信fixtureは `tests/oracle/http-server-cases.json` に置き、`tools/compare_http_server_oracle.mjs`で
+Interpreter、`tools/compare_http_server_aot_oracle.mjs`で純LLVM AOT O0〜O3を公式処理系と比較します。HTTP server fixtureは
+外部接続を伴うため、通常のAOT artifact／dispatch証拠とは分離し、CIの`aot` suiteで実行します。
+
 原則は公式CLI直接実行と公式生成JavaScriptの両方が一致することを必須にします。公式2経路の挙動が既知の理由で
 異なるケースだけ、採用する側を `"oracle": "official-source"` または `"oracle": "official-generated"` で指定します。
 この指定を使った差異は `docs/COMPATIBILITY_QUIRKS.md` に両経路の実測結果と採用理由を記録し、ハーネスの
 成功表示にも基準別の件数を出します。
 
-全192件の実行結果を保存する必要がある検証では、任意の絶対パスを明示してJSON artifactを生成できます。
+`native-cases.json`全192件の実行結果を保存する必要がある検証では、任意の絶対パスを明示してJSON artifactを生成できます。
 通常実行のstdout、所要時間、比較処理は変わりません。
 
 fixtureに`stdin`を指定した場合は、公式CLI・公式生成JavaScript・`lnako run`・LLVM AOTのO0〜O3の実行経路へ同じUTF-8入力を渡します。コンパイル経路そのものへは入力を渡しません。

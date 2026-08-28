@@ -75,6 +75,7 @@ validateCatalog(lock, catalog, matrix, standard, implemented, catalogSourceSha25
 
 const records = await readFixtureRecords();
 const nativeFixtureIds = new Set(records.filter((record) => record.file === "native-cases.json").map((record) => record.id));
+const aotFixtureIds = new Set(records.filter((record) => record.aot).map((record) => record.id));
 const compatJsFixtureIds = new Set(records.filter((record) => record.file === "compat-js-cases.json").map((record) => record.id));
 const standardNames = new Set(standard.commands.map((command) => command.name));
 const duplicateNames = duplicateNameSet(standard.commands);
@@ -119,8 +120,8 @@ const entries = standard.commands.map((command) => {
     .filter((record) => !nativeFixtureIds.has(record.id) && !compatJsFixtureIds.has(record.id) && record.commandNames.has(command.name))
     .map((record) => record.id)
     .sort();
-  const aotFixtureIds = records
-    .filter((record) => nativeFixtureIds.has(record.id) && record.commandNames.has(command.name))
+  const aotFixtureIdsForCommand = records
+    .filter((record) => aotFixtureIds.has(record.id) && record.commandNames.has(command.name))
     .map((record) => record.id)
     .sort();
 
@@ -128,7 +129,7 @@ const entries = standard.commands.map((command) => {
     .filter((record) => compatJsFixtureIds.has(record.id) && record.commandNames.has(command.name))
     .map((record) => record.id)
     .sort();
-  const fixtureCoverageState = fixtureCoverageStateFor(command.status, interpreterFixtureIds, aotFixtureIds, compatJsFixtureIdsForCommand);
+  const fixtureCoverageState = fixtureCoverageStateFor(command.status, interpreterFixtureIds, aotFixtureIdsForCommand, compatJsFixtureIdsForCommand);
   const identityResolution = duplicateNames.has(command.name) ? "ambiguous-name" : "unique-name";
   const executionSites = dispatchEvidenceByCatalogId.get(command.id) ?? [];
   const executionEvidenceState = executionSites.length > 0 && identityResolution === "unique-name"
@@ -139,7 +140,7 @@ const entries = standard.commands.map((command) => {
     fixtureCoverageState,
     identityResolution,
     interpreterFixtureIds,
-    aotFixtureIds,
+    aotFixtureIdsForCommand,
     compatJsFixtureIdsForCommand,
     unresolvedTestIds,
     executionEvidenceState,
@@ -151,11 +152,11 @@ const entries = standard.commands.map((command) => {
     plugin: command.plugin,
     status: command.status,
     interpreterFixtureIds,
-    aotFixtureIds,
+    aotFixtureIds: aotFixtureIdsForCommand,
     compatJsFixtureIds: compatJsFixtureIdsForCommand,
     associationOrigin: {
       interpreter: associationOriginsFor(command.name, records, (record) => !nativeFixtureIds.has(record.id) && !compatJsFixtureIds.has(record.id)),
-      aot: associationOriginsFor(command.name, records, (record) => nativeFixtureIds.has(record.id)),
+      aot: associationOriginsFor(command.name, records, (record) => aotFixtureIds.has(record.id)),
       compatJs: associationOriginsFor(command.name, records, (record) => compatJsFixtureIds.has(record.id)),
     },
     fixtureCoverageState,
@@ -184,7 +185,7 @@ const evidence = {
   duplicateNameCount: duplicateNames.size,
   fixtureInventory: {
     total: records.length,
-    nativeAot: nativeFixtureIds.size,
+    nativeAot: aotFixtureIds.size,
     interpreter: records.filter((record) => !nativeFixtureIds.has(record.id) && !compatJsFixtureIds.has(record.id)).length,
     compatJs: compatJsFixtureIds.size,
   },
@@ -204,7 +205,7 @@ if (mode === "--generate") {
 } else {
   const actual = await readFile(evidenceOutputPath, "utf8");
   if (actual !== expected) throw new Error(`カタログ証拠レイヤーが最新ではありません: ${evidenceOutputPath}`);
-  validateEvidence(JSON.parse(actual), lock, catalogSourceSha256, nativeFixtureIds, compatJsFixtureIds, standard, matrix);
+  validateEvidence(JSON.parse(actual), lock, catalogSourceSha256, nativeFixtureIds, aotFixtureIds, compatJsFixtureIds, standard, matrix);
   console.log(`カタログ証拠レイヤーを検証しました: ${entries.length}件（同名異plugin ${evidence.duplicateNameCount * 2} entry、verified ${evidence.executionEvidenceStates.verified}件 / trace-confirmed-unattested ${evidence.executionEvidenceStates["trace-confirmed-unattested"]}件 / unverified ${evidence.executionEvidenceStates.unverified}件）`);
 }
 
@@ -227,6 +228,7 @@ async function readFixtureRecords() {
       const record = {
         id: fixture.id,
         file,
+        aot: file === "native-cases.json" || fixture.aot === true,
         sourceSha256: typeof fixture.source === "string" ? createHash("sha256").update(fixture.source).digest("hex") : null,
         commandNames: new Set(),
         associationOrigins: new Map(),
@@ -513,7 +515,7 @@ function attestedSha256(subject) {
   return /^[0-9a-f]{64}$/.test(subject?.digest?.sha256) ? subject.digest.sha256 : null;
 }
 
-function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, compatJsFixtureIds, standard, matrix) {
+function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, aotFixtureIds, compatJsFixtureIds, standard, matrix) {
   rejectForbiddenEvidenceFields(actual);
   assertKnownObjectKeys(actual, ["schemaVersion", "baseline", "sourceSha256", "commandCount", "duplicateNameCount", "fixtureInventory", "fixtureCoverageStates", "executionEvidenceStates", "entries"], "evidence");
   assertKnownObjectKeys(actual.baseline, ["tag", "commit"], "evidence.baseline");
@@ -539,7 +541,7 @@ function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, c
     const expectedIdentity = duplicateNames.has(entry.name) ? "ambiguous-name" : "unique-name";
     if (entry.identityResolution !== expectedIdentity) throw new Error(`identityResolutionが不一致です: ${entry.id}`);
     if (entry.interpreterFixtureIds.some((id) => nativeFixtureIds.has(id) || compatJsFixtureIds.has(id))) throw new Error(`interpreterFixtureIdsにAOTまたはcompat-js IDがあります: ${entry.id}`);
-    for (const id of entry.aotFixtureIds ?? []) if (!nativeFixtureIds.has(id)) throw new Error(`AOT fixture IDがnative-cases.jsonにありません: ${entry.id} -> ${id}`);
+    for (const id of entry.aotFixtureIds ?? []) if (!aotFixtureIds.has(id)) throw new Error(`AOT fixture IDがAOT対応fixtureにありません: ${entry.id} -> ${id}`);
     for (const id of entry.compatJsFixtureIds ?? []) if (!compatJsFixtureIds.has(id)) throw new Error(`compatJsFixtureIdsがcompat-js-cases.jsonにありません: ${entry.id} -> ${id}`);
     if (entry.associationOrigin === undefined || typeof entry.associationOrigin !== "object") throw new Error(`associationOriginがありません: ${entry.id}`);
     for (const [mode, ids] of [["interpreter", entry.interpreterFixtureIds], ["aot", entry.aotFixtureIds], ["compatJs", entry.compatJsFixtureIds]]) {

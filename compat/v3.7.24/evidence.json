@@ -9,13 +9,13 @@
   "duplicateNameCount": 31,
   "fixtureInventory": {
     "total": 297,
-    "nativeAot": 192,
+    "nativeAot": 193,
     "interpreter": 96,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
-    "paired": 480,
-    "interpreter-only": 43,
+    "paired": 486,
+    "interpreter-only": 37,
     "aot-only": 0,
     "none": 0,
     "compat-js-only": 4
@@ -16369,7 +16369,8 @@
         "plugin-httpserver-all"
       ],
       "aotFixtureIds": [
-        "native-node-http-initial-constants"
+        "native-node-http-initial-constants",
+        "plugin-httpserver-all"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -16383,6 +16384,10 @@
           "native-node-http-initial-constants": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-httpserver-all": [
+            "fixture.commands",
+            "implemented.tests"
           ]
         },
         "compatJs": {}
@@ -16391,7 +16396,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
@@ -16403,7 +16408,8 @@
         "plugin-httpserver-all"
       ],
       "aotFixtureIds": [
-        "native-node-http-initial-constants"
+        "native-node-http-initial-constants",
+        "plugin-httpserver-all"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -16417,6 +16423,10 @@
           "native-node-http-initial-constants": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-httpserver-all": [
+            "fixture.commands",
+            "implemented.tests"
           ]
         },
         "compatJs": {}
@@ -16425,7 +16435,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
@@ -16437,7 +16447,8 @@
         "plugin-httpserver-all"
       ],
       "aotFixtureIds": [
-        "native-node-http-initial-constants"
+        "native-node-http-initial-constants",
+        "plugin-httpserver-all"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -16451,6 +16462,10 @@
           "native-node-http-initial-constants": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-httpserver-all": [
+            "fixture.commands",
+            "implemented.tests"
           ]
         },
         "compatJs": {}
@@ -16459,7 +16474,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
@@ -16471,7 +16486,8 @@
         "plugin-httpserver-all"
       ],
       "aotFixtureIds": [
-        "native-node-http-initial-constants"
+        "native-node-http-initial-constants",
+        "plugin-httpserver-all"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -16483,6 +16499,44 @@
         },
         "aot": {
           "native-node-http-initial-constants": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
+          "plugin-httpserver-all": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
+        "compatJs": {}
+      },
+      "fixtureCoverageState": "paired",
+      "identityResolution": "unique-name",
+      "executionEvidenceState": "unverified",
+      "executionEvidence": null,
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
+    },
+    {
+      "id": "command-0799",
+      "name": "簡易HTTPサーバ起動時",
+      "plugin": "plugin_httpserver",
+      "status": "native",
+      "interpreterFixtureIds": [
+        "plugin-httpserver-all"
+      ],
+      "aotFixtureIds": [
+        "plugin-httpserver-all"
+      ],
+      "compatJsFixtureIds": [],
+      "associationOrigin": {
+        "interpreter": {
+          "plugin-httpserver-all": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
+        "aot": {
+          "plugin-httpserver-all": [
             "fixture.commands",
             "implemented.tests"
           ]
@@ -16497,33 +16551,6 @@
       "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
-      "id": "command-0799",
-      "name": "簡易HTTPサーバ起動時",
-      "plugin": "plugin_httpserver",
-      "status": "native",
-      "interpreterFixtureIds": [
-        "plugin-httpserver-all"
-      ],
-      "aotFixtureIds": [],
-      "compatJsFixtureIds": [],
-      "associationOrigin": {
-        "interpreter": {
-          "plugin-httpserver-all": [
-            "fixture.commands",
-            "implemented.tests"
-          ]
-        },
-        "aot": {},
-        "compatJs": {}
-      },
-      "fixtureCoverageState": "interpreter-only",
-      "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
-    },
-    {
       "id": "command-0800",
       "name": "簡易HTTPサーバ静的パス指定",
       "plugin": "plugin_httpserver",
@@ -16531,7 +16558,9 @@
       "interpreterFixtureIds": [
         "plugin-httpserver-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "plugin-httpserver-all"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -16540,14 +16569,19 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "plugin-httpserver-all": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
@@ -16558,7 +16592,9 @@
       "interpreterFixtureIds": [
         "plugin-httpserver-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "plugin-httpserver-all"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -16567,14 +16603,19 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "plugin-httpserver-all": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
@@ -16585,7 +16626,9 @@
       "interpreterFixtureIds": [
         "plugin-httpserver-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "plugin-httpserver-all"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -16594,14 +16637,19 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "plugin-httpserver-all": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
@@ -16612,7 +16660,9 @@
       "interpreterFixtureIds": [
         "plugin-httpserver-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "plugin-httpserver-all"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -16621,14 +16671,19 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "plugin-httpserver-all": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
@@ -16639,7 +16694,9 @@
       "interpreterFixtureIds": [
         "plugin-httpserver-all"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "plugin-httpserver-all"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -16648,14 +16705,19 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "plugin-httpserver-all": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {

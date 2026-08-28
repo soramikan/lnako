@@ -7,46 +7,20 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "257ef26af4eef15d8e371f0470ce7a1b997b299015ed4d9442ae62e9a2716871"
+    "sha256": "b995dffd44de349ac8fa922d8739d36200ca4a79e34dc45b699248cd54d34d65"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 43,
+    "count": 37,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 43
+      "unverified": 37
     }
   },
   "groups": [
-    {
-      "plugin": "plugin_httpserver",
-      "group": "基本プラグイン",
-      "category": "簡易HTTPサーバ",
-      "type": "関数",
-      "count": 6,
-      "executionEvidenceStates": {
-        "unverified": 6
-      },
-      "commandIds": [
-        "command-0799",
-        "command-0800",
-        "command-0801",
-        "command-0802",
-        "command-0803",
-        "command-0804"
-      ],
-      "names": [
-        "簡易HTTPサーバ起動時",
-        "簡易HTTPサーバ静的パス指定",
-        "簡易HTTPサーバ受信時",
-        "簡易HTTPサーバ出力",
-        "簡易HTTPサーバヘッダ出力",
-        "簡易HTTPサーバ移動"
-      ]
-    },
     {
       "plugin": "plugin_node",
       "group": "基本プラグイン",
@@ -823,108 +797,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "plugin-node-http-discord-file"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0799",
-      "name": "簡易HTTPサーバ起動時",
-      "plugin": "plugin_httpserver",
-      "group": "基本プラグイン",
-      "category": "簡易HTTPサーバ",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-httpserver-all"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0800",
-      "name": "簡易HTTPサーバ静的パス指定",
-      "plugin": "plugin_httpserver",
-      "group": "基本プラグイン",
-      "category": "簡易HTTPサーバ",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-httpserver-all"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0801",
-      "name": "簡易HTTPサーバ受信時",
-      "plugin": "plugin_httpserver",
-      "group": "基本プラグイン",
-      "category": "簡易HTTPサーバ",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-httpserver-all"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0802",
-      "name": "簡易HTTPサーバ出力",
-      "plugin": "plugin_httpserver",
-      "group": "基本プラグイン",
-      "category": "簡易HTTPサーバ",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-httpserver-all"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0803",
-      "name": "簡易HTTPサーバヘッダ出力",
-      "plugin": "plugin_httpserver",
-      "group": "基本プラグイン",
-      "category": "簡易HTTPサーバ",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-httpserver-all"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0804",
-      "name": "簡易HTTPサーバ移動",
-      "plugin": "plugin_httpserver",
-      "group": "基本プラグイン",
-      "category": "簡易HTTPサーバ",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-httpserver-all"
       ],
       "aotFixtureIds": []
     }

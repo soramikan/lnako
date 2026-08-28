@@ -173,6 +173,7 @@ jobs:
           LNAKO_NATIVE_ORACLE_ARTIFACT: ${{ runner.temp }}/lnako-native-oracle.json
         run: |
           node tools/compare_native_oracle.mjs
+          node tools/compare_http_server_aot_oracle.mjs
           node tools/check_dispatch_trace.mjs --no-build --evidence-output "${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json"
       - name: Upload native AOT oracle artifact
         if: matrix.suite == 'aot' && always()

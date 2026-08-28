@@ -95,6 +95,7 @@ pub fn manifestCall(name: []const u8, direct_callee: ?ir.FunctionId, is_builtin_
         .system_hatena_execute => "hatena-default",
         .system_hatena_configure => "hatena-configure",
         .node_interrupt_callback => "node-interrupt",
+        .http_server_start, .http_server_static, .http_server_receive, .http_server_output, .http_server_headers, .http_server_redirect => "http-server",
         .system_debug_breakpoint_wait => "debug-breakpoint-wait",
         .node_stdin_line, .node_stdin_character, .node_stdin_callback => "node-stdin-lines",
         .node_archive_tool_path_set => "archive-tool-path",
@@ -357,6 +358,8 @@ const Emitter = struct {
                 "declare void @lnako_aot_ajax_options_set(ptr, ptr, i64, ptr, i64)\n" ++
                 "declare void @lnako_aot_ajax_onerror_set(ptr, ptr, i64, ptr, i64)\n" ++
                 "declare void @lnako_aot_file_operation_call(ptr, ptr, ptr, i64, i16, i64)\n" ++
+                "declare void @lnako_aot_http_server_init(ptr, ptr, ptr, ptr)\n" ++
+                "declare void @lnako_aot_http_server_call(ptr, ptr, ptr, ptr, ptr, ptr, i64, i16, i64)\n" ++
                 "declare i32 @lnako_aot_bigint_truthy(ptr)\n" ++
                 "declare void @lnako_aot_arithmetic(ptr, ptr, ptr, i8)\n" ++
                 "declare void @lnako_aot_compare(ptr, ptr, ptr, i8)\n" ++
@@ -564,6 +567,11 @@ const Emitter = struct {
                 };
                 if (aot_builtin.lookup(instruction.name)) |command| if (isNodeFileOperationCommand(command)) {
                     if (self.globalIndex("ファイルコピーデフォルト動作") == null) try self.globals.append(self.allocator, "ファイルコピーデフォルト動作");
+                };
+                if (aot_builtin.lookup(instruction.name)) |command| if (isHttpServerCommand(command)) {
+                    for ([_][]const u8{ "HTTPメソッド", "GETデータ", "POSTデータ", "FILESデータ" }) |name| {
+                        if (self.globalIndex(name) == null) try self.globals.append(self.allocator, name);
+                    }
                 };
             }
             if (instruction.opcode == .const_string) {
@@ -1287,6 +1295,27 @@ const Emitter = struct {
             try self.debugSuffix(instruction.span, scope);
             return;
         }
+        if (isHttpServerCommand(command)) {
+            const method_index = self.globalIndex("HTTPメソッド") orelse return error.MissingHttpMethodGlobal;
+            const get_index = self.globalIndex("GETデータ") orelse return error.MissingGetDataGlobal;
+            const post_index = self.globalIndex("POSTデータ") orelse return error.MissingPostDataGlobal;
+            const files_index = self.globalIndex("FILESデータ") orelse return error.MissingFilesDataGlobal;
+            for (instruction.operands, 0..) |argument, index| {
+                try self.output.writer.print("  %http-server.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+                try self.debugSuffix(instruction.span, scope);
+                try self.output.writer.writeAll("  store %lnako.Value ");
+                try self.writeValueRef(function, argument);
+                try self.output.writer.print(", ptr %http-server.{d}.slot.{d}", .{ result, index });
+                try self.debugSuffix(instruction.span, scope);
+            }
+            try self.output.writer.print("  call void @lnako_aot_http_server_call(ptr %root.slot.{d}, ptr @lnako.global.{d}, ptr @lnako.global.{d}, ptr @lnako.global.{d}, ptr @lnako.global.{d}, ptr ", .{ result, method_index, get_index, post_index, files_index });
+            if (instruction.operands.len > 0) try self.output.writer.print("%http-server.{d}.slot.0", .{result}) else try self.output.writer.writeAll("null");
+            try self.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+            try self.debugSuffix(instruction.span, scope);
+            try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+            try self.debugSuffix(instruction.span, scope);
+            return;
+        }
         if (isPromiseCommand(command)) {
             const last_promise_index = self.globalIndex("そ") orelse return error.MissingLastPromiseGlobal;
             const target_index = self.globalIndex("対象") orelse return error.MissingTargetGlobal;
@@ -1662,6 +1691,17 @@ const Emitter = struct {
         for (self.program.functions) |function| if (self.globalIndex(function.name)) |global_index| {
             try self.output.writer.print("  call void @lnako_aot_function_new_named(ptr @lnako.global.{d}, ptr @lnako.wrapper.{d}, i64 {d}, ptr @lnako.function.name.{d}, i64 {d}, ptr null, i64 0)\n", .{ global_index, function.id, function.parameters.len, function.id, function.name.len });
         };
+        if (self.program.http_server_plugin_imported) {
+            try self.output.writer.writeAll("  call void @lnako_aot_http_server_init(ptr ");
+            if (self.globalIndex("HTTPメソッド")) |global_index| try self.output.writer.print("@lnako.global.{d}", .{global_index}) else try self.output.writer.writeAll("null");
+            try self.output.writer.writeAll(", ptr ");
+            if (self.globalIndex("GETデータ")) |global_index| try self.output.writer.print("@lnako.global.{d}", .{global_index}) else try self.output.writer.writeAll("null");
+            try self.output.writer.writeAll(", ptr ");
+            if (self.globalIndex("POSTデータ")) |global_index| try self.output.writer.print("@lnako.global.{d}", .{global_index}) else try self.output.writer.writeAll("null");
+            try self.output.writer.writeAll(", ptr ");
+            if (self.globalIndex("FILESデータ")) |global_index| try self.output.writer.print("@lnako.global.{d}", .{global_index}) else try self.output.writer.writeAll("null");
+            try self.output.writer.writeAll(")\n");
+        }
         var index = self.program.module_entries.len;
         var call_index: usize = 0;
         while (index > 0) {
@@ -1819,6 +1859,9 @@ const Emitter = struct {
 
     fn systemStringValue(self: Emitter, name: []const u8) ?[]const u8 {
         if (std.mem.eql(u8, name, "名前空間")) return primaryModuleName(self.program);
+        if (self.program.http_server_plugin_imported and
+            (std.mem.eql(u8, name, "HTTPメソッド") or std.mem.eql(u8, name, "GETデータ") or
+                std.mem.eql(u8, name, "POSTデータ") or std.mem.eql(u8, name, "FILESデータ"))) return "";
         return system_constant.lookupString(name);
     }
 
@@ -1930,6 +1973,13 @@ fn isTimerCommand(command: aot_builtin.Command) bool {
 fn isPromiseCommand(command: aot_builtin.Command) bool {
     return switch (command) {
         .promise_create, .promise_success, .promise_settled, .promise_failure, .promise_finally, .promise_all => true,
+        else => false,
+    };
+}
+
+fn isHttpServerCommand(command: aot_builtin.Command) bool {
+    return switch (command) {
+        .http_server_start, .http_server_static, .http_server_receive, .http_server_output, .http_server_headers, .http_server_redirect => true,
         else => false,
     };
 }

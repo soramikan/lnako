@@ -97,6 +97,8 @@ Nodeの`コンソールクリア`は、比較ハーネスのpipe出力では公�
 
 Nodeの`尋`と`文字尋`は、純LLVM AOTでも標準入力を一度バッファして行単位に分割し、前者だけ数値変換し、後者は文字列のまま返します。`標準入力取得時`は同じ入力をEOFまで行分割し、各行をシステムグローバル`対象`へ設定して登録コールバックへ同期的に渡します。`native-node-stdin-lines`と`native-node-stdin-callback`でCRLF、プロンプト、後続の`標準入力全取得`、全行コールバックを公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3と比較します。
 
+`plugin-httpserver-all`で扱う簡易HTTPサーバ6 entryは、HTTPクライアントのAJAX命令とは別の純Zig routeです。AOTはlistener、HTTP/1.1 request parser、query/form/multipart、静的ファイル、登録callback、応答header、リダイレクトを実装し、`tools/compare_http_server_aot_oracle.mjs`で公式処理系とO0〜O3を比較します。上記でAOT未対応と記載するHTTP送信は、HTTPクライアント送信とそのPromise/callback経路を指します。
+
 ## CLI
 
 ```text

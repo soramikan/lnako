@@ -86,6 +86,9 @@ if (!nativeAotBlock[0].includes("node tools/check_dispatch_trace.mjs --no-build 
 if ((nativeAotBlock[0].match(/node tools\/compare_native_oracle\.mjs/g) ?? []).length !== 1) {
   throw new Error("AOT差分比較は同一suite内で1回だけ実行してください");
 }
+if ((nativeAotBlock[0].match(/node tools\/compare_http_server_aot_oracle\.mjs/g) ?? []).length !== 1) {
+  throw new Error("AOT HTTPサーバー差分比較がありません");
+}
 const nativeAotBlockEnd = workflow.indexOf(nativeAotBlock[0]) + nativeAotBlock[0].length;
 const uploadName = "Upload native AOT oracle artifact";
 const uploadStart = workflow.indexOf(`      - name: ${uploadName}`);
