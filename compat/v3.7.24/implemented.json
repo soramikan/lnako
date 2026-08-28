@@ -1658,24 +1658,27 @@
     "status": "native",
     "tests": [
       "plugin-system-table",
-      "native-system-table-query-commands"
+      "native-system-table-query-commands",
+      "native-system-table-byte-row-properties"
     ],
-    "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
+    "reason": "Zig製ランタイムでbyte bufferのlength・数値添字を実装し、公式差分テストに成功"
   },
   "表完全一致ピックアップ": {
     "status": "native",
     "tests": [
       "plugin-system-table",
-      "native-system-table-query-commands"
+      "native-system-table-query-commands",
+      "native-system-table-byte-row-properties"
     ],
-    "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
+    "reason": "Zig製ランタイムでbyte bufferのlength・数値添字を実装し、公式差分テストに成功"
   },
   "表検索": {
     "status": "native",
     "tests": [
       "plugin-system-table",
       "native-system-table-query-commands",
-      "native-system-table-search-negative-row-error"
+      "native-system-table-search-negative-row-error",
+      "native-system-table-byte-row-properties"
     ],
     "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
   },
@@ -1683,9 +1686,10 @@
     "status": "native",
     "tests": [
       "plugin-system-table",
-      "native-system-table-query-commands"
+      "native-system-table-query-commands",
+      "native-system-table-byte-row-properties"
     ],
-    "reason": "空表で1を返す公式挙動を含めて実装し、公式差分テストに成功"
+    "reason": "空表で1を返す公式挙動とBuffer・Uint8Arrayのlengthを含めて実装し、公式差分テストに成功"
   },
   "表行数": {
     "status": "native",
@@ -1700,17 +1704,19 @@
     "tests": [
       "plugin-system-table",
       "native-system-table-transform-commands",
-      "native-system-table-transpose-null-row-error"
+      "native-system-table-transpose-null-row-error",
+      "native-system-table-byte-row-properties"
     ],
-    "reason": "欠損列を空文字列で補う公式挙動を実装し、公式差分テストに成功"
+    "reason": "欠損列を空文字列で補う公式挙動とbyte buffer rowの数値添字を実装し、公式差分テストに成功"
   },
   "表右回転": {
     "status": "native",
     "tests": [
       "plugin-system-table",
-      "native-system-table-transform-commands"
+      "native-system-table-transform-commands",
+      "native-system-table-byte-row-properties"
     ],
-    "reason": "欠損列をundefinedにする公式挙動を実装し、公式差分テストに成功"
+    "reason": "欠損列をundefinedにする公式挙動とbyte buffer rowの数値添字を実装し、公式差分テストに成功"
   },
   "表重複削除": {
     "status": "native",
@@ -1725,9 +1731,10 @@
     "tests": [
       "plugin-system-table",
       "native-system-table-query-commands",
-      "native-system-table-column-null-row-error"
+      "native-system-table-column-null-row-error",
+      "native-system-table-byte-row-properties"
     ],
-    "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
+    "reason": "Zig製ランタイムでBuffer・Uint8Array・ArrayBufferのlengthと数値添字を実装し、公式差分テストに成功"
   },
   "表列挿入": {
     "status": "native",
@@ -1753,9 +1760,10 @@
     "tests": [
       "plugin-system-table",
       "native-system-table-transform-commands",
-      "native-system-table-column-sum-bigint-error"
+      "native-system-table-column-sum-bigint-error",
+      "native-system-table-byte-row-properties"
     ],
-    "reason": "JavaScript互換加算で実装し、公式差分テストに成功"
+    "reason": "JavaScript互換加算とbyte buffer rowの数値添字で実装し、公式差分テストに成功"
   },
   "表曖昧検索": {
     "status": "native",
@@ -3106,7 +3114,8 @@
     "status": "native",
     "tests": [
       "plugin-node-crypto",
-      "native-node-crypto"
+      "native-node-crypto",
+      "native-system-table-byte-row-properties"
     ],
     "reason": "公式7経路のSHA-256・Buffer境界とエンコード形式の差分テストに成功"
   },

@@ -13609,6 +13609,22 @@ fn tableRowProperty(runtime: *Runtime, row: Value, column: Value) !Value {
         }
         return .{};
     }
+    if (row_tag == .byte_buffer) {
+        const object = row.object() orelse return error.InvalidByteBuffer;
+        if (object.payload != .byte_buffer) return error.InvalidByteBuffer;
+        if (std.mem.eql(u16, key_units, &table_length_key)) {
+            return if (object.payload.byte_buffer.kind == .array_buffer)
+                .{}
+            else
+                numberValue(@floatFromInt(object.payload.byte_buffer.bytes.len));
+        }
+        if (object.payload.byte_buffer.kind == .array_buffer) return .{};
+        const index = tablePropertyIndex(key_units) orelse return .{};
+        return if (index < object.payload.byte_buffer.bytes.len)
+            numberValue(@floatFromInt(object.payload.byte_buffer.bytes[index]))
+        else
+            .{};
+    }
     if (isString(row)) {
         const units = try valueUtf16Alloc(runtime, row);
         defer runtime.allocator.free(units);
@@ -18937,6 +18953,37 @@ test "AOT表列挿入はbyte bufferの種類とslice内容を保持する" {
     try std.testing.expectEqualSlices(u8, &.{0x41}, row[0].object().?.payload.byte_buffer.bytes);
     try std.testing.expectEqual(@as(f64, 9), valueToNumber(row[1]));
     try std.testing.expectEqualSlices(u8, &.{ 0x42, 0x43 }, row[2].object().?.payload.byte_buffer.bytes);
+}
+
+test "AOT表命令はbyte bufferのlengthと数値添字を読む" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 10;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createBytes(&.{ 65, 66 });
+    roots[1] = try runtime.createUint8Array(&.{67});
+    roots[2] = try runtime.createArrayBuffer(&.{ 68, 69 });
+    roots[3] = try runtime.createArray(&.{ roots[0], roots[1], roots[2] });
+    roots[4] = try tableBuiltin(&runtime, .table_column_count, &.{roots[3]});
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(roots[4]));
+
+    roots[5] = try tableBuiltin(&runtime, .table_column, &.{ roots[3], numberValue(0) });
+    const column = roots[5].object().?.payload.array.items;
+    try std.testing.expectEqual(@as(f64, 65), valueToNumber(column[0]));
+    try std.testing.expectEqual(@as(f64, 67), valueToNumber(column[1]));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(column[2].tag)));
+
+    roots[6] = try tableBuiltin(&runtime, .table_pickup, &.{ roots[3], numberValue(0), numberValue(65) });
+    try std.testing.expectEqual(@as(usize, 1), roots[6].object().?.payload.array.items.len);
+    roots[7] = try tableBuiltin(&runtime, .table_exact_pickup, &.{ roots[3], numberValue(0), numberValue(67) });
+    try std.testing.expectEqual(@as(usize, 1), roots[7].object().?.payload.array.items.len);
+    roots[8] = try tableBuiltin(&runtime, .table_search, &.{ roots[3], numberValue(0), numberValue(0), numberValue(65) });
+    try std.testing.expectEqual(@as(f64, 0), valueToNumber(roots[8]));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try tableRowProperty(&runtime, roots[2], staticStringValue("length"))).tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try tableRowProperty(&runtime, roots[2], numberValue(0))).tag)));
 }
 
 test "AOT表変換系は欠損列・負位置・JS加算を公式どおり処理する" {

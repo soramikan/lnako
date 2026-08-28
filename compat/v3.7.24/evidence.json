@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 300,
-    "nativeAot": 209,
+    "total": 301,
+    "nativeAot": 210,
     "interpreter": 96,
     "compatJs": 9
   },
@@ -7321,6 +7321,7 @@
         "plugin-system-table"
       ],
       "aotFixtureIds": [
+        "native-system-table-byte-row-properties",
         "native-system-table-query-commands"
       ],
       "compatJsFixtureIds": [],
@@ -7332,6 +7333,10 @@
           ]
         },
         "aot": {
+          "native-system-table-byte-row-properties": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
           "native-system-table-query-commands": [
             "implemented.tests"
           ]
@@ -7342,8 +7347,8 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製ランタイムで実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Zig製ランタイムでbyte bufferのlength・数値添字を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0214",
@@ -7354,6 +7359,7 @@
         "plugin-system-table"
       ],
       "aotFixtureIds": [
+        "native-system-table-byte-row-properties",
         "native-system-table-query-commands"
       ],
       "compatJsFixtureIds": [],
@@ -7365,6 +7371,10 @@
           ]
         },
         "aot": {
+          "native-system-table-byte-row-properties": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
           "native-system-table-query-commands": [
             "implemented.tests"
           ]
@@ -7375,8 +7385,8 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製ランタイムで実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Zig製ランタイムでbyte bufferのlength・数値添字を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0215",
@@ -7387,6 +7397,7 @@
         "plugin-system-table"
       ],
       "aotFixtureIds": [
+        "native-system-table-byte-row-properties",
         "native-system-table-query-commands",
         "native-system-table-search-negative-row-error"
       ],
@@ -7399,6 +7410,10 @@
           ]
         },
         "aot": {
+          "native-system-table-byte-row-properties": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
           "native-system-table-query-commands": [
             "implemented.tests"
           ],
@@ -7412,7 +7427,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、公式差分テストに成功"
     },
     {
@@ -7424,6 +7439,7 @@
         "plugin-system-table"
       ],
       "aotFixtureIds": [
+        "native-system-table-byte-row-properties",
         "native-system-table-query-commands"
       ],
       "compatJsFixtureIds": [],
@@ -7435,6 +7451,10 @@
           ]
         },
         "aot": {
+          "native-system-table-byte-row-properties": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
           "native-system-table-query-commands": [
             "implemented.tests"
           ]
@@ -7445,8 +7465,8 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "空表で1を返す公式挙動を含めて実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "空表で1を返す公式挙動とBuffer・Uint8Arrayのlengthを含めて実装し、公式差分テストに成功"
     },
     {
       "id": "command-0217",
@@ -7490,6 +7510,7 @@
         "plugin-system-table"
       ],
       "aotFixtureIds": [
+        "native-system-table-byte-row-properties",
         "native-system-table-transform-commands",
         "native-system-table-transpose-null-row-error"
       ],
@@ -7502,6 +7523,10 @@
           ]
         },
         "aot": {
+          "native-system-table-byte-row-properties": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
           "native-system-table-transform-commands": [
             "implemented.tests"
           ],
@@ -7515,8 +7540,8 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "欠損列を空文字列で補う公式挙動を実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "欠損列を空文字列で補う公式挙動とbyte buffer rowの数値添字を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0219",
@@ -7527,6 +7552,7 @@
         "plugin-system-table"
       ],
       "aotFixtureIds": [
+        "native-system-table-byte-row-properties",
         "native-system-table-transform-commands"
       ],
       "compatJsFixtureIds": [],
@@ -7538,6 +7564,10 @@
           ]
         },
         "aot": {
+          "native-system-table-byte-row-properties": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
           "native-system-table-transform-commands": [
             "implemented.tests"
           ]
@@ -7548,8 +7578,8 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "欠損列をundefinedにする公式挙動を実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "欠損列をundefinedにする公式挙動とbyte buffer rowの数値添字を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0220",
@@ -7593,6 +7623,7 @@
         "plugin-system-table"
       ],
       "aotFixtureIds": [
+        "native-system-table-byte-row-properties",
         "native-system-table-column-null-row-error",
         "native-system-table-query-commands"
       ],
@@ -7605,6 +7636,10 @@
           ]
         },
         "aot": {
+          "native-system-table-byte-row-properties": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
           "native-system-table-column-null-row-error": [
             "implemented.tests"
           ],
@@ -7618,8 +7653,8 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製ランタイムで実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Zig製ランタイムでBuffer・Uint8Array・ArrayBufferのlengthと数値添字を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0222",
@@ -7709,6 +7744,7 @@
         "plugin-system-table"
       ],
       "aotFixtureIds": [
+        "native-system-table-byte-row-properties",
         "native-system-table-column-sum-bigint-error",
         "native-system-table-transform-commands"
       ],
@@ -7721,6 +7757,10 @@
           ]
         },
         "aot": {
+          "native-system-table-byte-row-properties": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
           "native-system-table-column-sum-bigint-error": [
             "implemented.tests"
           ],
@@ -7734,8 +7774,8 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "JavaScript互換加算で実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "JavaScript互換加算とbyte buffer rowの数値添字で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0225",
@@ -16607,6 +16647,7 @@
       ],
       "aotFixtureIds": [
         "native-node-crypto",
+        "native-system-table-byte-row-properties",
         "native-system-table-byte-row-slice",
         "native-system-url-and-base64"
       ],
@@ -16623,6 +16664,10 @@
             "fixture.commands",
             "implemented.tests"
           ],
+          "native-system-table-byte-row-properties": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
           "native-system-table-byte-row-slice": [
             "fixture.commands"
           ],
@@ -16636,7 +16681,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 4件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式7経路のSHA-256・Buffer境界とエンコード形式の差分テストに成功"
     },
     {

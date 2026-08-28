@@ -5657,14 +5657,15 @@
       "status": "native",
       "tests": [
         "plugin-system-table",
-        "native-system-table-query-commands"
+        "native-system-table-query-commands",
+        "native-system-table-byte-row-properties"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
+      "reason": "Zig製ランタイムでbyte bufferのlength・数値添字を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0214",
@@ -5684,14 +5685,15 @@
       "status": "native",
       "tests": [
         "plugin-system-table",
-        "native-system-table-query-commands"
+        "native-system-table-query-commands",
+        "native-system-table-byte-row-properties"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
+      "reason": "Zig製ランタイムでbyte bufferのlength・数値添字を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0215",
@@ -5712,7 +5714,8 @@
       "tests": [
         "plugin-system-table",
         "native-system-table-query-commands",
-        "native-system-table-search-negative-row-error"
+        "native-system-table-search-negative-row-error",
+        "native-system-table-byte-row-properties"
       ],
       "platforms": [
         "macos-aarch64",
@@ -5739,14 +5742,15 @@
       "status": "native",
       "tests": [
         "plugin-system-table",
-        "native-system-table-query-commands"
+        "native-system-table-query-commands",
+        "native-system-table-byte-row-properties"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "空表で1を返す公式挙動を含めて実装し、公式差分テストに成功"
+      "reason": "空表で1を返す公式挙動とBuffer・Uint8Arrayのlengthを含めて実装し、公式差分テストに成功"
     },
     {
       "id": "command-0217",
@@ -5794,14 +5798,15 @@
       "tests": [
         "plugin-system-table",
         "native-system-table-transform-commands",
-        "native-system-table-transpose-null-row-error"
+        "native-system-table-transpose-null-row-error",
+        "native-system-table-byte-row-properties"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "欠損列を空文字列で補う公式挙動を実装し、公式差分テストに成功"
+      "reason": "欠損列を空文字列で補う公式挙動とbyte buffer rowの数値添字を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0219",
@@ -5821,14 +5826,15 @@
       "status": "native",
       "tests": [
         "plugin-system-table",
-        "native-system-table-transform-commands"
+        "native-system-table-transform-commands",
+        "native-system-table-byte-row-properties"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "欠損列をundefinedにする公式挙動を実装し、公式差分テストに成功"
+      "reason": "欠損列をundefinedにする公式挙動とbyte buffer rowの数値添字を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0220",
@@ -5876,14 +5882,15 @@
       "tests": [
         "plugin-system-table",
         "native-system-table-query-commands",
-        "native-system-table-column-null-row-error"
+        "native-system-table-column-null-row-error",
+        "native-system-table-byte-row-properties"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
+      "reason": "Zig製ランタイムでBuffer・Uint8Array・ArrayBufferのlengthと数値添字を実装し、公式差分テストに成功"
     },
     {
       "id": "command-0222",
@@ -5961,14 +5968,15 @@
       "tests": [
         "plugin-system-table",
         "native-system-table-transform-commands",
-        "native-system-table-column-sum-bigint-error"
+        "native-system-table-column-sum-bigint-error",
+        "native-system-table-byte-row-properties"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "JavaScript互換加算で実装し、公式差分テストに成功"
+      "reason": "JavaScript互換加算とbyte buffer rowの数値添字で実装し、公式差分テストに成功"
     },
     {
       "id": "command-0225",
@@ -18268,7 +18276,8 @@
       "status": "native",
       "tests": [
         "plugin-node-crypto",
-        "native-node-crypto"
+        "native-node-crypto",
+        "native-system-table-byte-row-properties"
       ],
       "platforms": [
         "macos-aarch64",
