@@ -48,6 +48,8 @@ register("標準入力全取得", "native-node-stdin-all", "公式7経路の標�
 register("POSTデータ生成", "native-node-http-post-data", "公式7経路のPOSTデータ生成差分テストに成功");
 register("AJAXオプション設定", "native-node-http-options-set", "公式7経路のAJAXオプション設定差分テストに成功");
 register("AJAX失敗時", "native-node-http-onerror-set", "公式7経路のAJAX失敗時設定差分テストに成功");
+register("自分IPアドレス取得", "native-node-network-addresses", "公式7経路のIPv4ネットワークアドレス差分テストに成功");
+register("自分IPV6アドレス取得", "native-node-network-addresses", "公式7経路のIPv6ネットワークアドレス差分テストに成功");
 
 const output = `${JSON.stringify(implemented, null, 2)}\n`;
 if (process.argv.includes("--check")) {

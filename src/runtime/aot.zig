@@ -769,6 +769,49 @@ const Runtime = struct {
     }
 };
 
+const AotPosixIfAddrs = if (builtin.os.tag == .windows) opaque {} else extern struct {
+    next: ?*AotPosixIfAddrs,
+    name: [*:0]const u8,
+    flags: c_uint,
+    address: ?*std.posix.sockaddr,
+    netmask: ?*std.posix.sockaddr,
+    destination: ?*std.posix.sockaddr,
+    data: ?*anyopaque,
+};
+
+const AotPosixInterfaces = if (builtin.os.tag == .windows) struct {} else struct {
+    extern "c" fn getifaddrs(result: *?*AotPosixIfAddrs) c_int;
+    extern "c" fn freeifaddrs(result: ?*AotPosixIfAddrs) void;
+};
+
+const AotWindowsSocketAddress = extern struct {
+    address: ?*std.os.windows.ws2_32.sockaddr,
+    length: c_int,
+};
+
+const AotWindowsUnicastAddress = extern struct {
+    alignment: u64,
+    next: ?*AotWindowsUnicastAddress,
+    address: AotWindowsSocketAddress,
+};
+
+const AotWindowsAdapterAddresses = extern struct {
+    alignment: u64,
+    next: ?*AotWindowsAdapterAddresses,
+    adapter_name: ?[*:0]u8,
+    first_unicast_address: ?*AotWindowsUnicastAddress,
+};
+
+const AotWindowsInterfaces = if (builtin.os.tag == .windows) struct {
+    extern "iphlpapi" fn GetAdaptersAddresses(
+        family: u32,
+        flags: u32,
+        reserved: ?*anyopaque,
+        addresses: ?*AotWindowsAdapterAddresses,
+        size: *u32,
+    ) callconv(.winapi) u32;
+} else struct {};
+
 fn valueIndex(value: Value) ?usize {
     if (value.tag != @intFromEnum(Tag.number)) return null;
     const number: f64 = @bitCast(value.payload);
@@ -3372,6 +3415,106 @@ pub export fn lnako_aot_ajax_onerror_set(
     success = runtime.failure_epoch == start_epoch;
 }
 
+fn nodeNetworkAddressesBuiltin(runtime: *Runtime, ipv6: bool) !Value {
+    var addresses = if (builtin.os.tag == .windows)
+        try aotWindowsNetworkAddresses(runtime.allocator, ipv6)
+    else
+        try aotPosixNetworkAddresses(runtime.allocator, ipv6);
+    defer deinitAotNetworkAddressList(runtime.allocator, &addresses);
+
+    var result = try runtime.createArray(&.{});
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, @ptrCast(&result), 1);
+    defer runtime.popRoots(&frame);
+    for (addresses.items) |address| {
+        const value = try runtimeUtf8StringLossy(runtime, address);
+        try result.object().?.payload.array.append(runtime.allocator, value);
+    }
+    return result;
+}
+
+fn aotPosixNetworkAddresses(allocator: std.mem.Allocator, ipv6: bool) !std.ArrayList([]u8) {
+    if (builtin.os.tag == .windows) return error.NetworkInterfacesUnavailable;
+    var first: ?*AotPosixIfAddrs = null;
+    if (AotPosixInterfaces.getifaddrs(&first) != 0) return error.NetworkInterfacesUnavailable;
+    defer AotPosixInterfaces.freeifaddrs(first);
+
+    var items: std.ArrayList([]u8) = .empty;
+    errdefer deinitAotNetworkAddressList(allocator, &items);
+    var current = first;
+    while (current) |entry| : (current = entry.next) {
+        // Nodeのos.networkInterfaces()が内部で使うlibuvと同じく、
+        // UPかつRUNNINGのインターフェイスだけを公開する。
+        if ((entry.flags & 0x1) == 0 or (entry.flags & 0x40) == 0) continue;
+        const address = entry.address orelse continue;
+        const family: usize = @intCast(address.family);
+        if ((!ipv6 and family != std.posix.AF.INET) or (ipv6 and family != std.posix.AF.INET6)) continue;
+        try items.append(allocator, try aotFormatSockAddress(allocator, address));
+    }
+    return items;
+}
+
+fn aotWindowsNetworkAddresses(allocator: std.mem.Allocator, ipv6: bool) !std.ArrayList([]u8) {
+    if (builtin.os.tag != .windows) return error.NetworkInterfacesUnavailable;
+    const overflow_code = 111;
+    var size: u32 = 15 * 1024;
+    var storage = try allocator.alignedAlloc(u8, .of(AotWindowsAdapterAddresses), size);
+    defer allocator.free(storage);
+    var result = AotWindowsInterfaces.GetAdaptersAddresses(std.os.windows.ws2_32.AF.UNSPEC, 0, null, @ptrCast(storage.ptr), &size);
+    if (result == overflow_code) {
+        storage = try allocator.realloc(storage, size);
+        result = AotWindowsInterfaces.GetAdaptersAddresses(std.os.windows.ws2_32.AF.UNSPEC, 0, null, @ptrCast(storage.ptr), &size);
+    }
+    if (result != 0) return error.NetworkInterfacesUnavailable;
+
+    var items: std.ArrayList([]u8) = .empty;
+    errdefer deinitAotNetworkAddressList(allocator, &items);
+    var adapter: ?*AotWindowsAdapterAddresses = @ptrCast(storage.ptr);
+    while (adapter) |current| : (adapter = current.next) {
+        var unicast = current.first_unicast_address;
+        while (unicast) |entry| : (unicast = entry.next) {
+            const address = entry.address.address orelse continue;
+            const family: usize = @intCast(address.family);
+            if ((!ipv6 and family != std.os.windows.ws2_32.AF.INET) or (ipv6 and family != std.os.windows.ws2_32.AF.INET6)) continue;
+            try items.append(allocator, try aotFormatWindowsSockAddress(allocator, address));
+        }
+    }
+    return items;
+}
+
+fn deinitAotNetworkAddressList(allocator: std.mem.Allocator, items: *std.ArrayList([]u8)) void {
+    for (items.items) |item| allocator.free(item);
+    items.deinit(allocator);
+}
+
+fn aotFormatSockAddress(allocator: std.mem.Allocator, address: *const std.posix.sockaddr) ![]u8 {
+    if (address.family == std.posix.AF.INET) {
+        const source: *const std.posix.sockaddr.in = @ptrCast(@alignCast(address));
+        const bytes: *const [4]u8 = @ptrCast(&source.addr);
+        return std.fmt.allocPrint(allocator, "{d}.{d}.{d}.{d}", .{ bytes[0], bytes[1], bytes[2], bytes[3] });
+    }
+    const source: *const std.posix.sockaddr.in6 = @ptrCast(@alignCast(address));
+    return aotFormatIpv6Address(allocator, source.addr);
+}
+
+fn aotFormatWindowsSockAddress(allocator: std.mem.Allocator, address: *const std.os.windows.ws2_32.sockaddr) ![]u8 {
+    if (address.family == std.os.windows.ws2_32.AF.INET) {
+        const source: *const std.os.windows.ws2_32.sockaddr.in = @ptrCast(@alignCast(address));
+        const bytes: *const [4]u8 = @ptrCast(&source.addr);
+        return std.fmt.allocPrint(allocator, "{d}.{d}.{d}.{d}", .{ bytes[0], bytes[1], bytes[2], bytes[3] });
+    }
+    const source: *const std.os.windows.ws2_32.sockaddr.in6 = @ptrCast(@alignCast(address));
+    return aotFormatIpv6Address(allocator, source.addr);
+}
+
+fn aotFormatIpv6Address(allocator: std.mem.Allocator, bytes: [16]u8) ![]u8 {
+    var output: std.Io.Writer.Allocating = .init(allocator);
+    errdefer output.deinit();
+    const unresolved: std.Io.net.Ip6Address.Unresolved = .{ .bytes = bytes, .interface_name = null };
+    try output.writer.print("{f}", .{unresolved});
+    return output.toOwnedSlice();
+}
+
 pub export fn lnako_aot_bigint_truthy(value: *const Value) callconv(.c) c_int {
     const object = value.object() orelse return 0;
     if (object.payload != .bigint) return 0;
@@ -3636,7 +3779,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all and command != .namespace_pop and command != .timer_wait and command != .async_noop and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit and command != .node_hash_names and command != .node_stdin_all) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .stdio_write_all and command != .namespace_pop and command != .timer_wait and command != .async_noop and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit and command != .node_hash_names and command != .node_stdin_all and command != .node_network_ipv4 and command != .node_network_ipv6) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -3887,6 +4030,12 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         .node_post_data => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = nodePostDataBuiltin(runtime, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .node_network_ipv4, .node_network_ipv6 => {
+            out.* = nodeNetworkAddressesBuiltin(runtime, command == .node_network_ipv6) catch |failure| {
                 runtime.setFailure(failure);
                 return;
             };
@@ -10966,6 +11115,27 @@ test "AOT Nodeファイルサイズ取得はstatのサイズを返す" {
     const expected = try std.Io.Dir.cwd().statFile(std.Io.Threaded.global_single_threaded.io(), ".", .{});
     const result = try nodeFileSizeBuiltin(&runtime, &.{staticStringValue(".")});
     try std.testing.expectEqual(@as(f64, @floatFromInt(expected.size)), valueToNumber(result));
+}
+
+test "AOT Nodeネットワーク命令はOSアドレスを文字列配列へ変換する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try nodeNetworkAddressesBuiltin(&runtime, false);
+    roots[1] = try nodeNetworkAddressesBuiltin(&runtime, true);
+    for (roots) |value| {
+        try std.testing.expectEqual(Tag.array, @as(Tag, @enumFromInt(value.tag)));
+        for (value.object().?.payload.array.items) |address| {
+            try std.testing.expectEqual(Tag.utf16_string, @as(Tag, @enumFromInt(address.tag)));
+            const units = address.object().?.payload.utf16_string;
+            try std.testing.expect(units.len > 0);
+            try std.testing.expect(std.mem.indexOfScalar(u16, units, '%') == null);
+        }
+    }
 }
 
 test "AOT Node文字コード変換サポート判定はInterpreterと同じ別名を受理する" {

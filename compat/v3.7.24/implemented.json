@@ -3095,16 +3095,18 @@
   "自分IPアドレス取得": {
     "status": "native",
     "tests": [
-      "plugin-node-network-addresses"
+      "plugin-node-network-addresses",
+      "native-node-network-addresses"
     ],
-    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+    "reason": "公式7経路のIPv4ネットワークアドレス差分テストに成功"
   },
   "自分IPV6アドレス取得": {
     "status": "native",
     "tests": [
-      "plugin-node-network-addresses"
+      "plugin-node-network-addresses",
+      "native-node-network-addresses"
     ],
-    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+    "reason": "公式7経路のIPv6ネットワークアドレス差分テストに成功"
   },
   "AJAX送信時": {
     "status": "native",

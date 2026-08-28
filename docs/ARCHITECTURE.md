@@ -162,7 +162,7 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
   `文字列変換` / `TOSTR`、`変数型確認` / `TYPEOF`、整数・実数変換、2種類のNaN判定、16進・2進・任意基数変換、
   `RGB`、32bit・BigIntビット演算、基本算術・比較・集約・論理・範囲、空コレクション・真偽判定、多相`掛`、
   Unicode文字数・検索・先頭末尾判定、配列・辞書・UTF-16要素数、parseFloat・BigInt・JavaScript加算を使い分ける
-  `足`・`合計`・`連続加算`命令の各正式名と別名、および数学38 entry（乱数を含む）、日時29 entry（現在時刻・日付・年月・曜日・Unix秒・日時文字列・書式・元号・差分・加算・単調時計）、URL・Base64 5 entry、パス5 entry（拡張子・終端パス処理）、漢数字・算用数字2 entry（指数・全角数字・小数・BigInt変換）、Nodeホスト情報20 entry（OS・CPU・argv由来のコマンドライン定数3件・環境変数取得・一覧取得・カレントディレクトリ取得2 alias・カレントディレクトリ変更2 alias・ファイル／フォルダ存在判定・ホーム／デスクトップ／ドキュメント／テンポラリパス・母艦パス／母艦パス取得・一時フォルダ作成）、Nodeプロセス終了3 entry、LINE Notify廃止エラー2 entry、`元号データ`の固定5件、caniuseの`対応ブラウザ一覧取得`と`ブラウザ名変換表`を実装し、後続命令を個別ABIの増殖なしに追加できる。副作用命令の`二進表示`は同じ変換結果を
+  `足`・`合計`・`連続加算`命令の各正式名と別名、および数学38 entry（乱数を含む）、日時29 entry（現在時刻・日付・年月・曜日・Unix秒・日時文字列・書式・元号・差分・加算・単調時計）、URL・Base64 5 entry、パス5 entry（拡張子・終端パス処理）、漢数字・算用数字2 entry（指数・全角数字・小数・BigInt変換）、Nodeホスト情報22 entry（OS・CPU・argv由来のコマンドライン定数3件・環境変数取得・一覧取得・カレントディレクトリ取得2 alias・カレントディレクトリ変更2 alias・ファイル／フォルダ存在判定・ホーム／デスクトップ／ドキュメント／テンポラリパス・母艦パス／母艦パス取得・一時フォルダ作成・IPv4/IPv6アドレス列挙）、Nodeプロセス終了3 entry、LINE Notify廃止エラー2 entry、`元号データ`の固定5件、caniuseの`対応ブラウザ一覧取得`と`ブラウザ名変換表`を実装し、後続命令を個別ABIの増殖なしに追加できる。副作用命令の`二進表示`は同じ変換結果を
   改行付きで出力して`undefined`を返す。CSV 7 entry（CSV/TSV解析、引用、数値自動変換、セル文字列化、オプション設定）も
   `runtime/aot.zig`の`AotCsvState`と同じ標準命令ABIで処理する。TOML 2 entryも同じABIに接続し、
   AOT固有のparser・table writerで配列テーブルとインライン表を処理する。
@@ -226,6 +226,7 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
 - Nodeの`存在` / `フォルダ存在`は、Nodeの`fs.statSync`相当でパスの存在とディレクトリ種別を判定する。InterpreterはNode hostのstat抽象へ、AOTはJS runtimeを使わず`std.Io.Dir.statFile`へ接続し、未存在・stat失敗はfalseとして返す。`native-node-file-existence`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較し、QuickJS互換モードは対象外とする。
 - Nodeの`母艦パス` / `母艦パス取得`は、ソースパスを実行時CWD基準で絶対化した親ディレクトリを共有する。AOTは生成mainから専用ABIへソースパスを渡し、Interpreterと同じ規則で直接グローバルと関数を初期化する。`native-node-mother-path`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。
 - Nodeの`一時フォルダ作成`は、引数を親フォルダではなく接頭辞として扱い、6文字の英数字suffixを付けて新規ディレクトリを作る。純LLVM AOTは`std.Io.Dir`で作成し、既存名の衝突時は再試行する。`native-node-temporary-directory`で2回生成・存在判定・suffix長を公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3と比較する。
+- Nodeの`自分IPアドレス取得` / `自分IPV6アドレス取得`は、Nodeの`os.networkInterfaces()`相当のOS列挙を使い、IPv4/IPv6アドレスだけを順序付き配列へ変換する。純LLVM AOTはPOSIXの`getifaddrs`またはWindowsの`GetAdaptersAddresses`を直接呼び、IPv6のinterface scopeを除去する。`native-node-network-addresses`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。
 - Nodeの`ファイルコピーデフォルト動作`は、`上書禁止`を初期値とする可変システムグローバルである。純LLVM AOTは参照されたグローバルを同じ初期値で生成し、通常の代入を保持する。`native-node-file-copy-default`で初期値と`上書`/`overwrite`代入を公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3と比較する。ファイルコピー・移動本体のAOT routeは別の未実装境界である。
 - Nodeの`ファイルサイズ取得`は、指定pathを`std.Io.Dir.statFile`でstatし、`size`をbinary64へ変換する。stat失敗は実行時エラーとして伝播する。`native-node-file-size`で`.`の公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。
 - Nodeの`文字コード変換サポート判定`は、Interpreterと共有する正規化・別名・生成済みlegacy/single-byte表を使い、Bufferを生成せずbooleanだけを返す。純LLVM AOTは専用builtin dispatchへ接続し、`native-node-encoding-support`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。Bufferを返す4つのエンコーディング変換命令は別の未実装境界である。

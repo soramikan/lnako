@@ -17383,14 +17383,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-network-addresses"
+        "plugin-node-network-addresses",
+        "native-node-network-addresses"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+      "reason": "公式7経路のIPv4ネットワークアドレス差分テストに成功"
     },
     {
       "id": "command-0760",
@@ -17408,14 +17409,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-network-addresses"
+        "plugin-node-network-addresses",
+        "native-node-network-addresses"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+      "reason": "公式7経路のIPv6ネットワークアドレス差分テストに成功"
     },
     {
       "id": "command-0761",

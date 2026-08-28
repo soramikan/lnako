@@ -825,5 +825,10 @@
     "id": "native-node-http-onerror-set",
     "commands": ["AJAX失敗時"],
     "source": "F=関数(X)それはX;ここまで\nAJAX失敗時(F)\n\"SET\"を表示\n"
+  },
+  {
+    "id": "native-node-network-addresses",
+    "commands": ["自分IPアドレス取得", "自分IPV6アドレス取得"],
+    "source": "V4=自分IPアドレス取得(); JSON変換(配列ソート(V4))を表示\nV6=自分IPV6アドレス取得(); JSON変換(配列ソート(V6))を表示\n"
   }
 ]

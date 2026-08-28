@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "0cd9ac36a1d79816ce8ce2c1ef528387439348beda6a74b6e2bec619df24f999"
+    "sha256": "a23b540b6def01ed4ffa83030f81b535bac59b5b7ea17d2d09cc57a27647fc46"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 88,
+    "count": 86,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 88
+      "unverified": 86
     }
   },
   "groups": [
@@ -123,24 +123,6 @@
         "標準入力取得時",
         "尋",
         "文字尋"
-      ]
-    },
-    {
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ネットワーク",
-      "type": "関数",
-      "count": 2,
-      "executionEvidenceStates": {
-        "unverified": 2
-      },
-      "commandIds": [
-        "command-0759",
-        "command-0760"
-      ],
-      "names": [
-        "自分IPアドレス取得",
-        "自分IPV6アドレス取得"
       ]
     },
     {
@@ -1334,40 +1316,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "plugin-node-stdin"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0759",
-      "name": "自分IPアドレス取得",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ネットワーク",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-network-addresses"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0760",
-      "name": "自分IPV6アドレス取得",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ネットワーク",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-network-addresses"
       ],
       "aotFixtureIds": []
     },
