@@ -72,6 +72,7 @@ pub const string_entries = [_]StringEntry{
     .{ .name = "半角カナ濁音一覧", .value = "ｶﾞｷﾞｸﾞｹﾞｺﾞｻﾞｼﾞｽﾞｾﾞｿﾞﾀﾞﾁﾞﾂﾞﾃﾞﾄﾞﾊﾞﾋﾞﾌﾞﾍﾞﾎﾞﾊﾟﾋﾟﾌﾟﾍﾟﾎﾟ" },
     .{ .name = "表示ログ", .value = "" },
     .{ .name = "AJAXオプション", .value = "" },
+    .{ .name = "ファイルコピーデフォルト動作", .value = "上書禁止" },
     .{ .name = "プラグイン名", .value = "メイン" },
     .{ .name = "名前空間", .value = "" },
 };
@@ -135,6 +136,7 @@ test "v3.7.24のスカラーシステム定数を解決する" {
     try std.testing.expectEqualStrings("3.7.24", lookupString("ナデシコバージョン").?);
     try std.testing.expectEqualStrings("\n", lookupString("改行").?);
     try std.testing.expectEqualStrings("", lookupString("AJAXオプション").?);
+    try std.testing.expectEqualStrings("上書禁止", lookupString("ファイルコピーデフォルト動作").?);
     try std.testing.expect(lookupScalar("HTTPメソッド").? == .null_value);
     try std.testing.expect(lookupScalar("GETデータ").? == .null_value);
     try std.testing.expect(lookupScalar("POSTデータ").? == .null_value);

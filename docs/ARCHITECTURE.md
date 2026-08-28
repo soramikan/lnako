@@ -225,5 +225,6 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
 - Nodeの`存在` / `フォルダ存在`は、Nodeの`fs.statSync`相当でパスの存在とディレクトリ種別を判定する。InterpreterはNode hostのstat抽象へ、AOTはJS runtimeを使わず`std.Io.Dir.statFile`へ接続し、未存在・stat失敗はfalseとして返す。`native-node-file-existence`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較し、QuickJS互換モードは対象外とする。
 - Nodeの`母艦パス` / `母艦パス取得`は、ソースパスを実行時CWD基準で絶対化した親ディレクトリを共有する。AOTは生成mainから専用ABIへソースパスを渡し、Interpreterと同じ規則で直接グローバルと関数を初期化する。`native-node-mother-path`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。
 - Nodeの`一時フォルダ作成`は、引数を親フォルダではなく接頭辞として扱い、6文字の英数字suffixを付けて新規ディレクトリを作る。純LLVM AOTは`std.Io.Dir`で作成し、既存名の衝突時は再試行する。`native-node-temporary-directory`で2回生成・存在判定・suffix長を公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3と比較する。
+- Nodeの`ファイルコピーデフォルト動作`は、`上書禁止`を初期値とする可変システムグローバルである。純LLVM AOTは参照されたグローバルを同じ初期値で生成し、通常の代入を保持する。`native-node-file-copy-default`で初期値と`上書`/`overwrite`代入を公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3と比較する。ファイルコピー・移動本体のAOT routeは別の未実装境界である。
 - Promiseの`束`は入力PromiseをFIFOマイクロタスクへ接続し、入力順の成功配列、空入力、最初の失敗を`Promise.all`と同じ順序で処理する。
 - `tests/oracle/standard-plugin-cases.json` が48命令を重複なく列挙し、カバレッジ検査と公式CLI差分テストを3環境CIで実行する。

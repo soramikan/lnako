@@ -772,5 +772,10 @@
     "id": "native-node-temporary-directory",
     "commands": ["一時フォルダ作成"],
     "source": "A=一時フォルダ作成(\"work-\")\nB=一時フォルダ作成(\"work-\")\n(文字数(A)=11)を表示\n(文字数(B)=11)を表示\nフォルダ存在(A)を表示\nフォルダ存在(B)を表示\n"
+  },
+  {
+    "id": "native-node-file-copy-default",
+    "commands": ["ファイルコピーデフォルト動作"],
+    "source": "ファイルコピーデフォルト動作を表示\nファイルコピーデフォルト動作=\"上書\"\nファイルコピーデフォルト動作を表示\nファイルコピーデフォルト動作=\"overwrite\"\nファイルコピーデフォルト動作を表示\n"
   }
 ]
