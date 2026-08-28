@@ -369,6 +369,40 @@ const AotProcessTask = struct {
     }
 };
 
+const AotFileTaskOperation = enum { copy, move, delete };
+
+const AotFileTask = struct {
+    runtime: *Runtime,
+    operation: AotFileTaskOperation,
+    source: []u8,
+    destination: []u8,
+    overwrite: bool,
+    callback: Value = .{},
+    thread: ?std.Thread = null,
+    complete: std.atomic.Value(bool) = .init(false),
+    completion_order: u64 = 0,
+    failure: ?anyerror = null,
+
+    fn run(self: *@This()) void {
+        const io = aotRuntimeIo(self.runtime);
+        const result = switch (self.operation) {
+            .copy => aotFileCopyMoveWithIo(self.runtime, io, self.source, self.destination, self.overwrite, false),
+            .move => aotFileCopyMoveWithIo(self.runtime, io, self.source, self.destination, self.overwrite, true),
+            .delete => std.Io.Dir.cwd().deleteTree(io, self.source),
+        };
+        if (result) |_| {} else |failure| self.failure = failure;
+        self.completion_order = self.runtime.process_completion_sequence.fetchAdd(1, .monotonic);
+        self.complete.store(true, .release);
+    }
+
+    fn deinit(self: *@This(), allocator: std.mem.Allocator, join: bool) void {
+        if (join) if (self.thread) |thread| thread.join();
+        allocator.free(self.source);
+        allocator.free(self.destination);
+        allocator.destroy(self);
+    }
+};
+
 const AotHttpGlobals = struct {
     method: ?*Value = null,
     get_data: ?*Value = null,
@@ -567,6 +601,10 @@ const Runtime = struct {
     http_globals: ?AotHttpGlobals = null,
     archive_tool_path_custom: bool = false,
     archive_tasks: std.ArrayList(AotArchiveTask) = .empty,
+    file_process_callback: Value = .{},
+    file_process_target: ?*Value = null,
+    file_process_stop: bool = false,
+    file_tasks: std.ArrayList(*AotFileTask) = .empty,
     process_tasks: std.ArrayList(*AotProcessTask) = .empty,
     process_completion_sequence: std.atomic.Value(u64) = .init(1),
     process_io: std.Io.Threaded = .init_single_threaded,
@@ -582,6 +620,8 @@ const Runtime = struct {
         self.http_server_state.deinit(self.allocator);
         for (self.archive_tasks.items) |*task| task.deinit(self.allocator);
         self.archive_tasks.deinit(self.allocator);
+        while (self.file_tasks.pop()) |task| task.deinit(self.allocator, true);
+        self.file_tasks.deinit(self.allocator);
         while (self.process_tasks.pop()) |task| task.deinit(self.allocator, true);
         self.process_tasks.deinit(self.allocator);
         if (self.process_io_initialized) self.process_io.deinit();
@@ -823,6 +863,8 @@ const Runtime = struct {
             if (route.kind == .callback) self.markValue(route.callback);
         }
         for (self.archive_tasks.items) |task| self.markValue(task.callback);
+        self.markValue(self.file_process_callback);
+        for (self.file_tasks.items) |task| self.markValue(task.callback);
         for (self.process_tasks.items) |task| self.markValue(task.callback);
         while (self.grey) |object| {
             self.grey = object.grey_next;
@@ -3319,6 +3361,7 @@ fn sleepAotUntil(runtime: *Runtime, target: u64) !void {
     while (runtime.elapsed_milliseconds < target) {
         try pollAotInterrupt(runtime);
         try drainAotProcessTasks(runtime);
+        try drainAotFileTasks(runtime);
         const remaining = target - runtime.elapsed_milliseconds;
         const slice = @min(remaining, @as(u64, 20));
         try std.Io.sleep(
@@ -3329,6 +3372,7 @@ fn sleepAotUntil(runtime: *Runtime, target: u64) !void {
         runtime.elapsed_milliseconds += slice;
         try pollAotInterrupt(runtime);
         try drainAotProcessTasks(runtime);
+        try drainAotFileTasks(runtime);
     }
 }
 
@@ -3351,6 +3395,10 @@ fn runAotShellCommand(runtime: *Runtime, command: []const u8, cwd: []const u8) !
             else => 1,
         },
     };
+}
+
+fn aotRuntimeIo(runtime: *Runtime) std.Io {
+    return if (runtime.process_io_initialized) runtime.process_io.io() else std.Io.Threaded.global_single_threaded.io();
 }
 
 fn queueAotProcess(runtime: *Runtime, command: []const u8, mode: AotProcessMode, callback: Value) !void {
@@ -3383,11 +3431,51 @@ fn queueAotProcess(runtime: *Runtime, command: []const u8, mode: AotProcessMode,
     };
 }
 
+fn queueAotFileTask(runtime: *Runtime, operation: AotFileTaskOperation, source: []const u8, destination: []const u8, overwrite: bool, callback: Value) !void {
+    const allocator = runtime.allocator;
+    const task = try allocator.create(AotFileTask);
+    const owned_source = allocator.dupe(u8, source) catch |failure| {
+        allocator.destroy(task);
+        return failure;
+    };
+    const owned_destination = allocator.dupe(u8, destination) catch |failure| {
+        allocator.free(owned_source);
+        allocator.destroy(task);
+        return failure;
+    };
+    task.* = .{
+        .runtime = runtime,
+        .operation = operation,
+        .source = owned_source,
+        .destination = owned_destination,
+        .overwrite = overwrite,
+        .callback = callback,
+    };
+    runtime.file_tasks.append(allocator, task) catch |failure| {
+        task.deinit(allocator, false);
+        return failure;
+    };
+    task.thread = std.Thread.spawn(.{}, AotFileTask.run, .{task}) catch |failure| {
+        _ = runtime.file_tasks.pop();
+        task.deinit(allocator, false);
+        return failure;
+    };
+}
+
 fn readyAotProcessTaskIndex(runtime: *const Runtime) ?usize {
     var selected: ?usize = null;
     for (runtime.process_tasks.items, 0..) |task, index| {
         if (!task.complete.load(.acquire)) continue;
         if (selected == null or task.completion_order < runtime.process_tasks.items[selected.?].completion_order) selected = index;
+    }
+    return selected;
+}
+
+fn readyAotFileTaskIndex(runtime: *const Runtime) ?usize {
+    var selected: ?usize = null;
+    for (runtime.file_tasks.items, 0..) |task, index| {
+        if (!task.complete.load(.acquire)) continue;
+        if (selected == null or task.completion_order < runtime.file_tasks.items[selected.?].completion_order) selected = index;
     }
     return selected;
 }
@@ -3417,6 +3505,20 @@ fn drainAotProcessTasks(runtime: *Runtime) !void {
                 _ = try invokeAotCallback(runtime, rooted[0], @ptrCast(&rooted[1]), 1);
             },
         }
+    }
+}
+
+fn drainAotFileTasks(runtime: *Runtime) !void {
+    while (readyAotFileTaskIndex(runtime)) |index| {
+        try countAotEvent(runtime);
+        const task = runtime.file_tasks.orderedRemove(index);
+        defer task.deinit(runtime.allocator, true);
+        if (task.failure != null) return error.FileOperationFailed;
+        var callback = task.callback;
+        var frame = RootFrame{};
+        runtime.pushRoots(&frame, @ptrCast(&callback), 1);
+        defer runtime.popRoots(&frame);
+        _ = try invokeAotCallback(runtime, callback, null, 0);
     }
 }
 
@@ -3531,13 +3633,14 @@ fn drainAotPromiseTasks(runtime: *Runtime) !void {
 fn drainAotEvents(runtime: *Runtime) !void {
     while (true) {
         try drainAotProcessTasks(runtime);
+        try drainAotFileTasks(runtime);
         try drainAotArchiveTasks(runtime);
         try drainAotPromiseTasks(runtime);
         if (earliestAotTimerIndex(runtime)) |index| {
             try executeAotTimer(runtime, index);
             continue;
         }
-        if (runtime.process_tasks.items.len > 0) {
+        if (runtime.process_tasks.items.len > 0 or runtime.file_tasks.items.len > 0) {
             try std.Io.sleep(
                 std.Io.Threaded.global_single_threaded.io(),
                 std.Io.Duration.fromMilliseconds(1),
@@ -3558,6 +3661,7 @@ fn waitAotMilliseconds(runtime: *Runtime, milliseconds: u64) !void {
     const target = std.math.add(u64, runtime.elapsed_milliseconds, milliseconds) catch return error.TimerOverflow;
     while (true) {
         try drainAotProcessTasks(runtime);
+        try drainAotFileTasks(runtime);
         try drainAotArchiveTasks(runtime);
         try drainAotPromiseTasks(runtime);
         const index = earliestAotTimerIndex(runtime) orelse break;
@@ -3565,10 +3669,12 @@ fn waitAotMilliseconds(runtime: *Runtime, milliseconds: u64) !void {
         try executeAotTimer(runtime, index);
     }
     try drainAotProcessTasks(runtime);
+    try drainAotFileTasks(runtime);
     try drainAotArchiveTasks(runtime);
     try drainAotPromiseTasks(runtime);
     try sleepAotUntil(runtime, target);
     try drainAotProcessTasks(runtime);
+    try drainAotFileTasks(runtime);
 }
 
 fn scheduleAotTimer(runtime: *Runtime, arguments: []const Value, repeating: bool, target: ?*Value) !Value {
@@ -5105,12 +5211,16 @@ pub export fn lnako_aot_runtime_deinit() callconv(.c) void {
 pub export fn lnako_aot_runtime_drain_events() callconv(.c) void {
     const runtime = if (active_runtime) |*active| active else return;
     pollAotInterrupt(runtime) catch |failure| runtimeFailure(failure);
+    drainAotProcessTasks(runtime) catch |failure| runtimeFailure(failure);
+    drainAotFileTasks(runtime) catch |failure| runtimeFailure(failure);
     drainAotTimers(runtime) catch |failure| runtimeFailure(failure);
     drainAotArchiveTasks(runtime) catch |failure| runtimeFailure(failure);
     pollAotInterrupt(runtime) catch |failure| runtimeFailure(failure);
     if (runtime.http_server_state.started) {
         while (runtime.http_server_state.started) {
             _ = pollAotHttpServer(runtime) catch |failure| runtimeFailure(failure);
+            drainAotProcessTasks(runtime) catch |failure| runtimeFailure(failure);
+            drainAotFileTasks(runtime) catch |failure| runtimeFailure(failure);
             drainAotPromiseTasks(runtime) catch |failure| runtimeFailure(failure);
             drainAotArchiveTasks(runtime) catch |failure| runtimeFailure(failure);
             pollAotInterrupt(runtime) catch |failure| runtimeFailure(failure);
@@ -6298,6 +6408,47 @@ pub export fn lnako_aot_node_process_call(
     success = runtime.failure_epoch == start_epoch;
 }
 
+/// Dedicated ABI for Node file-operation callback and progress commands. The
+/// current `対象` storage is explicit so progress callbacks observe the same
+/// dictionary value as the interpreter, while worker threads retain only
+/// copied paths and the callback Value.
+pub export fn lnako_aot_node_file_callback_call(
+    out: *Value,
+    target: *Value,
+    arguments: ?[*]const Value,
+    len: usize,
+    opcode: u16,
+    site_id: u64,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
+        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "node-file-callback", site_id);
+        runtime.setFailure(error.UnknownCommand);
+        runtime.dispatch_trace.result(call_id, "unknown", opcode, "node-file-callback", site_id, false);
+        return;
+    };
+    if (!isNodeFileCallbackCommand(command)) {
+        runtime.setFailure(error.UnknownCommand);
+        return;
+    }
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "node-file-callback", site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "node-file-callback", site_id, success);
+    if (arguments == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+    out.* = nodeFileCallbackBuiltin(runtime, target, command, actual) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    success = runtime.failure_epoch == start_epoch;
+}
+
 pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Value, len: usize, opcode: u16, site_id: u64) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*active| active else return;
@@ -6317,7 +6468,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .namespace_pop and command != .timer_wait and command != .timer_stop_all and command != .promise_all and command != .async_noop and command != .node_console_clear and command != .system_debug_breakpoint_wait and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit and command != .node_hash_names and command != .node_random_uuid and command != .node_stdin_all and command != .node_stdin_line and command != .node_stdin_character and command != .node_network_ipv4 and command != .node_network_ipv6 and command != .system_hatena_configure) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .namespace_pop and command != .timer_wait and command != .timer_stop_all and command != .promise_all and command != .async_noop and command != .node_console_clear and command != .node_file_process_stop and command != .system_debug_breakpoint_wait and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit and command != .node_hash_names and command != .node_random_uuid and command != .node_stdin_all and command != .node_stdin_line and command != .node_stdin_character and command != .node_network_ipv4 and command != .node_network_ipv6 and command != .system_hatena_configure) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -6506,6 +6657,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         .node_process_run_wait, .node_process_run, .node_process_start, .node_process_run_wait_output, .node_process_start_callback, .node_open_external_browser, .node_open_external_explorer => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = nodeProcessBuiltin(runtime, command, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .node_file_process_callback, .node_file_process_stop, .node_file_copy_callback, .node_file_move_callback, .node_file_delete_callback => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = nodeFileCallbackBuiltin(runtime, null, command, actual) catch |failure| {
                 runtime.setFailure(failure);
                 return;
             };
@@ -9996,6 +10154,70 @@ fn isNodeFileOperationCommand(command: aot_builtin.Command) bool {
     };
 }
 
+fn isNodeFileCallbackCommand(command: aot_builtin.Command) bool {
+    return switch (command) {
+        .node_file_process_callback, .node_file_process_stop, .node_file_copy_callback, .node_file_move_callback, .node_file_delete_callback => true,
+        else => false,
+    };
+}
+
+fn nodeFileCallbackBuiltin(runtime: *Runtime, target: ?*Value, command: aot_builtin.Command, arguments: []const Value) !Value {
+    switch (command) {
+        .node_file_process_callback => {
+            if (arguments.len < 1) return error.InvalidArgumentCount;
+            var callback = arguments[0];
+            var frame = RootFrame{};
+            runtime.pushRoots(&frame, @ptrCast(&callback), 1);
+            defer runtime.popRoots(&frame);
+            callback = try resolveAotCallback(runtime, callback);
+            runtime.file_process_callback = callback;
+            runtime.file_process_target = target;
+            runtime.file_process_stop = false;
+            return .{};
+        },
+        .node_file_process_stop => {
+            runtime.file_process_stop = true;
+            return .{};
+        },
+        .node_file_copy_callback, .node_file_move_callback => {
+            if (arguments.len < 3) return error.InvalidArgumentCount;
+            var rooted = [_]Value{ arguments[0], arguments[1], arguments[2] };
+            var frame = RootFrame{};
+            runtime.pushRoots(&frame, &rooted, rooted.len);
+            defer runtime.popRoots(&frame);
+            rooted[0] = try resolveAotCallback(runtime, rooted[0]);
+            const source = try valueUtf8LossyAlloc(runtime, rooted[1]);
+            defer runtime.allocator.free(source);
+            const destination = try valueUtf8LossyAlloc(runtime, rooted[2]);
+            defer runtime.allocator.free(destination);
+            runtime.file_process_target = target;
+            try queueAotFileTask(
+                runtime,
+                if (command == .node_file_copy_callback) .copy else .move,
+                source,
+                destination,
+                command == .node_file_copy_callback,
+                rooted[0],
+            );
+            return .{};
+        },
+        .node_file_delete_callback => {
+            if (arguments.len < 2) return error.InvalidArgumentCount;
+            var rooted = [_]Value{ arguments[0], arguments[1] };
+            var frame = RootFrame{};
+            runtime.pushRoots(&frame, &rooted, rooted.len);
+            defer runtime.popRoots(&frame);
+            rooted[0] = try resolveAotCallback(runtime, rooted[0]);
+            const source = try valueUtf8LossyAlloc(runtime, rooted[1]);
+            defer runtime.allocator.free(source);
+            runtime.file_process_target = target;
+            try queueAotFileTask(runtime, .delete, source, &.{}, false, rooted[0]);
+            return .{};
+        },
+        else => return error.UnknownCommand,
+    }
+}
+
 fn nodeFileOperationBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value, file_copy_default: *Value) !Value {
     return switch (command) {
         .node_file_list => nodeFileListBuiltin(runtime, arguments, false),
@@ -10110,9 +10332,18 @@ fn nodeFileCopyMoveBuiltin(runtime: *Runtime, command: aot_builtin.Command, argu
     defer runtime.allocator.free(destination);
     const explicit_overwrite = command == .node_file_copy_overwrite or command == .node_file_move_overwrite;
     const overwrite = if (explicit_overwrite) true else try nodeFileCopyDefaultOverwrite(runtime, file_copy_default.*);
-    const io = std.Io.Threaded.global_single_threaded.io();
+    const io = aotRuntimeIo(runtime);
     if (!overwrite and nodeAotPathExists(io, destination)) return error.CopyDestinationExists;
+    runtime.file_process_stop = false;
 
+    const move = command == .node_file_move or command == .node_file_move_overwrite;
+    if (runtime.file_process_callback.tag == @intFromEnum(Tag.function)) {
+        try aotFileCopyMoveWithProgress(runtime, io, source, destination, overwrite, move);
+    } else try aotFileCopyMoveWithIo(runtime, io, source, destination, overwrite, move);
+    return .{};
+}
+
+fn aotFileCopyMoveWithIo(runtime: *Runtime, io: std.Io, source: []const u8, destination: []const u8, overwrite: bool, move: bool) !void {
     const stat = try std.Io.Dir.cwd().statFile(io, source, .{});
     if (stat.kind != .directory) {
         try std.Io.Dir.cwd().copyFile(source, std.Io.Dir.cwd(), destination, io, .{ .replace = overwrite, .make_path = true });
@@ -10134,8 +10365,59 @@ fn nodeFileCopyMoveBuiltin(runtime: *Runtime, command: aot_builtin.Command, argu
             }
         }
     }
-    if (command == .node_file_move or command == .node_file_move_overwrite) try std.Io.Dir.cwd().deleteTree(io, source);
-    return .{};
+    if (move) try std.Io.Dir.cwd().deleteTree(io, source);
+}
+
+fn aotFileCopyMoveWithProgress(runtime: *Runtime, io: std.Io, source: []const u8, destination: []const u8, overwrite: bool, move: bool) !void {
+    const stat = try std.Io.Dir.cwd().statFile(io, source, .{});
+    if (stat.kind != .directory) {
+        try std.Io.Dir.cwd().copyFile(source, std.Io.Dir.cwd(), destination, io, .{ .replace = overwrite, .make_path = true });
+        try emitAotFileProgress(runtime, 1, 1);
+    } else {
+        try std.Io.Dir.cwd().createDirPath(io, destination);
+        var directory = try std.Io.Dir.cwd().openDir(io, source, .{ .iterate = true });
+        defer directory.close(io);
+        var files: std.ArrayList([]u8) = .empty;
+        defer {
+            for (files.items) |path| runtime.allocator.free(path);
+            files.deinit(runtime.allocator);
+        }
+        var walker = try directory.walk(runtime.allocator);
+        defer walker.deinit();
+        while (try walker.next(io)) |entry| {
+            if (entry.kind == .file) {
+                try files.append(runtime.allocator, try runtime.allocator.dupe(u8, entry.path));
+            }
+        }
+        std.mem.sort([]u8, files.items, {}, lessThanNodeAotFileName);
+        var current: usize = 0;
+        for (files.items) |path| {
+            if (runtime.file_process_stop) break;
+            const from = try std.fs.path.join(runtime.allocator, &.{ source, path });
+            defer runtime.allocator.free(from);
+            const target = try std.fs.path.join(runtime.allocator, &.{ destination, path });
+            defer runtime.allocator.free(target);
+            try std.Io.Dir.cwd().copyFile(from, std.Io.Dir.cwd(), target, io, .{ .replace = overwrite, .make_path = true });
+            current += 1;
+            emitAotFileProgress(runtime, files.items.len, current) catch {};
+        }
+    }
+    if (move and !runtime.file_process_stop) try std.Io.Dir.cwd().deleteTree(io, source);
+}
+
+fn emitAotFileProgress(runtime: *Runtime, total: usize, current: usize) !void {
+    if (runtime.file_process_stop) return;
+    var rooted = [_]Value{ runtime.file_process_callback, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &rooted, rooted.len);
+    defer runtime.popRoots(&frame);
+    rooted[1] = try runtime.createDictionary(&.{});
+    rooted[2] = try runtimeUtf8String(runtime, "件数");
+    rooted[3] = try runtimeUtf8String(runtime, "現在");
+    try runtime.setDictionary(&rooted[1].object().?.payload.dictionary, rooted[2], numberValue(@floatFromInt(total)));
+    try runtime.setDictionary(&rooted[1].object().?.payload.dictionary, rooted[3], numberValue(@floatFromInt(current)));
+    if (runtime.file_process_target) |target| target.* = rooted[1];
+    _ = try invokeAotCallback(runtime, rooted[0], @ptrCast(&rooted[1]), 1);
 }
 
 fn nodeAotPathExists(io: std.Io, path: []const u8) bool {
@@ -13699,6 +13981,20 @@ fn testAotCapturedIncrement(out: *Value, context: *anyopaque, _: ?[*]const Value
     out.* = next;
 }
 
+fn testAotFileProgressStop(out: *Value, context: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
+    const function: *Object = @ptrCast(@alignCast(context));
+    const cell = function.payload.function.captures[0].object().?;
+    if (arguments != null and len == 1) {
+        const current = valueToNumber(dictionaryProperty(arguments.?[0], &.{ '現', '在' }));
+        cell.payload.binding_cell = numberValue(current);
+        if (current == 1) {
+            var ignored = Value{};
+            lnako_aot_builtin_call(&ignored, null, 0, @intFromEnum(aot_builtin.Command.node_file_process_stop));
+        }
+    }
+    out.* = .{};
+}
+
 test "AOT関数値を呼び出しGCで回収する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -14421,6 +14717,127 @@ test "AOT Node同期ファイル操作は列挙・再帰コピー・移動・削
     try std.testing.expect((try nodeFileExistenceBuiltin(&runtime, .node_folder_exists, &.{roots[11]})).payload != 0);
     _ = try nodeFileOperationBuiltin(&runtime, .node_file_delete, &.{roots[6]}, &roots[0]);
     try std.testing.expect((try nodeFileExistenceBuiltin(&runtime, .node_file_exists, &.{roots[6]})).payload == 0);
+}
+
+test "AOT Nodeファイルcallbackは完了・進捗・停止を処理する" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "copy-source.txt", .data = "copy" });
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "move-source.txt", .data = "move" });
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "delete-target.txt", .data = "delete" });
+    try temporary.dir.createDirPath(std.testing.io, "tree/sub");
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "tree/one.txt", .data = "1" });
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "tree/sub/two.txt", .data = "2" });
+
+    const root_path = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(root_path);
+    const copy_source_path = try std.fs.path.join(std.testing.allocator, &.{ root_path, "copy-source.txt" });
+    defer std.testing.allocator.free(copy_source_path);
+    const copy_target_path = try std.fs.path.join(std.testing.allocator, &.{ root_path, "copy-target.txt" });
+    defer std.testing.allocator.free(copy_target_path);
+    const move_source_path = try std.fs.path.join(std.testing.allocator, &.{ root_path, "move-source.txt" });
+    defer std.testing.allocator.free(move_source_path);
+    const move_target_path = try std.fs.path.join(std.testing.allocator, &.{ root_path, "move-target.txt" });
+    defer std.testing.allocator.free(move_target_path);
+    const delete_target_path = try std.fs.path.join(std.testing.allocator, &.{ root_path, "delete-target.txt" });
+    defer std.testing.allocator.free(delete_target_path);
+    const tree_source_path = try std.fs.path.join(std.testing.allocator, &.{ root_path, "tree" });
+    defer std.testing.allocator.free(tree_source_path);
+    const tree_target_path = try std.fs.path.join(std.testing.allocator, &.{ root_path, "tree-target" });
+    defer std.testing.allocator.free(tree_target_path);
+    const tree_target_one_path = try std.fs.path.join(std.testing.allocator, &.{ tree_target_path, "one.txt" });
+    defer std.testing.allocator.free(tree_target_one_path);
+    const tree_target_two_path = try std.fs.path.join(std.testing.allocator, &.{ tree_target_path, "sub", "two.txt" });
+    defer std.testing.allocator.free(tree_target_two_path);
+    const tree_source_two_path = try std.fs.path.join(std.testing.allocator, &.{ tree_source_path, "sub", "two.txt" });
+    defer std.testing.allocator.free(tree_source_two_path);
+
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+
+    var roots = [_]Value{.{}} ** 16;
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+    const active = &active_runtime.?;
+
+    roots[0] = try active.createBindingCell(numberValue(0));
+    roots[1] = try active.createFunction(testAotCapturedIncrement, 0, &.{roots[0]});
+    roots[2] = try runtimeUtf8String(active, copy_source_path);
+    roots[3] = try runtimeUtf8String(active, copy_target_path);
+    roots[4] = try runtimeUtf8String(active, move_source_path);
+    roots[5] = try runtimeUtf8String(active, move_target_path);
+    roots[6] = try runtimeUtf8String(active, delete_target_path);
+
+    var callback_arguments = [_]Value{ roots[1], roots[2], roots[3] };
+    lnako_aot_node_file_callback_call(
+        &roots[15],
+        &roots[14],
+        &callback_arguments,
+        callback_arguments.len,
+        @intFromEnum(aot_builtin.Command.node_file_copy_callback),
+        1,
+    );
+    try drainAotEvents(active);
+    try std.testing.expect((try nodeFileExistenceBuiltin(active, .node_file_exists, &.{roots[3]})).payload != 0);
+
+    callback_arguments = .{ roots[1], roots[4], roots[5] };
+    lnako_aot_node_file_callback_call(
+        &roots[15],
+        &roots[14],
+        &callback_arguments,
+        callback_arguments.len,
+        @intFromEnum(aot_builtin.Command.node_file_move_callback),
+        2,
+    );
+    try drainAotEvents(active);
+    try std.testing.expect((try nodeFileExistenceBuiltin(active, .node_file_exists, &.{roots[4]})).payload == 0);
+    try std.testing.expect((try nodeFileExistenceBuiltin(active, .node_file_exists, &.{roots[5]})).payload != 0);
+
+    var delete_callback_arguments = [_]Value{ roots[1], roots[6] };
+    lnako_aot_node_file_callback_call(
+        &roots[15],
+        &roots[14],
+        &delete_callback_arguments,
+        delete_callback_arguments.len,
+        @intFromEnum(aot_builtin.Command.node_file_delete_callback),
+        3,
+    );
+    try drainAotEvents(active);
+    try std.testing.expect((try nodeFileExistenceBuiltin(active, .node_file_exists, &.{roots[6]})).payload == 0);
+    try std.testing.expectEqual(@as(f64, 3), valueToNumber(roots[0].object().?.payload.binding_cell));
+
+    roots[7] = try active.createBindingCell(numberValue(0));
+    roots[8] = try active.createFunction(testAotFileProgressStop, 1, &.{roots[7]});
+    roots[9] = try runtimeUtf8String(active, tree_source_path);
+    roots[10] = try runtimeUtf8String(active, tree_target_path);
+    roots[11] = try runtimeUtf8String(active, tree_target_one_path);
+    roots[12] = try runtimeUtf8String(active, tree_target_two_path);
+    roots[13] = try runtimeUtf8String(active, tree_source_two_path);
+    var progress_registration = [_]Value{roots[8]};
+    lnako_aot_node_file_callback_call(
+        &roots[15],
+        &roots[14],
+        &progress_registration,
+        progress_registration.len,
+        @intFromEnum(aot_builtin.Command.node_file_process_callback),
+        4,
+    );
+    roots[15] = staticStringValue("上書禁止");
+    _ = try nodeFileCopyMoveBuiltin(active, .node_file_copy, &.{ roots[9], roots[10] }, &roots[15]);
+
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(roots[7].object().?.payload.binding_cell));
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(dictionaryProperty(roots[14], &.{ '件', '数' })));
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(dictionaryProperty(roots[14], &.{ '現', '在' })));
+    try std.testing.expect((try nodeFileExistenceBuiltin(active, .node_file_exists, &.{roots[9]})).payload != 0);
+    try std.testing.expect((try nodeFileExistenceBuiltin(active, .node_file_exists, &.{roots[13]})).payload != 0);
+    try std.testing.expect((try nodeFileExistenceBuiltin(active, .node_file_exists, &.{roots[11]})).payload != 0);
+    try std.testing.expect((try nodeFileExistenceBuiltin(active, .node_file_exists, &.{roots[12]})).payload == 0);
 }
 
 test "AOT Nodeファイルサイズ取得はstatのサイズを返す" {

@@ -9,13 +9,13 @@
   "duplicateNameCount": 31,
   "fixtureInventory": {
     "total": 297,
-    "nativeAot": 198,
+    "nativeAot": 199,
     "interpreter": 96,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
-    "paired": 497,
-    "interpreter-only": 26,
+    "paired": 502,
+    "interpreter-only": 21,
     "aot-only": 0,
     "none": 0,
     "compat-js-only": 4
@@ -13780,7 +13780,9 @@
       "interpreterFixtureIds": [
         "plugin-node-file-callbacks"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "plugin-node-file-callbacks"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -13789,14 +13791,19 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "plugin-node-file-callbacks": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
@@ -13875,7 +13882,9 @@
       "interpreterFixtureIds": [
         "plugin-node-file-callbacks"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "plugin-node-file-callbacks"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -13884,14 +13893,19 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "plugin-node-file-callbacks": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
@@ -13902,7 +13916,9 @@
       "interpreterFixtureIds": [
         "plugin-node-file-callbacks"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "plugin-node-file-callbacks"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -13911,14 +13927,19 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "plugin-node-file-callbacks": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
@@ -13929,7 +13950,9 @@
       "interpreterFixtureIds": [
         "plugin-node-file-callbacks"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "plugin-node-file-callbacks"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -13938,14 +13961,19 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "plugin-node-file-callbacks": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
@@ -13990,7 +14018,9 @@
       "interpreterFixtureIds": [
         "plugin-node-file-callbacks"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "plugin-node-file-callbacks"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -13999,14 +14029,19 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "plugin-node-file-callbacks": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {

@@ -84,9 +84,9 @@ fixtureのソース本文から命令名を推測することはしません。�
 
 `plugin-httpserver-all`は、既存のInterpreter比較に加えて、純LLVM AOT O0〜O3の実通信比較を行うfixtureです。
 
-現行HEADでは、明示`commands`を追加した既存AOT fixtureと数学・日時・caniuse・漢数字・CSV・TOML・マークアップ・比較・表・敬語・標準出力・プラグイン管理・ASYNC・システムカタログ・Node/AJAX初期定数・LINE Notify廃止エラー・Node終了・Node強制終了登録・Nodeファイル存在・Nodeファイルサイズ・Nodeファイル情報・NodeファイルI/O・Node同期ファイル操作・Nodeコンソールクリア・Node文字コード変換・Node文字コードサポート判定・Node標準入力行取得・コールバック・全取得・Node HTTPデータ生成・Node AJAXオプション設定・Node AJAX失敗時設定・Nodeネットワークアドレス・Nodeディレクトリ値・Node母艦パス・Node一時フォルダ作成・Nodeファイルコピーデフォルト動作・Nodeハッシュ名一覧・Node暗号（ハッシュ値・UUID・乱数配列）・Node圧縮解凍ツールパス・Nodeプロセス（同期／非同期shell実行とOSランチャー）・エラー発生・実行時間計測・デバッグ表示・既定ハテナ実行・カスタムハテナ実行・デバッグブレイクポイント待機・タイマー待機・タイマー（単発・周期・停止）・Promise連鎖・Promise束ね・Promise待機fixtureを含めて、fixture inventoryは
-全297件（AOT 198件、Interpreter 96件、QuickJS 9件）です。`plugin-node-native-archive`は圧縮・解凍4命令を含み、`plugin-node-process`と関連fixtureはNodeプロセス7命令を含み、InterpreterとAOT O0〜O3で実行・生成物を検証します。命令のfixture coverageは`paired` 497 entry、
-`interpreter-only` 26 entryです。execution evidenceは`verified` 0、
+現行HEADでは、明示`commands`を追加した既存AOT fixtureと数学・日時・caniuse・漢数字・CSV・TOML・マークアップ・比較・表・敬語・標準出力・プラグイン管理・ASYNC・システムカタログ・Node/AJAX初期定数・LINE Notify廃止エラー・Node終了・Node強制終了登録・Nodeファイル存在・Nodeファイルサイズ・Nodeファイル情報・NodeファイルI/O・Node同期ファイル操作・Nodeファイルcallback・Nodeコンソールクリア・Node文字コード変換・Node文字コードサポート判定・Node標準入力行取得・コールバック・全取得・Node HTTPデータ生成・Node AJAXオプション設定・Node AJAX失敗時設定・Nodeネットワークアドレス・Nodeディレクトリ値・Node母艦パス・Node一時フォルダ作成・Nodeファイルコピーデフォルト動作・Nodeハッシュ名一覧・Node暗号（ハッシュ値・UUID・乱数配列）・Node圧縮解凍ツールパス・Nodeプロセス（同期／非同期shell実行とOSランチャー）・エラー発生・実行時間計測・デバッグ表示・既定ハテナ実行・カスタムハテナ実行・デバッグブレイクポイント待機・タイマー待機・タイマー（単発・周期・停止）・Promise連鎖・Promise束ね・Promise待機fixtureを含めて、fixture inventoryは
+全297件（AOT 199件、Interpreter 96件、QuickJS 9件）です。`plugin-node-native-archive`は圧縮・解凍4命令を含み、`plugin-node-process`と関連fixtureはNodeプロセス7命令を含み、`plugin-node-file-callbacks`はファイル完了callback、進捗、停止を含み、InterpreterとAOT O0〜O3で実行・生成物を検証します。命令のfixture coverageは`paired` 502 entry、
+`interpreter-only` 21 entryです。execution evidenceは`verified` 0、
 `trace-confirmed-unattested` 4、`unverified` 523のままです。
 fixtureの関連付けを変更した場合は、次で派生台帳の生成と検査を行います。
 

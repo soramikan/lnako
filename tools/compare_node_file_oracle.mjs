@@ -22,21 +22,26 @@ try {
   for (const testCase of cases) {
     const officialDirectory = resolve(temporary, testCase.id, "official");
     const lnakoDirectory = resolve(temporary, testCase.id, "lnako");
-    const aotDirectory = resolve(temporary, testCase.id, "aot");
     await mkdir(officialDirectory, { recursive: true });
     await mkdir(lnakoDirectory, { recursive: true });
-    if (testCase.aot === true) await mkdir(aotDirectory, { recursive: true });
+    const aotDirectories = {};
+    if (testCase.aot === true) {
+      for (const optimization of ["O0", "O1", "O2", "O3"]) {
+        const directory = resolve(temporary, testCase.id, `aot-${optimization}`);
+        aotDirectories[optimization] = directory;
+        await mkdir(directory, { recursive: true });
+      }
+    }
     for (const [name, contents] of Object.entries(testCase.files ?? {})) {
       await writeFile(resolve(officialDirectory, name), contents, "utf8");
       await writeFile(resolve(lnakoDirectory, name), contents, "utf8");
-      if (testCase.aot === true) await writeFile(resolve(aotDirectory, name), contents, "utf8");
+      for (const directory of Object.values(aotDirectories)) await writeFile(resolve(directory, name), contents, "utf8");
     }
     const officialSource = resolve(officialDirectory, "case.nako3");
     const lnakoSource = resolve(lnakoDirectory, "case.nako3");
-    const aotSource = resolve(aotDirectory, "case.nako3");
     await writeFile(officialSource, testCase.source, "utf8");
     await writeFile(lnakoSource, testCase.source, "utf8");
-    if (testCase.aot === true) await writeFile(aotSource, testCase.source, "utf8");
+    for (const directory of Object.values(aotDirectories)) await writeFile(resolve(directory, "case.nako3"), testCase.source, "utf8");
     const environment = {
       ...process.env,
       TZ: "Asia/Tokyo",
@@ -60,9 +65,12 @@ try {
     const actualFiles = await snapshot(lnakoDirectory, basename(lnakoSource));
     const aotResults = {};
     const aotStderr = {};
+    const aotFiles = {};
     let aotCompileFailure = false;
     if (testCase.aot === true) {
       for (const optimization of ["O0", "O1", "O2", "O3"]) {
+        const aotDirectory = aotDirectories[optimization];
+        const aotSource = resolve(aotDirectory, "case.nako3");
         const nativeExecutable = resolve(temporary, `${testCase.id}-${optimization}${process.platform === "win32" ? ".exe" : ""}`);
         const nativeCompile = spawnSync(executable, ["build", aotSource, "-o", nativeExecutable, `-${optimization}`], {
           cwd: aotDirectory,
@@ -75,14 +83,14 @@ try {
           : nativeCompile;
         aotResults[`O${optimization.slice(1)}`] = normalize(nativeResult);
         aotStderr[`O${optimization.slice(1)}`] = nativeResult.stderr;
+        aotFiles[`O${optimization.slice(1)}`] = await snapshot(aotDirectory, basename(aotSource));
         if (nativeCompile.status !== 0) aotCompileFailure = true;
       }
     }
-    const aotFiles = testCase.aot === true ? await snapshot(aotDirectory, basename(aotSource)) : null;
     const aotMismatch = testCase.aot === true && (
       aotCompileFailure ||
       Object.values(aotResults).some((result) => JSON.stringify(result) !== JSON.stringify(expectedResult)) ||
-      JSON.stringify(aotFiles) !== JSON.stringify(expectedFiles)
+      Object.values(aotFiles).some((files) => JSON.stringify(files) !== JSON.stringify(expectedFiles))
     );
     if (official.status !== 0 || actual.status !== 0 || JSON.stringify(expectedResult) !== JSON.stringify(actualResult) || JSON.stringify(expectedFiles) !== JSON.stringify(actualFiles) || aotMismatch) {
       failures += 1;

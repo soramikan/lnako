@@ -351,6 +351,11 @@ pub const Command = enum(u16) {
     node_process_start_callback,
     node_open_external_browser,
     node_open_external_explorer,
+    node_file_process_callback,
+    node_file_process_stop,
+    node_file_copy_callback,
+    node_file_move_callback,
+    node_file_delete_callback,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -653,6 +658,11 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "起動時")) return .node_process_start_callback;
     if (std.mem.eql(u8, name, "ブラウザ起動")) return .node_open_external_browser;
     if (std.mem.eql(u8, name, "エクスプローラー起動")) return .node_open_external_explorer;
+    if (std.mem.eql(u8, name, "ファイル処理時")) return .node_file_process_callback;
+    if (std.mem.eql(u8, name, "ファイル処理強制停止")) return .node_file_process_stop;
+    if (std.mem.eql(u8, name, "ファイルコピー時")) return .node_file_copy_callback;
+    if (std.mem.eql(u8, name, "ファイル移動時")) return .node_file_move_callback;
+    if (std.mem.eql(u8, name, "ファイル削除時")) return .node_file_delete_callback;
     if (std.mem.eql(u8, name, "グローバル関数一覧取得")) return .system_global_function_names;
     if (std.mem.eql(u8, name, "システム関数一覧取得")) return .system_function_names;
     if (std.mem.eql(u8, name, "システム関数存在")) return .system_function_exists;
@@ -1064,6 +1074,11 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.node_process_start_callback, lookup("起動時").?);
     try std.testing.expectEqual(Command.node_open_external_browser, lookup("ブラウザ起動").?);
     try std.testing.expectEqual(Command.node_open_external_explorer, lookup("エクスプローラー起動").?);
+    try std.testing.expectEqual(Command.node_file_process_callback, lookup("ファイル処理時").?);
+    try std.testing.expectEqual(Command.node_file_process_stop, lookup("ファイル処理強制停止").?);
+    try std.testing.expectEqual(Command.node_file_copy_callback, lookup("ファイルコピー時").?);
+    try std.testing.expectEqual(Command.node_file_move_callback, lookup("ファイル移動時").?);
+    try std.testing.expectEqual(Command.node_file_delete_callback, lookup("ファイル削除時").?);
     try std.testing.expect(lookup("未対応命令") == null);
 }
 
