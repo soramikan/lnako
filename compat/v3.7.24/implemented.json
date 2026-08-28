@@ -2640,7 +2640,7 @@
       "plugin-node-path-host",
       "native-node-command-line-constants"
     ],
-    "reason": "公式cnako3とのNodeホスト・純LLVM AOT差分テストに成功"
+    "reason": "公式cnako3とのNodeホスト差分テストに成功"
   },
   "ナデシコランタイム": {
     "status": "native",
@@ -2648,7 +2648,7 @@
       "plugin-node-path-host",
       "native-node-command-line-constants"
     ],
-    "reason": "公式cnako3とのNodeホスト・純LLVM AOT差分テストに成功"
+    "reason": "公式cnako3とのNodeホスト差分テストに成功"
   },
   "ナデシコランタイムパス": {
     "status": "native",
@@ -2656,7 +2656,7 @@
       "plugin-node-path-host",
       "native-node-command-line-constants"
     ],
-    "reason": "公式cnako3とのNodeホスト・純LLVM AOT差分テストに成功"
+    "reason": "公式cnako3とのNodeホスト差分テストに成功"
   },
   "開": {
     "status": "native",
