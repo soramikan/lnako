@@ -315,6 +315,7 @@ const Emitter = struct {
                 "%lnako.Value = type { i8, i64 }\n" ++
                 "%lnako.RootFrame = type { ptr, ptr, i64 }\n\n" ++
                 "declare i32 @lnako_aot_runtime_init()\n" ++
+                "declare void @lnako_aot_node_constants_init(ptr, ptr, ptr, i32, ptr)\n" ++
                 "declare void @lnako_aot_runtime_deinit()\n" ++
                 "declare void @lnako_aot_push_roots(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_pop_roots(ptr)\n" ++
@@ -1389,7 +1390,7 @@ const Emitter = struct {
 
     fn writeMain(self: *Emitter) !void {
         const scope = 4 + self.program.functions.len;
-        try self.output.writer.print("define i32 @main() !dbg !{d} {{\nentry:\n", .{scope});
+        try self.output.writer.print("define i32 @main(i32 %argc, ptr %argv) !dbg !{d} {{\nentry:\n", .{scope});
         try self.output.writer.writeAll("  %runtime.status = call i32 @lnako_aot_runtime_init()\n");
         for (self.globals.items, 0..) |_, global_index| {
             try self.output.writer.print("  %global.root.frame.{d} = alloca %lnako.RootFrame\n", .{global_index});
@@ -1410,6 +1411,15 @@ const Emitter = struct {
         }
         for (self.system_era_data.items) |global_index| {
             try self.output.writer.print("  call void @lnako_aot_era_data_new(ptr @lnako.global.{d})\n", .{global_index});
+        }
+        if (self.globalIndex("コマンドライン") != null or self.globalIndex("ナデシコランタイム") != null or self.globalIndex("ナデシコランタイムパス") != null) {
+            try self.output.writer.writeAll("  call void @lnako_aot_node_constants_init(ptr ");
+            if (self.globalIndex("コマンドライン")) |global_index| try self.output.writer.print("@lnako.global.{d}", .{global_index}) else try self.output.writer.writeAll("null");
+            try self.output.writer.writeAll(", ptr ");
+            if (self.globalIndex("ナデシコランタイム")) |global_index| try self.output.writer.print("@lnako.global.{d}", .{global_index}) else try self.output.writer.writeAll("null");
+            try self.output.writer.writeAll(", ptr ");
+            if (self.globalIndex("ナデシコランタイムパス")) |global_index| try self.output.writer.print("@lnako.global.{d}", .{global_index}) else try self.output.writer.writeAll("null");
+            try self.output.writer.writeAll(", i32 %argc, ptr %argv)\n");
         }
         for (self.program.functions) |function| if (self.globalIndex(function.name)) |global_index| {
             try self.output.writer.print("  call void @lnako_aot_function_new_named(ptr @lnako.global.{d}, ptr @lnako.wrapper.{d}, i64 {d}, ptr @lnako.function.name.{d}, i64 {d}, ptr null, i64 0)\n", .{ global_index, function.id, function.parameters.len, function.id, function.name.len });
@@ -1829,7 +1839,7 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     const semantic = @import("../../semantic/analyzer.zig");
     const hir = @import("../../ir/hir.zig");
     const lower = @import("../../ir/lower_ssa.zig");
-    var parsed = try parser.parse(std.testing.allocator, "A=1\nB=A+2\nBを表示\nデバッグ表示({\"a\":1})\n", "main.nako3");
+    var parsed = try parser.parse(std.testing.allocator, "A=1\nB=A+2\nBを表示\nコマンドラインを表示\nデバッグ表示({\"a\":1})\n", "main.nako3");
     defer parsed.deinit();
     var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
     defer analyzed.deinit();
@@ -1839,8 +1849,10 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     defer program.deinit();
     var module = try generate(std.testing.allocator, program, "main.nako3", false);
     defer module.deinit(std.testing.allocator);
-    try std.testing.expect(std.mem.indexOf(u8, module.text, "define i32 @main()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "define i32 @main(i32 %argc, ptr %argv)") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call i32 @lnako_aot_runtime_init()") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_constants_init(ptr, ptr, ptr, i32, ptr)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_node_constants_init(ptr ") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_runtime_deinit()") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.global.0") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "!llvm.dbg.cu") != null);

@@ -2882,6 +2882,45 @@ pub export fn lnako_aot_runtime_init() callconv(.c) c_int {
     return 0;
 }
 
+fn aotProcessArgument(argv: ?*const anyopaque, index: usize) []const u8 {
+    const raw = argv orelse return "";
+    const values: [*:null]const ?[*:0]const u8 = @ptrCast(@alignCast(raw));
+    const value = values[index] orelse return "";
+    return std.mem.span(value);
+}
+
+/// Initializes Node-host constants whose values depend on the generated
+/// executable's process arguments.  The generated main has already rooted
+/// every referenced global before this function is called, so newly allocated
+/// strings and the command-line array remain visible to the collector while
+/// the values are being assembled.
+pub export fn lnako_aot_node_constants_init(
+    command_line: ?*Value,
+    runtime_name: ?*Value,
+    runtime_path: ?*Value,
+    argc: i32,
+    argv: ?*const anyopaque,
+) callconv(.c) void {
+    const runtime = if (active_runtime) |*active| active else return;
+    const count: usize = if (argc > 0) @intCast(argc) else 0;
+
+    if (command_line) |out| {
+        out.* = runtime.createArray(&.{}) catch |failure| runtimeFailure(failure);
+        var frame = RootFrame{};
+        runtime.pushRoots(&frame, @ptrCast(out), 1);
+        defer runtime.popRoots(&frame);
+        var index: usize = 0;
+        while (index < count) : (index += 1) {
+            const value = runtimeUtf8StringLossy(runtime, aotProcessArgument(argv, index)) catch |failure| runtimeFailure(failure);
+            out.object().?.payload.array.append(runtime.allocator, value) catch |failure| runtimeFailure(failure);
+        }
+    }
+
+    const first = aotProcessArgument(argv, 0);
+    if (runtime_path) |out| out.* = runtimeUtf8StringLossy(runtime, first) catch |failure| runtimeFailure(failure);
+    if (runtime_name) |out| out.* = runtimeUtf8StringLossy(runtime, nodeBasename(first)) catch |failure| runtimeFailure(failure);
+}
+
 pub export fn lnako_aot_runtime_deinit() callconv(.c) void {
     if (active_runtime) |*runtime| runtime.deinit();
     active_runtime = null;
@@ -9659,6 +9698,7 @@ test "LLVM側の値ABIと同じ16バイト配置を保つ" {
 }
 
 test "公開AOT ABIは動的値をポインタで受け渡す" {
+    try std.testing.expectEqual(*const fn (?*Value, ?*Value, ?*Value, i32, ?*const anyopaque) callconv(.c) void, @TypeOf(&lnako_aot_node_constants_init));
     try std.testing.expectEqual(*const fn (*Value, *anyopaque, ?[*]const Value, usize) callconv(.c) void, FunctionCallback);
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_array_new));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_index_get));
@@ -9689,6 +9729,36 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*const Value) callconv(.c) void, @TypeOf(&lnako_aot_exception_set_error_message));
     try std.testing.expectEqual(*const fn () callconv(.c) c_int, @TypeOf(&lnako_aot_exception_pending));
     try std.testing.expectEqual(*const fn (*Value) callconv(.c) void, @TypeOf(&lnako_aot_exception_take));
+}
+
+test "AOTコマンドライン定数は生成mainのargvから構築する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    const executable = "/opt/lnako/bin/sample";
+    const first_argument = "alpha";
+    const second_argument = "日本語";
+    var argv = [_]?[*:0]const u8{ executable.ptr, first_argument.ptr, second_argument.ptr, null };
+    lnako_aot_node_constants_init(&roots[0], &roots[1], &roots[2], 3, @ptrCast(&argv));
+
+    try std.testing.expectEqual(Tag.array, @as(Tag, @enumFromInt(roots[0].tag)));
+    const arguments = roots[0].object().?.payload.array.items;
+    try std.testing.expectEqual(@as(usize, 3), arguments.len);
+    try expectUtf16String(&active_runtime.?, arguments[0], executable);
+    try expectUtf16String(&active_runtime.?, arguments[1], first_argument);
+    try expectUtf16String(&active_runtime.?, arguments[2], second_argument);
+    try expectUtf16String(&active_runtime.?, roots[1], "sample");
+    try expectUtf16String(&active_runtime.?, roots[2], executable);
 }
 
 test "AOT dispatchのfailure epochは過去のpending exceptionを再利用しない" {
