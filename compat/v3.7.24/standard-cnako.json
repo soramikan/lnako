@@ -11714,14 +11714,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-stdin"
+        "plugin-node-stdin",
+        "native-node-stdin-lines"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路の標準入力行取得と数値変換差分テストに成功"
     },
     {
       "id": "command-0756",
@@ -11739,14 +11740,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-stdin"
+        "plugin-node-stdin",
+        "native-node-stdin-lines"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路の標準入力行取得と文字列境界差分テストに成功"
     },
     {
       "id": "command-0757",

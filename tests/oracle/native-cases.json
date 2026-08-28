@@ -885,6 +885,12 @@
     "source": "標準入力全取得()を表示\n"
   },
   {
+    "id": "native-node-stdin-lines",
+    "commands": ["尋", "文字尋", "標準入力全取得"],
+    "stdin": "abc\r\n41\nrest\n",
+    "source": "文字尋(\"P>\")を表示\n(尋(\"\")+1)を表示\n標準入力全取得()を表示\n"
+  },
+  {
     "id": "native-node-http-post-data",
     "commands": ["POSTデータ生成"],
     "source": "POSTデータ生成({\"a\":\"x y\",\"日本\":\"語!\"})を表示\n"

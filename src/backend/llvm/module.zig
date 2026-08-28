@@ -94,6 +94,7 @@ pub fn manifestCall(name: []const u8, direct_callee: ?ir.FunctionId, is_builtin_
         .system_debug_display => "debug-display",
         .system_hatena_execute => "hatena-default",
         .system_debug_breakpoint_wait => "debug-breakpoint-wait",
+        .node_stdin_line, .node_stdin_character => "node-stdin-lines",
         .node_archive_tool_path_set => "archive-tool-path",
         .node_ajax_options_set => "ajax-options",
         .node_ajax_onerror_set => "ajax-onerror",
@@ -2164,6 +2165,11 @@ test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {
     try std.testing.expectEqualStrings("system_debug_breakpoint_wait", breakpoint_wait.canonical_opcode);
     try std.testing.expectEqualStrings("debug-breakpoint-wait", breakpoint_wait.route);
     try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.system_debug_breakpoint_wait), breakpoint_wait.opcode);
+
+    const stdin_line = manifestCall("尋", null, true).?;
+    try std.testing.expectEqualStrings("node_stdin_line", stdin_line.canonical_opcode);
+    try std.testing.expectEqualStrings("node-stdin-lines", stdin_line.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_stdin_line), stdin_line.opcode);
 
     const archive_tool_path = manifestCall("圧縮解凍ツールパス変更", null, true).?;
     try std.testing.expectEqualStrings("node_archive_tool_path_set", archive_tool_path.canonical_opcode);

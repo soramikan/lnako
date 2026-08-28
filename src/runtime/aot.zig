@@ -413,6 +413,8 @@ const Runtime = struct {
     elapsed_milliseconds: u64 = 0,
     next_timer_id: u64 = 1,
     timer_event_count: usize = 0,
+    stdin_bytes: ?[]u8 = null,
+    stdin_offset: usize = 0,
 
     fn deinit(self: *Runtime) void {
         self.dispatch_trace.deinit();
@@ -423,6 +425,7 @@ const Runtime = struct {
         self.promise_tasks.deinit(self.allocator);
         for (self.promise_all_states.items) |state| self.allocator.destroy(state);
         self.promise_all_states.deinit(self.allocator);
+        if (self.stdin_bytes) |bytes| self.allocator.free(bytes);
         if (self.aot_source_directory) |path| self.allocator.free(path);
         var current = self.objects;
         while (current) |object| {
@@ -4810,7 +4813,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .namespace_pop and command != .timer_wait and command != .timer_stop_all and command != .promise_all and command != .async_noop and command != .node_console_clear and command != .system_debug_breakpoint_wait and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit and command != .node_hash_names and command != .node_random_uuid and command != .node_stdin_all and command != .node_network_ipv4 and command != .node_network_ipv6) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .namespace_pop and command != .timer_wait and command != .timer_stop_all and command != .promise_all and command != .async_noop and command != .node_console_clear and command != .system_debug_breakpoint_wait and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit and command != .node_hash_names and command != .node_random_uuid and command != .node_stdin_all and command != .node_stdin_line and command != .node_stdin_character and command != .node_network_ipv4 and command != .node_network_ipv6) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -5129,6 +5132,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         },
         .node_stdin_all => {
             out.* = nodeStdinAllBuiltin(runtime) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .node_stdin_line, .node_stdin_character => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = nodeStdinLineBuiltin(runtime, command, actual) catch |failure| {
                 runtime.setFailure(failure);
                 return;
             };
@@ -8661,11 +8671,55 @@ fn nodeEncodingSupportsBuiltin(runtime: *Runtime, arguments: []const Value) !Val
     return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(encoding.supports(name)) };
 }
 
+fn ensureAotStdin(runtime: *Runtime) ![]const u8 {
+    if (runtime.stdin_bytes == null) {
+        var buffer: [4096]u8 = undefined;
+        var reader = std.Io.File.stdin().readerStreaming(std.Io.Threaded.global_single_threaded.io(), &buffer);
+        runtime.stdin_bytes = try reader.interface.allocRemaining(runtime.allocator, .limited(64 * 1024 * 1024));
+    }
+    return runtime.stdin_bytes.?;
+}
+
+fn nextAotStdinLine(runtime: *Runtime) []const u8 {
+    const bytes = runtime.stdin_bytes orelse return "";
+    if (runtime.stdin_offset >= bytes.len) return "";
+    const start = runtime.stdin_offset;
+    var end = start;
+    while (end < bytes.len and bytes[end] != '\n') end += 1;
+    runtime.stdin_offset = if (end < bytes.len) end + 1 else end;
+    return bytes[start..end];
+}
+
+fn nodeStdinLineBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    _ = try ensureAotStdin(runtime);
+    const prompt_value = if (arguments.len > 0) arguments[0] else Value{};
+    const prompt = try valueUtf8LossyAlloc(runtime, prompt_value);
+    defer runtime.allocator.free(prompt);
+    writeBytes(prompt, false);
+
+    const raw_line = nextAotStdinLine(runtime);
+    const has_carriage_return = std.mem.indexOfScalar(u8, raw_line, '\r') != null;
+    var cleaned_storage: ?[]u8 = null;
+    const line = if (has_carriage_return) blk: {
+        const cleaned = try runtime.allocator.alloc(u8, raw_line.len);
+        cleaned_storage = cleaned;
+        var length: usize = 0;
+        for (raw_line) |byte| if (byte != '\r') {
+            cleaned[length] = byte;
+            length += 1;
+        };
+        break :blk cleaned[0..length];
+    } else raw_line;
+    defer if (cleaned_storage) |storage| runtime.allocator.free(storage);
+
+    const text = try runtimeUtf8StringLossy(runtime, line);
+    if (command == .node_stdin_character) return text;
+    const number = try valueToNumberRuntime(runtime, text);
+    return if (std.math.isNan(number)) text else numberValue(number);
+}
+
 fn nodeStdinAllBuiltin(runtime: *Runtime) !Value {
-    var buffer: [4096]u8 = undefined;
-    var reader = std.Io.File.stdin().readerStreaming(std.Io.Threaded.global_single_threaded.io(), &buffer);
-    const bytes = try reader.interface.allocRemaining(runtime.allocator, .limited(64 * 1024 * 1024));
-    defer runtime.allocator.free(bytes);
+    const bytes = try ensureAotStdin(runtime);
     return runtimeUtf8StringLossy(runtime, bytes);
 }
 
@@ -12913,6 +12967,25 @@ test "AOT Node標準入力全取得はUTF-8入力を文字列にする" {
     defer runtime.deinit();
     const result = try nodeStdinValueBuiltin(&runtime, "A\n日本語\n");
     try expectUtf16String(&runtime, result, "A\n日本語\n");
+}
+
+test "AOT Node標準入力行命令は行分割と尋の数値変換を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    runtime.stdin_bytes = try runtime.allocator.dupe(u8, "abc\r\n41\nrest\n");
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    const empty_prompt = [_]Value{staticStringValue("")};
+    roots[0] = try nodeStdinLineBuiltin(&runtime, .node_stdin_character, &empty_prompt);
+    roots[1] = try nodeStdinLineBuiltin(&runtime, .node_stdin_line, &empty_prompt);
+    roots[2] = try nodeStdinAllBuiltin(&runtime);
+    try expectUtf16String(&runtime, roots[0], "abc");
+    try std.testing.expectEqual(@as(f64, 41), valueToNumber(roots[1]));
+    try expectUtf16String(&runtime, roots[2], "abc\r\n41\nrest\n");
+    try std.testing.expectEqual(@as(usize, 8), runtime.stdin_offset);
 }
 
 test "AOT Node POSTデータ生成は辞書をURI component形式へ変換する" {

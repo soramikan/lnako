@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "0b39e017bb71621f8d9459b472bd3f77a93f956f6394307533ea4fdd6cae6005"
+    "sha256": "033b86387c97a35ed2db1be0451e29189154af9ae59389ca3d6c6e5da07f0f62"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 48,
+    "count": 46,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 48
+      "unverified": 46
     }
   },
   "groups": [
@@ -110,19 +110,15 @@
       "group": "基本プラグイン",
       "category": "コマンドラインと標準入出力",
       "type": "関数",
-      "count": 3,
+      "count": 1,
       "executionEvidenceStates": {
-        "unverified": 3
+        "unverified": 1
       },
       "commandIds": [
-        "command-0754",
-        "command-0755",
-        "command-0756"
+        "command-0754"
       ],
       "names": [
-        "標準入力取得時",
-        "尋",
-        "文字尋"
+        "標準入力取得時"
       ]
     },
     {
@@ -601,40 +597,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "plugin-node-stdin-callback"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0755",
-      "name": "尋",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "コマンドラインと標準入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-stdin"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0756",
-      "name": "文字尋",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "コマンドラインと標準入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-stdin"
       ],
       "aotFixtureIds": []
     },

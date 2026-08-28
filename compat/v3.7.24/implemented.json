@@ -2934,16 +2934,18 @@
   "尋": {
     "status": "native",
     "tests": [
-      "plugin-node-stdin"
+      "plugin-node-stdin",
+      "native-node-stdin-lines"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路の標準入力行取得と数値変換差分テストに成功"
   },
   "文字尋": {
     "status": "native",
     "tests": [
-      "plugin-node-stdin"
+      "plugin-node-stdin",
+      "native-node-stdin-lines"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路の標準入力行取得と文字列境界差分テストに成功"
   },
   "標準入力全取得": {
     "status": "native",
