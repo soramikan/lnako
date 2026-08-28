@@ -3824,6 +3824,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
+        .node_post_data => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = nodePostDataBuiltin(runtime, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .node_home_directory, .node_desktop, .node_documents, .node_temporary_directory => {
             out.* = nodeDirectoryBuiltin(runtime, command) catch |failure| {
                 runtime.setFailure(failure);
@@ -6915,6 +6922,39 @@ fn nodeStdinAllBuiltin(runtime: *Runtime) !Value {
 
 fn nodeStdinValueBuiltin(runtime: *Runtime, bytes: []const u8) !Value {
     return runtimeUtf8StringLossy(runtime, bytes);
+}
+
+fn nodePostDataBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    if (arguments.len < 1) return error.InvalidArgumentCount;
+    var output: std.Io.Writer.Allocating = .init(runtime.allocator);
+    defer output.deinit();
+    const parameters = arguments[0];
+    if (parameters.tag == @intFromEnum(Tag.dictionary)) {
+        for (parameters.object().?.payload.dictionary.items, 0..) |entry, index| {
+            if (index > 0) try output.writer.writeByte('&');
+            const key = try valueUtf8LossyAlloc(runtime, entry.key);
+            defer runtime.allocator.free(key);
+            const value = try valueUtf8LossyAlloc(runtime, entry.value);
+            defer runtime.allocator.free(value);
+            try appendNodeUriComponent(&output.writer, key);
+            try output.writer.writeByte('=');
+            try appendNodeUriComponent(&output.writer, value);
+        }
+    }
+    return runtimeUtf8String(runtime, output.written());
+}
+
+fn appendNodeUriComponent(writer: *std.Io.Writer, source: []const u8) !void {
+    const hex = "0123456789ABCDEF";
+    for (source) |byte| {
+        if (std.ascii.isAlphanumeric(byte) or std.mem.indexOfScalar(u8, "-_.!~*'()", byte) != null) {
+            try writer.writeByte(byte);
+        } else {
+            try writer.writeByte('%');
+            try writer.writeByte(hex[byte >> 4]);
+            try writer.writeByte(hex[byte & 0x0f]);
+        }
+    }
 }
 
 fn nodeDirectoryBuiltin(runtime: *Runtime, command: aot_builtin.Command) !Value {
@@ -10896,6 +10936,23 @@ test "AOT Node標準入力全取得はUTF-8入力を文字列にする" {
     defer runtime.deinit();
     const result = try nodeStdinValueBuiltin(&runtime, "A\n日本語\n");
     try expectUtf16String(&runtime, result, "A\n日本語\n");
+}
+
+test "AOT Node POSTデータ生成は辞書をURI component形式へ変換する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtimeUtf8String(&runtime, "{\"a\":\"x y\",\"日本\":\"語!\"}");
+    roots[1] = try jsonDecodeBuiltin(&runtime, roots[0]);
+    roots[2] = try nodePostDataBuiltin(&runtime, &.{roots[1]});
+    try expectUtf16String(&runtime, roots[2], "a=x%20y&%E6%97%A5%E6%9C%AC=%E8%AA%9E!");
+
+    roots[3] = try nodePostDataBuiltin(&runtime, &.{staticStringValue("not-a-dictionary")});
+    try expectUtf16String(&runtime, roots[3], "");
 }
 
 test "AOT Nodeの環境依存ディレクトリ命令はOSの環境値を使う" {

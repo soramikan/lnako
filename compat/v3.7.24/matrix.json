@@ -17811,14 +17811,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-http-post-data"
+        "plugin-node-http-post-data",
+        "native-node-http-post-data"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+      "reason": "公式7経路のPOSTデータ生成差分テストに成功"
     },
     {
       "id": "command-0777",

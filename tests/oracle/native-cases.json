@@ -810,5 +810,10 @@
     "commands": ["標準入力全取得"],
     "stdin": "A\n日本語\n",
     "source": "標準入力全取得()を表示\n"
+  },
+  {
+    "id": "native-node-http-post-data",
+    "commands": ["POSTデータ生成"],
+    "source": "POSTデータ生成({\"a\":\"x y\",\"日本\":\"語!\"})を表示\n"
   }
 ]

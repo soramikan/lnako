@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "fbe17707598cda960884fbc8589c64655507cc3a15195efb7886e6790dcd3d13"
+    "sha256": "948fd3de7eff14de65bf847b5405739eefe24c8a43155fd38d4523b1bf8eb013"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 91,
+    "count": 90,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 91
+      "unverified": 90
     }
   },
   "groups": [
@@ -52,9 +52,9 @@
       "group": "基本プラグイン",
       "category": "Ajax",
       "type": "関数",
-      "count": 17,
+      "count": 16,
       "executionEvidenceStates": {
-        "unverified": 17
+        "unverified": 16
       },
       "commandIds": [
         "command-0761",
@@ -71,7 +71,6 @@
         "command-0773",
         "command-0774",
         "command-0775",
-        "command-0776",
         "command-0777",
         "command-0778"
       ],
@@ -90,7 +89,6 @@
         "POSTフォーム保障送信",
         "AJAX内容取得",
         "AJAX受信",
-        "POSTデータ生成",
         "POST送信",
         "POSTフォーム送信"
       ]
@@ -1614,23 +1612,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "plugin-node-http-async-values"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0776",
-      "name": "POSTデータ生成",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "Ajax",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-http-post-data"
       ],
       "aotFixtureIds": []
     },

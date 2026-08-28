@@ -3087,9 +3087,10 @@
   "POSTデータ生成": {
     "status": "native",
     "tests": [
-      "plugin-node-http-post-data"
+      "plugin-node-http-post-data",
+      "native-node-http-post-data"
     ],
-    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+    "reason": "公式7経路のPOSTデータ生成差分テストに成功"
   },
   "自分IPアドレス取得": {
     "status": "native",
