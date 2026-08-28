@@ -815,5 +815,10 @@
     "id": "native-node-http-post-data",
     "commands": ["POSTデータ生成"],
     "source": "POSTデータ生成({\"a\":\"x y\",\"日本\":\"語!\"})を表示\n"
+  },
+  {
+    "id": "native-node-http-options-set",
+    "commands": ["AJAXオプション設定"],
+    "source": "AJAXオプション設定({\"method\":\"PUT\",\"body\":\"payload\",\"headers\":{\"X-Test\":\"yes\"}})\nJSON変換(AJAXオプション)を表示\n"
   }
 ]

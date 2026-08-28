@@ -46,6 +46,7 @@ register("一時フォルダ作成", "native-node-temporary-directory", "公式7
 register("文字コード変換サポート判定", "native-node-encoding-support", "公式7経路の文字コード名サポート判定差分テストに成功");
 register("標準入力全取得", "native-node-stdin-all", "公式7経路の標準入力全取得差分テストに成功");
 register("POSTデータ生成", "native-node-http-post-data", "公式7経路のPOSTデータ生成差分テストに成功");
+register("AJAXオプション設定", "native-node-http-options-set", "公式7経路のAJAXオプション設定差分テストに成功");
 
 const output = `${JSON.stringify(implemented, null, 2)}\n`;
 if (process.argv.includes("--check")) {

@@ -231,6 +231,7 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
 - Nodeの`文字コード変換サポート判定`は、Interpreterと共有する正規化・別名・生成済みlegacy/single-byte表を使い、Bufferを生成せずbooleanだけを返す。純LLVM AOTは専用builtin dispatchへ接続し、`native-node-encoding-support`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。Bufferを返す4つのエンコーディング変換命令は別の未実装境界である。
 - Nodeの`標準入力全取得`は、標準入力を一度だけUTF-8バイト列として読み、UTF-16文字列へ変換する。純LLVM AOTはJS runtimeを使わず`std.Io.File.stdin`から同じ入力を読み、`native-node-stdin-all`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。`尋`・`文字尋`・`標準入力取得時`の行分割・コールバックは別の未実装境界である。
 - Nodeの`POSTデータ生成`は、辞書の挿入順を保ったままキーと値をUTF-8へ変換し、URI component形式の`key=value&...`文字列を生成する。純LLVM AOTはNode/JavaScriptへ依存せず同じunreserved文字集合とUTF-8バイト単位のパーセントエンコードを使い、`native-node-http-post-data`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。実際のHTTP送信とPromise/callback経路は別の未実装境界である。
+- Nodeの`AJAXオプション設定`は、設定値を`AJAXオプション`グローバルへ保持し、戻り値を持たない。純LLVM AOTは専用ABIで同じグローバルへ値を直接保存し、`native-node-http-options-set`で設定後の辞書を公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3と比較する。実際のHTTP送信とPromise/callback経路は別の未実装境界である。
 - Nodeの`圧縮解凍ツールパス`は`7z`を初期値とする可変システムグローバルで、`圧縮解凍ツールパス変更`はその値を更新する。純LLVM AOTは共有システム定数と専用`archive-tool-path` ABIでこの状態遷移を保持し、`native-node-archive-tool-path`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。外部7z実行を含む`圧縮`・`解凍`本体は`TODO: aot-node-archive-operations`として別境界に残す。
 - Nodeの`ハッシュ関数一覧取得`は、Node 24/OpenSSL互換の固定52名称を順序付き配列へ変換する。純LLVM AOTは`crypto.hash_names`をUTF-16配列へ生成し、`native-node-hash-names`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3と比較する。ハッシュ値計算や乱数のバイト型は別の未実装AOT境界である。
 - Promiseの`束`は入力PromiseをFIFOマイクロタスクへ接続し、入力順の成功配列、空入力、最初の失敗を`Promise.all`と同じ順序で処理する。

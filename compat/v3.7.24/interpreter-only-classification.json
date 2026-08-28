@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "948fd3de7eff14de65bf847b5405739eefe24c8a43155fd38d4523b1bf8eb013"
+    "sha256": "68eec1cfda59f73b698de50622c030382ff10ebc7e63f6a8776a854fea971219"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 90,
+    "count": 89,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 90
+      "unverified": 89
     }
   },
   "groups": [
@@ -52,9 +52,9 @@
       "group": "基本プラグイン",
       "category": "Ajax",
       "type": "関数",
-      "count": 16,
+      "count": 15,
       "executionEvidenceStates": {
-        "unverified": 16
+        "unverified": 15
       },
       "commandIds": [
         "command-0761",
@@ -63,7 +63,6 @@
         "command-0764",
         "command-0765",
         "command-0766",
-        "command-0768",
         "command-0769",
         "command-0770",
         "command-0771",
@@ -81,7 +80,6 @@
         "POST送信時",
         "POSTフォーム送信時",
         "AJAX失敗時",
-        "AJAXオプション設定",
         "AJAX保障送信",
         "HTTP保障取得",
         "GET保障送信",
@@ -1476,23 +1474,6 @@
       "interpreterFixtureIds": [
         "plugin-node-http-callbacks",
         "plugin-node-http-onerror"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0768",
-      "name": "AJAXオプション設定",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "Ajax",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-http-options-and-promises"
       ],
       "aotFixtureIds": []
     },

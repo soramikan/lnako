@@ -3312,6 +3312,36 @@ pub export fn lnako_aot_archive_tool_path_set(
     success = runtime.failure_epoch == start_epoch;
 }
 
+/// Dedicated ABI for Node's AJAX option setter. The option object is kept in
+/// the corresponding rooted system global; actual HTTP execution remains a
+/// separate external boundary.
+pub export fn lnako_aot_ajax_options_set(
+    out: *Value,
+    values: ?[*]const Value,
+    len: usize,
+    ajax_options: *Value,
+    site_id: u64,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    if (values == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const command = aot_builtin.Command.node_ajax_options_set;
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    const call_id = runtime.dispatch_trace.begin(command_name, @intFromEnum(command), "ajax-options", site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, @intFromEnum(command), "ajax-options", site_id, success);
+    if (len == 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    ajax_options.* = values.?[0];
+    success = runtime.failure_epoch == start_epoch;
+}
+
 pub export fn lnako_aot_bigint_truthy(value: *const Value) callconv(.c) c_int {
     const object = value.object() orelse return 0;
     if (object.payload != .bigint) return 0;
@@ -3708,7 +3738,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
             runtime.setFailure(error.UnknownCommand);
             return;
         },
-        .node_archive_tool_path_set => {
+        .node_archive_tool_path_set, .node_ajax_options_set => {
             runtime.setFailure(error.UnknownCommand);
             return;
         },
@@ -13131,6 +13161,28 @@ test "AOT圧縮解凍ツールパス変更は可変グローバルを更新す�
     lnako_aot_archive_tool_path_set(&roots[1], &arguments, arguments.len, &roots[0], 9);
     try expectUtf16String(&active_runtime.?, roots[0], "native-tool");
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[1].tag)));
+}
+
+test "AOT AJAXオプション設定は設定値をグローバルへ保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try active_runtime.?.createString(&.{});
+    roots[1] = try runtimeUtf8String(&active_runtime.?, "{\"method\":\"PUT\",\"body\":\"payload\"}");
+    roots[2] = try jsonDecodeBuiltin(&active_runtime.?, roots[1]);
+    var arguments = [_]Value{roots[2]};
+    lnako_aot_ajax_options_set(&roots[3], &arguments, arguments.len, &roots[0], 10);
+    try std.testing.expectEqual(roots[2].payload, roots[0].payload);
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[3].tag)));
 }
 
 test "AOT表ソートは指定列を比較して同じ配列を安定ソートする" {

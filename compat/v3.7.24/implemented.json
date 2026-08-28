@@ -3161,9 +3161,10 @@
   "AJAXオプション設定": {
     "status": "native",
     "tests": [
-      "plugin-node-http-options-and-promises"
+      "plugin-node-http-options-and-promises",
+      "native-node-http-options-set"
     ],
-    "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
+    "reason": "公式7経路のAJAXオプション設定差分テストに成功"
   },
   "AJAX保障送信": {
     "status": "native",
