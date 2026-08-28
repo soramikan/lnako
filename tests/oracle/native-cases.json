@@ -925,5 +925,11 @@
     "id": "native-node-network-addresses",
     "commands": ["自分IPアドレス取得", "自分IPV6アドレス取得"],
     "source": "V4=自分IPアドレス取得(); JSON変換(配列ソート(V4))を表示\nV6=自分IPV6アドレス取得(); JSON変換(配列ソート(V6))を表示\n"
+  },
+  {
+    "id": "native-system-dynamic-execution",
+    "oracle": "official-source",
+    "commands": ["ナデシコ", "ナデシコ続"],
+    "source": "A=3\n「1+Aを表示する。」をナデシコする。\n「1を表示」をナデシコする。それを表示。\n「A=1」をナデシコ続。\n「A=A+1;Aを表示」をナデシコ続。\n"
   }
 ]

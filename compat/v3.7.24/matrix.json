@@ -1494,7 +1494,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "system-runtime-execution-and-debug"
+        "system-runtime-execution-and-debug",
+        "native-system-dynamic-execution"
       ],
       "platforms": [
         "macos-aarch64",
@@ -1520,7 +1521,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "system-runtime-execution-and-debug"
+        "system-runtime-execution-and-debug",
+        "native-system-dynamic-execution"
       ],
       "platforms": [
         "macos-aarch64",

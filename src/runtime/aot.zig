@@ -16,6 +16,9 @@ const markup = @import("../plugins/markup.zig");
 const lexer = @import("../frontend/lexer.zig");
 const josi = @import("../frontend/josi.zig");
 const builtin_catalog = @import("../semantic/builtin_catalog.zig");
+const dynamic_ir = @import("../ir/nako_ir.zig");
+const dynamic_interpreter = @import("interpreter.zig");
+const dynamic_value = @import("value.zig");
 
 extern "c" fn fflush(stream: ?*std.c.FILE) c_int;
 extern "c" fn time(timer: ?*i64) i64;
@@ -628,6 +631,12 @@ const RegisteredFunction = struct {
     object: *Object,
 };
 
+const DynamicGlobal = struct {
+    name: []u8,
+    value: Value = .{},
+    slot: ?*Value = null,
+};
+
 const NamespaceFrame = struct {
     namespace: Value,
     plugin_name: Value,
@@ -690,6 +699,8 @@ const Runtime = struct {
     process_completion_sequence: std.atomic.Value(u64) = .init(1),
     process_io: std.Io.Threaded = .init_single_threaded,
     process_io_initialized: bool = false,
+    dynamic_globals: std.ArrayList(DynamicGlobal) = .empty,
+    dynamic_state: ?*DynamicInterpreterState = null,
 
     fn deinit(self: *Runtime) void {
         self.dispatch_trace.deinit();
@@ -711,6 +722,12 @@ const Runtime = struct {
         while (self.process_tasks.pop()) |task| task.deinit(self.allocator, true);
         self.process_tasks.deinit(self.allocator);
         if (self.process_io_initialized) self.process_io.deinit();
+        if (self.dynamic_state) |state| {
+            state.deinit();
+            self.allocator.destroy(state);
+        }
+        for (self.dynamic_globals.items) |entry| self.allocator.free(entry.name);
+        self.dynamic_globals.deinit(self.allocator);
         self.csv_state.deinit(self.allocator);
         self.print_pool.deinit(self.allocator);
         self.namespace_stack.deinit(self.allocator);
@@ -926,6 +943,7 @@ const Runtime = struct {
         }
         if (self.has_pending_exception) self.markValue(self.pending_exception);
         self.markValue(self.system_context);
+        for (self.dynamic_globals.items) |entry| self.markValue(entry.value);
         self.markValue(self.caniuse_browsers);
         self.markValue(self.caniuse_agents);
         self.markValue(self.era_data);
@@ -1251,6 +1269,288 @@ const Runtime = struct {
         };
     }
 };
+
+const DynamicHostContext = struct {
+    owner: *Runtime,
+
+    fn host(self: *DynamicHostContext) dynamic_interpreter.Host {
+        return .{
+            .context = self,
+            .writeFn = write,
+            .sleepMillisecondsFn = sleepMilliseconds,
+            .nowMillisecondsFn = nowMilliseconds,
+            .monotonicMillisecondsFn = monotonicMilliseconds,
+            .randomFn = random,
+        };
+    }
+
+    fn write(context: *anyopaque, bytes: []const u8) !void {
+        const self: *DynamicHostContext = @ptrCast(@alignCast(context));
+        _ = self;
+        writeBytes(bytes, false);
+    }
+
+    fn sleepMilliseconds(context: *anyopaque, milliseconds: u64) !void {
+        const self: *DynamicHostContext = @ptrCast(@alignCast(context));
+        self.owner.elapsed_milliseconds = std.math.add(u64, self.owner.elapsed_milliseconds, milliseconds) catch return error.TimerOverflow;
+    }
+
+    fn nowMilliseconds(context: *anyopaque) !i64 {
+        const self: *DynamicHostContext = @ptrCast(@alignCast(context));
+        return currentTimeMilliseconds(self.owner);
+    }
+
+    fn monotonicMilliseconds(context: *anyopaque) !f64 {
+        const self: *DynamicHostContext = @ptrCast(@alignCast(context));
+        return monotonicTimeMilliseconds(self.owner);
+    }
+
+    fn random(context: *anyopaque) !f64 {
+        const self: *DynamicHostContext = @ptrCast(@alignCast(context));
+        return nextRandom(self.owner);
+    }
+};
+
+const DynamicInterpreterState = struct {
+    allocator: std.mem.Allocator,
+    owner: *Runtime,
+    value_runtime: dynamic_value.Runtime,
+    program: dynamic_ir.Program,
+    interpreter: dynamic_interpreter.Interpreter,
+    host_context: DynamicHostContext,
+    reset_display_log: bool = false,
+
+    fn init(allocator: std.mem.Allocator, owner: *Runtime) !*@This() {
+        const state = try allocator.create(@This());
+        errdefer allocator.destroy(state);
+        state.* = undefined;
+        state.allocator = allocator;
+        state.owner = owner;
+        state.value_runtime = dynamic_value.Runtime.init(allocator);
+        state.program = .{
+            .arena = std.heap.ArenaAllocator.init(allocator),
+            .functions = &.{},
+            .module_entries = &.{},
+        };
+        state.host_context = .{ .owner = owner };
+        state.interpreter = dynamic_interpreter.Interpreter.init(
+            allocator,
+            &state.value_runtime,
+            state.program,
+            state.host_context.host(),
+        );
+        return state;
+    }
+
+    fn deinit(self: *@This()) void {
+        self.interpreter.deinit();
+        self.program.deinit();
+        self.value_runtime.deinit();
+        self.* = undefined;
+    }
+};
+
+fn dynamicGlobal(runtime: *Runtime, name: []const u8) ?*DynamicGlobal {
+    for (runtime.dynamic_globals.items) |*entry| if (std.mem.eql(u8, entry.name, name)) return entry;
+    return null;
+}
+
+fn upsertDynamicGlobal(runtime: *Runtime, name: []const u8, value: Value) !void {
+    if (dynamicGlobal(runtime, name)) |entry| {
+        entry.value = value;
+        if (entry.slot) |slot| slot.* = value;
+        return;
+    }
+    const owned_name = try runtime.allocator.dupe(u8, name);
+    errdefer runtime.allocator.free(owned_name);
+    try runtime.dynamic_globals.append(runtime.allocator, .{ .name = owned_name, .value = value });
+}
+
+fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror!dynamic_value.Value {
+    const owner = state.owner;
+    switch (@as(Tag, @enumFromInt(value.tag))) {
+        .undefined => return .undefined,
+        .null_value => return .null_value,
+        .boolean => return .{ .boolean = value.payload != 0 },
+        .number => return .{ .number = @bitCast(value.payload) },
+        .static_utf8_string => return state.value_runtime.stringUtf8(staticUtf8(value)),
+        .utf16_string => return state.value_runtime.stringCodeUnits(value.object().?.payload.utf16_string),
+        .bigint => {
+            const text = try value.object().?.payload.bigint.toString(owner.allocator, 10);
+            defer owner.allocator.free(text);
+            return state.value_runtime.bigIntLiteral(text);
+        },
+        .byte_buffer => {
+            const buffer = value.object().?.payload.byte_buffer;
+            return switch (buffer.kind) {
+                .buffer => state.value_runtime.createBytes(buffer.bytes),
+                .uint8_array => state.value_runtime.createUint8Array(buffer.bytes),
+                .array_buffer => state.value_runtime.createArrayBuffer(buffer.bytes),
+            };
+        },
+        .array => {
+            var result = try state.value_runtime.createArray();
+            var roots = state.value_runtime.rootFrame();
+            defer roots.deinit();
+            try roots.protect(&result);
+            for (value.object().?.payload.array.items) |item| _ = try result.array.push(try aotToDynamicValue(state, item));
+            return result;
+        },
+        .dictionary => {
+            var result = try state.value_runtime.createDictionary();
+            var roots = state.value_runtime.rootFrame();
+            defer roots.deinit();
+            try roots.protect(&result);
+            for (value.object().?.payload.dictionary.items) |entry| {
+                var key = try aotToDynamicValue(state, entry.key);
+                var item = try aotToDynamicValue(state, entry.value);
+                try roots.protect(&key);
+                try roots.protect(&item);
+                if (key != .string) return error.DynamicValueUnsupported;
+                try result.dictionary.set(key.string, item);
+            }
+            return result;
+        },
+        .function, .promise, .iterator, .binding_cell => return error.DynamicValueUnsupported,
+    }
+}
+
+fn dynamicToAotValue(state: *DynamicInterpreterState, value: dynamic_value.Value) anyerror!Value {
+    const owner = state.owner;
+    return switch (value) {
+        .undefined => .{},
+        .null_value => .{ .tag = @intFromEnum(Tag.null_value) },
+        .boolean => |boolean| .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(boolean) },
+        .number => |number| numberValue(number),
+        .string => |string| owner.createString(string.units),
+        .bigint => |bigint| blk: {
+            const text = try bigint.toString(owner.allocator, 10);
+            defer owner.allocator.free(text);
+            break :blk owner.createBigInt(text);
+        },
+        .bytes => |bytes| switch (bytes.kind) {
+            .buffer => owner.createBytes(bytes.bytes),
+            .uint8_array => owner.createUint8Array(bytes.bytes),
+            .array_buffer => owner.createArrayBuffer(bytes.bytes),
+        },
+        .array => |array| blk: {
+            var result = try owner.createArray(&.{});
+            var roots = RootFrame{};
+            owner.pushRoots(&roots, @ptrCast(&result), 1);
+            defer owner.popRoots(&roots);
+            for (array.items.items) |item| try result.object().?.payload.array.append(owner.allocator, try dynamicToAotValue(state, item));
+            break :blk result;
+        },
+        .dictionary => |dictionary| blk: {
+            var result = try owner.createDictionary(&.{});
+            var result_roots = RootFrame{};
+            owner.pushRoots(&result_roots, @ptrCast(&result), 1);
+            defer owner.popRoots(&result_roots);
+            for (dictionary.keys(), dictionary.values()) |key, item| {
+                var converted_key = try owner.createString(key.units);
+                var key_roots = RootFrame{};
+                owner.pushRoots(&key_roots, @ptrCast(&converted_key), 1);
+                var converted_item = try dynamicToAotValue(state, item);
+                var item_roots = RootFrame{};
+                owner.pushRoots(&item_roots, @ptrCast(&converted_item), 1);
+                try owner.setDictionary(&result.object().?.payload.dictionary, converted_key, converted_item);
+                owner.popRoots(&item_roots);
+                owner.popRoots(&key_roots);
+            }
+            break :blk result;
+        },
+        .function, .promise => error.DynamicValueUnsupported,
+    };
+}
+
+fn prepareDynamic(context: *anyopaque, interpreter: *dynamic_interpreter.Interpreter) anyerror!void {
+    const state: *DynamicInterpreterState = @ptrCast(@alignCast(context));
+    const owner = state.owner;
+    for (owner.dynamic_globals.items) |*entry| {
+        if (entry.slot) |slot| entry.value = slot.*;
+    }
+    for (owner.dynamic_globals.items) |entry| {
+        var value = aotToDynamicValue(state, entry.value) catch |failure| switch (failure) {
+            error.DynamicValueUnsupported => continue,
+            else => return failure,
+        };
+        var roots = state.value_runtime.rootFrame();
+        defer roots.deinit();
+        try roots.protect(&value);
+        try interpreter.setGlobalValue(entry.name, value);
+    }
+    if (state.reset_display_log) {
+        var empty = try state.value_runtime.stringUtf8("");
+        var roots = state.value_runtime.rootFrame();
+        defer roots.deinit();
+        try roots.protect(&empty);
+        try interpreter.setGlobalValue("表示ログ", empty);
+    }
+}
+
+fn syncDynamicGlobals(state: *DynamicInterpreterState) anyerror!void {
+    var iterator = state.interpreter.globals.iterator();
+    while (iterator.next()) |entry| {
+        const value = dynamicToAotValue(state, entry.value_ptr.*) catch |failure| switch (failure) {
+            error.DynamicValueUnsupported => continue,
+            else => return failure,
+        };
+        try upsertDynamicGlobal(state.owner, entry.key_ptr.*, value);
+    }
+}
+
+fn dynamicBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    if (arguments.len == 0) return .{};
+    const state = if (runtime.dynamic_state) |existing| existing else blk: {
+        const created = try DynamicInterpreterState.init(runtime.allocator, runtime);
+        runtime.dynamic_state = created;
+        break :blk created;
+    };
+    const source = try valueUtf8LossyAlloc(runtime, arguments[arguments.len - 1]);
+    defer runtime.allocator.free(source);
+    state.reset_display_log = true;
+    defer state.reset_display_log = false;
+
+    var previous_log: Value = .{};
+    if (dynamicGlobal(runtime, "表示ログ")) |entry| {
+        if (entry.slot) |slot| entry.value = slot.*;
+        previous_log = entry.value;
+    }
+    var previous_roots = RootFrame{};
+    runtime.pushRoots(&previous_roots, @ptrCast(&previous_log), 1);
+    defer runtime.popRoots(&previous_roots);
+    _ = try state.interpreter.runDynamicSource(source, prepareDynamic, state);
+    const nested_log = state.interpreter.getGlobal("表示ログ") orelse dynamic_value.Value.undefined;
+    try syncDynamicGlobals(state);
+
+    var returned = try dynamicToAotValue(state, nested_log);
+    var returned_roots = RootFrame{};
+    runtime.pushRoots(&returned_roots, @ptrCast(&returned), 1);
+    defer runtime.popRoots(&returned_roots);
+    const combined = concatAotValues(runtime, previous_log, returned) catch |failure| {
+        if (failure == error.DynamicValueUnsupported) return returned;
+        return failure;
+    };
+    var rooted_combined = combined;
+    var combined_roots = RootFrame{};
+    runtime.pushRoots(&combined_roots, @ptrCast(&rooted_combined), 1);
+    defer runtime.popRoots(&combined_roots);
+    try upsertDynamicGlobal(runtime, "表示ログ", rooted_combined);
+    _ = command;
+    return returned;
+}
+
+fn concatAotValues(runtime: *Runtime, left: Value, right: Value) !Value {
+    const left_units = if (left.tag == @intFromEnum(Tag.undefined)) &.{} else try valueUtf16Alloc(runtime, left);
+    defer if (left.tag != @intFromEnum(Tag.undefined)) runtime.allocator.free(left_units);
+    const right_units = if (right.tag == @intFromEnum(Tag.undefined)) &.{} else try valueUtf16Alloc(runtime, right);
+    defer if (right.tag != @intFromEnum(Tag.undefined)) runtime.allocator.free(right_units);
+    var units: std.ArrayList(u16) = .empty;
+    defer units.deinit(runtime.allocator);
+    try units.appendSlice(runtime.allocator, left_units);
+    try units.appendSlice(runtime.allocator, right_units);
+    return runtime.createString(units.items);
+}
 
 const AotPosixIfAddrs = if (builtin.os.tag == .windows) opaque {} else extern struct {
     next: ?*AotPosixIfAddrs,
@@ -5291,6 +5591,36 @@ pub export fn lnako_aot_runtime_init() callconv(.c) c_int {
     return 0;
 }
 
+/// Registers a generated global with the embedded Zig interpreter used by
+/// `ナデシコ` and `ナデシコ続`. The pointer remains valid for the generated
+/// program lifetime and lets dynamic code observe and update ordinary AOT
+/// globals without crossing the JavaScript compatibility boundary.
+pub export fn lnako_aot_dynamic_global_register(name: ?[*]const u8, len: usize, slot: ?*Value) callconv(.c) void {
+    const runtime = if (active_runtime) |*active| active else return;
+    const name_pointer = name orelse {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    };
+    const value_slot = slot orelse {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    };
+    const name_slice = name_pointer[0..len];
+    if (dynamicGlobal(runtime, name_slice)) |entry| {
+        entry.slot = value_slot;
+        entry.value = value_slot.*;
+        return;
+    }
+    const owned_name = runtime.allocator.dupe(u8, name_slice) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    runtime.dynamic_globals.append(runtime.allocator, .{ .name = owned_name, .value = value_slot.*, .slot = value_slot }) catch |failure| {
+        runtime.allocator.free(owned_name);
+        runtime.setFailure(failure);
+    };
+}
+
 fn aotProcessArgument(argv: ?*const anyopaque, index: usize) []const u8 {
     const raw = argv orelse return "";
     const values: [*:null]const ?[*:0]const u8 = @ptrCast(@alignCast(raw));
@@ -5393,6 +5723,45 @@ pub export fn lnako_aot_runtime_drain_events() callconv(.c) void {
             pollAotInterrupt(runtime) catch |failure| runtimeFailure(failure);
         }
     }
+}
+
+/// Dedicated ABI for the two runtime-source commands. The source is parsed,
+/// lowered, verified, and executed by the normal Zig interpreter in a
+/// persistent per-process state; no JavaScript engine is loaded in this path.
+pub export fn lnako_aot_dynamic_call(
+    out: *Value,
+    arguments: ?[*]const Value,
+    len: usize,
+    opcode: u16,
+    site_id: u64,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
+        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "dynamic-execute", site_id);
+        runtime.setFailure(error.UnknownCommand);
+        runtime.dispatch_trace.result(call_id, "unknown", opcode, "dynamic-execute", site_id, false);
+        return;
+    };
+    if (command != .system_nadesiko and command != .system_nadesiko_continue) {
+        runtime.setFailure(error.UnknownCommand);
+        return;
+    }
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "dynamic-execute", site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "dynamic-execute", site_id, success);
+    if (arguments == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+    out.* = dynamicBuiltin(runtime, command, actual) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    success = runtime.failure_epoch == start_epoch;
 }
 
 /// Installs the four mutable globals used by the built-in HTTP server. The
@@ -6678,7 +7047,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .namespace_pop and command != .timer_wait and command != .timer_stop_all and command != .promise_all and command != .async_noop and command != .node_console_clear and command != .node_file_process_stop and command != .system_debug_breakpoint_wait and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit and command != .node_hash_names and command != .node_random_uuid and command != .node_stdin_all and command != .node_stdin_line and command != .node_stdin_character and command != .node_network_ipv4 and command != .node_network_ipv6 and command != .system_hatena_configure) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .namespace_pop and command != .timer_wait and command != .timer_stop_all and command != .promise_all and command != .async_noop and command != .node_console_clear and command != .node_file_process_stop and command != .system_debug_breakpoint_wait and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit and command != .node_hash_names and command != .node_random_uuid and command != .node_stdin_all and command != .node_stdin_line and command != .node_stdin_character and command != .node_network_ipv4 and command != .node_network_ipv6 and command != .system_hatena_configure and command != .system_nadesiko and command != .system_nadesiko_continue) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -6831,6 +7200,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = systemExecutionBuiltin(runtime, command, actual) catch |failure| {
                 if (!runtime.has_pending_exception) runtime.setFailure(failure);
+                return;
+            };
+        },
+        .system_nadesiko, .system_nadesiko_continue => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = dynamicBuiltin(runtime, command, actual) catch |failure| {
+                runtime.setFailure(failure);
                 return;
             };
         },

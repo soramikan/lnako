@@ -148,6 +148,12 @@ pub const Host = struct {
     }
 };
 
+/// AOT dynamic execution can reuse the normal Zig parser/interpreter without
+/// embedding a JavaScript runtime. The preparation hook runs while the
+/// interpreter root provider is active, so callers may safely allocate values
+/// while importing their host globals.
+pub const DynamicPreparationFn = *const fn (context: *anyopaque, interpreter: *Interpreter) anyerror!void;
+
 pub const BufferHost = struct {
     allocator: std.mem.Allocator,
     output: std.ArrayList(u8) = .empty,
@@ -394,6 +400,23 @@ pub const Interpreter = struct {
 
     pub fn getGlobal(self: Interpreter, name: []const u8) ?Value {
         return self.globals.get(name);
+    }
+
+    pub fn setGlobalValue(self: *Interpreter, name: []const u8, value: Value) !void {
+        try self.setGlobal(name, value);
+    }
+
+    pub fn runDynamicSource(
+        self: *Interpreter,
+        source: []const u8,
+        prepare: ?DynamicPreparationFn,
+        context: ?*anyopaque,
+    ) !Value {
+        try self.runtime.registerRootProvider(.{ .context = self, .traceFn = traceRoots });
+        defer self.runtime.unregisterRootProvider(self);
+        try self.initializeSystem();
+        if (prepare) |hook| try hook(context orelse return error.MissingDynamicPreparationContext, self);
+        return self.executeDynamicValue(try self.runtime.stringUtf8(source));
     }
 
     fn runEntries(self: *Interpreter) !Value {

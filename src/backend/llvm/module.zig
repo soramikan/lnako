@@ -93,6 +93,7 @@ pub fn manifestCall(name: []const u8, direct_callee: ?ir.FunctionId, is_builtin_
         .node_file_list, .node_file_list_all, .node_folder_create, .node_file_copy, .node_file_copy_overwrite, .node_file_move, .node_file_move_overwrite, .node_file_delete => "node-file-operation",
         .system_debug_display => "debug-display",
         .system_hatena_execute => "hatena-default",
+        .system_nadesiko, .system_nadesiko_continue => "dynamic-execute",
         .system_hatena_configure => "hatena-configure",
         .node_interrupt_callback => "node-interrupt",
         .http_server_start, .http_server_static, .http_server_receive, .http_server_output, .http_server_headers, .http_server_redirect => "http-server",
@@ -400,6 +401,8 @@ const Emitter = struct {
                 "declare void @lnako_aot_regexp_call(ptr, ptr, ptr, i64, i16)\n" ++
                 "declare void @lnako_aot_regexp_call_site(ptr, ptr, ptr, i64, i16, i64)\n" ++
                 "declare void @lnako_aot_hatena_execute(ptr, ptr, i64, ptr, i64, ptr, i64)\n" ++
+                "declare void @lnako_aot_dynamic_global_register(ptr, i64, ptr)\n" ++
+                "declare void @lnako_aot_dynamic_call(ptr, ptr, i64, i16, i64)\n" ++
                 "declare i64 @lnako_aot_dispatch_display_begin(i64)\n" ++
                 "declare i64 @lnako_aot_dispatch_display_begin_with_epoch(i64, ptr)\n" ++
                 "declare void @lnako_aot_dispatch_result(i64, i64, i64)\n" ++
@@ -419,6 +422,20 @@ const Emitter = struct {
             try writer.writeByte('\n');
         }
         if (self.globals.items.len > 0) try writer.writeByte('\n');
+        if (self.hasDynamicBuiltin()) for (self.globals.items, 0..) |name, index| {
+            try writer.print("@lnako.global.name.{d} = private unnamed_addr constant [{d} x i8] ", .{ index, name.len });
+            if (name.len == 0) {
+                try writer.writeAll("zeroinitializer\n");
+            } else {
+                try writer.writeByte('[');
+                for (name, 0..) |byte, byte_index| {
+                    if (byte_index > 0) try writer.writeAll(", ");
+                    try writer.print("i8 {d}", .{byte});
+                }
+                try writer.writeAll("]\n");
+            }
+        };
+        if (self.hasDynamicBuiltin() and self.globals.items.len > 0) try writer.writeByte('\n');
         for (self.strings.items) |constant| {
             try writer.print("@lnako.string.{d} = private unnamed_addr constant [{d} x i16] ", .{ constant.index, constant.units.len });
             if (constant.units.len == 0) {
@@ -1224,6 +1241,25 @@ const Emitter = struct {
         const result = instruction.result orelse return error.MissingInstructionResult;
         const site_id = instruction.site_id orelse return error.MissingDispatchSiteId;
         if (instruction.operands.len > aggregate_count) return error.InvalidCallScratch;
+        if (command == .system_nadesiko or command == .system_nadesiko_continue) {
+            for (instruction.operands, 0..) |argument, index| {
+                try self.output.writer.print("  %dynamic.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+                try self.debugSuffix(instruction.span, scope);
+                try self.output.writer.writeAll("  store %lnako.Value ");
+                try self.writeValueRef(function, argument);
+                try self.output.writer.print(", ptr %dynamic.{d}.slot.{d}", .{ result, index });
+                try self.debugSuffix(instruction.span, scope);
+            }
+            try self.output.writer.print("  call void @lnako_aot_dynamic_call(ptr %root.slot.{d}, ptr ", .{result});
+            if (instruction.operands.len > 0) {
+                try self.output.writer.print("%dynamic.{d}.slot.0", .{result});
+            } else try self.output.writer.writeAll("null");
+            try self.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+            try self.debugSuffix(instruction.span, scope);
+            try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+            try self.debugSuffix(instruction.span, scope);
+            return;
+        }
         if (command == .system_debug_display or command == .system_hatena_execute) {
             const display_log_index = self.globalIndex("表示ログ") orelse return error.MissingDisplayLogGlobal;
             const source_path = self.sourcePathForFunction(function.name);
@@ -1741,6 +1777,9 @@ const Emitter = struct {
             try self.output.writer.print("  %global.root.frame.{d} = alloca %lnako.RootFrame\n", .{global_index});
             try self.output.writer.print("  call void @lnako_aot_push_roots(ptr %global.root.frame.{d}, ptr @lnako.global.{d}, i64 1)\n", .{ global_index, global_index });
         }
+        if (self.hasDynamicBuiltin()) for (self.globals.items, 0..) |name, global_index| {
+            try self.output.writer.print("  call void @lnako_aot_dynamic_global_register(ptr @lnako.global.name.{d}, i64 {d}, ptr @lnako.global.{d})\n", .{ global_index, name.len, global_index });
+        };
         for (self.system_strings.items, 0..) |constant, index| {
             try self.output.writer.print("  call void @lnako_aot_string_new(ptr @lnako.global.{d}, ptr ", .{constant.global_index});
             if (constant.units.len == 0) {
@@ -1945,6 +1984,10 @@ const Emitter = struct {
             if (aot_builtin.lookup(instruction.name) == command) return true;
         };
         return false;
+    }
+
+    fn hasDynamicBuiltin(self: Emitter) bool {
+        return self.hasBuiltinCall(.system_nadesiko) or self.hasBuiltinCall(.system_nadesiko_continue);
     }
 
     fn needsNodeMotherPath(self: Emitter) bool {
@@ -2471,6 +2514,16 @@ test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {
     try std.testing.expectEqualStrings("promise_success", promise.canonical_opcode);
     try std.testing.expectEqualStrings("promise", promise.route);
     try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.promise_success), promise.opcode);
+
+    const dynamic = manifestCall("ナデシコ", null, true).?;
+    try std.testing.expectEqualStrings("system_nadesiko", dynamic.canonical_opcode);
+    try std.testing.expectEqualStrings("dynamic-execute", dynamic.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.system_nadesiko), dynamic.opcode);
+
+    const dynamic_continue = manifestCall("ナデシコ続", null, true).?;
+    try std.testing.expectEqualStrings("system_nadesiko_continue", dynamic_continue.canonical_opcode);
+    try std.testing.expectEqualStrings("dynamic-execute", dynamic_continue.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.system_nadesiko_continue), dynamic_continue.opcode);
 
     try std.testing.expect(manifestCall("利用者関数", 0, false) == null);
     try std.testing.expect(manifestCall("未知命令", null, false) == null);

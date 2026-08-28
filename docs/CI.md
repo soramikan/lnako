@@ -35,7 +35,7 @@ Linuxログでは通常のmath・CSV・TOML・Promise差分は約0.8秒で完了
 | `compat-aot` | QuickJS Debug単体テスト、QuickJS ReleaseSafe compiler build、compat-js smoke |
 
 `aot` suiteのHTTP server検証は、`plugin-httpserver-all`を使った公式処理系対AOT O0〜O3のlocalhost実通信比較です。
-通常の192件AOT artifact／dispatch証拠とは別fixtureですが、HTTP serverの10命令・14リクエストを検証範囲から除外しません。
+通常の193件AOT artifact／dispatch証拠とは別fixtureですが、HTTP serverの10命令・14リクエストを検証範囲から除外しません。
 
 元のコマンドは削除せず、各OSでいずれか1スイートが一度だけ実行します。OSごとの互換検証をLinuxだけへ
 縮小する最適化は行いません。ジョブ上限は50分とし、停止しないホスト・ネットワークテストを検出します。

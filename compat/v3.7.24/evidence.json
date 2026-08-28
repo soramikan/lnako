@@ -8,14 +8,14 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 297,
-    "nativeAot": 206,
+    "total": 298,
+    "nativeAot": 207,
     "interpreter": 96,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
-    "paired": 521,
-    "interpreter-only": 2,
+    "paired": 523,
+    "interpreter-only": 0,
     "aot-only": 0,
     "none": 0,
     "compat-js-only": 4
@@ -1898,7 +1898,9 @@
       "interpreterFixtureIds": [
         "system-runtime-execution-and-debug"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-dynamic-execution"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -1907,14 +1909,19 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-dynamic-execution": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
     },
     {
@@ -1925,7 +1932,9 @@
       "interpreterFixtureIds": [
         "system-runtime-execution-and-debug"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-dynamic-execution"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -1934,14 +1943,19 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-dynamic-execution": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
     },
     {

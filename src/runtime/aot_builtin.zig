@@ -375,6 +375,8 @@ pub const Command = enum(u16) {
     node_ajax_binary_get,
     node_discord_send,
     node_discord_file_send,
+    system_nadesiko,
+    system_nadesiko_continue,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -650,6 +652,8 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "ASYNC")) return .async_noop;
     if (std.mem.eql(u8, name, "AWAIT実行")) return .system_await_execute;
     if (std.mem.eql(u8, name, "実行")) return .system_execute;
+    if (std.mem.eql(u8, name, "ナデシコ")) return .system_nadesiko;
+    if (std.mem.eql(u8, name, "ナデシコ続")) return .system_nadesiko_continue;
     if (std.mem.eql(u8, name, "実行時間計測")) return .system_measure_time;
     if (std.mem.eql(u8, name, "デバッグ表示")) return .system_debug_display;
     if (std.mem.eql(u8, name, "ハテナ関数実行")) return .system_hatena_execute;
@@ -974,6 +978,8 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.async_noop, lookup("ASYNC").?);
     try std.testing.expectEqual(Command.system_await_execute, lookup("AWAIT実行").?);
     try std.testing.expectEqual(Command.system_execute, lookup("実行").?);
+    try std.testing.expectEqual(Command.system_nadesiko, lookup("ナデシコ").?);
+    try std.testing.expectEqual(Command.system_nadesiko_continue, lookup("ナデシコ続").?);
     try std.testing.expectEqual(Command.system_debug_display, lookup("デバッグ表示").?);
     try std.testing.expectEqual(Command.system_hatena_execute, lookup("ハテナ関数実行").?);
     try std.testing.expectEqual(Command.system_debug_enable, lookup("__DEBUG").?);

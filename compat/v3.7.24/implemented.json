@@ -3720,14 +3720,16 @@
   "ナデシコ": {
     "status": "native",
     "tests": [
-      "system-runtime-execution-and-debug"
+      "system-runtime-execution-and-debug",
+      "native-system-dynamic-execution"
     ],
     "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
   },
   "ナデシコ続": {
     "status": "native",
     "tests": [
-      "system-runtime-execution-and-debug"
+      "system-runtime-execution-and-debug",
+      "native-system-dynamic-execution"
     ],
     "reason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
   },

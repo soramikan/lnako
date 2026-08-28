@@ -48,7 +48,10 @@ pub fn build(b: *std.Build) void {
         .strip = true,
         .link_libc = true,
     });
+    aot_module.addOptions("build_options", build_options);
     aot_module.addImport("unicode_case", unicode_case);
+    aot_module.addIncludePath(b.path("src/compat"));
+    aot_module.addCSourceFiles(.{ .root = b.path("src/compat"), .files = &.{"quickjs_stub.c"} });
     const aot_runtime = b.addLibrary(.{
         .name = "lnako_runtime",
         .linkage = .static,
