@@ -34,108 +34,127 @@ pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Val
 }
 
 pub fn encode(runtime: *Runtime, source: Value, encoding: []const u8) !Value {
-    const kind = parseKind(encoding) orelse return error.UnsupportedEncoding;
     var rooted_source = source;
     var roots = runtime.rootFrame();
     defer roots.deinit();
     try roots.protect(&rooted_source);
     var text = try runtime.valueToString(rooted_source);
     try roots.protect(&text);
+    const bytes = try encodeUnits(runtime.allocator(), text.string.units, encoding);
+    defer runtime.allocator().free(bytes);
+    return runtime.createBytes(bytes);
+}
+
+/// Encodes UTF-16 code units without depending on the interpreter Value type.
+/// The AOT runtime uses this shared codec so both execution engines consume
+/// the same generated legacy tables and replacement rules.
+pub fn encodeUnits(allocator: std.mem.Allocator, units: []const u16, encoding: []const u8) ![]u8 {
+    const kind = parseKind(encoding) orelse return error.UnsupportedEncoding;
     if (kind == .utf8) {
-        const bytes = try text.string.toUtf8Lossy(runtime.allocator());
-        defer runtime.allocator().free(bytes);
-        return runtime.createBytes(bytes);
+        var text = try value_mod.String.fromCodeUnits(allocator, units);
+        defer text.deinit();
+        return text.toUtf8Lossy(allocator);
     }
     if (kind == .cesu8) {
         var bytes: std.ArrayList(u8) = .empty;
-        defer bytes.deinit(runtime.allocator());
-        try encodeCesu8(runtime.allocator(), &bytes, text.string.units);
-        return runtime.createBytes(bytes.items);
+        defer bytes.deinit(allocator);
+        try encodeCesu8(allocator, &bytes, units);
+        return bytes.toOwnedSlice(allocator);
     }
     if (kind == .utf7 or kind == .utf7imap) {
         var bytes: std.ArrayList(u8) = .empty;
-        defer bytes.deinit(runtime.allocator());
-        try encodeUtf7(runtime.allocator(), &bytes, text.string.units, kind == .utf7imap);
-        return runtime.createBytes(bytes.items);
+        defer bytes.deinit(allocator);
+        try encodeUtf7(allocator, &bytes, units, kind == .utf7imap);
+        return bytes.toOwnedSlice(allocator);
     }
     if (kind == .hex or kind == .base64) {
         if (kind == .hex) {
-            const decoded = try decodeHexAlloc(runtime.allocator(), text.string.units);
-            defer runtime.allocator().free(decoded);
-            return runtime.createBytes(decoded);
+            return decodeHexAlloc(allocator, units);
         }
         var decoded: std.ArrayList(u8) = .empty;
-        defer decoded.deinit(runtime.allocator());
-        const complete = text.string.units.len - (text.string.units.len % 4);
-        try appendBase64Decoded(runtime.allocator(), &decoded, text.string.units[0..complete]);
-        try appendBase64Decoded(runtime.allocator(), &decoded, text.string.units[complete..]);
-        return runtime.createBytes(decoded.items);
+        defer decoded.deinit(allocator);
+        const complete = units.len - (units.len % 4);
+        try appendBase64Decoded(allocator, &decoded, units[0..complete]);
+        try appendBase64Decoded(allocator, &decoded, units[complete..]);
+        return decoded.toOwnedSlice(allocator);
     }
     var output: std.ArrayList(u8) = .empty;
-    defer output.deinit(runtime.allocator());
+    defer output.deinit(allocator);
     switch (kind) {
         .utf16 => {
-            try output.appendSlice(runtime.allocator(), &.{ 0xff, 0xfe });
-            try encodeUtf16(runtime.allocator(), &output, text.string.units, true);
+            try output.appendSlice(allocator, &.{ 0xff, 0xfe });
+            try encodeUtf16(allocator, &output, units, true);
         },
-        .utf16le, .utf16be => for (text.string.units) |unit| {
+        .utf16le, .utf16be => for (units) |unit| {
             const low: u8 = @truncate(unit);
             const high: u8 = @truncate(unit >> 8);
-            if (kind == .utf16le) try output.appendSlice(runtime.allocator(), &.{ low, high }) else try output.appendSlice(runtime.allocator(), &.{ high, low });
+            if (kind == .utf16le) try output.appendSlice(allocator, &.{ low, high }) else try output.appendSlice(allocator, &.{ high, low });
         },
         .utf32 => {
-            try output.appendSlice(runtime.allocator(), &.{ 0xff, 0xfe, 0x00, 0x00 });
-            try encodeUtf32(runtime.allocator(), &output, text.string.units, true);
+            try output.appendSlice(allocator, &.{ 0xff, 0xfe, 0x00, 0x00 });
+            try encodeUtf32(allocator, &output, units, true);
         },
-        .utf32le => try encodeUtf32(runtime.allocator(), &output, text.string.units, true),
-        .utf32be => try encodeUtf32(runtime.allocator(), &output, text.string.units, false),
-        .ascii => for (text.string.units) |unit| try output.append(runtime.allocator(), if (unit <= 0x7f) @intCast(unit) else '?'),
-        .latin1 => for (text.string.units) |unit| try output.append(runtime.allocator(), if (unit <= 0xff) @intCast(unit) else '?'),
-        .binary => for (text.string.units) |unit| try output.append(runtime.allocator(), @truncate(unit)),
-        .single_byte => try encodeSingleByte(runtime.allocator(), &output, text.string.units, findSingleByte(encoding).?),
-        .legacy => try encodeLegacy(runtime.allocator(), &output, text.string.units, findLegacy(encoding).?),
+        .utf32le => try encodeUtf32(allocator, &output, units, true),
+        .utf32be => try encodeUtf32(allocator, &output, units, false),
+        .ascii => for (units) |unit| try output.append(allocator, if (unit <= 0x7f) @intCast(unit) else '?'),
+        .latin1 => for (units) |unit| try output.append(allocator, if (unit <= 0xff) @intCast(unit) else '?'),
+        .binary => for (units) |unit| try output.append(allocator, @truncate(unit)),
+        .single_byte => try encodeSingleByte(allocator, &output, units, findSingleByte(encoding).?),
+        .legacy => try encodeLegacy(allocator, &output, units, findLegacy(encoding).?),
         else => unreachable,
     }
-    return runtime.createBytes(output.items);
+    return output.toOwnedSlice(allocator);
 }
 
 pub fn decode(runtime: *Runtime, source: Value, encoding: []const u8) !Value {
-    const kind = parseKind(encoding) orelse return error.UnsupportedEncoding;
     const bytes = try valueBytes(runtime, source);
     defer runtime.allocator().free(bytes);
+    const units = try decodeBytes(runtime.allocator(), bytes, encoding);
+    defer runtime.allocator().free(units);
+    return runtime.stringCodeUnits(units);
+}
+
+/// Decodes bytes to UTF-16 code units without depending on the interpreter
+/// Value type. The returned slice is owned by the caller.
+pub fn decodeBytes(allocator: std.mem.Allocator, bytes: []const u8, encoding: []const u8) ![]u16 {
+    const kind = parseKind(encoding) orelse return error.UnsupportedEncoding;
     switch (kind) {
         .utf8 => {
-            var decoded = try value_mod.String.fromUtf8Lossy(runtime.allocator(), bytes);
+            var decoded = try value_mod.String.fromUtf8Lossy(allocator, bytes);
             defer decoded.deinit();
-            return runtime.stringCodeUnits(stripBom(decoded.units));
+            return allocator.dupe(u16, stripBom(decoded.units));
         },
         .cesu8 => {
             var output: std.ArrayList(u16) = .empty;
-            defer output.deinit(runtime.allocator());
-            try decodeCesu8(runtime.allocator(), &output, bytes);
-            return runtime.stringCodeUnits(stripBom(output.items));
+            defer output.deinit(allocator);
+            try decodeCesu8(allocator, &output, bytes);
+            return allocator.dupe(u16, stripBom(output.items));
         },
         .utf7, .utf7imap => {
             var output: std.ArrayList(u16) = .empty;
-            defer output.deinit(runtime.allocator());
-            try decodeUtf7(runtime.allocator(), &output, bytes, kind == .utf7imap);
-            return runtime.stringCodeUnits(stripBom(output.items));
+            defer output.deinit(allocator);
+            try decodeUtf7(allocator, &output, bytes, kind == .utf7imap);
+            return allocator.dupe(u16, stripBom(output.items));
         },
         .hex => {
-            const encoded = try runtime.allocator().alloc(u8, bytes.len * 2);
-            defer runtime.allocator().free(encoded);
+            const encoded = try allocator.alloc(u8, bytes.len * 2);
+            defer allocator.free(encoded);
             const alphabet = "0123456789abcdef";
             for (bytes, 0..) |byte, index| {
                 encoded[index * 2] = alphabet[byte >> 4];
                 encoded[index * 2 + 1] = alphabet[byte & 0x0f];
             }
-            return runtime.stringUtf8(encoded);
+            var decoded = try value_mod.String.fromUtf8(allocator, encoded);
+            defer decoded.deinit();
+            return allocator.dupe(u16, decoded.units);
         },
         .base64 => {
-            const encoded = try runtime.allocator().alloc(u8, std.base64.standard.Encoder.calcSize(bytes.len));
-            defer runtime.allocator().free(encoded);
+            const encoded = try allocator.alloc(u8, std.base64.standard.Encoder.calcSize(bytes.len));
+            defer allocator.free(encoded);
             _ = std.base64.standard.Encoder.encode(encoded, bytes);
-            return runtime.stringUtf8(encoded);
+            var decoded = try value_mod.String.fromUtf8(allocator, encoded);
+            defer decoded.deinit();
+            return allocator.dupe(u16, decoded.units);
         },
         else => {},
     }
@@ -145,13 +164,13 @@ pub fn decode(runtime: *Runtime, source: Value, encoding: []const u8) !Value {
         else => kind,
     };
     var output: std.ArrayList(u16) = .empty;
-    defer output.deinit(runtime.allocator());
+    defer output.deinit(allocator);
     switch (actual_kind) {
         .utf16le, .utf16be => {
             var index: usize = 0;
             while (index + 1 < bytes.len) : (index += 2) {
                 const unit = if (actual_kind == .utf16le) @as(u16, bytes[index]) | @as(u16, bytes[index + 1]) << 8 else @as(u16, bytes[index]) << 8 | bytes[index + 1];
-                try output.append(runtime.allocator(), unit);
+                try output.append(allocator, unit);
             }
             // NodeのStringDecoder(utf16le)とiconv-liteのUTF16BE decoderは
             // 末尾の片方だけのバイトを破棄する。
@@ -163,21 +182,21 @@ pub fn decode(runtime: *Runtime, source: Value, encoding: []const u8) !Value {
                     @as(u32, bytes[index]) | @as(u32, bytes[index + 1]) << 8 | @as(u32, bytes[index + 2]) << 16 | @as(u32, bytes[index + 3]) << 24
                 else
                     @as(u32, bytes[index]) << 24 | @as(u32, bytes[index + 1]) << 16 | @as(u32, bytes[index + 2]) << 8 | bytes[index + 3];
-                try appendDecodedCodepoint(runtime.allocator(), &output, codepoint);
+                try appendDecodedCodepoint(allocator, &output, codepoint);
             }
-            if (index < bytes.len) try output.append(runtime.allocator(), 0xfffd);
+            if (index < bytes.len) try output.append(allocator, 0xfffd);
         },
-        .ascii => for (bytes) |byte| try output.append(runtime.allocator(), if (byte <= 0x7f) byte else 0xfffd),
-        .latin1 => for (bytes) |byte| try output.append(runtime.allocator(), byte),
-        .binary => for (bytes) |byte| try output.append(runtime.allocator(), byte),
+        .ascii => for (bytes) |byte| try output.append(allocator, if (byte <= 0x7f) byte else 0xfffd),
+        .latin1 => for (bytes) |byte| try output.append(allocator, byte),
+        .binary => for (bytes) |byte| try output.append(allocator, byte),
         .single_byte => {
             const table = findSingleByte(encoding).?;
-            for (bytes) |byte| try output.append(runtime.allocator(), table.decode_units[byte]);
+            for (bytes) |byte| try output.append(allocator, table.decode_units[byte]);
         },
-        .legacy => try decodeLegacy(runtime.allocator(), &output, bytes, findLegacy(encoding).?),
+        .legacy => try decodeLegacy(allocator, &output, bytes, findLegacy(encoding).?),
         else => unreachable,
     }
-    return runtime.stringCodeUnits(if (actual_kind == .utf16le or actual_kind == .utf16be or actual_kind == .utf32le or actual_kind == .utf32be) stripBom(output.items) else output.items);
+    return allocator.dupe(u16, if (actual_kind == .utf16le or actual_kind == .utf16be or actual_kind == .utf32le or actual_kind == .utf32be) stripBom(output.items) else output.items);
 }
 
 fn encodeCesu8(allocator: std.mem.Allocator, output: *std.ArrayList(u8), units: []const u16) !void {

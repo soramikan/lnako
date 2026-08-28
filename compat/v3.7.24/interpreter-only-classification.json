@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "180824160731c419484e86331d990317ce695e72cb168e3824fdee512e8f26d5"
+    "sha256": "b6e88430b44313036456cdd747f9381e25bdbcf773db7b9467e96d6761e2aaf1"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 67,
+    "count": 59,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 67
+      "unverified": 59
     }
   },
   "groups": [
@@ -130,15 +130,11 @@
       "group": "基本プラグイン",
       "category": "ファイル入出力",
       "type": "関数",
-      "count": 25,
+      "count": 21,
       "executionEvidenceStates": {
-        "unverified": 25
+        "unverified": 21
       },
       "commandIds": [
-        "command-0692",
-        "command-0693",
-        "command-0694",
-        "command-0695",
         "command-0696",
         "command-0697",
         "command-0698",
@@ -162,10 +158,6 @@
         "command-0719"
       ],
       "names": [
-        "SJISファイル読",
-        "SJISファイル保存",
-        "EUCファイル読",
-        "EUCファイル保存",
         "起動待機",
         "コマンド実行",
         "コマンド実行待機",
@@ -209,28 +201,6 @@
         "解凍時",
         "圧縮",
         "圧縮時"
-      ]
-    },
-    {
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "文字コード",
-      "type": "関数",
-      "count": 4,
-      "executionEvidenceStates": {
-        "unverified": 4
-      },
-      "commandIds": [
-        "command-0787",
-        "command-0788",
-        "command-0789",
-        "command-0790"
-      ],
-      "names": [
-        "SJIS変換",
-        "SJIS取得",
-        "エンコーディング変換",
-        "エンコーディング取得"
       ]
     },
     {
@@ -393,74 +363,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "promise-reject"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0692",
-      "name": "SJISファイル読",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-file-core"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0693",
-      "name": "SJISファイル保存",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-file-core"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0694",
-      "name": "EUCファイル読",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-file-core"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0695",
-      "name": "EUCファイル保存",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-file-core"
       ],
       "aotFixtureIds": []
     },
@@ -1282,76 +1184,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "plugin-node-http-discord-file"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0787",
-      "name": "SJIS変換",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "文字コード",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-encoding"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0788",
-      "name": "SJIS取得",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "文字コード",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-encoding"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0789",
-      "name": "エンコーディング変換",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "文字コード",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-encoding",
-        "plugin-node-encoding-special"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0790",
-      "name": "エンコーディング取得",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "文字コード",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-encoding",
-        "plugin-node-encoding-special"
       ],
       "aotFixtureIds": []
     },

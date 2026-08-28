@@ -15695,14 +15695,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-file-core"
+        "plugin-node-file-core",
+        "native-node-encoding"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路の文字コード変換・SJIS/EUCファイルI/O差分テストに成功"
     },
     {
       "id": "command-0693",
@@ -15720,14 +15721,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-file-core"
+        "plugin-node-file-core",
+        "native-node-encoding"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路の文字コード変換・SJIS/EUCファイルI/O差分テストに成功"
     },
     {
       "id": "command-0694",
@@ -15745,14 +15747,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-file-core"
+        "plugin-node-file-core",
+        "native-node-encoding"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路の文字コード変換・SJIS/EUCファイルI/O差分テストに成功"
     },
     {
       "id": "command-0695",
@@ -15770,14 +15773,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-file-core"
+        "plugin-node-file-core",
+        "native-node-encoding"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路の文字コード変換・SJIS/EUCファイルI/O差分テストに成功"
     },
     {
       "id": "command-0696",
@@ -18112,14 +18116,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-encoding"
+        "plugin-node-encoding",
+        "native-node-encoding"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路の文字コード変換・SJIS/EUCファイルI/O差分テストに成功"
     },
     {
       "id": "command-0788",
@@ -18137,14 +18142,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-encoding"
+        "plugin-node-encoding",
+        "native-node-encoding"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路の文字コード変換・SJIS/EUCファイルI/O差分テストに成功"
     },
     {
       "id": "command-0789",
@@ -18163,14 +18169,15 @@
       "status": "native",
       "tests": [
         "plugin-node-encoding",
-        "plugin-node-encoding-special"
+        "plugin-node-encoding-special",
+        "native-node-encoding"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路の文字コード変換・SJIS/EUCファイルI/O差分テストに成功"
     },
     {
       "id": "command-0790",
@@ -18189,14 +18196,15 @@
       "status": "native",
       "tests": [
         "plugin-node-encoding",
-        "plugin-node-encoding-special"
+        "plugin-node-encoding-special",
+        "native-node-encoding"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路の文字コード変換・SJIS/EUCファイルI/O差分テストに成功"
     },
     {
       "id": "command-0791",

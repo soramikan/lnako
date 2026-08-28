@@ -311,6 +311,14 @@ pub const Command = enum(u16) {
     node_file_read,
     node_file_binary_read,
     node_file_save,
+    node_file_sjis_read,
+    node_file_sjis_save,
+    node_file_euc_read,
+    node_file_euc_save,
+    node_encoding_sjis_encode,
+    node_encoding_sjis_decode,
+    node_encoding_encode,
+    node_encoding_decode,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -631,6 +639,14 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "読")) return .node_file_read;
     if (std.mem.eql(u8, name, "バイナリ読")) return .node_file_binary_read;
     if (std.mem.eql(u8, name, "保存")) return .node_file_save;
+    if (std.mem.eql(u8, name, "SJISファイル読")) return .node_file_sjis_read;
+    if (std.mem.eql(u8, name, "SJISファイル保存")) return .node_file_sjis_save;
+    if (std.mem.eql(u8, name, "EUCファイル読")) return .node_file_euc_read;
+    if (std.mem.eql(u8, name, "EUCファイル保存")) return .node_file_euc_save;
+    if (std.mem.eql(u8, name, "SJIS変換")) return .node_encoding_sjis_encode;
+    if (std.mem.eql(u8, name, "SJIS取得")) return .node_encoding_sjis_decode;
+    if (std.mem.eql(u8, name, "エンコーディング変換")) return .node_encoding_encode;
+    if (std.mem.eql(u8, name, "エンコーディング取得")) return .node_encoding_decode;
     return null;
 }
 
@@ -826,6 +842,14 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.node_file_read, lookup("読").?);
     try std.testing.expectEqual(Command.node_file_binary_read, lookup("バイナリ読").?);
     try std.testing.expectEqual(Command.node_file_save, lookup("保存").?);
+    try std.testing.expectEqual(Command.node_file_sjis_read, lookup("SJISファイル読").?);
+    try std.testing.expectEqual(Command.node_file_sjis_save, lookup("SJISファイル保存").?);
+    try std.testing.expectEqual(Command.node_file_euc_read, lookup("EUCファイル読").?);
+    try std.testing.expectEqual(Command.node_file_euc_save, lookup("EUCファイル保存").?);
+    try std.testing.expectEqual(Command.node_encoding_sjis_encode, lookup("SJIS変換").?);
+    try std.testing.expectEqual(Command.node_encoding_sjis_decode, lookup("SJIS取得").?);
+    try std.testing.expectEqual(Command.node_encoding_encode, lookup("エンコーディング変換").?);
+    try std.testing.expectEqual(Command.node_encoding_decode, lookup("エンコーディング取得").?);
     try std.testing.expectEqual(Command.async_noop, lookup("ASYNC").?);
     try std.testing.expectEqual(Command.system_await_execute, lookup("AWAIT実行").?);
     try std.testing.expectEqual(Command.system_execute, lookup("実行").?);

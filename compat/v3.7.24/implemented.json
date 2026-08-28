@@ -2710,30 +2710,34 @@
   "SJISファイル読": {
     "status": "native",
     "tests": [
-      "plugin-node-file-core"
+      "plugin-node-file-core",
+      "native-node-encoding"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路の文字コード変換・SJIS/EUCファイルI/O差分テストに成功"
   },
   "SJISファイル保存": {
     "status": "native",
     "tests": [
-      "plugin-node-file-core"
+      "plugin-node-file-core",
+      "native-node-encoding"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路の文字コード変換・SJIS/EUCファイルI/O差分テストに成功"
   },
   "EUCファイル読": {
     "status": "native",
     "tests": [
-      "plugin-node-file-core"
+      "plugin-node-file-core",
+      "native-node-encoding"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路の文字コード変換・SJIS/EUCファイルI/O差分テストに成功"
   },
   "EUCファイル保存": {
     "status": "native",
     "tests": [
-      "plugin-node-file-core"
+      "plugin-node-file-core",
+      "native-node-encoding"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路の文字コード変換・SJIS/EUCファイルI/O差分テストに成功"
   },
   "ファイル列挙": {
     "status": "native",
@@ -2842,32 +2846,36 @@
   "SJIS変換": {
     "status": "native",
     "tests": [
-      "plugin-node-encoding"
+      "plugin-node-encoding",
+      "native-node-encoding"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路の文字コード変換・SJIS/EUCファイルI/O差分テストに成功"
   },
   "SJIS取得": {
     "status": "native",
     "tests": [
-      "plugin-node-encoding"
+      "plugin-node-encoding",
+      "native-node-encoding"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路の文字コード変換・SJIS/EUCファイルI/O差分テストに成功"
   },
   "エンコーディング変換": {
     "status": "native",
     "tests": [
       "plugin-node-encoding",
-      "plugin-node-encoding-special"
+      "plugin-node-encoding-special",
+      "native-node-encoding"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路の文字コード変換・SJIS/EUCファイルI/O差分テストに成功"
   },
   "エンコーディング取得": {
     "status": "native",
     "tests": [
       "plugin-node-encoding",
-      "plugin-node-encoding-special"
+      "plugin-node-encoding-special",
+      "native-node-encoding"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路の文字コード変換・SJIS/EUCファイルI/O差分テストに成功"
   },
   "起動待機": {
     "status": "native",

@@ -819,6 +819,11 @@
     "source": "T=開(\"file-io-case.nako3\")\nR=読(\"file-io-case.nako3\")\n文字数(T)を表示\n文字数(R)を表示\nB=バイナリ読(\"file-io-case.nako3\")\nJSON変換(B)を表示\n保存(\"保存テキスト\",\"text-output.txt\")\n読(\"text-output.txt\")を表示\n保存(B,\"binary-output.bin\")\nC=バイナリ読(\"binary-output.bin\")\nJSON変換(C)を表示\n"
   },
   {
+    "id": "native-node-encoding",
+    "commands": ["SJISファイル読", "SJISファイル保存", "EUCファイル読", "EUCファイル保存", "SJIS変換", "SJIS取得", "エンコーディング変換", "エンコーディング取得"],
+    "source": "S=SJIS変換(\"日本語ABC\")\nJSON変換(S)を表示\nSJIS取得(S)を表示\nE=エンコーディング変換(\"日本語ABC\",\"euc-jp\")\nJSON変換(E)を表示\nエンコーディング取得(E,\"euc-jp\")を表示\nSJISファイル保存(\"日本語ABC\",\"sjis-output.txt\")\nSJISファイル読(\"sjis-output.txt\")を表示\nEUCファイル保存(\"日本語ABC\",\"euc-output.txt\")\nEUCファイル読(\"euc-output.txt\")を表示\n"
+  },
+  {
     "id": "native-node-directory-values",
     "commands": ["ホームディレクトリ取得", "デスクトップ", "マイドキュメント", "テンポラリフォルダ"],
     "source": "ホームディレクトリ取得()を表示\nデスクトップを表示\nマイドキュメントを表示\nテンポラリフォルダを表示\n"

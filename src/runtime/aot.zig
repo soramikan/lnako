@@ -4941,6 +4941,27 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
+        .node_file_sjis_read, .node_file_euc_read => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = nodeEncodedFileReadBuiltin(runtime, command, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .node_file_sjis_save, .node_file_euc_save => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = nodeEncodedFileSaveBuiltin(runtime, command, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .node_encoding_sjis_encode, .node_encoding_sjis_decode, .node_encoding_encode, .node_encoding_decode => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = nodeEncodingBuiltin(runtime, command, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .node_file_info => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = nodeFileInfoBuiltin(runtime, actual) catch |failure| {
@@ -8144,6 +8165,87 @@ fn nodeFileSaveBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
         defer runtime.allocator.free(bytes);
         try std.Io.Dir.cwd().writeFile(std.Io.Threaded.global_single_threaded.io(), .{ .sub_path = path, .data = bytes });
     }
+    return .{};
+}
+
+fn nodeEncodingName(command: aot_builtin.Command) []const u8 {
+    return switch (command) {
+        .node_file_sjis_read, .node_file_sjis_save, .node_encoding_sjis_encode, .node_encoding_sjis_decode => "shift_jis",
+        .node_file_euc_read, .node_file_euc_save => "euc-jp",
+        else => unreachable,
+    };
+}
+
+fn nodeEncodingValueBytesAlloc(runtime: *Runtime, value: Value) ![]u8 {
+    if (value.tag == @intFromEnum(Tag.byte_buffer)) return runtime.allocator.dupe(u8, value.object().?.payload.byte_buffer.bytes);
+    if (value.tag == @intFromEnum(Tag.array)) {
+        const items = value.object().?.payload.array.items;
+        const bytes = try runtime.allocator.alloc(u8, items.len);
+        errdefer runtime.allocator.free(bytes);
+        for (items, 0..) |item, index| {
+            const number = try valueToNumberRuntime(runtime, item);
+            bytes[index] = if (!std.math.isFinite(number)) 0 else @intFromFloat(@mod(@trunc(number), 256.0));
+        }
+        return bytes;
+    }
+    return valueUtf8LossyAlloc(runtime, value);
+}
+
+fn nodeEncodingBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    if (arguments.len < 1) return error.InvalidArgumentCount;
+    if ((command == .node_encoding_encode or command == .node_encoding_decode) and arguments.len < 2) {
+        return error.InvalidArgumentCount;
+    }
+    const encoding_name = if (command == .node_encoding_encode or command == .node_encoding_decode)
+        try valueUtf8LossyAlloc(runtime, arguments[1])
+    else
+        try runtime.allocator.dupe(u8, nodeEncodingName(command));
+    defer runtime.allocator.free(encoding_name);
+
+    return switch (command) {
+        .node_encoding_sjis_encode, .node_encoding_encode => blk: {
+            const units = try valueUtf16Alloc(runtime, arguments[0]);
+            defer runtime.allocator.free(units);
+            const bytes = try encoding.encodeUnits(runtime.allocator, units, encoding_name);
+            defer runtime.allocator.free(bytes);
+            break :blk try runtime.createBytes(bytes);
+        },
+        .node_encoding_sjis_decode, .node_encoding_decode => blk: {
+            const bytes = try nodeEncodingValueBytesAlloc(runtime, arguments[0]);
+            defer runtime.allocator.free(bytes);
+            const units = try encoding.decodeBytes(runtime.allocator, bytes, encoding_name);
+            defer runtime.allocator.free(units);
+            break :blk try runtime.createString(units);
+        },
+        else => error.UnknownCommand,
+    };
+}
+
+fn nodeEncodedFileReadBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    if (arguments.len < 1) return error.InvalidArgumentCount;
+    const path = try valueUtf8LossyAlloc(runtime, arguments[0]);
+    defer runtime.allocator.free(path);
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(
+        std.Io.Threaded.global_single_threaded.io(),
+        path,
+        runtime.allocator,
+        .limited(1024 * 1024 * 1024),
+    );
+    defer runtime.allocator.free(bytes);
+    const units = try encoding.decodeBytes(runtime.allocator, bytes, nodeEncodingName(command));
+    defer runtime.allocator.free(units);
+    return runtime.createString(units);
+}
+
+fn nodeEncodedFileSaveBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    if (arguments.len < 2) return error.InvalidArgumentCount;
+    const units = try valueUtf16Alloc(runtime, arguments[0]);
+    defer runtime.allocator.free(units);
+    const bytes = try encoding.encodeUnits(runtime.allocator, units, nodeEncodingName(command));
+    defer runtime.allocator.free(bytes);
+    const path = try valueUtf8LossyAlloc(runtime, arguments[1]);
+    defer runtime.allocator.free(path);
+    try std.Io.Dir.cwd().writeFile(std.Io.Threaded.global_single_threaded.io(), .{ .sub_path = path, .data = bytes });
     return .{};
 }
 
@@ -12267,6 +12369,28 @@ test "AOT Node基本ファイルI/OはテキストとBufferを読み書きする
     roots[7] = try nodeFileReadBuiltin(&runtime, .node_file_binary_read, &.{roots[6]});
     try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @enumFromInt(roots[7].tag)));
     try std.testing.expectEqualSlices(u8, "日本語\nABC", roots[7].object().?.payload.byte_buffer.bytes);
+}
+
+test "AOT Node文字コード命令は共有codecへ接続する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtimeUtf8String(&runtime, "日本語ABC");
+    roots[1] = try nodeEncodingBuiltin(&runtime, .node_encoding_sjis_encode, &.{roots[0]});
+    roots[2] = try nodeEncodingBuiltin(&runtime, .node_encoding_sjis_decode, &.{roots[1]});
+    roots[3] = try nodeEncodingBuiltin(&runtime, .node_encoding_encode, &.{ roots[0], staticStringValue("euc-jp") });
+    roots[4] = try nodeEncodingBuiltin(&runtime, .node_encoding_decode, &.{ roots[3], staticStringValue("euc-jp") });
+
+    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @enumFromInt(roots[1].tag)));
+    try std.testing.expectEqualSlices(u8, &.{ 0x93, 0xfa, 0x96, 0x7b, 0x8c, 0xea, 'A', 'B', 'C' }, roots[1].object().?.payload.byte_buffer.bytes);
+    try expectUtf16String(&runtime, roots[2], "日本語ABC");
+    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @enumFromInt(roots[3].tag)));
+    try expectUtf16String(&runtime, roots[4], "日本語ABC");
+    try std.testing.expectError(error.InvalidArgumentCount, nodeEncodingBuiltin(&runtime, .node_encoding_encode, &.{roots[0]}));
 }
 
 test "AOT Nodeファイルサイズ取得はstatのサイズを返す" {

@@ -88,6 +88,8 @@ pub fn manifestCall(name: []const u8, direct_callee: ?ir.FunctionId, is_builtin_
         .timer_after, .timer_every, .timer_stop, .timer_stop_all => "timer",
         .promise_create, .promise_success, .promise_settled, .promise_failure, .promise_finally, .promise_all => "promise",
         .node_file_open, .node_file_read, .node_file_binary_read, .node_file_save => "node-file-io",
+        .node_file_sjis_read, .node_file_sjis_save, .node_file_euc_read, .node_file_euc_save => "node-file-encoding",
+        .node_encoding_sjis_encode, .node_encoding_sjis_decode, .node_encoding_encode, .node_encoding_decode => "node-encoding",
         .system_debug_display => "debug-display",
         .system_hatena_execute => "hatena-default",
         .node_archive_tool_path_set => "archive-tool-path",
@@ -2115,6 +2117,16 @@ test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {
     try std.testing.expectEqualStrings("node_file_open", file_open.canonical_opcode);
     try std.testing.expectEqualStrings("node-file-io", file_open.route);
     try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_file_open), file_open.opcode);
+
+    const sjis_file = manifestCall("SJISファイル読", null, true).?;
+    try std.testing.expectEqualStrings("node_file_sjis_read", sjis_file.canonical_opcode);
+    try std.testing.expectEqualStrings("node-file-encoding", sjis_file.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_file_sjis_read), sjis_file.opcode);
+
+    const sjis = manifestCall("SJIS変換", null, true).?;
+    try std.testing.expectEqualStrings("node_encoding_sjis_encode", sjis.canonical_opcode);
+    try std.testing.expectEqualStrings("node-encoding", sjis.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_encoding_sjis_encode), sjis.opcode);
 
     const timer_wait = manifestCall("秒待", null, true).?;
     try std.testing.expectEqualStrings("timer_wait", timer_wait.canonical_opcode);
