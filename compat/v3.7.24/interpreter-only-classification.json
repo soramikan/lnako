@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "259141633be78422766d2524f819422de0ec7bbfd1261fba602643d193fb0575"
+    "sha256": "1337a5ed9bd5cdb09f54ec075fb25bea878470a6f5cb3e8fe28d2d3cec664651"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 94,
+    "count": 93,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 94
+      "unverified": 93
     }
   },
   "groups": [
@@ -176,9 +176,9 @@
       "group": "基本プラグイン",
       "category": "ファイル入出力",
       "type": "関数",
-      "count": 31,
+      "count": 30,
       "executionEvidenceStates": {
-        "unverified": 31
+        "unverified": 30
       },
       "commandIds": [
         "command-0688",
@@ -210,8 +210,7 @@
         "command-0717",
         "command-0718",
         "command-0719",
-        "command-0720",
-        "command-0721"
+        "command-0720"
       ],
       "names": [
         "開",
@@ -243,8 +242,7 @@
         "ファイル移動時",
         "ファイル削除",
         "ファイル削除時",
-        "ファイル情報取得",
-        "ファイルサイズ取得"
+        "ファイル情報取得"
       ]
     },
     {
@@ -1199,23 +1197,6 @@
     {
       "id": "command-0720",
       "name": "ファイル情報取得",
-      "plugin": "plugin_node",
-      "group": "基本プラグイン",
-      "category": "ファイル入出力",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-node-file-core"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0721",
-      "name": "ファイルサイズ取得",
       "plugin": "plugin_node",
       "group": "基本プラグイン",
       "category": "ファイル入出力",

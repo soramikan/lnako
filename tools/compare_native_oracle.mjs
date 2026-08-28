@@ -30,7 +30,7 @@ const oracleIdentity = await readOracleIdentity(oracleRoot, officialCli, oracleB
 const artifactOracleIdentity = artifactPath === null ? null : oracleIdentity;
 const temporary = await mkdtemp(join(tmpdir(), "lnako-native-"));
 const maxBuffer = 16 * 1024 * 1024;
-const knownCaseFields = new Set(["id", "source", "oracle", "stderrIncludes", "normalizeDebugDump", "commands"]);
+const knownCaseFields = new Set(["id", "source", "sourceFileName", "oracle", "stderrIncludes", "normalizeDebugDump", "commands"]);
 const routeNames = ["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0", "lnakoNativeO1", "lnakoNativeO2", "lnakoNativeO3"];
 let artifactLnakoBinarySha256 = null;
 
@@ -52,6 +52,9 @@ try {
     }
     if (testCase.normalizeDebugDump !== undefined && typeof testCase.normalizeDebugDump !== "boolean") {
       throw new Error(`normalizeDebugDumpはbooleanで指定してください: ${testCase.id}`);
+    }
+    if (testCase.sourceFileName !== undefined && (typeof testCase.sourceFileName !== "string" || testCase.sourceFileName.length === 0 || isAbsolute(testCase.sourceFileName) || testCase.sourceFileName.includes("/") || testCase.sourceFileName.includes("\\") || testCase.sourceFileName === "." || testCase.sourceFileName === "..")) {
+      throw new Error(`sourceFileNameは相対basenameで指定してください: ${testCase.id}`);
     }
     if (testCase.commands !== undefined && (!Array.isArray(testCase.commands) || testCase.commands.length === 0 || testCase.commands.some((name) => typeof name !== "string" || name.length === 0 || !standardCommandNames.has(name)) || new Set(testCase.commands).size !== testCase.commands.length)) {
       throw new Error(`commandsは標準527命令の重複しない非空文字列配列で指定してください: ${testCase.id}`);
@@ -175,7 +178,7 @@ async function runCase(testCase, index, temporary, executable, officialCli, coll
   const stem = `${String(index).padStart(3, "0")}-${testCase.id}`;
   const fixtureDirectory = resolve(temporary, stem);
   await mkdir(fixtureDirectory);
-  const sourcePath = resolve(fixtureDirectory, `${stem}.nako3`);
+  const sourcePath = resolve(fixtureDirectory, testCase.sourceFileName ?? `${stem}.nako3`);
   const generatedJavaScript = resolve(fixtureDirectory, `${stem}.mjs`);
   const source = replaceNativePluginPlaceholders(testCase.source, oracleRoot, fixtureDirectory);
   await writeFile(sourcePath, source, "utf8");

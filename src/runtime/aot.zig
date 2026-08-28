@@ -3803,6 +3803,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
+        .node_file_size => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = nodeFileSizeBuiltin(runtime, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .node_home_directory, .node_desktop, .node_documents, .node_temporary_directory => {
             out.* = nodeDirectoryBuiltin(runtime, command) catch |failure| {
                 runtime.setFailure(failure);
@@ -6867,6 +6874,14 @@ fn nodeFileExistenceBuiltin(runtime: *Runtime, command: aot_builtin.Command, arg
     };
     const result = command == .node_file_exists or stat.kind == .directory;
     return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(result) };
+}
+
+fn nodeFileSizeBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    if (arguments.len < 1) return error.InvalidArgumentCount;
+    const path = try valueUtf8LossyAlloc(runtime, arguments[0]);
+    defer runtime.allocator.free(path);
+    const stat = try std.Io.Dir.cwd().statFile(std.Io.Threaded.global_single_threaded.io(), path, .{});
+    return numberValue(@floatFromInt(stat.size));
 }
 
 fn nodeDirectoryBuiltin(runtime: *Runtime, command: aot_builtin.Command) !Value {
@@ -10808,6 +10823,14 @@ test "AOT Node存在判定はファイルとフォルダの存在を区別する
     try std.testing.expect(roots[0].payload != 0);
     try std.testing.expect(roots[1].payload != 0);
     try std.testing.expect(roots[2].payload == 0);
+}
+
+test "AOT Nodeファイルサイズ取得はstatのサイズを返す" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const expected = try std.Io.Dir.cwd().statFile(std.Io.Threaded.global_single_threaded.io(), ".", .{});
+    const result = try nodeFileSizeBuiltin(&runtime, &.{staticStringValue(".")});
+    try std.testing.expectEqual(@as(f64, @floatFromInt(expected.size)), valueToNumber(result));
 }
 
 test "AOT Nodeの環境依存ディレクトリ命令はOSの環境値を使う" {
