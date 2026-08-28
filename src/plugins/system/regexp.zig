@@ -9,13 +9,22 @@ pub const Runtime = value_mod.Runtime;
 const max_captures = 64;
 pub const CallResult = struct { value: Value, captures: ?Value = null };
 
-pub const Flags = struct { global: bool = false, ignore_case: bool = false, multiline: bool = false, dot_all: bool = false };
+pub const Flags = struct {
+    global: bool = false,
+    ignore_case: bool = false,
+    multiline: bool = false,
+    dot_all: bool = false,
+    unicode: bool = false,
+    sticky: bool = false,
+    indices: bool = false,
+};
 pub const Span = struct { start: usize = 0, end: usize = 0, matched: bool = false };
 const Candidate = struct { position: usize, captures: [max_captures]Span };
 pub const Match = struct { span: Span, captures: [max_captures]Span };
 
 const ClassItem = union(enum) {
     literal: u16,
+    code_point: u21,
     range: struct { first: u16, last: u16 },
     digit,
     not_digit,
@@ -29,6 +38,7 @@ const Group = struct { expression: *Expression, capture: ?usize, name: ?[]const 
 const Assertion = struct { expression: *Expression, positive: bool, behind: bool };
 const Atom = union(enum) {
     literal: u16,
+    code_point: u21,
     dot,
     class: CharacterClass,
     group: Group,
@@ -58,6 +68,7 @@ pub const Compiled = struct {
 const Parser = struct {
     allocator: std.mem.Allocator,
     source: []const u16,
+    unicode: bool = false,
     index: usize = 0,
     capture_count: usize = 0,
     capture_names: [max_captures]?[]const u16 = [_]?[]const u16{null} ** max_captures,
@@ -96,7 +107,11 @@ const Parser = struct {
             '(' => try self.parseGroup(),
             '\\' => try self.parseEscape(false),
             '*', '+', '?', '{' => error.QuantifierWithoutAtom,
-            else => .{ .literal = unit },
+            else => if (self.unicode and isHighSurrogate(unit) and self.index < self.source.len and isLowSurrogate(self.source[self.index])) blk: {
+                const code_point = surrogatePairCodePoint(unit, self.source[self.index]);
+                self.index += 1;
+                break :blk .{ .code_point = code_point };
+            } else .{ .literal = unit },
         };
     }
 
@@ -170,6 +185,7 @@ const Parser = struct {
         const atom = try self.parseEscape(true);
         return switch (atom) {
             .literal => |literal| .{ .literal = literal },
+            .code_point => |code_point| .{ .code_point = code_point },
             .class => |class| if (class.items.len == 1) class.items[0] else error.InvalidClassEscape,
             else => error.InvalidClassEscape,
         };
@@ -195,7 +211,10 @@ const Parser = struct {
             'v' => .{ .literal = 0x0b },
             '0' => .{ .literal = 0 },
             'x' => .{ .literal = try self.parseHex(2) },
-            'u' => .{ .literal = try self.parseHex(4) },
+            'u' => if (self.index < self.source.len and self.source[self.index] == '{')
+                .{ .code_point = try self.parseCodePointEscape() }
+            else
+                .{ .literal = try self.parseHex(4) },
             '1'...'9' => if (in_class) .{ .literal = escaped } else .{ .backreference = escaped - '1' },
             else => .{ .literal = escaped },
         };
@@ -210,6 +229,26 @@ const Parser = struct {
         }
         self.index += count;
         return result;
+    }
+
+    fn parseCodePointEscape(self: *Parser) !u21 {
+        if (!self.unicode or self.index >= self.source.len or self.source[self.index] != '{') return error.InvalidUnicodeEscape;
+        self.index += 1;
+        const start = self.index;
+        var value: u32 = 0;
+        while (self.index < self.source.len and self.source[self.index] != '}') {
+            const unit = self.source[self.index];
+            if (unit > 0x7f) return error.InvalidUnicodeEscape;
+            const digit = std.fmt.charToDigit(@intCast(unit), 16) catch return error.InvalidUnicodeEscape;
+            value = std.math.mul(u32, value, 16) catch return error.InvalidUnicodeEscape;
+            value = std.math.add(u32, value, digit) catch return error.InvalidUnicodeEscape;
+            if (value > 0x10ffff) return error.InvalidUnicodeEscape;
+            self.index += 1;
+        }
+        if (self.index == start or self.index >= self.source.len) return error.InvalidUnicodeEscape;
+        self.index += 1;
+        if (value >= 0xd800 and value <= 0xdfff) return error.InvalidUnicodeEscape;
+        return @intCast(value);
     }
 
     fn parseQuantifier(self: *Parser, piece: *Piece) !void {
@@ -307,7 +346,7 @@ pub const RawPattern = struct {
         var arena = std.heap.ArenaAllocator.init(allocator);
         errdefer arena.deinit();
         const owned_pattern = try arena.allocator().dupe(u16, pattern);
-        var parser = Parser{ .allocator = arena.allocator(), .source = owned_pattern };
+        var parser = Parser{ .allocator = arena.allocator(), .source = owned_pattern, .unicode = false };
         const expression = try parser.parseExpression();
         if (parser.index != owned_pattern.len) return error.UnexpectedPatternToken;
         return .{
@@ -356,18 +395,35 @@ fn compile(allocator: std.mem.Allocator, specification: []const u16, default_glo
         if (last_slash) |slash| if (slash > 1) {
             pattern = specification[1..slash];
             flags = .{};
-            for (specification[slash + 1 ..]) |flag| switch (flag) {
-                'g' => flags.global = true,
-                'i' => flags.ignore_case = true,
-                'm' => flags.multiline = true,
-                's' => flags.dot_all = true,
-                'u' => {},
-                else => return error.UnsupportedRegularExpressionFlag,
-            };
+            var seen_flags: u8 = 0;
+            for (specification[slash + 1 ..]) |flag| {
+                const bit: u8 = switch (flag) {
+                    'g' => 1 << 0,
+                    'i' => 1 << 1,
+                    'm' => 1 << 2,
+                    's' => 1 << 3,
+                    'u' => 1 << 4,
+                    'd' => 1 << 5,
+                    'y' => 1 << 6,
+                    else => return error.UnsupportedRegularExpressionFlag,
+                };
+                if (seen_flags & bit != 0) return error.DuplicateRegularExpressionFlag;
+                seen_flags |= bit;
+                switch (flag) {
+                    'g' => flags.global = true,
+                    'i' => flags.ignore_case = true,
+                    'm' => flags.multiline = true,
+                    's' => flags.dot_all = true,
+                    'u' => flags.unicode = true,
+                    'd' => flags.indices = true,
+                    'y' => flags.sticky = true,
+                    else => unreachable,
+                }
+            }
         };
     }
     const owned_pattern = try arena.allocator().dupe(u16, pattern);
-    var parser = Parser{ .allocator = arena.allocator(), .source = owned_pattern };
+    var parser = Parser{ .allocator = arena.allocator(), .source = owned_pattern, .unicode = flags.unicode };
     const expression = try parser.parseExpression();
     if (parser.index != owned_pattern.len) return error.UnexpectedPatternToken;
     return .{ .arena = arena, .expression = expression, .flags = flags, .capture_count = parser.capture_count, .capture_names = parser.capture_names };
@@ -387,7 +443,10 @@ fn findAll(allocator: std.mem.Allocator, source: []const u16, compiled: *const C
         if (found == null) break;
         try results.append(allocator, found.?);
         if (!compiled.flags.global) break;
-        position = if (found.?.span.end > found.?.span.start) found.?.span.end else found.?.span.end + 1;
+        position = if (found.?.span.end > found.?.span.start)
+            found.?.span.end
+        else
+            advanceStringIndex(source, found.?.span.end, compiled.flags.unicode);
     }
     return results.toOwnedSlice(allocator);
 }
@@ -402,7 +461,8 @@ fn findOne(allocator: std.mem.Allocator, source: []const u16, compiled: *const C
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     var start = @min(from, source.len);
-    while (start <= source.len) : (start += 1) {
+    const last_start = if (compiled.flags.sticky) start else source.len;
+    while (start <= last_start) : (start += 1) {
         const initial = Candidate{ .position = start, .captures = [_]Span{.{}} ** max_captures };
         const candidates = try matchExpression(arena.allocator(), source, compiled.expression, initial, compiled.flags);
         if (candidates.len > 0) return .{ .span = .{ .start = start, .end = candidates[0].position, .matched = true }, .captures = candidates[0].captures };
@@ -476,14 +536,19 @@ fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: Atom, init
             candidate.position += 1;
             try output.append(allocator, candidate);
         },
-        .dot => if (initial.position < source.len and (flags.dot_all or !isLineTerminator(source[initial.position]))) {
+        .code_point => |code_point| if (codePointAt(source, initial.position)) |actual| if (actual.value == code_point) {
             var candidate = initial;
-            candidate.position += 1;
+            candidate.position += actual.width;
             try output.append(allocator, candidate);
         },
-        .class => |class| if (initial.position < source.len and classMatches(class, source[initial.position], flags.ignore_case)) {
+        .dot => if (initial.position < source.len and (flags.dot_all or !isLineTerminator(source[initial.position]))) {
             var candidate = initial;
-            candidate.position += 1;
+            candidate.position += codePointWidth(source, initial.position, flags.unicode);
+            try output.append(allocator, candidate);
+        },
+        .class => |class| if (initial.position < source.len and classMatches(class, source, initial.position, flags)) {
+            var candidate = initial;
+            candidate.position += codePointWidth(source, initial.position, flags.unicode);
             try output.append(allocator, candidate);
         },
         .start_anchor => if (initial.position == 0 or (flags.multiline and initial.position > 0 and isLineTerminator(source[initial.position - 1]))) try output.append(allocator, initial),
@@ -725,14 +790,19 @@ fn ownedText(runtime: *Runtime, value: Value) !value_mod.String {
     return value_mod.String.fromCodeUnits(runtime.allocator(), converted.string.units);
 }
 
-fn classMatches(class: CharacterClass, unit: u16, ignore_case: bool) bool {
+const CodePoint = struct { value: u21, width: usize };
+
+fn classMatches(class: CharacterClass, source: []const u16, position: usize, flags: Flags) bool {
+    const unit = source[position];
+    const code_point = codePointAt(source, position).?;
     var matched = false;
     for (class.items) |item| {
         matched = switch (item) {
-            .literal => |literal| unitsEqual(unit, literal, ignore_case),
+            .literal => |literal| code_point.value <= std.math.maxInt(u16) and unitsEqual(unit, literal, flags.ignore_case),
+            .code_point => |literal| if (flags.unicode) code_point.value == literal else literal <= std.math.maxInt(u16) and unit == literal,
             .range => |range| blk: {
-                const folded = foldAscii(unit, ignore_case);
-                break :blk folded >= foldAscii(range.first, ignore_case) and folded <= foldAscii(range.last, ignore_case);
+                const folded = foldAscii(unit, flags.ignore_case);
+                break :blk folded >= foldAscii(range.first, flags.ignore_case) and folded <= foldAscii(range.last, flags.ignore_case);
             },
             .digit => isDigit(unit),
             .not_digit => !isDigit(unit),
@@ -744,6 +814,37 @@ fn classMatches(class: CharacterClass, unit: u16, ignore_case: bool) bool {
         if (matched) break;
     }
     return matched != class.negated;
+}
+
+fn codePointAt(source: []const u16, position: usize) ?CodePoint {
+    if (position >= source.len) return null;
+    const first = source[position];
+    if (isHighSurrogate(first) and position + 1 < source.len and isLowSurrogate(source[position + 1])) {
+        return .{ .value = surrogatePairCodePoint(first, source[position + 1]), .width = 2 };
+    }
+    return .{ .value = first, .width = 1 };
+}
+
+fn codePointWidth(source: []const u16, position: usize, unicode: bool) usize {
+    if (!unicode) return 1;
+    return (codePointAt(source, position) orelse return 1).width;
+}
+
+fn advanceStringIndex(source: []const u16, position: usize, unicode: bool) usize {
+    if (position >= source.len) return source.len + 1;
+    return position + codePointWidth(source, position, unicode);
+}
+
+fn isHighSurrogate(unit: u16) bool {
+    return unit >= 0xd800 and unit <= 0xdbff;
+}
+
+fn isLowSurrogate(unit: u16) bool {
+    return unit >= 0xdc00 and unit <= 0xdfff;
+}
+
+fn surrogatePairCodePoint(high: u16, low: u16) u21 {
+    return @intCast(0x10000 + (@as(u32, high) - 0xd800) * 0x400 + (@as(u32, low) - 0xdc00));
 }
 
 fn unitsEqual(left: u16, right: u16, ignore_case: bool) bool {
@@ -919,4 +1020,49 @@ test "大文字小文字を区別しない照合は非ASCII文字にも適用す
     try roots.protect(&pattern);
     const matched = (try call(&runtime, "正規表現マッチ", &.{ source, pattern })).?;
     try std.testing.expect(matched == .string);
+}
+
+test "Unicode・sticky・indicesフラグはUTF-16共有エンジンで処理する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var source = try runtime.stringCodeUnits(&.{ 0xd83d, 0xde00, 'x' });
+    try roots.protect(&source);
+    var unicode_pattern = try runtime.stringUtf8("/./gu");
+    try roots.protect(&unicode_pattern);
+    const unicode_matches = (try call(&runtime, "正規表現マッチ", &.{ source, unicode_pattern })).?;
+    try std.testing.expectEqual(@as(usize, 2), unicode_matches.array.len());
+    try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00 }, unicode_matches.array.items.items[0].string.units);
+    try std.testing.expectEqualSlices(u16, &.{'x'}, unicode_matches.array.items.items[1].string.units);
+
+    var split_pattern = try runtime.stringUtf8("/./u");
+    try roots.protect(&split_pattern);
+    const split = (try call(&runtime, "正規表現区切", &.{ source, split_pattern })).?;
+    try std.testing.expectEqual(@as(usize, 3), split.array.len());
+    for (split.array.items.items) |item| try std.testing.expectEqual(@as(usize, 0), item.string.units.len);
+
+    var sticky_source = try runtime.stringUtf8("ba");
+    try roots.protect(&sticky_source);
+    var sticky_pattern = try runtime.stringUtf8("/a/y");
+    try roots.protect(&sticky_pattern);
+    try std.testing.expect((try call(&runtime, "正規表現マッチ", &.{ sticky_source, sticky_pattern })).? == .null_value);
+
+    var sticky_global_source = try runtime.stringUtf8("aaab");
+    try roots.protect(&sticky_global_source);
+    var sticky_global_pattern = try runtime.stringUtf8("/a/gy");
+    try roots.protect(&sticky_global_pattern);
+    const sticky_global = (try call(&runtime, "正規表現マッチ", &.{ sticky_global_source, sticky_global_pattern })).?;
+    try std.testing.expectEqual(@as(usize, 3), sticky_global.array.len());
+
+    var escaped_pattern = try runtime.stringUtf8("/\\u{1F600}/u");
+    try roots.protect(&escaped_pattern);
+    const escaped = (try call(&runtime, "正規表現マッチ", &.{ source, escaped_pattern })).?;
+    try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00 }, escaped.string.units);
+
+    var indices_pattern = try runtime.stringUtf8("/(x)/d");
+    try roots.protect(&indices_pattern);
+    const indices = (try call(&runtime, "正規表現マッチ", &.{ source, indices_pattern })).?;
+    try std.testing.expectEqualSlices(u16, &.{'x'}, indices.string.units);
 }
