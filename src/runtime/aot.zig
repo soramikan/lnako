@@ -3718,6 +3718,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
+        .node_temporary_directory_create => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = nodeCreateTemporaryDirectoryBuiltin(runtime, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .node_path_basename, .node_path_dirname => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = nodePathComponentBuiltin(runtime, command, actual) catch |failure| {
@@ -6770,6 +6777,64 @@ fn nodeDirectoryBuiltin(runtime: *Runtime, command: aot_builtin.Command) !Value 
     const path = try std.fs.path.join(runtime.allocator, &.{ home_path, child });
     defer runtime.allocator.free(path);
     return runtimeUtf8StringLossy(runtime, path);
+}
+
+fn nodeTemporaryDirectoryPrefixAlloc(runtime: *Runtime) ![]u8 {
+    const fallback = if (builtin.os.tag == .windows) "." else "/tmp";
+    const raw = if (builtin.os.tag == .windows)
+        std.c.getenv("TEMP") orelse std.c.getenv("TMP") orelse fallback
+    else
+        std.c.getenv("TMPDIR") orelse fallback;
+    const value = std.mem.span(raw);
+    const trimmed = std.mem.trimEnd(u8, value, "/\\");
+    return runtime.allocator.dupe(u8, if (trimmed.len == 0) value else trimmed);
+}
+
+fn nodeCreateTemporaryDirectoryBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    if (arguments.len < 1) return error.InvalidArgumentCount;
+    const prefix = try valueUtf8LossyAlloc(runtime, arguments[0]);
+    defer runtime.allocator.free(prefix);
+
+    var fallback_prefix: ?[]u8 = null;
+    const effective_prefix = if (prefix.len == 0) blk: {
+        fallback_prefix = try nodeTemporaryDirectoryPrefixAlloc(runtime);
+        break :blk fallback_prefix.?;
+    } else prefix;
+    defer if (fallback_prefix) |value| runtime.allocator.free(value);
+
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    const io = std.Io.Threaded.global_single_threaded.io();
+    for (0..128) |_| {
+        const candidate = try runtime.allocator.alloc(u8, effective_prefix.len + 6);
+        errdefer runtime.allocator.free(candidate);
+        @memcpy(candidate[0..effective_prefix.len], effective_prefix);
+        for (candidate[effective_prefix.len..]) |*byte| {
+            const index = @as(usize, @intFromFloat(@floor(nextRandom(runtime) * @as(f64, @floatFromInt(alphabet.len)))));
+            byte.* = alphabet[index];
+        }
+
+        if (std.fs.path.isAbsolute(candidate)) {
+            std.Io.Dir.createDirAbsolute(io, candidate, .default_dir) catch |failure| switch (failure) {
+                error.PathAlreadyExists => {
+                    runtime.allocator.free(candidate);
+                    continue;
+                },
+                else => return failure,
+            };
+        } else {
+            std.Io.Dir.cwd().createDir(io, candidate, .default_dir) catch |failure| switch (failure) {
+                error.PathAlreadyExists => {
+                    runtime.allocator.free(candidate);
+                    continue;
+                },
+                else => return failure,
+            };
+        }
+
+        defer runtime.allocator.free(candidate);
+        return runtimeUtf8StringLossy(runtime, candidate);
+    }
+    return error.TemporaryDirectoryCollision;
 }
 
 fn nodeMotherPathBuiltin(runtime: *Runtime) !Value {
@@ -10685,6 +10750,36 @@ test "AOT Node母艦パスはソースパスのディレクトリを保持する
 
     roots[1] = try nodeMotherPathBuiltin(&active_runtime.?);
     try expectUtf16String(&active_runtime.?, roots[1], expected);
+}
+
+test "AOT一時フォルダ作成は6文字suffixと衝突回避を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator, .random_state = default_random_seed };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 2;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    const prefix = ".lnako-aot-temporary-";
+    var arguments = [_]Value{staticStringValue(prefix)};
+    roots[0] = try nodeCreateTemporaryDirectoryBuiltin(&runtime, &arguments);
+    const first = try valueUtf8LossyAlloc(&runtime, roots[0]);
+    defer runtime.allocator.free(first);
+    defer std.Io.Dir.cwd().deleteTree(std.Io.Threaded.global_single_threaded.io(), first) catch {};
+    try std.testing.expect(std.mem.startsWith(u8, first, prefix));
+    try std.testing.expectEqual(prefix.len + 6, first.len);
+    const first_stat = try std.Io.Dir.cwd().statFile(std.Io.Threaded.global_single_threaded.io(), first, .{});
+    try std.testing.expectEqual(.directory, first_stat.kind);
+
+    roots[1] = try nodeCreateTemporaryDirectoryBuiltin(&runtime, &arguments);
+    const second = try valueUtf8LossyAlloc(&runtime, roots[1]);
+    defer runtime.allocator.free(second);
+    defer std.Io.Dir.cwd().deleteTree(std.Io.Threaded.global_single_threaded.io(), second) catch {};
+    try std.testing.expect(std.mem.startsWith(u8, second, prefix));
+    try std.testing.expectEqual(prefix.len + 6, second.len);
+    try std.testing.expect(!std.mem.eql(u8, first, second));
+    const second_stat = try std.Io.Dir.cwd().statFile(std.Io.Threaded.global_single_threaded.io(), second, .{});
+    try std.testing.expectEqual(.directory, second_stat.kind);
 }
 
 test "AOT環境変数取得はC環境から値を読み未設定をundefinedにする" {

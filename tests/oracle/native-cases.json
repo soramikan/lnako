@@ -762,5 +762,10 @@
     "id": "native-node-mother-path",
     "commands": ["母艦パス", "母艦パス取得"],
     "source": "母艦パスを表示\n母艦パス取得()を表示\n"
+  },
+  {
+    "id": "native-node-temporary-directory",
+    "commands": ["一時フォルダ作成"],
+    "source": "A=一時フォルダ作成(\"work-\")\nB=一時フォルダ作成(\"work-\")\n(文字数(A)=11)を表示\n(文字数(B)=11)を表示\nフォルダ存在(A)を表示\nフォルダ存在(B)を表示\n"
   }
 ]

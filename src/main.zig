@@ -1183,7 +1183,7 @@ const CliHost = struct {
             const candidate = try allocator.alloc(u8, prefix.len + 6);
             errdefer allocator.free(candidate);
             @memcpy(candidate[0..prefix.len], prefix);
-            for (candidate[prefix.len..]) |*byte| byte.* = alphabet[@as(usize, @intFromFloat(try random(self))) % alphabet.len];
+            for (candidate[prefix.len..]) |*byte| byte.* = alphabet[@as(usize, @intFromFloat(try random(self) * @as(f64, @floatFromInt(alphabet.len)))) % alphabet.len];
             std.Io.Dir.cwd().createDir(self.io, candidate, .default_dir) catch |err| switch (err) {
                 error.PathAlreadyExists => {
                     allocator.free(candidate);

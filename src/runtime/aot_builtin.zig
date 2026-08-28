@@ -280,6 +280,7 @@ pub const Command = enum(u16) {
     node_documents,
     node_temporary_directory,
     node_mother_path,
+    node_temporary_directory_create,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -569,6 +570,7 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "マイドキュメント")) return .node_documents;
     if (std.mem.eql(u8, name, "テンポラリフォルダ")) return .node_temporary_directory;
     if (std.mem.eql(u8, name, "母艦パス取得")) return .node_mother_path;
+    if (std.mem.eql(u8, name, "一時フォルダ作成")) return .node_temporary_directory_create;
     return null;
 }
 
@@ -780,6 +782,7 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.node_documents, lookup("マイドキュメント").?);
     try std.testing.expectEqual(Command.node_temporary_directory, lookup("テンポラリフォルダ").?);
     try std.testing.expectEqual(Command.node_mother_path, lookup("母艦パス取得").?);
+    try std.testing.expectEqual(Command.node_temporary_directory_create, lookup("一時フォルダ作成").?);
     try std.testing.expectEqual(Command.datetime_now, lookup("今").?);
     try std.testing.expectEqual(Command.datetime_system_time_milliseconds, lookup("システム時間ミリ秒").?);
     try std.testing.expectEqual(Command.datetime_today, lookup("今日").?);
