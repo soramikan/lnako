@@ -3281,6 +3281,36 @@ pub export fn lnako_aot_plugin_management_call(
     success = runtime.failure_epoch == start_epoch;
 }
 
+/// Dedicated ABI for Node's archive tool path setter. The setter mutates a
+/// system global, while archive execution itself remains a separate external
+/// tool boundary.
+pub export fn lnako_aot_archive_tool_path_set(
+    out: *Value,
+    values: ?[*]const Value,
+    len: usize,
+    archive_tool_path: *Value,
+    site_id: u64,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    if (values == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const command = aot_builtin.Command.node_archive_tool_path_set;
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    const call_id = runtime.dispatch_trace.begin(command_name, @intFromEnum(command), "archive-tool-path", site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, @intFromEnum(command), "archive-tool-path", site_id, success);
+    if (len == 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    archive_tool_path.* = values.?[0];
+    success = runtime.failure_epoch == start_epoch;
+}
+
 pub export fn lnako_aot_bigint_truthy(value: *const Value) callconv(.c) c_int {
     const object = value.object() orelse return 0;
     if (object.payload != .bigint) return 0;
@@ -3674,6 +3704,10 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
             return;
         },
         .system_hatena_execute => {
+            runtime.setFailure(error.UnknownCommand);
+            return;
+        },
+        .node_archive_tool_path_set => {
             runtime.setFailure(error.UnknownCommand);
             return;
         },
@@ -9993,6 +10027,8 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16) callconv(.c) void, @TypeOf(&lnako_aot_builtin_call));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_builtin_call_site));
     try std.testing.expectEqual(*const fn (*Value, ?*const Value, u64, ?[*]const u8, usize, ?*Value, u64) callconv(.c) void, @TypeOf(&lnako_aot_debug_display));
+    try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, *Value, u64) callconv(.c) void, @TypeOf(&lnako_aot_archive_tool_path_set));
+    try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, *Value, u64) callconv(.c) void, @TypeOf(&lnako_aot_archive_tool_path_set));
     try std.testing.expectEqual(*const fn (*Value, ?*Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_regexp_call_site));
     try std.testing.expectEqual(*const fn (u64) callconv(.c) u64, @TypeOf(&lnako_aot_dispatch_display_begin));
     try std.testing.expectEqual(*const fn (u64, *u64) callconv(.c) u64, @TypeOf(&lnako_aot_dispatch_display_begin_with_epoch));
@@ -12930,6 +12966,26 @@ test "AOTハッシュ関数一覧取得は固定したNode互換名を配列で�
     try std.testing.expectEqual(crypto.hash_names.len, result.object().?.payload.array.items.len);
     try expectUtf16String(&active_runtime.?, result.object().?.payload.array.items[0], crypto.hash_names[0]);
     try expectUtf16String(&active_runtime.?, result.object().?.payload.array.items[crypto.hash_names.len - 1], crypto.hash_names[crypto.hash_names.len - 1]);
+}
+
+test "AOT圧縮解凍ツールパス変更は可変グローバルを更新する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try active_runtime.?.createString(&.{ '7', 'z' });
+    var arguments = [_]Value{staticStringValue("native-tool")};
+    lnako_aot_archive_tool_path_set(&roots[1], &arguments, arguments.len, &roots[0], 9);
+    try expectUtf16String(&active_runtime.?, roots[0], "native-tool");
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[1].tag)));
 }
 
 test "AOT表ソートは指定列を比較して同じ配列を安定ソートする" {

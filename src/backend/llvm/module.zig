@@ -87,6 +87,7 @@ pub fn manifestCall(name: []const u8, direct_callee: ?ir.FunctionId, is_builtin_
         .regexp_match, .regexp_extract, .regexp_replace, .regexp_split => "regexp",
         .system_debug_display => "debug-display",
         .system_hatena_execute => "hatena-default",
+        .node_archive_tool_path_set => "archive-tool-path",
         else => "builtin",
     };
     return .{
@@ -338,6 +339,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_debug_display(ptr, ptr, i64, ptr, i64, ptr, i64)\n" ++
                 "declare void @lnako_aot_stdio_call(ptr, ptr, ptr, i64, i16, i64)\n" ++
                 "declare void @lnako_aot_plugin_management_call(ptr, ptr, i64, i16, ptr, ptr, i64)\n" ++
+                "declare void @lnako_aot_archive_tool_path_set(ptr, ptr, i64, ptr, i64)\n" ++
                 "declare i32 @lnako_aot_bigint_truthy(ptr)\n" ++
                 "declare void @lnako_aot_arithmetic(ptr, ptr, ptr, i8)\n" ++
                 "declare void @lnako_aot_compare(ptr, ptr, ptr, i8)\n" ++
@@ -515,6 +517,9 @@ const Emitter = struct {
                 if (aot_builtin.lookup(instruction.name)) |command| if (isPluginManagementCommand(command)) {
                     if (self.globalIndex("プラグイン名") == null) try self.globals.append(self.allocator, "プラグイン名");
                     if (self.globalIndex("名前空間") == null) try self.globals.append(self.allocator, "名前空間");
+                };
+                if (aot_builtin.lookup(instruction.name)) |command| if (command == .node_archive_tool_path_set) {
+                    if (self.globalIndex("圧縮解凍ツールパス") == null) try self.globals.append(self.allocator, "圧縮解凍ツールパス");
                 };
             }
             if (instruction.opcode == .const_string) {
@@ -1197,6 +1202,24 @@ const Emitter = struct {
                 namespace_index,
                 site_id,
             });
+            try self.debugSuffix(instruction.span, scope);
+            try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+            try self.debugSuffix(instruction.span, scope);
+            return;
+        }
+        if (command == .node_archive_tool_path_set) {
+            const archive_tool_path_index = self.globalIndex("圧縮解凍ツールパス") orelse return error.MissingArchiveToolPathGlobal;
+            for (instruction.operands, 0..) |argument, index| {
+                try self.output.writer.print("  %archive-tool-path.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+                try self.debugSuffix(instruction.span, scope);
+                try self.output.writer.writeAll("  store %lnako.Value ");
+                try self.writeValueRef(function, argument);
+                try self.output.writer.print(", ptr %archive-tool-path.{d}.slot.{d}", .{ result, index });
+                try self.debugSuffix(instruction.span, scope);
+            }
+            try self.output.writer.print("  call void @lnako_aot_archive_tool_path_set(ptr %root.slot.{d}, ptr ", .{result});
+            if (instruction.operands.len > 0) try self.output.writer.print("%archive-tool-path.{d}.slot.0", .{result}) else try self.output.writer.writeAll("null");
+            try self.output.writer.print(", i64 {d}, ptr @lnako.global.{d}, i64 {d})", .{ instruction.operands.len, archive_tool_path_index, site_id });
             try self.debugSuffix(instruction.span, scope);
             try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
             try self.debugSuffix(instruction.span, scope);
@@ -1949,6 +1972,11 @@ test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {
     try std.testing.expectEqualStrings("system_hatena_execute", hatena.canonical_opcode);
     try std.testing.expectEqualStrings("hatena-default", hatena.route);
     try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.system_hatena_execute), hatena.opcode);
+
+    const archive_tool_path = manifestCall("圧縮解凍ツールパス変更", null, true).?;
+    try std.testing.expectEqualStrings("node_archive_tool_path_set", archive_tool_path.canonical_opcode);
+    try std.testing.expectEqualStrings("archive-tool-path", archive_tool_path.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_archive_tool_path_set), archive_tool_path.opcode);
 
     const timer_wait = manifestCall("秒待", null, true).?;
     try std.testing.expectEqualStrings("timer_wait", timer_wait.canonical_opcode);

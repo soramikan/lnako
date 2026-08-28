@@ -73,6 +73,7 @@ pub const string_entries = [_]StringEntry{
     .{ .name = "表示ログ", .value = "" },
     .{ .name = "AJAXオプション", .value = "" },
     .{ .name = "ファイルコピーデフォルト動作", .value = "上書禁止" },
+    .{ .name = "圧縮解凍ツールパス", .value = "7z" },
     .{ .name = "プラグイン名", .value = "メイン" },
     .{ .name = "名前空間", .value = "" },
 };
@@ -137,6 +138,7 @@ test "v3.7.24のスカラーシステム定数を解決する" {
     try std.testing.expectEqualStrings("\n", lookupString("改行").?);
     try std.testing.expectEqualStrings("", lookupString("AJAXオプション").?);
     try std.testing.expectEqualStrings("上書禁止", lookupString("ファイルコピーデフォルト動作").?);
+    try std.testing.expectEqualStrings("7z", lookupString("圧縮解凍ツールパス").?);
     try std.testing.expect(lookupScalar("HTTPメソッド").? == .null_value);
     try std.testing.expect(lookupScalar("GETデータ").? == .null_value);
     try std.testing.expect(lookupScalar("POSTデータ").? == .null_value);

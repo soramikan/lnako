@@ -788,5 +788,10 @@
     "id": "native-node-hash-names",
     "commands": ["ハッシュ関数一覧取得"],
     "source": "JSON変換(ハッシュ関数一覧取得())を表示\n"
+  },
+  {
+    "id": "native-node-archive-tool-path",
+    "commands": ["圧縮解凍ツールパス", "圧縮解凍ツールパス変更"],
+    "source": "圧縮解凍ツールパスを表示\n圧縮解凍ツールパス変更(\"native-tool\")\n圧縮解凍ツールパスを表示\n"
   }
 ]
