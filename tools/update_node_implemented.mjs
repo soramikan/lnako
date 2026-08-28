@@ -37,6 +37,7 @@ register("プロセス終", "native-node-exit-code", "公式7経路の終了処�
 register("存在", "native-node-file-existence", "公式7経路のファイル存在判定差分テストに成功");
 register("フォルダ存在", "native-node-file-existence", "公式7経路のフォルダ存在判定差分テストに成功");
 register("ファイル情報取得", "native-node-file-info", "公式7経路のファイル情報とメソッド型差分テストに成功");
+for (const name of ["開", "読", "バイナリ読", "保存"]) register(name, "native-node-file-io", "公式7経路のファイル読み書きとBuffer境界の差分テストに成功");
 register("ハッシュ値計算", "native-node-crypto", "公式7経路のSHA-256・Buffer境界とエンコード形式の差分テストに成功");
 register("ランダムUUID生成", "native-node-crypto", "公式7経路のUUID version・variantと形式の差分テストに成功");
 register("ランダム配列生成", "native-node-crypto", "公式7経路のUint8Array長さ・要素境界の差分テストに成功");

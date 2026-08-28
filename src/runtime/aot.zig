@@ -4927,6 +4927,20 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
+        .node_file_open, .node_file_read, .node_file_binary_read => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = nodeFileReadBuiltin(runtime, command, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
+        .node_file_save => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = nodeFileSaveBuiltin(runtime, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .node_file_info => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = nodeFileInfoBuiltin(runtime, actual) catch |failure| {
@@ -8100,6 +8114,37 @@ fn nodeFileExistenceBuiltin(runtime: *Runtime, command: aot_builtin.Command, arg
     };
     const result = command == .node_file_exists or stat.kind == .directory;
     return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(result) };
+}
+
+fn nodeFileReadBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+    if (arguments.len < 1) return error.InvalidArgumentCount;
+    const path = try valueUtf8LossyAlloc(runtime, arguments[0]);
+    defer runtime.allocator.free(path);
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(
+        std.Io.Threaded.global_single_threaded.io(),
+        path,
+        runtime.allocator,
+        .limited(1024 * 1024 * 1024),
+    );
+    defer runtime.allocator.free(bytes);
+    return if (command == .node_file_binary_read) runtime.createBytes(bytes) else runtimeUtf8StringLossy(runtime, bytes);
+}
+
+fn nodeFileSaveBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    if (arguments.len < 2) return error.InvalidArgumentCount;
+    const path = try valueUtf8LossyAlloc(runtime, arguments[1]);
+    defer runtime.allocator.free(path);
+    if (arguments[0].tag == @intFromEnum(Tag.byte_buffer)) {
+        try std.Io.Dir.cwd().writeFile(std.Io.Threaded.global_single_threaded.io(), .{
+            .sub_path = path,
+            .data = arguments[0].object().?.payload.byte_buffer.bytes,
+        });
+    } else {
+        const bytes = try valueUtf8LossyAlloc(runtime, arguments[0]);
+        defer runtime.allocator.free(bytes);
+        try std.Io.Dir.cwd().writeFile(std.Io.Threaded.global_single_threaded.io(), .{ .sub_path = path, .data = bytes });
+    }
+    return .{};
 }
 
 fn nodeFileSizeBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
@@ -12181,6 +12226,47 @@ test "AOT Node存在判定はファイルとフォルダの存在を区別する
     try std.testing.expect(roots[0].payload != 0);
     try std.testing.expect(roots[1].payload != 0);
     try std.testing.expect(roots[2].payload == 0);
+}
+
+test "AOT Node基本ファイルI/OはテキストとBufferを読み書きする" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "source.txt", .data = "日本語\nABC" });
+    const temporary_path = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(temporary_path);
+    const source_path = try std.fs.path.join(std.testing.allocator, &.{ temporary_path, "source.txt" });
+    defer std.testing.allocator.free(source_path);
+    const text_path = try std.fs.path.join(std.testing.allocator, &.{ temporary_path, "text-copy.txt" });
+    defer std.testing.allocator.free(text_path);
+    const binary_path = try std.fs.path.join(std.testing.allocator, &.{ temporary_path, "binary-copy.bin" });
+    defer std.testing.allocator.free(binary_path);
+
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtimeUtf8String(&runtime, source_path);
+    roots[1] = try nodeFileReadBuiltin(&runtime, .node_file_open, &.{roots[0]});
+    roots[2] = try nodeFileReadBuiltin(&runtime, .node_file_read, &.{roots[0]});
+    roots[3] = try nodeFileReadBuiltin(&runtime, .node_file_binary_read, &.{roots[0]});
+    try expectUtf16String(&runtime, roots[1], "日本語\nABC");
+    try expectUtf16String(&runtime, roots[2], "日本語\nABC");
+    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @enumFromInt(roots[3].tag)));
+    try std.testing.expectEqualStrings("日本語\nABC", roots[3].object().?.payload.byte_buffer.bytes);
+
+    roots[4] = try runtimeUtf8String(&runtime, text_path);
+    _ = try nodeFileSaveBuiltin(&runtime, &.{ roots[1], roots[4] });
+    roots[5] = try nodeFileReadBuiltin(&runtime, .node_file_read, &.{roots[4]});
+    try expectUtf16String(&runtime, roots[5], "日本語\nABC");
+
+    roots[6] = try runtimeUtf8String(&runtime, binary_path);
+    _ = try nodeFileSaveBuiltin(&runtime, &.{ roots[3], roots[6] });
+    roots[7] = try nodeFileReadBuiltin(&runtime, .node_file_binary_read, &.{roots[6]});
+    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @enumFromInt(roots[7].tag)));
+    try std.testing.expectEqualSlices(u8, "日本語\nABC", roots[7].object().?.payload.byte_buffer.bytes);
 }
 
 test "AOT Nodeファイルサイズ取得はstatのサイズを返す" {

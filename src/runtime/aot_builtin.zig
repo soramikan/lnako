@@ -307,6 +307,10 @@ pub const Command = enum(u16) {
     promise_failure,
     promise_finally,
     promise_all,
+    node_file_open,
+    node_file_read,
+    node_file_binary_read,
+    node_file_save,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -623,6 +627,10 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "ハッシュ値計算")) return .node_hash_value;
     if (std.mem.eql(u8, name, "ランダムUUID生成")) return .node_random_uuid;
     if (std.mem.eql(u8, name, "ランダム配列生成")) return .node_random_array;
+    if (std.mem.eql(u8, name, "開")) return .node_file_open;
+    if (std.mem.eql(u8, name, "読")) return .node_file_read;
+    if (std.mem.eql(u8, name, "バイナリ読")) return .node_file_binary_read;
+    if (std.mem.eql(u8, name, "保存")) return .node_file_save;
     return null;
 }
 
@@ -814,6 +822,10 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.promise_failure, lookup("失敗時").?);
     try std.testing.expectEqual(Command.promise_finally, lookup("終了時").?);
     try std.testing.expectEqual(Command.promise_all, lookup("束").?);
+    try std.testing.expectEqual(Command.node_file_open, lookup("開").?);
+    try std.testing.expectEqual(Command.node_file_read, lookup("読").?);
+    try std.testing.expectEqual(Command.node_file_binary_read, lookup("バイナリ読").?);
+    try std.testing.expectEqual(Command.node_file_save, lookup("保存").?);
     try std.testing.expectEqual(Command.async_noop, lookup("ASYNC").?);
     try std.testing.expectEqual(Command.system_await_execute, lookup("AWAIT実行").?);
     try std.testing.expectEqual(Command.system_execute, lookup("実行").?);

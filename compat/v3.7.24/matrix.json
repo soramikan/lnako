@@ -15591,14 +15591,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-file-core"
+        "plugin-node-file-core",
+        "native-node-file-io"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路のファイル読み書きとBuffer境界の差分テストに成功"
     },
     {
       "id": "command-0689",
@@ -15616,14 +15617,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-file-core"
+        "plugin-node-file-core",
+        "native-node-file-io"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路のファイル読み書きとBuffer境界の差分テストに成功"
     },
     {
       "id": "command-0690",
@@ -15641,14 +15643,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-file-core"
+        "plugin-node-file-core",
+        "native-node-file-io"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路のファイル読み書きとBuffer境界の差分テストに成功"
     },
     {
       "id": "command-0691",
@@ -15666,14 +15669,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-file-core"
+        "plugin-node-file-core",
+        "native-node-file-io"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路のファイル読み書きとBuffer境界の差分テストに成功"
     },
     {
       "id": "command-0692",

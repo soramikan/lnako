@@ -87,6 +87,7 @@ pub fn manifestCall(name: []const u8, direct_callee: ?ir.FunctionId, is_builtin_
         .regexp_match, .regexp_extract, .regexp_replace, .regexp_split => "regexp",
         .timer_after, .timer_every, .timer_stop, .timer_stop_all => "timer",
         .promise_create, .promise_success, .promise_settled, .promise_failure, .promise_finally, .promise_all => "promise",
+        .node_file_open, .node_file_read, .node_file_binary_read, .node_file_save => "node-file-io",
         .system_debug_display => "debug-display",
         .system_hatena_execute => "hatena-default",
         .node_archive_tool_path_set => "archive-tool-path",
@@ -2109,6 +2110,11 @@ test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {
     try std.testing.expectEqualStrings("node_ajax_onerror_set", ajax_onerror.canonical_opcode);
     try std.testing.expectEqualStrings("ajax-onerror", ajax_onerror.route);
     try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_ajax_onerror_set), ajax_onerror.opcode);
+
+    const file_open = manifestCall("開", null, true).?;
+    try std.testing.expectEqualStrings("node_file_open", file_open.canonical_opcode);
+    try std.testing.expectEqualStrings("node-file-io", file_open.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.node_file_open), file_open.opcode);
 
     const timer_wait = manifestCall("秒待", null, true).?;
     try std.testing.expectEqualStrings("timer_wait", timer_wait.canonical_opcode);

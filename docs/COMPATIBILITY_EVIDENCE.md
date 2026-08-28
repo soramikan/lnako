@@ -82,9 +82,9 @@ fixtureのソース本文から命令名を推測することはしません。�
 `executionEvidenceState`も保持するため、次にAOT fixtureを追加する対象を命令系統ごとに選べます。
 この分類は実装完了、AOT実行、公式等価性、attestation済みの`verified`を意味しません。
 
-現行HEADでは、明示`commands`を追加した既存AOT fixtureと数学・日時・caniuse・漢数字・CSV・TOML・マークアップ・比較・表・敬語・標準出力・プラグイン管理・ASYNC・システムカタログ・Node/AJAX初期定数・LINE Notify廃止エラー・Node終了・Nodeファイル存在・Nodeファイルサイズ・Nodeファイル情報・Node文字コードサポート判定・Node標準入力全取得・Node HTTPデータ生成・Node AJAXオプション設定・Node AJAX失敗時設定・Nodeネットワークアドレス・Nodeディレクトリ値・Node母艦パス・Node一時フォルダ作成・Nodeファイルコピーデフォルト動作・Nodeハッシュ名一覧・Node暗号（ハッシュ値・UUID・乱数配列）・Node圧縮解凍ツールパス・エラー発生・実行時間計測・デバッグ表示・既定ハテナ実行・タイマー待機・タイマー（単発・周期・停止）・Promise連鎖・Promise束ね・Promise待機fixtureを含めて、fixture inventoryは
-全288件（AOT 183件、Interpreter 96件、QuickJS 9件）です。命令のfixture coverageは`paired` 452 entry、
-`interpreter-only` 71 entryです。execution evidenceは`verified` 0、
+現行HEADでは、明示`commands`を追加した既存AOT fixtureと数学・日時・caniuse・漢数字・CSV・TOML・マークアップ・比較・表・敬語・標準出力・プラグイン管理・ASYNC・システムカタログ・Node/AJAX初期定数・LINE Notify廃止エラー・Node終了・Nodeファイル存在・Nodeファイルサイズ・Nodeファイル情報・NodeファイルI/O・Node文字コードサポート判定・Node標準入力全取得・Node HTTPデータ生成・Node AJAXオプション設定・Node AJAX失敗時設定・Nodeネットワークアドレス・Nodeディレクトリ値・Node母艦パス・Node一時フォルダ作成・Nodeファイルコピーデフォルト動作・Nodeハッシュ名一覧・Node暗号（ハッシュ値・UUID・乱数配列）・Node圧縮解凍ツールパス・エラー発生・実行時間計測・デバッグ表示・既定ハテナ実行・タイマー待機・タイマー（単発・周期・停止）・Promise連鎖・Promise束ね・Promise待機fixtureを含めて、fixture inventoryは
+全289件（AOT 184件、Interpreter 96件、QuickJS 9件）です。命令のfixture coverageは`paired` 456 entry、
+`interpreter-only` 67 entryです。execution evidenceは`verified` 0、
 `trace-confirmed-unattested` 4、`unverified` 523のままです。
 fixtureの関連付けを変更した場合は、次で派生台帳の生成と検査を行います。
 
@@ -157,7 +157,7 @@ dirty=trueの場合は未コミット差分の内容までは証明しないた�
 site IDはsemantic bindingが固定builtinと解決した全呼出しについて、lowering時に関数IDと関数内の静的呼出し順から決定します。
 利用者関数、名前が衝突した利用者関数、native/JS pluginの動的命令には付けません。manifestはそのうち
 AOT ABIで処理できるsubsetだけを証拠化し、manifest内の重複はbuildエラーにします。
-emitter routeは`builtin`・`cut`・`regexp`・`direct-display`のABI分類であり、
+emitter routeは`builtin`・`cut`・`regexp`・`timer`・`promise`・`debug-display`・`hatena-default`・`archive-tool-path`・`ajax-options`・`ajax-onerror`・`node-file-io`・`direct-display`のABI分類であり、
 Interpreterの`plugin_system`・`plugin_node`等のplugin routeとは異なります。
 また、これはNako最適化前のdispatch予定を示す資料であり、LLVM最適化後にcallが残ったことや、
 実行時の成功を単独では証明しません。実行時traceと公式差分結果を別に照合する必要があります。

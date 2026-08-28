@@ -2678,30 +2678,34 @@
   "開": {
     "status": "native",
     "tests": [
-      "plugin-node-file-core"
+      "plugin-node-file-core",
+      "native-node-file-io"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路のファイル読み書きとBuffer境界の差分テストに成功"
   },
   "読": {
     "status": "native",
     "tests": [
-      "plugin-node-file-core"
+      "plugin-node-file-core",
+      "native-node-file-io"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路のファイル読み書きとBuffer境界の差分テストに成功"
   },
   "バイナリ読": {
     "status": "native",
     "tests": [
-      "plugin-node-file-core"
+      "plugin-node-file-core",
+      "native-node-file-io"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路のファイル読み書きとBuffer境界の差分テストに成功"
   },
   "保存": {
     "status": "native",
     "tests": [
-      "plugin-node-file-core"
+      "plugin-node-file-core",
+      "native-node-file-io"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路のファイル読み書きとBuffer境界の差分テストに成功"
   },
   "SJISファイル読": {
     "status": "native",
