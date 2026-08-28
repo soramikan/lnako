@@ -2818,9 +2818,10 @@
     "status": "native",
     "tests": [
       "plugin-node-encoding",
-      "plugin-node-encoding-special"
+      "plugin-node-encoding-special",
+      "native-node-encoding-support"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路の文字コード名サポート判定差分テストに成功"
   },
   "SJIS変換": {
     "status": "native",

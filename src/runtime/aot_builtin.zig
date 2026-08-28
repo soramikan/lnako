@@ -286,6 +286,7 @@ pub const Command = enum(u16) {
     system_hatena_execute,
     node_archive_tool_path_set,
     node_file_size,
+    node_encoding_supports,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -581,6 +582,7 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "ハッシュ関数一覧取得")) return .node_hash_names;
     if (std.mem.eql(u8, name, "圧縮解凍ツールパス変更")) return .node_archive_tool_path_set;
     if (std.mem.eql(u8, name, "ファイルサイズ取得")) return .node_file_size;
+    if (std.mem.eql(u8, name, "文字コード変換サポート判定")) return .node_encoding_supports;
     return null;
 }
 
@@ -798,6 +800,7 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.node_hash_names, lookup("ハッシュ関数一覧取得").?);
     try std.testing.expectEqual(Command.node_archive_tool_path_set, lookup("圧縮解凍ツールパス変更").?);
     try std.testing.expectEqual(Command.node_file_size, lookup("ファイルサイズ取得").?);
+    try std.testing.expectEqual(Command.node_encoding_supports, lookup("文字コード変換サポート判定").?);
     try std.testing.expectEqual(Command.datetime_now, lookup("今").?);
     try std.testing.expectEqual(Command.datetime_system_time_milliseconds, lookup("システム時間ミリ秒").?);
     try std.testing.expectEqual(Command.datetime_today, lookup("今日").?);

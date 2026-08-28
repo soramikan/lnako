@@ -8,11 +8,15 @@ pub const Runtime = value_mod.Runtime;
 
 const Kind = enum { utf8, cesu8, utf7, utf7imap, utf16, utf16le, utf16be, utf32, utf32le, utf32be, ascii, latin1, binary, single_byte, legacy, hex, base64 };
 
+pub fn supports(encoding: []const u8) bool {
+    return parseKind(encoding) != null;
+}
+
 pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Value {
     if (std.mem.eql(u8, name, "文字コード変換サポート判定")) {
         const encoding = try valueUtf8(runtime, common.argument(arguments, 0));
         defer runtime.allocator().free(encoding);
-        return @as(?Value, .{ .boolean = parseKind(encoding) != null });
+        return @as(?Value, .{ .boolean = supports(encoding) });
     }
     if (std.mem.eql(u8, name, "SJIS変換")) return @as(?Value, try encode(runtime, common.argument(arguments, 0), "shift_jis"));
     if (std.mem.eql(u8, name, "SJIS取得")) return @as(?Value, try decode(runtime, common.argument(arguments, 0), "shift_jis"));
@@ -709,6 +713,15 @@ test "Node内部エンコーディングの境界値を再現する" {
     try roots.protect(&hex_source);
     const hex = try encode(&runtime, hex_source, "hex");
     try std.testing.expectEqualSlices(u8, "AB", hex.bytes.bytes);
+}
+
+test "エンコーディング名のサポート判定は別名と年指定を正規化する" {
+    for ([_][]const u8{ "Shift_JIS", "utf16", "windows-1252:2000", "gb18030", "euc-kr", "big5", "cesu8", "utf7-imap" }) |name| {
+        try std.testing.expect(supports(name));
+    }
+    for ([_][]const u8{ "utf", "ucs2le", "x-lnako-unknown" }) |name| {
+        try std.testing.expect(!supports(name));
+    }
 }
 
 test "CESU-8とUTF-7をUTF-16コード単位のまま往復する" {

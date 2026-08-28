@@ -18064,14 +18064,15 @@
       "status": "native",
       "tests": [
         "plugin-node-encoding",
-        "plugin-node-encoding-special"
+        "plugin-node-encoding-special",
+        "native-node-encoding-support"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "公式7経路の文字コード名サポート判定差分テストに成功"
     },
     {
       "id": "command-0787",
