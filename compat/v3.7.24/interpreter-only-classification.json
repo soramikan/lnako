@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "94e013eec3495643f8fbe97c1dc800ca6f2bd386d64354fb1b9e0a68e579d01f"
+    "sha256": "e626e898b7a48062c38a525fcca55890d6aeff6f5c04c37ed603b717d9759e8d"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 100,
+    "count": 99,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 100
+      "unverified": 99
     }
   },
   "groups": [
@@ -444,19 +444,17 @@
       "group": "基本プラグイン",
       "category": "特殊命令",
       "type": "関数",
-      "count": 3,
+      "count": 2,
       "executionEvidenceStates": {
-        "unverified": 3
+        "unverified": 2
       },
       "commandIds": [
         "command-0057",
-        "command-0058",
-        "command-0060"
+        "command-0058"
       ],
       "names": [
         "ナデシコ",
-        "ナデシコ続",
-        "実行時間計測"
+        "ナデシコ続"
       ]
     }
   ],
@@ -481,23 +479,6 @@
     {
       "id": "command-0058",
       "name": "ナデシコ続",
-      "plugin": "plugin_system",
-      "group": "基本プラグイン",
-      "category": "特殊命令",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "system-runtime-execution-and-debug"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0060",
-      "name": "実行時間計測",
       "plugin": "plugin_system",
       "group": "基本プラグイン",
       "category": "特殊命令",

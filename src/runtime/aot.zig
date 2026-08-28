@@ -3610,6 +3610,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
+        .system_measure_time => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = measureCallableBuiltin(runtime, actual) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+        },
         .system_debug_display => debugDisplayBuiltin(runtime, value, 1, &.{}, null) catch |failure| {
             runtime.setFailure(failure);
             return;
@@ -6716,6 +6723,19 @@ fn systemExecutionBuiltin(runtime: *Runtime, command: aot_builtin.Command, argum
         },
         else => return error.UnknownCommand,
     }
+}
+
+fn measureCallableBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+    if (arguments.len == 0) return error.NotCallable;
+    var roots = [_]Value{ arguments[arguments.len - 1], .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[1] = try resolveAotCallback(runtime, roots[0]);
+    const started = monotonicTimeMilliseconds(runtime);
+    roots[2] = try invokeAotCallback(runtime, roots[1], null, 0);
+    const finished = monotonicTimeMilliseconds(runtime);
+    return numberValue(finished - started);
 }
 
 fn systemGlobalFunctionNamesBuiltin(runtime: *Runtime) !Value {
@@ -12809,6 +12829,26 @@ test "AOT同期実行は関数値・名前解決・AWAIT引数展開を保つ" {
     roots[5] = try active_runtime.?.createArray(&.{numberValue(4)});
     const awaited = try systemExecutionBuiltin(&active_runtime.?, .system_await_execute, &.{ roots[4], roots[5] });
     try std.testing.expectEqual(@as(f64, 4), valueToNumber(awaited));
+}
+
+test "AOT実行時間計測は関数名と単調時計を使う" {
+    var runtime = Runtime{ .allocator = std.testing.allocator, .monotonic_milliseconds = 123.5 };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try active_runtime.?.createNamedFunction(testAotConstantSeven, 0, "main__七", &.{});
+    roots[1] = try measureCallableBuiltin(&active_runtime.?, &.{staticStringValue("七")});
+    try std.testing.expectEqual(@as(f64, 0), valueToNumber(roots[1]));
+    roots[2] = try measureCallableBuiltin(&active_runtime.?, &.{roots[0]});
+    try std.testing.expectEqual(@as(f64, 0), valueToNumber(roots[2]));
 }
 
 test "AOT表ソートは指定列を比較して同じ配列を安定ソートする" {

@@ -281,6 +281,7 @@ pub const Command = enum(u16) {
     node_temporary_directory,
     node_mother_path,
     node_temporary_directory_create,
+    system_measure_time,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -546,6 +547,7 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "ASYNC")) return .async_noop;
     if (std.mem.eql(u8, name, "AWAIT実行")) return .system_await_execute;
     if (std.mem.eql(u8, name, "実行")) return .system_execute;
+    if (std.mem.eql(u8, name, "実行時間計測")) return .system_measure_time;
     if (std.mem.eql(u8, name, "デバッグ表示")) return .system_debug_display;
     if (std.mem.eql(u8, name, "__DEBUG")) return .system_debug_enable;
     if (std.mem.eql(u8, name, "グローバル関数一覧取得")) return .system_global_function_names;
@@ -604,6 +606,7 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.json_decode, lookup("JSON取得").?);
     try std.testing.expectEqual(Command.json_decode, lookup("JSONデコード").?);
     try std.testing.expectEqual(Command.json_decode, lookup("JSON_D").?);
+    try std.testing.expectEqual(Command.system_measure_time, lookup("実行時間計測").?);
     try std.testing.expectEqual(Command.math_sin, lookup("SIN").?);
     try std.testing.expectEqual(Command.math_rad2deg, lookup("度変換").?);
     try std.testing.expectEqual(Command.math_rad2deg, lookup("RAD2DEG").?);
