@@ -8,14 +8,14 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 283,
-    "nativeAot": 178,
+    "total": 288,
+    "nativeAot": 183,
     "interpreter": 96,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
-    "paired": 446,
-    "interpreter-only": 77,
+    "paired": 452,
+    "interpreter-only": 71,
     "aot-only": 0,
     "none": 0,
     "compat-js-only": 4
@@ -1826,7 +1826,8 @@
         "system-runtime-execution-and-debug"
       ],
       "aotFixtureIds": [
-        "native-system-execute"
+        "native-system-execute",
+        "native-system-promise-timer-await"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -1840,6 +1841,9 @@
           "native-system-execute": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-system-promise-timer-await": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
@@ -1848,7 +1852,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製実行時システム命令と純LLVM AOTの同期呼出しを公式cnako3との差分テストで確認"
     },
     {
@@ -10921,6 +10925,7 @@
         "timer-wait-interleaving"
       ],
       "aotFixtureIds": [
+        "native-system-promise-timer-await",
         "native-system-timers"
       ],
       "compatJsFixtureIds": [],
@@ -10940,6 +10945,9 @@
           ]
         },
         "aot": {
+          "native-system-promise-timer-await": [
+            "fixture.commands"
+          ],
           "native-system-timers": [
             "fixture.commands",
             "implemented.tests"
@@ -10951,7 +10959,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 4件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 4件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式7経路の単発タイマー順序・停止・終了時ドレイン差分テストに成功"
     },
     {
@@ -12688,7 +12696,10 @@
         "promise-reject",
         "promise-success"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-promise-success",
+        "native-system-promise-timer-await"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -12702,15 +12713,23 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-promise-success": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
+          "native-system-promise-timer-await": [
+            "fixture.commands"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 3件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "resolve・reject関数を渡すPromise生成を公式cnako3差分テストで確認"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 3件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "公式7経路のPromise生成と解決差分テストに成功"
     },
     {
       "id": "command-0372",
@@ -12721,7 +12740,9 @@
         "promise-async-timer",
         "promise-success"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-promise-success"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -12732,15 +12753,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-promise-success": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 2件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "成功反応とPromise連鎖を公式cnako3差分テストで確認"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 2件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "公式7経路の成功連鎖差分テストに成功"
     },
     {
       "id": "command-0373",
@@ -12750,7 +12776,9 @@
       "interpreterFixtureIds": [
         "promise-reject-process-finally"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-promise-reject-process-finally"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -12758,15 +12786,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-promise-reject-process-finally": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "成否フラグと値の反応を公式cnako3差分テストで確認"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "公式7経路の成功・失敗処理連鎖差分テストに成功"
     },
     {
       "id": "command-0374",
@@ -12776,7 +12809,9 @@
       "interpreterFixtureIds": [
         "promise-reject"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-promise-reject"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -12784,15 +12819,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-promise-reject": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "拒否反応と回復後のPromise連鎖を公式cnako3差分テストで確認"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "公式7経路の失敗連鎖差分テストに成功"
     },
     {
       "id": "command-0375",
@@ -12802,7 +12842,9 @@
       "interpreterFixtureIds": [
         "promise-reject-process-finally"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-promise-reject-process-finally"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -12810,15 +12852,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-promise-reject-process-finally": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "finally反応と元の成否伝播を公式cnako3差分テストで確認"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "公式7経路のfinally連鎖差分テストに成功"
     },
     {
       "id": "command-0376",
@@ -12828,7 +12875,9 @@
       "interpreterFixtureIds": [
         "plugin-promise-bundle"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-system-promise-bundle"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -12837,15 +12886,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-system-promise-bundle": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "Promise.all互換の入力順・非同期順序・失敗伝播を実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "公式7経路の入力順・空入力・失敗束ね差分テストに成功"
     },
     {
       "id": "command-0688",

@@ -86,6 +86,7 @@ pub fn manifestCall(name: []const u8, direct_callee: ?ir.FunctionId, is_builtin_
         .cut, .cut_range => "cut",
         .regexp_match, .regexp_extract, .regexp_replace, .regexp_split => "regexp",
         .timer_after, .timer_every, .timer_stop, .timer_stop_all => "timer",
+        .promise_create, .promise_success, .promise_settled, .promise_failure, .promise_finally, .promise_all => "promise",
         .system_debug_display => "debug-display",
         .system_hatena_execute => "hatena-default",
         .node_archive_tool_path_set => "archive-tool-path",
@@ -373,6 +374,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_builtin_call(ptr, ptr, i64, i16)\n" ++
                 "declare void @lnako_aot_builtin_call_site(ptr, ptr, i64, i16, i64)\n" ++
                 "declare void @lnako_aot_timer_call_site(ptr, ptr, ptr, i64, i16, i64)\n" ++
+                "declare void @lnako_aot_promise_call_site(ptr, ptr, ptr, ptr, i64, i16, i64)\n" ++
                 "declare void @lnako_aot_regexp_call(ptr, ptr, ptr, i64, i16)\n" ++
                 "declare void @lnako_aot_regexp_call_site(ptr, ptr, ptr, i64, i16, i64)\n" ++
                 "declare void @lnako_aot_hatena_execute(ptr, ptr, i64, ptr, i64, ptr, i64)\n" ++
@@ -519,6 +521,10 @@ const Emitter = struct {
                     if (self.globalIndex("対象") == null) try self.globals.append(self.allocator, "対象");
                 };
                 if (aot_builtin.lookup(instruction.name)) |command| if (isTimerCommand(command)) {
+                    if (self.globalIndex("対象") == null) try self.globals.append(self.allocator, "対象");
+                };
+                if (aot_builtin.lookup(instruction.name)) |command| if (isPromiseCommand(command)) {
+                    if (self.globalIndex("そ") == null) try self.globals.append(self.allocator, "そ");
                     if (self.globalIndex("対象") == null) try self.globals.append(self.allocator, "対象");
                 };
                 if (aot_builtin.lookup(instruction.name)) |command| if (command == .regexp_match or command == .regexp_extract) {
@@ -1218,6 +1224,27 @@ const Emitter = struct {
             try self.debugSuffix(instruction.span, scope);
             return;
         }
+        if (isPromiseCommand(command)) {
+            const last_promise_index = self.globalIndex("そ") orelse return error.MissingLastPromiseGlobal;
+            const target_index = self.globalIndex("対象") orelse return error.MissingTargetGlobal;
+            for (instruction.operands, 0..) |argument, index| {
+                try self.output.writer.print("  %promise.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+                try self.debugSuffix(instruction.span, scope);
+                try self.output.writer.writeAll("  store %lnako.Value ");
+                try self.writeValueRef(function, argument);
+                try self.output.writer.print(", ptr %promise.{d}.slot.{d}", .{ result, index });
+                try self.debugSuffix(instruction.span, scope);
+            }
+            try self.output.writer.print("  call void @lnako_aot_promise_call_site(ptr %root.slot.{d}, ptr @lnako.global.{d}, ptr @lnako.global.{d}, ptr ", .{ result, last_promise_index, target_index });
+            if (instruction.operands.len > 0) {
+                try self.output.writer.print("%promise.{d}.slot.0", .{result});
+            } else try self.output.writer.writeAll("null");
+            try self.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+            try self.debugSuffix(instruction.span, scope);
+            try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+            try self.debugSuffix(instruction.span, scope);
+            return;
+        }
         if (isPluginManagementCommand(command)) {
             const plugin_name_index = self.globalIndex("プラグイン名") orelse return error.MissingPluginNameGlobal;
             const namespace_index = self.globalIndex("名前空間") orelse return error.MissingNamespaceGlobal;
@@ -1819,6 +1846,13 @@ fn isTimerCommand(command: aot_builtin.Command) bool {
     };
 }
 
+fn isPromiseCommand(command: aot_builtin.Command) bool {
+    return switch (command) {
+        .promise_create, .promise_success, .promise_settled, .promise_failure, .promise_finally, .promise_all => true,
+        else => false,
+    };
+}
+
 fn isPluginManagementCommand(command: aot_builtin.Command) bool {
     return switch (command) {
         .plugin_name_set, .namespace_set, .namespace_pop => true,
@@ -2008,6 +2042,7 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_runtime_drain_events()\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_runtime_drain_events()\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_timer_call_site(ptr, ptr, ptr, i64, i16, i64)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_promise_call_site(ptr, ptr, ptr, ptr, i64, i16, i64)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_constants_init(ptr, ptr, ptr, i32, ptr)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_node_constants_init(ptr ") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_directory_constants_init(ptr, ptr, ptr)\n") != null);
@@ -2084,6 +2119,11 @@ test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {
     try std.testing.expectEqualStrings("timer_after", timer.canonical_opcode);
     try std.testing.expectEqualStrings("timer", timer.route);
     try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.timer_after), timer.opcode);
+
+    const promise = manifestCall("成功時", null, true).?;
+    try std.testing.expectEqualStrings("promise_success", promise.canonical_opcode);
+    try std.testing.expectEqualStrings("promise", promise.route);
+    try std.testing.expectEqual(@intFromEnum(aot_builtin.Command.promise_success), promise.opcode);
 
     try std.testing.expect(manifestCall("利用者関数", 0, false) == null);
     try std.testing.expect(manifestCall("未知命令", null, false) == null);

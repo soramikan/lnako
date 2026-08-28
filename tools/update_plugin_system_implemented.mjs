@@ -38,6 +38,12 @@ register("秒毎", "native-system-timers", "公式7経路の周期タイマー�
 register("秒タイマー開始時", "native-system-timers", "公式7経路の秒毎別名とコールバック内停止差分テストに成功");
 register("タイマー停止", "native-system-timers", "公式7経路の個別タイマー停止差分テストに成功");
 register("全タイマー停止", "native-system-timers", "公式7経路の一括タイマー停止差分テストに成功");
+register("動時", "native-system-promise-success", "公式7経路のPromise生成と解決差分テストに成功");
+register("成功時", "native-system-promise-success", "公式7経路の成功連鎖差分テストに成功");
+register("処理時", "native-system-promise-reject-process-finally", "公式7経路の成功・失敗処理連鎖差分テストに成功");
+register("失敗時", "native-system-promise-reject", "公式7経路の失敗連鎖差分テストに成功");
+register("終了時", "native-system-promise-reject-process-finally", "公式7経路のfinally連鎖差分テストに成功");
+register("束", "native-system-promise-bundle", "公式7経路の入力順・空入力・失敗束ね差分テストに成功");
 
 function register(name, testId, reason) {
   const current = implemented[name];

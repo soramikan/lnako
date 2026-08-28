@@ -9836,14 +9836,15 @@
       "tests": [
         "promise-success",
         "promise-reject",
-        "promise-async-timer"
+        "promise-async-timer",
+        "native-system-promise-success"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "resolve・reject関数を渡すPromise生成を公式cnako3差分テストで確認"
+      "reason": "公式7経路のPromise生成と解決差分テストに成功"
     },
     {
       "id": "command-0372",
@@ -9862,14 +9863,15 @@
       "status": "native",
       "tests": [
         "promise-success",
-        "promise-async-timer"
+        "promise-async-timer",
+        "native-system-promise-success"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "成功反応とPromise連鎖を公式cnako3差分テストで確認"
+      "reason": "公式7経路の成功連鎖差分テストに成功"
     },
     {
       "id": "command-0373",
@@ -9887,14 +9889,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "promise-reject-process-finally"
+        "promise-reject-process-finally",
+        "native-system-promise-reject-process-finally"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "成否フラグと値の反応を公式cnako3差分テストで確認"
+      "reason": "公式7経路の成功・失敗処理連鎖差分テストに成功"
     },
     {
       "id": "command-0374",
@@ -9912,14 +9915,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "promise-reject"
+        "promise-reject",
+        "native-system-promise-reject"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "拒否反応と回復後のPromise連鎖を公式cnako3差分テストで確認"
+      "reason": "公式7経路の失敗連鎖差分テストに成功"
     },
     {
       "id": "command-0375",
@@ -9937,14 +9941,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "promise-reject-process-finally"
+        "promise-reject-process-finally",
+        "native-system-promise-reject-process-finally"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "finally反応と元の成否伝播を公式cnako3差分テストで確認"
+      "reason": "公式7経路のfinally連鎖差分テストに成功"
     },
     {
       "id": "command-0376",
@@ -9962,14 +9967,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-promise-bundle"
+        "plugin-promise-bundle",
+        "native-system-promise-bundle"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Promise.all互換の入力順・非同期順序・失敗伝播を実装し、公式差分テストに成功"
+      "reason": "公式7経路の入力順・空入力・失敗束ね差分テストに成功"
     },
     {
       "id": "command-0377",

@@ -301,6 +301,12 @@ pub const Command = enum(u16) {
     timer_every,
     timer_stop,
     timer_stop_all,
+    promise_create,
+    promise_success,
+    promise_settled,
+    promise_failure,
+    promise_finally,
+    promise_all,
 };
 
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
@@ -567,6 +573,12 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "秒毎") or std.mem.eql(u8, name, "秒タイマー開始時")) return .timer_every;
     if (std.mem.eql(u8, name, "タイマー停止")) return .timer_stop;
     if (std.mem.eql(u8, name, "全タイマー停止")) return .timer_stop_all;
+    if (std.mem.eql(u8, name, "動時")) return .promise_create;
+    if (std.mem.eql(u8, name, "成功時")) return .promise_success;
+    if (std.mem.eql(u8, name, "処理時")) return .promise_settled;
+    if (std.mem.eql(u8, name, "失敗時")) return .promise_failure;
+    if (std.mem.eql(u8, name, "終了時")) return .promise_finally;
+    if (std.mem.eql(u8, name, "束")) return .promise_all;
     if (std.mem.eql(u8, name, "ASYNC")) return .async_noop;
     if (std.mem.eql(u8, name, "AWAIT実行")) return .system_await_execute;
     if (std.mem.eql(u8, name, "実行")) return .system_execute;
@@ -796,6 +808,12 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.timer_every, lookup("秒タイマー開始時").?);
     try std.testing.expectEqual(Command.timer_stop, lookup("タイマー停止").?);
     try std.testing.expectEqual(Command.timer_stop_all, lookup("全タイマー停止").?);
+    try std.testing.expectEqual(Command.promise_create, lookup("動時").?);
+    try std.testing.expectEqual(Command.promise_success, lookup("成功時").?);
+    try std.testing.expectEqual(Command.promise_settled, lookup("処理時").?);
+    try std.testing.expectEqual(Command.promise_failure, lookup("失敗時").?);
+    try std.testing.expectEqual(Command.promise_finally, lookup("終了時").?);
+    try std.testing.expectEqual(Command.promise_all, lookup("束").?);
     try std.testing.expectEqual(Command.async_noop, lookup("ASYNC").?);
     try std.testing.expectEqual(Command.system_await_execute, lookup("AWAIT実行").?);
     try std.testing.expectEqual(Command.system_execute, lookup("実行").?);

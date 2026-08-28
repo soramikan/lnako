@@ -138,6 +138,8 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
 - 出力はホスト抽象化を通す。CLIは標準出力、単体・差分テストはメモリバッファを接続する。
 - Promiseは `pending` / `fulfilled` / `rejected` の状態、反応列、FIFOマイクロタスクをランタイムヒープに持ち、
   反応先と未処理タスクもGCで追跡する。実行器は成功・失敗・両方・finallyの反応規則に従って次のPromiseへ伝播する。
+  純LLVM AOTも同じ状態機械をRuntime内へ持ち、resolve/reject関数と`束`の要素handlerをGC管理の関数値として生成する。
+  `AWAIT実行`と生成main終了前のイベントドレインは、Promiseマイクロタスクとタイマーを同じFIFO境界で処理する。
 - タイマーは単調な論理ミリ秒、登録順を保つ同時刻順序、単発・周期・停止を実行器に持つ。Interpreterは仮想時計と
   イベントループで処理し、純LLVM AOTはRuntime内のキューとコールバック値を保持してホストの `std.Io.sleep` へ接続する。
   生成mainはグローバルルートを外す前に保留イベントをドレインし、OS時計に依存しないInterpreterの順序テストと、AOTの実時間実行を分離する。
@@ -218,7 +220,8 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
 - `plugins/system` の敬語6命令は、未定義相当の礼節レベル、`拝啓`によるリセット、`敬具`による加点、3つの加算別名、取得時のfalsey正規化を共有する。AOTは`courtesy_increment`/`courtesy_begin`/`courtesy_end`/`courtesy_level` dispatchへ接続し、`native-system-courtesy`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。
 - `plugins/system` の標準出力6命令は、単一値の出力プール、可変引数の連結、表示ログのクリア、全引数の改行出力を共有する。AOTはdirect-displayと`stdio_*` dispatchへ接続し、`native-system-stdio`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。
 - `plugins/system` のプラグイン管理3命令は、文字列化したプラグイン名・名前空間の設定と、両方を対で保存・復元するスタック操作を共有する。AOTは`lnako_aot_plugin_management_call`とGC追跡対象の名前空間スタックへ接続し、`native-system-plugin-management`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。
-- `plugins/system` の`ASYNC`は同期実行時に値を返さないno-opである。AOTは`async_noop` builtin dispatchへ接続し、`native-system-async`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。Promiseを待機する`AWAIT実行`は別境界である。
+- `plugins/system` の`ASYNC`は同期実行時に値を返さないno-opである。AOTは`async_noop` builtin dispatchへ接続し、`native-system-async`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。Promiseを待機する`AWAIT実行`は別のcore Promise境界としてAOTへ接続する。
+- `plugin_promise` の`動時`・`成功時`・`処理時`・`失敗時`・`終了時`・`束`は、専用の`promise` dispatch routeで状態遷移、反応連鎖、入力順の束ねを処理する。`native-system-promise-success`、`native-system-promise-reject-process-finally`、`native-system-promise-reject`、`native-system-promise-bundle`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較し、`native-system-promise-timer-await`で`AWAIT実行`とタイマーの連動を比較する。
 - `plugins/system` の`実行時間計測`は、関数名を解決して関数値を実行し、公式の`performance.now()`相当の経過ミリ秒を返す。AOTは名前解決・関数値呼び出しを`system_measure_time` builtinへ接続し、固定可能な単調時計で`native-system-measure-time`の公式7経路差分を検証する。
 - `plugins/system` の`ハテナ関数実行`は、カスタムコールバックが未設定の既定`??`動作を`デバッグ表示`と同じ位置付きJSON出力へ接続する。AOTは専用`hatena-default` ABIと`native-system-hatena-default`で公式7経路差分を検証する。`ハテナ関数設定`の任意関数・`JS:`コールバックは通常AOTへ持ち込まず、`TODO: aot-hatena-custom-callback`として残す。
 - `plugins/system` のシステムカタログ6命令は、標準関数名478件、既定プラグイン7件、公開助詞、公開予約語を固定順序で配列化し、存在確認は公式と同じ最後の引数を調べる。AOTは共通builtin dispatchとGCルート付き配列生成へ接続し、`native-system-catalog-lists`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。利用者関数一覧の`グローバル関数一覧取得`はInterpreter側の境界として残る。
@@ -238,5 +241,5 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
 - Nodeの`AJAX失敗時`は、失敗時コールバック値を`AJAX:ONERROR`グローバルへ保持し、戻り値を持たない。純LLVM AOTは専用ABIで関数値を同じGC管理グローバルへ保存し、`native-node-http-onerror-set`で設定後の型を公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3と比較する。実際のHTTP失敗時callback呼び出しとPromise/callback経路は別の未実装境界である。
 - Nodeの`圧縮解凍ツールパス`は`7z`を初期値とする可変システムグローバルで、`圧縮解凍ツールパス変更`はその値を更新する。純LLVM AOTは共有システム定数と専用`archive-tool-path` ABIでこの状態遷移を保持し、`native-node-archive-tool-path`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較する。外部7z実行を含む`圧縮`・`解凍`本体は`TODO: aot-node-archive-operations`として別境界に残す。
 - Nodeの暗号4命令は、Node 24/OpenSSL互換の固定52名称、全別名のハッシュ計算、version 4 UUID、Uint8Array乱数配列を提供する。純LLVM AOTは`crypto.calculateDigest`を共有し、ハッシュの生値を`buffer`、乱数配列を`uint8_array`、将来のArrayBuffer値を`array_buffer`としてGC管理する。添字・長さ・反復・ToPrimitive・JSON形状も種別ごとに保持し、`native-node-hash-names`と`native-node-crypto`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3と比較する。その他のBufferを返すエンコーディング変換、Bufferのslice/view identity、継承プロパティは別の未実装境界として追跡する。
-- Promiseの`束`は入力PromiseをFIFOマイクロタスクへ接続し、入力順の成功配列、空入力、最初の失敗を`Promise.all`と同じ順序で処理する。
+- Promiseの`束`は入力PromiseをFIFOマイクロタスクへ接続し、入力順の成功配列、空入力、最初の失敗を`Promise.all`と同じ順序で処理する。`native-system-promise-bundle`で空入力と失敗伝播も固定する。
 - `tests/oracle/standard-plugin-cases.json` が48命令を重複なく列挙し、カバレッジ検査と公式CLI差分テストを3環境CIで実行する。

@@ -176,6 +176,14 @@ UTF-16コード単位を直接解析する明示スタックパーサーへ接�
 | ユーザー関数の呼び出し結果と`それ` | ユーザー関数の戻り値をシステム変数`それ`へ毎回書き戻す。空関数など結果指定がない関数は以前の`それ`を引き継がず`undefined`を返すが、例外終了した関数は`それ`を更新せず呼び出し前の値を残す。末尾の`それは式`は`それ`代入と関数結果の両方になる。組み込み`表示`のように、戻り値を持っていても`それ`を更新しない命令とは別規則 | AOTで`それ`を常設のGCルート付きグローバルとし、ユーザー関数呼び出し後だけ戻り値を書き戻す。終端が`それ`代入ならそのSSA値、それ以外の正常な戻り値なし終端なら`undefined`を返し、保留例外があれば旧値を選ぶ | `関数戻り値をシステム変数それへ書き戻す`、`native-function-result-variable`、`native-bigint-runtime-exception-monitor` |
 | クロージャのローカル変数捕捉 | 無名関数作成時の値をコピーするのではなく、外側の可変な束縛を共有する。作成後に外側が更新した値が見え、クロージャ自身の更新も次回呼び出しまで保持される。内側のクロージャだけが参照する変数も、中間のクロージャが束縛を中継する | インタプリタとAOTの両方で、GC管理の可変セルを外側フレームと各クロージャが共有する。関数値は捕捉セルをGCで追跡し、LLVMの統一コールバックABIは関数コンテキストから同じセルを復元する | `クロージャが外側の可変束縛を共有する`、`closure-shared-mutable-binding`、`AOTクロージャがGC管理の可変セルを共有する`、`native-closure-shared-mutable-binding`、`native-closure-transitive-capture` |
 
+## Promise
+
+| 命令・境界 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID | TODO識別子 |
+|---|---|---|---|---|
+| `動時`・`成功時`・`処理時`・`失敗時`・`終了時` | Promiseのexecutorは同期的に実行され、解決・拒否後の反応はFIFOのmicrotaskとして実行される。`成功時`と`失敗時`は対応する値を受け取り、`処理時`は成否booleanと値を受け取り、`終了時`は成否にかかわらず元の状態と値を次へ伝播する | Interpreterと純LLVM AOTで`pending` / `fulfilled` / `rejected`、反応列、FIFOマイクロタスク、次のPromiseへの成功・失敗・finally伝播を実装する。AOTはJS runtimeを使わずresolver関数をRuntimeのGC対象関数値として保持する。QuickJS互換モードはcore Promiseのnative証拠経路に含めない | `native-system-promise-success`、`native-system-promise-reject-process-finally`、`native-system-promise-reject` | なし |
+| `束` | `Promise.all`相当で入力の順序を保った配列を返し、入力が空なら空配列を即時に解決する。入力Promiseが拒否されると最初の拒否値で束全体を拒否する | Interpreterと純LLVM AOTで入力順の結果配列、空入力、最初の拒否を処理する。AOTは各入力へ専用handlerを接続し、結果配列と残件数をGCルートとして保持する。HTTP pluginのPromise/callback経路は別の未実装境界であり、core Promiseの実装完了とは扱わない | `native-system-promise-bundle` | `aot-node-http-operations`（HTTP境界のみ） |
+| `AWAIT実行`のPromise待機 | `AWAIT実行`は第2引数を展開して関数を呼び、戻り値がPromiseなら解決まで待機して値を返す。Promiseでない戻り値はそのまま返す | Interpreterと純LLVM AOTで同じ引数展開を行い、AOTはPromiseマイクロタスクとタイマーをドレインしてfulfilled値を返す。拒否時は保留例外を上書きせず、既存のエラー経路へ渡す。通常モードへJavaScript runtimeを混入させず、QuickJSは対象外 | `native-system-promise-timer-await`、`native-system-execute` | なし |
+
 ## 例外監視
 
 | 構文 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID |
@@ -321,7 +329,7 @@ ABI値の所有権と非同期スレッド制約は[`NATIVE_PLUGIN_ABI.md`](NATI
 | 初期`名前空間` | 公式CLI直接実行では`main`固定でなく入力ファイルのベース名。末尾が`.nako` / `.nako3`のときだけ拡張子を外し、ハイフンや別のピリオドは残す。一方、公式生成JavaScript単体では初期化経路が異なり空文字のままになる | `lnako run`とソースから作るAOTは公式CLI側に合わせ、同じファイル名をIRのモジュール名、関数の修飾名、初期`名前空間`に使う。AOT差分ケースは`oracle: official-source`を明示する | `system-runtime-catalog-and-namespace`、`公式と同じファイル名をモジュール名に保つ`、`native-string-system-constants` |
 | `プラグイン名設定` / `名前空間設定` / `名前空間ポップ` | `プラグイン名設定`と`名前空間設定`は最後の引数を文字列化して設定する。`名前空間設定`時点の`名前空間`だけでなく`プラグイン名`も対で保存し、後から変更された両方を`名前空間ポップ`で復元する。空スタックのポップは何もしない | InterpreterとAOTで同じ文字列化境界とスタック復元を処理する。AOTは専用ABIで対象globalを明示し、スタック内の2値をGCルートとして追跡する | `system-runtime-catalog-and-namespace`、`native-system-plugin-management` |
 | `ASYNC` | 公式の同期実行では値を返さず、後続の非同期処理を構成するためのno-opとして完了する | InterpreterとAOTでundefined相当を返す。Promiseを待機する`AWAIT実行`はこのno-opへ暗黙に縮退させない | `system-runtime-execution-and-debug`、`native-system-async` |
-| `実行` / 同期の`AWAIT実行` | `実行`は関数値または関数名を引数なしで呼び、関数でない値はそのまま返す。`AWAIT実行`は第2引数を配列なら展開し、Promiseでなければ戻り値をそのまま返す | Interpreterと純LLVM AOTで同じ関数値・名前解決・配列展開を処理する。AOTにはPromise実行ループを持たないため、同期AOT関数以外の待機は`TODO: aot-await-promise`として未実装扱いにする。`ナデシコ`による動的ソース実行は別経路で、通常AOTへJSを混入させない | `system-runtime-execution-and-debug`、`native-system-execute`、`TODO: aot-await-promise` |
+| `実行` / 同期の`AWAIT実行` | `実行`は関数値または関数名を引数なしで呼び、関数でない値はそのまま返す。`AWAIT実行`は第2引数を配列なら展開し、Promiseでなければ戻り値をそのまま返す | Interpreterと純LLVM AOTで同じ関数値・名前解決・配列展開を処理する。AOTはcore Promiseの実行ループで保留Promiseを待機し、`fulfilled`値を返し、拒否理由を保留例外として伝播する。`ナデシコ`による動的ソース実行は別経路で、通常AOTへJSを混入させない | `system-runtime-execution-and-debug`、`native-system-execute`、`native-system-promise-timer-await` |
 | `実行時間計測` | 公式は文字列を`sys.__findFunc`で関数へ解決し、関数値・解決した関数を`sys`付きで実行して、`performance.now()`（非対応時は`Date.now()`）の差をミリ秒で返す | Interpreterはhostの単調時計で関数名・関数値を解決して実行する。純LLVM AOTは`system_measure_time`でnamed functionまたは関数値を解決し、同じAOT単調時計を前後で読む。固定テスト時計では公式・Interpreter・AOTとも0を返す。QuickJSはこの標準命令の証拠対象外 | `system-runtime-execution-and-debug`、`native-system-measure-time` | なし |
 | `グローバル関数一覧取得` | コンパイル済みのグローバル関数名を生成順で返し、モジュール入口と無名lambdaは含めない。モジュール関数名は`モジュール名__関数名`の修飾名になる | InterpreterはIRの関数列、AOTは起動時に登録したnamed function列を同じ順序で列挙する。AOTの関数登録前にこの命令を実行する経路は存在しない | `system-runtime-catalog-and-namespace`、`native-system-global-function-names` |
 | `システム関数一覧取得` | 名前に反して関数だけでなく定数も含む。標準527命令そのものでもなく、既定7プラグインを登録したMapの重複を除いた順序に、カタログ外の別名も含めた478件を返す | 固定カタログから公式のプラグイン登録順・重複上書き・別名を再現した478件を生成する | `system-runtime-catalog-and-namespace`、`native-system-catalog-lists` |

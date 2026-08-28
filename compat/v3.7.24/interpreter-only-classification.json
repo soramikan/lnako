@@ -7,17 +7,17 @@
   "source": {
     "path": "compat/v3.7.24/evidence.json",
     "schemaVersion": 2,
-    "sha256": "482cbd18c5749f14cbb9b666207be9d90fd6022cd84bad9e7a198425ae1409a3"
+    "sha256": "e9248c3b7e74159122d4b17125fdc97ae1eef5f51776a3b8053b7fd56a269dad"
   },
   "interpretation": "fixtureCoverageState=interpreter-onlyはinterpreter fixtureだけが明示関連付けされた状態であり、実装完了・AOT実行・公式等価性・verified証拠を意味しない",
   "scope": {
     "commandCount": 527,
     "fixtureCoverageState": "interpreter-only",
-    "count": 77,
+    "count": 71,
     "executionEvidenceStates": {
       "verified": 0,
       "trace-confirmed-unattested": 0,
-      "unverified": 77
+      "unverified": 71
     }
   },
   "groups": [
@@ -268,32 +268,6 @@
     {
       "plugin": "plugin_promise",
       "group": "基本プラグイン",
-      "category": "非同期処理の保証",
-      "type": "関数",
-      "count": 6,
-      "executionEvidenceStates": {
-        "unverified": 6
-      },
-      "commandIds": [
-        "command-0371",
-        "command-0372",
-        "command-0373",
-        "command-0374",
-        "command-0375",
-        "command-0376"
-      ],
-      "names": [
-        "動時",
-        "成功時",
-        "処理時",
-        "失敗時",
-        "終了時",
-        "束"
-      ]
-    },
-    {
-      "plugin": "plugin_promise",
-      "group": "基本プラグイン",
       "category": "非同期処理の保証の定数",
       "type": "定数",
       "count": 1,
@@ -427,111 +401,6 @@
       "executionEvidenceState": "unverified",
       "interpreterFixtureIds": [
         "promise-reject"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0371",
-      "name": "動時",
-      "plugin": "plugin_promise",
-      "group": "基本プラグイン",
-      "category": "非同期処理の保証",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "promise-async-timer",
-        "promise-reject",
-        "promise-success"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0372",
-      "name": "成功時",
-      "plugin": "plugin_promise",
-      "group": "基本プラグイン",
-      "category": "非同期処理の保証",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "promise-async-timer",
-        "promise-success"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0373",
-      "name": "処理時",
-      "plugin": "plugin_promise",
-      "group": "基本プラグイン",
-      "category": "非同期処理の保証",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "promise-reject-process-finally"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0374",
-      "name": "失敗時",
-      "plugin": "plugin_promise",
-      "group": "基本プラグイン",
-      "category": "非同期処理の保証",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "promise-reject"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0375",
-      "name": "終了時",
-      "plugin": "plugin_promise",
-      "group": "基本プラグイン",
-      "category": "非同期処理の保証",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "promise-reject-process-finally"
-      ],
-      "aotFixtureIds": []
-    },
-    {
-      "id": "command-0376",
-      "name": "束",
-      "plugin": "plugin_promise",
-      "group": "基本プラグイン",
-      "category": "非同期処理の保証",
-      "type": "関数",
-      "plannedMode": "native",
-      "status": "native",
-      "identityResolution": "unique-name",
-      "fixtureCoverageState": "interpreter-only",
-      "executionEvidenceState": "unverified",
-      "interpreterFixtureIds": [
-        "plugin-promise-bundle"
       ],
       "aotFixtureIds": []
     },

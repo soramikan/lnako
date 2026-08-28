@@ -154,7 +154,7 @@ pub const Value = extern struct {
     pub fn object(self: Value) ?*Object {
         if (self.payload == 0) return null;
         return switch (@as(Tag, @enumFromInt(self.tag))) {
-            .utf16_string, .array, .dictionary, .iterator, .bigint, .function, .binding_cell, .byte_buffer => @ptrFromInt(self.payload),
+            .utf16_string, .array, .dictionary, .iterator, .bigint, .function, .binding_cell, .byte_buffer, .promise => @ptrFromInt(self.payload),
             else => null,
         };
     }
@@ -190,6 +190,57 @@ const Iterator = struct {
     step: f64 = 1,
 };
 
+const AotPromiseState = enum { pending, fulfilled, rejected };
+const AotPromiseReactionMode = enum { standard, settled_pair, finally };
+
+const AotPromiseReaction = struct {
+    on_fulfilled: Value = .{},
+    on_rejected: Value = .{},
+    next: *Object,
+    mode: AotPromiseReactionMode = .standard,
+    target_global: ?*Value = null,
+};
+
+const AotPromise = struct {
+    state: AotPromiseState = .pending,
+    result: Value = .{},
+    reactions: std.ArrayList(AotPromiseReaction) = .empty,
+};
+
+const AotPromiseTask = struct {
+    callback: Value,
+    settled_value: Value,
+    rejected: bool,
+    next: *Object,
+    mode: AotPromiseReactionMode,
+    target_global: ?*Value,
+};
+
+const AotPromiseAllState = struct {
+    promise: *Object,
+    results: Value,
+    remaining: usize = 0,
+};
+
+const AotPromiseResolver = struct {
+    promise: *Object,
+    rejected: bool,
+};
+
+const AotPromiseAllHandler = struct {
+    state: *AotPromiseAllState,
+    index: usize,
+    rejected: bool,
+};
+
+const PromiseFunctionKind = union(enum) {
+    none,
+    resolver: AotPromiseResolver,
+    all_handler: AotPromiseAllHandler,
+};
+
+const AotPromiseChainKind = enum { success, failure, settled, finally };
+
 /// Generated callbacks cross the Zig/LLVM boundary. Returning the 16-byte
 /// Value aggregate directly is not portable to the Windows x64 C ABI, so the
 /// result is always written through an explicit pointer.
@@ -202,6 +253,7 @@ const FunctionObject = struct {
     /// the interpreter exposes. The slice is owned by the function object.
     name: []u8,
     captures: []Value,
+    promise_kind: PromiseFunctionKind = .none,
 };
 
 const AotCsvDelimiterDefault = enum { comma, tab };
@@ -306,6 +358,7 @@ const Payload = union(enum) {
     iterator: Iterator,
     function: FunctionObject,
     binding_cell: Value,
+    promise: AotPromise,
 };
 
 const Object = struct {
@@ -355,6 +408,8 @@ const Runtime = struct {
     namespace_stack: std.ArrayList(NamespaceFrame) = .empty,
     named_functions: std.ArrayList(RegisteredFunction) = .empty,
     timers: std.ArrayList(AotTimer) = .empty,
+    promise_tasks: std.ArrayList(AotPromiseTask) = .empty,
+    promise_all_states: std.ArrayList(*AotPromiseAllState) = .empty,
     elapsed_milliseconds: u64 = 0,
     next_timer_id: u64 = 1,
     timer_event_count: usize = 0,
@@ -365,6 +420,9 @@ const Runtime = struct {
         self.print_pool.deinit(self.allocator);
         self.namespace_stack.deinit(self.allocator);
         self.timers.deinit(self.allocator);
+        self.promise_tasks.deinit(self.allocator);
+        for (self.promise_all_states.items) |state| self.allocator.destroy(state);
+        self.promise_all_states.deinit(self.allocator);
         if (self.aot_source_directory) |path| self.allocator.free(path);
         var current = self.objects;
         while (current) |object| {
@@ -487,11 +545,11 @@ const Runtime = struct {
     }
 
     fn createNamedFunction(self: *Runtime, callback: FunctionCallback, arity: usize, name: []const u8, captures: []const Value) !Value {
-        return self.createFunctionObject(callback, arity, name, captures, true);
+        return self.createFunctionObject(callback, arity, name, captures, true, .none);
     }
 
     fn createMethodFunction(self: *Runtime, callback: FunctionCallback, arity: usize, name: []const u8, captures: []const Value) !Value {
-        return self.createFunctionObject(callback, arity, name, captures, false);
+        return self.createFunctionObject(callback, arity, name, captures, false, .none);
     }
 
     fn createFunctionObject(
@@ -501,6 +559,7 @@ const Runtime = struct {
         name: []const u8,
         captures: []const Value,
         register_global: bool,
+        promise_kind: PromiseFunctionKind,
     ) !Value {
         var frame: RootFrame = .{};
         self.pushRoots(&frame, if (captures.len > 0) @constCast(captures.ptr) else null, captures.len);
@@ -511,7 +570,7 @@ const Runtime = struct {
             errdefer self.allocator.free(owned_name);
             const owned_captures = try self.allocator.dupe(Value, captures);
             errdefer self.allocator.free(owned_captures);
-            break :blk try self.createObject(.{ .function = .{ .callback = callback, .arity = arity, .name = owned_name, .captures = owned_captures } }, .function);
+            break :blk try self.createObject(.{ .function = .{ .callback = callback, .arity = arity, .name = owned_name, .captures = owned_captures, .promise_kind = promise_kind } }, .function);
         };
         if (register_global and name.len > 0) {
             const registered_name = try self.allocator.dupe(u8, name);
@@ -519,6 +578,10 @@ const Runtime = struct {
             try self.named_functions.append(self.allocator, .{ .name = registered_name, .object = result.object().? });
         }
         return result;
+    }
+
+    fn createPromiseSpecialFunction(self: *Runtime, name: []const u8, promise_kind: PromiseFunctionKind) !Value {
+        return self.createFunctionObject(promiseSentinel, 1, name, &.{}, false, promise_kind);
     }
 
     fn createBindingCell(self: *Runtime, initial: Value) !Value {
@@ -574,12 +637,31 @@ const Runtime = struct {
             self.markValue(entry.plugin_name);
         }
         for (self.timers.items) |timer| self.markValue(timer.callback);
+        for (self.promise_tasks.items) |task| {
+            self.markValue(task.callback);
+            self.markValue(task.settled_value);
+            self.markValue(.{ .tag = @intFromEnum(Tag.promise), .payload = @intFromPtr(task.next) });
+        }
+        for (self.promise_all_states.items) |state| {
+            self.markValue(.{ .tag = @intFromEnum(Tag.promise), .payload = @intFromPtr(state.promise) });
+            self.markValue(state.results);
+        }
         while (self.grey) |object| {
             self.grey = object.grey_next;
             object.grey_next = null;
             switch (object.payload) {
                 .utf16_string, .byte_buffer, .bigint => {},
-                .function => |function| for (function.captures) |capture| self.markValue(capture),
+                .function => |function| {
+                    for (function.captures) |capture| self.markValue(capture);
+                    switch (function.promise_kind) {
+                        .none => {},
+                        .resolver => |resolver| self.markValue(.{ .tag = @intFromEnum(Tag.promise), .payload = @intFromPtr(resolver.promise) }),
+                        .all_handler => |handler| {
+                            self.markValue(.{ .tag = @intFromEnum(Tag.promise), .payload = @intFromPtr(handler.state.promise) });
+                            self.markValue(handler.state.results);
+                        },
+                    }
+                },
                 .binding_cell => |value| self.markValue(value),
                 .array => |items| for (items.items) |value| self.markValue(value),
                 .dictionary => |entries| for (entries.items) |entry| {
@@ -587,6 +669,14 @@ const Runtime = struct {
                     self.markValue(entry.value);
                 },
                 .iterator => |iterator| self.markValue(iterator.source),
+                .promise => |promise| {
+                    self.markValue(promise.result);
+                    for (promise.reactions.items) |reaction| {
+                        self.markValue(reaction.on_fulfilled);
+                        self.markValue(reaction.on_rejected);
+                        self.markValue(.{ .tag = @intFromEnum(Tag.promise), .payload = @intFromPtr(reaction.next) });
+                    }
+                },
             }
         }
         var reclaimed: usize = 0;
@@ -691,6 +781,7 @@ const Runtime = struct {
                 self.allocator.free(function.captures);
             },
             .iterator, .binding_cell => {},
+            .promise => |*promise| promise.reactions.deinit(self.allocator),
         }
         self.allocator.destroy(object);
     }
@@ -758,7 +849,7 @@ const Runtime = struct {
                     @intFromFloat(@mod(@trunc(number), 256));
                 if (index < buffer.bytes.len) buffer.bytes[index] = byte;
             },
-            .utf16_string, .bigint, .function, .iterator, .binding_cell => {},
+            .utf16_string, .bigint, .function, .iterator, .binding_cell, .promise => {},
         }
     }
 
@@ -916,7 +1007,7 @@ fn valueToNumberRuntime(runtime: *Runtime, value: Value) !f64 {
         .number => @bitCast(value.payload),
         .static_utf8_string, .utf16_string => parseStringNumber(runtime, value),
         .bigint => error.CannotConvertBigIntToNumber,
-        .byte_buffer, .array, .dictionary, .iterator, .function => valueToNumberRuntime(runtime, try valueToPrimitive(runtime, value)),
+        .byte_buffer, .array, .dictionary, .iterator, .function, .promise => valueToNumberRuntime(runtime, try valueToPrimitive(runtime, value)),
         .binding_cell => unreachable,
     };
 }
@@ -937,7 +1028,7 @@ fn valueToParseFloatRuntime(runtime: *Runtime, value: Value) !f64 {
             break :blk string_mod.parseFloatNumber(runtime.allocator, units);
         },
         .bigint => error.CannotConvertBigIntToNumber,
-        .byte_buffer, .array, .dictionary, .iterator, .function => valueToParseFloatRuntime(runtime, try valueToPrimitive(runtime, value)),
+        .byte_buffer, .array, .dictionary, .iterator, .function, .promise => valueToParseFloatRuntime(runtime, try valueToPrimitive(runtime, value)),
         .binding_cell => unreachable,
         .undefined, .null_value, .boolean => std.math.nan(f64),
     };
@@ -1015,7 +1106,7 @@ fn isString(value: Value) bool {
 
 fn isObject(value: Value) bool {
     return value.tag == @intFromEnum(Tag.byte_buffer) or value.tag == @intFromEnum(Tag.array) or value.tag == @intFromEnum(Tag.dictionary) or
-        value.tag == @intFromEnum(Tag.iterator) or value.tag == @intFromEnum(Tag.function);
+        value.tag == @intFromEnum(Tag.iterator) or value.tag == @intFromEnum(Tag.function) or value.tag == @intFromEnum(Tag.promise);
 }
 
 fn stringUtf8Alloc(runtime: *Runtime, value: Value) ![]u8 {
@@ -1239,7 +1330,7 @@ fn jsonWriteValue(
         },
         .utf16_string => try jsonWriteQuotedString(writer, value.object().?.payload.utf16_string),
         .byte_buffer => try jsonWriteByteBuffer(writer, value.object().?.payload.byte_buffer, pretty, depth),
-        .iterator => try writer.writeAll("{}"),
+        .iterator, .promise => try writer.writeAll("{}"),
         .binding_cell => unreachable,
         .array => {
             const object = value.object().?;
@@ -2162,6 +2253,7 @@ fn valueUtf16Alloc(runtime: *Runtime, value: Value) anyerror![]u16 {
         .bigint => try value.object().?.payload.bigint.toString(runtime.allocator, 10),
         .array => return arrayUtf16Alloc(runtime, value.object().?),
         .dictionary, .iterator => try runtime.allocator.dupe(u8, "[object Object]"),
+        .promise => try runtime.allocator.dupe(u8, "[object Promise]"),
         .function => unreachable,
         .binding_cell => unreachable,
     };
@@ -2226,6 +2318,7 @@ fn valueToPrimitive(runtime: *Runtime, value: Value) !Value {
             break :blk try runtime.createString(units);
         },
         .dictionary, .iterator => staticStringValue("[object Object]"),
+        .promise => staticStringValue("[object Promise]"),
         .function => blk: {
             const units = try functionStringUtf16Alloc(runtime, value.object().?.payload.function.name);
             defer runtime.allocator.free(units);
@@ -2265,7 +2358,7 @@ fn strictEqual(runtime: *Runtime, left: Value, right: Value) !bool {
         .bigint => BigInt.eql(left.object().?.payload.bigint, right.object().?.payload.bigint),
         .static_utf8_string, .utf16_string => unreachable,
         .byte_buffer => left.payload == right.payload,
-        .array, .dictionary, .iterator, .function => left.payload == right.payload,
+        .array, .dictionary, .iterator, .function, .promise => left.payload == right.payload,
         .binding_cell => unreachable,
     };
 }
@@ -2557,7 +2650,7 @@ fn valueTruthy(value: Value) bool {
         .static_utf8_string => staticUtf8(value).len != 0,
         .utf16_string => value.object().?.payload.utf16_string.len != 0,
         .bigint => !value.object().?.payload.bigint.isZero(),
-        .byte_buffer, .array, .dictionary, .iterator, .function => true,
+        .byte_buffer, .array, .dictionary, .iterator, .function, .promise => true,
         .binding_cell => valueTruthy(value.object().?.payload.binding_cell),
     };
 }
@@ -2631,7 +2724,7 @@ fn sameKey(left: Value, right: Value) bool {
         .utf16_string => std.mem.eql(u16, left.object().?.payload.utf16_string, right.object().?.payload.utf16_string),
         .bigint => BigInt.eql(left.object().?.payload.bigint, right.object().?.payload.bigint),
         .byte_buffer => left.payload == right.payload,
-        .array, .dictionary, .iterator, .function => left.payload == right.payload,
+        .array, .dictionary, .iterator, .function, .promise => left.payload == right.payload,
         .binding_cell => unreachable,
     };
 }
@@ -2870,9 +2963,13 @@ fn earliestAotTimerIndex(runtime: *const Runtime) ?usize {
     return earliest;
 }
 
-fn executeAotTimer(runtime: *Runtime, index: usize) !void {
+fn countAotEvent(runtime: *Runtime) !void {
     if (runtime.timer_event_count >= aot_timer_event_limit) return error.EventLoopLimitExceeded;
     runtime.timer_event_count += 1;
+}
+
+fn executeAotTimer(runtime: *Runtime, index: usize) !void {
+    try countAotEvent(runtime);
     const timer = runtime.timers.orderedRemove(index);
     var callback = timer.callback;
     var root = RootFrame{};
@@ -2893,16 +2990,38 @@ fn executeAotTimer(runtime: *Runtime, index: usize) !void {
     _ = try invokeAotCallback(runtime, callback, @ptrCast(&id), 1);
 }
 
+fn drainAotPromiseTasks(runtime: *Runtime) !void {
+    while (runtime.promise_tasks.items.len > 0) {
+        try countAotEvent(runtime);
+        const task = runtime.promise_tasks.orderedRemove(0);
+        try executeAotPromiseTask(runtime, task);
+    }
+}
+
+fn drainAotEvents(runtime: *Runtime) !void {
+    while (true) {
+        try drainAotPromiseTasks(runtime);
+        if (earliestAotTimerIndex(runtime)) |index| {
+            try executeAotTimer(runtime, index);
+            continue;
+        }
+        break;
+    }
+}
+
 fn drainAotTimers(runtime: *Runtime) !void {
-    while (earliestAotTimerIndex(runtime)) |index| try executeAotTimer(runtime, index);
+    try drainAotEvents(runtime);
 }
 
 fn waitAotMilliseconds(runtime: *Runtime, milliseconds: u64) !void {
     const target = std.math.add(u64, runtime.elapsed_milliseconds, milliseconds) catch return error.TimerOverflow;
-    while (earliestAotTimerIndex(runtime)) |index| {
+    while (true) {
+        try drainAotPromiseTasks(runtime);
+        const index = earliestAotTimerIndex(runtime) orelse break;
         if (runtime.timers.items[index].due_milliseconds > target) break;
         try executeAotTimer(runtime, index);
     }
+    try drainAotPromiseTasks(runtime);
     try sleepAotUntil(runtime, target);
 }
 
@@ -2964,6 +3083,312 @@ fn timerWaitBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     return .{};
 }
 
+fn aotPromiseValue(object: *Object) Value {
+    return .{ .tag = @intFromEnum(Tag.promise), .payload = @intFromPtr(object) };
+}
+
+fn aotPromiseObject(value: Value) ?*Object {
+    if (value.tag != @intFromEnum(Tag.promise)) return null;
+    const object = value.object() orelse return null;
+    return if (object.payload == .promise) object else null;
+}
+
+fn createAotPromise(runtime: *Runtime) !Value {
+    try runtime.beforeAllocation();
+    return runtime.createObject(.{ .promise = .{} }, .promise);
+}
+
+fn enqueueAotPromiseReaction(runtime: *Runtime, promise: *Object, reaction: AotPromiseReaction) !void {
+    const state = &promise.payload.promise;
+    try runtime.promise_tasks.append(runtime.allocator, .{
+        .callback = if (state.state == .rejected) reaction.on_rejected else reaction.on_fulfilled,
+        .settled_value = state.result,
+        .rejected = state.state == .rejected,
+        .next = reaction.next,
+        .mode = reaction.mode,
+        .target_global = reaction.target_global,
+    });
+}
+
+fn enqueueAotPromiseReactions(runtime: *Runtime, promise: *Object) !void {
+    for (promise.payload.promise.reactions.items) |reaction| try enqueueAotPromiseReaction(runtime, promise, reaction);
+    promise.payload.promise.reactions.clearRetainingCapacity();
+}
+
+fn aotPromiseThen(
+    runtime: *Runtime,
+    source: *Object,
+    on_fulfilled: Value,
+    on_rejected: Value,
+    mode: AotPromiseReactionMode,
+    target_global: ?*Value,
+) !Value {
+    var roots = [_]Value{ aotPromiseValue(source), on_fulfilled, on_rejected, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[3] = try createAotPromise(runtime);
+    const reaction = AotPromiseReaction{
+        .on_fulfilled = roots[1],
+        .on_rejected = roots[2],
+        .next = roots[3].object().?,
+        .mode = mode,
+        .target_global = target_global,
+    };
+    if (source.payload.promise.state == .pending) {
+        try source.payload.promise.reactions.append(runtime.allocator, reaction);
+    } else try enqueueAotPromiseReaction(runtime, source, reaction);
+    return roots[3];
+}
+
+fn resolveAotPromise(runtime: *Runtime, promise: *Object, value: Value) !void {
+    const state = &promise.payload.promise;
+    if (state.state != .pending) return;
+    if (aotPromiseObject(value)) |source| {
+        if (source == promise) return error.PromiseResolutionCycle;
+        const reaction = AotPromiseReaction{ .next = promise };
+        if (source.payload.promise.state == .pending) {
+            try source.payload.promise.reactions.append(runtime.allocator, reaction);
+        } else try enqueueAotPromiseReaction(runtime, source, reaction);
+        return;
+    }
+    state.state = .fulfilled;
+    state.result = value;
+    try enqueueAotPromiseReactions(runtime, promise);
+}
+
+fn rejectAotPromise(runtime: *Runtime, promise: *Object, reason: Value) !void {
+    const state = &promise.payload.promise;
+    if (state.state != .pending) return;
+    state.state = .rejected;
+    state.result = reason;
+    try enqueueAotPromiseReactions(runtime, promise);
+}
+
+fn forwardAotPromiseTask(runtime: *Runtime, task: AotPromiseTask) !void {
+    if (task.rejected) return rejectAotPromise(runtime, task.next, task.settled_value);
+    return resolveAotPromise(runtime, task.next, task.settled_value);
+}
+
+fn callbackFailureReason(runtime: *Runtime, failure: anyerror) !Value {
+    if (runtime.has_pending_exception) return runtime.takeException();
+    return runtimeUtf8String(runtime, @errorName(failure));
+}
+
+fn executeAotPromiseTask(runtime: *Runtime, task: AotPromiseTask) !void {
+    var roots = [_]Value{ task.callback, task.settled_value, aotPromiseValue(task.next), .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    if (roots[0].tag == @intFromEnum(Tag.undefined)) return forwardAotPromiseTask(runtime, task);
+    if (roots[0].tag != @intFromEnum(Tag.function)) {
+        roots[4] = try runtimeUtf8String(runtime, "NotCallable");
+        return rejectAotPromise(runtime, task.next, roots[4]);
+    }
+    if (task.mode != .finally) {
+        if (task.target_global) |target| target.* = roots[1];
+    }
+
+    var callback_arguments = [_]Value{ .{}, .{} };
+    const callback_len: usize = switch (task.mode) {
+        .standard => blk: {
+            callback_arguments[0] = roots[1];
+            break :blk 1;
+        },
+        .settled_pair => blk: {
+            callback_arguments[0] = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(!task.rejected) };
+            callback_arguments[1] = roots[1];
+            break :blk 2;
+        },
+        .finally => 0,
+    };
+    roots[3] = invokeAotCallback(
+        runtime,
+        roots[0],
+        if (callback_len == 0) null else callback_arguments[0..].ptr,
+        callback_len,
+    ) catch |failure| {
+        roots[4] = try callbackFailureReason(runtime, failure);
+        return rejectAotPromise(runtime, task.next, roots[4]);
+    };
+    if (task.mode == .finally) {
+        if (task.rejected) return rejectAotPromise(runtime, task.next, task.settled_value);
+        return resolveAotPromise(runtime, task.next, task.settled_value);
+    }
+    return resolveAotPromise(runtime, task.next, roots[3]);
+}
+
+fn createAotPromiseResolver(runtime: *Runtime, promise: *Object, rejected: bool) !Value {
+    return runtime.createPromiseSpecialFunction(
+        if (rejected) "reject" else "resolve",
+        .{ .resolver = .{ .promise = promise, .rejected = rejected } },
+    );
+}
+
+fn createAotPromiseWithExecutor(runtime: *Runtime, arguments: []const Value, last_promise: ?*Value) !Value {
+    if (arguments.len == 0 or arguments[0].tag != @intFromEnum(Tag.function)) return error.NotCallable;
+    var roots = [_]Value{ arguments[0], .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[1] = try createAotPromise(runtime);
+    const promise = roots[1].object().?;
+    roots[2] = try createAotPromiseResolver(runtime, promise, false);
+    roots[3] = try createAotPromiseResolver(runtime, promise, true);
+    var executor_arguments = [_]Value{ roots[2], roots[3] };
+    _ = invokeAotCallback(runtime, roots[0], &executor_arguments, executor_arguments.len) catch |failure| {
+        roots[4] = try callbackFailureReason(runtime, failure);
+        try rejectAotPromise(runtime, promise, roots[4]);
+    };
+    if (last_promise) |target| target.* = roots[1];
+    return roots[1];
+}
+
+fn chainAotPromise(
+    runtime: *Runtime,
+    arguments: []const Value,
+    kind: AotPromiseChainKind,
+    last_promise: ?*Value,
+    target_global: ?*Value,
+) !Value {
+    if (arguments.len < 2 or arguments[0].tag != @intFromEnum(Tag.function)) return error.InvalidPromiseArguments;
+    const source = aotPromiseObject(arguments[1]) orelse return error.InvalidPromiseArguments;
+    var roots = [_]Value{ arguments[0], arguments[1], .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[2] = switch (kind) {
+        .success => try aotPromiseThen(runtime, source, roots[0], .{}, .standard, target_global),
+        .failure => try aotPromiseThen(runtime, source, .{}, roots[0], .standard, target_global),
+        .settled => try aotPromiseThen(runtime, source, roots[0], roots[0], .settled_pair, target_global),
+        .finally => try aotPromiseThen(runtime, source, roots[0], roots[0], .finally, target_global),
+    };
+    if (last_promise) |target| target.* = roots[2];
+    return roots[2];
+}
+
+fn destroyAotPromiseAllState(runtime: *Runtime, state: *AotPromiseAllState) void {
+    for (runtime.promise_all_states.items, 0..) |candidate, index| {
+        if (candidate != state) continue;
+        _ = runtime.promise_all_states.orderedRemove(index);
+        runtime.allocator.destroy(state);
+        return;
+    }
+}
+
+fn handleAotPromiseAll(runtime: *Runtime, handler: AotPromiseAllHandler, settled: Value) !Value {
+    const state = handler.state;
+    if (handler.rejected) {
+        try rejectAotPromise(runtime, state.promise, settled);
+    } else {
+        state.results.object().?.payload.array.items[handler.index] = settled;
+    }
+    if (state.remaining == 0) return .{};
+    state.remaining -= 1;
+    if (state.remaining == 0) {
+        if (state.promise.payload.promise.state == .pending) try resolveAotPromise(runtime, state.promise, state.results);
+        destroyAotPromiseAllState(runtime, state);
+    }
+    return .{};
+}
+
+fn createAotPromiseAllHandler(runtime: *Runtime, state: *AotPromiseAllState, index: usize, rejected: bool) !Value {
+    return runtime.createPromiseSpecialFunction(
+        if (rejected) "Promise.all rejected" else "Promise.all fulfilled",
+        .{ .all_handler = .{ .state = state, .index = index, .rejected = rejected } },
+    );
+}
+
+fn bundleAotPromises(runtime: *Runtime, arguments: []const Value, last_promise: ?*Value) !Value {
+    const root_count = std.math.add(usize, arguments.len, 4) catch return error.ArrayTooLarge;
+    const roots = try runtime.allocator.alloc(Value, root_count);
+    defer runtime.allocator.free(roots);
+    @memcpy(roots[0..arguments.len], arguments);
+    @memset(roots[arguments.len..], .{});
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, roots.ptr, roots.len);
+    defer runtime.popRoots(&frame);
+    const promise_index = arguments.len;
+    const results_index = arguments.len + 1;
+    const fulfilled_index = arguments.len + 2;
+    const rejected_index = arguments.len + 3;
+
+    roots[promise_index] = try createAotPromise(runtime);
+    roots[results_index] = try runtime.createArray(&.{});
+    const result_items = &roots[results_index].object().?.payload.array;
+    try result_items.ensureTotalCapacity(runtime.allocator, arguments.len);
+    for (arguments) |_| try result_items.append(runtime.allocator, .{});
+
+    const state = try runtime.allocator.create(AotPromiseAllState);
+    state.* = .{ .promise = roots[promise_index].object().?, .results = roots[results_index] };
+    try runtime.promise_all_states.append(runtime.allocator, state);
+    var state_active = true;
+    errdefer if (state_active) destroyAotPromiseAllState(runtime, state);
+
+    for (arguments, 0..) |argument, index| {
+        if (aotPromiseObject(argument)) |source| {
+            state.remaining += 1;
+            roots[fulfilled_index] = try createAotPromiseAllHandler(runtime, state, index, false);
+            roots[rejected_index] = try createAotPromiseAllHandler(runtime, state, index, true);
+            _ = try aotPromiseThen(runtime, source, roots[fulfilled_index], roots[rejected_index], .standard, null);
+        } else result_items.items[index] = argument;
+    }
+    if (state.remaining == 0) {
+        try resolveAotPromise(runtime, state.promise, state.results);
+        destroyAotPromiseAllState(runtime, state);
+        state_active = false;
+    }
+    if (last_promise) |target| target.* = roots[promise_index];
+    return roots[promise_index];
+}
+
+fn promiseAotBuiltin(
+    runtime: *Runtime,
+    command: aot_builtin.Command,
+    arguments: []const Value,
+    last_promise: ?*Value,
+    target_global: ?*Value,
+) !Value {
+    return switch (command) {
+        .promise_create => createAotPromiseWithExecutor(runtime, arguments, last_promise),
+        .promise_success => chainAotPromise(runtime, arguments, .success, last_promise, target_global),
+        .promise_settled => chainAotPromise(runtime, arguments, .settled, last_promise, target_global),
+        .promise_failure => chainAotPromise(runtime, arguments, .failure, last_promise, target_global),
+        .promise_finally => chainAotPromise(runtime, arguments, .finally, last_promise, target_global),
+        .promise_all => bundleAotPromises(runtime, arguments, last_promise),
+        else => error.UnknownCommand,
+    };
+}
+
+fn awaitAotPromise(runtime: *Runtime, value: Value) !Value {
+    const promise = aotPromiseObject(value) orelse return value;
+    var rooted = value;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, @ptrCast(&rooted), 1);
+    defer runtime.popRoots(&frame);
+    while (promise.payload.promise.state == .pending) {
+        try drainAotPromiseTasks(runtime);
+        if (promise.payload.promise.state != .pending) break;
+        if (earliestAotTimerIndex(runtime)) |index| {
+            try executeAotTimer(runtime, index);
+            continue;
+        }
+        break;
+    }
+    return switch (promise.payload.promise.state) {
+        .fulfilled => promise.payload.promise.result,
+        .rejected => {
+            runtime.setException(promise.payload.promise.result);
+            return error.NakoException;
+        },
+        .pending => error.PromiseStillPending,
+    };
+}
+
 test "AOT秒待は0秒・負数・非数をundefinedで完了する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -3011,6 +3436,55 @@ test "AOTタイマーはコールバックを保持し順序・停止・周期�
     _ = try timerBuiltin(active, .timer_after, &pending_arguments, null);
     _ = try timerBuiltin(active, .timer_stop_all, &.{}, null);
     try std.testing.expectEqual(@as(usize, 0), active_runtime.?.timers.items.len);
+}
+
+test "AOT Promiseは解決・連鎖・失敗・束ねをマイクロタスクで処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+
+    var roots = [_]Value{.{}} ** 16;
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try createAotPromise(&active_runtime.?);
+    roots[1] = try createAotPromiseResolver(&active_runtime.?, roots[0].object().?, false);
+    var seven = numberValue(7);
+    var ignored = Value{};
+    lnako_aot_function_call(&ignored, &roots[1], @ptrCast(&seven), 1);
+    try std.testing.expectEqual(AotPromiseState.fulfilled, roots[0].object().?.payload.promise.state);
+
+    roots[2] = try active_runtime.?.createFunction(testAotFunction, 1, &.{});
+    roots[3] = try chainAotPromise(&active_runtime.?, &.{ roots[2], roots[0] }, .success, null, &roots[4]);
+    try drainAotEvents(&active_runtime.?);
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[3].object().?.payload.promise.result));
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[4]));
+
+    roots[5] = try createAotPromise(&active_runtime.?);
+    roots[6] = try createAotPromiseResolver(&active_runtime.?, roots[5].object().?, true);
+    roots[7] = try active_runtime.?.createFunction(testAotFunction, 1, &.{});
+    roots[8] = try chainAotPromise(&active_runtime.?, &.{ roots[7], roots[5] }, .failure, null, &roots[9]);
+    var five = numberValue(5);
+    lnako_aot_function_call(&ignored, &roots[6], @ptrCast(&five), 1);
+    try drainAotEvents(&active_runtime.?);
+    try std.testing.expectEqual(@as(f64, 5), valueToNumber(roots[8].object().?.payload.promise.result));
+    try std.testing.expectEqual(@as(f64, 5), valueToNumber(roots[9]));
+
+    roots[10] = try createAotPromise(&active_runtime.?);
+    roots[11] = try createAotPromiseResolver(&active_runtime.?, roots[10].object().?, false);
+    var one = numberValue(1);
+    lnako_aot_function_call(&ignored, &roots[11], @ptrCast(&one), 1);
+    roots[12] = try bundleAotPromises(&active_runtime.?, &.{ roots[0], numberValue(2), roots[10] }, null);
+    try drainAotEvents(&active_runtime.?);
+    const bundled = roots[12].object().?.payload.promise.result;
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(bundled.object().?.payload.array.items[0]));
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(bundled.object().?.payload.array.items[1]));
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(bundled.object().?.payload.array.items[2]));
 }
 
 fn stringArrayBuiltin(runtime: *Runtime, names: []const []const u8) !Value {
@@ -4013,6 +4487,32 @@ pub export fn lnako_aot_function_call(out: *Value, callable: *const Value, argum
     if (object.payload != .function) runtimeFailure(error.NotCallable);
     const function = object.payload.function;
     if (arguments == null and len != 0) runtimeFailure(error.InvalidArguments);
+    switch (function.promise_kind) {
+        .none => {},
+        .resolver => |resolver| {
+            const settled = if (len > 0) arguments.?[0] else Value{};
+            if (resolver.rejected) {
+                rejectAotPromise(runtime, resolver.promise, settled) catch |failure| {
+                    runtime.setFailure(failure);
+                    return;
+                };
+            } else {
+                resolveAotPromise(runtime, resolver.promise, settled) catch |failure| {
+                    runtime.setFailure(failure);
+                    return;
+                };
+            }
+            return;
+        },
+        .all_handler => |handler| {
+            const settled = if (len > 0) arguments.?[0] else Value{};
+            out.* = handleAotPromiseAll(runtime, handler, settled) catch |failure| {
+                runtime.setFailure(failure);
+                return;
+            };
+            return;
+        },
+    }
     var padded: ?[]Value = null;
     defer if (padded) |values| runtime.allocator.free(values);
     var call_arguments = arguments;
@@ -4031,6 +4531,10 @@ pub export fn lnako_aot_function_call(out: *Value, callable: *const Value, argum
         call_arguments = values.ptr;
     }
     function.callback(out, @ptrCast(object), call_arguments, function.arity);
+}
+
+fn promiseSentinel(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    out.* = .{};
 }
 
 /// Dedicated ABI for the two commands that update the system `対象` value.
@@ -4115,6 +4619,47 @@ pub export fn lnako_aot_timer_call_site(
     success = runtime.failure_epoch == start_epoch;
 }
 
+/// Dedicated ABI for promise commands. The last promise and callback target
+/// are explicit globals so asynchronous callbacks cannot be redirected by a
+/// local variable with the same source-level name.
+pub export fn lnako_aot_promise_call_site(
+    out: *Value,
+    last_promise: *Value,
+    target: *Value,
+    arguments: ?[*]const Value,
+    len: usize,
+    opcode: u16,
+    site_id: u64,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
+        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "promise", site_id);
+        runtime.setFailure(error.UnknownCommand);
+        runtime.dispatch_trace.result(call_id, "unknown", opcode, "promise", site_id, false);
+        return;
+    };
+    if (command != .promise_create and command != .promise_success and command != .promise_settled and command != .promise_failure and command != .promise_finally and command != .promise_all) {
+        runtime.setFailure(error.UnknownCommand);
+        return;
+    }
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "promise", site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "promise", site_id, success);
+    if (arguments == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+    out.* = promiseAotBuiltin(runtime, command, actual, last_promise, target) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    success = runtime.failure_epoch == start_epoch;
+}
+
 pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Value, len: usize, opcode: u16, site_id: u64) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*active| active else return;
@@ -4133,7 +4678,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .namespace_pop and command != .timer_wait and command != .timer_stop_all and command != .async_noop and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit and command != .node_hash_names and command != .node_random_uuid and command != .node_stdin_all and command != .node_network_ipv4 and command != .node_network_ipv6) {
+    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .namespace_pop and command != .timer_wait and command != .timer_stop_all and command != .promise_all and command != .async_noop and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .node_exit and command != .node_hash_names and command != .node_random_uuid and command != .node_stdin_all and command != .node_network_ipv4 and command != .node_network_ipv6) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
     }
@@ -4249,11 +4794,18 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             };
         },
+        .promise_create, .promise_success, .promise_settled, .promise_failure, .promise_finally, .promise_all => {
+            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+            out.* = promiseAotBuiltin(runtime, command, actual, null, null) catch |failure| {
+                if (!runtime.has_pending_exception) runtime.setFailure(failure);
+                return;
+            };
+        },
         .async_noop => out.* = .{},
         .system_await_execute, .system_execute => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = systemExecutionBuiltin(runtime, command, actual) catch |failure| {
-                runtime.setFailure(failure);
+                if (!runtime.has_pending_exception) runtime.setFailure(failure);
                 return;
             };
         },
@@ -5063,7 +5615,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
 fn typeNameValue(value: Value) Value {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
         .undefined => staticStringValue("undefined"),
-        .null_value, .byte_buffer, .array, .dictionary, .iterator => staticStringValue("object"),
+        .null_value, .byte_buffer, .array, .dictionary, .iterator, .promise => staticStringValue("object"),
         .boolean => staticStringValue("boolean"),
         .number => staticStringValue("number"),
         .static_utf8_string, .utf16_string => staticStringValue("string"),
@@ -7427,6 +7979,7 @@ fn systemExecutionBuiltin(runtime: *Runtime, command: aot_builtin.Command, argum
                 const pointer = if (call_arguments.items.len > 0) @as(?[*]const Value, call_arguments.items.ptr) else null;
                 roots[2] = try invokeAotCallback(runtime, roots[0], pointer, call_arguments.items.len);
             } else roots[2] = try invokeAotCallback(runtime, roots[0], @ptrCast(&roots[1]), 1);
+            roots[2] = try awaitAotPromise(runtime, roots[2]);
             return roots[2];
         },
         else => return error.UnknownCommand,
@@ -8258,7 +8811,7 @@ fn elementCountBuiltin(runtime: *Runtime, value: Value) !usize {
             defer runtime.allocator.free(units);
             break :blk units.len;
         },
-        .function, .iterator => 0,
+        .function, .iterator, .promise => 0,
         .binding_cell => elementCountBuiltin(runtime, value.object().?.payload.binding_cell),
         else => 1,
     };
@@ -9876,7 +10429,7 @@ fn deepCloneValue(runtime: *Runtime, source: Value, state: *CloneState) !Value {
             }
             return roots[0];
         },
-        .iterator => runtime.createDictionary(&.{}),
+        .iterator, .promise => runtime.createDictionary(&.{}),
         .binding_cell => unreachable,
     };
 }
@@ -10835,6 +11388,7 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16) callconv(.c) void, @TypeOf(&lnako_aot_builtin_call));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_builtin_call_site));
     try std.testing.expectEqual(*const fn (*Value, *Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_timer_call_site));
+    try std.testing.expectEqual(*const fn (*Value, *Value, *Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_promise_call_site));
     try std.testing.expectEqual(*const fn (*Value, ?*const Value, u64, ?[*]const u8, usize, ?*Value, u64) callconv(.c) void, @TypeOf(&lnako_aot_debug_display));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, *Value, u64) callconv(.c) void, @TypeOf(&lnako_aot_archive_tool_path_set));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, *Value, u64) callconv(.c) void, @TypeOf(&lnako_aot_archive_tool_path_set));
