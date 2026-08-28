@@ -4626,6 +4626,46 @@ pub export fn lnako_aot_cut_site(out: *Value, target: *Value, arguments: ?[*]con
     success = runtime.failure_epoch == start_epoch;
 }
 
+/// Dedicated ABI for Node's synchronous standard-input callback command. The
+/// callback and `対象` storage are passed explicitly so a local variable with
+/// the same source-level name cannot redirect the command's side effect.
+pub export fn lnako_aot_node_stdin_callback_call(
+    out: *Value,
+    target: *Value,
+    arguments: ?[*]const Value,
+    len: usize,
+    opcode: u16,
+    site_id: u64,
+) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
+        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "node-stdin-lines", site_id);
+        runtime.setFailure(error.UnknownCommand);
+        runtime.dispatch_trace.result(call_id, "unknown", opcode, "node-stdin-lines", site_id, false);
+        return;
+    };
+    if (command != .node_stdin_callback) {
+        runtime.setFailure(error.UnknownCommand);
+        return;
+    }
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "node-stdin-lines", site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "node-stdin-lines", site_id, success);
+    if (arguments == null and len != 0) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+    out.* = nodeStdinCallbackBuiltin(runtime, target, actual) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    success = runtime.failure_epoch == start_epoch;
+}
+
 pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, len: usize, opcode: u16) callconv(.c) void {
     lnako_aot_builtin_call_site(out, arguments, len, opcode, 0);
 }
@@ -4971,6 +5011,10 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
             return;
         },
         .node_archive_tool_path_set, .node_ajax_options_set, .node_ajax_onerror_set => {
+            runtime.setFailure(error.UnknownCommand);
+            return;
+        },
+        .node_stdin_callback => {
             runtime.setFailure(error.UnknownCommand);
             return;
         },
@@ -8687,7 +8731,24 @@ fn nextAotStdinLine(runtime: *Runtime) []const u8 {
     var end = start;
     while (end < bytes.len and bytes[end] != '\n') end += 1;
     runtime.stdin_offset = if (end < bytes.len) end + 1 else end;
+    if (end > start and bytes[end - 1] == '\r') end -= 1;
     return bytes[start..end];
+}
+
+fn nodeStdinCallbackBuiltin(runtime: *Runtime, target: *Value, arguments: []const Value) !Value {
+    if (arguments.len < 1) return error.InvalidArgumentCount;
+    _ = try ensureAotStdin(runtime);
+    var rooted = [_]Value{ arguments[0], .{} };
+    var roots = RootFrame{};
+    runtime.pushRoots(&roots, &rooted, rooted.len);
+    defer runtime.popRoots(&roots);
+    rooted[0] = try resolveAotCallback(runtime, rooted[0]);
+    while (runtime.stdin_offset < runtime.stdin_bytes.?.len) {
+        rooted[1] = try runtimeUtf8StringLossy(runtime, nextAotStdinLine(runtime));
+        target.* = rooted[1];
+        _ = try invokeAotCallback(runtime, rooted[0], @ptrCast(&rooted[1]), 1);
+    }
+    return .{};
 }
 
 fn nodeStdinLineBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
@@ -8698,21 +8759,7 @@ fn nodeStdinLineBuiltin(runtime: *Runtime, command: aot_builtin.Command, argumen
     writeBytes(prompt, false);
 
     const raw_line = nextAotStdinLine(runtime);
-    const has_carriage_return = std.mem.indexOfScalar(u8, raw_line, '\r') != null;
-    var cleaned_storage: ?[]u8 = null;
-    const line = if (has_carriage_return) blk: {
-        const cleaned = try runtime.allocator.alloc(u8, raw_line.len);
-        cleaned_storage = cleaned;
-        var length: usize = 0;
-        for (raw_line) |byte| if (byte != '\r') {
-            cleaned[length] = byte;
-            length += 1;
-        };
-        break :blk cleaned[0..length];
-    } else raw_line;
-    defer if (cleaned_storage) |storage| runtime.allocator.free(storage);
-
-    const text = try runtimeUtf8StringLossy(runtime, line);
+    const text = try runtimeUtf8StringLossy(runtime, raw_line);
     if (command == .node_stdin_character) return text;
     const number = try valueToNumberRuntime(runtime, text);
     return if (std.math.isNan(number)) text else numberValue(number);
@@ -11929,6 +11976,7 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, *const Value, ?[*]const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_function_call));
     try std.testing.expectEqual(*const fn (*Value, *Value, ?[*]const Value, usize, u8) callconv(.c) void, @TypeOf(&lnako_aot_cut));
     try std.testing.expectEqual(*const fn (*Value, *Value, ?[*]const Value, usize, u8, u64) callconv(.c) void, @TypeOf(&lnako_aot_cut_site));
+    try std.testing.expectEqual(*const fn (*Value, *Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_node_stdin_callback_call));
     try std.testing.expectEqual(*const fn () callconv(.c) void, @TypeOf(&lnako_aot_runtime_drain_events));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16) callconv(.c) void, @TypeOf(&lnako_aot_builtin_call));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_builtin_call_site));
@@ -12972,7 +13020,7 @@ test "AOT Node標準入力全取得はUTF-8入力を文字列にする" {
 test "AOT Node標準入力行命令は行分割と尋の数値変換を保つ" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    runtime.stdin_bytes = try runtime.allocator.dupe(u8, "abc\r\n41\nrest\n");
+    runtime.stdin_bytes = try runtime.allocator.dupe(u8, "abc\rX\r\n41\nrest\n");
     var roots = [_]Value{ .{}, .{}, .{} };
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -12982,10 +13030,31 @@ test "AOT Node標準入力行命令は行分割と尋の数値変換を保つ" {
     roots[0] = try nodeStdinLineBuiltin(&runtime, .node_stdin_character, &empty_prompt);
     roots[1] = try nodeStdinLineBuiltin(&runtime, .node_stdin_line, &empty_prompt);
     roots[2] = try nodeStdinAllBuiltin(&runtime);
-    try expectUtf16String(&runtime, roots[0], "abc");
+    try expectUtf16String(&runtime, roots[0], "abc\rX");
     try std.testing.expectEqual(@as(f64, 41), valueToNumber(roots[1]));
-    try expectUtf16String(&runtime, roots[2], "abc\r\n41\nrest\n");
-    try std.testing.expectEqual(@as(usize, 8), runtime.stdin_offset);
+    try expectUtf16String(&runtime, roots[2], "abc\rX\r\n41\nrest\n");
+    try std.testing.expectEqual(@as(usize, 10), runtime.stdin_offset);
+}
+
+test "AOT Node標準入力取得時は全行を対象へ設定してコールバックへ渡す" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    active_runtime.?.stdin_bytes = try active_runtime.?.allocator.dupe(u8, "A\r\nB\n");
+    var rooted = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &rooted, rooted.len);
+    defer lnako_aot_pop_roots(&frame);
+    rooted[0] = try active_runtime.?.createFunction(testAotFunction, 1, &.{});
+    const callback_arguments = [_]Value{rooted[0]};
+    const result = try nodeStdinCallbackBuiltin(&active_runtime.?, &rooted[1], &callback_arguments);
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(result.tag)));
+    try expectUtf16String(&active_runtime.?, rooted[1], "B");
+    try std.testing.expectEqual(@as(usize, 5), active_runtime.?.stdin_offset);
 }
 
 test "AOT Node POSTデータ生成は辞書をURI component形式へ変換する" {

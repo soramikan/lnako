@@ -55,6 +55,7 @@ register("文字コード変換サポート判定", "native-node-encoding-suppor
 register("標準入力全取得", "native-node-stdin-all", "公式7経路の標準入力全取得差分テストに成功");
 register("尋", "native-node-stdin-lines", "公式7経路の標準入力行取得と数値変換差分テストに成功");
 register("文字尋", "native-node-stdin-lines", "公式7経路の標準入力行取得と文字列境界差分テストに成功");
+register("標準入力取得時", "native-node-stdin-callback", "公式7経路の標準入力全行コールバック差分テストに成功");
 register("POSTデータ生成", "native-node-http-post-data", "公式7経路のPOSTデータ生成差分テストに成功");
 register("AJAXオプション設定", "native-node-http-options-set", "公式7経路のAJAXオプション設定差分テストに成功");
 register("AJAX失敗時", "native-node-http-onerror-set", "公式7経路のAJAX失敗時設定差分テストに成功");

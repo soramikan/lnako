@@ -8,14 +8,14 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 294,
-    "nativeAot": 189,
+    "total": 295,
+    "nativeAot": 190,
     "interpreter": 96,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
-    "paired": 477,
-    "interpreter-only": 46,
+    "paired": 478,
+    "interpreter-only": 45,
     "aot-only": 0,
     "none": 0,
     "compat-js-only": 4
@@ -15055,7 +15055,9 @@
       "interpreterFixtureIds": [
         "plugin-node-stdin-callback"
       ],
-      "aotFixtureIds": [],
+      "aotFixtureIds": [
+        "native-node-stdin-callback"
+      ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
@@ -15064,15 +15066,20 @@
             "implemented.tests"
           ]
         },
-        "aot": {},
+        "aot": {
+          "native-node-stdin-callback": [
+            "fixture.commands",
+            "implemented.tests"
+          ]
+        },
         "compatJs": {}
       },
-      "fixtureCoverageState": "interpreter-only",
+      "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 0件（fixtureCoverageState=interpreter-only）。executionEvidenceState=unverified。",
-      "implementationReason": "公式cnako3とのNodeホスト差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "公式7経路の標準入力全行コールバック差分テストに成功"
     },
     {
       "id": "command-0755",

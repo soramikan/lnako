@@ -891,6 +891,12 @@
     "source": "文字尋(\"P>\")を表示\n(尋(\"\")+1)を表示\n標準入力全取得()を表示\n"
   },
   {
+    "id": "native-node-stdin-callback",
+    "commands": ["標準入力取得時"],
+    "stdin": "A\r\nB\n",
+    "source": "C=\"\"\nF=関数(S)それはC=C&S;ここまで\nFを標準入力取得時\nCを表示\n"
+  },
+  {
     "id": "native-node-http-post-data",
     "commands": ["POSTデータ生成"],
     "source": "POSTデータ生成({\"a\":\"x y\",\"日本\":\"語!\"})を表示\n"

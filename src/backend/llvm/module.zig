@@ -94,7 +94,7 @@ pub fn manifestCall(name: []const u8, direct_callee: ?ir.FunctionId, is_builtin_
         .system_debug_display => "debug-display",
         .system_hatena_execute => "hatena-default",
         .system_debug_breakpoint_wait => "debug-breakpoint-wait",
-        .node_stdin_line, .node_stdin_character => "node-stdin-lines",
+        .node_stdin_line, .node_stdin_character, .node_stdin_callback => "node-stdin-lines",
         .node_archive_tool_path_set => "archive-tool-path",
         .node_ajax_options_set => "ajax-options",
         .node_ajax_onerror_set => "ajax-onerror",
@@ -381,6 +381,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_cut_site(ptr, ptr, ptr, i64, i8, i64)\n" ++
                 "declare void @lnako_aot_builtin_call(ptr, ptr, i64, i16)\n" ++
                 "declare void @lnako_aot_builtin_call_site(ptr, ptr, i64, i16, i64)\n" ++
+                "declare void @lnako_aot_node_stdin_callback_call(ptr, ptr, ptr, i64, i16, i64)\n" ++
                 "declare void @lnako_aot_timer_call_site(ptr, ptr, ptr, i64, i16, i64)\n" ++
                 "declare void @lnako_aot_promise_call_site(ptr, ptr, ptr, ptr, i64, i16, i64)\n" ++
                 "declare void @lnako_aot_regexp_call(ptr, ptr, ptr, i64, i16)\n" ++
@@ -534,6 +535,9 @@ const Emitter = struct {
                     if (self.globalIndex("対象") == null) try self.globals.append(self.allocator, "対象");
                 };
                 if (aot_builtin.lookup(instruction.name)) |command| if (isTimerCommand(command)) {
+                    if (self.globalIndex("対象") == null) try self.globals.append(self.allocator, "対象");
+                };
+                if (aot_builtin.lookup(instruction.name)) |command| if (command == .node_stdin_callback) {
                     if (self.globalIndex("対象") == null) try self.globals.append(self.allocator, "対象");
                 };
                 if (aot_builtin.lookup(instruction.name)) |command| if (isPromiseCommand(command)) {
@@ -1254,6 +1258,26 @@ const Emitter = struct {
             try self.output.writer.print("  call void @lnako_aot_timer_call_site(ptr %root.slot.{d}, ptr @lnako.global.{d}, ptr ", .{ result, target_index });
             if (instruction.operands.len > 0) {
                 try self.output.writer.print("%timer.{d}.slot.0", .{result});
+            } else try self.output.writer.writeAll("null");
+            try self.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+            try self.debugSuffix(instruction.span, scope);
+            try self.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+            try self.debugSuffix(instruction.span, scope);
+            return;
+        }
+        if (command == .node_stdin_callback) {
+            const target_index = self.globalIndex("対象") orelse return error.MissingTargetGlobal;
+            for (instruction.operands, 0..) |argument, index| {
+                try self.output.writer.print("  %node-stdin-callback.{d}.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %aggregate.values, i64 0, i64 {d}", .{ result, index, aggregate_count, index });
+                try self.debugSuffix(instruction.span, scope);
+                try self.output.writer.writeAll("  store %lnako.Value ");
+                try self.writeValueRef(function, argument);
+                try self.output.writer.print(", ptr %node-stdin-callback.{d}.slot.{d}", .{ result, index });
+                try self.debugSuffix(instruction.span, scope);
+            }
+            try self.output.writer.print("  call void @lnako_aot_node_stdin_callback_call(ptr %root.slot.{d}, ptr @lnako.global.{d}, ptr ", .{ result, target_index });
+            if (instruction.operands.len > 0) {
+                try self.output.writer.print("%node-stdin-callback.{d}.slot.0", .{result});
             } else try self.output.writer.writeAll("null");
             try self.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
             try self.debugSuffix(instruction.span, scope);

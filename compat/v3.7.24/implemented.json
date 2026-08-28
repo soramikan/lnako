@@ -2958,9 +2958,10 @@
   "標準入力取得時": {
     "status": "native",
     "tests": [
-      "plugin-node-stdin-callback"
+      "plugin-node-stdin-callback",
+      "native-node-stdin-callback"
     ],
-    "reason": "公式cnako3とのNodeホスト差分テストに成功"
+    "reason": "公式7経路の標準入力全行コールバック差分テストに成功"
   },
   "一時フォルダ作成": {
     "status": "native",
