@@ -663,6 +663,11 @@
     "source": "JSON変換(正規表現マッチ(\"ー゠・々あア漢\",『/\\p{scx=Hira}/gu』))を表示\nJSON変換(正規表現マッチ(\"ー゠・々あア漢\",『/\\p{Script_Extensions=Han}/gu』))を表示\n"
   },
   {
+    "id": "native-system-regexp-unicode-all-scripts",
+    "commands": ["正規表現マッチ", "JSON変換"],
+    "source": "JSON変換(正規表現マッチ(\"𞤀A\",『/\\p{sc=Adlm}/gu』))を表示\n"
+  },
+  {
     "id": "native-system-regexp-invalid-capture-name-error",
     "oracle": "official-generated",
     "commands": ["正規表現マッチ"],

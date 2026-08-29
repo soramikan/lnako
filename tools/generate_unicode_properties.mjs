@@ -6,6 +6,184 @@ const root = resolve(import.meta.dirname, "..");
 const outputPath = resolve(root, "src/generated/unicode_properties.zig");
 const check = process.argv.includes("--check");
 
+const scriptDefinitions = [
+  { name: "Unknown", aliases: ["Zzzz"] },
+  { name: "Adlam", aliases: ["Adlm"] },
+  { name: "Ahom", aliases: ["Ahom"] },
+  { name: "Anatolian_Hieroglyphs", aliases: ["Hluw"] },
+  { name: "Arabic", aliases: ["Arab"] },
+  { name: "Armenian", aliases: ["Armn"] },
+  { name: "Avestan", aliases: ["Avst"] },
+  { name: "Balinese", aliases: ["Bali"] },
+  { name: "Bamum", aliases: ["Bamu"] },
+  { name: "Bassa_Vah", aliases: ["Bass"] },
+  { name: "Batak", aliases: ["Batk"] },
+  { name: "Beria_Erfe", aliases: ["Berf"] },
+  { name: "Bengali", aliases: ["Beng"] },
+  { name: "Bhaiksuki", aliases: ["Bhks"] },
+  { name: "Bopomofo", aliases: ["Bopo"] },
+  { name: "Brahmi", aliases: ["Brah"] },
+  { name: "Braille", aliases: ["Brai"] },
+  { name: "Buginese", aliases: ["Bugi"] },
+  { name: "Buhid", aliases: ["Buhd"] },
+  { name: "Canadian_Aboriginal", aliases: ["Cans"] },
+  { name: "Carian", aliases: ["Cari"] },
+  { name: "Caucasian_Albanian", aliases: ["Aghb"] },
+  { name: "Chakma", aliases: ["Cakm"] },
+  { name: "Cham", aliases: ["Cham"] },
+  { name: "Cherokee", aliases: ["Cher"] },
+  { name: "Chorasmian", aliases: ["Chrs"] },
+  { name: "Common", aliases: ["Zyyy"] },
+  { name: "Coptic", aliases: ["Copt", "Qaac"] },
+  { name: "Cuneiform", aliases: ["Xsux"] },
+  { name: "Cypriot", aliases: ["Cprt"] },
+  { name: "Cyrillic", aliases: ["Cyrl"] },
+  { name: "Cypro_Minoan", aliases: ["Cpmn"] },
+  { name: "Deseret", aliases: ["Dsrt"] },
+  { name: "Devanagari", aliases: ["Deva"] },
+  { name: "Dives_Akuru", aliases: ["Diak"] },
+  { name: "Dogra", aliases: ["Dogr"] },
+  { name: "Duployan", aliases: ["Dupl"] },
+  { name: "Egyptian_Hieroglyphs", aliases: ["Egyp"] },
+  { name: "Elbasan", aliases: ["Elba"] },
+  { name: "Elymaic", aliases: ["Elym"] },
+  { name: "Ethiopic", aliases: ["Ethi"] },
+  { name: "Garay", aliases: ["Gara"] },
+  { name: "Georgian", aliases: ["Geor"] },
+  { name: "Glagolitic", aliases: ["Glag"] },
+  { name: "Gothic", aliases: ["Goth"] },
+  { name: "Grantha", aliases: ["Gran"] },
+  { name: "Greek", aliases: ["Grek"] },
+  { name: "Gujarati", aliases: ["Gujr"] },
+  { name: "Gunjala_Gondi", aliases: ["Gong"] },
+  { name: "Gurmukhi", aliases: ["Guru"] },
+  { name: "Gurung_Khema", aliases: ["Gukh"] },
+  { name: "Han", aliases: ["Hani"] },
+  { name: "Hangul", aliases: ["Hang"] },
+  { name: "Hanifi_Rohingya", aliases: ["Rohg"] },
+  { name: "Hanunoo", aliases: ["Hano"] },
+  { name: "Hatran", aliases: ["Hatr"] },
+  { name: "Hebrew", aliases: ["Hebr"] },
+  { name: "Hiragana", aliases: ["Hira"] },
+  { name: "Imperial_Aramaic", aliases: ["Armi"] },
+  { name: "Inherited", aliases: ["Zinh", "Qaai"] },
+  { name: "Inscriptional_Pahlavi", aliases: ["Phli"] },
+  { name: "Inscriptional_Parthian", aliases: ["Prti"] },
+  { name: "Javanese", aliases: ["Java"] },
+  { name: "Kaithi", aliases: ["Kthi"] },
+  { name: "Kannada", aliases: ["Knda"] },
+  { name: "Katakana", aliases: ["Kana"] },
+  { name: "Kawi", aliases: ["Kawi"] },
+  { name: "Kayah_Li", aliases: ["Kali"] },
+  { name: "Kharoshthi", aliases: ["Khar"] },
+  { name: "Khmer", aliases: ["Khmr"] },
+  { name: "Khojki", aliases: ["Khoj"] },
+  { name: "Khitan_Small_Script", aliases: ["Kits"] },
+  { name: "Khudawadi", aliases: ["Sind"] },
+  { name: "Kirat_Rai", aliases: ["Krai"] },
+  { name: "Lao", aliases: ["Laoo"] },
+  { name: "Latin", aliases: ["Latn"] },
+  { name: "Lepcha", aliases: ["Lepc"] },
+  { name: "Limbu", aliases: ["Limb"] },
+  { name: "Linear_A", aliases: ["Lina"] },
+  { name: "Linear_B", aliases: ["Linb"] },
+  { name: "Lisu", aliases: ["Lisu"] },
+  { name: "Lycian", aliases: ["Lyci"] },
+  { name: "Lydian", aliases: ["Lydi"] },
+  { name: "Makasar", aliases: ["Maka"] },
+  { name: "Mahajani", aliases: ["Mahj"] },
+  { name: "Malayalam", aliases: ["Mlym"] },
+  { name: "Mandaic", aliases: ["Mand"] },
+  { name: "Manichaean", aliases: ["Mani"] },
+  { name: "Marchen", aliases: ["Marc"] },
+  { name: "Masaram_Gondi", aliases: ["Gonm"] },
+  { name: "Medefaidrin", aliases: ["Medf"] },
+  { name: "Meetei_Mayek", aliases: ["Mtei"] },
+  { name: "Mende_Kikakui", aliases: ["Mend"] },
+  { name: "Meroitic_Cursive", aliases: ["Merc"] },
+  { name: "Meroitic_Hieroglyphs", aliases: ["Mero"] },
+  { name: "Miao", aliases: ["Plrd"] },
+  { name: "Modi", aliases: ["Modi"] },
+  { name: "Mongolian", aliases: ["Mong"] },
+  { name: "Mro", aliases: ["Mroo"] },
+  { name: "Multani", aliases: ["Mult"] },
+  { name: "Myanmar", aliases: ["Mymr"] },
+  { name: "Nabataean", aliases: ["Nbat"] },
+  { name: "Nag_Mundari", aliases: ["Nagm"] },
+  { name: "Nandinagari", aliases: ["Nand"] },
+  { name: "New_Tai_Lue", aliases: ["Talu"] },
+  { name: "Newa", aliases: ["Newa"] },
+  { name: "Nko", aliases: ["Nkoo"] },
+  { name: "Nushu", aliases: ["Nshu"] },
+  { name: "Nyiakeng_Puachue_Hmong", aliases: ["Hmnp"] },
+  { name: "Ogham", aliases: ["Ogam"] },
+  { name: "Ol_Chiki", aliases: ["Olck"] },
+  { name: "Ol_Onal", aliases: ["Onao"] },
+  { name: "Old_Hungarian", aliases: ["Hung"] },
+  { name: "Old_Italic", aliases: ["Ital"] },
+  { name: "Old_North_Arabian", aliases: ["Narb"] },
+  { name: "Old_Permic", aliases: ["Perm"] },
+  { name: "Old_Persian", aliases: ["Xpeo"] },
+  { name: "Old_Sogdian", aliases: ["Sogo"] },
+  { name: "Old_South_Arabian", aliases: ["Sarb"] },
+  { name: "Old_Turkic", aliases: ["Orkh"] },
+  { name: "Old_Uyghur", aliases: ["Ougr"] },
+  { name: "Oriya", aliases: ["Orya"] },
+  { name: "Osage", aliases: ["Osge"] },
+  { name: "Osmanya", aliases: ["Osma"] },
+  { name: "Pahawh_Hmong", aliases: ["Hmng"] },
+  { name: "Palmyrene", aliases: ["Palm"] },
+  { name: "Pau_Cin_Hau", aliases: ["Pauc"] },
+  { name: "Phags_Pa", aliases: ["Phag"] },
+  { name: "Phoenician", aliases: ["Phnx"] },
+  { name: "Psalter_Pahlavi", aliases: ["Phlp"] },
+  { name: "Rejang", aliases: ["Rjng"] },
+  { name: "Runic", aliases: ["Runr"] },
+  { name: "Samaritan", aliases: ["Samr"] },
+  { name: "Saurashtra", aliases: ["Saur"] },
+  { name: "Sharada", aliases: ["Shrd"] },
+  { name: "Shavian", aliases: ["Shaw"] },
+  { name: "Siddham", aliases: ["Sidd"] },
+  { name: "Sidetic", aliases: ["Sidt"] },
+  { name: "SignWriting", aliases: ["Sgnw"] },
+  { name: "Sinhala", aliases: ["Sinh"] },
+  { name: "Sogdian", aliases: ["Sogd"] },
+  { name: "Sora_Sompeng", aliases: ["Sora"] },
+  { name: "Soyombo", aliases: ["Soyo"] },
+  { name: "Sundanese", aliases: ["Sund"] },
+  { name: "Sunuwar", aliases: ["Sunu"] },
+  { name: "Syloti_Nagri", aliases: ["Sylo"] },
+  { name: "Syriac", aliases: ["Syrc"] },
+  { name: "Tagalog", aliases: ["Tglg"] },
+  { name: "Tagbanwa", aliases: ["Tagb"] },
+  { name: "Tai_Le", aliases: ["Tale"] },
+  { name: "Tai_Tham", aliases: ["Lana"] },
+  { name: "Tai_Viet", aliases: ["Tavt"] },
+  { name: "Tai_Yo", aliases: ["Tayo"] },
+  { name: "Takri", aliases: ["Takr"] },
+  { name: "Tamil", aliases: ["Taml"] },
+  { name: "Tangut", aliases: ["Tang"] },
+  { name: "Telugu", aliases: ["Telu"] },
+  { name: "Thaana", aliases: ["Thaa"] },
+  { name: "Thai", aliases: ["Thai"] },
+  { name: "Tibetan", aliases: ["Tibt"] },
+  { name: "Tifinagh", aliases: ["Tfng"] },
+  { name: "Tirhuta", aliases: ["Tirh"] },
+  { name: "Tangsa", aliases: ["Tnsa"] },
+  { name: "Todhri", aliases: ["Todr"] },
+  { name: "Tolong_Siki", aliases: ["Tols"] },
+  { name: "Toto", aliases: ["Toto"] },
+  { name: "Tulu_Tigalari", aliases: ["Tutg"] },
+  { name: "Ugaritic", aliases: ["Ugar"] },
+  { name: "Vai", aliases: ["Vaii"] },
+  { name: "Vithkuqi", aliases: ["Vith"] },
+  { name: "Wancho", aliases: ["Wcho"] },
+  { name: "Warang_Citi", aliases: ["Wara"] },
+  { name: "Yezidi", aliases: ["Yezi"] },
+  { name: "Yi", aliases: ["Yiii"] },
+  { name: "Zanabazar_Square", aliases: ["Zanb"] },
+];
+
 // Keep the property inventory deliberately explicit.  Each expression is evaluated
 // by Node 24 only while generating the static table; the product runtime never
 // embeds or invokes JavaScript for Unicode property matching.
@@ -101,41 +279,21 @@ const definitions = [
   { id: "extended_pictographic", expression: "Extended_Pictographic" },
   { id: "id_start", expression: "ID_Start" },
   { id: "id_continue", expression: "ID_Continue" },
-  { id: "script_latin", expression: "Script=Latin" },
-  { id: "script_greek", expression: "Script=Greek" },
-  { id: "script_cyrillic", expression: "Script=Cyrillic" },
-  { id: "script_hiragana", expression: "Script=Hiragana" },
-  { id: "script_katakana", expression: "Script=Katakana" },
-  { id: "script_han", expression: "Script=Han" },
-  { id: "script_arabic", expression: "Script=Arabic" },
-  { id: "script_hebrew", expression: "Script=Hebrew" },
-  { id: "script_devanagari", expression: "Script=Devanagari" },
-  { id: "script_thai", expression: "Script=Thai" },
-  { id: "script_hangul", expression: "Script=Hangul" },
-  { id: "script_common", expression: "Script=Common" },
-  { id: "script_inherited", expression: "Script=Inherited" },
-  { id: "script_extensions_latin", expression: "Script_Extensions=Latin" },
-  { id: "script_extensions_greek", expression: "Script_Extensions=Greek" },
-  { id: "script_extensions_cyrillic", expression: "Script_Extensions=Cyrillic" },
-  { id: "script_extensions_hiragana", expression: "Script_Extensions=Hiragana" },
-  { id: "script_extensions_katakana", expression: "Script_Extensions=Katakana" },
-  { id: "script_extensions_han", expression: "Script_Extensions=Han" },
-  { id: "script_extensions_arabic", expression: "Script_Extensions=Arabic" },
-  { id: "script_extensions_hebrew", expression: "Script_Extensions=Hebrew" },
-  { id: "script_extensions_devanagari", expression: "Script_Extensions=Devanagari" },
-  { id: "script_extensions_thai", expression: "Script_Extensions=Thai" },
-  { id: "script_extensions_hangul", expression: "Script_Extensions=Hangul" },
-  { id: "script_extensions_common", expression: "Script_Extensions=Common" },
-  { id: "script_extensions_inherited", expression: "Script_Extensions=Inherited" },
+  ...scriptDefinitions.flatMap(({ name }) => [
+    { id: `script_${toSnake(name)}`, expression: `Script=${name}` },
+    { id: `script_extensions_${toSnake(name)}`, expression: `Script_Extensions=${name}` },
+  ]),
 ];
 
 const ranges = definitions.map((definition) => ({
   ...definition,
   ranges: definition.fixed === undefined ? collectRanges(definition.expression) : [definition.fixed],
 }));
-const rendered = render(ranges);
-const formatted = spawnSync("zig", ["fmt", "--stdin"], { input: rendered, encoding: "utf8" });
-if (formatted.status !== 0) throw new Error(`Unicode property tableの整形に失敗しました:\n${formatted.stderr}`);
+const rendered = render(ranges, scriptDefinitions);
+const formatted = spawnSync("zig", ["fmt", "--stdin"], { input: rendered, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+if (formatted.status !== 0) {
+  throw new Error(`Unicode property tableの整形に失敗しました:\n${formatted.stderr}`);
+}
 const output = formatted.stdout;
 
 if (check) {
@@ -165,7 +323,7 @@ function collectRanges(expression) {
   return result;
 }
 
-function render(properties) {
+function render(properties, scripts) {
   const header = "// Node.js 24.15.0のECMAScript Unicode property escapeから生成。tools/generate_unicode_properties.mjsで更新する。\n";
   const rangeType = "const Range = struct { first: u21, last: u21 };\n\n";
   const property = `pub const Property = enum {\n${properties.map(({ id }) => `    ${id},`).join("\n")}\n};\n\n`;
@@ -174,5 +332,23 @@ function render(properties) {
     return `const ranges_${id} = [_]Range{\n${values}\n};\n`;
   }).join("\n");
   const switchBody = properties.map(({ id }) => `        .${id} => inRanges(&ranges_${id}, codepoint),`).join("\n");
-  return `${header}\n${rangeType}${property}${tables}\npub fn contains(property: Property, codepoint: u21) bool {\n    return switch (property) {\n${switchBody}\n    };\n}\n\nfn inRanges(ranges: []const Range, codepoint: u21) bool {\n    var first: usize = 0;\n    var last = ranges.len;\n    while (first < last) {\n        const middle = first + (last - first) / 2;\n        if (ranges[middle].last < codepoint) first = middle + 1 else last = middle;\n    }\n    return first < ranges.len and ranges[first].first <= codepoint;\n}\n`;
+  const scriptLookup = renderScriptLookup(scripts);
+  return `${header}\n${rangeType}${property}${tables}\npub fn contains(property: Property, codepoint: u21) bool {\n    return switch (property) {\n${switchBody}\n    };\n}\n\n${scriptLookup}fn asciiEquals(units: []const u16, text: []const u8) bool {\n    if (units.len != text.len) return false;\n    for (text, 0..) |unit, index| if (units[index] != unit) return false;\n    return true;\n}\n\nfn inRanges(ranges: []const Range, codepoint: u21) bool {\n    var first: usize = 0;\n    var last = ranges.len;\n    while (first < last) {\n        const middle = first + (last - first) / 2;\n        if (ranges[middle].last < codepoint) first = middle + 1 else last = middle;\n    }\n    return first < ranges.len and ranges[first].first <= codepoint;\n}\n`;
+}
+
+function renderScriptLookup(scripts) {
+  const lines = [];
+  for (const { name, aliases } of scripts) {
+    const id = toSnake(name);
+    const values = [name, ...aliases];
+    const scriptNames = values.flatMap((value) => [`Script=${value}`, `sc=${value}`]);
+    const extensionNames = values.flatMap((value) => [`Script_Extensions=${value}`, `scx=${value}`]);
+    lines.push(`    if (${scriptNames.map((value) => `asciiEquals(name, ${JSON.stringify(value)})`).join(" or ")}) return .script_${id};`);
+    lines.push(`    if (${extensionNames.map((value) => `asciiEquals(name, ${JSON.stringify(value)})`).join(" or ")}) return .script_extensions_${id};`);
+  }
+  return `pub fn lookupScript(name: []const u16) ?Property {\n${lines.join("\n")}\n    return null;\n}\n\n`;
+}
+
+function toSnake(name) {
+  return name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
 }

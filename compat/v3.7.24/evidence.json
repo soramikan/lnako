@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 340,
-    "nativeAot": 246,
+    "total": 341,
+    "nativeAot": 247,
     "interpreter": 99,
     "compatJs": 9
   },
@@ -10230,6 +10230,7 @@
         "native-system-dictionary-buffer-enumerable-properties",
         "native-system-dictionary-byte-buffer-enumeration",
         "native-system-json-encode",
+        "native-system-regexp-unicode-all-scripts",
         "native-system-regexp-unicode-properties",
         "native-system-regexp-unicode-property-aliases",
         "native-system-regexp-unicode-script-extensions",
@@ -10277,6 +10278,9 @@
           ],
           "native-system-json-encode": [
             "implemented.tests"
+          ],
+          "native-system-regexp-unicode-all-scripts": [
+            "fixture.commands"
           ],
           "native-system-regexp-unicode-properties": [
             "fixture.commands"
@@ -10604,6 +10608,7 @@
         "native-system-regexp-invalid-capture-name-error",
         "native-system-regexp-invalid-hex-escape-error",
         "native-system-regexp-invalid-pattern-error",
+        "native-system-regexp-unicode-all-scripts",
         "native-system-regexp-unicode-invalid-escape-error",
         "native-system-regexp-unicode-properties",
         "native-system-regexp-unicode-property-aliases",
@@ -10644,6 +10649,9 @@
           "native-system-regexp-invalid-pattern-error": [
             "fixture.commands"
           ],
+          "native-system-regexp-unicode-all-scripts": [
+            "fixture.commands"
+          ],
           "native-system-regexp-unicode-invalid-escape-error": [
             "fixture.commands"
           ],
@@ -10669,7 +10677,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 14件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 15件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "共有Zig正規表現エンジンと抽出副作用をAOTへ実装し、公式7経路差分テストに成功"
     },
     {

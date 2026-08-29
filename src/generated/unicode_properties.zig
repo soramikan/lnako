@@ -94,32 +94,356 @@ pub const Property = enum {
     extended_pictographic,
     id_start,
     id_continue,
-    script_latin,
-    script_greek,
-    script_cyrillic,
-    script_hiragana,
-    script_katakana,
-    script_han,
+    script_unknown,
+    script_extensions_unknown,
+    script_adlam,
+    script_extensions_adlam,
+    script_ahom,
+    script_extensions_ahom,
+    script_anatolian_hieroglyphs,
+    script_extensions_anatolian_hieroglyphs,
     script_arabic,
-    script_hebrew,
-    script_devanagari,
-    script_thai,
-    script_hangul,
-    script_common,
-    script_inherited,
-    script_extensions_latin,
-    script_extensions_greek,
-    script_extensions_cyrillic,
-    script_extensions_hiragana,
-    script_extensions_katakana,
-    script_extensions_han,
     script_extensions_arabic,
-    script_extensions_hebrew,
-    script_extensions_devanagari,
-    script_extensions_thai,
-    script_extensions_hangul,
+    script_armenian,
+    script_extensions_armenian,
+    script_avestan,
+    script_extensions_avestan,
+    script_balinese,
+    script_extensions_balinese,
+    script_bamum,
+    script_extensions_bamum,
+    script_bassa_vah,
+    script_extensions_bassa_vah,
+    script_batak,
+    script_extensions_batak,
+    script_beria_erfe,
+    script_extensions_beria_erfe,
+    script_bengali,
+    script_extensions_bengali,
+    script_bhaiksuki,
+    script_extensions_bhaiksuki,
+    script_bopomofo,
+    script_extensions_bopomofo,
+    script_brahmi,
+    script_extensions_brahmi,
+    script_braille,
+    script_extensions_braille,
+    script_buginese,
+    script_extensions_buginese,
+    script_buhid,
+    script_extensions_buhid,
+    script_canadian_aboriginal,
+    script_extensions_canadian_aboriginal,
+    script_carian,
+    script_extensions_carian,
+    script_caucasian_albanian,
+    script_extensions_caucasian_albanian,
+    script_chakma,
+    script_extensions_chakma,
+    script_cham,
+    script_extensions_cham,
+    script_cherokee,
+    script_extensions_cherokee,
+    script_chorasmian,
+    script_extensions_chorasmian,
+    script_common,
     script_extensions_common,
+    script_coptic,
+    script_extensions_coptic,
+    script_cuneiform,
+    script_extensions_cuneiform,
+    script_cypriot,
+    script_extensions_cypriot,
+    script_cyrillic,
+    script_extensions_cyrillic,
+    script_cypro_minoan,
+    script_extensions_cypro_minoan,
+    script_deseret,
+    script_extensions_deseret,
+    script_devanagari,
+    script_extensions_devanagari,
+    script_dives_akuru,
+    script_extensions_dives_akuru,
+    script_dogra,
+    script_extensions_dogra,
+    script_duployan,
+    script_extensions_duployan,
+    script_egyptian_hieroglyphs,
+    script_extensions_egyptian_hieroglyphs,
+    script_elbasan,
+    script_extensions_elbasan,
+    script_elymaic,
+    script_extensions_elymaic,
+    script_ethiopic,
+    script_extensions_ethiopic,
+    script_garay,
+    script_extensions_garay,
+    script_georgian,
+    script_extensions_georgian,
+    script_glagolitic,
+    script_extensions_glagolitic,
+    script_gothic,
+    script_extensions_gothic,
+    script_grantha,
+    script_extensions_grantha,
+    script_greek,
+    script_extensions_greek,
+    script_gujarati,
+    script_extensions_gujarati,
+    script_gunjala_gondi,
+    script_extensions_gunjala_gondi,
+    script_gurmukhi,
+    script_extensions_gurmukhi,
+    script_gurung_khema,
+    script_extensions_gurung_khema,
+    script_han,
+    script_extensions_han,
+    script_hangul,
+    script_extensions_hangul,
+    script_hanifi_rohingya,
+    script_extensions_hanifi_rohingya,
+    script_hanunoo,
+    script_extensions_hanunoo,
+    script_hatran,
+    script_extensions_hatran,
+    script_hebrew,
+    script_extensions_hebrew,
+    script_hiragana,
+    script_extensions_hiragana,
+    script_imperial_aramaic,
+    script_extensions_imperial_aramaic,
+    script_inherited,
     script_extensions_inherited,
+    script_inscriptional_pahlavi,
+    script_extensions_inscriptional_pahlavi,
+    script_inscriptional_parthian,
+    script_extensions_inscriptional_parthian,
+    script_javanese,
+    script_extensions_javanese,
+    script_kaithi,
+    script_extensions_kaithi,
+    script_kannada,
+    script_extensions_kannada,
+    script_katakana,
+    script_extensions_katakana,
+    script_kawi,
+    script_extensions_kawi,
+    script_kayah_li,
+    script_extensions_kayah_li,
+    script_kharoshthi,
+    script_extensions_kharoshthi,
+    script_khmer,
+    script_extensions_khmer,
+    script_khojki,
+    script_extensions_khojki,
+    script_khitan_small_script,
+    script_extensions_khitan_small_script,
+    script_khudawadi,
+    script_extensions_khudawadi,
+    script_kirat_rai,
+    script_extensions_kirat_rai,
+    script_lao,
+    script_extensions_lao,
+    script_latin,
+    script_extensions_latin,
+    script_lepcha,
+    script_extensions_lepcha,
+    script_limbu,
+    script_extensions_limbu,
+    script_linear_a,
+    script_extensions_linear_a,
+    script_linear_b,
+    script_extensions_linear_b,
+    script_lisu,
+    script_extensions_lisu,
+    script_lycian,
+    script_extensions_lycian,
+    script_lydian,
+    script_extensions_lydian,
+    script_makasar,
+    script_extensions_makasar,
+    script_mahajani,
+    script_extensions_mahajani,
+    script_malayalam,
+    script_extensions_malayalam,
+    script_mandaic,
+    script_extensions_mandaic,
+    script_manichaean,
+    script_extensions_manichaean,
+    script_marchen,
+    script_extensions_marchen,
+    script_masaram_gondi,
+    script_extensions_masaram_gondi,
+    script_medefaidrin,
+    script_extensions_medefaidrin,
+    script_meetei_mayek,
+    script_extensions_meetei_mayek,
+    script_mende_kikakui,
+    script_extensions_mende_kikakui,
+    script_meroitic_cursive,
+    script_extensions_meroitic_cursive,
+    script_meroitic_hieroglyphs,
+    script_extensions_meroitic_hieroglyphs,
+    script_miao,
+    script_extensions_miao,
+    script_modi,
+    script_extensions_modi,
+    script_mongolian,
+    script_extensions_mongolian,
+    script_mro,
+    script_extensions_mro,
+    script_multani,
+    script_extensions_multani,
+    script_myanmar,
+    script_extensions_myanmar,
+    script_nabataean,
+    script_extensions_nabataean,
+    script_nag_mundari,
+    script_extensions_nag_mundari,
+    script_nandinagari,
+    script_extensions_nandinagari,
+    script_new_tai_lue,
+    script_extensions_new_tai_lue,
+    script_newa,
+    script_extensions_newa,
+    script_nko,
+    script_extensions_nko,
+    script_nushu,
+    script_extensions_nushu,
+    script_nyiakeng_puachue_hmong,
+    script_extensions_nyiakeng_puachue_hmong,
+    script_ogham,
+    script_extensions_ogham,
+    script_ol_chiki,
+    script_extensions_ol_chiki,
+    script_ol_onal,
+    script_extensions_ol_onal,
+    script_old_hungarian,
+    script_extensions_old_hungarian,
+    script_old_italic,
+    script_extensions_old_italic,
+    script_old_north_arabian,
+    script_extensions_old_north_arabian,
+    script_old_permic,
+    script_extensions_old_permic,
+    script_old_persian,
+    script_extensions_old_persian,
+    script_old_sogdian,
+    script_extensions_old_sogdian,
+    script_old_south_arabian,
+    script_extensions_old_south_arabian,
+    script_old_turkic,
+    script_extensions_old_turkic,
+    script_old_uyghur,
+    script_extensions_old_uyghur,
+    script_oriya,
+    script_extensions_oriya,
+    script_osage,
+    script_extensions_osage,
+    script_osmanya,
+    script_extensions_osmanya,
+    script_pahawh_hmong,
+    script_extensions_pahawh_hmong,
+    script_palmyrene,
+    script_extensions_palmyrene,
+    script_pau_cin_hau,
+    script_extensions_pau_cin_hau,
+    script_phags_pa,
+    script_extensions_phags_pa,
+    script_phoenician,
+    script_extensions_phoenician,
+    script_psalter_pahlavi,
+    script_extensions_psalter_pahlavi,
+    script_rejang,
+    script_extensions_rejang,
+    script_runic,
+    script_extensions_runic,
+    script_samaritan,
+    script_extensions_samaritan,
+    script_saurashtra,
+    script_extensions_saurashtra,
+    script_sharada,
+    script_extensions_sharada,
+    script_shavian,
+    script_extensions_shavian,
+    script_siddham,
+    script_extensions_siddham,
+    script_sidetic,
+    script_extensions_sidetic,
+    script_sign_writing,
+    script_extensions_sign_writing,
+    script_sinhala,
+    script_extensions_sinhala,
+    script_sogdian,
+    script_extensions_sogdian,
+    script_sora_sompeng,
+    script_extensions_sora_sompeng,
+    script_soyombo,
+    script_extensions_soyombo,
+    script_sundanese,
+    script_extensions_sundanese,
+    script_sunuwar,
+    script_extensions_sunuwar,
+    script_syloti_nagri,
+    script_extensions_syloti_nagri,
+    script_syriac,
+    script_extensions_syriac,
+    script_tagalog,
+    script_extensions_tagalog,
+    script_tagbanwa,
+    script_extensions_tagbanwa,
+    script_tai_le,
+    script_extensions_tai_le,
+    script_tai_tham,
+    script_extensions_tai_tham,
+    script_tai_viet,
+    script_extensions_tai_viet,
+    script_tai_yo,
+    script_extensions_tai_yo,
+    script_takri,
+    script_extensions_takri,
+    script_tamil,
+    script_extensions_tamil,
+    script_tangut,
+    script_extensions_tangut,
+    script_telugu,
+    script_extensions_telugu,
+    script_thaana,
+    script_extensions_thaana,
+    script_thai,
+    script_extensions_thai,
+    script_tibetan,
+    script_extensions_tibetan,
+    script_tifinagh,
+    script_extensions_tifinagh,
+    script_tirhuta,
+    script_extensions_tirhuta,
+    script_tangsa,
+    script_extensions_tangsa,
+    script_todhri,
+    script_extensions_todhri,
+    script_tolong_siki,
+    script_extensions_tolong_siki,
+    script_toto,
+    script_extensions_toto,
+    script_tulu_tigalari,
+    script_extensions_tulu_tigalari,
+    script_ugaritic,
+    script_extensions_ugaritic,
+    script_vai,
+    script_extensions_vai,
+    script_vithkuqi,
+    script_extensions_vithkuqi,
+    script_wancho,
+    script_extensions_wancho,
+    script_warang_citi,
+    script_extensions_warang_citi,
+    script_yezidi,
+    script_extensions_yezidi,
+    script_yi,
+    script_extensions_yi,
+    script_zanabazar_square,
+    script_extensions_zanabazar_square,
 };
 
 const ranges_ascii = [_]Range{
@@ -19636,145 +19960,1512 @@ const ranges_id_continue = [_]Range{
     .{ .first = 0xe0100, .last = 0xe01ef },
 };
 
-const ranges_script_latin = [_]Range{
-    .{ .first = 0x41, .last = 0x5a },
-    .{ .first = 0x61, .last = 0x7a },
-    .{ .first = 0xaa, .last = 0xaa },
-    .{ .first = 0xba, .last = 0xba },
-    .{ .first = 0xc0, .last = 0xd6 },
-    .{ .first = 0xd8, .last = 0xf6 },
-    .{ .first = 0xf8, .last = 0x2b8 },
-    .{ .first = 0x2e0, .last = 0x2e4 },
-    .{ .first = 0x1d00, .last = 0x1d25 },
-    .{ .first = 0x1d2c, .last = 0x1d5c },
-    .{ .first = 0x1d62, .last = 0x1d65 },
-    .{ .first = 0x1d6b, .last = 0x1d77 },
-    .{ .first = 0x1d79, .last = 0x1dbe },
-    .{ .first = 0x1e00, .last = 0x1eff },
-    .{ .first = 0x2071, .last = 0x2071 },
-    .{ .first = 0x207f, .last = 0x207f },
-    .{ .first = 0x2090, .last = 0x209c },
-    .{ .first = 0x212a, .last = 0x212b },
-    .{ .first = 0x2132, .last = 0x2132 },
-    .{ .first = 0x214e, .last = 0x214e },
-    .{ .first = 0x2160, .last = 0x2188 },
-    .{ .first = 0x2c60, .last = 0x2c7f },
-    .{ .first = 0xa722, .last = 0xa787 },
-    .{ .first = 0xa78b, .last = 0xa7dc },
-    .{ .first = 0xa7f1, .last = 0xa7ff },
-    .{ .first = 0xab30, .last = 0xab5a },
-    .{ .first = 0xab5c, .last = 0xab64 },
-    .{ .first = 0xab66, .last = 0xab69 },
-    .{ .first = 0xfb00, .last = 0xfb06 },
-    .{ .first = 0xff21, .last = 0xff3a },
-    .{ .first = 0xff41, .last = 0xff5a },
-    .{ .first = 0x10780, .last = 0x10785 },
-    .{ .first = 0x10787, .last = 0x107b0 },
-    .{ .first = 0x107b2, .last = 0x107ba },
-    .{ .first = 0x1df00, .last = 0x1df1e },
-    .{ .first = 0x1df25, .last = 0x1df2a },
+const ranges_script_unknown = [_]Range{
+    .{ .first = 0x378, .last = 0x379 },
+    .{ .first = 0x380, .last = 0x383 },
+    .{ .first = 0x38b, .last = 0x38b },
+    .{ .first = 0x38d, .last = 0x38d },
+    .{ .first = 0x3a2, .last = 0x3a2 },
+    .{ .first = 0x530, .last = 0x530 },
+    .{ .first = 0x557, .last = 0x558 },
+    .{ .first = 0x58b, .last = 0x58c },
+    .{ .first = 0x590, .last = 0x590 },
+    .{ .first = 0x5c8, .last = 0x5cf },
+    .{ .first = 0x5eb, .last = 0x5ee },
+    .{ .first = 0x5f5, .last = 0x5ff },
+    .{ .first = 0x70e, .last = 0x70e },
+    .{ .first = 0x74b, .last = 0x74c },
+    .{ .first = 0x7b2, .last = 0x7bf },
+    .{ .first = 0x7fb, .last = 0x7fc },
+    .{ .first = 0x82e, .last = 0x82f },
+    .{ .first = 0x83f, .last = 0x83f },
+    .{ .first = 0x85c, .last = 0x85d },
+    .{ .first = 0x85f, .last = 0x85f },
+    .{ .first = 0x86b, .last = 0x86f },
+    .{ .first = 0x892, .last = 0x896 },
+    .{ .first = 0x984, .last = 0x984 },
+    .{ .first = 0x98d, .last = 0x98e },
+    .{ .first = 0x991, .last = 0x992 },
+    .{ .first = 0x9a9, .last = 0x9a9 },
+    .{ .first = 0x9b1, .last = 0x9b1 },
+    .{ .first = 0x9b3, .last = 0x9b5 },
+    .{ .first = 0x9ba, .last = 0x9bb },
+    .{ .first = 0x9c5, .last = 0x9c6 },
+    .{ .first = 0x9c9, .last = 0x9ca },
+    .{ .first = 0x9cf, .last = 0x9d6 },
+    .{ .first = 0x9d8, .last = 0x9db },
+    .{ .first = 0x9de, .last = 0x9de },
+    .{ .first = 0x9e4, .last = 0x9e5 },
+    .{ .first = 0x9ff, .last = 0xa00 },
+    .{ .first = 0xa04, .last = 0xa04 },
+    .{ .first = 0xa0b, .last = 0xa0e },
+    .{ .first = 0xa11, .last = 0xa12 },
+    .{ .first = 0xa29, .last = 0xa29 },
+    .{ .first = 0xa31, .last = 0xa31 },
+    .{ .first = 0xa34, .last = 0xa34 },
+    .{ .first = 0xa37, .last = 0xa37 },
+    .{ .first = 0xa3a, .last = 0xa3b },
+    .{ .first = 0xa3d, .last = 0xa3d },
+    .{ .first = 0xa43, .last = 0xa46 },
+    .{ .first = 0xa49, .last = 0xa4a },
+    .{ .first = 0xa4e, .last = 0xa50 },
+    .{ .first = 0xa52, .last = 0xa58 },
+    .{ .first = 0xa5d, .last = 0xa5d },
+    .{ .first = 0xa5f, .last = 0xa65 },
+    .{ .first = 0xa77, .last = 0xa80 },
+    .{ .first = 0xa84, .last = 0xa84 },
+    .{ .first = 0xa8e, .last = 0xa8e },
+    .{ .first = 0xa92, .last = 0xa92 },
+    .{ .first = 0xaa9, .last = 0xaa9 },
+    .{ .first = 0xab1, .last = 0xab1 },
+    .{ .first = 0xab4, .last = 0xab4 },
+    .{ .first = 0xaba, .last = 0xabb },
+    .{ .first = 0xac6, .last = 0xac6 },
+    .{ .first = 0xaca, .last = 0xaca },
+    .{ .first = 0xace, .last = 0xacf },
+    .{ .first = 0xad1, .last = 0xadf },
+    .{ .first = 0xae4, .last = 0xae5 },
+    .{ .first = 0xaf2, .last = 0xaf8 },
+    .{ .first = 0xb00, .last = 0xb00 },
+    .{ .first = 0xb04, .last = 0xb04 },
+    .{ .first = 0xb0d, .last = 0xb0e },
+    .{ .first = 0xb11, .last = 0xb12 },
+    .{ .first = 0xb29, .last = 0xb29 },
+    .{ .first = 0xb31, .last = 0xb31 },
+    .{ .first = 0xb34, .last = 0xb34 },
+    .{ .first = 0xb3a, .last = 0xb3b },
+    .{ .first = 0xb45, .last = 0xb46 },
+    .{ .first = 0xb49, .last = 0xb4a },
+    .{ .first = 0xb4e, .last = 0xb54 },
+    .{ .first = 0xb58, .last = 0xb5b },
+    .{ .first = 0xb5e, .last = 0xb5e },
+    .{ .first = 0xb64, .last = 0xb65 },
+    .{ .first = 0xb78, .last = 0xb81 },
+    .{ .first = 0xb84, .last = 0xb84 },
+    .{ .first = 0xb8b, .last = 0xb8d },
+    .{ .first = 0xb91, .last = 0xb91 },
+    .{ .first = 0xb96, .last = 0xb98 },
+    .{ .first = 0xb9b, .last = 0xb9b },
+    .{ .first = 0xb9d, .last = 0xb9d },
+    .{ .first = 0xba0, .last = 0xba2 },
+    .{ .first = 0xba5, .last = 0xba7 },
+    .{ .first = 0xbab, .last = 0xbad },
+    .{ .first = 0xbba, .last = 0xbbd },
+    .{ .first = 0xbc3, .last = 0xbc5 },
+    .{ .first = 0xbc9, .last = 0xbc9 },
+    .{ .first = 0xbce, .last = 0xbcf },
+    .{ .first = 0xbd1, .last = 0xbd6 },
+    .{ .first = 0xbd8, .last = 0xbe5 },
+    .{ .first = 0xbfb, .last = 0xbff },
+    .{ .first = 0xc0d, .last = 0xc0d },
+    .{ .first = 0xc11, .last = 0xc11 },
+    .{ .first = 0xc29, .last = 0xc29 },
+    .{ .first = 0xc3a, .last = 0xc3b },
+    .{ .first = 0xc45, .last = 0xc45 },
+    .{ .first = 0xc49, .last = 0xc49 },
+    .{ .first = 0xc4e, .last = 0xc54 },
+    .{ .first = 0xc57, .last = 0xc57 },
+    .{ .first = 0xc5b, .last = 0xc5b },
+    .{ .first = 0xc5e, .last = 0xc5f },
+    .{ .first = 0xc64, .last = 0xc65 },
+    .{ .first = 0xc70, .last = 0xc76 },
+    .{ .first = 0xc8d, .last = 0xc8d },
+    .{ .first = 0xc91, .last = 0xc91 },
+    .{ .first = 0xca9, .last = 0xca9 },
+    .{ .first = 0xcb4, .last = 0xcb4 },
+    .{ .first = 0xcba, .last = 0xcbb },
+    .{ .first = 0xcc5, .last = 0xcc5 },
+    .{ .first = 0xcc9, .last = 0xcc9 },
+    .{ .first = 0xcce, .last = 0xcd4 },
+    .{ .first = 0xcd7, .last = 0xcdb },
+    .{ .first = 0xcdf, .last = 0xcdf },
+    .{ .first = 0xce4, .last = 0xce5 },
+    .{ .first = 0xcf0, .last = 0xcf0 },
+    .{ .first = 0xcf4, .last = 0xcff },
+    .{ .first = 0xd0d, .last = 0xd0d },
+    .{ .first = 0xd11, .last = 0xd11 },
+    .{ .first = 0xd45, .last = 0xd45 },
+    .{ .first = 0xd49, .last = 0xd49 },
+    .{ .first = 0xd50, .last = 0xd53 },
+    .{ .first = 0xd64, .last = 0xd65 },
+    .{ .first = 0xd80, .last = 0xd80 },
+    .{ .first = 0xd84, .last = 0xd84 },
+    .{ .first = 0xd97, .last = 0xd99 },
+    .{ .first = 0xdb2, .last = 0xdb2 },
+    .{ .first = 0xdbc, .last = 0xdbc },
+    .{ .first = 0xdbe, .last = 0xdbf },
+    .{ .first = 0xdc7, .last = 0xdc9 },
+    .{ .first = 0xdcb, .last = 0xdce },
+    .{ .first = 0xdd5, .last = 0xdd5 },
+    .{ .first = 0xdd7, .last = 0xdd7 },
+    .{ .first = 0xde0, .last = 0xde5 },
+    .{ .first = 0xdf0, .last = 0xdf1 },
+    .{ .first = 0xdf5, .last = 0xe00 },
+    .{ .first = 0xe3b, .last = 0xe3e },
+    .{ .first = 0xe5c, .last = 0xe80 },
+    .{ .first = 0xe83, .last = 0xe83 },
+    .{ .first = 0xe85, .last = 0xe85 },
+    .{ .first = 0xe8b, .last = 0xe8b },
+    .{ .first = 0xea4, .last = 0xea4 },
+    .{ .first = 0xea6, .last = 0xea6 },
+    .{ .first = 0xebe, .last = 0xebf },
+    .{ .first = 0xec5, .last = 0xec5 },
+    .{ .first = 0xec7, .last = 0xec7 },
+    .{ .first = 0xecf, .last = 0xecf },
+    .{ .first = 0xeda, .last = 0xedb },
+    .{ .first = 0xee0, .last = 0xeff },
+    .{ .first = 0xf48, .last = 0xf48 },
+    .{ .first = 0xf6d, .last = 0xf70 },
+    .{ .first = 0xf98, .last = 0xf98 },
+    .{ .first = 0xfbd, .last = 0xfbd },
+    .{ .first = 0xfcd, .last = 0xfcd },
+    .{ .first = 0xfdb, .last = 0xfff },
+    .{ .first = 0x10c6, .last = 0x10c6 },
+    .{ .first = 0x10c8, .last = 0x10cc },
+    .{ .first = 0x10ce, .last = 0x10cf },
+    .{ .first = 0x1249, .last = 0x1249 },
+    .{ .first = 0x124e, .last = 0x124f },
+    .{ .first = 0x1257, .last = 0x1257 },
+    .{ .first = 0x1259, .last = 0x1259 },
+    .{ .first = 0x125e, .last = 0x125f },
+    .{ .first = 0x1289, .last = 0x1289 },
+    .{ .first = 0x128e, .last = 0x128f },
+    .{ .first = 0x12b1, .last = 0x12b1 },
+    .{ .first = 0x12b6, .last = 0x12b7 },
+    .{ .first = 0x12bf, .last = 0x12bf },
+    .{ .first = 0x12c1, .last = 0x12c1 },
+    .{ .first = 0x12c6, .last = 0x12c7 },
+    .{ .first = 0x12d7, .last = 0x12d7 },
+    .{ .first = 0x1311, .last = 0x1311 },
+    .{ .first = 0x1316, .last = 0x1317 },
+    .{ .first = 0x135b, .last = 0x135c },
+    .{ .first = 0x137d, .last = 0x137f },
+    .{ .first = 0x139a, .last = 0x139f },
+    .{ .first = 0x13f6, .last = 0x13f7 },
+    .{ .first = 0x13fe, .last = 0x13ff },
+    .{ .first = 0x169d, .last = 0x169f },
+    .{ .first = 0x16f9, .last = 0x16ff },
+    .{ .first = 0x1716, .last = 0x171e },
+    .{ .first = 0x1737, .last = 0x173f },
+    .{ .first = 0x1754, .last = 0x175f },
+    .{ .first = 0x176d, .last = 0x176d },
+    .{ .first = 0x1771, .last = 0x1771 },
+    .{ .first = 0x1774, .last = 0x177f },
+    .{ .first = 0x17de, .last = 0x17df },
+    .{ .first = 0x17ea, .last = 0x17ef },
+    .{ .first = 0x17fa, .last = 0x17ff },
+    .{ .first = 0x181a, .last = 0x181f },
+    .{ .first = 0x1879, .last = 0x187f },
+    .{ .first = 0x18ab, .last = 0x18af },
+    .{ .first = 0x18f6, .last = 0x18ff },
+    .{ .first = 0x191f, .last = 0x191f },
+    .{ .first = 0x192c, .last = 0x192f },
+    .{ .first = 0x193c, .last = 0x193f },
+    .{ .first = 0x1941, .last = 0x1943 },
+    .{ .first = 0x196e, .last = 0x196f },
+    .{ .first = 0x1975, .last = 0x197f },
+    .{ .first = 0x19ac, .last = 0x19af },
+    .{ .first = 0x19ca, .last = 0x19cf },
+    .{ .first = 0x19db, .last = 0x19dd },
+    .{ .first = 0x1a1c, .last = 0x1a1d },
+    .{ .first = 0x1a5f, .last = 0x1a5f },
+    .{ .first = 0x1a7d, .last = 0x1a7e },
+    .{ .first = 0x1a8a, .last = 0x1a8f },
+    .{ .first = 0x1a9a, .last = 0x1a9f },
+    .{ .first = 0x1aae, .last = 0x1aaf },
+    .{ .first = 0x1ade, .last = 0x1adf },
+    .{ .first = 0x1aec, .last = 0x1aff },
+    .{ .first = 0x1b4d, .last = 0x1b4d },
+    .{ .first = 0x1bf4, .last = 0x1bfb },
+    .{ .first = 0x1c38, .last = 0x1c3a },
+    .{ .first = 0x1c4a, .last = 0x1c4c },
+    .{ .first = 0x1c8b, .last = 0x1c8f },
+    .{ .first = 0x1cbb, .last = 0x1cbc },
+    .{ .first = 0x1cc8, .last = 0x1ccf },
+    .{ .first = 0x1cfb, .last = 0x1cff },
+    .{ .first = 0x1f16, .last = 0x1f17 },
+    .{ .first = 0x1f1e, .last = 0x1f1f },
+    .{ .first = 0x1f46, .last = 0x1f47 },
+    .{ .first = 0x1f4e, .last = 0x1f4f },
+    .{ .first = 0x1f58, .last = 0x1f58 },
+    .{ .first = 0x1f5a, .last = 0x1f5a },
+    .{ .first = 0x1f5c, .last = 0x1f5c },
+    .{ .first = 0x1f5e, .last = 0x1f5e },
+    .{ .first = 0x1f7e, .last = 0x1f7f },
+    .{ .first = 0x1fb5, .last = 0x1fb5 },
+    .{ .first = 0x1fc5, .last = 0x1fc5 },
+    .{ .first = 0x1fd4, .last = 0x1fd5 },
+    .{ .first = 0x1fdc, .last = 0x1fdc },
+    .{ .first = 0x1ff0, .last = 0x1ff1 },
+    .{ .first = 0x1ff5, .last = 0x1ff5 },
+    .{ .first = 0x1fff, .last = 0x1fff },
+    .{ .first = 0x2065, .last = 0x2065 },
+    .{ .first = 0x2072, .last = 0x2073 },
+    .{ .first = 0x208f, .last = 0x208f },
+    .{ .first = 0x209d, .last = 0x209f },
+    .{ .first = 0x20c2, .last = 0x20cf },
+    .{ .first = 0x20f1, .last = 0x20ff },
+    .{ .first = 0x218c, .last = 0x218f },
+    .{ .first = 0x242a, .last = 0x243f },
+    .{ .first = 0x244b, .last = 0x245f },
+    .{ .first = 0x2b74, .last = 0x2b75 },
+    .{ .first = 0x2cf4, .last = 0x2cf8 },
+    .{ .first = 0x2d26, .last = 0x2d26 },
+    .{ .first = 0x2d28, .last = 0x2d2c },
+    .{ .first = 0x2d2e, .last = 0x2d2f },
+    .{ .first = 0x2d68, .last = 0x2d6e },
+    .{ .first = 0x2d71, .last = 0x2d7e },
+    .{ .first = 0x2d97, .last = 0x2d9f },
+    .{ .first = 0x2da7, .last = 0x2da7 },
+    .{ .first = 0x2daf, .last = 0x2daf },
+    .{ .first = 0x2db7, .last = 0x2db7 },
+    .{ .first = 0x2dbf, .last = 0x2dbf },
+    .{ .first = 0x2dc7, .last = 0x2dc7 },
+    .{ .first = 0x2dcf, .last = 0x2dcf },
+    .{ .first = 0x2dd7, .last = 0x2dd7 },
+    .{ .first = 0x2ddf, .last = 0x2ddf },
+    .{ .first = 0x2e5e, .last = 0x2e7f },
+    .{ .first = 0x2e9a, .last = 0x2e9a },
+    .{ .first = 0x2ef4, .last = 0x2eff },
+    .{ .first = 0x2fd6, .last = 0x2fef },
+    .{ .first = 0x3040, .last = 0x3040 },
+    .{ .first = 0x3097, .last = 0x3098 },
+    .{ .first = 0x3100, .last = 0x3104 },
+    .{ .first = 0x3130, .last = 0x3130 },
+    .{ .first = 0x318f, .last = 0x318f },
+    .{ .first = 0x31e6, .last = 0x31ee },
+    .{ .first = 0x321f, .last = 0x321f },
+    .{ .first = 0xa48d, .last = 0xa48f },
+    .{ .first = 0xa4c7, .last = 0xa4cf },
+    .{ .first = 0xa62c, .last = 0xa63f },
+    .{ .first = 0xa6f8, .last = 0xa6ff },
+    .{ .first = 0xa7dd, .last = 0xa7f0 },
+    .{ .first = 0xa82d, .last = 0xa82f },
+    .{ .first = 0xa83a, .last = 0xa83f },
+    .{ .first = 0xa878, .last = 0xa87f },
+    .{ .first = 0xa8c6, .last = 0xa8cd },
+    .{ .first = 0xa8da, .last = 0xa8df },
+    .{ .first = 0xa954, .last = 0xa95e },
+    .{ .first = 0xa97d, .last = 0xa97f },
+    .{ .first = 0xa9ce, .last = 0xa9ce },
+    .{ .first = 0xa9da, .last = 0xa9dd },
+    .{ .first = 0xa9ff, .last = 0xa9ff },
+    .{ .first = 0xaa37, .last = 0xaa3f },
+    .{ .first = 0xaa4e, .last = 0xaa4f },
+    .{ .first = 0xaa5a, .last = 0xaa5b },
+    .{ .first = 0xaac3, .last = 0xaada },
+    .{ .first = 0xaaf7, .last = 0xab00 },
+    .{ .first = 0xab07, .last = 0xab08 },
+    .{ .first = 0xab0f, .last = 0xab10 },
+    .{ .first = 0xab17, .last = 0xab1f },
+    .{ .first = 0xab27, .last = 0xab27 },
+    .{ .first = 0xab2f, .last = 0xab2f },
+    .{ .first = 0xab6c, .last = 0xab6f },
+    .{ .first = 0xabee, .last = 0xabef },
+    .{ .first = 0xabfa, .last = 0xabff },
+    .{ .first = 0xd7a4, .last = 0xd7af },
+    .{ .first = 0xd7c7, .last = 0xd7ca },
+    .{ .first = 0xd7fc, .last = 0xf8ff },
+    .{ .first = 0xfa6e, .last = 0xfa6f },
+    .{ .first = 0xfada, .last = 0xfaff },
+    .{ .first = 0xfb07, .last = 0xfb12 },
+    .{ .first = 0xfb18, .last = 0xfb1c },
+    .{ .first = 0xfb37, .last = 0xfb37 },
+    .{ .first = 0xfb3d, .last = 0xfb3d },
+    .{ .first = 0xfb3f, .last = 0xfb3f },
+    .{ .first = 0xfb42, .last = 0xfb42 },
+    .{ .first = 0xfb45, .last = 0xfb45 },
+    .{ .first = 0xfdd0, .last = 0xfdef },
+    .{ .first = 0xfe1a, .last = 0xfe1f },
+    .{ .first = 0xfe53, .last = 0xfe53 },
+    .{ .first = 0xfe67, .last = 0xfe67 },
+    .{ .first = 0xfe6c, .last = 0xfe6f },
+    .{ .first = 0xfe75, .last = 0xfe75 },
+    .{ .first = 0xfefd, .last = 0xfefe },
+    .{ .first = 0xff00, .last = 0xff00 },
+    .{ .first = 0xffbf, .last = 0xffc1 },
+    .{ .first = 0xffc8, .last = 0xffc9 },
+    .{ .first = 0xffd0, .last = 0xffd1 },
+    .{ .first = 0xffd8, .last = 0xffd9 },
+    .{ .first = 0xffdd, .last = 0xffdf },
+    .{ .first = 0xffe7, .last = 0xffe7 },
+    .{ .first = 0xffef, .last = 0xfff8 },
+    .{ .first = 0xfffe, .last = 0xffff },
+    .{ .first = 0x1000c, .last = 0x1000c },
+    .{ .first = 0x10027, .last = 0x10027 },
+    .{ .first = 0x1003b, .last = 0x1003b },
+    .{ .first = 0x1003e, .last = 0x1003e },
+    .{ .first = 0x1004e, .last = 0x1004f },
+    .{ .first = 0x1005e, .last = 0x1007f },
+    .{ .first = 0x100fb, .last = 0x100ff },
+    .{ .first = 0x10103, .last = 0x10106 },
+    .{ .first = 0x10134, .last = 0x10136 },
+    .{ .first = 0x1018f, .last = 0x1018f },
+    .{ .first = 0x1019d, .last = 0x1019f },
+    .{ .first = 0x101a1, .last = 0x101cf },
+    .{ .first = 0x101fe, .last = 0x1027f },
+    .{ .first = 0x1029d, .last = 0x1029f },
+    .{ .first = 0x102d1, .last = 0x102df },
+    .{ .first = 0x102fc, .last = 0x102ff },
+    .{ .first = 0x10324, .last = 0x1032c },
+    .{ .first = 0x1034b, .last = 0x1034f },
+    .{ .first = 0x1037b, .last = 0x1037f },
+    .{ .first = 0x1039e, .last = 0x1039e },
+    .{ .first = 0x103c4, .last = 0x103c7 },
+    .{ .first = 0x103d6, .last = 0x103ff },
+    .{ .first = 0x1049e, .last = 0x1049f },
+    .{ .first = 0x104aa, .last = 0x104af },
+    .{ .first = 0x104d4, .last = 0x104d7 },
+    .{ .first = 0x104fc, .last = 0x104ff },
+    .{ .first = 0x10528, .last = 0x1052f },
+    .{ .first = 0x10564, .last = 0x1056e },
+    .{ .first = 0x1057b, .last = 0x1057b },
+    .{ .first = 0x1058b, .last = 0x1058b },
+    .{ .first = 0x10593, .last = 0x10593 },
+    .{ .first = 0x10596, .last = 0x10596 },
+    .{ .first = 0x105a2, .last = 0x105a2 },
+    .{ .first = 0x105b2, .last = 0x105b2 },
+    .{ .first = 0x105ba, .last = 0x105ba },
+    .{ .first = 0x105bd, .last = 0x105bf },
+    .{ .first = 0x105f4, .last = 0x105ff },
+    .{ .first = 0x10737, .last = 0x1073f },
+    .{ .first = 0x10756, .last = 0x1075f },
+    .{ .first = 0x10768, .last = 0x1077f },
+    .{ .first = 0x10786, .last = 0x10786 },
+    .{ .first = 0x107b1, .last = 0x107b1 },
+    .{ .first = 0x107bb, .last = 0x107ff },
+    .{ .first = 0x10806, .last = 0x10807 },
+    .{ .first = 0x10809, .last = 0x10809 },
+    .{ .first = 0x10836, .last = 0x10836 },
+    .{ .first = 0x10839, .last = 0x1083b },
+    .{ .first = 0x1083d, .last = 0x1083e },
+    .{ .first = 0x10856, .last = 0x10856 },
+    .{ .first = 0x1089f, .last = 0x108a6 },
+    .{ .first = 0x108b0, .last = 0x108df },
+    .{ .first = 0x108f3, .last = 0x108f3 },
+    .{ .first = 0x108f6, .last = 0x108fa },
+    .{ .first = 0x1091c, .last = 0x1091e },
+    .{ .first = 0x1093a, .last = 0x1093e },
+    .{ .first = 0x1095a, .last = 0x1097f },
+    .{ .first = 0x109b8, .last = 0x109bb },
+    .{ .first = 0x109d0, .last = 0x109d1 },
+    .{ .first = 0x10a04, .last = 0x10a04 },
+    .{ .first = 0x10a07, .last = 0x10a0b },
+    .{ .first = 0x10a14, .last = 0x10a14 },
+    .{ .first = 0x10a18, .last = 0x10a18 },
+    .{ .first = 0x10a36, .last = 0x10a37 },
+    .{ .first = 0x10a3b, .last = 0x10a3e },
+    .{ .first = 0x10a49, .last = 0x10a4f },
+    .{ .first = 0x10a59, .last = 0x10a5f },
+    .{ .first = 0x10aa0, .last = 0x10abf },
+    .{ .first = 0x10ae7, .last = 0x10aea },
+    .{ .first = 0x10af7, .last = 0x10aff },
+    .{ .first = 0x10b36, .last = 0x10b38 },
+    .{ .first = 0x10b56, .last = 0x10b57 },
+    .{ .first = 0x10b73, .last = 0x10b77 },
+    .{ .first = 0x10b92, .last = 0x10b98 },
+    .{ .first = 0x10b9d, .last = 0x10ba8 },
+    .{ .first = 0x10bb0, .last = 0x10bff },
+    .{ .first = 0x10c49, .last = 0x10c7f },
+    .{ .first = 0x10cb3, .last = 0x10cbf },
+    .{ .first = 0x10cf3, .last = 0x10cf9 },
+    .{ .first = 0x10d28, .last = 0x10d2f },
+    .{ .first = 0x10d3a, .last = 0x10d3f },
+    .{ .first = 0x10d66, .last = 0x10d68 },
+    .{ .first = 0x10d86, .last = 0x10d8d },
+    .{ .first = 0x10d90, .last = 0x10e5f },
+    .{ .first = 0x10e7f, .last = 0x10e7f },
+    .{ .first = 0x10eaa, .last = 0x10eaa },
+    .{ .first = 0x10eae, .last = 0x10eaf },
+    .{ .first = 0x10eb2, .last = 0x10ec1 },
+    .{ .first = 0x10ec8, .last = 0x10ecf },
+    .{ .first = 0x10ed9, .last = 0x10ef9 },
+    .{ .first = 0x10f28, .last = 0x10f2f },
+    .{ .first = 0x10f5a, .last = 0x10f6f },
+    .{ .first = 0x10f8a, .last = 0x10faf },
+    .{ .first = 0x10fcc, .last = 0x10fdf },
+    .{ .first = 0x10ff7, .last = 0x10fff },
+    .{ .first = 0x1104e, .last = 0x11051 },
+    .{ .first = 0x11076, .last = 0x1107e },
+    .{ .first = 0x110c3, .last = 0x110cc },
+    .{ .first = 0x110ce, .last = 0x110cf },
+    .{ .first = 0x110e9, .last = 0x110ef },
+    .{ .first = 0x110fa, .last = 0x110ff },
+    .{ .first = 0x11135, .last = 0x11135 },
+    .{ .first = 0x11148, .last = 0x1114f },
+    .{ .first = 0x11177, .last = 0x1117f },
+    .{ .first = 0x111e0, .last = 0x111e0 },
+    .{ .first = 0x111f5, .last = 0x111ff },
+    .{ .first = 0x11212, .last = 0x11212 },
+    .{ .first = 0x11242, .last = 0x1127f },
+    .{ .first = 0x11287, .last = 0x11287 },
+    .{ .first = 0x11289, .last = 0x11289 },
+    .{ .first = 0x1128e, .last = 0x1128e },
+    .{ .first = 0x1129e, .last = 0x1129e },
+    .{ .first = 0x112aa, .last = 0x112af },
+    .{ .first = 0x112eb, .last = 0x112ef },
+    .{ .first = 0x112fa, .last = 0x112ff },
+    .{ .first = 0x11304, .last = 0x11304 },
+    .{ .first = 0x1130d, .last = 0x1130e },
+    .{ .first = 0x11311, .last = 0x11312 },
+    .{ .first = 0x11329, .last = 0x11329 },
+    .{ .first = 0x11331, .last = 0x11331 },
+    .{ .first = 0x11334, .last = 0x11334 },
+    .{ .first = 0x1133a, .last = 0x1133a },
+    .{ .first = 0x11345, .last = 0x11346 },
+    .{ .first = 0x11349, .last = 0x1134a },
+    .{ .first = 0x1134e, .last = 0x1134f },
+    .{ .first = 0x11351, .last = 0x11356 },
+    .{ .first = 0x11358, .last = 0x1135c },
+    .{ .first = 0x11364, .last = 0x11365 },
+    .{ .first = 0x1136d, .last = 0x1136f },
+    .{ .first = 0x11375, .last = 0x1137f },
+    .{ .first = 0x1138a, .last = 0x1138a },
+    .{ .first = 0x1138c, .last = 0x1138d },
+    .{ .first = 0x1138f, .last = 0x1138f },
+    .{ .first = 0x113b6, .last = 0x113b6 },
+    .{ .first = 0x113c1, .last = 0x113c1 },
+    .{ .first = 0x113c3, .last = 0x113c4 },
+    .{ .first = 0x113c6, .last = 0x113c6 },
+    .{ .first = 0x113cb, .last = 0x113cb },
+    .{ .first = 0x113d6, .last = 0x113d6 },
+    .{ .first = 0x113d9, .last = 0x113e0 },
+    .{ .first = 0x113e3, .last = 0x113ff },
+    .{ .first = 0x1145c, .last = 0x1145c },
+    .{ .first = 0x11462, .last = 0x1147f },
+    .{ .first = 0x114c8, .last = 0x114cf },
+    .{ .first = 0x114da, .last = 0x1157f },
+    .{ .first = 0x115b6, .last = 0x115b7 },
+    .{ .first = 0x115de, .last = 0x115ff },
+    .{ .first = 0x11645, .last = 0x1164f },
+    .{ .first = 0x1165a, .last = 0x1165f },
+    .{ .first = 0x1166d, .last = 0x1167f },
+    .{ .first = 0x116ba, .last = 0x116bf },
+    .{ .first = 0x116ca, .last = 0x116cf },
+    .{ .first = 0x116e4, .last = 0x116ff },
+    .{ .first = 0x1171b, .last = 0x1171c },
+    .{ .first = 0x1172c, .last = 0x1172f },
+    .{ .first = 0x11747, .last = 0x117ff },
+    .{ .first = 0x1183c, .last = 0x1189f },
+    .{ .first = 0x118f3, .last = 0x118fe },
+    .{ .first = 0x11907, .last = 0x11908 },
+    .{ .first = 0x1190a, .last = 0x1190b },
+    .{ .first = 0x11914, .last = 0x11914 },
+    .{ .first = 0x11917, .last = 0x11917 },
+    .{ .first = 0x11936, .last = 0x11936 },
+    .{ .first = 0x11939, .last = 0x1193a },
+    .{ .first = 0x11947, .last = 0x1194f },
+    .{ .first = 0x1195a, .last = 0x1199f },
+    .{ .first = 0x119a8, .last = 0x119a9 },
+    .{ .first = 0x119d8, .last = 0x119d9 },
+    .{ .first = 0x119e5, .last = 0x119ff },
+    .{ .first = 0x11a48, .last = 0x11a4f },
+    .{ .first = 0x11aa3, .last = 0x11aaf },
+    .{ .first = 0x11af9, .last = 0x11aff },
+    .{ .first = 0x11b0a, .last = 0x11b5f },
+    .{ .first = 0x11b68, .last = 0x11bbf },
+    .{ .first = 0x11be2, .last = 0x11bef },
+    .{ .first = 0x11bfa, .last = 0x11bff },
+    .{ .first = 0x11c09, .last = 0x11c09 },
+    .{ .first = 0x11c37, .last = 0x11c37 },
+    .{ .first = 0x11c46, .last = 0x11c4f },
+    .{ .first = 0x11c6d, .last = 0x11c6f },
+    .{ .first = 0x11c90, .last = 0x11c91 },
+    .{ .first = 0x11ca8, .last = 0x11ca8 },
+    .{ .first = 0x11cb7, .last = 0x11cff },
+    .{ .first = 0x11d07, .last = 0x11d07 },
+    .{ .first = 0x11d0a, .last = 0x11d0a },
+    .{ .first = 0x11d37, .last = 0x11d39 },
+    .{ .first = 0x11d3b, .last = 0x11d3b },
+    .{ .first = 0x11d3e, .last = 0x11d3e },
+    .{ .first = 0x11d48, .last = 0x11d4f },
+    .{ .first = 0x11d5a, .last = 0x11d5f },
+    .{ .first = 0x11d66, .last = 0x11d66 },
+    .{ .first = 0x11d69, .last = 0x11d69 },
+    .{ .first = 0x11d8f, .last = 0x11d8f },
+    .{ .first = 0x11d92, .last = 0x11d92 },
+    .{ .first = 0x11d99, .last = 0x11d9f },
+    .{ .first = 0x11daa, .last = 0x11daf },
+    .{ .first = 0x11ddc, .last = 0x11ddf },
+    .{ .first = 0x11dea, .last = 0x11edf },
+    .{ .first = 0x11ef9, .last = 0x11eff },
+    .{ .first = 0x11f11, .last = 0x11f11 },
+    .{ .first = 0x11f3b, .last = 0x11f3d },
+    .{ .first = 0x11f5b, .last = 0x11faf },
+    .{ .first = 0x11fb1, .last = 0x11fbf },
+    .{ .first = 0x11ff2, .last = 0x11ffe },
+    .{ .first = 0x1239a, .last = 0x123ff },
+    .{ .first = 0x1246f, .last = 0x1246f },
+    .{ .first = 0x12475, .last = 0x1247f },
+    .{ .first = 0x12544, .last = 0x12f8f },
+    .{ .first = 0x12ff3, .last = 0x12fff },
+    .{ .first = 0x13456, .last = 0x1345f },
+    .{ .first = 0x143fb, .last = 0x143ff },
+    .{ .first = 0x14647, .last = 0x160ff },
+    .{ .first = 0x1613a, .last = 0x167ff },
+    .{ .first = 0x16a39, .last = 0x16a3f },
+    .{ .first = 0x16a5f, .last = 0x16a5f },
+    .{ .first = 0x16a6a, .last = 0x16a6d },
+    .{ .first = 0x16abf, .last = 0x16abf },
+    .{ .first = 0x16aca, .last = 0x16acf },
+    .{ .first = 0x16aee, .last = 0x16aef },
+    .{ .first = 0x16af6, .last = 0x16aff },
+    .{ .first = 0x16b46, .last = 0x16b4f },
+    .{ .first = 0x16b5a, .last = 0x16b5a },
+    .{ .first = 0x16b62, .last = 0x16b62 },
+    .{ .first = 0x16b78, .last = 0x16b7c },
+    .{ .first = 0x16b90, .last = 0x16d3f },
+    .{ .first = 0x16d7a, .last = 0x16e3f },
+    .{ .first = 0x16e9b, .last = 0x16e9f },
+    .{ .first = 0x16eb9, .last = 0x16eba },
+    .{ .first = 0x16ed4, .last = 0x16eff },
+    .{ .first = 0x16f4b, .last = 0x16f4e },
+    .{ .first = 0x16f88, .last = 0x16f8e },
+    .{ .first = 0x16fa0, .last = 0x16fdf },
+    .{ .first = 0x16fe5, .last = 0x16fef },
+    .{ .first = 0x16ff7, .last = 0x16fff },
+    .{ .first = 0x18cd6, .last = 0x18cfe },
+    .{ .first = 0x18d1f, .last = 0x18d7f },
+    .{ .first = 0x18df3, .last = 0x1afef },
+    .{ .first = 0x1aff4, .last = 0x1aff4 },
+    .{ .first = 0x1affc, .last = 0x1affc },
+    .{ .first = 0x1afff, .last = 0x1afff },
+    .{ .first = 0x1b123, .last = 0x1b131 },
+    .{ .first = 0x1b133, .last = 0x1b14f },
+    .{ .first = 0x1b153, .last = 0x1b154 },
+    .{ .first = 0x1b156, .last = 0x1b163 },
+    .{ .first = 0x1b168, .last = 0x1b16f },
+    .{ .first = 0x1b2fc, .last = 0x1bbff },
+    .{ .first = 0x1bc6b, .last = 0x1bc6f },
+    .{ .first = 0x1bc7d, .last = 0x1bc7f },
+    .{ .first = 0x1bc89, .last = 0x1bc8f },
+    .{ .first = 0x1bc9a, .last = 0x1bc9b },
+    .{ .first = 0x1bca4, .last = 0x1cbff },
+    .{ .first = 0x1ccfd, .last = 0x1ccff },
+    .{ .first = 0x1ceb4, .last = 0x1ceb9 },
+    .{ .first = 0x1ced1, .last = 0x1cedf },
+    .{ .first = 0x1cef1, .last = 0x1ceff },
+    .{ .first = 0x1cf2e, .last = 0x1cf2f },
+    .{ .first = 0x1cf47, .last = 0x1cf4f },
+    .{ .first = 0x1cfc4, .last = 0x1cfff },
+    .{ .first = 0x1d0f6, .last = 0x1d0ff },
+    .{ .first = 0x1d127, .last = 0x1d128 },
+    .{ .first = 0x1d1eb, .last = 0x1d1ff },
+    .{ .first = 0x1d246, .last = 0x1d2bf },
+    .{ .first = 0x1d2d4, .last = 0x1d2df },
+    .{ .first = 0x1d2f4, .last = 0x1d2ff },
+    .{ .first = 0x1d357, .last = 0x1d35f },
+    .{ .first = 0x1d379, .last = 0x1d3ff },
+    .{ .first = 0x1d455, .last = 0x1d455 },
+    .{ .first = 0x1d49d, .last = 0x1d49d },
+    .{ .first = 0x1d4a0, .last = 0x1d4a1 },
+    .{ .first = 0x1d4a3, .last = 0x1d4a4 },
+    .{ .first = 0x1d4a7, .last = 0x1d4a8 },
+    .{ .first = 0x1d4ad, .last = 0x1d4ad },
+    .{ .first = 0x1d4ba, .last = 0x1d4ba },
+    .{ .first = 0x1d4bc, .last = 0x1d4bc },
+    .{ .first = 0x1d4c4, .last = 0x1d4c4 },
+    .{ .first = 0x1d506, .last = 0x1d506 },
+    .{ .first = 0x1d50b, .last = 0x1d50c },
+    .{ .first = 0x1d515, .last = 0x1d515 },
+    .{ .first = 0x1d51d, .last = 0x1d51d },
+    .{ .first = 0x1d53a, .last = 0x1d53a },
+    .{ .first = 0x1d53f, .last = 0x1d53f },
+    .{ .first = 0x1d545, .last = 0x1d545 },
+    .{ .first = 0x1d547, .last = 0x1d549 },
+    .{ .first = 0x1d551, .last = 0x1d551 },
+    .{ .first = 0x1d6a6, .last = 0x1d6a7 },
+    .{ .first = 0x1d7cc, .last = 0x1d7cd },
+    .{ .first = 0x1da8c, .last = 0x1da9a },
+    .{ .first = 0x1daa0, .last = 0x1daa0 },
+    .{ .first = 0x1dab0, .last = 0x1deff },
+    .{ .first = 0x1df1f, .last = 0x1df24 },
+    .{ .first = 0x1df2b, .last = 0x1dfff },
+    .{ .first = 0x1e007, .last = 0x1e007 },
+    .{ .first = 0x1e019, .last = 0x1e01a },
+    .{ .first = 0x1e022, .last = 0x1e022 },
+    .{ .first = 0x1e025, .last = 0x1e025 },
+    .{ .first = 0x1e02b, .last = 0x1e02f },
+    .{ .first = 0x1e06e, .last = 0x1e08e },
+    .{ .first = 0x1e090, .last = 0x1e0ff },
+    .{ .first = 0x1e12d, .last = 0x1e12f },
+    .{ .first = 0x1e13e, .last = 0x1e13f },
+    .{ .first = 0x1e14a, .last = 0x1e14d },
+    .{ .first = 0x1e150, .last = 0x1e28f },
+    .{ .first = 0x1e2af, .last = 0x1e2bf },
+    .{ .first = 0x1e2fa, .last = 0x1e2fe },
+    .{ .first = 0x1e300, .last = 0x1e4cf },
+    .{ .first = 0x1e4fa, .last = 0x1e5cf },
+    .{ .first = 0x1e5fb, .last = 0x1e5fe },
+    .{ .first = 0x1e600, .last = 0x1e6bf },
+    .{ .first = 0x1e6df, .last = 0x1e6df },
+    .{ .first = 0x1e6f6, .last = 0x1e6fd },
+    .{ .first = 0x1e700, .last = 0x1e7df },
+    .{ .first = 0x1e7e7, .last = 0x1e7e7 },
+    .{ .first = 0x1e7ec, .last = 0x1e7ec },
+    .{ .first = 0x1e7ef, .last = 0x1e7ef },
+    .{ .first = 0x1e7ff, .last = 0x1e7ff },
+    .{ .first = 0x1e8c5, .last = 0x1e8c6 },
+    .{ .first = 0x1e8d7, .last = 0x1e8ff },
+    .{ .first = 0x1e94c, .last = 0x1e94f },
+    .{ .first = 0x1e95a, .last = 0x1e95d },
+    .{ .first = 0x1e960, .last = 0x1ec70 },
+    .{ .first = 0x1ecb5, .last = 0x1ed00 },
+    .{ .first = 0x1ed3e, .last = 0x1edff },
+    .{ .first = 0x1ee04, .last = 0x1ee04 },
+    .{ .first = 0x1ee20, .last = 0x1ee20 },
+    .{ .first = 0x1ee23, .last = 0x1ee23 },
+    .{ .first = 0x1ee25, .last = 0x1ee26 },
+    .{ .first = 0x1ee28, .last = 0x1ee28 },
+    .{ .first = 0x1ee33, .last = 0x1ee33 },
+    .{ .first = 0x1ee38, .last = 0x1ee38 },
+    .{ .first = 0x1ee3a, .last = 0x1ee3a },
+    .{ .first = 0x1ee3c, .last = 0x1ee41 },
+    .{ .first = 0x1ee43, .last = 0x1ee46 },
+    .{ .first = 0x1ee48, .last = 0x1ee48 },
+    .{ .first = 0x1ee4a, .last = 0x1ee4a },
+    .{ .first = 0x1ee4c, .last = 0x1ee4c },
+    .{ .first = 0x1ee50, .last = 0x1ee50 },
+    .{ .first = 0x1ee53, .last = 0x1ee53 },
+    .{ .first = 0x1ee55, .last = 0x1ee56 },
+    .{ .first = 0x1ee58, .last = 0x1ee58 },
+    .{ .first = 0x1ee5a, .last = 0x1ee5a },
+    .{ .first = 0x1ee5c, .last = 0x1ee5c },
+    .{ .first = 0x1ee5e, .last = 0x1ee5e },
+    .{ .first = 0x1ee60, .last = 0x1ee60 },
+    .{ .first = 0x1ee63, .last = 0x1ee63 },
+    .{ .first = 0x1ee65, .last = 0x1ee66 },
+    .{ .first = 0x1ee6b, .last = 0x1ee6b },
+    .{ .first = 0x1ee73, .last = 0x1ee73 },
+    .{ .first = 0x1ee78, .last = 0x1ee78 },
+    .{ .first = 0x1ee7d, .last = 0x1ee7d },
+    .{ .first = 0x1ee7f, .last = 0x1ee7f },
+    .{ .first = 0x1ee8a, .last = 0x1ee8a },
+    .{ .first = 0x1ee9c, .last = 0x1eea0 },
+    .{ .first = 0x1eea4, .last = 0x1eea4 },
+    .{ .first = 0x1eeaa, .last = 0x1eeaa },
+    .{ .first = 0x1eebc, .last = 0x1eeef },
+    .{ .first = 0x1eef2, .last = 0x1efff },
+    .{ .first = 0x1f02c, .last = 0x1f02f },
+    .{ .first = 0x1f094, .last = 0x1f09f },
+    .{ .first = 0x1f0af, .last = 0x1f0b0 },
+    .{ .first = 0x1f0c0, .last = 0x1f0c0 },
+    .{ .first = 0x1f0d0, .last = 0x1f0d0 },
+    .{ .first = 0x1f0f6, .last = 0x1f0ff },
+    .{ .first = 0x1f1ae, .last = 0x1f1e5 },
+    .{ .first = 0x1f203, .last = 0x1f20f },
+    .{ .first = 0x1f23c, .last = 0x1f23f },
+    .{ .first = 0x1f249, .last = 0x1f24f },
+    .{ .first = 0x1f252, .last = 0x1f25f },
+    .{ .first = 0x1f266, .last = 0x1f2ff },
+    .{ .first = 0x1f6d9, .last = 0x1f6db },
+    .{ .first = 0x1f6ed, .last = 0x1f6ef },
+    .{ .first = 0x1f6fd, .last = 0x1f6ff },
+    .{ .first = 0x1f7da, .last = 0x1f7df },
+    .{ .first = 0x1f7ec, .last = 0x1f7ef },
+    .{ .first = 0x1f7f1, .last = 0x1f7ff },
+    .{ .first = 0x1f80c, .last = 0x1f80f },
+    .{ .first = 0x1f848, .last = 0x1f84f },
+    .{ .first = 0x1f85a, .last = 0x1f85f },
+    .{ .first = 0x1f888, .last = 0x1f88f },
+    .{ .first = 0x1f8ae, .last = 0x1f8af },
+    .{ .first = 0x1f8bc, .last = 0x1f8bf },
+    .{ .first = 0x1f8c2, .last = 0x1f8cf },
+    .{ .first = 0x1f8d9, .last = 0x1f8ff },
+    .{ .first = 0x1fa58, .last = 0x1fa5f },
+    .{ .first = 0x1fa6e, .last = 0x1fa6f },
+    .{ .first = 0x1fa7d, .last = 0x1fa7f },
+    .{ .first = 0x1fa8b, .last = 0x1fa8d },
+    .{ .first = 0x1fac7, .last = 0x1fac7 },
+    .{ .first = 0x1fac9, .last = 0x1facc },
+    .{ .first = 0x1fadd, .last = 0x1fade },
+    .{ .first = 0x1faeb, .last = 0x1faee },
+    .{ .first = 0x1faf9, .last = 0x1faff },
+    .{ .first = 0x1fb93, .last = 0x1fb93 },
+    .{ .first = 0x1fbfb, .last = 0x1ffff },
+    .{ .first = 0x2a6e0, .last = 0x2a6ff },
+    .{ .first = 0x2b81e, .last = 0x2b81f },
+    .{ .first = 0x2ceae, .last = 0x2ceaf },
+    .{ .first = 0x2ebe1, .last = 0x2ebef },
+    .{ .first = 0x2ee5e, .last = 0x2f7ff },
+    .{ .first = 0x2fa1e, .last = 0x2ffff },
+    .{ .first = 0x3134b, .last = 0x3134f },
+    .{ .first = 0x3347a, .last = 0xe0000 },
+    .{ .first = 0xe0002, .last = 0xe001f },
+    .{ .first = 0xe0080, .last = 0xe00ff },
+    .{ .first = 0xe01f0, .last = 0x10ffff },
 };
 
-const ranges_script_greek = [_]Range{
-    .{ .first = 0x370, .last = 0x373 },
-    .{ .first = 0x375, .last = 0x377 },
-    .{ .first = 0x37a, .last = 0x37d },
-    .{ .first = 0x37f, .last = 0x37f },
-    .{ .first = 0x384, .last = 0x384 },
-    .{ .first = 0x386, .last = 0x386 },
-    .{ .first = 0x388, .last = 0x38a },
-    .{ .first = 0x38c, .last = 0x38c },
-    .{ .first = 0x38e, .last = 0x3a1 },
-    .{ .first = 0x3a3, .last = 0x3e1 },
-    .{ .first = 0x3f0, .last = 0x3ff },
-    .{ .first = 0x1d26, .last = 0x1d2a },
-    .{ .first = 0x1d5d, .last = 0x1d61 },
-    .{ .first = 0x1d66, .last = 0x1d6a },
-    .{ .first = 0x1dbf, .last = 0x1dbf },
-    .{ .first = 0x1f00, .last = 0x1f15 },
-    .{ .first = 0x1f18, .last = 0x1f1d },
-    .{ .first = 0x1f20, .last = 0x1f45 },
-    .{ .first = 0x1f48, .last = 0x1f4d },
-    .{ .first = 0x1f50, .last = 0x1f57 },
-    .{ .first = 0x1f59, .last = 0x1f59 },
-    .{ .first = 0x1f5b, .last = 0x1f5b },
-    .{ .first = 0x1f5d, .last = 0x1f5d },
-    .{ .first = 0x1f5f, .last = 0x1f7d },
-    .{ .first = 0x1f80, .last = 0x1fb4 },
-    .{ .first = 0x1fb6, .last = 0x1fc4 },
-    .{ .first = 0x1fc6, .last = 0x1fd3 },
-    .{ .first = 0x1fd6, .last = 0x1fdb },
-    .{ .first = 0x1fdd, .last = 0x1fef },
-    .{ .first = 0x1ff2, .last = 0x1ff4 },
-    .{ .first = 0x1ff6, .last = 0x1ffe },
-    .{ .first = 0x2126, .last = 0x2126 },
-    .{ .first = 0xab65, .last = 0xab65 },
-    .{ .first = 0x10140, .last = 0x1018e },
-    .{ .first = 0x101a0, .last = 0x101a0 },
-    .{ .first = 0x1d200, .last = 0x1d245 },
+const ranges_script_extensions_unknown = [_]Range{
+    .{ .first = 0x378, .last = 0x379 },
+    .{ .first = 0x380, .last = 0x383 },
+    .{ .first = 0x38b, .last = 0x38b },
+    .{ .first = 0x38d, .last = 0x38d },
+    .{ .first = 0x3a2, .last = 0x3a2 },
+    .{ .first = 0x530, .last = 0x530 },
+    .{ .first = 0x557, .last = 0x558 },
+    .{ .first = 0x58b, .last = 0x58c },
+    .{ .first = 0x590, .last = 0x590 },
+    .{ .first = 0x5c8, .last = 0x5cf },
+    .{ .first = 0x5eb, .last = 0x5ee },
+    .{ .first = 0x5f5, .last = 0x5ff },
+    .{ .first = 0x70e, .last = 0x70e },
+    .{ .first = 0x74b, .last = 0x74c },
+    .{ .first = 0x7b2, .last = 0x7bf },
+    .{ .first = 0x7fb, .last = 0x7fc },
+    .{ .first = 0x82e, .last = 0x82f },
+    .{ .first = 0x83f, .last = 0x83f },
+    .{ .first = 0x85c, .last = 0x85d },
+    .{ .first = 0x85f, .last = 0x85f },
+    .{ .first = 0x86b, .last = 0x86f },
+    .{ .first = 0x892, .last = 0x896 },
+    .{ .first = 0x984, .last = 0x984 },
+    .{ .first = 0x98d, .last = 0x98e },
+    .{ .first = 0x991, .last = 0x992 },
+    .{ .first = 0x9a9, .last = 0x9a9 },
+    .{ .first = 0x9b1, .last = 0x9b1 },
+    .{ .first = 0x9b3, .last = 0x9b5 },
+    .{ .first = 0x9ba, .last = 0x9bb },
+    .{ .first = 0x9c5, .last = 0x9c6 },
+    .{ .first = 0x9c9, .last = 0x9ca },
+    .{ .first = 0x9cf, .last = 0x9d6 },
+    .{ .first = 0x9d8, .last = 0x9db },
+    .{ .first = 0x9de, .last = 0x9de },
+    .{ .first = 0x9e4, .last = 0x9e5 },
+    .{ .first = 0x9ff, .last = 0xa00 },
+    .{ .first = 0xa04, .last = 0xa04 },
+    .{ .first = 0xa0b, .last = 0xa0e },
+    .{ .first = 0xa11, .last = 0xa12 },
+    .{ .first = 0xa29, .last = 0xa29 },
+    .{ .first = 0xa31, .last = 0xa31 },
+    .{ .first = 0xa34, .last = 0xa34 },
+    .{ .first = 0xa37, .last = 0xa37 },
+    .{ .first = 0xa3a, .last = 0xa3b },
+    .{ .first = 0xa3d, .last = 0xa3d },
+    .{ .first = 0xa43, .last = 0xa46 },
+    .{ .first = 0xa49, .last = 0xa4a },
+    .{ .first = 0xa4e, .last = 0xa50 },
+    .{ .first = 0xa52, .last = 0xa58 },
+    .{ .first = 0xa5d, .last = 0xa5d },
+    .{ .first = 0xa5f, .last = 0xa65 },
+    .{ .first = 0xa77, .last = 0xa80 },
+    .{ .first = 0xa84, .last = 0xa84 },
+    .{ .first = 0xa8e, .last = 0xa8e },
+    .{ .first = 0xa92, .last = 0xa92 },
+    .{ .first = 0xaa9, .last = 0xaa9 },
+    .{ .first = 0xab1, .last = 0xab1 },
+    .{ .first = 0xab4, .last = 0xab4 },
+    .{ .first = 0xaba, .last = 0xabb },
+    .{ .first = 0xac6, .last = 0xac6 },
+    .{ .first = 0xaca, .last = 0xaca },
+    .{ .first = 0xace, .last = 0xacf },
+    .{ .first = 0xad1, .last = 0xadf },
+    .{ .first = 0xae4, .last = 0xae5 },
+    .{ .first = 0xaf2, .last = 0xaf8 },
+    .{ .first = 0xb00, .last = 0xb00 },
+    .{ .first = 0xb04, .last = 0xb04 },
+    .{ .first = 0xb0d, .last = 0xb0e },
+    .{ .first = 0xb11, .last = 0xb12 },
+    .{ .first = 0xb29, .last = 0xb29 },
+    .{ .first = 0xb31, .last = 0xb31 },
+    .{ .first = 0xb34, .last = 0xb34 },
+    .{ .first = 0xb3a, .last = 0xb3b },
+    .{ .first = 0xb45, .last = 0xb46 },
+    .{ .first = 0xb49, .last = 0xb4a },
+    .{ .first = 0xb4e, .last = 0xb54 },
+    .{ .first = 0xb58, .last = 0xb5b },
+    .{ .first = 0xb5e, .last = 0xb5e },
+    .{ .first = 0xb64, .last = 0xb65 },
+    .{ .first = 0xb78, .last = 0xb81 },
+    .{ .first = 0xb84, .last = 0xb84 },
+    .{ .first = 0xb8b, .last = 0xb8d },
+    .{ .first = 0xb91, .last = 0xb91 },
+    .{ .first = 0xb96, .last = 0xb98 },
+    .{ .first = 0xb9b, .last = 0xb9b },
+    .{ .first = 0xb9d, .last = 0xb9d },
+    .{ .first = 0xba0, .last = 0xba2 },
+    .{ .first = 0xba5, .last = 0xba7 },
+    .{ .first = 0xbab, .last = 0xbad },
+    .{ .first = 0xbba, .last = 0xbbd },
+    .{ .first = 0xbc3, .last = 0xbc5 },
+    .{ .first = 0xbc9, .last = 0xbc9 },
+    .{ .first = 0xbce, .last = 0xbcf },
+    .{ .first = 0xbd1, .last = 0xbd6 },
+    .{ .first = 0xbd8, .last = 0xbe5 },
+    .{ .first = 0xbfb, .last = 0xbff },
+    .{ .first = 0xc0d, .last = 0xc0d },
+    .{ .first = 0xc11, .last = 0xc11 },
+    .{ .first = 0xc29, .last = 0xc29 },
+    .{ .first = 0xc3a, .last = 0xc3b },
+    .{ .first = 0xc45, .last = 0xc45 },
+    .{ .first = 0xc49, .last = 0xc49 },
+    .{ .first = 0xc4e, .last = 0xc54 },
+    .{ .first = 0xc57, .last = 0xc57 },
+    .{ .first = 0xc5b, .last = 0xc5b },
+    .{ .first = 0xc5e, .last = 0xc5f },
+    .{ .first = 0xc64, .last = 0xc65 },
+    .{ .first = 0xc70, .last = 0xc76 },
+    .{ .first = 0xc8d, .last = 0xc8d },
+    .{ .first = 0xc91, .last = 0xc91 },
+    .{ .first = 0xca9, .last = 0xca9 },
+    .{ .first = 0xcb4, .last = 0xcb4 },
+    .{ .first = 0xcba, .last = 0xcbb },
+    .{ .first = 0xcc5, .last = 0xcc5 },
+    .{ .first = 0xcc9, .last = 0xcc9 },
+    .{ .first = 0xcce, .last = 0xcd4 },
+    .{ .first = 0xcd7, .last = 0xcdb },
+    .{ .first = 0xcdf, .last = 0xcdf },
+    .{ .first = 0xce4, .last = 0xce5 },
+    .{ .first = 0xcf0, .last = 0xcf0 },
+    .{ .first = 0xcf4, .last = 0xcff },
+    .{ .first = 0xd0d, .last = 0xd0d },
+    .{ .first = 0xd11, .last = 0xd11 },
+    .{ .first = 0xd45, .last = 0xd45 },
+    .{ .first = 0xd49, .last = 0xd49 },
+    .{ .first = 0xd50, .last = 0xd53 },
+    .{ .first = 0xd64, .last = 0xd65 },
+    .{ .first = 0xd80, .last = 0xd80 },
+    .{ .first = 0xd84, .last = 0xd84 },
+    .{ .first = 0xd97, .last = 0xd99 },
+    .{ .first = 0xdb2, .last = 0xdb2 },
+    .{ .first = 0xdbc, .last = 0xdbc },
+    .{ .first = 0xdbe, .last = 0xdbf },
+    .{ .first = 0xdc7, .last = 0xdc9 },
+    .{ .first = 0xdcb, .last = 0xdce },
+    .{ .first = 0xdd5, .last = 0xdd5 },
+    .{ .first = 0xdd7, .last = 0xdd7 },
+    .{ .first = 0xde0, .last = 0xde5 },
+    .{ .first = 0xdf0, .last = 0xdf1 },
+    .{ .first = 0xdf5, .last = 0xe00 },
+    .{ .first = 0xe3b, .last = 0xe3e },
+    .{ .first = 0xe5c, .last = 0xe80 },
+    .{ .first = 0xe83, .last = 0xe83 },
+    .{ .first = 0xe85, .last = 0xe85 },
+    .{ .first = 0xe8b, .last = 0xe8b },
+    .{ .first = 0xea4, .last = 0xea4 },
+    .{ .first = 0xea6, .last = 0xea6 },
+    .{ .first = 0xebe, .last = 0xebf },
+    .{ .first = 0xec5, .last = 0xec5 },
+    .{ .first = 0xec7, .last = 0xec7 },
+    .{ .first = 0xecf, .last = 0xecf },
+    .{ .first = 0xeda, .last = 0xedb },
+    .{ .first = 0xee0, .last = 0xeff },
+    .{ .first = 0xf48, .last = 0xf48 },
+    .{ .first = 0xf6d, .last = 0xf70 },
+    .{ .first = 0xf98, .last = 0xf98 },
+    .{ .first = 0xfbd, .last = 0xfbd },
+    .{ .first = 0xfcd, .last = 0xfcd },
+    .{ .first = 0xfdb, .last = 0xfff },
+    .{ .first = 0x10c6, .last = 0x10c6 },
+    .{ .first = 0x10c8, .last = 0x10cc },
+    .{ .first = 0x10ce, .last = 0x10cf },
+    .{ .first = 0x1249, .last = 0x1249 },
+    .{ .first = 0x124e, .last = 0x124f },
+    .{ .first = 0x1257, .last = 0x1257 },
+    .{ .first = 0x1259, .last = 0x1259 },
+    .{ .first = 0x125e, .last = 0x125f },
+    .{ .first = 0x1289, .last = 0x1289 },
+    .{ .first = 0x128e, .last = 0x128f },
+    .{ .first = 0x12b1, .last = 0x12b1 },
+    .{ .first = 0x12b6, .last = 0x12b7 },
+    .{ .first = 0x12bf, .last = 0x12bf },
+    .{ .first = 0x12c1, .last = 0x12c1 },
+    .{ .first = 0x12c6, .last = 0x12c7 },
+    .{ .first = 0x12d7, .last = 0x12d7 },
+    .{ .first = 0x1311, .last = 0x1311 },
+    .{ .first = 0x1316, .last = 0x1317 },
+    .{ .first = 0x135b, .last = 0x135c },
+    .{ .first = 0x137d, .last = 0x137f },
+    .{ .first = 0x139a, .last = 0x139f },
+    .{ .first = 0x13f6, .last = 0x13f7 },
+    .{ .first = 0x13fe, .last = 0x13ff },
+    .{ .first = 0x169d, .last = 0x169f },
+    .{ .first = 0x16f9, .last = 0x16ff },
+    .{ .first = 0x1716, .last = 0x171e },
+    .{ .first = 0x1737, .last = 0x173f },
+    .{ .first = 0x1754, .last = 0x175f },
+    .{ .first = 0x176d, .last = 0x176d },
+    .{ .first = 0x1771, .last = 0x1771 },
+    .{ .first = 0x1774, .last = 0x177f },
+    .{ .first = 0x17de, .last = 0x17df },
+    .{ .first = 0x17ea, .last = 0x17ef },
+    .{ .first = 0x17fa, .last = 0x17ff },
+    .{ .first = 0x181a, .last = 0x181f },
+    .{ .first = 0x1879, .last = 0x187f },
+    .{ .first = 0x18ab, .last = 0x18af },
+    .{ .first = 0x18f6, .last = 0x18ff },
+    .{ .first = 0x191f, .last = 0x191f },
+    .{ .first = 0x192c, .last = 0x192f },
+    .{ .first = 0x193c, .last = 0x193f },
+    .{ .first = 0x1941, .last = 0x1943 },
+    .{ .first = 0x196e, .last = 0x196f },
+    .{ .first = 0x1975, .last = 0x197f },
+    .{ .first = 0x19ac, .last = 0x19af },
+    .{ .first = 0x19ca, .last = 0x19cf },
+    .{ .first = 0x19db, .last = 0x19dd },
+    .{ .first = 0x1a1c, .last = 0x1a1d },
+    .{ .first = 0x1a5f, .last = 0x1a5f },
+    .{ .first = 0x1a7d, .last = 0x1a7e },
+    .{ .first = 0x1a8a, .last = 0x1a8f },
+    .{ .first = 0x1a9a, .last = 0x1a9f },
+    .{ .first = 0x1aae, .last = 0x1aaf },
+    .{ .first = 0x1ade, .last = 0x1adf },
+    .{ .first = 0x1aec, .last = 0x1aff },
+    .{ .first = 0x1b4d, .last = 0x1b4d },
+    .{ .first = 0x1bf4, .last = 0x1bfb },
+    .{ .first = 0x1c38, .last = 0x1c3a },
+    .{ .first = 0x1c4a, .last = 0x1c4c },
+    .{ .first = 0x1c8b, .last = 0x1c8f },
+    .{ .first = 0x1cbb, .last = 0x1cbc },
+    .{ .first = 0x1cc8, .last = 0x1ccf },
+    .{ .first = 0x1cfb, .last = 0x1cff },
+    .{ .first = 0x1f16, .last = 0x1f17 },
+    .{ .first = 0x1f1e, .last = 0x1f1f },
+    .{ .first = 0x1f46, .last = 0x1f47 },
+    .{ .first = 0x1f4e, .last = 0x1f4f },
+    .{ .first = 0x1f58, .last = 0x1f58 },
+    .{ .first = 0x1f5a, .last = 0x1f5a },
+    .{ .first = 0x1f5c, .last = 0x1f5c },
+    .{ .first = 0x1f5e, .last = 0x1f5e },
+    .{ .first = 0x1f7e, .last = 0x1f7f },
+    .{ .first = 0x1fb5, .last = 0x1fb5 },
+    .{ .first = 0x1fc5, .last = 0x1fc5 },
+    .{ .first = 0x1fd4, .last = 0x1fd5 },
+    .{ .first = 0x1fdc, .last = 0x1fdc },
+    .{ .first = 0x1ff0, .last = 0x1ff1 },
+    .{ .first = 0x1ff5, .last = 0x1ff5 },
+    .{ .first = 0x1fff, .last = 0x1fff },
+    .{ .first = 0x2065, .last = 0x2065 },
+    .{ .first = 0x2072, .last = 0x2073 },
+    .{ .first = 0x208f, .last = 0x208f },
+    .{ .first = 0x209d, .last = 0x209f },
+    .{ .first = 0x20c2, .last = 0x20cf },
+    .{ .first = 0x20f1, .last = 0x20ff },
+    .{ .first = 0x218c, .last = 0x218f },
+    .{ .first = 0x242a, .last = 0x243f },
+    .{ .first = 0x244b, .last = 0x245f },
+    .{ .first = 0x2b74, .last = 0x2b75 },
+    .{ .first = 0x2cf4, .last = 0x2cf8 },
+    .{ .first = 0x2d26, .last = 0x2d26 },
+    .{ .first = 0x2d28, .last = 0x2d2c },
+    .{ .first = 0x2d2e, .last = 0x2d2f },
+    .{ .first = 0x2d68, .last = 0x2d6e },
+    .{ .first = 0x2d71, .last = 0x2d7e },
+    .{ .first = 0x2d97, .last = 0x2d9f },
+    .{ .first = 0x2da7, .last = 0x2da7 },
+    .{ .first = 0x2daf, .last = 0x2daf },
+    .{ .first = 0x2db7, .last = 0x2db7 },
+    .{ .first = 0x2dbf, .last = 0x2dbf },
+    .{ .first = 0x2dc7, .last = 0x2dc7 },
+    .{ .first = 0x2dcf, .last = 0x2dcf },
+    .{ .first = 0x2dd7, .last = 0x2dd7 },
+    .{ .first = 0x2ddf, .last = 0x2ddf },
+    .{ .first = 0x2e5e, .last = 0x2e7f },
+    .{ .first = 0x2e9a, .last = 0x2e9a },
+    .{ .first = 0x2ef4, .last = 0x2eff },
+    .{ .first = 0x2fd6, .last = 0x2fef },
+    .{ .first = 0x3040, .last = 0x3040 },
+    .{ .first = 0x3097, .last = 0x3098 },
+    .{ .first = 0x3100, .last = 0x3104 },
+    .{ .first = 0x3130, .last = 0x3130 },
+    .{ .first = 0x318f, .last = 0x318f },
+    .{ .first = 0x31e6, .last = 0x31ee },
+    .{ .first = 0x321f, .last = 0x321f },
+    .{ .first = 0xa48d, .last = 0xa48f },
+    .{ .first = 0xa4c7, .last = 0xa4cf },
+    .{ .first = 0xa62c, .last = 0xa63f },
+    .{ .first = 0xa6f8, .last = 0xa6ff },
+    .{ .first = 0xa7dd, .last = 0xa7f0 },
+    .{ .first = 0xa82d, .last = 0xa82f },
+    .{ .first = 0xa83a, .last = 0xa83f },
+    .{ .first = 0xa878, .last = 0xa87f },
+    .{ .first = 0xa8c6, .last = 0xa8cd },
+    .{ .first = 0xa8da, .last = 0xa8df },
+    .{ .first = 0xa954, .last = 0xa95e },
+    .{ .first = 0xa97d, .last = 0xa97f },
+    .{ .first = 0xa9ce, .last = 0xa9ce },
+    .{ .first = 0xa9da, .last = 0xa9dd },
+    .{ .first = 0xa9ff, .last = 0xa9ff },
+    .{ .first = 0xaa37, .last = 0xaa3f },
+    .{ .first = 0xaa4e, .last = 0xaa4f },
+    .{ .first = 0xaa5a, .last = 0xaa5b },
+    .{ .first = 0xaac3, .last = 0xaada },
+    .{ .first = 0xaaf7, .last = 0xab00 },
+    .{ .first = 0xab07, .last = 0xab08 },
+    .{ .first = 0xab0f, .last = 0xab10 },
+    .{ .first = 0xab17, .last = 0xab1f },
+    .{ .first = 0xab27, .last = 0xab27 },
+    .{ .first = 0xab2f, .last = 0xab2f },
+    .{ .first = 0xab6c, .last = 0xab6f },
+    .{ .first = 0xabee, .last = 0xabef },
+    .{ .first = 0xabfa, .last = 0xabff },
+    .{ .first = 0xd7a4, .last = 0xd7af },
+    .{ .first = 0xd7c7, .last = 0xd7ca },
+    .{ .first = 0xd7fc, .last = 0xf8ff },
+    .{ .first = 0xfa6e, .last = 0xfa6f },
+    .{ .first = 0xfada, .last = 0xfaff },
+    .{ .first = 0xfb07, .last = 0xfb12 },
+    .{ .first = 0xfb18, .last = 0xfb1c },
+    .{ .first = 0xfb37, .last = 0xfb37 },
+    .{ .first = 0xfb3d, .last = 0xfb3d },
+    .{ .first = 0xfb3f, .last = 0xfb3f },
+    .{ .first = 0xfb42, .last = 0xfb42 },
+    .{ .first = 0xfb45, .last = 0xfb45 },
+    .{ .first = 0xfdd0, .last = 0xfdef },
+    .{ .first = 0xfe1a, .last = 0xfe1f },
+    .{ .first = 0xfe53, .last = 0xfe53 },
+    .{ .first = 0xfe67, .last = 0xfe67 },
+    .{ .first = 0xfe6c, .last = 0xfe6f },
+    .{ .first = 0xfe75, .last = 0xfe75 },
+    .{ .first = 0xfefd, .last = 0xfefe },
+    .{ .first = 0xff00, .last = 0xff00 },
+    .{ .first = 0xffbf, .last = 0xffc1 },
+    .{ .first = 0xffc8, .last = 0xffc9 },
+    .{ .first = 0xffd0, .last = 0xffd1 },
+    .{ .first = 0xffd8, .last = 0xffd9 },
+    .{ .first = 0xffdd, .last = 0xffdf },
+    .{ .first = 0xffe7, .last = 0xffe7 },
+    .{ .first = 0xffef, .last = 0xfff8 },
+    .{ .first = 0xfffe, .last = 0xffff },
+    .{ .first = 0x1000c, .last = 0x1000c },
+    .{ .first = 0x10027, .last = 0x10027 },
+    .{ .first = 0x1003b, .last = 0x1003b },
+    .{ .first = 0x1003e, .last = 0x1003e },
+    .{ .first = 0x1004e, .last = 0x1004f },
+    .{ .first = 0x1005e, .last = 0x1007f },
+    .{ .first = 0x100fb, .last = 0x100ff },
+    .{ .first = 0x10103, .last = 0x10106 },
+    .{ .first = 0x10134, .last = 0x10136 },
+    .{ .first = 0x1018f, .last = 0x1018f },
+    .{ .first = 0x1019d, .last = 0x1019f },
+    .{ .first = 0x101a1, .last = 0x101cf },
+    .{ .first = 0x101fe, .last = 0x1027f },
+    .{ .first = 0x1029d, .last = 0x1029f },
+    .{ .first = 0x102d1, .last = 0x102df },
+    .{ .first = 0x102fc, .last = 0x102ff },
+    .{ .first = 0x10324, .last = 0x1032c },
+    .{ .first = 0x1034b, .last = 0x1034f },
+    .{ .first = 0x1037b, .last = 0x1037f },
+    .{ .first = 0x1039e, .last = 0x1039e },
+    .{ .first = 0x103c4, .last = 0x103c7 },
+    .{ .first = 0x103d6, .last = 0x103ff },
+    .{ .first = 0x1049e, .last = 0x1049f },
+    .{ .first = 0x104aa, .last = 0x104af },
+    .{ .first = 0x104d4, .last = 0x104d7 },
+    .{ .first = 0x104fc, .last = 0x104ff },
+    .{ .first = 0x10528, .last = 0x1052f },
+    .{ .first = 0x10564, .last = 0x1056e },
+    .{ .first = 0x1057b, .last = 0x1057b },
+    .{ .first = 0x1058b, .last = 0x1058b },
+    .{ .first = 0x10593, .last = 0x10593 },
+    .{ .first = 0x10596, .last = 0x10596 },
+    .{ .first = 0x105a2, .last = 0x105a2 },
+    .{ .first = 0x105b2, .last = 0x105b2 },
+    .{ .first = 0x105ba, .last = 0x105ba },
+    .{ .first = 0x105bd, .last = 0x105bf },
+    .{ .first = 0x105f4, .last = 0x105ff },
+    .{ .first = 0x10737, .last = 0x1073f },
+    .{ .first = 0x10756, .last = 0x1075f },
+    .{ .first = 0x10768, .last = 0x1077f },
+    .{ .first = 0x10786, .last = 0x10786 },
+    .{ .first = 0x107b1, .last = 0x107b1 },
+    .{ .first = 0x107bb, .last = 0x107ff },
+    .{ .first = 0x10806, .last = 0x10807 },
+    .{ .first = 0x10809, .last = 0x10809 },
+    .{ .first = 0x10836, .last = 0x10836 },
+    .{ .first = 0x10839, .last = 0x1083b },
+    .{ .first = 0x1083d, .last = 0x1083e },
+    .{ .first = 0x10856, .last = 0x10856 },
+    .{ .first = 0x1089f, .last = 0x108a6 },
+    .{ .first = 0x108b0, .last = 0x108df },
+    .{ .first = 0x108f3, .last = 0x108f3 },
+    .{ .first = 0x108f6, .last = 0x108fa },
+    .{ .first = 0x1091c, .last = 0x1091e },
+    .{ .first = 0x1093a, .last = 0x1093e },
+    .{ .first = 0x1095a, .last = 0x1097f },
+    .{ .first = 0x109b8, .last = 0x109bb },
+    .{ .first = 0x109d0, .last = 0x109d1 },
+    .{ .first = 0x10a04, .last = 0x10a04 },
+    .{ .first = 0x10a07, .last = 0x10a0b },
+    .{ .first = 0x10a14, .last = 0x10a14 },
+    .{ .first = 0x10a18, .last = 0x10a18 },
+    .{ .first = 0x10a36, .last = 0x10a37 },
+    .{ .first = 0x10a3b, .last = 0x10a3e },
+    .{ .first = 0x10a49, .last = 0x10a4f },
+    .{ .first = 0x10a59, .last = 0x10a5f },
+    .{ .first = 0x10aa0, .last = 0x10abf },
+    .{ .first = 0x10ae7, .last = 0x10aea },
+    .{ .first = 0x10af7, .last = 0x10aff },
+    .{ .first = 0x10b36, .last = 0x10b38 },
+    .{ .first = 0x10b56, .last = 0x10b57 },
+    .{ .first = 0x10b73, .last = 0x10b77 },
+    .{ .first = 0x10b92, .last = 0x10b98 },
+    .{ .first = 0x10b9d, .last = 0x10ba8 },
+    .{ .first = 0x10bb0, .last = 0x10bff },
+    .{ .first = 0x10c49, .last = 0x10c7f },
+    .{ .first = 0x10cb3, .last = 0x10cbf },
+    .{ .first = 0x10cf3, .last = 0x10cf9 },
+    .{ .first = 0x10d28, .last = 0x10d2f },
+    .{ .first = 0x10d3a, .last = 0x10d3f },
+    .{ .first = 0x10d66, .last = 0x10d68 },
+    .{ .first = 0x10d86, .last = 0x10d8d },
+    .{ .first = 0x10d90, .last = 0x10e5f },
+    .{ .first = 0x10e7f, .last = 0x10e7f },
+    .{ .first = 0x10eaa, .last = 0x10eaa },
+    .{ .first = 0x10eae, .last = 0x10eaf },
+    .{ .first = 0x10eb2, .last = 0x10ec1 },
+    .{ .first = 0x10ec8, .last = 0x10ecf },
+    .{ .first = 0x10ed9, .last = 0x10ef9 },
+    .{ .first = 0x10f28, .last = 0x10f2f },
+    .{ .first = 0x10f5a, .last = 0x10f6f },
+    .{ .first = 0x10f8a, .last = 0x10faf },
+    .{ .first = 0x10fcc, .last = 0x10fdf },
+    .{ .first = 0x10ff7, .last = 0x10fff },
+    .{ .first = 0x1104e, .last = 0x11051 },
+    .{ .first = 0x11076, .last = 0x1107e },
+    .{ .first = 0x110c3, .last = 0x110cc },
+    .{ .first = 0x110ce, .last = 0x110cf },
+    .{ .first = 0x110e9, .last = 0x110ef },
+    .{ .first = 0x110fa, .last = 0x110ff },
+    .{ .first = 0x11135, .last = 0x11135 },
+    .{ .first = 0x11148, .last = 0x1114f },
+    .{ .first = 0x11177, .last = 0x1117f },
+    .{ .first = 0x111e0, .last = 0x111e0 },
+    .{ .first = 0x111f5, .last = 0x111ff },
+    .{ .first = 0x11212, .last = 0x11212 },
+    .{ .first = 0x11242, .last = 0x1127f },
+    .{ .first = 0x11287, .last = 0x11287 },
+    .{ .first = 0x11289, .last = 0x11289 },
+    .{ .first = 0x1128e, .last = 0x1128e },
+    .{ .first = 0x1129e, .last = 0x1129e },
+    .{ .first = 0x112aa, .last = 0x112af },
+    .{ .first = 0x112eb, .last = 0x112ef },
+    .{ .first = 0x112fa, .last = 0x112ff },
+    .{ .first = 0x11304, .last = 0x11304 },
+    .{ .first = 0x1130d, .last = 0x1130e },
+    .{ .first = 0x11311, .last = 0x11312 },
+    .{ .first = 0x11329, .last = 0x11329 },
+    .{ .first = 0x11331, .last = 0x11331 },
+    .{ .first = 0x11334, .last = 0x11334 },
+    .{ .first = 0x1133a, .last = 0x1133a },
+    .{ .first = 0x11345, .last = 0x11346 },
+    .{ .first = 0x11349, .last = 0x1134a },
+    .{ .first = 0x1134e, .last = 0x1134f },
+    .{ .first = 0x11351, .last = 0x11356 },
+    .{ .first = 0x11358, .last = 0x1135c },
+    .{ .first = 0x11364, .last = 0x11365 },
+    .{ .first = 0x1136d, .last = 0x1136f },
+    .{ .first = 0x11375, .last = 0x1137f },
+    .{ .first = 0x1138a, .last = 0x1138a },
+    .{ .first = 0x1138c, .last = 0x1138d },
+    .{ .first = 0x1138f, .last = 0x1138f },
+    .{ .first = 0x113b6, .last = 0x113b6 },
+    .{ .first = 0x113c1, .last = 0x113c1 },
+    .{ .first = 0x113c3, .last = 0x113c4 },
+    .{ .first = 0x113c6, .last = 0x113c6 },
+    .{ .first = 0x113cb, .last = 0x113cb },
+    .{ .first = 0x113d6, .last = 0x113d6 },
+    .{ .first = 0x113d9, .last = 0x113e0 },
+    .{ .first = 0x113e3, .last = 0x113ff },
+    .{ .first = 0x1145c, .last = 0x1145c },
+    .{ .first = 0x11462, .last = 0x1147f },
+    .{ .first = 0x114c8, .last = 0x114cf },
+    .{ .first = 0x114da, .last = 0x1157f },
+    .{ .first = 0x115b6, .last = 0x115b7 },
+    .{ .first = 0x115de, .last = 0x115ff },
+    .{ .first = 0x11645, .last = 0x1164f },
+    .{ .first = 0x1165a, .last = 0x1165f },
+    .{ .first = 0x1166d, .last = 0x1167f },
+    .{ .first = 0x116ba, .last = 0x116bf },
+    .{ .first = 0x116ca, .last = 0x116cf },
+    .{ .first = 0x116e4, .last = 0x116ff },
+    .{ .first = 0x1171b, .last = 0x1171c },
+    .{ .first = 0x1172c, .last = 0x1172f },
+    .{ .first = 0x11747, .last = 0x117ff },
+    .{ .first = 0x1183c, .last = 0x1189f },
+    .{ .first = 0x118f3, .last = 0x118fe },
+    .{ .first = 0x11907, .last = 0x11908 },
+    .{ .first = 0x1190a, .last = 0x1190b },
+    .{ .first = 0x11914, .last = 0x11914 },
+    .{ .first = 0x11917, .last = 0x11917 },
+    .{ .first = 0x11936, .last = 0x11936 },
+    .{ .first = 0x11939, .last = 0x1193a },
+    .{ .first = 0x11947, .last = 0x1194f },
+    .{ .first = 0x1195a, .last = 0x1199f },
+    .{ .first = 0x119a8, .last = 0x119a9 },
+    .{ .first = 0x119d8, .last = 0x119d9 },
+    .{ .first = 0x119e5, .last = 0x119ff },
+    .{ .first = 0x11a48, .last = 0x11a4f },
+    .{ .first = 0x11aa3, .last = 0x11aaf },
+    .{ .first = 0x11af9, .last = 0x11aff },
+    .{ .first = 0x11b0a, .last = 0x11b5f },
+    .{ .first = 0x11b68, .last = 0x11bbf },
+    .{ .first = 0x11be2, .last = 0x11bef },
+    .{ .first = 0x11bfa, .last = 0x11bff },
+    .{ .first = 0x11c09, .last = 0x11c09 },
+    .{ .first = 0x11c37, .last = 0x11c37 },
+    .{ .first = 0x11c46, .last = 0x11c4f },
+    .{ .first = 0x11c6d, .last = 0x11c6f },
+    .{ .first = 0x11c90, .last = 0x11c91 },
+    .{ .first = 0x11ca8, .last = 0x11ca8 },
+    .{ .first = 0x11cb7, .last = 0x11cff },
+    .{ .first = 0x11d07, .last = 0x11d07 },
+    .{ .first = 0x11d0a, .last = 0x11d0a },
+    .{ .first = 0x11d37, .last = 0x11d39 },
+    .{ .first = 0x11d3b, .last = 0x11d3b },
+    .{ .first = 0x11d3e, .last = 0x11d3e },
+    .{ .first = 0x11d48, .last = 0x11d4f },
+    .{ .first = 0x11d5a, .last = 0x11d5f },
+    .{ .first = 0x11d66, .last = 0x11d66 },
+    .{ .first = 0x11d69, .last = 0x11d69 },
+    .{ .first = 0x11d8f, .last = 0x11d8f },
+    .{ .first = 0x11d92, .last = 0x11d92 },
+    .{ .first = 0x11d99, .last = 0x11d9f },
+    .{ .first = 0x11daa, .last = 0x11daf },
+    .{ .first = 0x11ddc, .last = 0x11ddf },
+    .{ .first = 0x11dea, .last = 0x11edf },
+    .{ .first = 0x11ef9, .last = 0x11eff },
+    .{ .first = 0x11f11, .last = 0x11f11 },
+    .{ .first = 0x11f3b, .last = 0x11f3d },
+    .{ .first = 0x11f5b, .last = 0x11faf },
+    .{ .first = 0x11fb1, .last = 0x11fbf },
+    .{ .first = 0x11ff2, .last = 0x11ffe },
+    .{ .first = 0x1239a, .last = 0x123ff },
+    .{ .first = 0x1246f, .last = 0x1246f },
+    .{ .first = 0x12475, .last = 0x1247f },
+    .{ .first = 0x12544, .last = 0x12f8f },
+    .{ .first = 0x12ff3, .last = 0x12fff },
+    .{ .first = 0x13456, .last = 0x1345f },
+    .{ .first = 0x143fb, .last = 0x143ff },
+    .{ .first = 0x14647, .last = 0x160ff },
+    .{ .first = 0x1613a, .last = 0x167ff },
+    .{ .first = 0x16a39, .last = 0x16a3f },
+    .{ .first = 0x16a5f, .last = 0x16a5f },
+    .{ .first = 0x16a6a, .last = 0x16a6d },
+    .{ .first = 0x16abf, .last = 0x16abf },
+    .{ .first = 0x16aca, .last = 0x16acf },
+    .{ .first = 0x16aee, .last = 0x16aef },
+    .{ .first = 0x16af6, .last = 0x16aff },
+    .{ .first = 0x16b46, .last = 0x16b4f },
+    .{ .first = 0x16b5a, .last = 0x16b5a },
+    .{ .first = 0x16b62, .last = 0x16b62 },
+    .{ .first = 0x16b78, .last = 0x16b7c },
+    .{ .first = 0x16b90, .last = 0x16d3f },
+    .{ .first = 0x16d7a, .last = 0x16e3f },
+    .{ .first = 0x16e9b, .last = 0x16e9f },
+    .{ .first = 0x16eb9, .last = 0x16eba },
+    .{ .first = 0x16ed4, .last = 0x16eff },
+    .{ .first = 0x16f4b, .last = 0x16f4e },
+    .{ .first = 0x16f88, .last = 0x16f8e },
+    .{ .first = 0x16fa0, .last = 0x16fdf },
+    .{ .first = 0x16fe5, .last = 0x16fef },
+    .{ .first = 0x16ff7, .last = 0x16fff },
+    .{ .first = 0x18cd6, .last = 0x18cfe },
+    .{ .first = 0x18d1f, .last = 0x18d7f },
+    .{ .first = 0x18df3, .last = 0x1afef },
+    .{ .first = 0x1aff4, .last = 0x1aff4 },
+    .{ .first = 0x1affc, .last = 0x1affc },
+    .{ .first = 0x1afff, .last = 0x1afff },
+    .{ .first = 0x1b123, .last = 0x1b131 },
+    .{ .first = 0x1b133, .last = 0x1b14f },
+    .{ .first = 0x1b153, .last = 0x1b154 },
+    .{ .first = 0x1b156, .last = 0x1b163 },
+    .{ .first = 0x1b168, .last = 0x1b16f },
+    .{ .first = 0x1b2fc, .last = 0x1bbff },
+    .{ .first = 0x1bc6b, .last = 0x1bc6f },
+    .{ .first = 0x1bc7d, .last = 0x1bc7f },
+    .{ .first = 0x1bc89, .last = 0x1bc8f },
+    .{ .first = 0x1bc9a, .last = 0x1bc9b },
+    .{ .first = 0x1bca4, .last = 0x1cbff },
+    .{ .first = 0x1ccfd, .last = 0x1ccff },
+    .{ .first = 0x1ceb4, .last = 0x1ceb9 },
+    .{ .first = 0x1ced1, .last = 0x1cedf },
+    .{ .first = 0x1cef1, .last = 0x1ceff },
+    .{ .first = 0x1cf2e, .last = 0x1cf2f },
+    .{ .first = 0x1cf47, .last = 0x1cf4f },
+    .{ .first = 0x1cfc4, .last = 0x1cfff },
+    .{ .first = 0x1d0f6, .last = 0x1d0ff },
+    .{ .first = 0x1d127, .last = 0x1d128 },
+    .{ .first = 0x1d1eb, .last = 0x1d1ff },
+    .{ .first = 0x1d246, .last = 0x1d2bf },
+    .{ .first = 0x1d2d4, .last = 0x1d2df },
+    .{ .first = 0x1d2f4, .last = 0x1d2ff },
+    .{ .first = 0x1d357, .last = 0x1d35f },
+    .{ .first = 0x1d379, .last = 0x1d3ff },
+    .{ .first = 0x1d455, .last = 0x1d455 },
+    .{ .first = 0x1d49d, .last = 0x1d49d },
+    .{ .first = 0x1d4a0, .last = 0x1d4a1 },
+    .{ .first = 0x1d4a3, .last = 0x1d4a4 },
+    .{ .first = 0x1d4a7, .last = 0x1d4a8 },
+    .{ .first = 0x1d4ad, .last = 0x1d4ad },
+    .{ .first = 0x1d4ba, .last = 0x1d4ba },
+    .{ .first = 0x1d4bc, .last = 0x1d4bc },
+    .{ .first = 0x1d4c4, .last = 0x1d4c4 },
+    .{ .first = 0x1d506, .last = 0x1d506 },
+    .{ .first = 0x1d50b, .last = 0x1d50c },
+    .{ .first = 0x1d515, .last = 0x1d515 },
+    .{ .first = 0x1d51d, .last = 0x1d51d },
+    .{ .first = 0x1d53a, .last = 0x1d53a },
+    .{ .first = 0x1d53f, .last = 0x1d53f },
+    .{ .first = 0x1d545, .last = 0x1d545 },
+    .{ .first = 0x1d547, .last = 0x1d549 },
+    .{ .first = 0x1d551, .last = 0x1d551 },
+    .{ .first = 0x1d6a6, .last = 0x1d6a7 },
+    .{ .first = 0x1d7cc, .last = 0x1d7cd },
+    .{ .first = 0x1da8c, .last = 0x1da9a },
+    .{ .first = 0x1daa0, .last = 0x1daa0 },
+    .{ .first = 0x1dab0, .last = 0x1deff },
+    .{ .first = 0x1df1f, .last = 0x1df24 },
+    .{ .first = 0x1df2b, .last = 0x1dfff },
+    .{ .first = 0x1e007, .last = 0x1e007 },
+    .{ .first = 0x1e019, .last = 0x1e01a },
+    .{ .first = 0x1e022, .last = 0x1e022 },
+    .{ .first = 0x1e025, .last = 0x1e025 },
+    .{ .first = 0x1e02b, .last = 0x1e02f },
+    .{ .first = 0x1e06e, .last = 0x1e08e },
+    .{ .first = 0x1e090, .last = 0x1e0ff },
+    .{ .first = 0x1e12d, .last = 0x1e12f },
+    .{ .first = 0x1e13e, .last = 0x1e13f },
+    .{ .first = 0x1e14a, .last = 0x1e14d },
+    .{ .first = 0x1e150, .last = 0x1e28f },
+    .{ .first = 0x1e2af, .last = 0x1e2bf },
+    .{ .first = 0x1e2fa, .last = 0x1e2fe },
+    .{ .first = 0x1e300, .last = 0x1e4cf },
+    .{ .first = 0x1e4fa, .last = 0x1e5cf },
+    .{ .first = 0x1e5fb, .last = 0x1e5fe },
+    .{ .first = 0x1e600, .last = 0x1e6bf },
+    .{ .first = 0x1e6df, .last = 0x1e6df },
+    .{ .first = 0x1e6f6, .last = 0x1e6fd },
+    .{ .first = 0x1e700, .last = 0x1e7df },
+    .{ .first = 0x1e7e7, .last = 0x1e7e7 },
+    .{ .first = 0x1e7ec, .last = 0x1e7ec },
+    .{ .first = 0x1e7ef, .last = 0x1e7ef },
+    .{ .first = 0x1e7ff, .last = 0x1e7ff },
+    .{ .first = 0x1e8c5, .last = 0x1e8c6 },
+    .{ .first = 0x1e8d7, .last = 0x1e8ff },
+    .{ .first = 0x1e94c, .last = 0x1e94f },
+    .{ .first = 0x1e95a, .last = 0x1e95d },
+    .{ .first = 0x1e960, .last = 0x1ec70 },
+    .{ .first = 0x1ecb5, .last = 0x1ed00 },
+    .{ .first = 0x1ed3e, .last = 0x1edff },
+    .{ .first = 0x1ee04, .last = 0x1ee04 },
+    .{ .first = 0x1ee20, .last = 0x1ee20 },
+    .{ .first = 0x1ee23, .last = 0x1ee23 },
+    .{ .first = 0x1ee25, .last = 0x1ee26 },
+    .{ .first = 0x1ee28, .last = 0x1ee28 },
+    .{ .first = 0x1ee33, .last = 0x1ee33 },
+    .{ .first = 0x1ee38, .last = 0x1ee38 },
+    .{ .first = 0x1ee3a, .last = 0x1ee3a },
+    .{ .first = 0x1ee3c, .last = 0x1ee41 },
+    .{ .first = 0x1ee43, .last = 0x1ee46 },
+    .{ .first = 0x1ee48, .last = 0x1ee48 },
+    .{ .first = 0x1ee4a, .last = 0x1ee4a },
+    .{ .first = 0x1ee4c, .last = 0x1ee4c },
+    .{ .first = 0x1ee50, .last = 0x1ee50 },
+    .{ .first = 0x1ee53, .last = 0x1ee53 },
+    .{ .first = 0x1ee55, .last = 0x1ee56 },
+    .{ .first = 0x1ee58, .last = 0x1ee58 },
+    .{ .first = 0x1ee5a, .last = 0x1ee5a },
+    .{ .first = 0x1ee5c, .last = 0x1ee5c },
+    .{ .first = 0x1ee5e, .last = 0x1ee5e },
+    .{ .first = 0x1ee60, .last = 0x1ee60 },
+    .{ .first = 0x1ee63, .last = 0x1ee63 },
+    .{ .first = 0x1ee65, .last = 0x1ee66 },
+    .{ .first = 0x1ee6b, .last = 0x1ee6b },
+    .{ .first = 0x1ee73, .last = 0x1ee73 },
+    .{ .first = 0x1ee78, .last = 0x1ee78 },
+    .{ .first = 0x1ee7d, .last = 0x1ee7d },
+    .{ .first = 0x1ee7f, .last = 0x1ee7f },
+    .{ .first = 0x1ee8a, .last = 0x1ee8a },
+    .{ .first = 0x1ee9c, .last = 0x1eea0 },
+    .{ .first = 0x1eea4, .last = 0x1eea4 },
+    .{ .first = 0x1eeaa, .last = 0x1eeaa },
+    .{ .first = 0x1eebc, .last = 0x1eeef },
+    .{ .first = 0x1eef2, .last = 0x1efff },
+    .{ .first = 0x1f02c, .last = 0x1f02f },
+    .{ .first = 0x1f094, .last = 0x1f09f },
+    .{ .first = 0x1f0af, .last = 0x1f0b0 },
+    .{ .first = 0x1f0c0, .last = 0x1f0c0 },
+    .{ .first = 0x1f0d0, .last = 0x1f0d0 },
+    .{ .first = 0x1f0f6, .last = 0x1f0ff },
+    .{ .first = 0x1f1ae, .last = 0x1f1e5 },
+    .{ .first = 0x1f203, .last = 0x1f20f },
+    .{ .first = 0x1f23c, .last = 0x1f23f },
+    .{ .first = 0x1f249, .last = 0x1f24f },
+    .{ .first = 0x1f252, .last = 0x1f25f },
+    .{ .first = 0x1f266, .last = 0x1f2ff },
+    .{ .first = 0x1f6d9, .last = 0x1f6db },
+    .{ .first = 0x1f6ed, .last = 0x1f6ef },
+    .{ .first = 0x1f6fd, .last = 0x1f6ff },
+    .{ .first = 0x1f7da, .last = 0x1f7df },
+    .{ .first = 0x1f7ec, .last = 0x1f7ef },
+    .{ .first = 0x1f7f1, .last = 0x1f7ff },
+    .{ .first = 0x1f80c, .last = 0x1f80f },
+    .{ .first = 0x1f848, .last = 0x1f84f },
+    .{ .first = 0x1f85a, .last = 0x1f85f },
+    .{ .first = 0x1f888, .last = 0x1f88f },
+    .{ .first = 0x1f8ae, .last = 0x1f8af },
+    .{ .first = 0x1f8bc, .last = 0x1f8bf },
+    .{ .first = 0x1f8c2, .last = 0x1f8cf },
+    .{ .first = 0x1f8d9, .last = 0x1f8ff },
+    .{ .first = 0x1fa58, .last = 0x1fa5f },
+    .{ .first = 0x1fa6e, .last = 0x1fa6f },
+    .{ .first = 0x1fa7d, .last = 0x1fa7f },
+    .{ .first = 0x1fa8b, .last = 0x1fa8d },
+    .{ .first = 0x1fac7, .last = 0x1fac7 },
+    .{ .first = 0x1fac9, .last = 0x1facc },
+    .{ .first = 0x1fadd, .last = 0x1fade },
+    .{ .first = 0x1faeb, .last = 0x1faee },
+    .{ .first = 0x1faf9, .last = 0x1faff },
+    .{ .first = 0x1fb93, .last = 0x1fb93 },
+    .{ .first = 0x1fbfb, .last = 0x1ffff },
+    .{ .first = 0x2a6e0, .last = 0x2a6ff },
+    .{ .first = 0x2b81e, .last = 0x2b81f },
+    .{ .first = 0x2ceae, .last = 0x2ceaf },
+    .{ .first = 0x2ebe1, .last = 0x2ebef },
+    .{ .first = 0x2ee5e, .last = 0x2f7ff },
+    .{ .first = 0x2fa1e, .last = 0x2ffff },
+    .{ .first = 0x3134b, .last = 0x3134f },
+    .{ .first = 0x3347a, .last = 0xe0000 },
+    .{ .first = 0xe0002, .last = 0xe001f },
+    .{ .first = 0xe0080, .last = 0xe00ff },
+    .{ .first = 0xe01f0, .last = 0x10ffff },
 };
 
-const ranges_script_cyrillic = [_]Range{
-    .{ .first = 0x400, .last = 0x484 },
-    .{ .first = 0x487, .last = 0x52f },
-    .{ .first = 0x1c80, .last = 0x1c8a },
-    .{ .first = 0x1d2b, .last = 0x1d2b },
-    .{ .first = 0x1d78, .last = 0x1d78 },
-    .{ .first = 0x2de0, .last = 0x2dff },
-    .{ .first = 0xa640, .last = 0xa69f },
-    .{ .first = 0xfe2e, .last = 0xfe2f },
-    .{ .first = 0x1e030, .last = 0x1e06d },
-    .{ .first = 0x1e08f, .last = 0x1e08f },
+const ranges_script_adlam = [_]Range{
+    .{ .first = 0x1e900, .last = 0x1e94b },
+    .{ .first = 0x1e950, .last = 0x1e959 },
+    .{ .first = 0x1e95e, .last = 0x1e95f },
 };
 
-const ranges_script_hiragana = [_]Range{
-    .{ .first = 0x3041, .last = 0x3096 },
-    .{ .first = 0x309d, .last = 0x309f },
-    .{ .first = 0x1b001, .last = 0x1b11f },
-    .{ .first = 0x1b132, .last = 0x1b132 },
-    .{ .first = 0x1b150, .last = 0x1b152 },
-    .{ .first = 0x1f200, .last = 0x1f200 },
+const ranges_script_extensions_adlam = [_]Range{
+    .{ .first = 0x61f, .last = 0x61f },
+    .{ .first = 0x640, .last = 0x640 },
+    .{ .first = 0x204f, .last = 0x204f },
+    .{ .first = 0x2e41, .last = 0x2e41 },
+    .{ .first = 0x1e900, .last = 0x1e94b },
+    .{ .first = 0x1e950, .last = 0x1e959 },
+    .{ .first = 0x1e95e, .last = 0x1e95f },
 };
 
-const ranges_script_katakana = [_]Range{
-    .{ .first = 0x30a1, .last = 0x30fa },
-    .{ .first = 0x30fd, .last = 0x30ff },
-    .{ .first = 0x31f0, .last = 0x31ff },
-    .{ .first = 0x32d0, .last = 0x32fe },
-    .{ .first = 0x3300, .last = 0x3357 },
-    .{ .first = 0xff66, .last = 0xff6f },
-    .{ .first = 0xff71, .last = 0xff9d },
-    .{ .first = 0x1aff0, .last = 0x1aff3 },
-    .{ .first = 0x1aff5, .last = 0x1affb },
-    .{ .first = 0x1affd, .last = 0x1affe },
-    .{ .first = 0x1b000, .last = 0x1b000 },
-    .{ .first = 0x1b120, .last = 0x1b122 },
-    .{ .first = 0x1b155, .last = 0x1b155 },
-    .{ .first = 0x1b164, .last = 0x1b167 },
+const ranges_script_ahom = [_]Range{
+    .{ .first = 0x11700, .last = 0x1171a },
+    .{ .first = 0x1171d, .last = 0x1172b },
+    .{ .first = 0x11730, .last = 0x11746 },
 };
 
-const ranges_script_han = [_]Range{
-    .{ .first = 0x2e80, .last = 0x2e99 },
-    .{ .first = 0x2e9b, .last = 0x2ef3 },
-    .{ .first = 0x2f00, .last = 0x2fd5 },
-    .{ .first = 0x3005, .last = 0x3005 },
-    .{ .first = 0x3007, .last = 0x3007 },
-    .{ .first = 0x3021, .last = 0x3029 },
-    .{ .first = 0x3038, .last = 0x303b },
-    .{ .first = 0x3400, .last = 0x4dbf },
-    .{ .first = 0x4e00, .last = 0x9fff },
-    .{ .first = 0xf900, .last = 0xfa6d },
-    .{ .first = 0xfa70, .last = 0xfad9 },
-    .{ .first = 0x16fe2, .last = 0x16fe3 },
-    .{ .first = 0x16ff0, .last = 0x16ff6 },
-    .{ .first = 0x20000, .last = 0x2a6df },
-    .{ .first = 0x2a700, .last = 0x2b81d },
-    .{ .first = 0x2b820, .last = 0x2cead },
-    .{ .first = 0x2ceb0, .last = 0x2ebe0 },
-    .{ .first = 0x2ebf0, .last = 0x2ee5d },
-    .{ .first = 0x2f800, .last = 0x2fa1d },
-    .{ .first = 0x30000, .last = 0x3134a },
-    .{ .first = 0x31350, .last = 0x33479 },
+const ranges_script_extensions_ahom = [_]Range{
+    .{ .first = 0x11700, .last = 0x1171a },
+    .{ .first = 0x1171d, .last = 0x1172b },
+    .{ .first = 0x11730, .last = 0x11746 },
+};
+
+const ranges_script_anatolian_hieroglyphs = [_]Range{
+    .{ .first = 0x14400, .last = 0x14646 },
+};
+
+const ranges_script_extensions_anatolian_hieroglyphs = [_]Range{
+    .{ .first = 0x14400, .last = 0x14646 },
 };
 
 const ranges_script_arabic = [_]Range{
@@ -19836,46 +21527,349 @@ const ranges_script_arabic = [_]Range{
     .{ .first = 0x1eef0, .last = 0x1eef1 },
 };
 
-const ranges_script_hebrew = [_]Range{
-    .{ .first = 0x591, .last = 0x5c7 },
-    .{ .first = 0x5d0, .last = 0x5ea },
-    .{ .first = 0x5ef, .last = 0x5f4 },
-    .{ .first = 0xfb1d, .last = 0xfb36 },
-    .{ .first = 0xfb38, .last = 0xfb3c },
-    .{ .first = 0xfb3e, .last = 0xfb3e },
-    .{ .first = 0xfb40, .last = 0xfb41 },
-    .{ .first = 0xfb43, .last = 0xfb44 },
-    .{ .first = 0xfb46, .last = 0xfb4f },
+const ranges_script_extensions_arabic = [_]Range{
+    .{ .first = 0x600, .last = 0x604 },
+    .{ .first = 0x606, .last = 0x6dc },
+    .{ .first = 0x6de, .last = 0x6ff },
+    .{ .first = 0x750, .last = 0x77f },
+    .{ .first = 0x870, .last = 0x891 },
+    .{ .first = 0x897, .last = 0x8e1 },
+    .{ .first = 0x8e3, .last = 0x8ff },
+    .{ .first = 0x204f, .last = 0x204f },
+    .{ .first = 0x2e41, .last = 0x2e41 },
+    .{ .first = 0xfb50, .last = 0xfdcf },
+    .{ .first = 0xfdf0, .last = 0xfdff },
+    .{ .first = 0xfe70, .last = 0xfe74 },
+    .{ .first = 0xfe76, .last = 0xfefc },
+    .{ .first = 0x102e0, .last = 0x102fb },
+    .{ .first = 0x10e60, .last = 0x10e7e },
+    .{ .first = 0x10ec2, .last = 0x10ec7 },
+    .{ .first = 0x10ed0, .last = 0x10ed8 },
+    .{ .first = 0x10efa, .last = 0x10eff },
+    .{ .first = 0x1ee00, .last = 0x1ee03 },
+    .{ .first = 0x1ee05, .last = 0x1ee1f },
+    .{ .first = 0x1ee21, .last = 0x1ee22 },
+    .{ .first = 0x1ee24, .last = 0x1ee24 },
+    .{ .first = 0x1ee27, .last = 0x1ee27 },
+    .{ .first = 0x1ee29, .last = 0x1ee32 },
+    .{ .first = 0x1ee34, .last = 0x1ee37 },
+    .{ .first = 0x1ee39, .last = 0x1ee39 },
+    .{ .first = 0x1ee3b, .last = 0x1ee3b },
+    .{ .first = 0x1ee42, .last = 0x1ee42 },
+    .{ .first = 0x1ee47, .last = 0x1ee47 },
+    .{ .first = 0x1ee49, .last = 0x1ee49 },
+    .{ .first = 0x1ee4b, .last = 0x1ee4b },
+    .{ .first = 0x1ee4d, .last = 0x1ee4f },
+    .{ .first = 0x1ee51, .last = 0x1ee52 },
+    .{ .first = 0x1ee54, .last = 0x1ee54 },
+    .{ .first = 0x1ee57, .last = 0x1ee57 },
+    .{ .first = 0x1ee59, .last = 0x1ee59 },
+    .{ .first = 0x1ee5b, .last = 0x1ee5b },
+    .{ .first = 0x1ee5d, .last = 0x1ee5d },
+    .{ .first = 0x1ee5f, .last = 0x1ee5f },
+    .{ .first = 0x1ee61, .last = 0x1ee62 },
+    .{ .first = 0x1ee64, .last = 0x1ee64 },
+    .{ .first = 0x1ee67, .last = 0x1ee6a },
+    .{ .first = 0x1ee6c, .last = 0x1ee72 },
+    .{ .first = 0x1ee74, .last = 0x1ee77 },
+    .{ .first = 0x1ee79, .last = 0x1ee7c },
+    .{ .first = 0x1ee7e, .last = 0x1ee7e },
+    .{ .first = 0x1ee80, .last = 0x1ee89 },
+    .{ .first = 0x1ee8b, .last = 0x1ee9b },
+    .{ .first = 0x1eea1, .last = 0x1eea3 },
+    .{ .first = 0x1eea5, .last = 0x1eea9 },
+    .{ .first = 0x1eeab, .last = 0x1eebb },
+    .{ .first = 0x1eef0, .last = 0x1eef1 },
 };
 
-const ranges_script_devanagari = [_]Range{
-    .{ .first = 0x900, .last = 0x950 },
-    .{ .first = 0x955, .last = 0x963 },
-    .{ .first = 0x966, .last = 0x97f },
-    .{ .first = 0xa8e0, .last = 0xa8ff },
-    .{ .first = 0x11b00, .last = 0x11b09 },
+const ranges_script_armenian = [_]Range{
+    .{ .first = 0x531, .last = 0x556 },
+    .{ .first = 0x559, .last = 0x58a },
+    .{ .first = 0x58d, .last = 0x58f },
+    .{ .first = 0xfb13, .last = 0xfb17 },
 };
 
-const ranges_script_thai = [_]Range{
-    .{ .first = 0xe01, .last = 0xe3a },
-    .{ .first = 0xe40, .last = 0xe5b },
+const ranges_script_extensions_armenian = [_]Range{
+    .{ .first = 0x308, .last = 0x308 },
+    .{ .first = 0x531, .last = 0x556 },
+    .{ .first = 0x559, .last = 0x58a },
+    .{ .first = 0x58d, .last = 0x58f },
+    .{ .first = 0xfb13, .last = 0xfb17 },
 };
 
-const ranges_script_hangul = [_]Range{
-    .{ .first = 0x1100, .last = 0x11ff },
-    .{ .first = 0x302e, .last = 0x302f },
-    .{ .first = 0x3131, .last = 0x318e },
-    .{ .first = 0x3200, .last = 0x321e },
-    .{ .first = 0x3260, .last = 0x327e },
-    .{ .first = 0xa960, .last = 0xa97c },
-    .{ .first = 0xac00, .last = 0xd7a3 },
-    .{ .first = 0xd7b0, .last = 0xd7c6 },
-    .{ .first = 0xd7cb, .last = 0xd7fb },
-    .{ .first = 0xffa0, .last = 0xffbe },
-    .{ .first = 0xffc2, .last = 0xffc7 },
-    .{ .first = 0xffca, .last = 0xffcf },
-    .{ .first = 0xffd2, .last = 0xffd7 },
-    .{ .first = 0xffda, .last = 0xffdc },
+const ranges_script_avestan = [_]Range{
+    .{ .first = 0x10b00, .last = 0x10b35 },
+    .{ .first = 0x10b39, .last = 0x10b3f },
+};
+
+const ranges_script_extensions_avestan = [_]Range{
+    .{ .first = 0xb7, .last = 0xb7 },
+    .{ .first = 0x2e30, .last = 0x2e31 },
+    .{ .first = 0x10b00, .last = 0x10b35 },
+    .{ .first = 0x10b39, .last = 0x10b3f },
+};
+
+const ranges_script_balinese = [_]Range{
+    .{ .first = 0x1b00, .last = 0x1b4c },
+    .{ .first = 0x1b4e, .last = 0x1b7f },
+};
+
+const ranges_script_extensions_balinese = [_]Range{
+    .{ .first = 0x1b00, .last = 0x1b4c },
+    .{ .first = 0x1b4e, .last = 0x1b7f },
+};
+
+const ranges_script_bamum = [_]Range{
+    .{ .first = 0xa6a0, .last = 0xa6f7 },
+    .{ .first = 0x16800, .last = 0x16a38 },
+};
+
+const ranges_script_extensions_bamum = [_]Range{
+    .{ .first = 0xa6a0, .last = 0xa6f7 },
+    .{ .first = 0x16800, .last = 0x16a38 },
+};
+
+const ranges_script_bassa_vah = [_]Range{
+    .{ .first = 0x16ad0, .last = 0x16aed },
+    .{ .first = 0x16af0, .last = 0x16af5 },
+};
+
+const ranges_script_extensions_bassa_vah = [_]Range{
+    .{ .first = 0x16ad0, .last = 0x16aed },
+    .{ .first = 0x16af0, .last = 0x16af5 },
+};
+
+const ranges_script_batak = [_]Range{
+    .{ .first = 0x1bc0, .last = 0x1bf3 },
+    .{ .first = 0x1bfc, .last = 0x1bff },
+};
+
+const ranges_script_extensions_batak = [_]Range{
+    .{ .first = 0x1bc0, .last = 0x1bf3 },
+    .{ .first = 0x1bfc, .last = 0x1bff },
+};
+
+const ranges_script_beria_erfe = [_]Range{
+    .{ .first = 0x16ea0, .last = 0x16eb8 },
+    .{ .first = 0x16ebb, .last = 0x16ed3 },
+};
+
+const ranges_script_extensions_beria_erfe = [_]Range{
+    .{ .first = 0x16ea0, .last = 0x16eb8 },
+    .{ .first = 0x16ebb, .last = 0x16ed3 },
+};
+
+const ranges_script_bengali = [_]Range{
+    .{ .first = 0x980, .last = 0x983 },
+    .{ .first = 0x985, .last = 0x98c },
+    .{ .first = 0x98f, .last = 0x990 },
+    .{ .first = 0x993, .last = 0x9a8 },
+    .{ .first = 0x9aa, .last = 0x9b0 },
+    .{ .first = 0x9b2, .last = 0x9b2 },
+    .{ .first = 0x9b6, .last = 0x9b9 },
+    .{ .first = 0x9bc, .last = 0x9c4 },
+    .{ .first = 0x9c7, .last = 0x9c8 },
+    .{ .first = 0x9cb, .last = 0x9ce },
+    .{ .first = 0x9d7, .last = 0x9d7 },
+    .{ .first = 0x9dc, .last = 0x9dd },
+    .{ .first = 0x9df, .last = 0x9e3 },
+    .{ .first = 0x9e6, .last = 0x9fe },
+};
+
+const ranges_script_extensions_bengali = [_]Range{
+    .{ .first = 0x2bc, .last = 0x2bc },
+    .{ .first = 0x951, .last = 0x952 },
+    .{ .first = 0x964, .last = 0x965 },
+    .{ .first = 0x980, .last = 0x983 },
+    .{ .first = 0x985, .last = 0x98c },
+    .{ .first = 0x98f, .last = 0x990 },
+    .{ .first = 0x993, .last = 0x9a8 },
+    .{ .first = 0x9aa, .last = 0x9b0 },
+    .{ .first = 0x9b2, .last = 0x9b2 },
+    .{ .first = 0x9b6, .last = 0x9b9 },
+    .{ .first = 0x9bc, .last = 0x9c4 },
+    .{ .first = 0x9c7, .last = 0x9c8 },
+    .{ .first = 0x9cb, .last = 0x9ce },
+    .{ .first = 0x9d7, .last = 0x9d7 },
+    .{ .first = 0x9dc, .last = 0x9dd },
+    .{ .first = 0x9df, .last = 0x9e3 },
+    .{ .first = 0x9e6, .last = 0x9fe },
+    .{ .first = 0x1cd0, .last = 0x1cd0 },
+    .{ .first = 0x1cd2, .last = 0x1cd2 },
+    .{ .first = 0x1cd5, .last = 0x1cd6 },
+    .{ .first = 0x1cd8, .last = 0x1cd8 },
+    .{ .first = 0x1ce1, .last = 0x1ce1 },
+    .{ .first = 0x1cea, .last = 0x1cea },
+    .{ .first = 0x1ced, .last = 0x1ced },
+    .{ .first = 0x1cf2, .last = 0x1cf2 },
+    .{ .first = 0x1cf5, .last = 0x1cf7 },
+    .{ .first = 0xa8f1, .last = 0xa8f1 },
+};
+
+const ranges_script_bhaiksuki = [_]Range{
+    .{ .first = 0x11c00, .last = 0x11c08 },
+    .{ .first = 0x11c0a, .last = 0x11c36 },
+    .{ .first = 0x11c38, .last = 0x11c45 },
+    .{ .first = 0x11c50, .last = 0x11c6c },
+};
+
+const ranges_script_extensions_bhaiksuki = [_]Range{
+    .{ .first = 0x11c00, .last = 0x11c08 },
+    .{ .first = 0x11c0a, .last = 0x11c36 },
+    .{ .first = 0x11c38, .last = 0x11c45 },
+    .{ .first = 0x11c50, .last = 0x11c6c },
+};
+
+const ranges_script_bopomofo = [_]Range{
+    .{ .first = 0x2ea, .last = 0x2eb },
+    .{ .first = 0x3105, .last = 0x312f },
+    .{ .first = 0x31a0, .last = 0x31bf },
+};
+
+const ranges_script_extensions_bopomofo = [_]Range{
+    .{ .first = 0x2c7, .last = 0x2c7 },
+    .{ .first = 0x2c9, .last = 0x2cb },
+    .{ .first = 0x2d9, .last = 0x2d9 },
+    .{ .first = 0x2ea, .last = 0x2eb },
+    .{ .first = 0x3001, .last = 0x3003 },
+    .{ .first = 0x3008, .last = 0x3011 },
+    .{ .first = 0x3013, .last = 0x301f },
+    .{ .first = 0x302a, .last = 0x302d },
+    .{ .first = 0x3030, .last = 0x3030 },
+    .{ .first = 0x3037, .last = 0x3037 },
+    .{ .first = 0x30fb, .last = 0x30fb },
+    .{ .first = 0x3105, .last = 0x312f },
+    .{ .first = 0x31a0, .last = 0x31bf },
+    .{ .first = 0xfe45, .last = 0xfe46 },
+    .{ .first = 0xff61, .last = 0xff65 },
+};
+
+const ranges_script_brahmi = [_]Range{
+    .{ .first = 0x11000, .last = 0x1104d },
+    .{ .first = 0x11052, .last = 0x11075 },
+    .{ .first = 0x1107f, .last = 0x1107f },
+};
+
+const ranges_script_extensions_brahmi = [_]Range{
+    .{ .first = 0x11000, .last = 0x1104d },
+    .{ .first = 0x11052, .last = 0x11075 },
+    .{ .first = 0x1107f, .last = 0x1107f },
+};
+
+const ranges_script_braille = [_]Range{
+    .{ .first = 0x2800, .last = 0x28ff },
+};
+
+const ranges_script_extensions_braille = [_]Range{
+    .{ .first = 0x2800, .last = 0x28ff },
+};
+
+const ranges_script_buginese = [_]Range{
+    .{ .first = 0x1a00, .last = 0x1a1b },
+    .{ .first = 0x1a1e, .last = 0x1a1f },
+};
+
+const ranges_script_extensions_buginese = [_]Range{
+    .{ .first = 0x1a00, .last = 0x1a1b },
+    .{ .first = 0x1a1e, .last = 0x1a1f },
+    .{ .first = 0xa9cf, .last = 0xa9cf },
+};
+
+const ranges_script_buhid = [_]Range{
+    .{ .first = 0x1740, .last = 0x1753 },
+};
+
+const ranges_script_extensions_buhid = [_]Range{
+    .{ .first = 0x1735, .last = 0x1736 },
+    .{ .first = 0x1740, .last = 0x1753 },
+};
+
+const ranges_script_canadian_aboriginal = [_]Range{
+    .{ .first = 0x1400, .last = 0x167f },
+    .{ .first = 0x18b0, .last = 0x18f5 },
+    .{ .first = 0x11ab0, .last = 0x11abf },
+};
+
+const ranges_script_extensions_canadian_aboriginal = [_]Range{
+    .{ .first = 0x1400, .last = 0x167f },
+    .{ .first = 0x18b0, .last = 0x18f5 },
+    .{ .first = 0x11ab0, .last = 0x11abf },
+};
+
+const ranges_script_carian = [_]Range{
+    .{ .first = 0x102a0, .last = 0x102d0 },
+};
+
+const ranges_script_extensions_carian = [_]Range{
+    .{ .first = 0xb7, .last = 0xb7 },
+    .{ .first = 0x205a, .last = 0x205a },
+    .{ .first = 0x205d, .last = 0x205d },
+    .{ .first = 0x2e31, .last = 0x2e31 },
+    .{ .first = 0x102a0, .last = 0x102d0 },
+};
+
+const ranges_script_caucasian_albanian = [_]Range{
+    .{ .first = 0x10530, .last = 0x10563 },
+    .{ .first = 0x1056f, .last = 0x1056f },
+};
+
+const ranges_script_extensions_caucasian_albanian = [_]Range{
+    .{ .first = 0x304, .last = 0x304 },
+    .{ .first = 0x331, .last = 0x331 },
+    .{ .first = 0x35e, .last = 0x35e },
+    .{ .first = 0x10530, .last = 0x10563 },
+    .{ .first = 0x1056f, .last = 0x1056f },
+};
+
+const ranges_script_chakma = [_]Range{
+    .{ .first = 0x11100, .last = 0x11134 },
+    .{ .first = 0x11136, .last = 0x11147 },
+};
+
+const ranges_script_extensions_chakma = [_]Range{
+    .{ .first = 0x9e6, .last = 0x9ef },
+    .{ .first = 0x1040, .last = 0x1049 },
+    .{ .first = 0x11100, .last = 0x11134 },
+    .{ .first = 0x11136, .last = 0x11147 },
+};
+
+const ranges_script_cham = [_]Range{
+    .{ .first = 0xaa00, .last = 0xaa36 },
+    .{ .first = 0xaa40, .last = 0xaa4d },
+    .{ .first = 0xaa50, .last = 0xaa59 },
+    .{ .first = 0xaa5c, .last = 0xaa5f },
+};
+
+const ranges_script_extensions_cham = [_]Range{
+    .{ .first = 0xaa00, .last = 0xaa36 },
+    .{ .first = 0xaa40, .last = 0xaa4d },
+    .{ .first = 0xaa50, .last = 0xaa59 },
+    .{ .first = 0xaa5c, .last = 0xaa5f },
+};
+
+const ranges_script_cherokee = [_]Range{
+    .{ .first = 0x13a0, .last = 0x13f5 },
+    .{ .first = 0x13f8, .last = 0x13fd },
+    .{ .first = 0xab70, .last = 0xabbf },
+};
+
+const ranges_script_extensions_cherokee = [_]Range{
+    .{ .first = 0x300, .last = 0x302 },
+    .{ .first = 0x304, .last = 0x304 },
+    .{ .first = 0x30b, .last = 0x30c },
+    .{ .first = 0x323, .last = 0x324 },
+    .{ .first = 0x330, .last = 0x331 },
+    .{ .first = 0x13a0, .last = 0x13f5 },
+    .{ .first = 0x13f8, .last = 0x13fd },
+    .{ .first = 0xab70, .last = 0xabbf },
+};
+
+const ranges_script_chorasmian = [_]Range{
+    .{ .first = 0x10fb0, .last = 0x10fcb },
+};
+
+const ranges_script_extensions_chorasmian = [_]Range{
+    .{ .first = 0x10fb0, .last = 0x10fcb },
 };
 
 const ranges_script_common = [_]Range{
@@ -20057,373 +22051,6 @@ const ranges_script_common = [_]Range{
     .{ .first = 0xe0020, .last = 0xe007f },
 };
 
-const ranges_script_inherited = [_]Range{
-    .{ .first = 0x300, .last = 0x36f },
-    .{ .first = 0x485, .last = 0x486 },
-    .{ .first = 0x64b, .last = 0x655 },
-    .{ .first = 0x670, .last = 0x670 },
-    .{ .first = 0x951, .last = 0x954 },
-    .{ .first = 0x1ab0, .last = 0x1add },
-    .{ .first = 0x1ae0, .last = 0x1aeb },
-    .{ .first = 0x1cd0, .last = 0x1cd2 },
-    .{ .first = 0x1cd4, .last = 0x1ce0 },
-    .{ .first = 0x1ce2, .last = 0x1ce8 },
-    .{ .first = 0x1ced, .last = 0x1ced },
-    .{ .first = 0x1cf4, .last = 0x1cf4 },
-    .{ .first = 0x1cf8, .last = 0x1cf9 },
-    .{ .first = 0x1dc0, .last = 0x1dff },
-    .{ .first = 0x200c, .last = 0x200d },
-    .{ .first = 0x20d0, .last = 0x20f0 },
-    .{ .first = 0x302a, .last = 0x302d },
-    .{ .first = 0x3099, .last = 0x309a },
-    .{ .first = 0xfe00, .last = 0xfe0f },
-    .{ .first = 0xfe20, .last = 0xfe2d },
-    .{ .first = 0x101fd, .last = 0x101fd },
-    .{ .first = 0x102e0, .last = 0x102e0 },
-    .{ .first = 0x1133b, .last = 0x1133b },
-    .{ .first = 0x1cf00, .last = 0x1cf2d },
-    .{ .first = 0x1cf30, .last = 0x1cf46 },
-    .{ .first = 0x1d167, .last = 0x1d169 },
-    .{ .first = 0x1d17b, .last = 0x1d182 },
-    .{ .first = 0x1d185, .last = 0x1d18b },
-    .{ .first = 0x1d1aa, .last = 0x1d1ad },
-    .{ .first = 0xe0100, .last = 0xe01ef },
-};
-
-const ranges_script_extensions_latin = [_]Range{
-    .{ .first = 0x41, .last = 0x5a },
-    .{ .first = 0x61, .last = 0x7a },
-    .{ .first = 0xaa, .last = 0xaa },
-    .{ .first = 0xb7, .last = 0xb7 },
-    .{ .first = 0xba, .last = 0xba },
-    .{ .first = 0xc0, .last = 0xd6 },
-    .{ .first = 0xd8, .last = 0xf6 },
-    .{ .first = 0xf8, .last = 0x2b8 },
-    .{ .first = 0x2bc, .last = 0x2bc },
-    .{ .first = 0x2c7, .last = 0x2c7 },
-    .{ .first = 0x2c9, .last = 0x2cb },
-    .{ .first = 0x2cd, .last = 0x2cd },
-    .{ .first = 0x2d7, .last = 0x2d7 },
-    .{ .first = 0x2d9, .last = 0x2d9 },
-    .{ .first = 0x2e0, .last = 0x2e4 },
-    .{ .first = 0x300, .last = 0x30e },
-    .{ .first = 0x310, .last = 0x311 },
-    .{ .first = 0x313, .last = 0x313 },
-    .{ .first = 0x323, .last = 0x325 },
-    .{ .first = 0x32d, .last = 0x32e },
-    .{ .first = 0x330, .last = 0x331 },
-    .{ .first = 0x358, .last = 0x358 },
-    .{ .first = 0x35e, .last = 0x35e },
-    .{ .first = 0x363, .last = 0x36f },
-    .{ .first = 0x485, .last = 0x486 },
-    .{ .first = 0x951, .last = 0x952 },
-    .{ .first = 0x10fb, .last = 0x10fb },
-    .{ .first = 0x1d00, .last = 0x1d25 },
-    .{ .first = 0x1d2c, .last = 0x1d5c },
-    .{ .first = 0x1d62, .last = 0x1d65 },
-    .{ .first = 0x1d6b, .last = 0x1d77 },
-    .{ .first = 0x1d79, .last = 0x1dbe },
-    .{ .first = 0x1df8, .last = 0x1df8 },
-    .{ .first = 0x1e00, .last = 0x1eff },
-    .{ .first = 0x202f, .last = 0x202f },
-    .{ .first = 0x2071, .last = 0x2071 },
-    .{ .first = 0x207f, .last = 0x207f },
-    .{ .first = 0x2090, .last = 0x209c },
-    .{ .first = 0x20f0, .last = 0x20f0 },
-    .{ .first = 0x212a, .last = 0x212b },
-    .{ .first = 0x2132, .last = 0x2132 },
-    .{ .first = 0x214e, .last = 0x214e },
-    .{ .first = 0x2160, .last = 0x2188 },
-    .{ .first = 0x2c60, .last = 0x2c7f },
-    .{ .first = 0x2e17, .last = 0x2e17 },
-    .{ .first = 0xa700, .last = 0xa707 },
-    .{ .first = 0xa722, .last = 0xa787 },
-    .{ .first = 0xa78b, .last = 0xa7dc },
-    .{ .first = 0xa7f1, .last = 0xa7ff },
-    .{ .first = 0xa92e, .last = 0xa92e },
-    .{ .first = 0xab30, .last = 0xab5a },
-    .{ .first = 0xab5c, .last = 0xab64 },
-    .{ .first = 0xab66, .last = 0xab69 },
-    .{ .first = 0xfb00, .last = 0xfb06 },
-    .{ .first = 0xff21, .last = 0xff3a },
-    .{ .first = 0xff41, .last = 0xff5a },
-    .{ .first = 0x10780, .last = 0x10785 },
-    .{ .first = 0x10787, .last = 0x107b0 },
-    .{ .first = 0x107b2, .last = 0x107ba },
-    .{ .first = 0x1df00, .last = 0x1df1e },
-    .{ .first = 0x1df25, .last = 0x1df2a },
-};
-
-const ranges_script_extensions_greek = [_]Range{
-    .{ .first = 0xb7, .last = 0xb7 },
-    .{ .first = 0x300, .last = 0x301 },
-    .{ .first = 0x304, .last = 0x304 },
-    .{ .first = 0x306, .last = 0x306 },
-    .{ .first = 0x308, .last = 0x308 },
-    .{ .first = 0x313, .last = 0x313 },
-    .{ .first = 0x342, .last = 0x342 },
-    .{ .first = 0x345, .last = 0x345 },
-    .{ .first = 0x370, .last = 0x377 },
-    .{ .first = 0x37a, .last = 0x37d },
-    .{ .first = 0x37f, .last = 0x37f },
-    .{ .first = 0x384, .last = 0x384 },
-    .{ .first = 0x386, .last = 0x386 },
-    .{ .first = 0x388, .last = 0x38a },
-    .{ .first = 0x38c, .last = 0x38c },
-    .{ .first = 0x38e, .last = 0x3a1 },
-    .{ .first = 0x3a3, .last = 0x3e1 },
-    .{ .first = 0x3f0, .last = 0x3ff },
-    .{ .first = 0x1d26, .last = 0x1d2a },
-    .{ .first = 0x1d5d, .last = 0x1d61 },
-    .{ .first = 0x1d66, .last = 0x1d6a },
-    .{ .first = 0x1dbf, .last = 0x1dc1 },
-    .{ .first = 0x1f00, .last = 0x1f15 },
-    .{ .first = 0x1f18, .last = 0x1f1d },
-    .{ .first = 0x1f20, .last = 0x1f45 },
-    .{ .first = 0x1f48, .last = 0x1f4d },
-    .{ .first = 0x1f50, .last = 0x1f57 },
-    .{ .first = 0x1f59, .last = 0x1f59 },
-    .{ .first = 0x1f5b, .last = 0x1f5b },
-    .{ .first = 0x1f5d, .last = 0x1f5d },
-    .{ .first = 0x1f5f, .last = 0x1f7d },
-    .{ .first = 0x1f80, .last = 0x1fb4 },
-    .{ .first = 0x1fb6, .last = 0x1fc4 },
-    .{ .first = 0x1fc6, .last = 0x1fd3 },
-    .{ .first = 0x1fd6, .last = 0x1fdb },
-    .{ .first = 0x1fdd, .last = 0x1fef },
-    .{ .first = 0x1ff2, .last = 0x1ff4 },
-    .{ .first = 0x1ff6, .last = 0x1ffe },
-    .{ .first = 0x205d, .last = 0x205d },
-    .{ .first = 0x2126, .last = 0x2126 },
-    .{ .first = 0xab65, .last = 0xab65 },
-    .{ .first = 0x10140, .last = 0x1018e },
-    .{ .first = 0x101a0, .last = 0x101a0 },
-    .{ .first = 0x1d200, .last = 0x1d245 },
-};
-
-const ranges_script_extensions_cyrillic = [_]Range{
-    .{ .first = 0x2bc, .last = 0x2bc },
-    .{ .first = 0x300, .last = 0x302 },
-    .{ .first = 0x304, .last = 0x304 },
-    .{ .first = 0x306, .last = 0x306 },
-    .{ .first = 0x308, .last = 0x308 },
-    .{ .first = 0x30b, .last = 0x30b },
-    .{ .first = 0x311, .last = 0x311 },
-    .{ .first = 0x400, .last = 0x52f },
-    .{ .first = 0x1c80, .last = 0x1c8a },
-    .{ .first = 0x1d2b, .last = 0x1d2b },
-    .{ .first = 0x1d78, .last = 0x1d78 },
-    .{ .first = 0x1df8, .last = 0x1df8 },
-    .{ .first = 0x2de0, .last = 0x2dff },
-    .{ .first = 0x2e43, .last = 0x2e43 },
-    .{ .first = 0xa640, .last = 0xa69f },
-    .{ .first = 0xfe2e, .last = 0xfe2f },
-    .{ .first = 0x1e030, .last = 0x1e06d },
-    .{ .first = 0x1e08f, .last = 0x1e08f },
-};
-
-const ranges_script_extensions_hiragana = [_]Range{
-    .{ .first = 0x3001, .last = 0x3003 },
-    .{ .first = 0x3008, .last = 0x3011 },
-    .{ .first = 0x3013, .last = 0x301f },
-    .{ .first = 0x3030, .last = 0x3035 },
-    .{ .first = 0x3037, .last = 0x3037 },
-    .{ .first = 0x303c, .last = 0x303d },
-    .{ .first = 0x3041, .last = 0x3096 },
-    .{ .first = 0x3099, .last = 0x30a0 },
-    .{ .first = 0x30fb, .last = 0x30fc },
-    .{ .first = 0xfe45, .last = 0xfe46 },
-    .{ .first = 0xff61, .last = 0xff65 },
-    .{ .first = 0xff70, .last = 0xff70 },
-    .{ .first = 0xff9e, .last = 0xff9f },
-    .{ .first = 0x1b001, .last = 0x1b11f },
-    .{ .first = 0x1b132, .last = 0x1b132 },
-    .{ .first = 0x1b150, .last = 0x1b152 },
-    .{ .first = 0x1f200, .last = 0x1f200 },
-};
-
-const ranges_script_extensions_katakana = [_]Range{
-    .{ .first = 0x305, .last = 0x305 },
-    .{ .first = 0x323, .last = 0x323 },
-    .{ .first = 0x3001, .last = 0x3003 },
-    .{ .first = 0x3008, .last = 0x3011 },
-    .{ .first = 0x3013, .last = 0x301f },
-    .{ .first = 0x3030, .last = 0x3035 },
-    .{ .first = 0x3037, .last = 0x3037 },
-    .{ .first = 0x303c, .last = 0x303d },
-    .{ .first = 0x3099, .last = 0x309c },
-    .{ .first = 0x30a0, .last = 0x30ff },
-    .{ .first = 0x31f0, .last = 0x31ff },
-    .{ .first = 0x32d0, .last = 0x32fe },
-    .{ .first = 0x3300, .last = 0x3357 },
-    .{ .first = 0xfe45, .last = 0xfe46 },
-    .{ .first = 0xff61, .last = 0xff9f },
-    .{ .first = 0x1aff0, .last = 0x1aff3 },
-    .{ .first = 0x1aff5, .last = 0x1affb },
-    .{ .first = 0x1affd, .last = 0x1affe },
-    .{ .first = 0x1b000, .last = 0x1b000 },
-    .{ .first = 0x1b120, .last = 0x1b122 },
-    .{ .first = 0x1b155, .last = 0x1b155 },
-    .{ .first = 0x1b164, .last = 0x1b167 },
-};
-
-const ranges_script_extensions_han = [_]Range{
-    .{ .first = 0xb7, .last = 0xb7 },
-    .{ .first = 0x2e80, .last = 0x2e99 },
-    .{ .first = 0x2e9b, .last = 0x2ef3 },
-    .{ .first = 0x2f00, .last = 0x2fd5 },
-    .{ .first = 0x2ff0, .last = 0x2fff },
-    .{ .first = 0x3001, .last = 0x3003 },
-    .{ .first = 0x3005, .last = 0x3011 },
-    .{ .first = 0x3013, .last = 0x301f },
-    .{ .first = 0x3021, .last = 0x302d },
-    .{ .first = 0x3030, .last = 0x3030 },
-    .{ .first = 0x3037, .last = 0x303f },
-    .{ .first = 0x30fb, .last = 0x30fb },
-    .{ .first = 0x3190, .last = 0x319f },
-    .{ .first = 0x31c0, .last = 0x31e5 },
-    .{ .first = 0x31ef, .last = 0x31ef },
-    .{ .first = 0x3220, .last = 0x3247 },
-    .{ .first = 0x3280, .last = 0x32b0 },
-    .{ .first = 0x32c0, .last = 0x32cb },
-    .{ .first = 0x32ff, .last = 0x32ff },
-    .{ .first = 0x3358, .last = 0x3370 },
-    .{ .first = 0x337b, .last = 0x337f },
-    .{ .first = 0x33e0, .last = 0x33fe },
-    .{ .first = 0x3400, .last = 0x4dbf },
-    .{ .first = 0x4e00, .last = 0x9fff },
-    .{ .first = 0xa700, .last = 0xa707 },
-    .{ .first = 0xf900, .last = 0xfa6d },
-    .{ .first = 0xfa70, .last = 0xfad9 },
-    .{ .first = 0xfe45, .last = 0xfe46 },
-    .{ .first = 0xff61, .last = 0xff65 },
-    .{ .first = 0x16fe2, .last = 0x16fe3 },
-    .{ .first = 0x16ff0, .last = 0x16ff6 },
-    .{ .first = 0x1d360, .last = 0x1d371 },
-    .{ .first = 0x1f250, .last = 0x1f251 },
-    .{ .first = 0x20000, .last = 0x2a6df },
-    .{ .first = 0x2a700, .last = 0x2b81d },
-    .{ .first = 0x2b820, .last = 0x2cead },
-    .{ .first = 0x2ceb0, .last = 0x2ebe0 },
-    .{ .first = 0x2ebf0, .last = 0x2ee5d },
-    .{ .first = 0x2f800, .last = 0x2fa1d },
-    .{ .first = 0x30000, .last = 0x3134a },
-    .{ .first = 0x31350, .last = 0x33479 },
-};
-
-const ranges_script_extensions_arabic = [_]Range{
-    .{ .first = 0x600, .last = 0x604 },
-    .{ .first = 0x606, .last = 0x6dc },
-    .{ .first = 0x6de, .last = 0x6ff },
-    .{ .first = 0x750, .last = 0x77f },
-    .{ .first = 0x870, .last = 0x891 },
-    .{ .first = 0x897, .last = 0x8e1 },
-    .{ .first = 0x8e3, .last = 0x8ff },
-    .{ .first = 0x204f, .last = 0x204f },
-    .{ .first = 0x2e41, .last = 0x2e41 },
-    .{ .first = 0xfb50, .last = 0xfdcf },
-    .{ .first = 0xfdf0, .last = 0xfdff },
-    .{ .first = 0xfe70, .last = 0xfe74 },
-    .{ .first = 0xfe76, .last = 0xfefc },
-    .{ .first = 0x102e0, .last = 0x102fb },
-    .{ .first = 0x10e60, .last = 0x10e7e },
-    .{ .first = 0x10ec2, .last = 0x10ec7 },
-    .{ .first = 0x10ed0, .last = 0x10ed8 },
-    .{ .first = 0x10efa, .last = 0x10eff },
-    .{ .first = 0x1ee00, .last = 0x1ee03 },
-    .{ .first = 0x1ee05, .last = 0x1ee1f },
-    .{ .first = 0x1ee21, .last = 0x1ee22 },
-    .{ .first = 0x1ee24, .last = 0x1ee24 },
-    .{ .first = 0x1ee27, .last = 0x1ee27 },
-    .{ .first = 0x1ee29, .last = 0x1ee32 },
-    .{ .first = 0x1ee34, .last = 0x1ee37 },
-    .{ .first = 0x1ee39, .last = 0x1ee39 },
-    .{ .first = 0x1ee3b, .last = 0x1ee3b },
-    .{ .first = 0x1ee42, .last = 0x1ee42 },
-    .{ .first = 0x1ee47, .last = 0x1ee47 },
-    .{ .first = 0x1ee49, .last = 0x1ee49 },
-    .{ .first = 0x1ee4b, .last = 0x1ee4b },
-    .{ .first = 0x1ee4d, .last = 0x1ee4f },
-    .{ .first = 0x1ee51, .last = 0x1ee52 },
-    .{ .first = 0x1ee54, .last = 0x1ee54 },
-    .{ .first = 0x1ee57, .last = 0x1ee57 },
-    .{ .first = 0x1ee59, .last = 0x1ee59 },
-    .{ .first = 0x1ee5b, .last = 0x1ee5b },
-    .{ .first = 0x1ee5d, .last = 0x1ee5d },
-    .{ .first = 0x1ee5f, .last = 0x1ee5f },
-    .{ .first = 0x1ee61, .last = 0x1ee62 },
-    .{ .first = 0x1ee64, .last = 0x1ee64 },
-    .{ .first = 0x1ee67, .last = 0x1ee6a },
-    .{ .first = 0x1ee6c, .last = 0x1ee72 },
-    .{ .first = 0x1ee74, .last = 0x1ee77 },
-    .{ .first = 0x1ee79, .last = 0x1ee7c },
-    .{ .first = 0x1ee7e, .last = 0x1ee7e },
-    .{ .first = 0x1ee80, .last = 0x1ee89 },
-    .{ .first = 0x1ee8b, .last = 0x1ee9b },
-    .{ .first = 0x1eea1, .last = 0x1eea3 },
-    .{ .first = 0x1eea5, .last = 0x1eea9 },
-    .{ .first = 0x1eeab, .last = 0x1eebb },
-    .{ .first = 0x1eef0, .last = 0x1eef1 },
-};
-
-const ranges_script_extensions_hebrew = [_]Range{
-    .{ .first = 0x307, .last = 0x308 },
-    .{ .first = 0x591, .last = 0x5c7 },
-    .{ .first = 0x5d0, .last = 0x5ea },
-    .{ .first = 0x5ef, .last = 0x5f4 },
-    .{ .first = 0xfb1d, .last = 0xfb36 },
-    .{ .first = 0xfb38, .last = 0xfb3c },
-    .{ .first = 0xfb3e, .last = 0xfb3e },
-    .{ .first = 0xfb40, .last = 0xfb41 },
-    .{ .first = 0xfb43, .last = 0xfb44 },
-    .{ .first = 0xfb46, .last = 0xfb4f },
-};
-
-const ranges_script_extensions_devanagari = [_]Range{
-    .{ .first = 0x2bc, .last = 0x2bc },
-    .{ .first = 0x900, .last = 0x952 },
-    .{ .first = 0x955, .last = 0x97f },
-    .{ .first = 0x1cd0, .last = 0x1cf6 },
-    .{ .first = 0x1cf8, .last = 0x1cf9 },
-    .{ .first = 0x20f0, .last = 0x20f0 },
-    .{ .first = 0xa830, .last = 0xa839 },
-    .{ .first = 0xa8e0, .last = 0xa8ff },
-    .{ .first = 0x11b00, .last = 0x11b09 },
-};
-
-const ranges_script_extensions_thai = [_]Range{
-    .{ .first = 0x2bc, .last = 0x2bc },
-    .{ .first = 0x2d7, .last = 0x2d7 },
-    .{ .first = 0x303, .last = 0x303 },
-    .{ .first = 0x331, .last = 0x331 },
-    .{ .first = 0xe01, .last = 0xe3a },
-    .{ .first = 0xe40, .last = 0xe5b },
-};
-
-const ranges_script_extensions_hangul = [_]Range{
-    .{ .first = 0x1100, .last = 0x11ff },
-    .{ .first = 0x3001, .last = 0x3003 },
-    .{ .first = 0x3008, .last = 0x3011 },
-    .{ .first = 0x3013, .last = 0x301f },
-    .{ .first = 0x302e, .last = 0x3030 },
-    .{ .first = 0x3037, .last = 0x3037 },
-    .{ .first = 0x30fb, .last = 0x30fb },
-    .{ .first = 0x3131, .last = 0x318e },
-    .{ .first = 0x3200, .last = 0x321e },
-    .{ .first = 0x3260, .last = 0x327e },
-    .{ .first = 0xa960, .last = 0xa97c },
-    .{ .first = 0xac00, .last = 0xd7a3 },
-    .{ .first = 0xd7b0, .last = 0xd7c6 },
-    .{ .first = 0xd7cb, .last = 0xd7fb },
-    .{ .first = 0xfe45, .last = 0xfe46 },
-    .{ .first = 0xff61, .last = 0xff65 },
-    .{ .first = 0xffa0, .last = 0xffbe },
-    .{ .first = 0xffc2, .last = 0xffc7 },
-    .{ .first = 0xffca, .last = 0xffcf },
-    .{ .first = 0xffd2, .last = 0xffd7 },
-    .{ .first = 0xffda, .last = 0xffdc },
-};
-
 const ranges_script_extensions_common = [_]Range{
     .{ .first = 0x0, .last = 0x40 },
     .{ .first = 0x5b, .last = 0x60 },
@@ -20588,6 +22215,855 @@ const ranges_script_extensions_common = [_]Range{
     .{ .first = 0xe0020, .last = 0xe007f },
 };
 
+const ranges_script_coptic = [_]Range{
+    .{ .first = 0x3e2, .last = 0x3ef },
+    .{ .first = 0x2c80, .last = 0x2cf3 },
+    .{ .first = 0x2cf9, .last = 0x2cff },
+};
+
+const ranges_script_extensions_coptic = [_]Range{
+    .{ .first = 0xb7, .last = 0xb7 },
+    .{ .first = 0x300, .last = 0x300 },
+    .{ .first = 0x304, .last = 0x305 },
+    .{ .first = 0x307, .last = 0x307 },
+    .{ .first = 0x374, .last = 0x375 },
+    .{ .first = 0x3e2, .last = 0x3ef },
+    .{ .first = 0x2c80, .last = 0x2cf3 },
+    .{ .first = 0x2cf9, .last = 0x2cff },
+    .{ .first = 0x2e17, .last = 0x2e17 },
+    .{ .first = 0x102e0, .last = 0x102fb },
+};
+
+const ranges_script_cuneiform = [_]Range{
+    .{ .first = 0x12000, .last = 0x12399 },
+    .{ .first = 0x12400, .last = 0x1246e },
+    .{ .first = 0x12470, .last = 0x12474 },
+    .{ .first = 0x12480, .last = 0x12543 },
+};
+
+const ranges_script_extensions_cuneiform = [_]Range{
+    .{ .first = 0x12000, .last = 0x12399 },
+    .{ .first = 0x12400, .last = 0x1246e },
+    .{ .first = 0x12470, .last = 0x12474 },
+    .{ .first = 0x12480, .last = 0x12543 },
+};
+
+const ranges_script_cypriot = [_]Range{
+    .{ .first = 0x10800, .last = 0x10805 },
+    .{ .first = 0x10808, .last = 0x10808 },
+    .{ .first = 0x1080a, .last = 0x10835 },
+    .{ .first = 0x10837, .last = 0x10838 },
+    .{ .first = 0x1083c, .last = 0x1083c },
+    .{ .first = 0x1083f, .last = 0x1083f },
+};
+
+const ranges_script_extensions_cypriot = [_]Range{
+    .{ .first = 0x10100, .last = 0x10102 },
+    .{ .first = 0x10107, .last = 0x10133 },
+    .{ .first = 0x10137, .last = 0x1013f },
+    .{ .first = 0x10800, .last = 0x10805 },
+    .{ .first = 0x10808, .last = 0x10808 },
+    .{ .first = 0x1080a, .last = 0x10835 },
+    .{ .first = 0x10837, .last = 0x10838 },
+    .{ .first = 0x1083c, .last = 0x1083c },
+    .{ .first = 0x1083f, .last = 0x1083f },
+};
+
+const ranges_script_cyrillic = [_]Range{
+    .{ .first = 0x400, .last = 0x484 },
+    .{ .first = 0x487, .last = 0x52f },
+    .{ .first = 0x1c80, .last = 0x1c8a },
+    .{ .first = 0x1d2b, .last = 0x1d2b },
+    .{ .first = 0x1d78, .last = 0x1d78 },
+    .{ .first = 0x2de0, .last = 0x2dff },
+    .{ .first = 0xa640, .last = 0xa69f },
+    .{ .first = 0xfe2e, .last = 0xfe2f },
+    .{ .first = 0x1e030, .last = 0x1e06d },
+    .{ .first = 0x1e08f, .last = 0x1e08f },
+};
+
+const ranges_script_extensions_cyrillic = [_]Range{
+    .{ .first = 0x2bc, .last = 0x2bc },
+    .{ .first = 0x300, .last = 0x302 },
+    .{ .first = 0x304, .last = 0x304 },
+    .{ .first = 0x306, .last = 0x306 },
+    .{ .first = 0x308, .last = 0x308 },
+    .{ .first = 0x30b, .last = 0x30b },
+    .{ .first = 0x311, .last = 0x311 },
+    .{ .first = 0x400, .last = 0x52f },
+    .{ .first = 0x1c80, .last = 0x1c8a },
+    .{ .first = 0x1d2b, .last = 0x1d2b },
+    .{ .first = 0x1d78, .last = 0x1d78 },
+    .{ .first = 0x1df8, .last = 0x1df8 },
+    .{ .first = 0x2de0, .last = 0x2dff },
+    .{ .first = 0x2e43, .last = 0x2e43 },
+    .{ .first = 0xa640, .last = 0xa69f },
+    .{ .first = 0xfe2e, .last = 0xfe2f },
+    .{ .first = 0x1e030, .last = 0x1e06d },
+    .{ .first = 0x1e08f, .last = 0x1e08f },
+};
+
+const ranges_script_cypro_minoan = [_]Range{
+    .{ .first = 0x12f90, .last = 0x12ff2 },
+};
+
+const ranges_script_extensions_cypro_minoan = [_]Range{
+    .{ .first = 0x10100, .last = 0x10101 },
+    .{ .first = 0x12f90, .last = 0x12ff2 },
+};
+
+const ranges_script_deseret = [_]Range{
+    .{ .first = 0x10400, .last = 0x1044f },
+};
+
+const ranges_script_extensions_deseret = [_]Range{
+    .{ .first = 0x10400, .last = 0x1044f },
+};
+
+const ranges_script_devanagari = [_]Range{
+    .{ .first = 0x900, .last = 0x950 },
+    .{ .first = 0x955, .last = 0x963 },
+    .{ .first = 0x966, .last = 0x97f },
+    .{ .first = 0xa8e0, .last = 0xa8ff },
+    .{ .first = 0x11b00, .last = 0x11b09 },
+};
+
+const ranges_script_extensions_devanagari = [_]Range{
+    .{ .first = 0x2bc, .last = 0x2bc },
+    .{ .first = 0x900, .last = 0x952 },
+    .{ .first = 0x955, .last = 0x97f },
+    .{ .first = 0x1cd0, .last = 0x1cf6 },
+    .{ .first = 0x1cf8, .last = 0x1cf9 },
+    .{ .first = 0x20f0, .last = 0x20f0 },
+    .{ .first = 0xa830, .last = 0xa839 },
+    .{ .first = 0xa8e0, .last = 0xa8ff },
+    .{ .first = 0x11b00, .last = 0x11b09 },
+};
+
+const ranges_script_dives_akuru = [_]Range{
+    .{ .first = 0x11900, .last = 0x11906 },
+    .{ .first = 0x11909, .last = 0x11909 },
+    .{ .first = 0x1190c, .last = 0x11913 },
+    .{ .first = 0x11915, .last = 0x11916 },
+    .{ .first = 0x11918, .last = 0x11935 },
+    .{ .first = 0x11937, .last = 0x11938 },
+    .{ .first = 0x1193b, .last = 0x11946 },
+    .{ .first = 0x11950, .last = 0x11959 },
+};
+
+const ranges_script_extensions_dives_akuru = [_]Range{
+    .{ .first = 0x11900, .last = 0x11906 },
+    .{ .first = 0x11909, .last = 0x11909 },
+    .{ .first = 0x1190c, .last = 0x11913 },
+    .{ .first = 0x11915, .last = 0x11916 },
+    .{ .first = 0x11918, .last = 0x11935 },
+    .{ .first = 0x11937, .last = 0x11938 },
+    .{ .first = 0x1193b, .last = 0x11946 },
+    .{ .first = 0x11950, .last = 0x11959 },
+};
+
+const ranges_script_dogra = [_]Range{
+    .{ .first = 0x11800, .last = 0x1183b },
+};
+
+const ranges_script_extensions_dogra = [_]Range{
+    .{ .first = 0x964, .last = 0x96f },
+    .{ .first = 0xa830, .last = 0xa839 },
+    .{ .first = 0x11800, .last = 0x1183b },
+};
+
+const ranges_script_duployan = [_]Range{
+    .{ .first = 0x1bc00, .last = 0x1bc6a },
+    .{ .first = 0x1bc70, .last = 0x1bc7c },
+    .{ .first = 0x1bc80, .last = 0x1bc88 },
+    .{ .first = 0x1bc90, .last = 0x1bc99 },
+    .{ .first = 0x1bc9c, .last = 0x1bc9f },
+};
+
+const ranges_script_extensions_duployan = [_]Range{
+    .{ .first = 0xb7, .last = 0xb7 },
+    .{ .first = 0x307, .last = 0x308 },
+    .{ .first = 0x30a, .last = 0x30a },
+    .{ .first = 0x323, .last = 0x324 },
+    .{ .first = 0x2e3c, .last = 0x2e3c },
+    .{ .first = 0x1bc00, .last = 0x1bc6a },
+    .{ .first = 0x1bc70, .last = 0x1bc7c },
+    .{ .first = 0x1bc80, .last = 0x1bc88 },
+    .{ .first = 0x1bc90, .last = 0x1bc99 },
+    .{ .first = 0x1bc9c, .last = 0x1bca3 },
+};
+
+const ranges_script_egyptian_hieroglyphs = [_]Range{
+    .{ .first = 0x13000, .last = 0x13455 },
+    .{ .first = 0x13460, .last = 0x143fa },
+};
+
+const ranges_script_extensions_egyptian_hieroglyphs = [_]Range{
+    .{ .first = 0x13000, .last = 0x13455 },
+    .{ .first = 0x13460, .last = 0x143fa },
+};
+
+const ranges_script_elbasan = [_]Range{
+    .{ .first = 0x10500, .last = 0x10527 },
+};
+
+const ranges_script_extensions_elbasan = [_]Range{
+    .{ .first = 0xb7, .last = 0xb7 },
+    .{ .first = 0x305, .last = 0x305 },
+    .{ .first = 0x10500, .last = 0x10527 },
+};
+
+const ranges_script_elymaic = [_]Range{
+    .{ .first = 0x10fe0, .last = 0x10ff6 },
+};
+
+const ranges_script_extensions_elymaic = [_]Range{
+    .{ .first = 0x10fe0, .last = 0x10ff6 },
+};
+
+const ranges_script_ethiopic = [_]Range{
+    .{ .first = 0x1200, .last = 0x1248 },
+    .{ .first = 0x124a, .last = 0x124d },
+    .{ .first = 0x1250, .last = 0x1256 },
+    .{ .first = 0x1258, .last = 0x1258 },
+    .{ .first = 0x125a, .last = 0x125d },
+    .{ .first = 0x1260, .last = 0x1288 },
+    .{ .first = 0x128a, .last = 0x128d },
+    .{ .first = 0x1290, .last = 0x12b0 },
+    .{ .first = 0x12b2, .last = 0x12b5 },
+    .{ .first = 0x12b8, .last = 0x12be },
+    .{ .first = 0x12c0, .last = 0x12c0 },
+    .{ .first = 0x12c2, .last = 0x12c5 },
+    .{ .first = 0x12c8, .last = 0x12d6 },
+    .{ .first = 0x12d8, .last = 0x1310 },
+    .{ .first = 0x1312, .last = 0x1315 },
+    .{ .first = 0x1318, .last = 0x135a },
+    .{ .first = 0x135d, .last = 0x137c },
+    .{ .first = 0x1380, .last = 0x1399 },
+    .{ .first = 0x2d80, .last = 0x2d96 },
+    .{ .first = 0x2da0, .last = 0x2da6 },
+    .{ .first = 0x2da8, .last = 0x2dae },
+    .{ .first = 0x2db0, .last = 0x2db6 },
+    .{ .first = 0x2db8, .last = 0x2dbe },
+    .{ .first = 0x2dc0, .last = 0x2dc6 },
+    .{ .first = 0x2dc8, .last = 0x2dce },
+    .{ .first = 0x2dd0, .last = 0x2dd6 },
+    .{ .first = 0x2dd8, .last = 0x2dde },
+    .{ .first = 0xab01, .last = 0xab06 },
+    .{ .first = 0xab09, .last = 0xab0e },
+    .{ .first = 0xab11, .last = 0xab16 },
+    .{ .first = 0xab20, .last = 0xab26 },
+    .{ .first = 0xab28, .last = 0xab2e },
+    .{ .first = 0x1e7e0, .last = 0x1e7e6 },
+    .{ .first = 0x1e7e8, .last = 0x1e7eb },
+    .{ .first = 0x1e7ed, .last = 0x1e7ee },
+    .{ .first = 0x1e7f0, .last = 0x1e7fe },
+};
+
+const ranges_script_extensions_ethiopic = [_]Range{
+    .{ .first = 0x30e, .last = 0x30e },
+    .{ .first = 0x1200, .last = 0x1248 },
+    .{ .first = 0x124a, .last = 0x124d },
+    .{ .first = 0x1250, .last = 0x1256 },
+    .{ .first = 0x1258, .last = 0x1258 },
+    .{ .first = 0x125a, .last = 0x125d },
+    .{ .first = 0x1260, .last = 0x1288 },
+    .{ .first = 0x128a, .last = 0x128d },
+    .{ .first = 0x1290, .last = 0x12b0 },
+    .{ .first = 0x12b2, .last = 0x12b5 },
+    .{ .first = 0x12b8, .last = 0x12be },
+    .{ .first = 0x12c0, .last = 0x12c0 },
+    .{ .first = 0x12c2, .last = 0x12c5 },
+    .{ .first = 0x12c8, .last = 0x12d6 },
+    .{ .first = 0x12d8, .last = 0x1310 },
+    .{ .first = 0x1312, .last = 0x1315 },
+    .{ .first = 0x1318, .last = 0x135a },
+    .{ .first = 0x135d, .last = 0x137c },
+    .{ .first = 0x1380, .last = 0x1399 },
+    .{ .first = 0x2d80, .last = 0x2d96 },
+    .{ .first = 0x2da0, .last = 0x2da6 },
+    .{ .first = 0x2da8, .last = 0x2dae },
+    .{ .first = 0x2db0, .last = 0x2db6 },
+    .{ .first = 0x2db8, .last = 0x2dbe },
+    .{ .first = 0x2dc0, .last = 0x2dc6 },
+    .{ .first = 0x2dc8, .last = 0x2dce },
+    .{ .first = 0x2dd0, .last = 0x2dd6 },
+    .{ .first = 0x2dd8, .last = 0x2dde },
+    .{ .first = 0xab01, .last = 0xab06 },
+    .{ .first = 0xab09, .last = 0xab0e },
+    .{ .first = 0xab11, .last = 0xab16 },
+    .{ .first = 0xab20, .last = 0xab26 },
+    .{ .first = 0xab28, .last = 0xab2e },
+    .{ .first = 0x1e7e0, .last = 0x1e7e6 },
+    .{ .first = 0x1e7e8, .last = 0x1e7eb },
+    .{ .first = 0x1e7ed, .last = 0x1e7ee },
+    .{ .first = 0x1e7f0, .last = 0x1e7fe },
+};
+
+const ranges_script_garay = [_]Range{
+    .{ .first = 0x10d40, .last = 0x10d65 },
+    .{ .first = 0x10d69, .last = 0x10d85 },
+    .{ .first = 0x10d8e, .last = 0x10d8f },
+};
+
+const ranges_script_extensions_garay = [_]Range{
+    .{ .first = 0x60c, .last = 0x60c },
+    .{ .first = 0x61b, .last = 0x61b },
+    .{ .first = 0x61f, .last = 0x61f },
+    .{ .first = 0x10d40, .last = 0x10d65 },
+    .{ .first = 0x10d69, .last = 0x10d85 },
+    .{ .first = 0x10d8e, .last = 0x10d8f },
+};
+
+const ranges_script_georgian = [_]Range{
+    .{ .first = 0x10a0, .last = 0x10c5 },
+    .{ .first = 0x10c7, .last = 0x10c7 },
+    .{ .first = 0x10cd, .last = 0x10cd },
+    .{ .first = 0x10d0, .last = 0x10fa },
+    .{ .first = 0x10fc, .last = 0x10ff },
+    .{ .first = 0x1c90, .last = 0x1cba },
+    .{ .first = 0x1cbd, .last = 0x1cbf },
+    .{ .first = 0x2d00, .last = 0x2d25 },
+    .{ .first = 0x2d27, .last = 0x2d27 },
+    .{ .first = 0x2d2d, .last = 0x2d2d },
+};
+
+const ranges_script_extensions_georgian = [_]Range{
+    .{ .first = 0xb7, .last = 0xb7 },
+    .{ .first = 0x589, .last = 0x589 },
+    .{ .first = 0x10a0, .last = 0x10c5 },
+    .{ .first = 0x10c7, .last = 0x10c7 },
+    .{ .first = 0x10cd, .last = 0x10cd },
+    .{ .first = 0x10d0, .last = 0x10ff },
+    .{ .first = 0x1c90, .last = 0x1cba },
+    .{ .first = 0x1cbd, .last = 0x1cbf },
+    .{ .first = 0x205a, .last = 0x205a },
+    .{ .first = 0x2d00, .last = 0x2d25 },
+    .{ .first = 0x2d27, .last = 0x2d27 },
+    .{ .first = 0x2d2d, .last = 0x2d2d },
+    .{ .first = 0x2e31, .last = 0x2e31 },
+};
+
+const ranges_script_glagolitic = [_]Range{
+    .{ .first = 0x2c00, .last = 0x2c5f },
+    .{ .first = 0x1e000, .last = 0x1e006 },
+    .{ .first = 0x1e008, .last = 0x1e018 },
+    .{ .first = 0x1e01b, .last = 0x1e021 },
+    .{ .first = 0x1e023, .last = 0x1e024 },
+    .{ .first = 0x1e026, .last = 0x1e02a },
+};
+
+const ranges_script_extensions_glagolitic = [_]Range{
+    .{ .first = 0xb7, .last = 0xb7 },
+    .{ .first = 0x303, .last = 0x303 },
+    .{ .first = 0x305, .last = 0x305 },
+    .{ .first = 0x484, .last = 0x484 },
+    .{ .first = 0x487, .last = 0x487 },
+    .{ .first = 0x589, .last = 0x589 },
+    .{ .first = 0x10fb, .last = 0x10fb },
+    .{ .first = 0x205a, .last = 0x205a },
+    .{ .first = 0x2c00, .last = 0x2c5f },
+    .{ .first = 0x2e43, .last = 0x2e43 },
+    .{ .first = 0xa66f, .last = 0xa66f },
+    .{ .first = 0x1e000, .last = 0x1e006 },
+    .{ .first = 0x1e008, .last = 0x1e018 },
+    .{ .first = 0x1e01b, .last = 0x1e021 },
+    .{ .first = 0x1e023, .last = 0x1e024 },
+    .{ .first = 0x1e026, .last = 0x1e02a },
+};
+
+const ranges_script_gothic = [_]Range{
+    .{ .first = 0x10330, .last = 0x1034a },
+};
+
+const ranges_script_extensions_gothic = [_]Range{
+    .{ .first = 0xb7, .last = 0xb7 },
+    .{ .first = 0x304, .last = 0x305 },
+    .{ .first = 0x308, .last = 0x308 },
+    .{ .first = 0x331, .last = 0x331 },
+    .{ .first = 0x10330, .last = 0x1034a },
+};
+
+const ranges_script_grantha = [_]Range{
+    .{ .first = 0x11300, .last = 0x11303 },
+    .{ .first = 0x11305, .last = 0x1130c },
+    .{ .first = 0x1130f, .last = 0x11310 },
+    .{ .first = 0x11313, .last = 0x11328 },
+    .{ .first = 0x1132a, .last = 0x11330 },
+    .{ .first = 0x11332, .last = 0x11333 },
+    .{ .first = 0x11335, .last = 0x11339 },
+    .{ .first = 0x1133c, .last = 0x11344 },
+    .{ .first = 0x11347, .last = 0x11348 },
+    .{ .first = 0x1134b, .last = 0x1134d },
+    .{ .first = 0x11350, .last = 0x11350 },
+    .{ .first = 0x11357, .last = 0x11357 },
+    .{ .first = 0x1135d, .last = 0x11363 },
+    .{ .first = 0x11366, .last = 0x1136c },
+    .{ .first = 0x11370, .last = 0x11374 },
+};
+
+const ranges_script_extensions_grantha = [_]Range{
+    .{ .first = 0x951, .last = 0x952 },
+    .{ .first = 0x964, .last = 0x965 },
+    .{ .first = 0xbe6, .last = 0xbf3 },
+    .{ .first = 0x1cd0, .last = 0x1cd0 },
+    .{ .first = 0x1cd2, .last = 0x1cd3 },
+    .{ .first = 0x1cf2, .last = 0x1cf4 },
+    .{ .first = 0x1cf8, .last = 0x1cf9 },
+    .{ .first = 0x20f0, .last = 0x20f0 },
+    .{ .first = 0x11300, .last = 0x11303 },
+    .{ .first = 0x11305, .last = 0x1130c },
+    .{ .first = 0x1130f, .last = 0x11310 },
+    .{ .first = 0x11313, .last = 0x11328 },
+    .{ .first = 0x1132a, .last = 0x11330 },
+    .{ .first = 0x11332, .last = 0x11333 },
+    .{ .first = 0x11335, .last = 0x11339 },
+    .{ .first = 0x1133b, .last = 0x11344 },
+    .{ .first = 0x11347, .last = 0x11348 },
+    .{ .first = 0x1134b, .last = 0x1134d },
+    .{ .first = 0x11350, .last = 0x11350 },
+    .{ .first = 0x11357, .last = 0x11357 },
+    .{ .first = 0x1135d, .last = 0x11363 },
+    .{ .first = 0x11366, .last = 0x1136c },
+    .{ .first = 0x11370, .last = 0x11374 },
+    .{ .first = 0x11fd0, .last = 0x11fd1 },
+    .{ .first = 0x11fd3, .last = 0x11fd3 },
+};
+
+const ranges_script_greek = [_]Range{
+    .{ .first = 0x370, .last = 0x373 },
+    .{ .first = 0x375, .last = 0x377 },
+    .{ .first = 0x37a, .last = 0x37d },
+    .{ .first = 0x37f, .last = 0x37f },
+    .{ .first = 0x384, .last = 0x384 },
+    .{ .first = 0x386, .last = 0x386 },
+    .{ .first = 0x388, .last = 0x38a },
+    .{ .first = 0x38c, .last = 0x38c },
+    .{ .first = 0x38e, .last = 0x3a1 },
+    .{ .first = 0x3a3, .last = 0x3e1 },
+    .{ .first = 0x3f0, .last = 0x3ff },
+    .{ .first = 0x1d26, .last = 0x1d2a },
+    .{ .first = 0x1d5d, .last = 0x1d61 },
+    .{ .first = 0x1d66, .last = 0x1d6a },
+    .{ .first = 0x1dbf, .last = 0x1dbf },
+    .{ .first = 0x1f00, .last = 0x1f15 },
+    .{ .first = 0x1f18, .last = 0x1f1d },
+    .{ .first = 0x1f20, .last = 0x1f45 },
+    .{ .first = 0x1f48, .last = 0x1f4d },
+    .{ .first = 0x1f50, .last = 0x1f57 },
+    .{ .first = 0x1f59, .last = 0x1f59 },
+    .{ .first = 0x1f5b, .last = 0x1f5b },
+    .{ .first = 0x1f5d, .last = 0x1f5d },
+    .{ .first = 0x1f5f, .last = 0x1f7d },
+    .{ .first = 0x1f80, .last = 0x1fb4 },
+    .{ .first = 0x1fb6, .last = 0x1fc4 },
+    .{ .first = 0x1fc6, .last = 0x1fd3 },
+    .{ .first = 0x1fd6, .last = 0x1fdb },
+    .{ .first = 0x1fdd, .last = 0x1fef },
+    .{ .first = 0x1ff2, .last = 0x1ff4 },
+    .{ .first = 0x1ff6, .last = 0x1ffe },
+    .{ .first = 0x2126, .last = 0x2126 },
+    .{ .first = 0xab65, .last = 0xab65 },
+    .{ .first = 0x10140, .last = 0x1018e },
+    .{ .first = 0x101a0, .last = 0x101a0 },
+    .{ .first = 0x1d200, .last = 0x1d245 },
+};
+
+const ranges_script_extensions_greek = [_]Range{
+    .{ .first = 0xb7, .last = 0xb7 },
+    .{ .first = 0x300, .last = 0x301 },
+    .{ .first = 0x304, .last = 0x304 },
+    .{ .first = 0x306, .last = 0x306 },
+    .{ .first = 0x308, .last = 0x308 },
+    .{ .first = 0x313, .last = 0x313 },
+    .{ .first = 0x342, .last = 0x342 },
+    .{ .first = 0x345, .last = 0x345 },
+    .{ .first = 0x370, .last = 0x377 },
+    .{ .first = 0x37a, .last = 0x37d },
+    .{ .first = 0x37f, .last = 0x37f },
+    .{ .first = 0x384, .last = 0x384 },
+    .{ .first = 0x386, .last = 0x386 },
+    .{ .first = 0x388, .last = 0x38a },
+    .{ .first = 0x38c, .last = 0x38c },
+    .{ .first = 0x38e, .last = 0x3a1 },
+    .{ .first = 0x3a3, .last = 0x3e1 },
+    .{ .first = 0x3f0, .last = 0x3ff },
+    .{ .first = 0x1d26, .last = 0x1d2a },
+    .{ .first = 0x1d5d, .last = 0x1d61 },
+    .{ .first = 0x1d66, .last = 0x1d6a },
+    .{ .first = 0x1dbf, .last = 0x1dc1 },
+    .{ .first = 0x1f00, .last = 0x1f15 },
+    .{ .first = 0x1f18, .last = 0x1f1d },
+    .{ .first = 0x1f20, .last = 0x1f45 },
+    .{ .first = 0x1f48, .last = 0x1f4d },
+    .{ .first = 0x1f50, .last = 0x1f57 },
+    .{ .first = 0x1f59, .last = 0x1f59 },
+    .{ .first = 0x1f5b, .last = 0x1f5b },
+    .{ .first = 0x1f5d, .last = 0x1f5d },
+    .{ .first = 0x1f5f, .last = 0x1f7d },
+    .{ .first = 0x1f80, .last = 0x1fb4 },
+    .{ .first = 0x1fb6, .last = 0x1fc4 },
+    .{ .first = 0x1fc6, .last = 0x1fd3 },
+    .{ .first = 0x1fd6, .last = 0x1fdb },
+    .{ .first = 0x1fdd, .last = 0x1fef },
+    .{ .first = 0x1ff2, .last = 0x1ff4 },
+    .{ .first = 0x1ff6, .last = 0x1ffe },
+    .{ .first = 0x205d, .last = 0x205d },
+    .{ .first = 0x2126, .last = 0x2126 },
+    .{ .first = 0xab65, .last = 0xab65 },
+    .{ .first = 0x10140, .last = 0x1018e },
+    .{ .first = 0x101a0, .last = 0x101a0 },
+    .{ .first = 0x1d200, .last = 0x1d245 },
+};
+
+const ranges_script_gujarati = [_]Range{
+    .{ .first = 0xa81, .last = 0xa83 },
+    .{ .first = 0xa85, .last = 0xa8d },
+    .{ .first = 0xa8f, .last = 0xa91 },
+    .{ .first = 0xa93, .last = 0xaa8 },
+    .{ .first = 0xaaa, .last = 0xab0 },
+    .{ .first = 0xab2, .last = 0xab3 },
+    .{ .first = 0xab5, .last = 0xab9 },
+    .{ .first = 0xabc, .last = 0xac5 },
+    .{ .first = 0xac7, .last = 0xac9 },
+    .{ .first = 0xacb, .last = 0xacd },
+    .{ .first = 0xad0, .last = 0xad0 },
+    .{ .first = 0xae0, .last = 0xae3 },
+    .{ .first = 0xae6, .last = 0xaf1 },
+    .{ .first = 0xaf9, .last = 0xaff },
+};
+
+const ranges_script_extensions_gujarati = [_]Range{
+    .{ .first = 0x951, .last = 0x952 },
+    .{ .first = 0x964, .last = 0x965 },
+    .{ .first = 0xa81, .last = 0xa83 },
+    .{ .first = 0xa85, .last = 0xa8d },
+    .{ .first = 0xa8f, .last = 0xa91 },
+    .{ .first = 0xa93, .last = 0xaa8 },
+    .{ .first = 0xaaa, .last = 0xab0 },
+    .{ .first = 0xab2, .last = 0xab3 },
+    .{ .first = 0xab5, .last = 0xab9 },
+    .{ .first = 0xabc, .last = 0xac5 },
+    .{ .first = 0xac7, .last = 0xac9 },
+    .{ .first = 0xacb, .last = 0xacd },
+    .{ .first = 0xad0, .last = 0xad0 },
+    .{ .first = 0xae0, .last = 0xae3 },
+    .{ .first = 0xae6, .last = 0xaf1 },
+    .{ .first = 0xaf9, .last = 0xaff },
+    .{ .first = 0xa830, .last = 0xa839 },
+};
+
+const ranges_script_gunjala_gondi = [_]Range{
+    .{ .first = 0x11d60, .last = 0x11d65 },
+    .{ .first = 0x11d67, .last = 0x11d68 },
+    .{ .first = 0x11d6a, .last = 0x11d8e },
+    .{ .first = 0x11d90, .last = 0x11d91 },
+    .{ .first = 0x11d93, .last = 0x11d98 },
+    .{ .first = 0x11da0, .last = 0x11da9 },
+};
+
+const ranges_script_extensions_gunjala_gondi = [_]Range{
+    .{ .first = 0xb7, .last = 0xb7 },
+    .{ .first = 0x964, .last = 0x965 },
+    .{ .first = 0x11d60, .last = 0x11d65 },
+    .{ .first = 0x11d67, .last = 0x11d68 },
+    .{ .first = 0x11d6a, .last = 0x11d8e },
+    .{ .first = 0x11d90, .last = 0x11d91 },
+    .{ .first = 0x11d93, .last = 0x11d98 },
+    .{ .first = 0x11da0, .last = 0x11da9 },
+};
+
+const ranges_script_gurmukhi = [_]Range{
+    .{ .first = 0xa01, .last = 0xa03 },
+    .{ .first = 0xa05, .last = 0xa0a },
+    .{ .first = 0xa0f, .last = 0xa10 },
+    .{ .first = 0xa13, .last = 0xa28 },
+    .{ .first = 0xa2a, .last = 0xa30 },
+    .{ .first = 0xa32, .last = 0xa33 },
+    .{ .first = 0xa35, .last = 0xa36 },
+    .{ .first = 0xa38, .last = 0xa39 },
+    .{ .first = 0xa3c, .last = 0xa3c },
+    .{ .first = 0xa3e, .last = 0xa42 },
+    .{ .first = 0xa47, .last = 0xa48 },
+    .{ .first = 0xa4b, .last = 0xa4d },
+    .{ .first = 0xa51, .last = 0xa51 },
+    .{ .first = 0xa59, .last = 0xa5c },
+    .{ .first = 0xa5e, .last = 0xa5e },
+    .{ .first = 0xa66, .last = 0xa76 },
+};
+
+const ranges_script_extensions_gurmukhi = [_]Range{
+    .{ .first = 0x951, .last = 0x952 },
+    .{ .first = 0x964, .last = 0x965 },
+    .{ .first = 0xa01, .last = 0xa03 },
+    .{ .first = 0xa05, .last = 0xa0a },
+    .{ .first = 0xa0f, .last = 0xa10 },
+    .{ .first = 0xa13, .last = 0xa28 },
+    .{ .first = 0xa2a, .last = 0xa30 },
+    .{ .first = 0xa32, .last = 0xa33 },
+    .{ .first = 0xa35, .last = 0xa36 },
+    .{ .first = 0xa38, .last = 0xa39 },
+    .{ .first = 0xa3c, .last = 0xa3c },
+    .{ .first = 0xa3e, .last = 0xa42 },
+    .{ .first = 0xa47, .last = 0xa48 },
+    .{ .first = 0xa4b, .last = 0xa4d },
+    .{ .first = 0xa51, .last = 0xa51 },
+    .{ .first = 0xa59, .last = 0xa5c },
+    .{ .first = 0xa5e, .last = 0xa5e },
+    .{ .first = 0xa66, .last = 0xa76 },
+    .{ .first = 0xa830, .last = 0xa839 },
+};
+
+const ranges_script_gurung_khema = [_]Range{
+    .{ .first = 0x16100, .last = 0x16139 },
+};
+
+const ranges_script_extensions_gurung_khema = [_]Range{
+    .{ .first = 0x965, .last = 0x965 },
+    .{ .first = 0x16100, .last = 0x16139 },
+};
+
+const ranges_script_han = [_]Range{
+    .{ .first = 0x2e80, .last = 0x2e99 },
+    .{ .first = 0x2e9b, .last = 0x2ef3 },
+    .{ .first = 0x2f00, .last = 0x2fd5 },
+    .{ .first = 0x3005, .last = 0x3005 },
+    .{ .first = 0x3007, .last = 0x3007 },
+    .{ .first = 0x3021, .last = 0x3029 },
+    .{ .first = 0x3038, .last = 0x303b },
+    .{ .first = 0x3400, .last = 0x4dbf },
+    .{ .first = 0x4e00, .last = 0x9fff },
+    .{ .first = 0xf900, .last = 0xfa6d },
+    .{ .first = 0xfa70, .last = 0xfad9 },
+    .{ .first = 0x16fe2, .last = 0x16fe3 },
+    .{ .first = 0x16ff0, .last = 0x16ff6 },
+    .{ .first = 0x20000, .last = 0x2a6df },
+    .{ .first = 0x2a700, .last = 0x2b81d },
+    .{ .first = 0x2b820, .last = 0x2cead },
+    .{ .first = 0x2ceb0, .last = 0x2ebe0 },
+    .{ .first = 0x2ebf0, .last = 0x2ee5d },
+    .{ .first = 0x2f800, .last = 0x2fa1d },
+    .{ .first = 0x30000, .last = 0x3134a },
+    .{ .first = 0x31350, .last = 0x33479 },
+};
+
+const ranges_script_extensions_han = [_]Range{
+    .{ .first = 0xb7, .last = 0xb7 },
+    .{ .first = 0x2e80, .last = 0x2e99 },
+    .{ .first = 0x2e9b, .last = 0x2ef3 },
+    .{ .first = 0x2f00, .last = 0x2fd5 },
+    .{ .first = 0x2ff0, .last = 0x2fff },
+    .{ .first = 0x3001, .last = 0x3003 },
+    .{ .first = 0x3005, .last = 0x3011 },
+    .{ .first = 0x3013, .last = 0x301f },
+    .{ .first = 0x3021, .last = 0x302d },
+    .{ .first = 0x3030, .last = 0x3030 },
+    .{ .first = 0x3037, .last = 0x303f },
+    .{ .first = 0x30fb, .last = 0x30fb },
+    .{ .first = 0x3190, .last = 0x319f },
+    .{ .first = 0x31c0, .last = 0x31e5 },
+    .{ .first = 0x31ef, .last = 0x31ef },
+    .{ .first = 0x3220, .last = 0x3247 },
+    .{ .first = 0x3280, .last = 0x32b0 },
+    .{ .first = 0x32c0, .last = 0x32cb },
+    .{ .first = 0x32ff, .last = 0x32ff },
+    .{ .first = 0x3358, .last = 0x3370 },
+    .{ .first = 0x337b, .last = 0x337f },
+    .{ .first = 0x33e0, .last = 0x33fe },
+    .{ .first = 0x3400, .last = 0x4dbf },
+    .{ .first = 0x4e00, .last = 0x9fff },
+    .{ .first = 0xa700, .last = 0xa707 },
+    .{ .first = 0xf900, .last = 0xfa6d },
+    .{ .first = 0xfa70, .last = 0xfad9 },
+    .{ .first = 0xfe45, .last = 0xfe46 },
+    .{ .first = 0xff61, .last = 0xff65 },
+    .{ .first = 0x16fe2, .last = 0x16fe3 },
+    .{ .first = 0x16ff0, .last = 0x16ff6 },
+    .{ .first = 0x1d360, .last = 0x1d371 },
+    .{ .first = 0x1f250, .last = 0x1f251 },
+    .{ .first = 0x20000, .last = 0x2a6df },
+    .{ .first = 0x2a700, .last = 0x2b81d },
+    .{ .first = 0x2b820, .last = 0x2cead },
+    .{ .first = 0x2ceb0, .last = 0x2ebe0 },
+    .{ .first = 0x2ebf0, .last = 0x2ee5d },
+    .{ .first = 0x2f800, .last = 0x2fa1d },
+    .{ .first = 0x30000, .last = 0x3134a },
+    .{ .first = 0x31350, .last = 0x33479 },
+};
+
+const ranges_script_hangul = [_]Range{
+    .{ .first = 0x1100, .last = 0x11ff },
+    .{ .first = 0x302e, .last = 0x302f },
+    .{ .first = 0x3131, .last = 0x318e },
+    .{ .first = 0x3200, .last = 0x321e },
+    .{ .first = 0x3260, .last = 0x327e },
+    .{ .first = 0xa960, .last = 0xa97c },
+    .{ .first = 0xac00, .last = 0xd7a3 },
+    .{ .first = 0xd7b0, .last = 0xd7c6 },
+    .{ .first = 0xd7cb, .last = 0xd7fb },
+    .{ .first = 0xffa0, .last = 0xffbe },
+    .{ .first = 0xffc2, .last = 0xffc7 },
+    .{ .first = 0xffca, .last = 0xffcf },
+    .{ .first = 0xffd2, .last = 0xffd7 },
+    .{ .first = 0xffda, .last = 0xffdc },
+};
+
+const ranges_script_extensions_hangul = [_]Range{
+    .{ .first = 0x1100, .last = 0x11ff },
+    .{ .first = 0x3001, .last = 0x3003 },
+    .{ .first = 0x3008, .last = 0x3011 },
+    .{ .first = 0x3013, .last = 0x301f },
+    .{ .first = 0x302e, .last = 0x3030 },
+    .{ .first = 0x3037, .last = 0x3037 },
+    .{ .first = 0x30fb, .last = 0x30fb },
+    .{ .first = 0x3131, .last = 0x318e },
+    .{ .first = 0x3200, .last = 0x321e },
+    .{ .first = 0x3260, .last = 0x327e },
+    .{ .first = 0xa960, .last = 0xa97c },
+    .{ .first = 0xac00, .last = 0xd7a3 },
+    .{ .first = 0xd7b0, .last = 0xd7c6 },
+    .{ .first = 0xd7cb, .last = 0xd7fb },
+    .{ .first = 0xfe45, .last = 0xfe46 },
+    .{ .first = 0xff61, .last = 0xff65 },
+    .{ .first = 0xffa0, .last = 0xffbe },
+    .{ .first = 0xffc2, .last = 0xffc7 },
+    .{ .first = 0xffca, .last = 0xffcf },
+    .{ .first = 0xffd2, .last = 0xffd7 },
+    .{ .first = 0xffda, .last = 0xffdc },
+};
+
+const ranges_script_hanifi_rohingya = [_]Range{
+    .{ .first = 0x10d00, .last = 0x10d27 },
+    .{ .first = 0x10d30, .last = 0x10d39 },
+};
+
+const ranges_script_extensions_hanifi_rohingya = [_]Range{
+    .{ .first = 0x60c, .last = 0x60c },
+    .{ .first = 0x61b, .last = 0x61b },
+    .{ .first = 0x61f, .last = 0x61f },
+    .{ .first = 0x640, .last = 0x640 },
+    .{ .first = 0x6d4, .last = 0x6d4 },
+    .{ .first = 0x10d00, .last = 0x10d27 },
+    .{ .first = 0x10d30, .last = 0x10d39 },
+};
+
+const ranges_script_hanunoo = [_]Range{
+    .{ .first = 0x1720, .last = 0x1734 },
+};
+
+const ranges_script_extensions_hanunoo = [_]Range{
+    .{ .first = 0x1720, .last = 0x1736 },
+};
+
+const ranges_script_hatran = [_]Range{
+    .{ .first = 0x108e0, .last = 0x108f2 },
+    .{ .first = 0x108f4, .last = 0x108f5 },
+    .{ .first = 0x108fb, .last = 0x108ff },
+};
+
+const ranges_script_extensions_hatran = [_]Range{
+    .{ .first = 0x108e0, .last = 0x108f2 },
+    .{ .first = 0x108f4, .last = 0x108f5 },
+    .{ .first = 0x108fb, .last = 0x108ff },
+};
+
+const ranges_script_hebrew = [_]Range{
+    .{ .first = 0x591, .last = 0x5c7 },
+    .{ .first = 0x5d0, .last = 0x5ea },
+    .{ .first = 0x5ef, .last = 0x5f4 },
+    .{ .first = 0xfb1d, .last = 0xfb36 },
+    .{ .first = 0xfb38, .last = 0xfb3c },
+    .{ .first = 0xfb3e, .last = 0xfb3e },
+    .{ .first = 0xfb40, .last = 0xfb41 },
+    .{ .first = 0xfb43, .last = 0xfb44 },
+    .{ .first = 0xfb46, .last = 0xfb4f },
+};
+
+const ranges_script_extensions_hebrew = [_]Range{
+    .{ .first = 0x307, .last = 0x308 },
+    .{ .first = 0x591, .last = 0x5c7 },
+    .{ .first = 0x5d0, .last = 0x5ea },
+    .{ .first = 0x5ef, .last = 0x5f4 },
+    .{ .first = 0xfb1d, .last = 0xfb36 },
+    .{ .first = 0xfb38, .last = 0xfb3c },
+    .{ .first = 0xfb3e, .last = 0xfb3e },
+    .{ .first = 0xfb40, .last = 0xfb41 },
+    .{ .first = 0xfb43, .last = 0xfb44 },
+    .{ .first = 0xfb46, .last = 0xfb4f },
+};
+
+const ranges_script_hiragana = [_]Range{
+    .{ .first = 0x3041, .last = 0x3096 },
+    .{ .first = 0x309d, .last = 0x309f },
+    .{ .first = 0x1b001, .last = 0x1b11f },
+    .{ .first = 0x1b132, .last = 0x1b132 },
+    .{ .first = 0x1b150, .last = 0x1b152 },
+    .{ .first = 0x1f200, .last = 0x1f200 },
+};
+
+const ranges_script_extensions_hiragana = [_]Range{
+    .{ .first = 0x3001, .last = 0x3003 },
+    .{ .first = 0x3008, .last = 0x3011 },
+    .{ .first = 0x3013, .last = 0x301f },
+    .{ .first = 0x3030, .last = 0x3035 },
+    .{ .first = 0x3037, .last = 0x3037 },
+    .{ .first = 0x303c, .last = 0x303d },
+    .{ .first = 0x3041, .last = 0x3096 },
+    .{ .first = 0x3099, .last = 0x30a0 },
+    .{ .first = 0x30fb, .last = 0x30fc },
+    .{ .first = 0xfe45, .last = 0xfe46 },
+    .{ .first = 0xff61, .last = 0xff65 },
+    .{ .first = 0xff70, .last = 0xff70 },
+    .{ .first = 0xff9e, .last = 0xff9f },
+    .{ .first = 0x1b001, .last = 0x1b11f },
+    .{ .first = 0x1b132, .last = 0x1b132 },
+    .{ .first = 0x1b150, .last = 0x1b152 },
+    .{ .first = 0x1f200, .last = 0x1f200 },
+};
+
+const ranges_script_imperial_aramaic = [_]Range{
+    .{ .first = 0x10840, .last = 0x10855 },
+    .{ .first = 0x10857, .last = 0x1085f },
+};
+
+const ranges_script_extensions_imperial_aramaic = [_]Range{
+    .{ .first = 0x10840, .last = 0x10855 },
+    .{ .first = 0x10857, .last = 0x1085f },
+};
+
+const ranges_script_inherited = [_]Range{
+    .{ .first = 0x300, .last = 0x36f },
+    .{ .first = 0x485, .last = 0x486 },
+    .{ .first = 0x64b, .last = 0x655 },
+    .{ .first = 0x670, .last = 0x670 },
+    .{ .first = 0x951, .last = 0x954 },
+    .{ .first = 0x1ab0, .last = 0x1add },
+    .{ .first = 0x1ae0, .last = 0x1aeb },
+    .{ .first = 0x1cd0, .last = 0x1cd2 },
+    .{ .first = 0x1cd4, .last = 0x1ce0 },
+    .{ .first = 0x1ce2, .last = 0x1ce8 },
+    .{ .first = 0x1ced, .last = 0x1ced },
+    .{ .first = 0x1cf4, .last = 0x1cf4 },
+    .{ .first = 0x1cf8, .last = 0x1cf9 },
+    .{ .first = 0x1dc0, .last = 0x1dff },
+    .{ .first = 0x200c, .last = 0x200d },
+    .{ .first = 0x20d0, .last = 0x20f0 },
+    .{ .first = 0x302a, .last = 0x302d },
+    .{ .first = 0x3099, .last = 0x309a },
+    .{ .first = 0xfe00, .last = 0xfe0f },
+    .{ .first = 0xfe20, .last = 0xfe2d },
+    .{ .first = 0x101fd, .last = 0x101fd },
+    .{ .first = 0x102e0, .last = 0x102e0 },
+    .{ .first = 0x1133b, .last = 0x1133b },
+    .{ .first = 0x1cf00, .last = 0x1cf2d },
+    .{ .first = 0x1cf30, .last = 0x1cf46 },
+    .{ .first = 0x1d167, .last = 0x1d169 },
+    .{ .first = 0x1d17b, .last = 0x1d182 },
+    .{ .first = 0x1d185, .last = 0x1d18b },
+    .{ .first = 0x1d1aa, .last = 0x1d1ad },
+    .{ .first = 0xe0100, .last = 0xe01ef },
+};
+
 const ranges_script_extensions_inherited = [_]Range{
     .{ .first = 0x30f, .last = 0x30f },
     .{ .first = 0x312, .last = 0x312 },
@@ -20617,6 +23093,1725 @@ const ranges_script_extensions_inherited = [_]Range{
     .{ .first = 0x1d185, .last = 0x1d18b },
     .{ .first = 0x1d1aa, .last = 0x1d1ad },
     .{ .first = 0xe0100, .last = 0xe01ef },
+};
+
+const ranges_script_inscriptional_pahlavi = [_]Range{
+    .{ .first = 0x10b60, .last = 0x10b72 },
+    .{ .first = 0x10b78, .last = 0x10b7f },
+};
+
+const ranges_script_extensions_inscriptional_pahlavi = [_]Range{
+    .{ .first = 0x10b60, .last = 0x10b72 },
+    .{ .first = 0x10b78, .last = 0x10b7f },
+};
+
+const ranges_script_inscriptional_parthian = [_]Range{
+    .{ .first = 0x10b40, .last = 0x10b55 },
+    .{ .first = 0x10b58, .last = 0x10b5f },
+};
+
+const ranges_script_extensions_inscriptional_parthian = [_]Range{
+    .{ .first = 0x10b40, .last = 0x10b55 },
+    .{ .first = 0x10b58, .last = 0x10b5f },
+};
+
+const ranges_script_javanese = [_]Range{
+    .{ .first = 0xa980, .last = 0xa9cd },
+    .{ .first = 0xa9d0, .last = 0xa9d9 },
+    .{ .first = 0xa9de, .last = 0xa9df },
+};
+
+const ranges_script_extensions_javanese = [_]Range{
+    .{ .first = 0xa980, .last = 0xa9cd },
+    .{ .first = 0xa9cf, .last = 0xa9d9 },
+    .{ .first = 0xa9de, .last = 0xa9df },
+};
+
+const ranges_script_kaithi = [_]Range{
+    .{ .first = 0x11080, .last = 0x110c2 },
+    .{ .first = 0x110cd, .last = 0x110cd },
+};
+
+const ranges_script_extensions_kaithi = [_]Range{
+    .{ .first = 0x966, .last = 0x96f },
+    .{ .first = 0x2e31, .last = 0x2e31 },
+    .{ .first = 0xa830, .last = 0xa839 },
+    .{ .first = 0x11080, .last = 0x110c2 },
+    .{ .first = 0x110cd, .last = 0x110cd },
+};
+
+const ranges_script_kannada = [_]Range{
+    .{ .first = 0xc80, .last = 0xc8c },
+    .{ .first = 0xc8e, .last = 0xc90 },
+    .{ .first = 0xc92, .last = 0xca8 },
+    .{ .first = 0xcaa, .last = 0xcb3 },
+    .{ .first = 0xcb5, .last = 0xcb9 },
+    .{ .first = 0xcbc, .last = 0xcc4 },
+    .{ .first = 0xcc6, .last = 0xcc8 },
+    .{ .first = 0xcca, .last = 0xccd },
+    .{ .first = 0xcd5, .last = 0xcd6 },
+    .{ .first = 0xcdc, .last = 0xcde },
+    .{ .first = 0xce0, .last = 0xce3 },
+    .{ .first = 0xce6, .last = 0xcef },
+    .{ .first = 0xcf1, .last = 0xcf3 },
+};
+
+const ranges_script_extensions_kannada = [_]Range{
+    .{ .first = 0x951, .last = 0x952 },
+    .{ .first = 0x964, .last = 0x965 },
+    .{ .first = 0xc80, .last = 0xc8c },
+    .{ .first = 0xc8e, .last = 0xc90 },
+    .{ .first = 0xc92, .last = 0xca8 },
+    .{ .first = 0xcaa, .last = 0xcb3 },
+    .{ .first = 0xcb5, .last = 0xcb9 },
+    .{ .first = 0xcbc, .last = 0xcc4 },
+    .{ .first = 0xcc6, .last = 0xcc8 },
+    .{ .first = 0xcca, .last = 0xccd },
+    .{ .first = 0xcd5, .last = 0xcd6 },
+    .{ .first = 0xcdc, .last = 0xcde },
+    .{ .first = 0xce0, .last = 0xce3 },
+    .{ .first = 0xce6, .last = 0xcef },
+    .{ .first = 0xcf1, .last = 0xcf3 },
+    .{ .first = 0x1cd0, .last = 0x1cd0 },
+    .{ .first = 0x1cd2, .last = 0x1cd3 },
+    .{ .first = 0x1cda, .last = 0x1cda },
+    .{ .first = 0x1cf2, .last = 0x1cf2 },
+    .{ .first = 0x1cf4, .last = 0x1cf4 },
+    .{ .first = 0xa830, .last = 0xa835 },
+};
+
+const ranges_script_katakana = [_]Range{
+    .{ .first = 0x30a1, .last = 0x30fa },
+    .{ .first = 0x30fd, .last = 0x30ff },
+    .{ .first = 0x31f0, .last = 0x31ff },
+    .{ .first = 0x32d0, .last = 0x32fe },
+    .{ .first = 0x3300, .last = 0x3357 },
+    .{ .first = 0xff66, .last = 0xff6f },
+    .{ .first = 0xff71, .last = 0xff9d },
+    .{ .first = 0x1aff0, .last = 0x1aff3 },
+    .{ .first = 0x1aff5, .last = 0x1affb },
+    .{ .first = 0x1affd, .last = 0x1affe },
+    .{ .first = 0x1b000, .last = 0x1b000 },
+    .{ .first = 0x1b120, .last = 0x1b122 },
+    .{ .first = 0x1b155, .last = 0x1b155 },
+    .{ .first = 0x1b164, .last = 0x1b167 },
+};
+
+const ranges_script_extensions_katakana = [_]Range{
+    .{ .first = 0x305, .last = 0x305 },
+    .{ .first = 0x323, .last = 0x323 },
+    .{ .first = 0x3001, .last = 0x3003 },
+    .{ .first = 0x3008, .last = 0x3011 },
+    .{ .first = 0x3013, .last = 0x301f },
+    .{ .first = 0x3030, .last = 0x3035 },
+    .{ .first = 0x3037, .last = 0x3037 },
+    .{ .first = 0x303c, .last = 0x303d },
+    .{ .first = 0x3099, .last = 0x309c },
+    .{ .first = 0x30a0, .last = 0x30ff },
+    .{ .first = 0x31f0, .last = 0x31ff },
+    .{ .first = 0x32d0, .last = 0x32fe },
+    .{ .first = 0x3300, .last = 0x3357 },
+    .{ .first = 0xfe45, .last = 0xfe46 },
+    .{ .first = 0xff61, .last = 0xff9f },
+    .{ .first = 0x1aff0, .last = 0x1aff3 },
+    .{ .first = 0x1aff5, .last = 0x1affb },
+    .{ .first = 0x1affd, .last = 0x1affe },
+    .{ .first = 0x1b000, .last = 0x1b000 },
+    .{ .first = 0x1b120, .last = 0x1b122 },
+    .{ .first = 0x1b155, .last = 0x1b155 },
+    .{ .first = 0x1b164, .last = 0x1b167 },
+};
+
+const ranges_script_kawi = [_]Range{
+    .{ .first = 0x11f00, .last = 0x11f10 },
+    .{ .first = 0x11f12, .last = 0x11f3a },
+    .{ .first = 0x11f3e, .last = 0x11f5a },
+};
+
+const ranges_script_extensions_kawi = [_]Range{
+    .{ .first = 0x11f00, .last = 0x11f10 },
+    .{ .first = 0x11f12, .last = 0x11f3a },
+    .{ .first = 0x11f3e, .last = 0x11f5a },
+};
+
+const ranges_script_kayah_li = [_]Range{
+    .{ .first = 0xa900, .last = 0xa92d },
+    .{ .first = 0xa92f, .last = 0xa92f },
+};
+
+const ranges_script_extensions_kayah_li = [_]Range{
+    .{ .first = 0xa900, .last = 0xa92f },
+};
+
+const ranges_script_kharoshthi = [_]Range{
+    .{ .first = 0x10a00, .last = 0x10a03 },
+    .{ .first = 0x10a05, .last = 0x10a06 },
+    .{ .first = 0x10a0c, .last = 0x10a13 },
+    .{ .first = 0x10a15, .last = 0x10a17 },
+    .{ .first = 0x10a19, .last = 0x10a35 },
+    .{ .first = 0x10a38, .last = 0x10a3a },
+    .{ .first = 0x10a3f, .last = 0x10a48 },
+    .{ .first = 0x10a50, .last = 0x10a58 },
+};
+
+const ranges_script_extensions_kharoshthi = [_]Range{
+    .{ .first = 0x10a00, .last = 0x10a03 },
+    .{ .first = 0x10a05, .last = 0x10a06 },
+    .{ .first = 0x10a0c, .last = 0x10a13 },
+    .{ .first = 0x10a15, .last = 0x10a17 },
+    .{ .first = 0x10a19, .last = 0x10a35 },
+    .{ .first = 0x10a38, .last = 0x10a3a },
+    .{ .first = 0x10a3f, .last = 0x10a48 },
+    .{ .first = 0x10a50, .last = 0x10a58 },
+};
+
+const ranges_script_khmer = [_]Range{
+    .{ .first = 0x1780, .last = 0x17dd },
+    .{ .first = 0x17e0, .last = 0x17e9 },
+    .{ .first = 0x17f0, .last = 0x17f9 },
+    .{ .first = 0x19e0, .last = 0x19ff },
+};
+
+const ranges_script_extensions_khmer = [_]Range{
+    .{ .first = 0x1780, .last = 0x17dd },
+    .{ .first = 0x17e0, .last = 0x17e9 },
+    .{ .first = 0x17f0, .last = 0x17f9 },
+    .{ .first = 0x19e0, .last = 0x19ff },
+};
+
+const ranges_script_khojki = [_]Range{
+    .{ .first = 0x11200, .last = 0x11211 },
+    .{ .first = 0x11213, .last = 0x11241 },
+};
+
+const ranges_script_extensions_khojki = [_]Range{
+    .{ .first = 0xae6, .last = 0xaef },
+    .{ .first = 0xa830, .last = 0xa839 },
+    .{ .first = 0x11200, .last = 0x11211 },
+    .{ .first = 0x11213, .last = 0x11241 },
+};
+
+const ranges_script_khitan_small_script = [_]Range{
+    .{ .first = 0x16fe4, .last = 0x16fe4 },
+    .{ .first = 0x18b00, .last = 0x18cd5 },
+    .{ .first = 0x18cff, .last = 0x18cff },
+};
+
+const ranges_script_extensions_khitan_small_script = [_]Range{
+    .{ .first = 0x16fe4, .last = 0x16fe4 },
+    .{ .first = 0x18b00, .last = 0x18cd5 },
+    .{ .first = 0x18cff, .last = 0x18cff },
+};
+
+const ranges_script_khudawadi = [_]Range{
+    .{ .first = 0x112b0, .last = 0x112ea },
+    .{ .first = 0x112f0, .last = 0x112f9 },
+};
+
+const ranges_script_extensions_khudawadi = [_]Range{
+    .{ .first = 0x964, .last = 0x965 },
+    .{ .first = 0xa830, .last = 0xa839 },
+    .{ .first = 0x112b0, .last = 0x112ea },
+    .{ .first = 0x112f0, .last = 0x112f9 },
+};
+
+const ranges_script_kirat_rai = [_]Range{
+    .{ .first = 0x16d40, .last = 0x16d79 },
+};
+
+const ranges_script_extensions_kirat_rai = [_]Range{
+    .{ .first = 0x16d40, .last = 0x16d79 },
+};
+
+const ranges_script_lao = [_]Range{
+    .{ .first = 0xe81, .last = 0xe82 },
+    .{ .first = 0xe84, .last = 0xe84 },
+    .{ .first = 0xe86, .last = 0xe8a },
+    .{ .first = 0xe8c, .last = 0xea3 },
+    .{ .first = 0xea5, .last = 0xea5 },
+    .{ .first = 0xea7, .last = 0xebd },
+    .{ .first = 0xec0, .last = 0xec4 },
+    .{ .first = 0xec6, .last = 0xec6 },
+    .{ .first = 0xec8, .last = 0xece },
+    .{ .first = 0xed0, .last = 0xed9 },
+    .{ .first = 0xedc, .last = 0xedf },
+};
+
+const ranges_script_extensions_lao = [_]Range{
+    .{ .first = 0xe81, .last = 0xe82 },
+    .{ .first = 0xe84, .last = 0xe84 },
+    .{ .first = 0xe86, .last = 0xe8a },
+    .{ .first = 0xe8c, .last = 0xea3 },
+    .{ .first = 0xea5, .last = 0xea5 },
+    .{ .first = 0xea7, .last = 0xebd },
+    .{ .first = 0xec0, .last = 0xec4 },
+    .{ .first = 0xec6, .last = 0xec6 },
+    .{ .first = 0xec8, .last = 0xece },
+    .{ .first = 0xed0, .last = 0xed9 },
+    .{ .first = 0xedc, .last = 0xedf },
+};
+
+const ranges_script_latin = [_]Range{
+    .{ .first = 0x41, .last = 0x5a },
+    .{ .first = 0x61, .last = 0x7a },
+    .{ .first = 0xaa, .last = 0xaa },
+    .{ .first = 0xba, .last = 0xba },
+    .{ .first = 0xc0, .last = 0xd6 },
+    .{ .first = 0xd8, .last = 0xf6 },
+    .{ .first = 0xf8, .last = 0x2b8 },
+    .{ .first = 0x2e0, .last = 0x2e4 },
+    .{ .first = 0x1d00, .last = 0x1d25 },
+    .{ .first = 0x1d2c, .last = 0x1d5c },
+    .{ .first = 0x1d62, .last = 0x1d65 },
+    .{ .first = 0x1d6b, .last = 0x1d77 },
+    .{ .first = 0x1d79, .last = 0x1dbe },
+    .{ .first = 0x1e00, .last = 0x1eff },
+    .{ .first = 0x2071, .last = 0x2071 },
+    .{ .first = 0x207f, .last = 0x207f },
+    .{ .first = 0x2090, .last = 0x209c },
+    .{ .first = 0x212a, .last = 0x212b },
+    .{ .first = 0x2132, .last = 0x2132 },
+    .{ .first = 0x214e, .last = 0x214e },
+    .{ .first = 0x2160, .last = 0x2188 },
+    .{ .first = 0x2c60, .last = 0x2c7f },
+    .{ .first = 0xa722, .last = 0xa787 },
+    .{ .first = 0xa78b, .last = 0xa7dc },
+    .{ .first = 0xa7f1, .last = 0xa7ff },
+    .{ .first = 0xab30, .last = 0xab5a },
+    .{ .first = 0xab5c, .last = 0xab64 },
+    .{ .first = 0xab66, .last = 0xab69 },
+    .{ .first = 0xfb00, .last = 0xfb06 },
+    .{ .first = 0xff21, .last = 0xff3a },
+    .{ .first = 0xff41, .last = 0xff5a },
+    .{ .first = 0x10780, .last = 0x10785 },
+    .{ .first = 0x10787, .last = 0x107b0 },
+    .{ .first = 0x107b2, .last = 0x107ba },
+    .{ .first = 0x1df00, .last = 0x1df1e },
+    .{ .first = 0x1df25, .last = 0x1df2a },
+};
+
+const ranges_script_extensions_latin = [_]Range{
+    .{ .first = 0x41, .last = 0x5a },
+    .{ .first = 0x61, .last = 0x7a },
+    .{ .first = 0xaa, .last = 0xaa },
+    .{ .first = 0xb7, .last = 0xb7 },
+    .{ .first = 0xba, .last = 0xba },
+    .{ .first = 0xc0, .last = 0xd6 },
+    .{ .first = 0xd8, .last = 0xf6 },
+    .{ .first = 0xf8, .last = 0x2b8 },
+    .{ .first = 0x2bc, .last = 0x2bc },
+    .{ .first = 0x2c7, .last = 0x2c7 },
+    .{ .first = 0x2c9, .last = 0x2cb },
+    .{ .first = 0x2cd, .last = 0x2cd },
+    .{ .first = 0x2d7, .last = 0x2d7 },
+    .{ .first = 0x2d9, .last = 0x2d9 },
+    .{ .first = 0x2e0, .last = 0x2e4 },
+    .{ .first = 0x300, .last = 0x30e },
+    .{ .first = 0x310, .last = 0x311 },
+    .{ .first = 0x313, .last = 0x313 },
+    .{ .first = 0x323, .last = 0x325 },
+    .{ .first = 0x32d, .last = 0x32e },
+    .{ .first = 0x330, .last = 0x331 },
+    .{ .first = 0x358, .last = 0x358 },
+    .{ .first = 0x35e, .last = 0x35e },
+    .{ .first = 0x363, .last = 0x36f },
+    .{ .first = 0x485, .last = 0x486 },
+    .{ .first = 0x951, .last = 0x952 },
+    .{ .first = 0x10fb, .last = 0x10fb },
+    .{ .first = 0x1d00, .last = 0x1d25 },
+    .{ .first = 0x1d2c, .last = 0x1d5c },
+    .{ .first = 0x1d62, .last = 0x1d65 },
+    .{ .first = 0x1d6b, .last = 0x1d77 },
+    .{ .first = 0x1d79, .last = 0x1dbe },
+    .{ .first = 0x1df8, .last = 0x1df8 },
+    .{ .first = 0x1e00, .last = 0x1eff },
+    .{ .first = 0x202f, .last = 0x202f },
+    .{ .first = 0x2071, .last = 0x2071 },
+    .{ .first = 0x207f, .last = 0x207f },
+    .{ .first = 0x2090, .last = 0x209c },
+    .{ .first = 0x20f0, .last = 0x20f0 },
+    .{ .first = 0x212a, .last = 0x212b },
+    .{ .first = 0x2132, .last = 0x2132 },
+    .{ .first = 0x214e, .last = 0x214e },
+    .{ .first = 0x2160, .last = 0x2188 },
+    .{ .first = 0x2c60, .last = 0x2c7f },
+    .{ .first = 0x2e17, .last = 0x2e17 },
+    .{ .first = 0xa700, .last = 0xa707 },
+    .{ .first = 0xa722, .last = 0xa787 },
+    .{ .first = 0xa78b, .last = 0xa7dc },
+    .{ .first = 0xa7f1, .last = 0xa7ff },
+    .{ .first = 0xa92e, .last = 0xa92e },
+    .{ .first = 0xab30, .last = 0xab5a },
+    .{ .first = 0xab5c, .last = 0xab64 },
+    .{ .first = 0xab66, .last = 0xab69 },
+    .{ .first = 0xfb00, .last = 0xfb06 },
+    .{ .first = 0xff21, .last = 0xff3a },
+    .{ .first = 0xff41, .last = 0xff5a },
+    .{ .first = 0x10780, .last = 0x10785 },
+    .{ .first = 0x10787, .last = 0x107b0 },
+    .{ .first = 0x107b2, .last = 0x107ba },
+    .{ .first = 0x1df00, .last = 0x1df1e },
+    .{ .first = 0x1df25, .last = 0x1df2a },
+};
+
+const ranges_script_lepcha = [_]Range{
+    .{ .first = 0x1c00, .last = 0x1c37 },
+    .{ .first = 0x1c3b, .last = 0x1c49 },
+    .{ .first = 0x1c4d, .last = 0x1c4f },
+};
+
+const ranges_script_extensions_lepcha = [_]Range{
+    .{ .first = 0x1c00, .last = 0x1c37 },
+    .{ .first = 0x1c3b, .last = 0x1c49 },
+    .{ .first = 0x1c4d, .last = 0x1c4f },
+};
+
+const ranges_script_limbu = [_]Range{
+    .{ .first = 0x1900, .last = 0x191e },
+    .{ .first = 0x1920, .last = 0x192b },
+    .{ .first = 0x1930, .last = 0x193b },
+    .{ .first = 0x1940, .last = 0x1940 },
+    .{ .first = 0x1944, .last = 0x194f },
+};
+
+const ranges_script_extensions_limbu = [_]Range{
+    .{ .first = 0x965, .last = 0x965 },
+    .{ .first = 0x1900, .last = 0x191e },
+    .{ .first = 0x1920, .last = 0x192b },
+    .{ .first = 0x1930, .last = 0x193b },
+    .{ .first = 0x1940, .last = 0x1940 },
+    .{ .first = 0x1944, .last = 0x194f },
+};
+
+const ranges_script_linear_a = [_]Range{
+    .{ .first = 0x10600, .last = 0x10736 },
+    .{ .first = 0x10740, .last = 0x10755 },
+    .{ .first = 0x10760, .last = 0x10767 },
+};
+
+const ranges_script_extensions_linear_a = [_]Range{
+    .{ .first = 0x10107, .last = 0x10133 },
+    .{ .first = 0x10600, .last = 0x10736 },
+    .{ .first = 0x10740, .last = 0x10755 },
+    .{ .first = 0x10760, .last = 0x10767 },
+};
+
+const ranges_script_linear_b = [_]Range{
+    .{ .first = 0x10000, .last = 0x1000b },
+    .{ .first = 0x1000d, .last = 0x10026 },
+    .{ .first = 0x10028, .last = 0x1003a },
+    .{ .first = 0x1003c, .last = 0x1003d },
+    .{ .first = 0x1003f, .last = 0x1004d },
+    .{ .first = 0x10050, .last = 0x1005d },
+    .{ .first = 0x10080, .last = 0x100fa },
+};
+
+const ranges_script_extensions_linear_b = [_]Range{
+    .{ .first = 0x10000, .last = 0x1000b },
+    .{ .first = 0x1000d, .last = 0x10026 },
+    .{ .first = 0x10028, .last = 0x1003a },
+    .{ .first = 0x1003c, .last = 0x1003d },
+    .{ .first = 0x1003f, .last = 0x1004d },
+    .{ .first = 0x10050, .last = 0x1005d },
+    .{ .first = 0x10080, .last = 0x100fa },
+    .{ .first = 0x10100, .last = 0x10102 },
+    .{ .first = 0x10107, .last = 0x10133 },
+    .{ .first = 0x10137, .last = 0x1013f },
+};
+
+const ranges_script_lisu = [_]Range{
+    .{ .first = 0xa4d0, .last = 0xa4ff },
+    .{ .first = 0x11fb0, .last = 0x11fb0 },
+};
+
+const ranges_script_extensions_lisu = [_]Range{
+    .{ .first = 0x2bc, .last = 0x2bc },
+    .{ .first = 0x2cd, .last = 0x2cd },
+    .{ .first = 0x300a, .last = 0x300b },
+    .{ .first = 0xa4d0, .last = 0xa4ff },
+    .{ .first = 0x11fb0, .last = 0x11fb0 },
+};
+
+const ranges_script_lycian = [_]Range{
+    .{ .first = 0x10280, .last = 0x1029c },
+};
+
+const ranges_script_extensions_lycian = [_]Range{
+    .{ .first = 0x205a, .last = 0x205a },
+    .{ .first = 0x10280, .last = 0x1029c },
+};
+
+const ranges_script_lydian = [_]Range{
+    .{ .first = 0x10920, .last = 0x10939 },
+    .{ .first = 0x1093f, .last = 0x1093f },
+};
+
+const ranges_script_extensions_lydian = [_]Range{
+    .{ .first = 0xb7, .last = 0xb7 },
+    .{ .first = 0x2e31, .last = 0x2e31 },
+    .{ .first = 0x10920, .last = 0x10939 },
+    .{ .first = 0x1093f, .last = 0x1093f },
+};
+
+const ranges_script_makasar = [_]Range{
+    .{ .first = 0x11ee0, .last = 0x11ef8 },
+};
+
+const ranges_script_extensions_makasar = [_]Range{
+    .{ .first = 0x11ee0, .last = 0x11ef8 },
+};
+
+const ranges_script_mahajani = [_]Range{
+    .{ .first = 0x11150, .last = 0x11176 },
+};
+
+const ranges_script_extensions_mahajani = [_]Range{
+    .{ .first = 0xb7, .last = 0xb7 },
+    .{ .first = 0x964, .last = 0x96f },
+    .{ .first = 0xa830, .last = 0xa839 },
+    .{ .first = 0x11150, .last = 0x11176 },
+};
+
+const ranges_script_malayalam = [_]Range{
+    .{ .first = 0xd00, .last = 0xd0c },
+    .{ .first = 0xd0e, .last = 0xd10 },
+    .{ .first = 0xd12, .last = 0xd44 },
+    .{ .first = 0xd46, .last = 0xd48 },
+    .{ .first = 0xd4a, .last = 0xd4f },
+    .{ .first = 0xd54, .last = 0xd63 },
+    .{ .first = 0xd66, .last = 0xd7f },
+};
+
+const ranges_script_extensions_malayalam = [_]Range{
+    .{ .first = 0x951, .last = 0x952 },
+    .{ .first = 0x964, .last = 0x965 },
+    .{ .first = 0xd00, .last = 0xd0c },
+    .{ .first = 0xd0e, .last = 0xd10 },
+    .{ .first = 0xd12, .last = 0xd44 },
+    .{ .first = 0xd46, .last = 0xd48 },
+    .{ .first = 0xd4a, .last = 0xd4f },
+    .{ .first = 0xd54, .last = 0xd63 },
+    .{ .first = 0xd66, .last = 0xd7f },
+    .{ .first = 0x1cda, .last = 0x1cda },
+    .{ .first = 0x1cf2, .last = 0x1cf2 },
+    .{ .first = 0xa830, .last = 0xa832 },
+};
+
+const ranges_script_mandaic = [_]Range{
+    .{ .first = 0x840, .last = 0x85b },
+    .{ .first = 0x85e, .last = 0x85e },
+};
+
+const ranges_script_extensions_mandaic = [_]Range{
+    .{ .first = 0x640, .last = 0x640 },
+    .{ .first = 0x840, .last = 0x85b },
+    .{ .first = 0x85e, .last = 0x85e },
+};
+
+const ranges_script_manichaean = [_]Range{
+    .{ .first = 0x10ac0, .last = 0x10ae6 },
+    .{ .first = 0x10aeb, .last = 0x10af6 },
+};
+
+const ranges_script_extensions_manichaean = [_]Range{
+    .{ .first = 0x640, .last = 0x640 },
+    .{ .first = 0x10ac0, .last = 0x10ae6 },
+    .{ .first = 0x10aeb, .last = 0x10af6 },
+};
+
+const ranges_script_marchen = [_]Range{
+    .{ .first = 0x11c70, .last = 0x11c8f },
+    .{ .first = 0x11c92, .last = 0x11ca7 },
+    .{ .first = 0x11ca9, .last = 0x11cb6 },
+};
+
+const ranges_script_extensions_marchen = [_]Range{
+    .{ .first = 0x11c70, .last = 0x11c8f },
+    .{ .first = 0x11c92, .last = 0x11ca7 },
+    .{ .first = 0x11ca9, .last = 0x11cb6 },
+};
+
+const ranges_script_masaram_gondi = [_]Range{
+    .{ .first = 0x11d00, .last = 0x11d06 },
+    .{ .first = 0x11d08, .last = 0x11d09 },
+    .{ .first = 0x11d0b, .last = 0x11d36 },
+    .{ .first = 0x11d3a, .last = 0x11d3a },
+    .{ .first = 0x11d3c, .last = 0x11d3d },
+    .{ .first = 0x11d3f, .last = 0x11d47 },
+    .{ .first = 0x11d50, .last = 0x11d59 },
+};
+
+const ranges_script_extensions_masaram_gondi = [_]Range{
+    .{ .first = 0x964, .last = 0x965 },
+    .{ .first = 0x11d00, .last = 0x11d06 },
+    .{ .first = 0x11d08, .last = 0x11d09 },
+    .{ .first = 0x11d0b, .last = 0x11d36 },
+    .{ .first = 0x11d3a, .last = 0x11d3a },
+    .{ .first = 0x11d3c, .last = 0x11d3d },
+    .{ .first = 0x11d3f, .last = 0x11d47 },
+    .{ .first = 0x11d50, .last = 0x11d59 },
+};
+
+const ranges_script_medefaidrin = [_]Range{
+    .{ .first = 0x16e40, .last = 0x16e9a },
+};
+
+const ranges_script_extensions_medefaidrin = [_]Range{
+    .{ .first = 0x16e40, .last = 0x16e9a },
+};
+
+const ranges_script_meetei_mayek = [_]Range{
+    .{ .first = 0xaae0, .last = 0xaaf6 },
+    .{ .first = 0xabc0, .last = 0xabed },
+    .{ .first = 0xabf0, .last = 0xabf9 },
+};
+
+const ranges_script_extensions_meetei_mayek = [_]Range{
+    .{ .first = 0xaae0, .last = 0xaaf6 },
+    .{ .first = 0xabc0, .last = 0xabed },
+    .{ .first = 0xabf0, .last = 0xabf9 },
+};
+
+const ranges_script_mende_kikakui = [_]Range{
+    .{ .first = 0x1e800, .last = 0x1e8c4 },
+    .{ .first = 0x1e8c7, .last = 0x1e8d6 },
+};
+
+const ranges_script_extensions_mende_kikakui = [_]Range{
+    .{ .first = 0x1e800, .last = 0x1e8c4 },
+    .{ .first = 0x1e8c7, .last = 0x1e8d6 },
+};
+
+const ranges_script_meroitic_cursive = [_]Range{
+    .{ .first = 0x109a0, .last = 0x109b7 },
+    .{ .first = 0x109bc, .last = 0x109cf },
+    .{ .first = 0x109d2, .last = 0x109ff },
+};
+
+const ranges_script_extensions_meroitic_cursive = [_]Range{
+    .{ .first = 0x109a0, .last = 0x109b7 },
+    .{ .first = 0x109bc, .last = 0x109cf },
+    .{ .first = 0x109d2, .last = 0x109ff },
+};
+
+const ranges_script_meroitic_hieroglyphs = [_]Range{
+    .{ .first = 0x10980, .last = 0x1099f },
+};
+
+const ranges_script_extensions_meroitic_hieroglyphs = [_]Range{
+    .{ .first = 0x205d, .last = 0x205d },
+    .{ .first = 0x10980, .last = 0x1099f },
+};
+
+const ranges_script_miao = [_]Range{
+    .{ .first = 0x16f00, .last = 0x16f4a },
+    .{ .first = 0x16f4f, .last = 0x16f87 },
+    .{ .first = 0x16f8f, .last = 0x16f9f },
+};
+
+const ranges_script_extensions_miao = [_]Range{
+    .{ .first = 0x16f00, .last = 0x16f4a },
+    .{ .first = 0x16f4f, .last = 0x16f87 },
+    .{ .first = 0x16f8f, .last = 0x16f9f },
+};
+
+const ranges_script_modi = [_]Range{
+    .{ .first = 0x11600, .last = 0x11644 },
+    .{ .first = 0x11650, .last = 0x11659 },
+};
+
+const ranges_script_extensions_modi = [_]Range{
+    .{ .first = 0xa830, .last = 0xa839 },
+    .{ .first = 0x11600, .last = 0x11644 },
+    .{ .first = 0x11650, .last = 0x11659 },
+};
+
+const ranges_script_mongolian = [_]Range{
+    .{ .first = 0x1800, .last = 0x1801 },
+    .{ .first = 0x1804, .last = 0x1804 },
+    .{ .first = 0x1806, .last = 0x1819 },
+    .{ .first = 0x1820, .last = 0x1878 },
+    .{ .first = 0x1880, .last = 0x18aa },
+    .{ .first = 0x11660, .last = 0x1166c },
+};
+
+const ranges_script_extensions_mongolian = [_]Range{
+    .{ .first = 0x1800, .last = 0x1819 },
+    .{ .first = 0x1820, .last = 0x1878 },
+    .{ .first = 0x1880, .last = 0x18aa },
+    .{ .first = 0x202f, .last = 0x202f },
+    .{ .first = 0x3001, .last = 0x3002 },
+    .{ .first = 0x3008, .last = 0x300b },
+    .{ .first = 0x11660, .last = 0x1166c },
+};
+
+const ranges_script_mro = [_]Range{
+    .{ .first = 0x16a40, .last = 0x16a5e },
+    .{ .first = 0x16a60, .last = 0x16a69 },
+    .{ .first = 0x16a6e, .last = 0x16a6f },
+};
+
+const ranges_script_extensions_mro = [_]Range{
+    .{ .first = 0x16a40, .last = 0x16a5e },
+    .{ .first = 0x16a60, .last = 0x16a69 },
+    .{ .first = 0x16a6e, .last = 0x16a6f },
+};
+
+const ranges_script_multani = [_]Range{
+    .{ .first = 0x11280, .last = 0x11286 },
+    .{ .first = 0x11288, .last = 0x11288 },
+    .{ .first = 0x1128a, .last = 0x1128d },
+    .{ .first = 0x1128f, .last = 0x1129d },
+    .{ .first = 0x1129f, .last = 0x112a9 },
+};
+
+const ranges_script_extensions_multani = [_]Range{
+    .{ .first = 0xa66, .last = 0xa6f },
+    .{ .first = 0x11280, .last = 0x11286 },
+    .{ .first = 0x11288, .last = 0x11288 },
+    .{ .first = 0x1128a, .last = 0x1128d },
+    .{ .first = 0x1128f, .last = 0x1129d },
+    .{ .first = 0x1129f, .last = 0x112a9 },
+};
+
+const ranges_script_myanmar = [_]Range{
+    .{ .first = 0x1000, .last = 0x109f },
+    .{ .first = 0xa9e0, .last = 0xa9fe },
+    .{ .first = 0xaa60, .last = 0xaa7f },
+    .{ .first = 0x116d0, .last = 0x116e3 },
+};
+
+const ranges_script_extensions_myanmar = [_]Range{
+    .{ .first = 0x1000, .last = 0x109f },
+    .{ .first = 0xa92e, .last = 0xa92e },
+    .{ .first = 0xa9e0, .last = 0xa9fe },
+    .{ .first = 0xaa60, .last = 0xaa7f },
+    .{ .first = 0x116d0, .last = 0x116e3 },
+};
+
+const ranges_script_nabataean = [_]Range{
+    .{ .first = 0x10880, .last = 0x1089e },
+    .{ .first = 0x108a7, .last = 0x108af },
+};
+
+const ranges_script_extensions_nabataean = [_]Range{
+    .{ .first = 0x10880, .last = 0x1089e },
+    .{ .first = 0x108a7, .last = 0x108af },
+};
+
+const ranges_script_nag_mundari = [_]Range{
+    .{ .first = 0x1e4d0, .last = 0x1e4f9 },
+};
+
+const ranges_script_extensions_nag_mundari = [_]Range{
+    .{ .first = 0x1e4d0, .last = 0x1e4f9 },
+};
+
+const ranges_script_nandinagari = [_]Range{
+    .{ .first = 0x119a0, .last = 0x119a7 },
+    .{ .first = 0x119aa, .last = 0x119d7 },
+    .{ .first = 0x119da, .last = 0x119e4 },
+};
+
+const ranges_script_extensions_nandinagari = [_]Range{
+    .{ .first = 0x951, .last = 0x951 },
+    .{ .first = 0x964, .last = 0x965 },
+    .{ .first = 0xce6, .last = 0xcef },
+    .{ .first = 0x1ce9, .last = 0x1ce9 },
+    .{ .first = 0x1cf2, .last = 0x1cf2 },
+    .{ .first = 0x1cfa, .last = 0x1cfa },
+    .{ .first = 0xa830, .last = 0xa835 },
+    .{ .first = 0x119a0, .last = 0x119a7 },
+    .{ .first = 0x119aa, .last = 0x119d7 },
+    .{ .first = 0x119da, .last = 0x119e4 },
+};
+
+const ranges_script_new_tai_lue = [_]Range{
+    .{ .first = 0x1980, .last = 0x19ab },
+    .{ .first = 0x19b0, .last = 0x19c9 },
+    .{ .first = 0x19d0, .last = 0x19da },
+    .{ .first = 0x19de, .last = 0x19df },
+};
+
+const ranges_script_extensions_new_tai_lue = [_]Range{
+    .{ .first = 0x1980, .last = 0x19ab },
+    .{ .first = 0x19b0, .last = 0x19c9 },
+    .{ .first = 0x19d0, .last = 0x19da },
+    .{ .first = 0x19de, .last = 0x19df },
+};
+
+const ranges_script_newa = [_]Range{
+    .{ .first = 0x11400, .last = 0x1145b },
+    .{ .first = 0x1145d, .last = 0x11461 },
+};
+
+const ranges_script_extensions_newa = [_]Range{
+    .{ .first = 0x951, .last = 0x952 },
+    .{ .first = 0x1cd5, .last = 0x1cd5 },
+    .{ .first = 0x1cd7, .last = 0x1cd8 },
+    .{ .first = 0x1ce2, .last = 0x1ce2 },
+    .{ .first = 0x1ce9, .last = 0x1ce9 },
+    .{ .first = 0x1ceb, .last = 0x1ceb },
+    .{ .first = 0x1ced, .last = 0x1ced },
+    .{ .first = 0x11400, .last = 0x1145b },
+    .{ .first = 0x1145d, .last = 0x11461 },
+};
+
+const ranges_script_nko = [_]Range{
+    .{ .first = 0x7c0, .last = 0x7fa },
+    .{ .first = 0x7fd, .last = 0x7ff },
+};
+
+const ranges_script_extensions_nko = [_]Range{
+    .{ .first = 0x60c, .last = 0x60c },
+    .{ .first = 0x61b, .last = 0x61b },
+    .{ .first = 0x61f, .last = 0x61f },
+    .{ .first = 0x7c0, .last = 0x7fa },
+    .{ .first = 0x7fd, .last = 0x7ff },
+    .{ .first = 0xfd3e, .last = 0xfd3f },
+};
+
+const ranges_script_nushu = [_]Range{
+    .{ .first = 0x16fe1, .last = 0x16fe1 },
+    .{ .first = 0x1b170, .last = 0x1b2fb },
+};
+
+const ranges_script_extensions_nushu = [_]Range{
+    .{ .first = 0x16fe1, .last = 0x16fe1 },
+    .{ .first = 0x1b170, .last = 0x1b2fb },
+};
+
+const ranges_script_nyiakeng_puachue_hmong = [_]Range{
+    .{ .first = 0x1e100, .last = 0x1e12c },
+    .{ .first = 0x1e130, .last = 0x1e13d },
+    .{ .first = 0x1e140, .last = 0x1e149 },
+    .{ .first = 0x1e14e, .last = 0x1e14f },
+};
+
+const ranges_script_extensions_nyiakeng_puachue_hmong = [_]Range{
+    .{ .first = 0x1e100, .last = 0x1e12c },
+    .{ .first = 0x1e130, .last = 0x1e13d },
+    .{ .first = 0x1e140, .last = 0x1e149 },
+    .{ .first = 0x1e14e, .last = 0x1e14f },
+};
+
+const ranges_script_ogham = [_]Range{
+    .{ .first = 0x1680, .last = 0x169c },
+};
+
+const ranges_script_extensions_ogham = [_]Range{
+    .{ .first = 0x1680, .last = 0x169c },
+};
+
+const ranges_script_ol_chiki = [_]Range{
+    .{ .first = 0x1c50, .last = 0x1c7f },
+};
+
+const ranges_script_extensions_ol_chiki = [_]Range{
+    .{ .first = 0x1c50, .last = 0x1c7f },
+};
+
+const ranges_script_ol_onal = [_]Range{
+    .{ .first = 0x1e5d0, .last = 0x1e5fa },
+    .{ .first = 0x1e5ff, .last = 0x1e5ff },
+};
+
+const ranges_script_extensions_ol_onal = [_]Range{
+    .{ .first = 0x964, .last = 0x965 },
+    .{ .first = 0x1e5d0, .last = 0x1e5fa },
+    .{ .first = 0x1e5ff, .last = 0x1e5ff },
+};
+
+const ranges_script_old_hungarian = [_]Range{
+    .{ .first = 0x10c80, .last = 0x10cb2 },
+    .{ .first = 0x10cc0, .last = 0x10cf2 },
+    .{ .first = 0x10cfa, .last = 0x10cff },
+};
+
+const ranges_script_extensions_old_hungarian = [_]Range{
+    .{ .first = 0x205a, .last = 0x205a },
+    .{ .first = 0x205d, .last = 0x205d },
+    .{ .first = 0x2e31, .last = 0x2e31 },
+    .{ .first = 0x2e41, .last = 0x2e41 },
+    .{ .first = 0x10c80, .last = 0x10cb2 },
+    .{ .first = 0x10cc0, .last = 0x10cf2 },
+    .{ .first = 0x10cfa, .last = 0x10cff },
+};
+
+const ranges_script_old_italic = [_]Range{
+    .{ .first = 0x10300, .last = 0x10323 },
+    .{ .first = 0x1032d, .last = 0x1032f },
+};
+
+const ranges_script_extensions_old_italic = [_]Range{
+    .{ .first = 0x10300, .last = 0x10323 },
+    .{ .first = 0x1032d, .last = 0x1032f },
+};
+
+const ranges_script_old_north_arabian = [_]Range{
+    .{ .first = 0x10a80, .last = 0x10a9f },
+};
+
+const ranges_script_extensions_old_north_arabian = [_]Range{
+    .{ .first = 0x10a80, .last = 0x10a9f },
+};
+
+const ranges_script_old_permic = [_]Range{
+    .{ .first = 0x10350, .last = 0x1037a },
+};
+
+const ranges_script_extensions_old_permic = [_]Range{
+    .{ .first = 0xb7, .last = 0xb7 },
+    .{ .first = 0x300, .last = 0x300 },
+    .{ .first = 0x306, .last = 0x308 },
+    .{ .first = 0x313, .last = 0x313 },
+    .{ .first = 0x483, .last = 0x483 },
+    .{ .first = 0x10350, .last = 0x1037a },
+};
+
+const ranges_script_old_persian = [_]Range{
+    .{ .first = 0x103a0, .last = 0x103c3 },
+    .{ .first = 0x103c8, .last = 0x103d5 },
+};
+
+const ranges_script_extensions_old_persian = [_]Range{
+    .{ .first = 0x103a0, .last = 0x103c3 },
+    .{ .first = 0x103c8, .last = 0x103d5 },
+};
+
+const ranges_script_old_sogdian = [_]Range{
+    .{ .first = 0x10f00, .last = 0x10f27 },
+};
+
+const ranges_script_extensions_old_sogdian = [_]Range{
+    .{ .first = 0x10f00, .last = 0x10f27 },
+};
+
+const ranges_script_old_south_arabian = [_]Range{
+    .{ .first = 0x10a60, .last = 0x10a7f },
+};
+
+const ranges_script_extensions_old_south_arabian = [_]Range{
+    .{ .first = 0x10a60, .last = 0x10a7f },
+};
+
+const ranges_script_old_turkic = [_]Range{
+    .{ .first = 0x10c00, .last = 0x10c48 },
+};
+
+const ranges_script_extensions_old_turkic = [_]Range{
+    .{ .first = 0x205a, .last = 0x205a },
+    .{ .first = 0x2e30, .last = 0x2e30 },
+    .{ .first = 0x10c00, .last = 0x10c48 },
+};
+
+const ranges_script_old_uyghur = [_]Range{
+    .{ .first = 0x10f70, .last = 0x10f89 },
+};
+
+const ranges_script_extensions_old_uyghur = [_]Range{
+    .{ .first = 0x640, .last = 0x640 },
+    .{ .first = 0x10af2, .last = 0x10af2 },
+    .{ .first = 0x10f70, .last = 0x10f89 },
+};
+
+const ranges_script_oriya = [_]Range{
+    .{ .first = 0xb01, .last = 0xb03 },
+    .{ .first = 0xb05, .last = 0xb0c },
+    .{ .first = 0xb0f, .last = 0xb10 },
+    .{ .first = 0xb13, .last = 0xb28 },
+    .{ .first = 0xb2a, .last = 0xb30 },
+    .{ .first = 0xb32, .last = 0xb33 },
+    .{ .first = 0xb35, .last = 0xb39 },
+    .{ .first = 0xb3c, .last = 0xb44 },
+    .{ .first = 0xb47, .last = 0xb48 },
+    .{ .first = 0xb4b, .last = 0xb4d },
+    .{ .first = 0xb55, .last = 0xb57 },
+    .{ .first = 0xb5c, .last = 0xb5d },
+    .{ .first = 0xb5f, .last = 0xb63 },
+    .{ .first = 0xb66, .last = 0xb77 },
+};
+
+const ranges_script_extensions_oriya = [_]Range{
+    .{ .first = 0x951, .last = 0x952 },
+    .{ .first = 0x964, .last = 0x965 },
+    .{ .first = 0xb01, .last = 0xb03 },
+    .{ .first = 0xb05, .last = 0xb0c },
+    .{ .first = 0xb0f, .last = 0xb10 },
+    .{ .first = 0xb13, .last = 0xb28 },
+    .{ .first = 0xb2a, .last = 0xb30 },
+    .{ .first = 0xb32, .last = 0xb33 },
+    .{ .first = 0xb35, .last = 0xb39 },
+    .{ .first = 0xb3c, .last = 0xb44 },
+    .{ .first = 0xb47, .last = 0xb48 },
+    .{ .first = 0xb4b, .last = 0xb4d },
+    .{ .first = 0xb55, .last = 0xb57 },
+    .{ .first = 0xb5c, .last = 0xb5d },
+    .{ .first = 0xb5f, .last = 0xb63 },
+    .{ .first = 0xb66, .last = 0xb77 },
+    .{ .first = 0x1cda, .last = 0x1cda },
+    .{ .first = 0x1cf2, .last = 0x1cf2 },
+};
+
+const ranges_script_osage = [_]Range{
+    .{ .first = 0x104b0, .last = 0x104d3 },
+    .{ .first = 0x104d8, .last = 0x104fb },
+};
+
+const ranges_script_extensions_osage = [_]Range{
+    .{ .first = 0x301, .last = 0x301 },
+    .{ .first = 0x304, .last = 0x304 },
+    .{ .first = 0x30b, .last = 0x30b },
+    .{ .first = 0x358, .last = 0x358 },
+    .{ .first = 0x104b0, .last = 0x104d3 },
+    .{ .first = 0x104d8, .last = 0x104fb },
+};
+
+const ranges_script_osmanya = [_]Range{
+    .{ .first = 0x10480, .last = 0x1049d },
+    .{ .first = 0x104a0, .last = 0x104a9 },
+};
+
+const ranges_script_extensions_osmanya = [_]Range{
+    .{ .first = 0x10480, .last = 0x1049d },
+    .{ .first = 0x104a0, .last = 0x104a9 },
+};
+
+const ranges_script_pahawh_hmong = [_]Range{
+    .{ .first = 0x16b00, .last = 0x16b45 },
+    .{ .first = 0x16b50, .last = 0x16b59 },
+    .{ .first = 0x16b5b, .last = 0x16b61 },
+    .{ .first = 0x16b63, .last = 0x16b77 },
+    .{ .first = 0x16b7d, .last = 0x16b8f },
+};
+
+const ranges_script_extensions_pahawh_hmong = [_]Range{
+    .{ .first = 0x16b00, .last = 0x16b45 },
+    .{ .first = 0x16b50, .last = 0x16b59 },
+    .{ .first = 0x16b5b, .last = 0x16b61 },
+    .{ .first = 0x16b63, .last = 0x16b77 },
+    .{ .first = 0x16b7d, .last = 0x16b8f },
+};
+
+const ranges_script_palmyrene = [_]Range{
+    .{ .first = 0x10860, .last = 0x1087f },
+};
+
+const ranges_script_extensions_palmyrene = [_]Range{
+    .{ .first = 0x10860, .last = 0x1087f },
+};
+
+const ranges_script_pau_cin_hau = [_]Range{
+    .{ .first = 0x11ac0, .last = 0x11af8 },
+};
+
+const ranges_script_extensions_pau_cin_hau = [_]Range{
+    .{ .first = 0x11ac0, .last = 0x11af8 },
+};
+
+const ranges_script_phags_pa = [_]Range{
+    .{ .first = 0xa840, .last = 0xa877 },
+};
+
+const ranges_script_extensions_phags_pa = [_]Range{
+    .{ .first = 0x1802, .last = 0x1803 },
+    .{ .first = 0x1805, .last = 0x1805 },
+    .{ .first = 0x202f, .last = 0x202f },
+    .{ .first = 0x3002, .last = 0x3002 },
+    .{ .first = 0xa840, .last = 0xa877 },
+};
+
+const ranges_script_phoenician = [_]Range{
+    .{ .first = 0x10900, .last = 0x1091b },
+    .{ .first = 0x1091f, .last = 0x1091f },
+};
+
+const ranges_script_extensions_phoenician = [_]Range{
+    .{ .first = 0x10900, .last = 0x1091b },
+    .{ .first = 0x1091f, .last = 0x1091f },
+};
+
+const ranges_script_psalter_pahlavi = [_]Range{
+    .{ .first = 0x10b80, .last = 0x10b91 },
+    .{ .first = 0x10b99, .last = 0x10b9c },
+    .{ .first = 0x10ba9, .last = 0x10baf },
+};
+
+const ranges_script_extensions_psalter_pahlavi = [_]Range{
+    .{ .first = 0x640, .last = 0x640 },
+    .{ .first = 0x10b80, .last = 0x10b91 },
+    .{ .first = 0x10b99, .last = 0x10b9c },
+    .{ .first = 0x10ba9, .last = 0x10baf },
+};
+
+const ranges_script_rejang = [_]Range{
+    .{ .first = 0xa930, .last = 0xa953 },
+    .{ .first = 0xa95f, .last = 0xa95f },
+};
+
+const ranges_script_extensions_rejang = [_]Range{
+    .{ .first = 0xa930, .last = 0xa953 },
+    .{ .first = 0xa95f, .last = 0xa95f },
+};
+
+const ranges_script_runic = [_]Range{
+    .{ .first = 0x16a0, .last = 0x16ea },
+    .{ .first = 0x16ee, .last = 0x16f8 },
+};
+
+const ranges_script_extensions_runic = [_]Range{
+    .{ .first = 0x16a0, .last = 0x16f8 },
+};
+
+const ranges_script_samaritan = [_]Range{
+    .{ .first = 0x800, .last = 0x82d },
+    .{ .first = 0x830, .last = 0x83e },
+};
+
+const ranges_script_extensions_samaritan = [_]Range{
+    .{ .first = 0x800, .last = 0x82d },
+    .{ .first = 0x830, .last = 0x83e },
+    .{ .first = 0x2e31, .last = 0x2e31 },
+};
+
+const ranges_script_saurashtra = [_]Range{
+    .{ .first = 0xa880, .last = 0xa8c5 },
+    .{ .first = 0xa8ce, .last = 0xa8d9 },
+};
+
+const ranges_script_extensions_saurashtra = [_]Range{
+    .{ .first = 0xa880, .last = 0xa8c5 },
+    .{ .first = 0xa8ce, .last = 0xa8d9 },
+};
+
+const ranges_script_sharada = [_]Range{
+    .{ .first = 0x11180, .last = 0x111df },
+    .{ .first = 0x11b60, .last = 0x11b67 },
+};
+
+const ranges_script_extensions_sharada = [_]Range{
+    .{ .first = 0x951, .last = 0x951 },
+    .{ .first = 0x1cd7, .last = 0x1cd7 },
+    .{ .first = 0x1cd9, .last = 0x1cd9 },
+    .{ .first = 0x1cdc, .last = 0x1cdd },
+    .{ .first = 0x1ce0, .last = 0x1ce0 },
+    .{ .first = 0x1cea, .last = 0x1cea },
+    .{ .first = 0x1ced, .last = 0x1ced },
+    .{ .first = 0xa830, .last = 0xa835 },
+    .{ .first = 0xa838, .last = 0xa838 },
+    .{ .first = 0x11180, .last = 0x111df },
+    .{ .first = 0x11b60, .last = 0x11b67 },
+};
+
+const ranges_script_shavian = [_]Range{
+    .{ .first = 0x10450, .last = 0x1047f },
+};
+
+const ranges_script_extensions_shavian = [_]Range{
+    .{ .first = 0xb7, .last = 0xb7 },
+    .{ .first = 0x10450, .last = 0x1047f },
+};
+
+const ranges_script_siddham = [_]Range{
+    .{ .first = 0x11580, .last = 0x115b5 },
+    .{ .first = 0x115b8, .last = 0x115dd },
+};
+
+const ranges_script_extensions_siddham = [_]Range{
+    .{ .first = 0x11580, .last = 0x115b5 },
+    .{ .first = 0x115b8, .last = 0x115dd },
+};
+
+const ranges_script_sidetic = [_]Range{
+    .{ .first = 0x10940, .last = 0x10959 },
+};
+
+const ranges_script_extensions_sidetic = [_]Range{
+    .{ .first = 0x10940, .last = 0x10959 },
+};
+
+const ranges_script_sign_writing = [_]Range{
+    .{ .first = 0x1d800, .last = 0x1da8b },
+    .{ .first = 0x1da9b, .last = 0x1da9f },
+    .{ .first = 0x1daa1, .last = 0x1daaf },
+};
+
+const ranges_script_extensions_sign_writing = [_]Range{
+    .{ .first = 0x1d800, .last = 0x1da8b },
+    .{ .first = 0x1da9b, .last = 0x1da9f },
+    .{ .first = 0x1daa1, .last = 0x1daaf },
+};
+
+const ranges_script_sinhala = [_]Range{
+    .{ .first = 0xd81, .last = 0xd83 },
+    .{ .first = 0xd85, .last = 0xd96 },
+    .{ .first = 0xd9a, .last = 0xdb1 },
+    .{ .first = 0xdb3, .last = 0xdbb },
+    .{ .first = 0xdbd, .last = 0xdbd },
+    .{ .first = 0xdc0, .last = 0xdc6 },
+    .{ .first = 0xdca, .last = 0xdca },
+    .{ .first = 0xdcf, .last = 0xdd4 },
+    .{ .first = 0xdd6, .last = 0xdd6 },
+    .{ .first = 0xdd8, .last = 0xddf },
+    .{ .first = 0xde6, .last = 0xdef },
+    .{ .first = 0xdf2, .last = 0xdf4 },
+    .{ .first = 0x111e1, .last = 0x111f4 },
+};
+
+const ranges_script_extensions_sinhala = [_]Range{
+    .{ .first = 0x964, .last = 0x965 },
+    .{ .first = 0xd81, .last = 0xd83 },
+    .{ .first = 0xd85, .last = 0xd96 },
+    .{ .first = 0xd9a, .last = 0xdb1 },
+    .{ .first = 0xdb3, .last = 0xdbb },
+    .{ .first = 0xdbd, .last = 0xdbd },
+    .{ .first = 0xdc0, .last = 0xdc6 },
+    .{ .first = 0xdca, .last = 0xdca },
+    .{ .first = 0xdcf, .last = 0xdd4 },
+    .{ .first = 0xdd6, .last = 0xdd6 },
+    .{ .first = 0xdd8, .last = 0xddf },
+    .{ .first = 0xde6, .last = 0xdef },
+    .{ .first = 0xdf2, .last = 0xdf4 },
+    .{ .first = 0x1cf2, .last = 0x1cf2 },
+    .{ .first = 0x111e1, .last = 0x111f4 },
+};
+
+const ranges_script_sogdian = [_]Range{
+    .{ .first = 0x10f30, .last = 0x10f59 },
+};
+
+const ranges_script_extensions_sogdian = [_]Range{
+    .{ .first = 0x640, .last = 0x640 },
+    .{ .first = 0x10f30, .last = 0x10f59 },
+};
+
+const ranges_script_sora_sompeng = [_]Range{
+    .{ .first = 0x110d0, .last = 0x110e8 },
+    .{ .first = 0x110f0, .last = 0x110f9 },
+};
+
+const ranges_script_extensions_sora_sompeng = [_]Range{
+    .{ .first = 0x110d0, .last = 0x110e8 },
+    .{ .first = 0x110f0, .last = 0x110f9 },
+};
+
+const ranges_script_soyombo = [_]Range{
+    .{ .first = 0x11a50, .last = 0x11aa2 },
+};
+
+const ranges_script_extensions_soyombo = [_]Range{
+    .{ .first = 0x11a50, .last = 0x11aa2 },
+};
+
+const ranges_script_sundanese = [_]Range{
+    .{ .first = 0x1b80, .last = 0x1bbf },
+    .{ .first = 0x1cc0, .last = 0x1cc7 },
+};
+
+const ranges_script_extensions_sundanese = [_]Range{
+    .{ .first = 0x1b80, .last = 0x1bbf },
+    .{ .first = 0x1cc0, .last = 0x1cc7 },
+};
+
+const ranges_script_sunuwar = [_]Range{
+    .{ .first = 0x11bc0, .last = 0x11be1 },
+    .{ .first = 0x11bf0, .last = 0x11bf9 },
+};
+
+const ranges_script_extensions_sunuwar = [_]Range{
+    .{ .first = 0x300, .last = 0x301 },
+    .{ .first = 0x303, .last = 0x303 },
+    .{ .first = 0x30d, .last = 0x30d },
+    .{ .first = 0x310, .last = 0x310 },
+    .{ .first = 0x32d, .last = 0x32d },
+    .{ .first = 0x331, .last = 0x331 },
+    .{ .first = 0x11bc0, .last = 0x11be1 },
+    .{ .first = 0x11bf0, .last = 0x11bf9 },
+};
+
+const ranges_script_syloti_nagri = [_]Range{
+    .{ .first = 0xa800, .last = 0xa82c },
+};
+
+const ranges_script_extensions_syloti_nagri = [_]Range{
+    .{ .first = 0x964, .last = 0x965 },
+    .{ .first = 0x9e6, .last = 0x9ef },
+    .{ .first = 0xa800, .last = 0xa82c },
+};
+
+const ranges_script_syriac = [_]Range{
+    .{ .first = 0x700, .last = 0x70d },
+    .{ .first = 0x70f, .last = 0x74a },
+    .{ .first = 0x74d, .last = 0x74f },
+    .{ .first = 0x860, .last = 0x86a },
+};
+
+const ranges_script_extensions_syriac = [_]Range{
+    .{ .first = 0x303, .last = 0x304 },
+    .{ .first = 0x307, .last = 0x308 },
+    .{ .first = 0x30a, .last = 0x30a },
+    .{ .first = 0x323, .last = 0x325 },
+    .{ .first = 0x32d, .last = 0x32e },
+    .{ .first = 0x330, .last = 0x331 },
+    .{ .first = 0x60c, .last = 0x60c },
+    .{ .first = 0x61b, .last = 0x61c },
+    .{ .first = 0x61f, .last = 0x61f },
+    .{ .first = 0x640, .last = 0x640 },
+    .{ .first = 0x64b, .last = 0x655 },
+    .{ .first = 0x670, .last = 0x670 },
+    .{ .first = 0x700, .last = 0x70d },
+    .{ .first = 0x70f, .last = 0x74a },
+    .{ .first = 0x74d, .last = 0x74f },
+    .{ .first = 0x860, .last = 0x86a },
+    .{ .first = 0x1df8, .last = 0x1df8 },
+    .{ .first = 0x1dfa, .last = 0x1dfa },
+};
+
+const ranges_script_tagalog = [_]Range{
+    .{ .first = 0x1700, .last = 0x1715 },
+    .{ .first = 0x171f, .last = 0x171f },
+};
+
+const ranges_script_extensions_tagalog = [_]Range{
+    .{ .first = 0x1700, .last = 0x1715 },
+    .{ .first = 0x171f, .last = 0x171f },
+    .{ .first = 0x1735, .last = 0x1736 },
+};
+
+const ranges_script_tagbanwa = [_]Range{
+    .{ .first = 0x1760, .last = 0x176c },
+    .{ .first = 0x176e, .last = 0x1770 },
+    .{ .first = 0x1772, .last = 0x1773 },
+};
+
+const ranges_script_extensions_tagbanwa = [_]Range{
+    .{ .first = 0x1735, .last = 0x1736 },
+    .{ .first = 0x1760, .last = 0x176c },
+    .{ .first = 0x176e, .last = 0x1770 },
+    .{ .first = 0x1772, .last = 0x1773 },
+};
+
+const ranges_script_tai_le = [_]Range{
+    .{ .first = 0x1950, .last = 0x196d },
+    .{ .first = 0x1970, .last = 0x1974 },
+};
+
+const ranges_script_extensions_tai_le = [_]Range{
+    .{ .first = 0x300, .last = 0x301 },
+    .{ .first = 0x307, .last = 0x308 },
+    .{ .first = 0x30c, .last = 0x30c },
+    .{ .first = 0x1040, .last = 0x1049 },
+    .{ .first = 0x1950, .last = 0x196d },
+    .{ .first = 0x1970, .last = 0x1974 },
+};
+
+const ranges_script_tai_tham = [_]Range{
+    .{ .first = 0x1a20, .last = 0x1a5e },
+    .{ .first = 0x1a60, .last = 0x1a7c },
+    .{ .first = 0x1a7f, .last = 0x1a89 },
+    .{ .first = 0x1a90, .last = 0x1a99 },
+    .{ .first = 0x1aa0, .last = 0x1aad },
+};
+
+const ranges_script_extensions_tai_tham = [_]Range{
+    .{ .first = 0x1a20, .last = 0x1a5e },
+    .{ .first = 0x1a60, .last = 0x1a7c },
+    .{ .first = 0x1a7f, .last = 0x1a89 },
+    .{ .first = 0x1a90, .last = 0x1a99 },
+    .{ .first = 0x1aa0, .last = 0x1aad },
+};
+
+const ranges_script_tai_viet = [_]Range{
+    .{ .first = 0xaa80, .last = 0xaac2 },
+    .{ .first = 0xaadb, .last = 0xaadf },
+};
+
+const ranges_script_extensions_tai_viet = [_]Range{
+    .{ .first = 0xaa80, .last = 0xaac2 },
+    .{ .first = 0xaadb, .last = 0xaadf },
+};
+
+const ranges_script_tai_yo = [_]Range{
+    .{ .first = 0x1e6c0, .last = 0x1e6de },
+    .{ .first = 0x1e6e0, .last = 0x1e6f5 },
+    .{ .first = 0x1e6fe, .last = 0x1e6ff },
+};
+
+const ranges_script_extensions_tai_yo = [_]Range{
+    .{ .first = 0x1e6c0, .last = 0x1e6de },
+    .{ .first = 0x1e6e0, .last = 0x1e6f5 },
+    .{ .first = 0x1e6fe, .last = 0x1e6ff },
+};
+
+const ranges_script_takri = [_]Range{
+    .{ .first = 0x11680, .last = 0x116b9 },
+    .{ .first = 0x116c0, .last = 0x116c9 },
+};
+
+const ranges_script_extensions_takri = [_]Range{
+    .{ .first = 0x964, .last = 0x965 },
+    .{ .first = 0xa830, .last = 0xa839 },
+    .{ .first = 0x11680, .last = 0x116b9 },
+    .{ .first = 0x116c0, .last = 0x116c9 },
+};
+
+const ranges_script_tamil = [_]Range{
+    .{ .first = 0xb82, .last = 0xb83 },
+    .{ .first = 0xb85, .last = 0xb8a },
+    .{ .first = 0xb8e, .last = 0xb90 },
+    .{ .first = 0xb92, .last = 0xb95 },
+    .{ .first = 0xb99, .last = 0xb9a },
+    .{ .first = 0xb9c, .last = 0xb9c },
+    .{ .first = 0xb9e, .last = 0xb9f },
+    .{ .first = 0xba3, .last = 0xba4 },
+    .{ .first = 0xba8, .last = 0xbaa },
+    .{ .first = 0xbae, .last = 0xbb9 },
+    .{ .first = 0xbbe, .last = 0xbc2 },
+    .{ .first = 0xbc6, .last = 0xbc8 },
+    .{ .first = 0xbca, .last = 0xbcd },
+    .{ .first = 0xbd0, .last = 0xbd0 },
+    .{ .first = 0xbd7, .last = 0xbd7 },
+    .{ .first = 0xbe6, .last = 0xbfa },
+    .{ .first = 0x11fc0, .last = 0x11ff1 },
+    .{ .first = 0x11fff, .last = 0x11fff },
+};
+
+const ranges_script_extensions_tamil = [_]Range{
+    .{ .first = 0x951, .last = 0x952 },
+    .{ .first = 0x964, .last = 0x965 },
+    .{ .first = 0xb82, .last = 0xb83 },
+    .{ .first = 0xb85, .last = 0xb8a },
+    .{ .first = 0xb8e, .last = 0xb90 },
+    .{ .first = 0xb92, .last = 0xb95 },
+    .{ .first = 0xb99, .last = 0xb9a },
+    .{ .first = 0xb9c, .last = 0xb9c },
+    .{ .first = 0xb9e, .last = 0xb9f },
+    .{ .first = 0xba3, .last = 0xba4 },
+    .{ .first = 0xba8, .last = 0xbaa },
+    .{ .first = 0xbae, .last = 0xbb9 },
+    .{ .first = 0xbbe, .last = 0xbc2 },
+    .{ .first = 0xbc6, .last = 0xbc8 },
+    .{ .first = 0xbca, .last = 0xbcd },
+    .{ .first = 0xbd0, .last = 0xbd0 },
+    .{ .first = 0xbd7, .last = 0xbd7 },
+    .{ .first = 0xbe6, .last = 0xbfa },
+    .{ .first = 0x1cda, .last = 0x1cda },
+    .{ .first = 0xa8f3, .last = 0xa8f3 },
+    .{ .first = 0x11301, .last = 0x11301 },
+    .{ .first = 0x11303, .last = 0x11303 },
+    .{ .first = 0x1133b, .last = 0x1133c },
+    .{ .first = 0x11fc0, .last = 0x11ff1 },
+    .{ .first = 0x11fff, .last = 0x11fff },
+};
+
+const ranges_script_tangut = [_]Range{
+    .{ .first = 0x16fe0, .last = 0x16fe0 },
+    .{ .first = 0x17000, .last = 0x18aff },
+    .{ .first = 0x18d00, .last = 0x18d1e },
+    .{ .first = 0x18d80, .last = 0x18df2 },
+};
+
+const ranges_script_extensions_tangut = [_]Range{
+    .{ .first = 0x2ff0, .last = 0x2fff },
+    .{ .first = 0x31ef, .last = 0x31ef },
+    .{ .first = 0x16fe0, .last = 0x16fe0 },
+    .{ .first = 0x17000, .last = 0x18aff },
+    .{ .first = 0x18d00, .last = 0x18d1e },
+    .{ .first = 0x18d80, .last = 0x18df2 },
+};
+
+const ranges_script_telugu = [_]Range{
+    .{ .first = 0xc00, .last = 0xc0c },
+    .{ .first = 0xc0e, .last = 0xc10 },
+    .{ .first = 0xc12, .last = 0xc28 },
+    .{ .first = 0xc2a, .last = 0xc39 },
+    .{ .first = 0xc3c, .last = 0xc44 },
+    .{ .first = 0xc46, .last = 0xc48 },
+    .{ .first = 0xc4a, .last = 0xc4d },
+    .{ .first = 0xc55, .last = 0xc56 },
+    .{ .first = 0xc58, .last = 0xc5a },
+    .{ .first = 0xc5c, .last = 0xc5d },
+    .{ .first = 0xc60, .last = 0xc63 },
+    .{ .first = 0xc66, .last = 0xc6f },
+    .{ .first = 0xc77, .last = 0xc7f },
+};
+
+const ranges_script_extensions_telugu = [_]Range{
+    .{ .first = 0x951, .last = 0x952 },
+    .{ .first = 0x964, .last = 0x965 },
+    .{ .first = 0xc00, .last = 0xc0c },
+    .{ .first = 0xc0e, .last = 0xc10 },
+    .{ .first = 0xc12, .last = 0xc28 },
+    .{ .first = 0xc2a, .last = 0xc39 },
+    .{ .first = 0xc3c, .last = 0xc44 },
+    .{ .first = 0xc46, .last = 0xc48 },
+    .{ .first = 0xc4a, .last = 0xc4d },
+    .{ .first = 0xc55, .last = 0xc56 },
+    .{ .first = 0xc58, .last = 0xc5a },
+    .{ .first = 0xc5c, .last = 0xc5d },
+    .{ .first = 0xc60, .last = 0xc63 },
+    .{ .first = 0xc66, .last = 0xc6f },
+    .{ .first = 0xc77, .last = 0xc7f },
+    .{ .first = 0x1cd5, .last = 0x1cd6 },
+    .{ .first = 0x1cd8, .last = 0x1cd8 },
+    .{ .first = 0x1cda, .last = 0x1cda },
+    .{ .first = 0x1cf2, .last = 0x1cf2 },
+};
+
+const ranges_script_thaana = [_]Range{
+    .{ .first = 0x780, .last = 0x7b1 },
+};
+
+const ranges_script_extensions_thaana = [_]Range{
+    .{ .first = 0x60c, .last = 0x60c },
+    .{ .first = 0x61b, .last = 0x61c },
+    .{ .first = 0x61f, .last = 0x61f },
+    .{ .first = 0x660, .last = 0x669 },
+    .{ .first = 0x780, .last = 0x7b1 },
+    .{ .first = 0xfdf2, .last = 0xfdf2 },
+    .{ .first = 0xfdfd, .last = 0xfdfd },
+};
+
+const ranges_script_thai = [_]Range{
+    .{ .first = 0xe01, .last = 0xe3a },
+    .{ .first = 0xe40, .last = 0xe5b },
+};
+
+const ranges_script_extensions_thai = [_]Range{
+    .{ .first = 0x2bc, .last = 0x2bc },
+    .{ .first = 0x2d7, .last = 0x2d7 },
+    .{ .first = 0x303, .last = 0x303 },
+    .{ .first = 0x331, .last = 0x331 },
+    .{ .first = 0xe01, .last = 0xe3a },
+    .{ .first = 0xe40, .last = 0xe5b },
+};
+
+const ranges_script_tibetan = [_]Range{
+    .{ .first = 0xf00, .last = 0xf47 },
+    .{ .first = 0xf49, .last = 0xf6c },
+    .{ .first = 0xf71, .last = 0xf97 },
+    .{ .first = 0xf99, .last = 0xfbc },
+    .{ .first = 0xfbe, .last = 0xfcc },
+    .{ .first = 0xfce, .last = 0xfd4 },
+    .{ .first = 0xfd9, .last = 0xfda },
+};
+
+const ranges_script_extensions_tibetan = [_]Range{
+    .{ .first = 0xf00, .last = 0xf47 },
+    .{ .first = 0xf49, .last = 0xf6c },
+    .{ .first = 0xf71, .last = 0xf97 },
+    .{ .first = 0xf99, .last = 0xfbc },
+    .{ .first = 0xfbe, .last = 0xfcc },
+    .{ .first = 0xfce, .last = 0xfd4 },
+    .{ .first = 0xfd9, .last = 0xfda },
+    .{ .first = 0x3008, .last = 0x300b },
+};
+
+const ranges_script_tifinagh = [_]Range{
+    .{ .first = 0x2d30, .last = 0x2d67 },
+    .{ .first = 0x2d6f, .last = 0x2d70 },
+    .{ .first = 0x2d7f, .last = 0x2d7f },
+};
+
+const ranges_script_extensions_tifinagh = [_]Range{
+    .{ .first = 0x302, .last = 0x302 },
+    .{ .first = 0x304, .last = 0x304 },
+    .{ .first = 0x306, .last = 0x309 },
+    .{ .first = 0x323, .last = 0x323 },
+    .{ .first = 0x2d30, .last = 0x2d67 },
+    .{ .first = 0x2d6f, .last = 0x2d70 },
+    .{ .first = 0x2d7f, .last = 0x2d7f },
+};
+
+const ranges_script_tirhuta = [_]Range{
+    .{ .first = 0x11480, .last = 0x114c7 },
+    .{ .first = 0x114d0, .last = 0x114d9 },
+};
+
+const ranges_script_extensions_tirhuta = [_]Range{
+    .{ .first = 0x951, .last = 0x952 },
+    .{ .first = 0x964, .last = 0x965 },
+    .{ .first = 0x1cd5, .last = 0x1cd5 },
+    .{ .first = 0x1ce2, .last = 0x1ce2 },
+    .{ .first = 0x1cf2, .last = 0x1cf2 },
+    .{ .first = 0xa830, .last = 0xa839 },
+    .{ .first = 0x11480, .last = 0x114c7 },
+    .{ .first = 0x114d0, .last = 0x114d9 },
+};
+
+const ranges_script_tangsa = [_]Range{
+    .{ .first = 0x16a70, .last = 0x16abe },
+    .{ .first = 0x16ac0, .last = 0x16ac9 },
+};
+
+const ranges_script_extensions_tangsa = [_]Range{
+    .{ .first = 0x16a70, .last = 0x16abe },
+    .{ .first = 0x16ac0, .last = 0x16ac9 },
+};
+
+const ranges_script_todhri = [_]Range{
+    .{ .first = 0x105c0, .last = 0x105f3 },
+};
+
+const ranges_script_extensions_todhri = [_]Range{
+    .{ .first = 0x301, .last = 0x301 },
+    .{ .first = 0x304, .last = 0x304 },
+    .{ .first = 0x307, .last = 0x307 },
+    .{ .first = 0x311, .last = 0x311 },
+    .{ .first = 0x313, .last = 0x313 },
+    .{ .first = 0x35e, .last = 0x35e },
+    .{ .first = 0x105c0, .last = 0x105f3 },
+};
+
+const ranges_script_tolong_siki = [_]Range{
+    .{ .first = 0x11db0, .last = 0x11ddb },
+    .{ .first = 0x11de0, .last = 0x11de9 },
+};
+
+const ranges_script_extensions_tolong_siki = [_]Range{
+    .{ .first = 0x11db0, .last = 0x11ddb },
+    .{ .first = 0x11de0, .last = 0x11de9 },
+};
+
+const ranges_script_toto = [_]Range{
+    .{ .first = 0x1e290, .last = 0x1e2ae },
+};
+
+const ranges_script_extensions_toto = [_]Range{
+    .{ .first = 0x2bc, .last = 0x2bc },
+    .{ .first = 0x1e290, .last = 0x1e2ae },
+};
+
+const ranges_script_tulu_tigalari = [_]Range{
+    .{ .first = 0x11380, .last = 0x11389 },
+    .{ .first = 0x1138b, .last = 0x1138b },
+    .{ .first = 0x1138e, .last = 0x1138e },
+    .{ .first = 0x11390, .last = 0x113b5 },
+    .{ .first = 0x113b7, .last = 0x113c0 },
+    .{ .first = 0x113c2, .last = 0x113c2 },
+    .{ .first = 0x113c5, .last = 0x113c5 },
+    .{ .first = 0x113c7, .last = 0x113ca },
+    .{ .first = 0x113cc, .last = 0x113d5 },
+    .{ .first = 0x113d7, .last = 0x113d8 },
+    .{ .first = 0x113e1, .last = 0x113e2 },
+};
+
+const ranges_script_extensions_tulu_tigalari = [_]Range{
+    .{ .first = 0xce6, .last = 0xcef },
+    .{ .first = 0x1cf2, .last = 0x1cf2 },
+    .{ .first = 0x1cf4, .last = 0x1cf4 },
+    .{ .first = 0xa830, .last = 0xa835 },
+    .{ .first = 0xa8f1, .last = 0xa8f1 },
+    .{ .first = 0x11380, .last = 0x11389 },
+    .{ .first = 0x1138b, .last = 0x1138b },
+    .{ .first = 0x1138e, .last = 0x1138e },
+    .{ .first = 0x11390, .last = 0x113b5 },
+    .{ .first = 0x113b7, .last = 0x113c0 },
+    .{ .first = 0x113c2, .last = 0x113c2 },
+    .{ .first = 0x113c5, .last = 0x113c5 },
+    .{ .first = 0x113c7, .last = 0x113ca },
+    .{ .first = 0x113cc, .last = 0x113d5 },
+    .{ .first = 0x113d7, .last = 0x113d8 },
+    .{ .first = 0x113e1, .last = 0x113e2 },
+};
+
+const ranges_script_ugaritic = [_]Range{
+    .{ .first = 0x10380, .last = 0x1039d },
+    .{ .first = 0x1039f, .last = 0x1039f },
+};
+
+const ranges_script_extensions_ugaritic = [_]Range{
+    .{ .first = 0x10380, .last = 0x1039d },
+    .{ .first = 0x1039f, .last = 0x1039f },
+};
+
+const ranges_script_vai = [_]Range{
+    .{ .first = 0xa500, .last = 0xa62b },
+};
+
+const ranges_script_extensions_vai = [_]Range{
+    .{ .first = 0xa500, .last = 0xa62b },
+};
+
+const ranges_script_vithkuqi = [_]Range{
+    .{ .first = 0x10570, .last = 0x1057a },
+    .{ .first = 0x1057c, .last = 0x1058a },
+    .{ .first = 0x1058c, .last = 0x10592 },
+    .{ .first = 0x10594, .last = 0x10595 },
+    .{ .first = 0x10597, .last = 0x105a1 },
+    .{ .first = 0x105a3, .last = 0x105b1 },
+    .{ .first = 0x105b3, .last = 0x105b9 },
+    .{ .first = 0x105bb, .last = 0x105bc },
+};
+
+const ranges_script_extensions_vithkuqi = [_]Range{
+    .{ .first = 0x10570, .last = 0x1057a },
+    .{ .first = 0x1057c, .last = 0x1058a },
+    .{ .first = 0x1058c, .last = 0x10592 },
+    .{ .first = 0x10594, .last = 0x10595 },
+    .{ .first = 0x10597, .last = 0x105a1 },
+    .{ .first = 0x105a3, .last = 0x105b1 },
+    .{ .first = 0x105b3, .last = 0x105b9 },
+    .{ .first = 0x105bb, .last = 0x105bc },
+};
+
+const ranges_script_wancho = [_]Range{
+    .{ .first = 0x1e2c0, .last = 0x1e2f9 },
+    .{ .first = 0x1e2ff, .last = 0x1e2ff },
+};
+
+const ranges_script_extensions_wancho = [_]Range{
+    .{ .first = 0x1e2c0, .last = 0x1e2f9 },
+    .{ .first = 0x1e2ff, .last = 0x1e2ff },
+};
+
+const ranges_script_warang_citi = [_]Range{
+    .{ .first = 0x118a0, .last = 0x118f2 },
+    .{ .first = 0x118ff, .last = 0x118ff },
+};
+
+const ranges_script_extensions_warang_citi = [_]Range{
+    .{ .first = 0x118a0, .last = 0x118f2 },
+    .{ .first = 0x118ff, .last = 0x118ff },
+};
+
+const ranges_script_yezidi = [_]Range{
+    .{ .first = 0x10e80, .last = 0x10ea9 },
+    .{ .first = 0x10eab, .last = 0x10ead },
+    .{ .first = 0x10eb0, .last = 0x10eb1 },
+};
+
+const ranges_script_extensions_yezidi = [_]Range{
+    .{ .first = 0x60c, .last = 0x60c },
+    .{ .first = 0x61b, .last = 0x61b },
+    .{ .first = 0x61f, .last = 0x61f },
+    .{ .first = 0x660, .last = 0x669 },
+    .{ .first = 0x10e80, .last = 0x10ea9 },
+    .{ .first = 0x10eab, .last = 0x10ead },
+    .{ .first = 0x10eb0, .last = 0x10eb1 },
+};
+
+const ranges_script_yi = [_]Range{
+    .{ .first = 0xa000, .last = 0xa48c },
+    .{ .first = 0xa490, .last = 0xa4c6 },
+};
+
+const ranges_script_extensions_yi = [_]Range{
+    .{ .first = 0x3001, .last = 0x3002 },
+    .{ .first = 0x3008, .last = 0x3011 },
+    .{ .first = 0x3014, .last = 0x301b },
+    .{ .first = 0x30fb, .last = 0x30fb },
+    .{ .first = 0xa000, .last = 0xa48c },
+    .{ .first = 0xa490, .last = 0xa4c6 },
+    .{ .first = 0xff61, .last = 0xff65 },
+};
+
+const ranges_script_zanabazar_square = [_]Range{
+    .{ .first = 0x11a00, .last = 0x11a47 },
+};
+
+const ranges_script_extensions_zanabazar_square = [_]Range{
+    .{ .first = 0x11a00, .last = 0x11a47 },
 };
 
 pub fn contains(property: Property, codepoint: u21) bool {
@@ -20712,33 +24907,717 @@ pub fn contains(property: Property, codepoint: u21) bool {
         .extended_pictographic => inRanges(&ranges_extended_pictographic, codepoint),
         .id_start => inRanges(&ranges_id_start, codepoint),
         .id_continue => inRanges(&ranges_id_continue, codepoint),
-        .script_latin => inRanges(&ranges_script_latin, codepoint),
-        .script_greek => inRanges(&ranges_script_greek, codepoint),
-        .script_cyrillic => inRanges(&ranges_script_cyrillic, codepoint),
-        .script_hiragana => inRanges(&ranges_script_hiragana, codepoint),
-        .script_katakana => inRanges(&ranges_script_katakana, codepoint),
-        .script_han => inRanges(&ranges_script_han, codepoint),
+        .script_unknown => inRanges(&ranges_script_unknown, codepoint),
+        .script_extensions_unknown => inRanges(&ranges_script_extensions_unknown, codepoint),
+        .script_adlam => inRanges(&ranges_script_adlam, codepoint),
+        .script_extensions_adlam => inRanges(&ranges_script_extensions_adlam, codepoint),
+        .script_ahom => inRanges(&ranges_script_ahom, codepoint),
+        .script_extensions_ahom => inRanges(&ranges_script_extensions_ahom, codepoint),
+        .script_anatolian_hieroglyphs => inRanges(&ranges_script_anatolian_hieroglyphs, codepoint),
+        .script_extensions_anatolian_hieroglyphs => inRanges(&ranges_script_extensions_anatolian_hieroglyphs, codepoint),
         .script_arabic => inRanges(&ranges_script_arabic, codepoint),
-        .script_hebrew => inRanges(&ranges_script_hebrew, codepoint),
-        .script_devanagari => inRanges(&ranges_script_devanagari, codepoint),
-        .script_thai => inRanges(&ranges_script_thai, codepoint),
-        .script_hangul => inRanges(&ranges_script_hangul, codepoint),
-        .script_common => inRanges(&ranges_script_common, codepoint),
-        .script_inherited => inRanges(&ranges_script_inherited, codepoint),
-        .script_extensions_latin => inRanges(&ranges_script_extensions_latin, codepoint),
-        .script_extensions_greek => inRanges(&ranges_script_extensions_greek, codepoint),
-        .script_extensions_cyrillic => inRanges(&ranges_script_extensions_cyrillic, codepoint),
-        .script_extensions_hiragana => inRanges(&ranges_script_extensions_hiragana, codepoint),
-        .script_extensions_katakana => inRanges(&ranges_script_extensions_katakana, codepoint),
-        .script_extensions_han => inRanges(&ranges_script_extensions_han, codepoint),
         .script_extensions_arabic => inRanges(&ranges_script_extensions_arabic, codepoint),
-        .script_extensions_hebrew => inRanges(&ranges_script_extensions_hebrew, codepoint),
-        .script_extensions_devanagari => inRanges(&ranges_script_extensions_devanagari, codepoint),
-        .script_extensions_thai => inRanges(&ranges_script_extensions_thai, codepoint),
-        .script_extensions_hangul => inRanges(&ranges_script_extensions_hangul, codepoint),
+        .script_armenian => inRanges(&ranges_script_armenian, codepoint),
+        .script_extensions_armenian => inRanges(&ranges_script_extensions_armenian, codepoint),
+        .script_avestan => inRanges(&ranges_script_avestan, codepoint),
+        .script_extensions_avestan => inRanges(&ranges_script_extensions_avestan, codepoint),
+        .script_balinese => inRanges(&ranges_script_balinese, codepoint),
+        .script_extensions_balinese => inRanges(&ranges_script_extensions_balinese, codepoint),
+        .script_bamum => inRanges(&ranges_script_bamum, codepoint),
+        .script_extensions_bamum => inRanges(&ranges_script_extensions_bamum, codepoint),
+        .script_bassa_vah => inRanges(&ranges_script_bassa_vah, codepoint),
+        .script_extensions_bassa_vah => inRanges(&ranges_script_extensions_bassa_vah, codepoint),
+        .script_batak => inRanges(&ranges_script_batak, codepoint),
+        .script_extensions_batak => inRanges(&ranges_script_extensions_batak, codepoint),
+        .script_beria_erfe => inRanges(&ranges_script_beria_erfe, codepoint),
+        .script_extensions_beria_erfe => inRanges(&ranges_script_extensions_beria_erfe, codepoint),
+        .script_bengali => inRanges(&ranges_script_bengali, codepoint),
+        .script_extensions_bengali => inRanges(&ranges_script_extensions_bengali, codepoint),
+        .script_bhaiksuki => inRanges(&ranges_script_bhaiksuki, codepoint),
+        .script_extensions_bhaiksuki => inRanges(&ranges_script_extensions_bhaiksuki, codepoint),
+        .script_bopomofo => inRanges(&ranges_script_bopomofo, codepoint),
+        .script_extensions_bopomofo => inRanges(&ranges_script_extensions_bopomofo, codepoint),
+        .script_brahmi => inRanges(&ranges_script_brahmi, codepoint),
+        .script_extensions_brahmi => inRanges(&ranges_script_extensions_brahmi, codepoint),
+        .script_braille => inRanges(&ranges_script_braille, codepoint),
+        .script_extensions_braille => inRanges(&ranges_script_extensions_braille, codepoint),
+        .script_buginese => inRanges(&ranges_script_buginese, codepoint),
+        .script_extensions_buginese => inRanges(&ranges_script_extensions_buginese, codepoint),
+        .script_buhid => inRanges(&ranges_script_buhid, codepoint),
+        .script_extensions_buhid => inRanges(&ranges_script_extensions_buhid, codepoint),
+        .script_canadian_aboriginal => inRanges(&ranges_script_canadian_aboriginal, codepoint),
+        .script_extensions_canadian_aboriginal => inRanges(&ranges_script_extensions_canadian_aboriginal, codepoint),
+        .script_carian => inRanges(&ranges_script_carian, codepoint),
+        .script_extensions_carian => inRanges(&ranges_script_extensions_carian, codepoint),
+        .script_caucasian_albanian => inRanges(&ranges_script_caucasian_albanian, codepoint),
+        .script_extensions_caucasian_albanian => inRanges(&ranges_script_extensions_caucasian_albanian, codepoint),
+        .script_chakma => inRanges(&ranges_script_chakma, codepoint),
+        .script_extensions_chakma => inRanges(&ranges_script_extensions_chakma, codepoint),
+        .script_cham => inRanges(&ranges_script_cham, codepoint),
+        .script_extensions_cham => inRanges(&ranges_script_extensions_cham, codepoint),
+        .script_cherokee => inRanges(&ranges_script_cherokee, codepoint),
+        .script_extensions_cherokee => inRanges(&ranges_script_extensions_cherokee, codepoint),
+        .script_chorasmian => inRanges(&ranges_script_chorasmian, codepoint),
+        .script_extensions_chorasmian => inRanges(&ranges_script_extensions_chorasmian, codepoint),
+        .script_common => inRanges(&ranges_script_common, codepoint),
         .script_extensions_common => inRanges(&ranges_script_extensions_common, codepoint),
+        .script_coptic => inRanges(&ranges_script_coptic, codepoint),
+        .script_extensions_coptic => inRanges(&ranges_script_extensions_coptic, codepoint),
+        .script_cuneiform => inRanges(&ranges_script_cuneiform, codepoint),
+        .script_extensions_cuneiform => inRanges(&ranges_script_extensions_cuneiform, codepoint),
+        .script_cypriot => inRanges(&ranges_script_cypriot, codepoint),
+        .script_extensions_cypriot => inRanges(&ranges_script_extensions_cypriot, codepoint),
+        .script_cyrillic => inRanges(&ranges_script_cyrillic, codepoint),
+        .script_extensions_cyrillic => inRanges(&ranges_script_extensions_cyrillic, codepoint),
+        .script_cypro_minoan => inRanges(&ranges_script_cypro_minoan, codepoint),
+        .script_extensions_cypro_minoan => inRanges(&ranges_script_extensions_cypro_minoan, codepoint),
+        .script_deseret => inRanges(&ranges_script_deseret, codepoint),
+        .script_extensions_deseret => inRanges(&ranges_script_extensions_deseret, codepoint),
+        .script_devanagari => inRanges(&ranges_script_devanagari, codepoint),
+        .script_extensions_devanagari => inRanges(&ranges_script_extensions_devanagari, codepoint),
+        .script_dives_akuru => inRanges(&ranges_script_dives_akuru, codepoint),
+        .script_extensions_dives_akuru => inRanges(&ranges_script_extensions_dives_akuru, codepoint),
+        .script_dogra => inRanges(&ranges_script_dogra, codepoint),
+        .script_extensions_dogra => inRanges(&ranges_script_extensions_dogra, codepoint),
+        .script_duployan => inRanges(&ranges_script_duployan, codepoint),
+        .script_extensions_duployan => inRanges(&ranges_script_extensions_duployan, codepoint),
+        .script_egyptian_hieroglyphs => inRanges(&ranges_script_egyptian_hieroglyphs, codepoint),
+        .script_extensions_egyptian_hieroglyphs => inRanges(&ranges_script_extensions_egyptian_hieroglyphs, codepoint),
+        .script_elbasan => inRanges(&ranges_script_elbasan, codepoint),
+        .script_extensions_elbasan => inRanges(&ranges_script_extensions_elbasan, codepoint),
+        .script_elymaic => inRanges(&ranges_script_elymaic, codepoint),
+        .script_extensions_elymaic => inRanges(&ranges_script_extensions_elymaic, codepoint),
+        .script_ethiopic => inRanges(&ranges_script_ethiopic, codepoint),
+        .script_extensions_ethiopic => inRanges(&ranges_script_extensions_ethiopic, codepoint),
+        .script_garay => inRanges(&ranges_script_garay, codepoint),
+        .script_extensions_garay => inRanges(&ranges_script_extensions_garay, codepoint),
+        .script_georgian => inRanges(&ranges_script_georgian, codepoint),
+        .script_extensions_georgian => inRanges(&ranges_script_extensions_georgian, codepoint),
+        .script_glagolitic => inRanges(&ranges_script_glagolitic, codepoint),
+        .script_extensions_glagolitic => inRanges(&ranges_script_extensions_glagolitic, codepoint),
+        .script_gothic => inRanges(&ranges_script_gothic, codepoint),
+        .script_extensions_gothic => inRanges(&ranges_script_extensions_gothic, codepoint),
+        .script_grantha => inRanges(&ranges_script_grantha, codepoint),
+        .script_extensions_grantha => inRanges(&ranges_script_extensions_grantha, codepoint),
+        .script_greek => inRanges(&ranges_script_greek, codepoint),
+        .script_extensions_greek => inRanges(&ranges_script_extensions_greek, codepoint),
+        .script_gujarati => inRanges(&ranges_script_gujarati, codepoint),
+        .script_extensions_gujarati => inRanges(&ranges_script_extensions_gujarati, codepoint),
+        .script_gunjala_gondi => inRanges(&ranges_script_gunjala_gondi, codepoint),
+        .script_extensions_gunjala_gondi => inRanges(&ranges_script_extensions_gunjala_gondi, codepoint),
+        .script_gurmukhi => inRanges(&ranges_script_gurmukhi, codepoint),
+        .script_extensions_gurmukhi => inRanges(&ranges_script_extensions_gurmukhi, codepoint),
+        .script_gurung_khema => inRanges(&ranges_script_gurung_khema, codepoint),
+        .script_extensions_gurung_khema => inRanges(&ranges_script_extensions_gurung_khema, codepoint),
+        .script_han => inRanges(&ranges_script_han, codepoint),
+        .script_extensions_han => inRanges(&ranges_script_extensions_han, codepoint),
+        .script_hangul => inRanges(&ranges_script_hangul, codepoint),
+        .script_extensions_hangul => inRanges(&ranges_script_extensions_hangul, codepoint),
+        .script_hanifi_rohingya => inRanges(&ranges_script_hanifi_rohingya, codepoint),
+        .script_extensions_hanifi_rohingya => inRanges(&ranges_script_extensions_hanifi_rohingya, codepoint),
+        .script_hanunoo => inRanges(&ranges_script_hanunoo, codepoint),
+        .script_extensions_hanunoo => inRanges(&ranges_script_extensions_hanunoo, codepoint),
+        .script_hatran => inRanges(&ranges_script_hatran, codepoint),
+        .script_extensions_hatran => inRanges(&ranges_script_extensions_hatran, codepoint),
+        .script_hebrew => inRanges(&ranges_script_hebrew, codepoint),
+        .script_extensions_hebrew => inRanges(&ranges_script_extensions_hebrew, codepoint),
+        .script_hiragana => inRanges(&ranges_script_hiragana, codepoint),
+        .script_extensions_hiragana => inRanges(&ranges_script_extensions_hiragana, codepoint),
+        .script_imperial_aramaic => inRanges(&ranges_script_imperial_aramaic, codepoint),
+        .script_extensions_imperial_aramaic => inRanges(&ranges_script_extensions_imperial_aramaic, codepoint),
+        .script_inherited => inRanges(&ranges_script_inherited, codepoint),
         .script_extensions_inherited => inRanges(&ranges_script_extensions_inherited, codepoint),
+        .script_inscriptional_pahlavi => inRanges(&ranges_script_inscriptional_pahlavi, codepoint),
+        .script_extensions_inscriptional_pahlavi => inRanges(&ranges_script_extensions_inscriptional_pahlavi, codepoint),
+        .script_inscriptional_parthian => inRanges(&ranges_script_inscriptional_parthian, codepoint),
+        .script_extensions_inscriptional_parthian => inRanges(&ranges_script_extensions_inscriptional_parthian, codepoint),
+        .script_javanese => inRanges(&ranges_script_javanese, codepoint),
+        .script_extensions_javanese => inRanges(&ranges_script_extensions_javanese, codepoint),
+        .script_kaithi => inRanges(&ranges_script_kaithi, codepoint),
+        .script_extensions_kaithi => inRanges(&ranges_script_extensions_kaithi, codepoint),
+        .script_kannada => inRanges(&ranges_script_kannada, codepoint),
+        .script_extensions_kannada => inRanges(&ranges_script_extensions_kannada, codepoint),
+        .script_katakana => inRanges(&ranges_script_katakana, codepoint),
+        .script_extensions_katakana => inRanges(&ranges_script_extensions_katakana, codepoint),
+        .script_kawi => inRanges(&ranges_script_kawi, codepoint),
+        .script_extensions_kawi => inRanges(&ranges_script_extensions_kawi, codepoint),
+        .script_kayah_li => inRanges(&ranges_script_kayah_li, codepoint),
+        .script_extensions_kayah_li => inRanges(&ranges_script_extensions_kayah_li, codepoint),
+        .script_kharoshthi => inRanges(&ranges_script_kharoshthi, codepoint),
+        .script_extensions_kharoshthi => inRanges(&ranges_script_extensions_kharoshthi, codepoint),
+        .script_khmer => inRanges(&ranges_script_khmer, codepoint),
+        .script_extensions_khmer => inRanges(&ranges_script_extensions_khmer, codepoint),
+        .script_khojki => inRanges(&ranges_script_khojki, codepoint),
+        .script_extensions_khojki => inRanges(&ranges_script_extensions_khojki, codepoint),
+        .script_khitan_small_script => inRanges(&ranges_script_khitan_small_script, codepoint),
+        .script_extensions_khitan_small_script => inRanges(&ranges_script_extensions_khitan_small_script, codepoint),
+        .script_khudawadi => inRanges(&ranges_script_khudawadi, codepoint),
+        .script_extensions_khudawadi => inRanges(&ranges_script_extensions_khudawadi, codepoint),
+        .script_kirat_rai => inRanges(&ranges_script_kirat_rai, codepoint),
+        .script_extensions_kirat_rai => inRanges(&ranges_script_extensions_kirat_rai, codepoint),
+        .script_lao => inRanges(&ranges_script_lao, codepoint),
+        .script_extensions_lao => inRanges(&ranges_script_extensions_lao, codepoint),
+        .script_latin => inRanges(&ranges_script_latin, codepoint),
+        .script_extensions_latin => inRanges(&ranges_script_extensions_latin, codepoint),
+        .script_lepcha => inRanges(&ranges_script_lepcha, codepoint),
+        .script_extensions_lepcha => inRanges(&ranges_script_extensions_lepcha, codepoint),
+        .script_limbu => inRanges(&ranges_script_limbu, codepoint),
+        .script_extensions_limbu => inRanges(&ranges_script_extensions_limbu, codepoint),
+        .script_linear_a => inRanges(&ranges_script_linear_a, codepoint),
+        .script_extensions_linear_a => inRanges(&ranges_script_extensions_linear_a, codepoint),
+        .script_linear_b => inRanges(&ranges_script_linear_b, codepoint),
+        .script_extensions_linear_b => inRanges(&ranges_script_extensions_linear_b, codepoint),
+        .script_lisu => inRanges(&ranges_script_lisu, codepoint),
+        .script_extensions_lisu => inRanges(&ranges_script_extensions_lisu, codepoint),
+        .script_lycian => inRanges(&ranges_script_lycian, codepoint),
+        .script_extensions_lycian => inRanges(&ranges_script_extensions_lycian, codepoint),
+        .script_lydian => inRanges(&ranges_script_lydian, codepoint),
+        .script_extensions_lydian => inRanges(&ranges_script_extensions_lydian, codepoint),
+        .script_makasar => inRanges(&ranges_script_makasar, codepoint),
+        .script_extensions_makasar => inRanges(&ranges_script_extensions_makasar, codepoint),
+        .script_mahajani => inRanges(&ranges_script_mahajani, codepoint),
+        .script_extensions_mahajani => inRanges(&ranges_script_extensions_mahajani, codepoint),
+        .script_malayalam => inRanges(&ranges_script_malayalam, codepoint),
+        .script_extensions_malayalam => inRanges(&ranges_script_extensions_malayalam, codepoint),
+        .script_mandaic => inRanges(&ranges_script_mandaic, codepoint),
+        .script_extensions_mandaic => inRanges(&ranges_script_extensions_mandaic, codepoint),
+        .script_manichaean => inRanges(&ranges_script_manichaean, codepoint),
+        .script_extensions_manichaean => inRanges(&ranges_script_extensions_manichaean, codepoint),
+        .script_marchen => inRanges(&ranges_script_marchen, codepoint),
+        .script_extensions_marchen => inRanges(&ranges_script_extensions_marchen, codepoint),
+        .script_masaram_gondi => inRanges(&ranges_script_masaram_gondi, codepoint),
+        .script_extensions_masaram_gondi => inRanges(&ranges_script_extensions_masaram_gondi, codepoint),
+        .script_medefaidrin => inRanges(&ranges_script_medefaidrin, codepoint),
+        .script_extensions_medefaidrin => inRanges(&ranges_script_extensions_medefaidrin, codepoint),
+        .script_meetei_mayek => inRanges(&ranges_script_meetei_mayek, codepoint),
+        .script_extensions_meetei_mayek => inRanges(&ranges_script_extensions_meetei_mayek, codepoint),
+        .script_mende_kikakui => inRanges(&ranges_script_mende_kikakui, codepoint),
+        .script_extensions_mende_kikakui => inRanges(&ranges_script_extensions_mende_kikakui, codepoint),
+        .script_meroitic_cursive => inRanges(&ranges_script_meroitic_cursive, codepoint),
+        .script_extensions_meroitic_cursive => inRanges(&ranges_script_extensions_meroitic_cursive, codepoint),
+        .script_meroitic_hieroglyphs => inRanges(&ranges_script_meroitic_hieroglyphs, codepoint),
+        .script_extensions_meroitic_hieroglyphs => inRanges(&ranges_script_extensions_meroitic_hieroglyphs, codepoint),
+        .script_miao => inRanges(&ranges_script_miao, codepoint),
+        .script_extensions_miao => inRanges(&ranges_script_extensions_miao, codepoint),
+        .script_modi => inRanges(&ranges_script_modi, codepoint),
+        .script_extensions_modi => inRanges(&ranges_script_extensions_modi, codepoint),
+        .script_mongolian => inRanges(&ranges_script_mongolian, codepoint),
+        .script_extensions_mongolian => inRanges(&ranges_script_extensions_mongolian, codepoint),
+        .script_mro => inRanges(&ranges_script_mro, codepoint),
+        .script_extensions_mro => inRanges(&ranges_script_extensions_mro, codepoint),
+        .script_multani => inRanges(&ranges_script_multani, codepoint),
+        .script_extensions_multani => inRanges(&ranges_script_extensions_multani, codepoint),
+        .script_myanmar => inRanges(&ranges_script_myanmar, codepoint),
+        .script_extensions_myanmar => inRanges(&ranges_script_extensions_myanmar, codepoint),
+        .script_nabataean => inRanges(&ranges_script_nabataean, codepoint),
+        .script_extensions_nabataean => inRanges(&ranges_script_extensions_nabataean, codepoint),
+        .script_nag_mundari => inRanges(&ranges_script_nag_mundari, codepoint),
+        .script_extensions_nag_mundari => inRanges(&ranges_script_extensions_nag_mundari, codepoint),
+        .script_nandinagari => inRanges(&ranges_script_nandinagari, codepoint),
+        .script_extensions_nandinagari => inRanges(&ranges_script_extensions_nandinagari, codepoint),
+        .script_new_tai_lue => inRanges(&ranges_script_new_tai_lue, codepoint),
+        .script_extensions_new_tai_lue => inRanges(&ranges_script_extensions_new_tai_lue, codepoint),
+        .script_newa => inRanges(&ranges_script_newa, codepoint),
+        .script_extensions_newa => inRanges(&ranges_script_extensions_newa, codepoint),
+        .script_nko => inRanges(&ranges_script_nko, codepoint),
+        .script_extensions_nko => inRanges(&ranges_script_extensions_nko, codepoint),
+        .script_nushu => inRanges(&ranges_script_nushu, codepoint),
+        .script_extensions_nushu => inRanges(&ranges_script_extensions_nushu, codepoint),
+        .script_nyiakeng_puachue_hmong => inRanges(&ranges_script_nyiakeng_puachue_hmong, codepoint),
+        .script_extensions_nyiakeng_puachue_hmong => inRanges(&ranges_script_extensions_nyiakeng_puachue_hmong, codepoint),
+        .script_ogham => inRanges(&ranges_script_ogham, codepoint),
+        .script_extensions_ogham => inRanges(&ranges_script_extensions_ogham, codepoint),
+        .script_ol_chiki => inRanges(&ranges_script_ol_chiki, codepoint),
+        .script_extensions_ol_chiki => inRanges(&ranges_script_extensions_ol_chiki, codepoint),
+        .script_ol_onal => inRanges(&ranges_script_ol_onal, codepoint),
+        .script_extensions_ol_onal => inRanges(&ranges_script_extensions_ol_onal, codepoint),
+        .script_old_hungarian => inRanges(&ranges_script_old_hungarian, codepoint),
+        .script_extensions_old_hungarian => inRanges(&ranges_script_extensions_old_hungarian, codepoint),
+        .script_old_italic => inRanges(&ranges_script_old_italic, codepoint),
+        .script_extensions_old_italic => inRanges(&ranges_script_extensions_old_italic, codepoint),
+        .script_old_north_arabian => inRanges(&ranges_script_old_north_arabian, codepoint),
+        .script_extensions_old_north_arabian => inRanges(&ranges_script_extensions_old_north_arabian, codepoint),
+        .script_old_permic => inRanges(&ranges_script_old_permic, codepoint),
+        .script_extensions_old_permic => inRanges(&ranges_script_extensions_old_permic, codepoint),
+        .script_old_persian => inRanges(&ranges_script_old_persian, codepoint),
+        .script_extensions_old_persian => inRanges(&ranges_script_extensions_old_persian, codepoint),
+        .script_old_sogdian => inRanges(&ranges_script_old_sogdian, codepoint),
+        .script_extensions_old_sogdian => inRanges(&ranges_script_extensions_old_sogdian, codepoint),
+        .script_old_south_arabian => inRanges(&ranges_script_old_south_arabian, codepoint),
+        .script_extensions_old_south_arabian => inRanges(&ranges_script_extensions_old_south_arabian, codepoint),
+        .script_old_turkic => inRanges(&ranges_script_old_turkic, codepoint),
+        .script_extensions_old_turkic => inRanges(&ranges_script_extensions_old_turkic, codepoint),
+        .script_old_uyghur => inRanges(&ranges_script_old_uyghur, codepoint),
+        .script_extensions_old_uyghur => inRanges(&ranges_script_extensions_old_uyghur, codepoint),
+        .script_oriya => inRanges(&ranges_script_oriya, codepoint),
+        .script_extensions_oriya => inRanges(&ranges_script_extensions_oriya, codepoint),
+        .script_osage => inRanges(&ranges_script_osage, codepoint),
+        .script_extensions_osage => inRanges(&ranges_script_extensions_osage, codepoint),
+        .script_osmanya => inRanges(&ranges_script_osmanya, codepoint),
+        .script_extensions_osmanya => inRanges(&ranges_script_extensions_osmanya, codepoint),
+        .script_pahawh_hmong => inRanges(&ranges_script_pahawh_hmong, codepoint),
+        .script_extensions_pahawh_hmong => inRanges(&ranges_script_extensions_pahawh_hmong, codepoint),
+        .script_palmyrene => inRanges(&ranges_script_palmyrene, codepoint),
+        .script_extensions_palmyrene => inRanges(&ranges_script_extensions_palmyrene, codepoint),
+        .script_pau_cin_hau => inRanges(&ranges_script_pau_cin_hau, codepoint),
+        .script_extensions_pau_cin_hau => inRanges(&ranges_script_extensions_pau_cin_hau, codepoint),
+        .script_phags_pa => inRanges(&ranges_script_phags_pa, codepoint),
+        .script_extensions_phags_pa => inRanges(&ranges_script_extensions_phags_pa, codepoint),
+        .script_phoenician => inRanges(&ranges_script_phoenician, codepoint),
+        .script_extensions_phoenician => inRanges(&ranges_script_extensions_phoenician, codepoint),
+        .script_psalter_pahlavi => inRanges(&ranges_script_psalter_pahlavi, codepoint),
+        .script_extensions_psalter_pahlavi => inRanges(&ranges_script_extensions_psalter_pahlavi, codepoint),
+        .script_rejang => inRanges(&ranges_script_rejang, codepoint),
+        .script_extensions_rejang => inRanges(&ranges_script_extensions_rejang, codepoint),
+        .script_runic => inRanges(&ranges_script_runic, codepoint),
+        .script_extensions_runic => inRanges(&ranges_script_extensions_runic, codepoint),
+        .script_samaritan => inRanges(&ranges_script_samaritan, codepoint),
+        .script_extensions_samaritan => inRanges(&ranges_script_extensions_samaritan, codepoint),
+        .script_saurashtra => inRanges(&ranges_script_saurashtra, codepoint),
+        .script_extensions_saurashtra => inRanges(&ranges_script_extensions_saurashtra, codepoint),
+        .script_sharada => inRanges(&ranges_script_sharada, codepoint),
+        .script_extensions_sharada => inRanges(&ranges_script_extensions_sharada, codepoint),
+        .script_shavian => inRanges(&ranges_script_shavian, codepoint),
+        .script_extensions_shavian => inRanges(&ranges_script_extensions_shavian, codepoint),
+        .script_siddham => inRanges(&ranges_script_siddham, codepoint),
+        .script_extensions_siddham => inRanges(&ranges_script_extensions_siddham, codepoint),
+        .script_sidetic => inRanges(&ranges_script_sidetic, codepoint),
+        .script_extensions_sidetic => inRanges(&ranges_script_extensions_sidetic, codepoint),
+        .script_sign_writing => inRanges(&ranges_script_sign_writing, codepoint),
+        .script_extensions_sign_writing => inRanges(&ranges_script_extensions_sign_writing, codepoint),
+        .script_sinhala => inRanges(&ranges_script_sinhala, codepoint),
+        .script_extensions_sinhala => inRanges(&ranges_script_extensions_sinhala, codepoint),
+        .script_sogdian => inRanges(&ranges_script_sogdian, codepoint),
+        .script_extensions_sogdian => inRanges(&ranges_script_extensions_sogdian, codepoint),
+        .script_sora_sompeng => inRanges(&ranges_script_sora_sompeng, codepoint),
+        .script_extensions_sora_sompeng => inRanges(&ranges_script_extensions_sora_sompeng, codepoint),
+        .script_soyombo => inRanges(&ranges_script_soyombo, codepoint),
+        .script_extensions_soyombo => inRanges(&ranges_script_extensions_soyombo, codepoint),
+        .script_sundanese => inRanges(&ranges_script_sundanese, codepoint),
+        .script_extensions_sundanese => inRanges(&ranges_script_extensions_sundanese, codepoint),
+        .script_sunuwar => inRanges(&ranges_script_sunuwar, codepoint),
+        .script_extensions_sunuwar => inRanges(&ranges_script_extensions_sunuwar, codepoint),
+        .script_syloti_nagri => inRanges(&ranges_script_syloti_nagri, codepoint),
+        .script_extensions_syloti_nagri => inRanges(&ranges_script_extensions_syloti_nagri, codepoint),
+        .script_syriac => inRanges(&ranges_script_syriac, codepoint),
+        .script_extensions_syriac => inRanges(&ranges_script_extensions_syriac, codepoint),
+        .script_tagalog => inRanges(&ranges_script_tagalog, codepoint),
+        .script_extensions_tagalog => inRanges(&ranges_script_extensions_tagalog, codepoint),
+        .script_tagbanwa => inRanges(&ranges_script_tagbanwa, codepoint),
+        .script_extensions_tagbanwa => inRanges(&ranges_script_extensions_tagbanwa, codepoint),
+        .script_tai_le => inRanges(&ranges_script_tai_le, codepoint),
+        .script_extensions_tai_le => inRanges(&ranges_script_extensions_tai_le, codepoint),
+        .script_tai_tham => inRanges(&ranges_script_tai_tham, codepoint),
+        .script_extensions_tai_tham => inRanges(&ranges_script_extensions_tai_tham, codepoint),
+        .script_tai_viet => inRanges(&ranges_script_tai_viet, codepoint),
+        .script_extensions_tai_viet => inRanges(&ranges_script_extensions_tai_viet, codepoint),
+        .script_tai_yo => inRanges(&ranges_script_tai_yo, codepoint),
+        .script_extensions_tai_yo => inRanges(&ranges_script_extensions_tai_yo, codepoint),
+        .script_takri => inRanges(&ranges_script_takri, codepoint),
+        .script_extensions_takri => inRanges(&ranges_script_extensions_takri, codepoint),
+        .script_tamil => inRanges(&ranges_script_tamil, codepoint),
+        .script_extensions_tamil => inRanges(&ranges_script_extensions_tamil, codepoint),
+        .script_tangut => inRanges(&ranges_script_tangut, codepoint),
+        .script_extensions_tangut => inRanges(&ranges_script_extensions_tangut, codepoint),
+        .script_telugu => inRanges(&ranges_script_telugu, codepoint),
+        .script_extensions_telugu => inRanges(&ranges_script_extensions_telugu, codepoint),
+        .script_thaana => inRanges(&ranges_script_thaana, codepoint),
+        .script_extensions_thaana => inRanges(&ranges_script_extensions_thaana, codepoint),
+        .script_thai => inRanges(&ranges_script_thai, codepoint),
+        .script_extensions_thai => inRanges(&ranges_script_extensions_thai, codepoint),
+        .script_tibetan => inRanges(&ranges_script_tibetan, codepoint),
+        .script_extensions_tibetan => inRanges(&ranges_script_extensions_tibetan, codepoint),
+        .script_tifinagh => inRanges(&ranges_script_tifinagh, codepoint),
+        .script_extensions_tifinagh => inRanges(&ranges_script_extensions_tifinagh, codepoint),
+        .script_tirhuta => inRanges(&ranges_script_tirhuta, codepoint),
+        .script_extensions_tirhuta => inRanges(&ranges_script_extensions_tirhuta, codepoint),
+        .script_tangsa => inRanges(&ranges_script_tangsa, codepoint),
+        .script_extensions_tangsa => inRanges(&ranges_script_extensions_tangsa, codepoint),
+        .script_todhri => inRanges(&ranges_script_todhri, codepoint),
+        .script_extensions_todhri => inRanges(&ranges_script_extensions_todhri, codepoint),
+        .script_tolong_siki => inRanges(&ranges_script_tolong_siki, codepoint),
+        .script_extensions_tolong_siki => inRanges(&ranges_script_extensions_tolong_siki, codepoint),
+        .script_toto => inRanges(&ranges_script_toto, codepoint),
+        .script_extensions_toto => inRanges(&ranges_script_extensions_toto, codepoint),
+        .script_tulu_tigalari => inRanges(&ranges_script_tulu_tigalari, codepoint),
+        .script_extensions_tulu_tigalari => inRanges(&ranges_script_extensions_tulu_tigalari, codepoint),
+        .script_ugaritic => inRanges(&ranges_script_ugaritic, codepoint),
+        .script_extensions_ugaritic => inRanges(&ranges_script_extensions_ugaritic, codepoint),
+        .script_vai => inRanges(&ranges_script_vai, codepoint),
+        .script_extensions_vai => inRanges(&ranges_script_extensions_vai, codepoint),
+        .script_vithkuqi => inRanges(&ranges_script_vithkuqi, codepoint),
+        .script_extensions_vithkuqi => inRanges(&ranges_script_extensions_vithkuqi, codepoint),
+        .script_wancho => inRanges(&ranges_script_wancho, codepoint),
+        .script_extensions_wancho => inRanges(&ranges_script_extensions_wancho, codepoint),
+        .script_warang_citi => inRanges(&ranges_script_warang_citi, codepoint),
+        .script_extensions_warang_citi => inRanges(&ranges_script_extensions_warang_citi, codepoint),
+        .script_yezidi => inRanges(&ranges_script_yezidi, codepoint),
+        .script_extensions_yezidi => inRanges(&ranges_script_extensions_yezidi, codepoint),
+        .script_yi => inRanges(&ranges_script_yi, codepoint),
+        .script_extensions_yi => inRanges(&ranges_script_extensions_yi, codepoint),
+        .script_zanabazar_square => inRanges(&ranges_script_zanabazar_square, codepoint),
+        .script_extensions_zanabazar_square => inRanges(&ranges_script_extensions_zanabazar_square, codepoint),
     };
+}
+
+pub fn lookupScript(name: []const u16) ?Property {
+    if (asciiEquals(name, "Script=Unknown") or asciiEquals(name, "sc=Unknown") or asciiEquals(name, "Script=Zzzz") or asciiEquals(name, "sc=Zzzz")) return .script_unknown;
+    if (asciiEquals(name, "Script_Extensions=Unknown") or asciiEquals(name, "scx=Unknown") or asciiEquals(name, "Script_Extensions=Zzzz") or asciiEquals(name, "scx=Zzzz")) return .script_extensions_unknown;
+    if (asciiEquals(name, "Script=Adlam") or asciiEquals(name, "sc=Adlam") or asciiEquals(name, "Script=Adlm") or asciiEquals(name, "sc=Adlm")) return .script_adlam;
+    if (asciiEquals(name, "Script_Extensions=Adlam") or asciiEquals(name, "scx=Adlam") or asciiEquals(name, "Script_Extensions=Adlm") or asciiEquals(name, "scx=Adlm")) return .script_extensions_adlam;
+    if (asciiEquals(name, "Script=Ahom") or asciiEquals(name, "sc=Ahom") or asciiEquals(name, "Script=Ahom") or asciiEquals(name, "sc=Ahom")) return .script_ahom;
+    if (asciiEquals(name, "Script_Extensions=Ahom") or asciiEquals(name, "scx=Ahom") or asciiEquals(name, "Script_Extensions=Ahom") or asciiEquals(name, "scx=Ahom")) return .script_extensions_ahom;
+    if (asciiEquals(name, "Script=Anatolian_Hieroglyphs") or asciiEquals(name, "sc=Anatolian_Hieroglyphs") or asciiEquals(name, "Script=Hluw") or asciiEquals(name, "sc=Hluw")) return .script_anatolian_hieroglyphs;
+    if (asciiEquals(name, "Script_Extensions=Anatolian_Hieroglyphs") or asciiEquals(name, "scx=Anatolian_Hieroglyphs") or asciiEquals(name, "Script_Extensions=Hluw") or asciiEquals(name, "scx=Hluw")) return .script_extensions_anatolian_hieroglyphs;
+    if (asciiEquals(name, "Script=Arabic") or asciiEquals(name, "sc=Arabic") or asciiEquals(name, "Script=Arab") or asciiEquals(name, "sc=Arab")) return .script_arabic;
+    if (asciiEquals(name, "Script_Extensions=Arabic") or asciiEquals(name, "scx=Arabic") or asciiEquals(name, "Script_Extensions=Arab") or asciiEquals(name, "scx=Arab")) return .script_extensions_arabic;
+    if (asciiEquals(name, "Script=Armenian") or asciiEquals(name, "sc=Armenian") or asciiEquals(name, "Script=Armn") or asciiEquals(name, "sc=Armn")) return .script_armenian;
+    if (asciiEquals(name, "Script_Extensions=Armenian") or asciiEquals(name, "scx=Armenian") or asciiEquals(name, "Script_Extensions=Armn") or asciiEquals(name, "scx=Armn")) return .script_extensions_armenian;
+    if (asciiEquals(name, "Script=Avestan") or asciiEquals(name, "sc=Avestan") or asciiEquals(name, "Script=Avst") or asciiEquals(name, "sc=Avst")) return .script_avestan;
+    if (asciiEquals(name, "Script_Extensions=Avestan") or asciiEquals(name, "scx=Avestan") or asciiEquals(name, "Script_Extensions=Avst") or asciiEquals(name, "scx=Avst")) return .script_extensions_avestan;
+    if (asciiEquals(name, "Script=Balinese") or asciiEquals(name, "sc=Balinese") or asciiEquals(name, "Script=Bali") or asciiEquals(name, "sc=Bali")) return .script_balinese;
+    if (asciiEquals(name, "Script_Extensions=Balinese") or asciiEquals(name, "scx=Balinese") or asciiEquals(name, "Script_Extensions=Bali") or asciiEquals(name, "scx=Bali")) return .script_extensions_balinese;
+    if (asciiEquals(name, "Script=Bamum") or asciiEquals(name, "sc=Bamum") or asciiEquals(name, "Script=Bamu") or asciiEquals(name, "sc=Bamu")) return .script_bamum;
+    if (asciiEquals(name, "Script_Extensions=Bamum") or asciiEquals(name, "scx=Bamum") or asciiEquals(name, "Script_Extensions=Bamu") or asciiEquals(name, "scx=Bamu")) return .script_extensions_bamum;
+    if (asciiEquals(name, "Script=Bassa_Vah") or asciiEquals(name, "sc=Bassa_Vah") or asciiEquals(name, "Script=Bass") or asciiEquals(name, "sc=Bass")) return .script_bassa_vah;
+    if (asciiEquals(name, "Script_Extensions=Bassa_Vah") or asciiEquals(name, "scx=Bassa_Vah") or asciiEquals(name, "Script_Extensions=Bass") or asciiEquals(name, "scx=Bass")) return .script_extensions_bassa_vah;
+    if (asciiEquals(name, "Script=Batak") or asciiEquals(name, "sc=Batak") or asciiEquals(name, "Script=Batk") or asciiEquals(name, "sc=Batk")) return .script_batak;
+    if (asciiEquals(name, "Script_Extensions=Batak") or asciiEquals(name, "scx=Batak") or asciiEquals(name, "Script_Extensions=Batk") or asciiEquals(name, "scx=Batk")) return .script_extensions_batak;
+    if (asciiEquals(name, "Script=Beria_Erfe") or asciiEquals(name, "sc=Beria_Erfe") or asciiEquals(name, "Script=Berf") or asciiEquals(name, "sc=Berf")) return .script_beria_erfe;
+    if (asciiEquals(name, "Script_Extensions=Beria_Erfe") or asciiEquals(name, "scx=Beria_Erfe") or asciiEquals(name, "Script_Extensions=Berf") or asciiEquals(name, "scx=Berf")) return .script_extensions_beria_erfe;
+    if (asciiEquals(name, "Script=Bengali") or asciiEquals(name, "sc=Bengali") or asciiEquals(name, "Script=Beng") or asciiEquals(name, "sc=Beng")) return .script_bengali;
+    if (asciiEquals(name, "Script_Extensions=Bengali") or asciiEquals(name, "scx=Bengali") or asciiEquals(name, "Script_Extensions=Beng") or asciiEquals(name, "scx=Beng")) return .script_extensions_bengali;
+    if (asciiEquals(name, "Script=Bhaiksuki") or asciiEquals(name, "sc=Bhaiksuki") or asciiEquals(name, "Script=Bhks") or asciiEquals(name, "sc=Bhks")) return .script_bhaiksuki;
+    if (asciiEquals(name, "Script_Extensions=Bhaiksuki") or asciiEquals(name, "scx=Bhaiksuki") or asciiEquals(name, "Script_Extensions=Bhks") or asciiEquals(name, "scx=Bhks")) return .script_extensions_bhaiksuki;
+    if (asciiEquals(name, "Script=Bopomofo") or asciiEquals(name, "sc=Bopomofo") or asciiEquals(name, "Script=Bopo") or asciiEquals(name, "sc=Bopo")) return .script_bopomofo;
+    if (asciiEquals(name, "Script_Extensions=Bopomofo") or asciiEquals(name, "scx=Bopomofo") or asciiEquals(name, "Script_Extensions=Bopo") or asciiEquals(name, "scx=Bopo")) return .script_extensions_bopomofo;
+    if (asciiEquals(name, "Script=Brahmi") or asciiEquals(name, "sc=Brahmi") or asciiEquals(name, "Script=Brah") or asciiEquals(name, "sc=Brah")) return .script_brahmi;
+    if (asciiEquals(name, "Script_Extensions=Brahmi") or asciiEquals(name, "scx=Brahmi") or asciiEquals(name, "Script_Extensions=Brah") or asciiEquals(name, "scx=Brah")) return .script_extensions_brahmi;
+    if (asciiEquals(name, "Script=Braille") or asciiEquals(name, "sc=Braille") or asciiEquals(name, "Script=Brai") or asciiEquals(name, "sc=Brai")) return .script_braille;
+    if (asciiEquals(name, "Script_Extensions=Braille") or asciiEquals(name, "scx=Braille") or asciiEquals(name, "Script_Extensions=Brai") or asciiEquals(name, "scx=Brai")) return .script_extensions_braille;
+    if (asciiEquals(name, "Script=Buginese") or asciiEquals(name, "sc=Buginese") or asciiEquals(name, "Script=Bugi") or asciiEquals(name, "sc=Bugi")) return .script_buginese;
+    if (asciiEquals(name, "Script_Extensions=Buginese") or asciiEquals(name, "scx=Buginese") or asciiEquals(name, "Script_Extensions=Bugi") or asciiEquals(name, "scx=Bugi")) return .script_extensions_buginese;
+    if (asciiEquals(name, "Script=Buhid") or asciiEquals(name, "sc=Buhid") or asciiEquals(name, "Script=Buhd") or asciiEquals(name, "sc=Buhd")) return .script_buhid;
+    if (asciiEquals(name, "Script_Extensions=Buhid") or asciiEquals(name, "scx=Buhid") or asciiEquals(name, "Script_Extensions=Buhd") or asciiEquals(name, "scx=Buhd")) return .script_extensions_buhid;
+    if (asciiEquals(name, "Script=Canadian_Aboriginal") or asciiEquals(name, "sc=Canadian_Aboriginal") or asciiEquals(name, "Script=Cans") or asciiEquals(name, "sc=Cans")) return .script_canadian_aboriginal;
+    if (asciiEquals(name, "Script_Extensions=Canadian_Aboriginal") or asciiEquals(name, "scx=Canadian_Aboriginal") or asciiEquals(name, "Script_Extensions=Cans") or asciiEquals(name, "scx=Cans")) return .script_extensions_canadian_aboriginal;
+    if (asciiEquals(name, "Script=Carian") or asciiEquals(name, "sc=Carian") or asciiEquals(name, "Script=Cari") or asciiEquals(name, "sc=Cari")) return .script_carian;
+    if (asciiEquals(name, "Script_Extensions=Carian") or asciiEquals(name, "scx=Carian") or asciiEquals(name, "Script_Extensions=Cari") or asciiEquals(name, "scx=Cari")) return .script_extensions_carian;
+    if (asciiEquals(name, "Script=Caucasian_Albanian") or asciiEquals(name, "sc=Caucasian_Albanian") or asciiEquals(name, "Script=Aghb") or asciiEquals(name, "sc=Aghb")) return .script_caucasian_albanian;
+    if (asciiEquals(name, "Script_Extensions=Caucasian_Albanian") or asciiEquals(name, "scx=Caucasian_Albanian") or asciiEquals(name, "Script_Extensions=Aghb") or asciiEquals(name, "scx=Aghb")) return .script_extensions_caucasian_albanian;
+    if (asciiEquals(name, "Script=Chakma") or asciiEquals(name, "sc=Chakma") or asciiEquals(name, "Script=Cakm") or asciiEquals(name, "sc=Cakm")) return .script_chakma;
+    if (asciiEquals(name, "Script_Extensions=Chakma") or asciiEquals(name, "scx=Chakma") or asciiEquals(name, "Script_Extensions=Cakm") or asciiEquals(name, "scx=Cakm")) return .script_extensions_chakma;
+    if (asciiEquals(name, "Script=Cham") or asciiEquals(name, "sc=Cham") or asciiEquals(name, "Script=Cham") or asciiEquals(name, "sc=Cham")) return .script_cham;
+    if (asciiEquals(name, "Script_Extensions=Cham") or asciiEquals(name, "scx=Cham") or asciiEquals(name, "Script_Extensions=Cham") or asciiEquals(name, "scx=Cham")) return .script_extensions_cham;
+    if (asciiEquals(name, "Script=Cherokee") or asciiEquals(name, "sc=Cherokee") or asciiEquals(name, "Script=Cher") or asciiEquals(name, "sc=Cher")) return .script_cherokee;
+    if (asciiEquals(name, "Script_Extensions=Cherokee") or asciiEquals(name, "scx=Cherokee") or asciiEquals(name, "Script_Extensions=Cher") or asciiEquals(name, "scx=Cher")) return .script_extensions_cherokee;
+    if (asciiEquals(name, "Script=Chorasmian") or asciiEquals(name, "sc=Chorasmian") or asciiEquals(name, "Script=Chrs") or asciiEquals(name, "sc=Chrs")) return .script_chorasmian;
+    if (asciiEquals(name, "Script_Extensions=Chorasmian") or asciiEquals(name, "scx=Chorasmian") or asciiEquals(name, "Script_Extensions=Chrs") or asciiEquals(name, "scx=Chrs")) return .script_extensions_chorasmian;
+    if (asciiEquals(name, "Script=Common") or asciiEquals(name, "sc=Common") or asciiEquals(name, "Script=Zyyy") or asciiEquals(name, "sc=Zyyy")) return .script_common;
+    if (asciiEquals(name, "Script_Extensions=Common") or asciiEquals(name, "scx=Common") or asciiEquals(name, "Script_Extensions=Zyyy") or asciiEquals(name, "scx=Zyyy")) return .script_extensions_common;
+    if (asciiEquals(name, "Script=Coptic") or asciiEquals(name, "sc=Coptic") or asciiEquals(name, "Script=Copt") or asciiEquals(name, "sc=Copt") or asciiEquals(name, "Script=Qaac") or asciiEquals(name, "sc=Qaac")) return .script_coptic;
+    if (asciiEquals(name, "Script_Extensions=Coptic") or asciiEquals(name, "scx=Coptic") or asciiEquals(name, "Script_Extensions=Copt") or asciiEquals(name, "scx=Copt") or asciiEquals(name, "Script_Extensions=Qaac") or asciiEquals(name, "scx=Qaac")) return .script_extensions_coptic;
+    if (asciiEquals(name, "Script=Cuneiform") or asciiEquals(name, "sc=Cuneiform") or asciiEquals(name, "Script=Xsux") or asciiEquals(name, "sc=Xsux")) return .script_cuneiform;
+    if (asciiEquals(name, "Script_Extensions=Cuneiform") or asciiEquals(name, "scx=Cuneiform") or asciiEquals(name, "Script_Extensions=Xsux") or asciiEquals(name, "scx=Xsux")) return .script_extensions_cuneiform;
+    if (asciiEquals(name, "Script=Cypriot") or asciiEquals(name, "sc=Cypriot") or asciiEquals(name, "Script=Cprt") or asciiEquals(name, "sc=Cprt")) return .script_cypriot;
+    if (asciiEquals(name, "Script_Extensions=Cypriot") or asciiEquals(name, "scx=Cypriot") or asciiEquals(name, "Script_Extensions=Cprt") or asciiEquals(name, "scx=Cprt")) return .script_extensions_cypriot;
+    if (asciiEquals(name, "Script=Cyrillic") or asciiEquals(name, "sc=Cyrillic") or asciiEquals(name, "Script=Cyrl") or asciiEquals(name, "sc=Cyrl")) return .script_cyrillic;
+    if (asciiEquals(name, "Script_Extensions=Cyrillic") or asciiEquals(name, "scx=Cyrillic") or asciiEquals(name, "Script_Extensions=Cyrl") or asciiEquals(name, "scx=Cyrl")) return .script_extensions_cyrillic;
+    if (asciiEquals(name, "Script=Cypro_Minoan") or asciiEquals(name, "sc=Cypro_Minoan") or asciiEquals(name, "Script=Cpmn") or asciiEquals(name, "sc=Cpmn")) return .script_cypro_minoan;
+    if (asciiEquals(name, "Script_Extensions=Cypro_Minoan") or asciiEquals(name, "scx=Cypro_Minoan") or asciiEquals(name, "Script_Extensions=Cpmn") or asciiEquals(name, "scx=Cpmn")) return .script_extensions_cypro_minoan;
+    if (asciiEquals(name, "Script=Deseret") or asciiEquals(name, "sc=Deseret") or asciiEquals(name, "Script=Dsrt") or asciiEquals(name, "sc=Dsrt")) return .script_deseret;
+    if (asciiEquals(name, "Script_Extensions=Deseret") or asciiEquals(name, "scx=Deseret") or asciiEquals(name, "Script_Extensions=Dsrt") or asciiEquals(name, "scx=Dsrt")) return .script_extensions_deseret;
+    if (asciiEquals(name, "Script=Devanagari") or asciiEquals(name, "sc=Devanagari") or asciiEquals(name, "Script=Deva") or asciiEquals(name, "sc=Deva")) return .script_devanagari;
+    if (asciiEquals(name, "Script_Extensions=Devanagari") or asciiEquals(name, "scx=Devanagari") or asciiEquals(name, "Script_Extensions=Deva") or asciiEquals(name, "scx=Deva")) return .script_extensions_devanagari;
+    if (asciiEquals(name, "Script=Dives_Akuru") or asciiEquals(name, "sc=Dives_Akuru") or asciiEquals(name, "Script=Diak") or asciiEquals(name, "sc=Diak")) return .script_dives_akuru;
+    if (asciiEquals(name, "Script_Extensions=Dives_Akuru") or asciiEquals(name, "scx=Dives_Akuru") or asciiEquals(name, "Script_Extensions=Diak") or asciiEquals(name, "scx=Diak")) return .script_extensions_dives_akuru;
+    if (asciiEquals(name, "Script=Dogra") or asciiEquals(name, "sc=Dogra") or asciiEquals(name, "Script=Dogr") or asciiEquals(name, "sc=Dogr")) return .script_dogra;
+    if (asciiEquals(name, "Script_Extensions=Dogra") or asciiEquals(name, "scx=Dogra") or asciiEquals(name, "Script_Extensions=Dogr") or asciiEquals(name, "scx=Dogr")) return .script_extensions_dogra;
+    if (asciiEquals(name, "Script=Duployan") or asciiEquals(name, "sc=Duployan") or asciiEquals(name, "Script=Dupl") or asciiEquals(name, "sc=Dupl")) return .script_duployan;
+    if (asciiEquals(name, "Script_Extensions=Duployan") or asciiEquals(name, "scx=Duployan") or asciiEquals(name, "Script_Extensions=Dupl") or asciiEquals(name, "scx=Dupl")) return .script_extensions_duployan;
+    if (asciiEquals(name, "Script=Egyptian_Hieroglyphs") or asciiEquals(name, "sc=Egyptian_Hieroglyphs") or asciiEquals(name, "Script=Egyp") or asciiEquals(name, "sc=Egyp")) return .script_egyptian_hieroglyphs;
+    if (asciiEquals(name, "Script_Extensions=Egyptian_Hieroglyphs") or asciiEquals(name, "scx=Egyptian_Hieroglyphs") or asciiEquals(name, "Script_Extensions=Egyp") or asciiEquals(name, "scx=Egyp")) return .script_extensions_egyptian_hieroglyphs;
+    if (asciiEquals(name, "Script=Elbasan") or asciiEquals(name, "sc=Elbasan") or asciiEquals(name, "Script=Elba") or asciiEquals(name, "sc=Elba")) return .script_elbasan;
+    if (asciiEquals(name, "Script_Extensions=Elbasan") or asciiEquals(name, "scx=Elbasan") or asciiEquals(name, "Script_Extensions=Elba") or asciiEquals(name, "scx=Elba")) return .script_extensions_elbasan;
+    if (asciiEquals(name, "Script=Elymaic") or asciiEquals(name, "sc=Elymaic") or asciiEquals(name, "Script=Elym") or asciiEquals(name, "sc=Elym")) return .script_elymaic;
+    if (asciiEquals(name, "Script_Extensions=Elymaic") or asciiEquals(name, "scx=Elymaic") or asciiEquals(name, "Script_Extensions=Elym") or asciiEquals(name, "scx=Elym")) return .script_extensions_elymaic;
+    if (asciiEquals(name, "Script=Ethiopic") or asciiEquals(name, "sc=Ethiopic") or asciiEquals(name, "Script=Ethi") or asciiEquals(name, "sc=Ethi")) return .script_ethiopic;
+    if (asciiEquals(name, "Script_Extensions=Ethiopic") or asciiEquals(name, "scx=Ethiopic") or asciiEquals(name, "Script_Extensions=Ethi") or asciiEquals(name, "scx=Ethi")) return .script_extensions_ethiopic;
+    if (asciiEquals(name, "Script=Garay") or asciiEquals(name, "sc=Garay") or asciiEquals(name, "Script=Gara") or asciiEquals(name, "sc=Gara")) return .script_garay;
+    if (asciiEquals(name, "Script_Extensions=Garay") or asciiEquals(name, "scx=Garay") or asciiEquals(name, "Script_Extensions=Gara") or asciiEquals(name, "scx=Gara")) return .script_extensions_garay;
+    if (asciiEquals(name, "Script=Georgian") or asciiEquals(name, "sc=Georgian") or asciiEquals(name, "Script=Geor") or asciiEquals(name, "sc=Geor")) return .script_georgian;
+    if (asciiEquals(name, "Script_Extensions=Georgian") or asciiEquals(name, "scx=Georgian") or asciiEquals(name, "Script_Extensions=Geor") or asciiEquals(name, "scx=Geor")) return .script_extensions_georgian;
+    if (asciiEquals(name, "Script=Glagolitic") or asciiEquals(name, "sc=Glagolitic") or asciiEquals(name, "Script=Glag") or asciiEquals(name, "sc=Glag")) return .script_glagolitic;
+    if (asciiEquals(name, "Script_Extensions=Glagolitic") or asciiEquals(name, "scx=Glagolitic") or asciiEquals(name, "Script_Extensions=Glag") or asciiEquals(name, "scx=Glag")) return .script_extensions_glagolitic;
+    if (asciiEquals(name, "Script=Gothic") or asciiEquals(name, "sc=Gothic") or asciiEquals(name, "Script=Goth") or asciiEquals(name, "sc=Goth")) return .script_gothic;
+    if (asciiEquals(name, "Script_Extensions=Gothic") or asciiEquals(name, "scx=Gothic") or asciiEquals(name, "Script_Extensions=Goth") or asciiEquals(name, "scx=Goth")) return .script_extensions_gothic;
+    if (asciiEquals(name, "Script=Grantha") or asciiEquals(name, "sc=Grantha") or asciiEquals(name, "Script=Gran") or asciiEquals(name, "sc=Gran")) return .script_grantha;
+    if (asciiEquals(name, "Script_Extensions=Grantha") or asciiEquals(name, "scx=Grantha") or asciiEquals(name, "Script_Extensions=Gran") or asciiEquals(name, "scx=Gran")) return .script_extensions_grantha;
+    if (asciiEquals(name, "Script=Greek") or asciiEquals(name, "sc=Greek") or asciiEquals(name, "Script=Grek") or asciiEquals(name, "sc=Grek")) return .script_greek;
+    if (asciiEquals(name, "Script_Extensions=Greek") or asciiEquals(name, "scx=Greek") or asciiEquals(name, "Script_Extensions=Grek") or asciiEquals(name, "scx=Grek")) return .script_extensions_greek;
+    if (asciiEquals(name, "Script=Gujarati") or asciiEquals(name, "sc=Gujarati") or asciiEquals(name, "Script=Gujr") or asciiEquals(name, "sc=Gujr")) return .script_gujarati;
+    if (asciiEquals(name, "Script_Extensions=Gujarati") or asciiEquals(name, "scx=Gujarati") or asciiEquals(name, "Script_Extensions=Gujr") or asciiEquals(name, "scx=Gujr")) return .script_extensions_gujarati;
+    if (asciiEquals(name, "Script=Gunjala_Gondi") or asciiEquals(name, "sc=Gunjala_Gondi") or asciiEquals(name, "Script=Gong") or asciiEquals(name, "sc=Gong")) return .script_gunjala_gondi;
+    if (asciiEquals(name, "Script_Extensions=Gunjala_Gondi") or asciiEquals(name, "scx=Gunjala_Gondi") or asciiEquals(name, "Script_Extensions=Gong") or asciiEquals(name, "scx=Gong")) return .script_extensions_gunjala_gondi;
+    if (asciiEquals(name, "Script=Gurmukhi") or asciiEquals(name, "sc=Gurmukhi") or asciiEquals(name, "Script=Guru") or asciiEquals(name, "sc=Guru")) return .script_gurmukhi;
+    if (asciiEquals(name, "Script_Extensions=Gurmukhi") or asciiEquals(name, "scx=Gurmukhi") or asciiEquals(name, "Script_Extensions=Guru") or asciiEquals(name, "scx=Guru")) return .script_extensions_gurmukhi;
+    if (asciiEquals(name, "Script=Gurung_Khema") or asciiEquals(name, "sc=Gurung_Khema") or asciiEquals(name, "Script=Gukh") or asciiEquals(name, "sc=Gukh")) return .script_gurung_khema;
+    if (asciiEquals(name, "Script_Extensions=Gurung_Khema") or asciiEquals(name, "scx=Gurung_Khema") or asciiEquals(name, "Script_Extensions=Gukh") or asciiEquals(name, "scx=Gukh")) return .script_extensions_gurung_khema;
+    if (asciiEquals(name, "Script=Han") or asciiEquals(name, "sc=Han") or asciiEquals(name, "Script=Hani") or asciiEquals(name, "sc=Hani")) return .script_han;
+    if (asciiEquals(name, "Script_Extensions=Han") or asciiEquals(name, "scx=Han") or asciiEquals(name, "Script_Extensions=Hani") or asciiEquals(name, "scx=Hani")) return .script_extensions_han;
+    if (asciiEquals(name, "Script=Hangul") or asciiEquals(name, "sc=Hangul") or asciiEquals(name, "Script=Hang") or asciiEquals(name, "sc=Hang")) return .script_hangul;
+    if (asciiEquals(name, "Script_Extensions=Hangul") or asciiEquals(name, "scx=Hangul") or asciiEquals(name, "Script_Extensions=Hang") or asciiEquals(name, "scx=Hang")) return .script_extensions_hangul;
+    if (asciiEquals(name, "Script=Hanifi_Rohingya") or asciiEquals(name, "sc=Hanifi_Rohingya") or asciiEquals(name, "Script=Rohg") or asciiEquals(name, "sc=Rohg")) return .script_hanifi_rohingya;
+    if (asciiEquals(name, "Script_Extensions=Hanifi_Rohingya") or asciiEquals(name, "scx=Hanifi_Rohingya") or asciiEquals(name, "Script_Extensions=Rohg") or asciiEquals(name, "scx=Rohg")) return .script_extensions_hanifi_rohingya;
+    if (asciiEquals(name, "Script=Hanunoo") or asciiEquals(name, "sc=Hanunoo") or asciiEquals(name, "Script=Hano") or asciiEquals(name, "sc=Hano")) return .script_hanunoo;
+    if (asciiEquals(name, "Script_Extensions=Hanunoo") or asciiEquals(name, "scx=Hanunoo") or asciiEquals(name, "Script_Extensions=Hano") or asciiEquals(name, "scx=Hano")) return .script_extensions_hanunoo;
+    if (asciiEquals(name, "Script=Hatran") or asciiEquals(name, "sc=Hatran") or asciiEquals(name, "Script=Hatr") or asciiEquals(name, "sc=Hatr")) return .script_hatran;
+    if (asciiEquals(name, "Script_Extensions=Hatran") or asciiEquals(name, "scx=Hatran") or asciiEquals(name, "Script_Extensions=Hatr") or asciiEquals(name, "scx=Hatr")) return .script_extensions_hatran;
+    if (asciiEquals(name, "Script=Hebrew") or asciiEquals(name, "sc=Hebrew") or asciiEquals(name, "Script=Hebr") or asciiEquals(name, "sc=Hebr")) return .script_hebrew;
+    if (asciiEquals(name, "Script_Extensions=Hebrew") or asciiEquals(name, "scx=Hebrew") or asciiEquals(name, "Script_Extensions=Hebr") or asciiEquals(name, "scx=Hebr")) return .script_extensions_hebrew;
+    if (asciiEquals(name, "Script=Hiragana") or asciiEquals(name, "sc=Hiragana") or asciiEquals(name, "Script=Hira") or asciiEquals(name, "sc=Hira")) return .script_hiragana;
+    if (asciiEquals(name, "Script_Extensions=Hiragana") or asciiEquals(name, "scx=Hiragana") or asciiEquals(name, "Script_Extensions=Hira") or asciiEquals(name, "scx=Hira")) return .script_extensions_hiragana;
+    if (asciiEquals(name, "Script=Imperial_Aramaic") or asciiEquals(name, "sc=Imperial_Aramaic") or asciiEquals(name, "Script=Armi") or asciiEquals(name, "sc=Armi")) return .script_imperial_aramaic;
+    if (asciiEquals(name, "Script_Extensions=Imperial_Aramaic") or asciiEquals(name, "scx=Imperial_Aramaic") or asciiEquals(name, "Script_Extensions=Armi") or asciiEquals(name, "scx=Armi")) return .script_extensions_imperial_aramaic;
+    if (asciiEquals(name, "Script=Inherited") or asciiEquals(name, "sc=Inherited") or asciiEquals(name, "Script=Zinh") or asciiEquals(name, "sc=Zinh") or asciiEquals(name, "Script=Qaai") or asciiEquals(name, "sc=Qaai")) return .script_inherited;
+    if (asciiEquals(name, "Script_Extensions=Inherited") or asciiEquals(name, "scx=Inherited") or asciiEquals(name, "Script_Extensions=Zinh") or asciiEquals(name, "scx=Zinh") or asciiEquals(name, "Script_Extensions=Qaai") or asciiEquals(name, "scx=Qaai")) return .script_extensions_inherited;
+    if (asciiEquals(name, "Script=Inscriptional_Pahlavi") or asciiEquals(name, "sc=Inscriptional_Pahlavi") or asciiEquals(name, "Script=Phli") or asciiEquals(name, "sc=Phli")) return .script_inscriptional_pahlavi;
+    if (asciiEquals(name, "Script_Extensions=Inscriptional_Pahlavi") or asciiEquals(name, "scx=Inscriptional_Pahlavi") or asciiEquals(name, "Script_Extensions=Phli") or asciiEquals(name, "scx=Phli")) return .script_extensions_inscriptional_pahlavi;
+    if (asciiEquals(name, "Script=Inscriptional_Parthian") or asciiEquals(name, "sc=Inscriptional_Parthian") or asciiEquals(name, "Script=Prti") or asciiEquals(name, "sc=Prti")) return .script_inscriptional_parthian;
+    if (asciiEquals(name, "Script_Extensions=Inscriptional_Parthian") or asciiEquals(name, "scx=Inscriptional_Parthian") or asciiEquals(name, "Script_Extensions=Prti") or asciiEquals(name, "scx=Prti")) return .script_extensions_inscriptional_parthian;
+    if (asciiEquals(name, "Script=Javanese") or asciiEquals(name, "sc=Javanese") or asciiEquals(name, "Script=Java") or asciiEquals(name, "sc=Java")) return .script_javanese;
+    if (asciiEquals(name, "Script_Extensions=Javanese") or asciiEquals(name, "scx=Javanese") or asciiEquals(name, "Script_Extensions=Java") or asciiEquals(name, "scx=Java")) return .script_extensions_javanese;
+    if (asciiEquals(name, "Script=Kaithi") or asciiEquals(name, "sc=Kaithi") or asciiEquals(name, "Script=Kthi") or asciiEquals(name, "sc=Kthi")) return .script_kaithi;
+    if (asciiEquals(name, "Script_Extensions=Kaithi") or asciiEquals(name, "scx=Kaithi") or asciiEquals(name, "Script_Extensions=Kthi") or asciiEquals(name, "scx=Kthi")) return .script_extensions_kaithi;
+    if (asciiEquals(name, "Script=Kannada") or asciiEquals(name, "sc=Kannada") or asciiEquals(name, "Script=Knda") or asciiEquals(name, "sc=Knda")) return .script_kannada;
+    if (asciiEquals(name, "Script_Extensions=Kannada") or asciiEquals(name, "scx=Kannada") or asciiEquals(name, "Script_Extensions=Knda") or asciiEquals(name, "scx=Knda")) return .script_extensions_kannada;
+    if (asciiEquals(name, "Script=Katakana") or asciiEquals(name, "sc=Katakana") or asciiEquals(name, "Script=Kana") or asciiEquals(name, "sc=Kana")) return .script_katakana;
+    if (asciiEquals(name, "Script_Extensions=Katakana") or asciiEquals(name, "scx=Katakana") or asciiEquals(name, "Script_Extensions=Kana") or asciiEquals(name, "scx=Kana")) return .script_extensions_katakana;
+    if (asciiEquals(name, "Script=Kawi") or asciiEquals(name, "sc=Kawi") or asciiEquals(name, "Script=Kawi") or asciiEquals(name, "sc=Kawi")) return .script_kawi;
+    if (asciiEquals(name, "Script_Extensions=Kawi") or asciiEquals(name, "scx=Kawi") or asciiEquals(name, "Script_Extensions=Kawi") or asciiEquals(name, "scx=Kawi")) return .script_extensions_kawi;
+    if (asciiEquals(name, "Script=Kayah_Li") or asciiEquals(name, "sc=Kayah_Li") or asciiEquals(name, "Script=Kali") or asciiEquals(name, "sc=Kali")) return .script_kayah_li;
+    if (asciiEquals(name, "Script_Extensions=Kayah_Li") or asciiEquals(name, "scx=Kayah_Li") or asciiEquals(name, "Script_Extensions=Kali") or asciiEquals(name, "scx=Kali")) return .script_extensions_kayah_li;
+    if (asciiEquals(name, "Script=Kharoshthi") or asciiEquals(name, "sc=Kharoshthi") or asciiEquals(name, "Script=Khar") or asciiEquals(name, "sc=Khar")) return .script_kharoshthi;
+    if (asciiEquals(name, "Script_Extensions=Kharoshthi") or asciiEquals(name, "scx=Kharoshthi") or asciiEquals(name, "Script_Extensions=Khar") or asciiEquals(name, "scx=Khar")) return .script_extensions_kharoshthi;
+    if (asciiEquals(name, "Script=Khmer") or asciiEquals(name, "sc=Khmer") or asciiEquals(name, "Script=Khmr") or asciiEquals(name, "sc=Khmr")) return .script_khmer;
+    if (asciiEquals(name, "Script_Extensions=Khmer") or asciiEquals(name, "scx=Khmer") or asciiEquals(name, "Script_Extensions=Khmr") or asciiEquals(name, "scx=Khmr")) return .script_extensions_khmer;
+    if (asciiEquals(name, "Script=Khojki") or asciiEquals(name, "sc=Khojki") or asciiEquals(name, "Script=Khoj") or asciiEquals(name, "sc=Khoj")) return .script_khojki;
+    if (asciiEquals(name, "Script_Extensions=Khojki") or asciiEquals(name, "scx=Khojki") or asciiEquals(name, "Script_Extensions=Khoj") or asciiEquals(name, "scx=Khoj")) return .script_extensions_khojki;
+    if (asciiEquals(name, "Script=Khitan_Small_Script") or asciiEquals(name, "sc=Khitan_Small_Script") or asciiEquals(name, "Script=Kits") or asciiEquals(name, "sc=Kits")) return .script_khitan_small_script;
+    if (asciiEquals(name, "Script_Extensions=Khitan_Small_Script") or asciiEquals(name, "scx=Khitan_Small_Script") or asciiEquals(name, "Script_Extensions=Kits") or asciiEquals(name, "scx=Kits")) return .script_extensions_khitan_small_script;
+    if (asciiEquals(name, "Script=Khudawadi") or asciiEquals(name, "sc=Khudawadi") or asciiEquals(name, "Script=Sind") or asciiEquals(name, "sc=Sind")) return .script_khudawadi;
+    if (asciiEquals(name, "Script_Extensions=Khudawadi") or asciiEquals(name, "scx=Khudawadi") or asciiEquals(name, "Script_Extensions=Sind") or asciiEquals(name, "scx=Sind")) return .script_extensions_khudawadi;
+    if (asciiEquals(name, "Script=Kirat_Rai") or asciiEquals(name, "sc=Kirat_Rai") or asciiEquals(name, "Script=Krai") or asciiEquals(name, "sc=Krai")) return .script_kirat_rai;
+    if (asciiEquals(name, "Script_Extensions=Kirat_Rai") or asciiEquals(name, "scx=Kirat_Rai") or asciiEquals(name, "Script_Extensions=Krai") or asciiEquals(name, "scx=Krai")) return .script_extensions_kirat_rai;
+    if (asciiEquals(name, "Script=Lao") or asciiEquals(name, "sc=Lao") or asciiEquals(name, "Script=Laoo") or asciiEquals(name, "sc=Laoo")) return .script_lao;
+    if (asciiEquals(name, "Script_Extensions=Lao") or asciiEquals(name, "scx=Lao") or asciiEquals(name, "Script_Extensions=Laoo") or asciiEquals(name, "scx=Laoo")) return .script_extensions_lao;
+    if (asciiEquals(name, "Script=Latin") or asciiEquals(name, "sc=Latin") or asciiEquals(name, "Script=Latn") or asciiEquals(name, "sc=Latn")) return .script_latin;
+    if (asciiEquals(name, "Script_Extensions=Latin") or asciiEquals(name, "scx=Latin") or asciiEquals(name, "Script_Extensions=Latn") or asciiEquals(name, "scx=Latn")) return .script_extensions_latin;
+    if (asciiEquals(name, "Script=Lepcha") or asciiEquals(name, "sc=Lepcha") or asciiEquals(name, "Script=Lepc") or asciiEquals(name, "sc=Lepc")) return .script_lepcha;
+    if (asciiEquals(name, "Script_Extensions=Lepcha") or asciiEquals(name, "scx=Lepcha") or asciiEquals(name, "Script_Extensions=Lepc") or asciiEquals(name, "scx=Lepc")) return .script_extensions_lepcha;
+    if (asciiEquals(name, "Script=Limbu") or asciiEquals(name, "sc=Limbu") or asciiEquals(name, "Script=Limb") or asciiEquals(name, "sc=Limb")) return .script_limbu;
+    if (asciiEquals(name, "Script_Extensions=Limbu") or asciiEquals(name, "scx=Limbu") or asciiEquals(name, "Script_Extensions=Limb") or asciiEquals(name, "scx=Limb")) return .script_extensions_limbu;
+    if (asciiEquals(name, "Script=Linear_A") or asciiEquals(name, "sc=Linear_A") or asciiEquals(name, "Script=Lina") or asciiEquals(name, "sc=Lina")) return .script_linear_a;
+    if (asciiEquals(name, "Script_Extensions=Linear_A") or asciiEquals(name, "scx=Linear_A") or asciiEquals(name, "Script_Extensions=Lina") or asciiEquals(name, "scx=Lina")) return .script_extensions_linear_a;
+    if (asciiEquals(name, "Script=Linear_B") or asciiEquals(name, "sc=Linear_B") or asciiEquals(name, "Script=Linb") or asciiEquals(name, "sc=Linb")) return .script_linear_b;
+    if (asciiEquals(name, "Script_Extensions=Linear_B") or asciiEquals(name, "scx=Linear_B") or asciiEquals(name, "Script_Extensions=Linb") or asciiEquals(name, "scx=Linb")) return .script_extensions_linear_b;
+    if (asciiEquals(name, "Script=Lisu") or asciiEquals(name, "sc=Lisu") or asciiEquals(name, "Script=Lisu") or asciiEquals(name, "sc=Lisu")) return .script_lisu;
+    if (asciiEquals(name, "Script_Extensions=Lisu") or asciiEquals(name, "scx=Lisu") or asciiEquals(name, "Script_Extensions=Lisu") or asciiEquals(name, "scx=Lisu")) return .script_extensions_lisu;
+    if (asciiEquals(name, "Script=Lycian") or asciiEquals(name, "sc=Lycian") or asciiEquals(name, "Script=Lyci") or asciiEquals(name, "sc=Lyci")) return .script_lycian;
+    if (asciiEquals(name, "Script_Extensions=Lycian") or asciiEquals(name, "scx=Lycian") or asciiEquals(name, "Script_Extensions=Lyci") or asciiEquals(name, "scx=Lyci")) return .script_extensions_lycian;
+    if (asciiEquals(name, "Script=Lydian") or asciiEquals(name, "sc=Lydian") or asciiEquals(name, "Script=Lydi") or asciiEquals(name, "sc=Lydi")) return .script_lydian;
+    if (asciiEquals(name, "Script_Extensions=Lydian") or asciiEquals(name, "scx=Lydian") or asciiEquals(name, "Script_Extensions=Lydi") or asciiEquals(name, "scx=Lydi")) return .script_extensions_lydian;
+    if (asciiEquals(name, "Script=Makasar") or asciiEquals(name, "sc=Makasar") or asciiEquals(name, "Script=Maka") or asciiEquals(name, "sc=Maka")) return .script_makasar;
+    if (asciiEquals(name, "Script_Extensions=Makasar") or asciiEquals(name, "scx=Makasar") or asciiEquals(name, "Script_Extensions=Maka") or asciiEquals(name, "scx=Maka")) return .script_extensions_makasar;
+    if (asciiEquals(name, "Script=Mahajani") or asciiEquals(name, "sc=Mahajani") or asciiEquals(name, "Script=Mahj") or asciiEquals(name, "sc=Mahj")) return .script_mahajani;
+    if (asciiEquals(name, "Script_Extensions=Mahajani") or asciiEquals(name, "scx=Mahajani") or asciiEquals(name, "Script_Extensions=Mahj") or asciiEquals(name, "scx=Mahj")) return .script_extensions_mahajani;
+    if (asciiEquals(name, "Script=Malayalam") or asciiEquals(name, "sc=Malayalam") or asciiEquals(name, "Script=Mlym") or asciiEquals(name, "sc=Mlym")) return .script_malayalam;
+    if (asciiEquals(name, "Script_Extensions=Malayalam") or asciiEquals(name, "scx=Malayalam") or asciiEquals(name, "Script_Extensions=Mlym") or asciiEquals(name, "scx=Mlym")) return .script_extensions_malayalam;
+    if (asciiEquals(name, "Script=Mandaic") or asciiEquals(name, "sc=Mandaic") or asciiEquals(name, "Script=Mand") or asciiEquals(name, "sc=Mand")) return .script_mandaic;
+    if (asciiEquals(name, "Script_Extensions=Mandaic") or asciiEquals(name, "scx=Mandaic") or asciiEquals(name, "Script_Extensions=Mand") or asciiEquals(name, "scx=Mand")) return .script_extensions_mandaic;
+    if (asciiEquals(name, "Script=Manichaean") or asciiEquals(name, "sc=Manichaean") or asciiEquals(name, "Script=Mani") or asciiEquals(name, "sc=Mani")) return .script_manichaean;
+    if (asciiEquals(name, "Script_Extensions=Manichaean") or asciiEquals(name, "scx=Manichaean") or asciiEquals(name, "Script_Extensions=Mani") or asciiEquals(name, "scx=Mani")) return .script_extensions_manichaean;
+    if (asciiEquals(name, "Script=Marchen") or asciiEquals(name, "sc=Marchen") or asciiEquals(name, "Script=Marc") or asciiEquals(name, "sc=Marc")) return .script_marchen;
+    if (asciiEquals(name, "Script_Extensions=Marchen") or asciiEquals(name, "scx=Marchen") or asciiEquals(name, "Script_Extensions=Marc") or asciiEquals(name, "scx=Marc")) return .script_extensions_marchen;
+    if (asciiEquals(name, "Script=Masaram_Gondi") or asciiEquals(name, "sc=Masaram_Gondi") or asciiEquals(name, "Script=Gonm") or asciiEquals(name, "sc=Gonm")) return .script_masaram_gondi;
+    if (asciiEquals(name, "Script_Extensions=Masaram_Gondi") or asciiEquals(name, "scx=Masaram_Gondi") or asciiEquals(name, "Script_Extensions=Gonm") or asciiEquals(name, "scx=Gonm")) return .script_extensions_masaram_gondi;
+    if (asciiEquals(name, "Script=Medefaidrin") or asciiEquals(name, "sc=Medefaidrin") or asciiEquals(name, "Script=Medf") or asciiEquals(name, "sc=Medf")) return .script_medefaidrin;
+    if (asciiEquals(name, "Script_Extensions=Medefaidrin") or asciiEquals(name, "scx=Medefaidrin") or asciiEquals(name, "Script_Extensions=Medf") or asciiEquals(name, "scx=Medf")) return .script_extensions_medefaidrin;
+    if (asciiEquals(name, "Script=Meetei_Mayek") or asciiEquals(name, "sc=Meetei_Mayek") or asciiEquals(name, "Script=Mtei") or asciiEquals(name, "sc=Mtei")) return .script_meetei_mayek;
+    if (asciiEquals(name, "Script_Extensions=Meetei_Mayek") or asciiEquals(name, "scx=Meetei_Mayek") or asciiEquals(name, "Script_Extensions=Mtei") or asciiEquals(name, "scx=Mtei")) return .script_extensions_meetei_mayek;
+    if (asciiEquals(name, "Script=Mende_Kikakui") or asciiEquals(name, "sc=Mende_Kikakui") or asciiEquals(name, "Script=Mend") or asciiEquals(name, "sc=Mend")) return .script_mende_kikakui;
+    if (asciiEquals(name, "Script_Extensions=Mende_Kikakui") or asciiEquals(name, "scx=Mende_Kikakui") or asciiEquals(name, "Script_Extensions=Mend") or asciiEquals(name, "scx=Mend")) return .script_extensions_mende_kikakui;
+    if (asciiEquals(name, "Script=Meroitic_Cursive") or asciiEquals(name, "sc=Meroitic_Cursive") or asciiEquals(name, "Script=Merc") or asciiEquals(name, "sc=Merc")) return .script_meroitic_cursive;
+    if (asciiEquals(name, "Script_Extensions=Meroitic_Cursive") or asciiEquals(name, "scx=Meroitic_Cursive") or asciiEquals(name, "Script_Extensions=Merc") or asciiEquals(name, "scx=Merc")) return .script_extensions_meroitic_cursive;
+    if (asciiEquals(name, "Script=Meroitic_Hieroglyphs") or asciiEquals(name, "sc=Meroitic_Hieroglyphs") or asciiEquals(name, "Script=Mero") or asciiEquals(name, "sc=Mero")) return .script_meroitic_hieroglyphs;
+    if (asciiEquals(name, "Script_Extensions=Meroitic_Hieroglyphs") or asciiEquals(name, "scx=Meroitic_Hieroglyphs") or asciiEquals(name, "Script_Extensions=Mero") or asciiEquals(name, "scx=Mero")) return .script_extensions_meroitic_hieroglyphs;
+    if (asciiEquals(name, "Script=Miao") or asciiEquals(name, "sc=Miao") or asciiEquals(name, "Script=Plrd") or asciiEquals(name, "sc=Plrd")) return .script_miao;
+    if (asciiEquals(name, "Script_Extensions=Miao") or asciiEquals(name, "scx=Miao") or asciiEquals(name, "Script_Extensions=Plrd") or asciiEquals(name, "scx=Plrd")) return .script_extensions_miao;
+    if (asciiEquals(name, "Script=Modi") or asciiEquals(name, "sc=Modi") or asciiEquals(name, "Script=Modi") or asciiEquals(name, "sc=Modi")) return .script_modi;
+    if (asciiEquals(name, "Script_Extensions=Modi") or asciiEquals(name, "scx=Modi") or asciiEquals(name, "Script_Extensions=Modi") or asciiEquals(name, "scx=Modi")) return .script_extensions_modi;
+    if (asciiEquals(name, "Script=Mongolian") or asciiEquals(name, "sc=Mongolian") or asciiEquals(name, "Script=Mong") or asciiEquals(name, "sc=Mong")) return .script_mongolian;
+    if (asciiEquals(name, "Script_Extensions=Mongolian") or asciiEquals(name, "scx=Mongolian") or asciiEquals(name, "Script_Extensions=Mong") or asciiEquals(name, "scx=Mong")) return .script_extensions_mongolian;
+    if (asciiEquals(name, "Script=Mro") or asciiEquals(name, "sc=Mro") or asciiEquals(name, "Script=Mroo") or asciiEquals(name, "sc=Mroo")) return .script_mro;
+    if (asciiEquals(name, "Script_Extensions=Mro") or asciiEquals(name, "scx=Mro") or asciiEquals(name, "Script_Extensions=Mroo") or asciiEquals(name, "scx=Mroo")) return .script_extensions_mro;
+    if (asciiEquals(name, "Script=Multani") or asciiEquals(name, "sc=Multani") or asciiEquals(name, "Script=Mult") or asciiEquals(name, "sc=Mult")) return .script_multani;
+    if (asciiEquals(name, "Script_Extensions=Multani") or asciiEquals(name, "scx=Multani") or asciiEquals(name, "Script_Extensions=Mult") or asciiEquals(name, "scx=Mult")) return .script_extensions_multani;
+    if (asciiEquals(name, "Script=Myanmar") or asciiEquals(name, "sc=Myanmar") or asciiEquals(name, "Script=Mymr") or asciiEquals(name, "sc=Mymr")) return .script_myanmar;
+    if (asciiEquals(name, "Script_Extensions=Myanmar") or asciiEquals(name, "scx=Myanmar") or asciiEquals(name, "Script_Extensions=Mymr") or asciiEquals(name, "scx=Mymr")) return .script_extensions_myanmar;
+    if (asciiEquals(name, "Script=Nabataean") or asciiEquals(name, "sc=Nabataean") or asciiEquals(name, "Script=Nbat") or asciiEquals(name, "sc=Nbat")) return .script_nabataean;
+    if (asciiEquals(name, "Script_Extensions=Nabataean") or asciiEquals(name, "scx=Nabataean") or asciiEquals(name, "Script_Extensions=Nbat") or asciiEquals(name, "scx=Nbat")) return .script_extensions_nabataean;
+    if (asciiEquals(name, "Script=Nag_Mundari") or asciiEquals(name, "sc=Nag_Mundari") or asciiEquals(name, "Script=Nagm") or asciiEquals(name, "sc=Nagm")) return .script_nag_mundari;
+    if (asciiEquals(name, "Script_Extensions=Nag_Mundari") or asciiEquals(name, "scx=Nag_Mundari") or asciiEquals(name, "Script_Extensions=Nagm") or asciiEquals(name, "scx=Nagm")) return .script_extensions_nag_mundari;
+    if (asciiEquals(name, "Script=Nandinagari") or asciiEquals(name, "sc=Nandinagari") or asciiEquals(name, "Script=Nand") or asciiEquals(name, "sc=Nand")) return .script_nandinagari;
+    if (asciiEquals(name, "Script_Extensions=Nandinagari") or asciiEquals(name, "scx=Nandinagari") or asciiEquals(name, "Script_Extensions=Nand") or asciiEquals(name, "scx=Nand")) return .script_extensions_nandinagari;
+    if (asciiEquals(name, "Script=New_Tai_Lue") or asciiEquals(name, "sc=New_Tai_Lue") or asciiEquals(name, "Script=Talu") or asciiEquals(name, "sc=Talu")) return .script_new_tai_lue;
+    if (asciiEquals(name, "Script_Extensions=New_Tai_Lue") or asciiEquals(name, "scx=New_Tai_Lue") or asciiEquals(name, "Script_Extensions=Talu") or asciiEquals(name, "scx=Talu")) return .script_extensions_new_tai_lue;
+    if (asciiEquals(name, "Script=Newa") or asciiEquals(name, "sc=Newa") or asciiEquals(name, "Script=Newa") or asciiEquals(name, "sc=Newa")) return .script_newa;
+    if (asciiEquals(name, "Script_Extensions=Newa") or asciiEquals(name, "scx=Newa") or asciiEquals(name, "Script_Extensions=Newa") or asciiEquals(name, "scx=Newa")) return .script_extensions_newa;
+    if (asciiEquals(name, "Script=Nko") or asciiEquals(name, "sc=Nko") or asciiEquals(name, "Script=Nkoo") or asciiEquals(name, "sc=Nkoo")) return .script_nko;
+    if (asciiEquals(name, "Script_Extensions=Nko") or asciiEquals(name, "scx=Nko") or asciiEquals(name, "Script_Extensions=Nkoo") or asciiEquals(name, "scx=Nkoo")) return .script_extensions_nko;
+    if (asciiEquals(name, "Script=Nushu") or asciiEquals(name, "sc=Nushu") or asciiEquals(name, "Script=Nshu") or asciiEquals(name, "sc=Nshu")) return .script_nushu;
+    if (asciiEquals(name, "Script_Extensions=Nushu") or asciiEquals(name, "scx=Nushu") or asciiEquals(name, "Script_Extensions=Nshu") or asciiEquals(name, "scx=Nshu")) return .script_extensions_nushu;
+    if (asciiEquals(name, "Script=Nyiakeng_Puachue_Hmong") or asciiEquals(name, "sc=Nyiakeng_Puachue_Hmong") or asciiEquals(name, "Script=Hmnp") or asciiEquals(name, "sc=Hmnp")) return .script_nyiakeng_puachue_hmong;
+    if (asciiEquals(name, "Script_Extensions=Nyiakeng_Puachue_Hmong") or asciiEquals(name, "scx=Nyiakeng_Puachue_Hmong") or asciiEquals(name, "Script_Extensions=Hmnp") or asciiEquals(name, "scx=Hmnp")) return .script_extensions_nyiakeng_puachue_hmong;
+    if (asciiEquals(name, "Script=Ogham") or asciiEquals(name, "sc=Ogham") or asciiEquals(name, "Script=Ogam") or asciiEquals(name, "sc=Ogam")) return .script_ogham;
+    if (asciiEquals(name, "Script_Extensions=Ogham") or asciiEquals(name, "scx=Ogham") or asciiEquals(name, "Script_Extensions=Ogam") or asciiEquals(name, "scx=Ogam")) return .script_extensions_ogham;
+    if (asciiEquals(name, "Script=Ol_Chiki") or asciiEquals(name, "sc=Ol_Chiki") or asciiEquals(name, "Script=Olck") or asciiEquals(name, "sc=Olck")) return .script_ol_chiki;
+    if (asciiEquals(name, "Script_Extensions=Ol_Chiki") or asciiEquals(name, "scx=Ol_Chiki") or asciiEquals(name, "Script_Extensions=Olck") or asciiEquals(name, "scx=Olck")) return .script_extensions_ol_chiki;
+    if (asciiEquals(name, "Script=Ol_Onal") or asciiEquals(name, "sc=Ol_Onal") or asciiEquals(name, "Script=Onao") or asciiEquals(name, "sc=Onao")) return .script_ol_onal;
+    if (asciiEquals(name, "Script_Extensions=Ol_Onal") or asciiEquals(name, "scx=Ol_Onal") or asciiEquals(name, "Script_Extensions=Onao") or asciiEquals(name, "scx=Onao")) return .script_extensions_ol_onal;
+    if (asciiEquals(name, "Script=Old_Hungarian") or asciiEquals(name, "sc=Old_Hungarian") or asciiEquals(name, "Script=Hung") or asciiEquals(name, "sc=Hung")) return .script_old_hungarian;
+    if (asciiEquals(name, "Script_Extensions=Old_Hungarian") or asciiEquals(name, "scx=Old_Hungarian") or asciiEquals(name, "Script_Extensions=Hung") or asciiEquals(name, "scx=Hung")) return .script_extensions_old_hungarian;
+    if (asciiEquals(name, "Script=Old_Italic") or asciiEquals(name, "sc=Old_Italic") or asciiEquals(name, "Script=Ital") or asciiEquals(name, "sc=Ital")) return .script_old_italic;
+    if (asciiEquals(name, "Script_Extensions=Old_Italic") or asciiEquals(name, "scx=Old_Italic") or asciiEquals(name, "Script_Extensions=Ital") or asciiEquals(name, "scx=Ital")) return .script_extensions_old_italic;
+    if (asciiEquals(name, "Script=Old_North_Arabian") or asciiEquals(name, "sc=Old_North_Arabian") or asciiEquals(name, "Script=Narb") or asciiEquals(name, "sc=Narb")) return .script_old_north_arabian;
+    if (asciiEquals(name, "Script_Extensions=Old_North_Arabian") or asciiEquals(name, "scx=Old_North_Arabian") or asciiEquals(name, "Script_Extensions=Narb") or asciiEquals(name, "scx=Narb")) return .script_extensions_old_north_arabian;
+    if (asciiEquals(name, "Script=Old_Permic") or asciiEquals(name, "sc=Old_Permic") or asciiEquals(name, "Script=Perm") or asciiEquals(name, "sc=Perm")) return .script_old_permic;
+    if (asciiEquals(name, "Script_Extensions=Old_Permic") or asciiEquals(name, "scx=Old_Permic") or asciiEquals(name, "Script_Extensions=Perm") or asciiEquals(name, "scx=Perm")) return .script_extensions_old_permic;
+    if (asciiEquals(name, "Script=Old_Persian") or asciiEquals(name, "sc=Old_Persian") or asciiEquals(name, "Script=Xpeo") or asciiEquals(name, "sc=Xpeo")) return .script_old_persian;
+    if (asciiEquals(name, "Script_Extensions=Old_Persian") or asciiEquals(name, "scx=Old_Persian") or asciiEquals(name, "Script_Extensions=Xpeo") or asciiEquals(name, "scx=Xpeo")) return .script_extensions_old_persian;
+    if (asciiEquals(name, "Script=Old_Sogdian") or asciiEquals(name, "sc=Old_Sogdian") or asciiEquals(name, "Script=Sogo") or asciiEquals(name, "sc=Sogo")) return .script_old_sogdian;
+    if (asciiEquals(name, "Script_Extensions=Old_Sogdian") or asciiEquals(name, "scx=Old_Sogdian") or asciiEquals(name, "Script_Extensions=Sogo") or asciiEquals(name, "scx=Sogo")) return .script_extensions_old_sogdian;
+    if (asciiEquals(name, "Script=Old_South_Arabian") or asciiEquals(name, "sc=Old_South_Arabian") or asciiEquals(name, "Script=Sarb") or asciiEquals(name, "sc=Sarb")) return .script_old_south_arabian;
+    if (asciiEquals(name, "Script_Extensions=Old_South_Arabian") or asciiEquals(name, "scx=Old_South_Arabian") or asciiEquals(name, "Script_Extensions=Sarb") or asciiEquals(name, "scx=Sarb")) return .script_extensions_old_south_arabian;
+    if (asciiEquals(name, "Script=Old_Turkic") or asciiEquals(name, "sc=Old_Turkic") or asciiEquals(name, "Script=Orkh") or asciiEquals(name, "sc=Orkh")) return .script_old_turkic;
+    if (asciiEquals(name, "Script_Extensions=Old_Turkic") or asciiEquals(name, "scx=Old_Turkic") or asciiEquals(name, "Script_Extensions=Orkh") or asciiEquals(name, "scx=Orkh")) return .script_extensions_old_turkic;
+    if (asciiEquals(name, "Script=Old_Uyghur") or asciiEquals(name, "sc=Old_Uyghur") or asciiEquals(name, "Script=Ougr") or asciiEquals(name, "sc=Ougr")) return .script_old_uyghur;
+    if (asciiEquals(name, "Script_Extensions=Old_Uyghur") or asciiEquals(name, "scx=Old_Uyghur") or asciiEquals(name, "Script_Extensions=Ougr") or asciiEquals(name, "scx=Ougr")) return .script_extensions_old_uyghur;
+    if (asciiEquals(name, "Script=Oriya") or asciiEquals(name, "sc=Oriya") or asciiEquals(name, "Script=Orya") or asciiEquals(name, "sc=Orya")) return .script_oriya;
+    if (asciiEquals(name, "Script_Extensions=Oriya") or asciiEquals(name, "scx=Oriya") or asciiEquals(name, "Script_Extensions=Orya") or asciiEquals(name, "scx=Orya")) return .script_extensions_oriya;
+    if (asciiEquals(name, "Script=Osage") or asciiEquals(name, "sc=Osage") or asciiEquals(name, "Script=Osge") or asciiEquals(name, "sc=Osge")) return .script_osage;
+    if (asciiEquals(name, "Script_Extensions=Osage") or asciiEquals(name, "scx=Osage") or asciiEquals(name, "Script_Extensions=Osge") or asciiEquals(name, "scx=Osge")) return .script_extensions_osage;
+    if (asciiEquals(name, "Script=Osmanya") or asciiEquals(name, "sc=Osmanya") or asciiEquals(name, "Script=Osma") or asciiEquals(name, "sc=Osma")) return .script_osmanya;
+    if (asciiEquals(name, "Script_Extensions=Osmanya") or asciiEquals(name, "scx=Osmanya") or asciiEquals(name, "Script_Extensions=Osma") or asciiEquals(name, "scx=Osma")) return .script_extensions_osmanya;
+    if (asciiEquals(name, "Script=Pahawh_Hmong") or asciiEquals(name, "sc=Pahawh_Hmong") or asciiEquals(name, "Script=Hmng") or asciiEquals(name, "sc=Hmng")) return .script_pahawh_hmong;
+    if (asciiEquals(name, "Script_Extensions=Pahawh_Hmong") or asciiEquals(name, "scx=Pahawh_Hmong") or asciiEquals(name, "Script_Extensions=Hmng") or asciiEquals(name, "scx=Hmng")) return .script_extensions_pahawh_hmong;
+    if (asciiEquals(name, "Script=Palmyrene") or asciiEquals(name, "sc=Palmyrene") or asciiEquals(name, "Script=Palm") or asciiEquals(name, "sc=Palm")) return .script_palmyrene;
+    if (asciiEquals(name, "Script_Extensions=Palmyrene") or asciiEquals(name, "scx=Palmyrene") or asciiEquals(name, "Script_Extensions=Palm") or asciiEquals(name, "scx=Palm")) return .script_extensions_palmyrene;
+    if (asciiEquals(name, "Script=Pau_Cin_Hau") or asciiEquals(name, "sc=Pau_Cin_Hau") or asciiEquals(name, "Script=Pauc") or asciiEquals(name, "sc=Pauc")) return .script_pau_cin_hau;
+    if (asciiEquals(name, "Script_Extensions=Pau_Cin_Hau") or asciiEquals(name, "scx=Pau_Cin_Hau") or asciiEquals(name, "Script_Extensions=Pauc") or asciiEquals(name, "scx=Pauc")) return .script_extensions_pau_cin_hau;
+    if (asciiEquals(name, "Script=Phags_Pa") or asciiEquals(name, "sc=Phags_Pa") or asciiEquals(name, "Script=Phag") or asciiEquals(name, "sc=Phag")) return .script_phags_pa;
+    if (asciiEquals(name, "Script_Extensions=Phags_Pa") or asciiEquals(name, "scx=Phags_Pa") or asciiEquals(name, "Script_Extensions=Phag") or asciiEquals(name, "scx=Phag")) return .script_extensions_phags_pa;
+    if (asciiEquals(name, "Script=Phoenician") or asciiEquals(name, "sc=Phoenician") or asciiEquals(name, "Script=Phnx") or asciiEquals(name, "sc=Phnx")) return .script_phoenician;
+    if (asciiEquals(name, "Script_Extensions=Phoenician") or asciiEquals(name, "scx=Phoenician") or asciiEquals(name, "Script_Extensions=Phnx") or asciiEquals(name, "scx=Phnx")) return .script_extensions_phoenician;
+    if (asciiEquals(name, "Script=Psalter_Pahlavi") or asciiEquals(name, "sc=Psalter_Pahlavi") or asciiEquals(name, "Script=Phlp") or asciiEquals(name, "sc=Phlp")) return .script_psalter_pahlavi;
+    if (asciiEquals(name, "Script_Extensions=Psalter_Pahlavi") or asciiEquals(name, "scx=Psalter_Pahlavi") or asciiEquals(name, "Script_Extensions=Phlp") or asciiEquals(name, "scx=Phlp")) return .script_extensions_psalter_pahlavi;
+    if (asciiEquals(name, "Script=Rejang") or asciiEquals(name, "sc=Rejang") or asciiEquals(name, "Script=Rjng") or asciiEquals(name, "sc=Rjng")) return .script_rejang;
+    if (asciiEquals(name, "Script_Extensions=Rejang") or asciiEquals(name, "scx=Rejang") or asciiEquals(name, "Script_Extensions=Rjng") or asciiEquals(name, "scx=Rjng")) return .script_extensions_rejang;
+    if (asciiEquals(name, "Script=Runic") or asciiEquals(name, "sc=Runic") or asciiEquals(name, "Script=Runr") or asciiEquals(name, "sc=Runr")) return .script_runic;
+    if (asciiEquals(name, "Script_Extensions=Runic") or asciiEquals(name, "scx=Runic") or asciiEquals(name, "Script_Extensions=Runr") or asciiEquals(name, "scx=Runr")) return .script_extensions_runic;
+    if (asciiEquals(name, "Script=Samaritan") or asciiEquals(name, "sc=Samaritan") or asciiEquals(name, "Script=Samr") or asciiEquals(name, "sc=Samr")) return .script_samaritan;
+    if (asciiEquals(name, "Script_Extensions=Samaritan") or asciiEquals(name, "scx=Samaritan") or asciiEquals(name, "Script_Extensions=Samr") or asciiEquals(name, "scx=Samr")) return .script_extensions_samaritan;
+    if (asciiEquals(name, "Script=Saurashtra") or asciiEquals(name, "sc=Saurashtra") or asciiEquals(name, "Script=Saur") or asciiEquals(name, "sc=Saur")) return .script_saurashtra;
+    if (asciiEquals(name, "Script_Extensions=Saurashtra") or asciiEquals(name, "scx=Saurashtra") or asciiEquals(name, "Script_Extensions=Saur") or asciiEquals(name, "scx=Saur")) return .script_extensions_saurashtra;
+    if (asciiEquals(name, "Script=Sharada") or asciiEquals(name, "sc=Sharada") or asciiEquals(name, "Script=Shrd") or asciiEquals(name, "sc=Shrd")) return .script_sharada;
+    if (asciiEquals(name, "Script_Extensions=Sharada") or asciiEquals(name, "scx=Sharada") or asciiEquals(name, "Script_Extensions=Shrd") or asciiEquals(name, "scx=Shrd")) return .script_extensions_sharada;
+    if (asciiEquals(name, "Script=Shavian") or asciiEquals(name, "sc=Shavian") or asciiEquals(name, "Script=Shaw") or asciiEquals(name, "sc=Shaw")) return .script_shavian;
+    if (asciiEquals(name, "Script_Extensions=Shavian") or asciiEquals(name, "scx=Shavian") or asciiEquals(name, "Script_Extensions=Shaw") or asciiEquals(name, "scx=Shaw")) return .script_extensions_shavian;
+    if (asciiEquals(name, "Script=Siddham") or asciiEquals(name, "sc=Siddham") or asciiEquals(name, "Script=Sidd") or asciiEquals(name, "sc=Sidd")) return .script_siddham;
+    if (asciiEquals(name, "Script_Extensions=Siddham") or asciiEquals(name, "scx=Siddham") or asciiEquals(name, "Script_Extensions=Sidd") or asciiEquals(name, "scx=Sidd")) return .script_extensions_siddham;
+    if (asciiEquals(name, "Script=Sidetic") or asciiEquals(name, "sc=Sidetic") or asciiEquals(name, "Script=Sidt") or asciiEquals(name, "sc=Sidt")) return .script_sidetic;
+    if (asciiEquals(name, "Script_Extensions=Sidetic") or asciiEquals(name, "scx=Sidetic") or asciiEquals(name, "Script_Extensions=Sidt") or asciiEquals(name, "scx=Sidt")) return .script_extensions_sidetic;
+    if (asciiEquals(name, "Script=SignWriting") or asciiEquals(name, "sc=SignWriting") or asciiEquals(name, "Script=Sgnw") or asciiEquals(name, "sc=Sgnw")) return .script_sign_writing;
+    if (asciiEquals(name, "Script_Extensions=SignWriting") or asciiEquals(name, "scx=SignWriting") or asciiEquals(name, "Script_Extensions=Sgnw") or asciiEquals(name, "scx=Sgnw")) return .script_extensions_sign_writing;
+    if (asciiEquals(name, "Script=Sinhala") or asciiEquals(name, "sc=Sinhala") or asciiEquals(name, "Script=Sinh") or asciiEquals(name, "sc=Sinh")) return .script_sinhala;
+    if (asciiEquals(name, "Script_Extensions=Sinhala") or asciiEquals(name, "scx=Sinhala") or asciiEquals(name, "Script_Extensions=Sinh") or asciiEquals(name, "scx=Sinh")) return .script_extensions_sinhala;
+    if (asciiEquals(name, "Script=Sogdian") or asciiEquals(name, "sc=Sogdian") or asciiEquals(name, "Script=Sogd") or asciiEquals(name, "sc=Sogd")) return .script_sogdian;
+    if (asciiEquals(name, "Script_Extensions=Sogdian") or asciiEquals(name, "scx=Sogdian") or asciiEquals(name, "Script_Extensions=Sogd") or asciiEquals(name, "scx=Sogd")) return .script_extensions_sogdian;
+    if (asciiEquals(name, "Script=Sora_Sompeng") or asciiEquals(name, "sc=Sora_Sompeng") or asciiEquals(name, "Script=Sora") or asciiEquals(name, "sc=Sora")) return .script_sora_sompeng;
+    if (asciiEquals(name, "Script_Extensions=Sora_Sompeng") or asciiEquals(name, "scx=Sora_Sompeng") or asciiEquals(name, "Script_Extensions=Sora") or asciiEquals(name, "scx=Sora")) return .script_extensions_sora_sompeng;
+    if (asciiEquals(name, "Script=Soyombo") or asciiEquals(name, "sc=Soyombo") or asciiEquals(name, "Script=Soyo") or asciiEquals(name, "sc=Soyo")) return .script_soyombo;
+    if (asciiEquals(name, "Script_Extensions=Soyombo") or asciiEquals(name, "scx=Soyombo") or asciiEquals(name, "Script_Extensions=Soyo") or asciiEquals(name, "scx=Soyo")) return .script_extensions_soyombo;
+    if (asciiEquals(name, "Script=Sundanese") or asciiEquals(name, "sc=Sundanese") or asciiEquals(name, "Script=Sund") or asciiEquals(name, "sc=Sund")) return .script_sundanese;
+    if (asciiEquals(name, "Script_Extensions=Sundanese") or asciiEquals(name, "scx=Sundanese") or asciiEquals(name, "Script_Extensions=Sund") or asciiEquals(name, "scx=Sund")) return .script_extensions_sundanese;
+    if (asciiEquals(name, "Script=Sunuwar") or asciiEquals(name, "sc=Sunuwar") or asciiEquals(name, "Script=Sunu") or asciiEquals(name, "sc=Sunu")) return .script_sunuwar;
+    if (asciiEquals(name, "Script_Extensions=Sunuwar") or asciiEquals(name, "scx=Sunuwar") or asciiEquals(name, "Script_Extensions=Sunu") or asciiEquals(name, "scx=Sunu")) return .script_extensions_sunuwar;
+    if (asciiEquals(name, "Script=Syloti_Nagri") or asciiEquals(name, "sc=Syloti_Nagri") or asciiEquals(name, "Script=Sylo") or asciiEquals(name, "sc=Sylo")) return .script_syloti_nagri;
+    if (asciiEquals(name, "Script_Extensions=Syloti_Nagri") or asciiEquals(name, "scx=Syloti_Nagri") or asciiEquals(name, "Script_Extensions=Sylo") or asciiEquals(name, "scx=Sylo")) return .script_extensions_syloti_nagri;
+    if (asciiEquals(name, "Script=Syriac") or asciiEquals(name, "sc=Syriac") or asciiEquals(name, "Script=Syrc") or asciiEquals(name, "sc=Syrc")) return .script_syriac;
+    if (asciiEquals(name, "Script_Extensions=Syriac") or asciiEquals(name, "scx=Syriac") or asciiEquals(name, "Script_Extensions=Syrc") or asciiEquals(name, "scx=Syrc")) return .script_extensions_syriac;
+    if (asciiEquals(name, "Script=Tagalog") or asciiEquals(name, "sc=Tagalog") or asciiEquals(name, "Script=Tglg") or asciiEquals(name, "sc=Tglg")) return .script_tagalog;
+    if (asciiEquals(name, "Script_Extensions=Tagalog") or asciiEquals(name, "scx=Tagalog") or asciiEquals(name, "Script_Extensions=Tglg") or asciiEquals(name, "scx=Tglg")) return .script_extensions_tagalog;
+    if (asciiEquals(name, "Script=Tagbanwa") or asciiEquals(name, "sc=Tagbanwa") or asciiEquals(name, "Script=Tagb") or asciiEquals(name, "sc=Tagb")) return .script_tagbanwa;
+    if (asciiEquals(name, "Script_Extensions=Tagbanwa") or asciiEquals(name, "scx=Tagbanwa") or asciiEquals(name, "Script_Extensions=Tagb") or asciiEquals(name, "scx=Tagb")) return .script_extensions_tagbanwa;
+    if (asciiEquals(name, "Script=Tai_Le") or asciiEquals(name, "sc=Tai_Le") or asciiEquals(name, "Script=Tale") or asciiEquals(name, "sc=Tale")) return .script_tai_le;
+    if (asciiEquals(name, "Script_Extensions=Tai_Le") or asciiEquals(name, "scx=Tai_Le") or asciiEquals(name, "Script_Extensions=Tale") or asciiEquals(name, "scx=Tale")) return .script_extensions_tai_le;
+    if (asciiEquals(name, "Script=Tai_Tham") or asciiEquals(name, "sc=Tai_Tham") or asciiEquals(name, "Script=Lana") or asciiEquals(name, "sc=Lana")) return .script_tai_tham;
+    if (asciiEquals(name, "Script_Extensions=Tai_Tham") or asciiEquals(name, "scx=Tai_Tham") or asciiEquals(name, "Script_Extensions=Lana") or asciiEquals(name, "scx=Lana")) return .script_extensions_tai_tham;
+    if (asciiEquals(name, "Script=Tai_Viet") or asciiEquals(name, "sc=Tai_Viet") or asciiEquals(name, "Script=Tavt") or asciiEquals(name, "sc=Tavt")) return .script_tai_viet;
+    if (asciiEquals(name, "Script_Extensions=Tai_Viet") or asciiEquals(name, "scx=Tai_Viet") or asciiEquals(name, "Script_Extensions=Tavt") or asciiEquals(name, "scx=Tavt")) return .script_extensions_tai_viet;
+    if (asciiEquals(name, "Script=Tai_Yo") or asciiEquals(name, "sc=Tai_Yo") or asciiEquals(name, "Script=Tayo") or asciiEquals(name, "sc=Tayo")) return .script_tai_yo;
+    if (asciiEquals(name, "Script_Extensions=Tai_Yo") or asciiEquals(name, "scx=Tai_Yo") or asciiEquals(name, "Script_Extensions=Tayo") or asciiEquals(name, "scx=Tayo")) return .script_extensions_tai_yo;
+    if (asciiEquals(name, "Script=Takri") or asciiEquals(name, "sc=Takri") or asciiEquals(name, "Script=Takr") or asciiEquals(name, "sc=Takr")) return .script_takri;
+    if (asciiEquals(name, "Script_Extensions=Takri") or asciiEquals(name, "scx=Takri") or asciiEquals(name, "Script_Extensions=Takr") or asciiEquals(name, "scx=Takr")) return .script_extensions_takri;
+    if (asciiEquals(name, "Script=Tamil") or asciiEquals(name, "sc=Tamil") or asciiEquals(name, "Script=Taml") or asciiEquals(name, "sc=Taml")) return .script_tamil;
+    if (asciiEquals(name, "Script_Extensions=Tamil") or asciiEquals(name, "scx=Tamil") or asciiEquals(name, "Script_Extensions=Taml") or asciiEquals(name, "scx=Taml")) return .script_extensions_tamil;
+    if (asciiEquals(name, "Script=Tangut") or asciiEquals(name, "sc=Tangut") or asciiEquals(name, "Script=Tang") or asciiEquals(name, "sc=Tang")) return .script_tangut;
+    if (asciiEquals(name, "Script_Extensions=Tangut") or asciiEquals(name, "scx=Tangut") or asciiEquals(name, "Script_Extensions=Tang") or asciiEquals(name, "scx=Tang")) return .script_extensions_tangut;
+    if (asciiEquals(name, "Script=Telugu") or asciiEquals(name, "sc=Telugu") or asciiEquals(name, "Script=Telu") or asciiEquals(name, "sc=Telu")) return .script_telugu;
+    if (asciiEquals(name, "Script_Extensions=Telugu") or asciiEquals(name, "scx=Telugu") or asciiEquals(name, "Script_Extensions=Telu") or asciiEquals(name, "scx=Telu")) return .script_extensions_telugu;
+    if (asciiEquals(name, "Script=Thaana") or asciiEquals(name, "sc=Thaana") or asciiEquals(name, "Script=Thaa") or asciiEquals(name, "sc=Thaa")) return .script_thaana;
+    if (asciiEquals(name, "Script_Extensions=Thaana") or asciiEquals(name, "scx=Thaana") or asciiEquals(name, "Script_Extensions=Thaa") or asciiEquals(name, "scx=Thaa")) return .script_extensions_thaana;
+    if (asciiEquals(name, "Script=Thai") or asciiEquals(name, "sc=Thai") or asciiEquals(name, "Script=Thai") or asciiEquals(name, "sc=Thai")) return .script_thai;
+    if (asciiEquals(name, "Script_Extensions=Thai") or asciiEquals(name, "scx=Thai") or asciiEquals(name, "Script_Extensions=Thai") or asciiEquals(name, "scx=Thai")) return .script_extensions_thai;
+    if (asciiEquals(name, "Script=Tibetan") or asciiEquals(name, "sc=Tibetan") or asciiEquals(name, "Script=Tibt") or asciiEquals(name, "sc=Tibt")) return .script_tibetan;
+    if (asciiEquals(name, "Script_Extensions=Tibetan") or asciiEquals(name, "scx=Tibetan") or asciiEquals(name, "Script_Extensions=Tibt") or asciiEquals(name, "scx=Tibt")) return .script_extensions_tibetan;
+    if (asciiEquals(name, "Script=Tifinagh") or asciiEquals(name, "sc=Tifinagh") or asciiEquals(name, "Script=Tfng") or asciiEquals(name, "sc=Tfng")) return .script_tifinagh;
+    if (asciiEquals(name, "Script_Extensions=Tifinagh") or asciiEquals(name, "scx=Tifinagh") or asciiEquals(name, "Script_Extensions=Tfng") or asciiEquals(name, "scx=Tfng")) return .script_extensions_tifinagh;
+    if (asciiEquals(name, "Script=Tirhuta") or asciiEquals(name, "sc=Tirhuta") or asciiEquals(name, "Script=Tirh") or asciiEquals(name, "sc=Tirh")) return .script_tirhuta;
+    if (asciiEquals(name, "Script_Extensions=Tirhuta") or asciiEquals(name, "scx=Tirhuta") or asciiEquals(name, "Script_Extensions=Tirh") or asciiEquals(name, "scx=Tirh")) return .script_extensions_tirhuta;
+    if (asciiEquals(name, "Script=Tangsa") or asciiEquals(name, "sc=Tangsa") or asciiEquals(name, "Script=Tnsa") or asciiEquals(name, "sc=Tnsa")) return .script_tangsa;
+    if (asciiEquals(name, "Script_Extensions=Tangsa") or asciiEquals(name, "scx=Tangsa") or asciiEquals(name, "Script_Extensions=Tnsa") or asciiEquals(name, "scx=Tnsa")) return .script_extensions_tangsa;
+    if (asciiEquals(name, "Script=Todhri") or asciiEquals(name, "sc=Todhri") or asciiEquals(name, "Script=Todr") or asciiEquals(name, "sc=Todr")) return .script_todhri;
+    if (asciiEquals(name, "Script_Extensions=Todhri") or asciiEquals(name, "scx=Todhri") or asciiEquals(name, "Script_Extensions=Todr") or asciiEquals(name, "scx=Todr")) return .script_extensions_todhri;
+    if (asciiEquals(name, "Script=Tolong_Siki") or asciiEquals(name, "sc=Tolong_Siki") or asciiEquals(name, "Script=Tols") or asciiEquals(name, "sc=Tols")) return .script_tolong_siki;
+    if (asciiEquals(name, "Script_Extensions=Tolong_Siki") or asciiEquals(name, "scx=Tolong_Siki") or asciiEquals(name, "Script_Extensions=Tols") or asciiEquals(name, "scx=Tols")) return .script_extensions_tolong_siki;
+    if (asciiEquals(name, "Script=Toto") or asciiEquals(name, "sc=Toto") or asciiEquals(name, "Script=Toto") or asciiEquals(name, "sc=Toto")) return .script_toto;
+    if (asciiEquals(name, "Script_Extensions=Toto") or asciiEquals(name, "scx=Toto") or asciiEquals(name, "Script_Extensions=Toto") or asciiEquals(name, "scx=Toto")) return .script_extensions_toto;
+    if (asciiEquals(name, "Script=Tulu_Tigalari") or asciiEquals(name, "sc=Tulu_Tigalari") or asciiEquals(name, "Script=Tutg") or asciiEquals(name, "sc=Tutg")) return .script_tulu_tigalari;
+    if (asciiEquals(name, "Script_Extensions=Tulu_Tigalari") or asciiEquals(name, "scx=Tulu_Tigalari") or asciiEquals(name, "Script_Extensions=Tutg") or asciiEquals(name, "scx=Tutg")) return .script_extensions_tulu_tigalari;
+    if (asciiEquals(name, "Script=Ugaritic") or asciiEquals(name, "sc=Ugaritic") or asciiEquals(name, "Script=Ugar") or asciiEquals(name, "sc=Ugar")) return .script_ugaritic;
+    if (asciiEquals(name, "Script_Extensions=Ugaritic") or asciiEquals(name, "scx=Ugaritic") or asciiEquals(name, "Script_Extensions=Ugar") or asciiEquals(name, "scx=Ugar")) return .script_extensions_ugaritic;
+    if (asciiEquals(name, "Script=Vai") or asciiEquals(name, "sc=Vai") or asciiEquals(name, "Script=Vaii") or asciiEquals(name, "sc=Vaii")) return .script_vai;
+    if (asciiEquals(name, "Script_Extensions=Vai") or asciiEquals(name, "scx=Vai") or asciiEquals(name, "Script_Extensions=Vaii") or asciiEquals(name, "scx=Vaii")) return .script_extensions_vai;
+    if (asciiEquals(name, "Script=Vithkuqi") or asciiEquals(name, "sc=Vithkuqi") or asciiEquals(name, "Script=Vith") or asciiEquals(name, "sc=Vith")) return .script_vithkuqi;
+    if (asciiEquals(name, "Script_Extensions=Vithkuqi") or asciiEquals(name, "scx=Vithkuqi") or asciiEquals(name, "Script_Extensions=Vith") or asciiEquals(name, "scx=Vith")) return .script_extensions_vithkuqi;
+    if (asciiEquals(name, "Script=Wancho") or asciiEquals(name, "sc=Wancho") or asciiEquals(name, "Script=Wcho") or asciiEquals(name, "sc=Wcho")) return .script_wancho;
+    if (asciiEquals(name, "Script_Extensions=Wancho") or asciiEquals(name, "scx=Wancho") or asciiEquals(name, "Script_Extensions=Wcho") or asciiEquals(name, "scx=Wcho")) return .script_extensions_wancho;
+    if (asciiEquals(name, "Script=Warang_Citi") or asciiEquals(name, "sc=Warang_Citi") or asciiEquals(name, "Script=Wara") or asciiEquals(name, "sc=Wara")) return .script_warang_citi;
+    if (asciiEquals(name, "Script_Extensions=Warang_Citi") or asciiEquals(name, "scx=Warang_Citi") or asciiEquals(name, "Script_Extensions=Wara") or asciiEquals(name, "scx=Wara")) return .script_extensions_warang_citi;
+    if (asciiEquals(name, "Script=Yezidi") or asciiEquals(name, "sc=Yezidi") or asciiEquals(name, "Script=Yezi") or asciiEquals(name, "sc=Yezi")) return .script_yezidi;
+    if (asciiEquals(name, "Script_Extensions=Yezidi") or asciiEquals(name, "scx=Yezidi") or asciiEquals(name, "Script_Extensions=Yezi") or asciiEquals(name, "scx=Yezi")) return .script_extensions_yezidi;
+    if (asciiEquals(name, "Script=Yi") or asciiEquals(name, "sc=Yi") or asciiEquals(name, "Script=Yiii") or asciiEquals(name, "sc=Yiii")) return .script_yi;
+    if (asciiEquals(name, "Script_Extensions=Yi") or asciiEquals(name, "scx=Yi") or asciiEquals(name, "Script_Extensions=Yiii") or asciiEquals(name, "scx=Yiii")) return .script_extensions_yi;
+    if (asciiEquals(name, "Script=Zanabazar_Square") or asciiEquals(name, "sc=Zanabazar_Square") or asciiEquals(name, "Script=Zanb") or asciiEquals(name, "sc=Zanb")) return .script_zanabazar_square;
+    if (asciiEquals(name, "Script_Extensions=Zanabazar_Square") or asciiEquals(name, "scx=Zanabazar_Square") or asciiEquals(name, "Script_Extensions=Zanb") or asciiEquals(name, "scx=Zanb")) return .script_extensions_zanabazar_square;
+    return null;
+}
+
+fn asciiEquals(units: []const u16, text: []const u8) bool {
+    if (units.len != text.len) return false;
+    for (text, 0..) |unit, index| if (units[index] != unit) return false;
+    return true;
 }
 
 fn inRanges(ranges: []const Range, codepoint: u21) bool {

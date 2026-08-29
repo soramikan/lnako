@@ -1099,32 +1099,7 @@ fn lookupUnicodeProperty(name: []const u16) ?unicode_properties.Property {
     if (oneOf(name, &.{ "Symbol", "S", "General_Category=Symbol", "General_Category=S", "gc=Symbol", "gc=S" })) return .symbol;
     if (oneOf(name, &.{ "Separator", "Z", "General_Category=Separator", "General_Category=Z", "gc=Separator", "gc=Z" })) return .separator;
 
-    if (oneOf(name, &.{ "Script=Latin", "sc=Latin", "Script=Latn", "sc=Latn" })) return .script_latin;
-    if (oneOf(name, &.{ "Script=Greek", "sc=Greek", "Script=Grek", "sc=Grek" })) return .script_greek;
-    if (oneOf(name, &.{ "Script=Cyrillic", "sc=Cyrillic", "Script=Cyrl", "sc=Cyrl" })) return .script_cyrillic;
-    if (oneOf(name, &.{ "Script=Hiragana", "sc=Hiragana", "Script=Hira", "sc=Hira" })) return .script_hiragana;
-    if (oneOf(name, &.{ "Script=Katakana", "sc=Katakana", "Script=Kana", "sc=Kana" })) return .script_katakana;
-    if (oneOf(name, &.{ "Script=Han", "sc=Han", "Script=Hani", "sc=Hani" })) return .script_han;
-    if (oneOf(name, &.{ "Script=Arabic", "sc=Arabic", "Script=Arab", "sc=Arab" })) return .script_arabic;
-    if (oneOf(name, &.{ "Script=Hebrew", "sc=Hebrew", "Script=Hebr", "sc=Hebr" })) return .script_hebrew;
-    if (oneOf(name, &.{ "Script=Devanagari", "sc=Devanagari", "Script=Deva", "sc=Deva" })) return .script_devanagari;
-    if (oneOf(name, &.{ "Script=Thai", "sc=Thai" })) return .script_thai;
-    if (oneOf(name, &.{ "Script=Hangul", "sc=Hangul", "Script=Hang", "sc=Hang" })) return .script_hangul;
-    if (oneOf(name, &.{ "Script=Common", "sc=Common", "Script=Zyyy", "sc=Zyyy" })) return .script_common;
-    if (oneOf(name, &.{ "Script=Inherited", "sc=Inherited", "Script=Zinh", "sc=Zinh" })) return .script_inherited;
-    if (oneOf(name, &.{ "Script_Extensions=Latin", "scx=Latin", "Script_Extensions=Latn", "scx=Latn" })) return .script_extensions_latin;
-    if (oneOf(name, &.{ "Script_Extensions=Greek", "scx=Greek", "Script_Extensions=Grek", "scx=Grek" })) return .script_extensions_greek;
-    if (oneOf(name, &.{ "Script_Extensions=Cyrillic", "scx=Cyrillic", "Script_Extensions=Cyrl", "scx=Cyrl" })) return .script_extensions_cyrillic;
-    if (oneOf(name, &.{ "Script_Extensions=Hiragana", "scx=Hiragana", "Script_Extensions=Hira", "scx=Hira" })) return .script_extensions_hiragana;
-    if (oneOf(name, &.{ "Script_Extensions=Katakana", "scx=Katakana", "Script_Extensions=Kana", "scx=Kana" })) return .script_extensions_katakana;
-    if (oneOf(name, &.{ "Script_Extensions=Han", "scx=Han", "Script_Extensions=Hani", "scx=Hani" })) return .script_extensions_han;
-    if (oneOf(name, &.{ "Script_Extensions=Arabic", "scx=Arabic", "Script_Extensions=Arab", "scx=Arab" })) return .script_extensions_arabic;
-    if (oneOf(name, &.{ "Script_Extensions=Hebrew", "scx=Hebrew", "Script_Extensions=Hebr", "scx=Hebr" })) return .script_extensions_hebrew;
-    if (oneOf(name, &.{ "Script_Extensions=Devanagari", "scx=Devanagari", "Script_Extensions=Deva", "scx=Deva" })) return .script_extensions_devanagari;
-    if (oneOf(name, &.{ "Script_Extensions=Thai", "scx=Thai" })) return .script_extensions_thai;
-    if (oneOf(name, &.{ "Script_Extensions=Hangul", "scx=Hangul", "Script_Extensions=Hang", "scx=Hang" })) return .script_extensions_hangul;
-    if (oneOf(name, &.{ "Script_Extensions=Common", "scx=Common", "Script_Extensions=Zyyy", "scx=Zyyy" })) return .script_extensions_common;
-    if (oneOf(name, &.{ "Script_Extensions=Inherited", "scx=Inherited", "Script_Extensions=Zinh", "scx=Zinh" })) return .script_extensions_inherited;
+    if (unicode_properties.lookupScript(name)) |property| return property;
     return null;
 }
 
@@ -1463,6 +1438,14 @@ test "Unicode property escapeは生成済み静的範囲を使う" {
     try std.testing.expectEqualSlices(u16, &.{'・'}, han_extensions.array.items.items[0].string.units);
     try std.testing.expectEqualSlices(u16, &.{'々'}, han_extensions.array.items.items[1].string.units);
     try std.testing.expectEqualSlices(u16, &.{'漢'}, han_extensions.array.items.items[2].string.units);
+
+    var adlam_source = try runtime.stringUtf8("𞤀A");
+    try roots.protect(&adlam_source);
+    var adlam_pattern = try runtime.stringUtf8("/\\p{sc=Adlm}/gu");
+    try roots.protect(&adlam_pattern);
+    const adlam = (try call(&runtime, "正規表現マッチ", &.{ adlam_source, adlam_pattern })).?;
+    try std.testing.expectEqual(@as(usize, 1), adlam.array.len());
+    try std.testing.expectEqualSlices(u16, &.{ 0xd83a, 0xdd00 }, adlam.array.items.items[0].string.units);
 
     var invalid_pattern = try runtime.stringUtf8("/\\p{Nope}/u");
     try roots.protect(&invalid_pattern);
