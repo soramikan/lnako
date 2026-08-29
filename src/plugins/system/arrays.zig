@@ -602,8 +602,11 @@ fn reference(runtime: *Runtime, source: Value, index_value: Value) !Value {
         return result;
     }
     if (source_value == .dictionary) {
-        const key = try runtime.valueToString(index);
-        return source_value.dictionary.get(key.string) orelse .undefined;
+        var key = try runtime.valueToString(index);
+        try roots.protect(&key);
+        if (source_value.dictionary.get(key.string)) |value| return value;
+        if (try tableInheritedProperty(runtime, source_value, key.string.units)) |value| return value;
+        return .undefined;
     }
     return error.IndexableValueExpected;
 }
@@ -1478,6 +1481,54 @@ test "表行propertyはown値を優先して標準prototypeを解決する" {
     var number_constructor_name = try indexed(&runtime, number_constructor, name_key);
     try roots.protect(&number_constructor_name);
     try std.testing.expectEqualSlices(u16, &.{ 'N', 'u', 'm', 'b', 'e', 'r' }, number_constructor_name.string.units);
+}
+
+test "参照は辞書と配列の標準prototype propertyを解決する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var dictionary = try runtime.createDictionary();
+    try roots.protect(&dictionary);
+    var array = try common.arrayFromValues(&runtime, &.{.{ .number = 1 }});
+    try roots.protect(&array);
+    var to_string_key = try runtime.stringUtf8("toString");
+    try roots.protect(&to_string_key);
+    var constructor_key = try runtime.stringUtf8("constructor");
+    try roots.protect(&constructor_key);
+    var proto_key = try runtime.stringUtf8("__proto__");
+    try roots.protect(&proto_key);
+    var map_key = try runtime.stringUtf8("map");
+    try roots.protect(&map_key);
+    var name_key = try runtime.stringUtf8("name");
+    try roots.protect(&name_key);
+
+    var dictionary_method = try reference(&runtime, dictionary, to_string_key);
+    try roots.protect(&dictionary_method);
+    try std.testing.expect(dictionary_method == .function);
+    var dictionary_constructor = try reference(&runtime, dictionary, constructor_key);
+    try roots.protect(&dictionary_constructor);
+    try std.testing.expect(dictionary_constructor == .function);
+    var dictionary_constructor_name = try indexed(&runtime, dictionary_constructor, name_key);
+    try roots.protect(&dictionary_constructor_name);
+    try std.testing.expectEqualSlices(u16, &.{ 'O', 'b', 'j', 'e', 'c', 't' }, dictionary_constructor_name.string.units);
+    var dictionary_proto = try reference(&runtime, dictionary, proto_key);
+    try roots.protect(&dictionary_proto);
+    try std.testing.expect(dictionary_proto == .dictionary);
+
+    var array_method = try reference(&runtime, array, map_key);
+    try roots.protect(&array_method);
+    try std.testing.expect(array_method == .function);
+    var alias_method = (try call(&runtime, "配列参照", &.{ array, to_string_key }, null)).?;
+    try roots.protect(&alias_method);
+    try std.testing.expect(alias_method == .function);
+
+    try dictionary.dictionary.set(to_string_key.string, .{ .number = 7 });
+    var own_value = try reference(&runtime, dictionary, to_string_key);
+    try roots.protect(&own_value);
+    try std.testing.expectEqual(@as(f64, 7), own_value.number);
 }
 
 fn tableDeleteColumn(runtime: *Runtime, source: Value, column_value: Value) !Value {

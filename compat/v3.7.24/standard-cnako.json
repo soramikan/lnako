@@ -5286,6 +5286,7 @@
         "native-system-reference-string-range-error",
         "native-system-reference-string-range-error-details",
         "native-system-reference-array-string-properties",
+        "native-system-reference-inherited-properties",
         "native-system-array-range-copy-bigint-coercion",
         "native-system-array-own-properties",
         "native-system-array-sparse-copy-reference-concat"
@@ -5295,7 +5296,7 @@
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "UTF-16文字列・配列・own辞書の参照、canonical文字列添字、length、明示的なBigInt範囲端のNumber変換、非index配列own property表、疎配列sliceの穴を実装し、継承プロパティはTODO: reference-inherited-propertiesとして分離して公式差分テストに成功"
+      "reason": "UTF-16文字列・配列・辞書の参照、canonical文字列添字、length、明示的なBigInt範囲端のNumber変換、非index配列own property表、辞書・配列の標準prototype property、疎配列sliceの穴を実装し、custom prototype・descriptor・receiver・identity境界はTODO: reference-inherited-propertiesとして分離して公式差分テストに成功"
     },
     {
       "id": "command-0200",
@@ -5320,6 +5321,7 @@
         "native-system-reference-string-range-error",
         "native-system-reference-string-range-error-details",
         "native-system-reference-array-string-properties",
+        "native-system-reference-inherited-properties",
         "native-system-array-range-copy-bigint-coercion",
         "native-system-array-own-properties",
         "native-system-array-sparse-copy-reference-concat"
@@ -5329,7 +5331,7 @@
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "参照の別名としてcanonical文字列添字、length、非index配列own property表、疎配列sliceの穴を含めて実装し、継承プロパティはTODO: reference-inherited-propertiesとして分離して公式差分テストに成功"
+      "reason": "参照の別名としてcanonical文字列添字、length、非index配列own property表、辞書・配列の標準prototype property、疎配列sliceの穴を含めて実装し、custom prototype・descriptor・receiver・identity境界はTODO: reference-inherited-propertiesとして分離して公式差分テストに成功"
     },
     {
       "id": "command-0201",

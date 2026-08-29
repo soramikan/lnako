@@ -13428,10 +13428,10 @@ fn spliceCountNumber(number: f64, maximum: usize) usize {
     return @min(@as(usize, @intFromFloat(@min(@floor(number), @as(f64, @floatFromInt(maximum))))), maximum);
 }
 
-fn dictionaryProperty(value: Value, key: []const u16) Value {
-    if (value.tag != @intFromEnum(Tag.dictionary)) return .{};
-    const object = value.object() orelse return .{};
-    if (object.payload != .dictionary) return .{};
+fn dictionaryOwnProperty(value: Value, key: []const u16) ?Value {
+    if (value.tag != @intFromEnum(Tag.dictionary)) return null;
+    const object = value.object() orelse return null;
+    if (object.payload != .dictionary) return null;
     for (object.payload.dictionary.items) |entry| {
         const matches = switch (@as(Tag, @enumFromInt(entry.key.tag))) {
             .static_utf8_string => blk: {
@@ -13446,7 +13446,11 @@ fn dictionaryProperty(value: Value, key: []const u16) Value {
         };
         if (matches) return entry.value;
     }
-    return .{};
+    return null;
+}
+
+fn dictionaryProperty(value: Value, key: []const u16) Value {
+    return dictionaryOwnProperty(value, key) orelse .{};
 }
 
 fn aotCanonicalArrayIndex(value: Value) ?usize {
@@ -14944,7 +14948,9 @@ fn referenceBuiltin(runtime: *Runtime, source: Value, index: Value) !Value {
     if (rooted[0].tag == @intFromEnum(Tag.dictionary)) {
         const key = try valueUtf16Alloc(runtime, rooted[1]);
         defer runtime.allocator.free(key);
-        return dictionaryProperty(rooted[0], key);
+        if (dictionaryOwnProperty(rooted[0], key)) |value| return value;
+        if (try tableInheritedProperty(runtime, rooted[0], .dictionary, key)) |value| return value;
+        return .{};
     }
     return error.IndexableValueExpected;
 }
@@ -18159,6 +18165,34 @@ test "AOT参照の配列文字列添字はGC後も配列とキーを保持する
     while (i < 8) : (i += 1) _ = runtime.collect();
     try std.testing.expectEqual(@as(f64, 2), valueToNumber(try referenceBuiltin(&runtime, roots[0], roots[1])));
     try std.testing.expectEqual(@as(f64, 20), valueToNumber(try referenceBuiltin(&runtime, roots[0], roots[2])));
+}
+
+test "AOT参照は辞書と配列の標準prototype propertyを解決する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 10;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    runtime.next_collection = 1;
+
+    roots[0] = try runtime.createDictionary(&.{});
+    roots[1] = try runtime.createArray(&.{numberValue(1)});
+    roots[2] = try referenceBuiltin(&runtime, roots[0], staticStringValue("toString"));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[2].tag)));
+    roots[3] = try referenceBuiltin(&runtime, roots[0], staticStringValue("constructor"));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[3].tag)));
+    roots[4] = try tableRowProperty(&runtime, roots[3], staticStringValue("name"));
+    try expectUtf16String(&runtime, roots[4], "Object");
+    roots[5] = try referenceBuiltin(&runtime, roots[0], staticStringValue("__proto__"));
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(roots[5].tag)));
+    roots[6] = try referenceBuiltin(&runtime, roots[1], staticStringValue("map"));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[6].tag)));
+    roots[7] = try referenceBuiltin(&runtime, roots[1], staticStringValue("toString"));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[7].tag)));
+    roots[8] = try runtime.createDictionary(&.{ staticStringValue("toString"), numberValue(7) });
+    roots[9] = try referenceBuiltin(&runtime, roots[8], staticStringValue("toString"));
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[9]));
 }
 
 fn referenceAotArrayStringKeyAllocationTest(allocator: std.mem.Allocator) !void {

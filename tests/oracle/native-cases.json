@@ -287,6 +287,11 @@
     "source": "A=[0,1,2,3]\n参照(A,\"0\")を表示\n参照(A,\"1\")を表示\n参照(A,\"01\")を表示\n参照(A,\"-0\")を表示\n参照(A,\"-1\")を表示\n参照(A,\"1.0\")を表示\n参照(A,\"\")を表示\n参照(A,\"4294967295\")を表示\n参照(A,\"900719925474099999999999999\")を表示\n参照(A,\"length\")を表示\n配列参照(A,\"0\")を表示\n配列参照(A,\"length\")を表示\n"
   },
   {
+    "id": "native-system-reference-inherited-properties",
+    "commands": ["参照", "配列参照", "TYPEOF"],
+    "source": "D={\"own\":7}\nA=[1]\nTYPEOF(参照(D,\"toString\"))を表示\nTYPEOF(参照(D,\"constructor\"))を表示\nTYPEOF(参照(D,\"__proto__\"))を表示\nTYPEOF(参照(A,\"map\"))を表示\nTYPEOF(配列参照(A,\"toString\"))を表示\nD[\"toString\"]=9\n参照(D,\"toString\")を表示\n"
+  },
+  {
     "id": "native-system-array-own-properties",
     "commands": ["辞書キー列挙", "ハッシュ内容列挙", "参照", "辞書キー存在", "配列入替", "表ピックアップ", "表完全一致ピックアップ", "表列取得", "表検索"],
     "source": "A=[10,20]\nA[\"foo\"]=7\nA[\"01\"]=8\nA[-1]=9\nA[1.5]=6\nA[非数]=5\nA[無限大]=4\nA[1n]=11\nJSON変換(辞書キー列挙(A))を表示\nJSON変換(ハッシュ内容列挙(A))を表示\nJSON変換(A)を表示\n参照(A,\"foo\")を表示\n参照(A,\"01\")を表示\n参照(A,-1)を表示\n参照(A,1.5)を表示\n参照(A,非数)を表示\n参照(A,無限大)を表示\n参照(A,1n)を表示\n辞書キー存在(A,\"foo\")を表示\n辞書キー存在(A,\"length\")を表示\n配列入替(A,\"foo\",\"bar\")を表示\nJSON変換(辞書キー列挙(A))を表示\nJSON変換(ハッシュ内容列挙(A))を表示\nJSON変換(A)を表示\nT=空配列()\nT[\"tag\"]=\"hit\"\nT[\"score\"]=7\nJSON変換(表ピックアップ([T],\"tag\",\"it\"))を表示\nJSON変換(表完全一致ピックアップ([T],\"tag\",\"hit\"))を表示\nJSON変換(表列取得([T],\"tag\"))を表示\n表検索([T],\"tag\",0,\"hit\")を表示\n"
