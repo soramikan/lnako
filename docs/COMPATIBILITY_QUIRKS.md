@@ -100,6 +100,8 @@ Unicode文字クラスでは、4桁Unicode escapeで表した高・低surrogate 
 
 Unicode正規表現の非sticky探索は、UTF-16のlow surrogate位置から再試行しない。例えば`/\\uDE00/u`と`/\\uD83D/u`は`"😀"`内の対内部を単独コード単位として一致させず、非Unicodeの`/\\uDE00/`だけがlow surrogateへ一致する。共有エンジンはUnicode時の探索開始位置を`AdvanceStringIndex`相当で進め、`native-system-regexp-unicode-search-boundary`でInterpreter・AOTの7経路を比較する。
 
+Unicode `u`+`i` / `v`+`i` の`\w`は、ASCII word文字へsimple foldされるKelvin sign (`K`)やlong s (`ſ`)もword文字として扱い、`\b`/`\B`の境界判定にも同じ規則を使う。`native-system-regexp-unicode-word-boundary`で、非ignore-caseとの差と`\B`の連続word判定をInterpreter・AOTの7経路で比較する。
+
 根拠は固定オラクルの
 [`core/src/plugin_system_array.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_array.mts) と
 [`core/src/plugin_system_dict.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_dict.mts) です。

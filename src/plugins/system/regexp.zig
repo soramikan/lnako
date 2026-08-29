@@ -792,8 +792,14 @@ fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: Atom, init
         .start_anchor => if (initial.position == 0 or (flags.multiline and initial.position > 0 and isLineTerminator(source[initial.position - 1]))) try output.append(allocator, initial),
         .end_anchor => if (initial.position == source.len or (flags.multiline and initial.position < source.len and isLineTerminator(source[initial.position]))) try output.append(allocator, initial),
         .word_boundary => |expected| {
-            const left_word = initial.position > 0 and isWord(source[initial.position - 1]);
-            const right_word = initial.position < source.len and isWord(source[initial.position]);
+            const left_word = if (flags.unicode)
+                if (codePointBefore(source, initial.position)) |point| isWordCodePoint(point.value, flags) else false
+            else
+                initial.position > 0 and isWord(source[initial.position - 1]);
+            const right_word = if (flags.unicode)
+                if (codePointAt(source, initial.position)) |point| isWordCodePoint(point.value, flags) else false
+            else
+                initial.position < source.len and isWord(source[initial.position]);
             if ((left_word != right_word) == expected) try output.append(allocator, initial);
         },
         .backreference => |capture_index| {
@@ -1055,8 +1061,8 @@ fn classMatches(class: CharacterClass, source: []const u16, position: usize, fla
             },
             .digit => isDigit(unit),
             .not_digit => !isDigit(unit),
-            .word => isWord(unit),
-            .not_word => !isWord(unit),
+            .word => if (flags.unicode) isWordCodePoint(code_point.value, flags) else isWord(unit),
+            .not_word => if (flags.unicode) !isWordCodePoint(code_point.value, flags) else !isWord(unit),
             .space => isWhitespace(unit),
             .not_space => !isWhitespace(unit),
             .unicode_property => |property| propertyMatches(property, code_point.value, flags),
@@ -1073,6 +1079,15 @@ fn codePointAt(source: []const u16, position: usize) ?CodePoint {
         return .{ .value = surrogatePairCodePoint(first, source[position + 1]), .width = 2 };
     }
     return .{ .value = first, .width = 1 };
+}
+
+fn codePointBefore(source: []const u16, position: usize) ?CodePoint {
+    const end = @min(position, source.len);
+    if (end == 0) return null;
+    if (end >= 2 and isHighSurrogate(source[end - 2]) and isLowSurrogate(source[end - 1])) {
+        return .{ .value = surrogatePairCodePoint(source[end - 2], source[end - 1]), .width = 2 };
+    }
+    return .{ .value = source[end - 1], .width = 1 };
 }
 
 fn codePointWidth(source: []const u16, position: usize, unicode: bool) usize {
@@ -1150,7 +1165,23 @@ fn isDigit(unit: u16) bool {
 }
 
 fn isWord(unit: u16) bool {
-    return isDigit(unit) or (unit >= 'A' and unit <= 'Z') or (unit >= 'a' and unit <= 'z') or unit == '_';
+    return isAsciiWord(unit);
+}
+
+fn isWordCodePoint(codepoint: u21, flags: Flags) bool {
+    if (codepoint <= 0x7f and isAsciiWord(codepoint)) return true;
+    if (!(flags.unicode and flags.ignore_case)) return false;
+    if (unicode_case.simpleFoldVariants(codepoint)) |variants| {
+        for (variants) |variant| if (variant <= 0x7f and isAsciiWord(variant)) return true;
+    }
+    return false;
+}
+
+fn isAsciiWord(codepoint: u21) bool {
+    return (codepoint >= '0' and codepoint <= '9') or
+        (codepoint >= 'A' and codepoint <= 'Z') or
+        (codepoint >= 'a' and codepoint <= 'z') or
+        codepoint == '_';
 }
 
 fn isWhitespace(unit: u16) bool {
@@ -1581,6 +1612,43 @@ test "Unicode正規表現の探索はサロゲート対内部へ進まない" {
     try roots.protect(&non_unicode_pattern);
     const non_unicode = (try call(&runtime, "正規表現マッチ", &.{ source, non_unicode_pattern })).?;
     try std.testing.expectEqualSlices(u16, &.{0xde00}, non_unicode.string.units);
+}
+
+test "Unicode大小文字無視のword判定を拡張する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var kelvin = try runtime.stringUtf8("K");
+    try roots.protect(&kelvin);
+    var word_pattern = try runtime.stringUtf8("/^\\w$/iu");
+    try roots.protect(&word_pattern);
+    const word = (try call(&runtime, "正規表現マッチ", &.{ kelvin, word_pattern })).?;
+    try std.testing.expectEqualSlices(u16, kelvin.string.units, word.string.units);
+
+    var boundary_pattern = try runtime.stringUtf8("/^\\b.\\b$/iu");
+    try roots.protect(&boundary_pattern);
+    const boundary = (try call(&runtime, "正規表現マッチ", &.{ kelvin, boundary_pattern })).?;
+    try std.testing.expectEqualSlices(u16, kelvin.string.units, boundary.string.units);
+
+    var ascii_only_pattern = try runtime.stringUtf8("/^\\w$/u");
+    try roots.protect(&ascii_only_pattern);
+    try std.testing.expect((try call(&runtime, "正規表現マッチ", &.{ kelvin, ascii_only_pattern })).? == .null_value);
+
+    var mixed = try runtime.stringUtf8("xKx");
+    try roots.protect(&mixed);
+    var non_boundary_pattern = try runtime.stringUtf8("/^x\\BK\\Bx$/iu");
+    try roots.protect(&non_boundary_pattern);
+    const non_boundary = (try call(&runtime, "正規表現マッチ", &.{ mixed, non_boundary_pattern })).?;
+    try std.testing.expectEqualSlices(u16, mixed.string.units, non_boundary.string.units);
+
+    var long_s = try runtime.stringUtf8("ſ");
+    try roots.protect(&long_s);
+    var unicode_sets_pattern = try runtime.stringUtf8("/^\\w$/iv");
+    try roots.protect(&unicode_sets_pattern);
+    const unicode_sets = (try call(&runtime, "正規表現マッチ", &.{ long_s, unicode_sets_pattern })).?;
+    try std.testing.expectEqualSlices(u16, long_s.string.units, unicode_sets.string.units);
 }
 
 test "アンカー・空クラス・先読み・後読みを処理する" {
