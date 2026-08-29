@@ -14180,6 +14180,31 @@ fn incrementTableSearchRow(runtime: *Runtime, row: Value) !Value {
     return numberValue(try valueToNumberRuntime(runtime, row) + 1);
 }
 
+fn compareTableRowsBuiltin(
+    runtime: *Runtime,
+    left: Value,
+    left_present: bool,
+    right: Value,
+    right_present: bool,
+    column: Value,
+    numeric: bool,
+    left_cell: *Value,
+    right_cell: *Value,
+) !std.math.Order {
+    if (!left_present) return if (!right_present) .eq else .gt;
+    if (!right_present) return .lt;
+    if (left.tag == @intFromEnum(Tag.undefined)) return if (right.tag == @intFromEnum(Tag.undefined)) .eq else .gt;
+    if (right.tag == @intFromEnum(Tag.undefined)) return .lt;
+    left_cell.* = try tableRowProperty(runtime, left, column);
+    right_cell.* = try tableRowProperty(runtime, right, column);
+    if (numeric) {
+        const left_number = try valueToNumberRuntime(runtime, left_cell.*);
+        const right_number = try valueToNumberRuntime(runtime, right_cell.*);
+        return if (std.math.isNan(left_number) or std.math.isNan(right_number)) .eq else std.math.order(left_number, right_number);
+    }
+    return (try relationalOrder(runtime, left_cell.*, right_cell.*)) orelse .eq;
+}
+
 fn tableSortBuiltin(runtime: *Runtime, source: Value, column: Value, numeric: bool) !Value {
     // The official commands mutate and return the original table.  Keep the
     // current row and both compared cells rooted because property lookup and
@@ -14189,24 +14214,33 @@ fn tableSortBuiltin(runtime: *Runtime, source: Value, column: Value, numeric: bo
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
 
-    const rows = try arrayItems(roots[0]);
+    const object = roots[0].object().?;
+    try runtime.normalizeAotArrayPresence(object);
+    const rows = &object.payload.array;
     var index: usize = 1;
     while (index < rows.items.len) : (index += 1) {
         roots[2] = rows.items[index];
+        const row_present = runtime.aotArrayIsPresent(object, index);
         var cursor = index;
         while (cursor > 0) {
-            roots[3] = try tableRowProperty(runtime, rows.items[cursor - 1], roots[1]);
-            roots[4] = try tableRowProperty(runtime, roots[2], roots[1]);
-            const order = if (numeric) blk: {
-                const left_number = try valueToNumberRuntime(runtime, roots[3]);
-                const right_number = try valueToNumberRuntime(runtime, roots[4]);
-                break :blk if (std.math.isNan(left_number) or std.math.isNan(right_number)) .eq else std.math.order(left_number, right_number);
-            } else (try relationalOrder(runtime, roots[3], roots[4])) orelse .eq;
+            const order = try compareTableRowsBuiltin(
+                runtime,
+                rows.items[cursor - 1],
+                runtime.aotArrayIsPresent(object, cursor - 1),
+                roots[2],
+                row_present,
+                roots[1],
+                numeric,
+                &roots[3],
+                &roots[4],
+            );
             if (order != .gt) break;
             rows.items[cursor] = rows.items[cursor - 1];
+            object.array_presence.items[cursor] = object.array_presence.items[cursor - 1];
             cursor -= 1;
         }
         rows.items[cursor] = roots[2];
+        object.array_presence.items[cursor] = row_present;
     }
     return roots[0];
 }
@@ -19187,6 +19221,38 @@ test "AOT表ソートは指定列を比較して同じ配列を安定ソート�
     try expectUtf16String(&runtime, try tableRowProperty(&runtime, numeric_rows[0], numberValue(0)), "y");
     try expectUtf16String(&runtime, try tableRowProperty(&runtime, numeric_rows[1], numberValue(0)), "x");
     try expectUtf16String(&runtime, try tableRowProperty(&runtime, numeric_rows[2], numberValue(0)), "z");
+}
+
+test "AOT表ソートは最上位配列のholeと明示的undefinedをpresence順に保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 8;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createArray(&.{numberValue(2)});
+    roots[1] = try runtime.createArray(&.{numberValue(1)});
+    roots[2] = try runtime.createArray(&.{});
+    try runtime.indexSet(roots[2], numberValue(0), roots[0]);
+    try runtime.indexSet(roots[2], numberValue(2), roots[1]);
+    try runtime.indexSet(roots[2], numberValue(3), .{});
+    _ = try tableBuiltin(&runtime, .table_sort, &.{ roots[2], numberValue(0) });
+    try std.testing.expectEqual(roots[1].payload, (try arrayItems(roots[2])).items[0].payload);
+    try std.testing.expectEqual(roots[0].payload, (try arrayItems(roots[2])).items[1].payload);
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try arrayItems(roots[2])).items[2].tag)));
+    try std.testing.expectEqualSlices(bool, &.{ true, true, true, false }, roots[2].object().?.array_presence.items);
+
+    roots[3] = try runtime.createArray(&.{staticStringValue("10")});
+    roots[4] = try runtime.createArray(&.{staticStringValue("2")});
+    roots[5] = try runtime.createArray(&.{});
+    try runtime.indexSet(roots[5], numberValue(0), roots[3]);
+    try runtime.indexSet(roots[5], numberValue(2), roots[4]);
+    try runtime.indexSet(roots[5], numberValue(3), .{});
+    _ = try tableBuiltin(&runtime, .table_numeric_sort, &.{ roots[5], numberValue(0) });
+    try std.testing.expectEqual(roots[4].payload, (try arrayItems(roots[5])).items[0].payload);
+    try std.testing.expectEqual(roots[3].payload, (try arrayItems(roots[5])).items[1].payload);
+    try std.testing.expectEqualSlices(bool, &.{ true, true, true, false }, roots[5].object().?.array_presence.items);
 }
 
 test "AOT敬語命令は未定義初期値と礼節レベルを公式どおり処理する" {

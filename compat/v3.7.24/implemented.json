@@ -1662,17 +1662,19 @@
     "status": "native",
     "tests": [
       "plugin-system-table",
-      "native-system-table-sort"
+      "native-system-table-sort",
+      "native-system-table-sparse-sort"
     ],
-    "reason": "Zig製ランタイムと純LLVM AOT dispatchを実装し、公式7経路差分テストに成功"
+    "reason": "Zig製ランタイムと純LLVM AOT dispatchを実装し、最上位疎配列のhole・undefined順序を含む公式7経路差分テストに成功"
   },
   "表数値ソート": {
     "status": "native",
     "tests": [
       "plugin-system-table",
-      "native-system-table-sort"
+      "native-system-table-sort",
+      "native-system-table-sparse-sort"
     ],
-    "reason": "Zig製ランタイムと純LLVM AOT dispatchを実装し、公式7経路差分テストに成功"
+    "reason": "Zig製ランタイムと純LLVM AOT dispatchを実装し、最上位疎配列のhole・undefined順序を含む公式7経路差分テストに成功"
   },
   "表ピックアップ": {
     "status": "native",

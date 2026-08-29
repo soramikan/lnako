@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 306,
-    "nativeAot": 215,
+    "total": 307,
+    "nativeAot": 216,
     "interpreter": 96,
     "compatJs": 9
   },
@@ -1324,7 +1324,8 @@
       "aotFixtureIds": [
         "native-system-array-sparse-copy-reference-concat",
         "native-system-array-sparse-splice",
-        "native-system-empty-collection-truth-command"
+        "native-system-empty-collection-truth-command",
+        "native-system-table-sparse-sort"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -1343,6 +1344,9 @@
           ],
           "native-system-empty-collection-truth-command": [
             "fixture.commands"
+          ],
+          "native-system-table-sparse-sort": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
@@ -1351,7 +1355,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 4件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -7360,7 +7364,8 @@
         "plugin-system-table"
       ],
       "aotFixtureIds": [
-        "native-system-table-sort"
+        "native-system-table-sort",
+        "native-system-table-sparse-sort"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -7374,6 +7379,10 @@
           "native-system-table-sort": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-system-table-sparse-sort": [
+            "fixture.commands",
+            "implemented.tests"
           ]
         },
         "compatJs": {}
@@ -7382,8 +7391,8 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製ランタイムと純LLVM AOT dispatchを実装し、公式7経路差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Zig製ランタイムと純LLVM AOT dispatchを実装し、最上位疎配列のhole・undefined順序を含む公式7経路差分テストに成功"
     },
     {
       "id": "command-0212",
@@ -7394,7 +7403,8 @@
         "plugin-system-table"
       ],
       "aotFixtureIds": [
-        "native-system-table-sort"
+        "native-system-table-sort",
+        "native-system-table-sparse-sort"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -7408,6 +7418,10 @@
           "native-system-table-sort": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-system-table-sparse-sort": [
+            "fixture.commands",
+            "implemented.tests"
           ]
         },
         "compatJs": {}
@@ -7416,8 +7430,8 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製ランタイムと純LLVM AOT dispatchを実装し、公式7経路差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Zig製ランタイムと純LLVM AOT dispatchを実装し、最上位疎配列のhole・undefined順序を含む公式7経路差分テストに成功"
     },
     {
       "id": "command-0213",
@@ -10013,7 +10027,8 @@
         "native-system-array-sparse-splice",
         "native-system-json-encode",
         "native-system-regexp-unicode-sticky",
-        "native-system-table-byte-row-slice"
+        "native-system-table-byte-row-slice",
+        "native-system-table-sparse-sort"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -10041,6 +10056,9 @@
           ],
           "native-system-table-byte-row-slice": [
             "fixture.commands"
+          ],
+          "native-system-table-sparse-sort": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
@@ -10049,7 +10067,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 2件、AOT 5件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 2件、AOT 6件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "純LLVM AOTのJSON.stringify互換エンコーダと公式CLI・生成JavaScriptとの差分テストに成功"
     },
     {
@@ -10522,7 +10540,8 @@
         "native-system-array-sparse-ordering",
         "native-system-array-sparse-presence",
         "native-system-array-sparse-splice",
-        "native-system-dictionary-hash-commands"
+        "native-system-dictionary-hash-commands",
+        "native-system-table-sparse-sort"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -10552,6 +10571,9 @@
           ],
           "native-system-dictionary-hash-commands": [
             "implemented.tests"
+          ],
+          "native-system-table-sparse-sort": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
@@ -10560,7 +10582,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 6件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 7件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "ECMAScriptのproperty key順、配列・関数境界、疎配列holeの除外をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
@@ -10614,7 +10636,8 @@
         "native-system-array-sparse-copy-reference-concat",
         "native-system-array-sparse-ordering",
         "native-system-array-sparse-presence",
-        "native-system-dictionary-hash-commands"
+        "native-system-dictionary-hash-commands",
+        "native-system-table-sparse-sort"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -10641,6 +10664,9 @@
           ],
           "native-system-dictionary-hash-commands": [
             "implemented.tests"
+          ],
+          "native-system-table-sparse-sort": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
@@ -10649,7 +10675,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 5件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 6件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "辞書・配列・関数の存在判定、配列holeの非存在化、動的エラー文言をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
@@ -10699,7 +10725,8 @@
         "native-system-array-sparse-ordering",
         "native-system-array-sparse-presence",
         "native-system-array-sparse-splice",
-        "native-system-dictionary-hash-commands"
+        "native-system-dictionary-hash-commands",
+        "native-system-table-sparse-sort"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -10729,6 +10756,9 @@
           ],
           "native-system-dictionary-hash-commands": [
             "implemented.tests"
+          ],
+          "native-system-table-sparse-sort": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
@@ -10737,7 +10767,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 6件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 7件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "辞書のproperty key順、配列・関数の内容列挙、疎配列holeの除外をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {

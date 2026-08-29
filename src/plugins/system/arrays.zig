@@ -844,25 +844,70 @@ fn map(runtime: *Runtime, function_value: Value, source: Value, context: ?Contex
 
 fn tableSort(runtime: *Runtime, source: Value, column: Value, numeric: bool) !Value {
     if (source != .array) return error.ArrayExpected;
+    var rooted_source = source;
+    var rooted_column = column;
+    var row: Value = .undefined;
+    var left_cell: Value = .undefined;
+    var right_cell: Value = .undefined;
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&rooted_source);
+    try roots.protect(&rooted_column);
+    try roots.protect(&row);
+    try roots.protect(&left_cell);
+    try roots.protect(&right_cell);
+    try rooted_source.array.normalizePresence();
     var index: usize = 1;
-    while (index < source.array.len()) : (index += 1) {
-        const row = source.array.items.items[index];
+    while (index < rooted_source.array.len()) : (index += 1) {
+        row = rooted_source.array.items.items[index];
+        const row_present = rooted_source.array.isPresent(index);
         var cursor = index;
         while (cursor > 0) {
-            const left = try indexed(runtime, source.array.items.items[cursor - 1], column);
-            const right = try indexed(runtime, row, column);
-            const order = if (numeric) blk: {
-                const left_number = try runtime.valueToNumber(left);
-                const right_number = try runtime.valueToNumber(right);
-                break :blk if (std.math.isNan(left_number) or std.math.isNan(right_number)) std.math.Order.eq else std.math.order(left_number, right_number);
-            } else (try operators.compare(runtime, left, right)) orelse .eq;
+            const order = try compareTableRows(
+                runtime,
+                rooted_source.array.items.items[cursor - 1],
+                rooted_source.array.isPresent(cursor - 1),
+                row,
+                row_present,
+                rooted_column,
+                numeric,
+                &left_cell,
+                &right_cell,
+            );
             if (order != .gt) break;
-            source.array.items.items[cursor] = source.array.items.items[cursor - 1];
+            rooted_source.array.items.items[cursor] = rooted_source.array.items.items[cursor - 1];
+            rooted_source.array.presence.items[cursor] = rooted_source.array.presence.items[cursor - 1];
             cursor -= 1;
         }
-        source.array.items.items[cursor] = row;
+        rooted_source.array.items.items[cursor] = row;
+        rooted_source.array.presence.items[cursor] = row_present;
     }
-    return source;
+    return rooted_source;
+}
+
+fn compareTableRows(
+    runtime: *Runtime,
+    left: Value,
+    left_present: bool,
+    right: Value,
+    right_present: bool,
+    column: Value,
+    numeric: bool,
+    left_cell: *Value,
+    right_cell: *Value,
+) !std.math.Order {
+    if (!left_present) return if (!right_present) .eq else .gt;
+    if (!right_present) return .lt;
+    if (left == .undefined) return if (right == .undefined) .eq else .gt;
+    if (right == .undefined) return .lt;
+    left_cell.* = try indexed(runtime, left, column);
+    right_cell.* = try indexed(runtime, right, column);
+    if (numeric) {
+        const left_number = try runtime.valueToNumber(left_cell.*);
+        const right_number = try runtime.valueToNumber(right_cell.*);
+        return if (std.math.isNan(left_number) or std.math.isNan(right_number)) .eq else std.math.order(left_number, right_number);
+    }
+    return (try operators.compare(runtime, left_cell.*, right_cell.*)) orelse .eq;
 }
 
 fn tablePickup(runtime: *Runtime, source: Value, column: Value, needle: Value, exact: bool) !Value {
@@ -1643,6 +1688,49 @@ test "表検索系はlengthとraw開始値の型を保持する" {
     var array_buffer = try runtime.createArrayBuffer(&.{ 85, 9 });
     try roots.protect(&array_buffer);
     try std.testing.expect((try indexed(&runtime, array_buffer, length_key)) == .undefined);
+}
+
+test "表ソートは最上位配列のholeと明示的undefinedをpresence順に保持する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var high = try common.arrayFromValues(&runtime, &.{.{ .number = 2 }});
+    try roots.protect(&high);
+    var low = try common.arrayFromValues(&runtime, &.{.{ .number = 1 }});
+    try roots.protect(&low);
+    var table = try runtime.createArray();
+    try roots.protect(&table);
+    try table.array.set(0, high);
+    try table.array.set(2, low);
+    try table.array.set(3, .undefined);
+
+    const sorted = try tableSort(&runtime, table, .{ .number = 0 }, false);
+    try std.testing.expectEqual(table.array, sorted.array);
+    try std.testing.expectEqual(low.array, table.array.get(0).array);
+    try std.testing.expectEqual(high.array, table.array.get(1).array);
+    try std.testing.expectEqual(Value.undefined, table.array.get(2));
+    try std.testing.expectEqualSlices(bool, &.{ true, true, true, false }, table.array.presence.items);
+
+    var high_text = try runtime.stringUtf8("10");
+    try roots.protect(&high_text);
+    var low_text = try runtime.stringUtf8("2");
+    try roots.protect(&low_text);
+    var numeric_high = try common.arrayFromValues(&runtime, &.{high_text});
+    try roots.protect(&numeric_high);
+    var numeric_low = try common.arrayFromValues(&runtime, &.{low_text});
+    try roots.protect(&numeric_low);
+    var numeric_table = try runtime.createArray();
+    try roots.protect(&numeric_table);
+    try numeric_table.array.set(0, numeric_high);
+    try numeric_table.array.set(2, numeric_low);
+    try numeric_table.array.set(3, .undefined);
+    _ = try tableSort(&runtime, numeric_table, .{ .number = 0 }, true);
+    try std.testing.expectEqual(numeric_low.array, numeric_table.array.get(0).array);
+    try std.testing.expectEqual(numeric_high.array, numeric_table.array.get(1).array);
+    try std.testing.expectEqualSlices(bool, &.{ true, true, true, false }, numeric_table.array.presence.items);
 }
 
 test "表正規表現系はraw RegExpと浅いコピーとGCを保つ" {
