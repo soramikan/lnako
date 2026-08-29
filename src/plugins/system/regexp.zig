@@ -36,15 +36,26 @@ const ClassItem = union(enum) {
     space,
     not_space,
     unicode_property: UnicodeProperty,
+    nested_class: *CharacterClass,
 };
-const CharacterClass = struct { negated: bool, items: []const ClassItem };
+const SetOperationKind = enum { intersection, subtraction };
+const SetOperation = struct {
+    kind: SetOperationKind,
+    left: *CharacterClass,
+    right: *CharacterClass,
+};
+const CharacterClass = struct {
+    negated: bool,
+    items: []const ClassItem,
+    operation: ?*SetOperation = null,
+};
 const Group = struct { expression: *Expression, capture: ?usize, name: ?[]const u16 };
 const Assertion = struct { expression: *Expression, positive: bool, behind: bool };
 const Atom = union(enum) {
     literal: u16,
     code_point: u21,
     dot,
-    class: CharacterClass,
+    class: *CharacterClass,
     group: Group,
     assertion: Assertion,
     start_anchor,
@@ -171,22 +182,36 @@ const Parser = struct {
         return .{ .group = .{ .expression = expression, .capture = capture_index, .name = name } };
     }
 
-    fn parseClass(self: *Parser) !CharacterClass {
+    fn parseClass(self: *Parser) anyerror!*CharacterClass {
         const negated = consume(self, '^');
+        var left = try self.parseClassOperand();
+        while (self.consumeSetOperator()) |kind| {
+            if (left.operation == null and left.items.len == 0) return error.InvalidCharacterClass;
+            if (!isSetOperand(left)) return error.UnsupportedUnicodeSetOperation;
+            if (self.index >= self.source.len or self.source[self.index] == ']' or self.atSetOperator()) return error.InvalidCharacterClass;
+            const right = try self.parseClassOperand();
+            if (right.items.len == 0 and right.operation == null) return error.InvalidCharacterClass;
+            if (!isSetOperand(right)) return error.UnsupportedUnicodeSetOperation;
+            const operation = try self.allocator.create(SetOperation);
+            operation.* = .{ .kind = kind, .left = left, .right = right };
+            const result = try self.allocator.create(CharacterClass);
+            result.* = .{ .negated = false, .items = &.{}, .operation = operation };
+            left = result;
+        }
+        if (!consume(self, ']')) return error.UnclosedCharacterClass;
+        left.negated = negated;
+        return left;
+    }
+
+    fn parseClassOperand(self: *Parser) !*CharacterClass {
         var items: std.ArrayList(ClassItem) = .empty;
-        while (self.index < self.source.len) {
-            if (self.source[self.index] == ']') {
-                self.index += 1;
-                return .{ .negated = negated, .items = try items.toOwnedSlice(self.allocator) };
-            }
-            if (self.unicode_sets and (self.source[self.index] == '[' or
-                (self.index + 1 < self.source.len and
-                    ((self.source[self.index] == '&' and self.source[self.index + 1] == '&') or
-                        (self.source[self.index] == '-' and self.source[self.index + 1] == '-')))))
-            {
-                return error.UnsupportedUnicodeSetOperation;
-            }
+        while (self.index < self.source.len and self.source[self.index] != ']') {
+            if (self.atSetOperator()) break;
             const first = try self.parseClassItem();
+            if (self.atSetOperator()) {
+                try items.append(self.allocator, first);
+                break;
+            }
             if (classItemCodePoint(first)) |first_code_point| {
                 if (self.index + 1 < self.source.len and self.source[self.index] == '-' and self.source[self.index + 1] != ']') {
                     self.index += 1;
@@ -199,11 +224,30 @@ const Parser = struct {
                 return error.InvalidCharacterClass;
             } else try items.append(self.allocator, first);
         }
-        return error.UnclosedCharacterClass;
+        const class = try self.allocator.create(CharacterClass);
+        class.* = .{ .negated = false, .items = try items.toOwnedSlice(self.allocator) };
+        return class;
+    }
+
+    fn atSetOperator(self: *const Parser) bool {
+        if (!self.unicode_sets or self.index >= self.source.len or self.source.len - self.index < 2) return false;
+        return (self.source[self.index] == '&' and self.source[self.index + 1] == '&') or
+            (self.source[self.index] == '-' and self.source[self.index + 1] == '-');
+    }
+
+    fn consumeSetOperator(self: *Parser) ?SetOperationKind {
+        if (!self.atSetOperator()) return null;
+        const kind: SetOperationKind = if (self.source[self.index] == '&') .intersection else .subtraction;
+        self.index += 2;
+        return kind;
     }
 
     fn parseClassItem(self: *Parser) !ClassItem {
         if (self.index >= self.source.len) return error.UnclosedCharacterClass;
+        if (self.unicode_sets and self.source[self.index] == '[') {
+            self.index += 1;
+            return .{ .nested_class = try self.parseClass() };
+        }
         const unit = self.source[self.index];
         self.index += 1;
         if (unit != '\\') {
@@ -219,7 +263,7 @@ const Parser = struct {
         return switch (atom) {
             .literal => |literal| if (self.unicode and escaped_unit == 'u' and isHighSurrogate(literal)) if (consumeLowSurrogateEscape(self)) |low| .{ .code_point = surrogatePairCodePoint(literal, low) } else .{ .literal = literal } else .{ .literal = literal },
             .code_point => |code_point| .{ .code_point = code_point },
-            .class => |class| if (class.items.len == 1) class.items[0] else error.InvalidClassEscape,
+            .class => |class| if (class.operation == null and class.items.len == 1) class.items[0] else if (self.unicode_sets) .{ .nested_class = class } else error.InvalidClassEscape,
             .unicode_property => |property| .{ .unicode_property = property },
             else => error.InvalidClassEscape,
         };
@@ -395,7 +439,9 @@ const Parser = struct {
     fn singletonClass(self: *Parser, item: ClassItem) !Atom {
         const items = try self.allocator.alloc(ClassItem, 1);
         items[0] = item;
-        return .{ .class = .{ .negated = false, .items = items } };
+        const class = try self.allocator.create(CharacterClass);
+        class.* = .{ .negated = false, .items = items };
+        return .{ .class = class };
     }
 
     fn consume(self: *Parser, unit: u16) bool {
@@ -1043,32 +1089,43 @@ fn ownedText(runtime: *Runtime, value: Value) !value_mod.String {
 
 const CodePoint = struct { value: u21, width: usize };
 
-fn classMatches(class: CharacterClass, source: []const u16, position: usize, flags: Flags) bool {
+fn classMatches(class: *const CharacterClass, source: []const u16, position: usize, flags: Flags) bool {
     const unit = source[position];
     const code_point = codePointAt(source, position).?;
-    var matched = false;
-    for (class.items) |item| {
-        matched = switch (item) {
-            .literal => |literal| if (flags.unicode)
-                codePointsEqual(code_point.value, literal, flags)
-            else
-                unitsEqual(unit, literal, flags.ignore_case),
-            .code_point => |literal| if (flags.unicode) codePointsEqual(code_point.value, literal, flags) else literal <= std.math.maxInt(u16) and unit == literal,
-            .range => |range| blk: {
-                const value = if (flags.unicode) code_point.value else unit;
-                const folded = foldCodePoint(value, flags);
-                break :blk folded >= foldCodePoint(range.first, flags) and folded <= foldCodePoint(range.last, flags);
-            },
-            .digit => isDigit(unit),
-            .not_digit => !isDigit(unit),
-            .word => if (flags.unicode) isWordCodePoint(code_point.value, flags) else isWord(unit),
-            .not_word => if (flags.unicode) !isWordCodePoint(code_point.value, flags) else !isWord(unit),
-            .space => isWhitespace(unit),
-            .not_space => !isWhitespace(unit),
-            .unicode_property => |property| propertyMatches(property, code_point.value, flags),
+    const matched = if (class.operation) |operation| blk: {
+        const left = classMatches(operation.left, source, position, flags);
+        const right = classMatches(operation.right, source, position, flags);
+        break :blk switch (operation.kind) {
+            .intersection => left and right,
+            .subtraction => left and !right,
         };
-        if (matched) break;
-    }
+    } else blk: {
+        var items_match = false;
+        for (class.items) |item| {
+            items_match = switch (item) {
+                .literal => |literal| if (flags.unicode)
+                    codePointsEqual(code_point.value, literal, flags)
+                else
+                    unitsEqual(unit, literal, flags.ignore_case),
+                .code_point => |literal| if (flags.unicode) codePointsEqual(code_point.value, literal, flags) else literal <= std.math.maxInt(u16) and unit == literal,
+                .range => |range| blk_range: {
+                    const value = if (flags.unicode) code_point.value else unit;
+                    const folded = foldCodePoint(value, flags);
+                    break :blk_range folded >= foldCodePoint(range.first, flags) and folded <= foldCodePoint(range.last, flags);
+                },
+                .digit => isDigit(unit),
+                .not_digit => !isDigit(unit),
+                .word => if (flags.unicode) isWordCodePoint(code_point.value, flags) else isWord(unit),
+                .not_word => if (flags.unicode) !isWordCodePoint(code_point.value, flags) else !isWord(unit),
+                .space => isWhitespace(unit),
+                .not_space => !isWhitespace(unit),
+                .unicode_property => |property| propertyMatches(property, code_point.value, flags),
+                .nested_class => |nested| classMatches(nested, source, position, flags),
+            };
+            if (items_match) break;
+        }
+        break :blk items_match;
+    };
     return matched != class.negated;
 }
 
@@ -1196,6 +1253,15 @@ fn classItemCodePoint(item: ClassItem) ?u21 {
         .literal => |literal| literal,
         .code_point => |code_point| code_point,
         else => null,
+    };
+}
+
+fn isSetOperand(class: *const CharacterClass) bool {
+    if (class.operation != null) return true;
+    if (class.items.len != 1) return false;
+    return switch (class.items[0]) {
+        .range => false,
+        else => true,
     };
 }
 
@@ -1651,6 +1717,53 @@ test "Unicode大小文字無視のword判定を拡張する" {
     try std.testing.expectEqualSlices(u16, long_s.string.units, unicode_sets.string.units);
 }
 
+test "vフラグの文字集合intersectionとsubtractionを処理する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var ascii_word_source = try runtime.stringUtf8("aé1_");
+    try roots.protect(&ascii_word_source);
+    var ascii_word_pattern = try runtime.stringUtf8("/[\\w&&\\p{ASCII}]/gv");
+    try roots.protect(&ascii_word_pattern);
+    const ascii_word = (try call(&runtime, "正規表現マッチ", &.{ ascii_word_source, ascii_word_pattern })).?;
+    try std.testing.expect(ascii_word == .array);
+    try std.testing.expectEqual(@as(usize, 3), ascii_word.array.len());
+    try std.testing.expectEqualSlices(u16, &.{'a'}, ascii_word.array.items.items[0].string.units);
+    try std.testing.expectEqualSlices(u16, &.{'1'}, ascii_word.array.items.items[1].string.units);
+    try std.testing.expectEqualSlices(u16, &.{'_'}, ascii_word.array.items.items[2].string.units);
+
+    var consonant_source = try runtime.stringUtf8("AbEc");
+    try roots.protect(&consonant_source);
+    var consonant_pattern = try runtime.stringUtf8("/[[a-z]--[aeiou]]/giv");
+    try roots.protect(&consonant_pattern);
+    const consonants = (try call(&runtime, "正規表現マッチ", &.{ consonant_source, consonant_pattern })).?;
+    try std.testing.expect(consonants == .array);
+    try std.testing.expectEqual(@as(usize, 2), consonants.array.len());
+    try std.testing.expectEqualSlices(u16, &.{'b'}, consonants.array.items.items[0].string.units);
+    try std.testing.expectEqualSlices(u16, &.{'c'}, consonants.array.items.items[1].string.units);
+
+    var non_ascii_source = try runtime.stringUtf8("Aé😀");
+    try roots.protect(&non_ascii_source);
+    var non_ascii_pattern = try runtime.stringUtf8("/[\\p{Any}--\\p{ASCII}]/gv");
+    try roots.protect(&non_ascii_pattern);
+    const non_ascii = (try call(&runtime, "正規表現マッチ", &.{ non_ascii_source, non_ascii_pattern })).?;
+    try std.testing.expect(non_ascii == .array);
+    try std.testing.expectEqual(@as(usize, 2), non_ascii.array.len());
+    try std.testing.expectEqualSlices(u16, &.{0x00e9}, non_ascii.array.items.items[0].string.units);
+    try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00 }, non_ascii.array.items.items[1].string.units);
+
+    var letter_source = try runtime.stringUtf8("A1é");
+    try roots.protect(&letter_source);
+    var letter_pattern = try runtime.stringUtf8("/[\\p{ASCII}&&\\p{Letter}]/gv");
+    try roots.protect(&letter_pattern);
+    const letter = (try call(&runtime, "正規表現マッチ", &.{ letter_source, letter_pattern })).?;
+    try std.testing.expect(letter == .array);
+    try std.testing.expectEqual(@as(usize, 1), letter.array.len());
+    try std.testing.expectEqualSlices(u16, &.{'A'}, letter.array.items.items[0].string.units);
+}
+
 test "アンカー・空クラス・先読み・後読みを処理する" {
     var runtime = Runtime.init(std.testing.allocator);
     defer runtime.deinit();
@@ -1801,7 +1914,7 @@ test "Unicode・sticky・indicesフラグはUTF-16共有エンジンで処理す
     try std.testing.expectEqualSlices(u16, &.{0xd800}, lone_surrogate.string.units);
 }
 
-test "Unicode setsのvフラグは基本照合を行い未実装集合演算を拒否する" {
+test "Unicode setsのvフラグは基本照合と未対応構文を扱う" {
     var runtime = Runtime.init(std.testing.allocator);
     defer runtime.deinit();
     var roots = runtime.rootFrame();

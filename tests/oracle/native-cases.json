@@ -777,6 +777,11 @@
     "source": "JSON変換(正規表現マッチ(\"K\",『/^\\w$/iu』))を表示\nJSON変換(正規表現マッチ(\"K\",『/^\\b.\\b$/iu』))を表示\nJSON変換(正規表現マッチ(\"K\",『/^\\w$/u』))を表示\nJSON変換(正規表現マッチ(\"ſ\",『/^\\w$/iv』))を表示\nJSON変換(正規表現マッチ(\"xKx\",『/^x\\BK\\Bx$/iu』))を表示\n"
   },
   {
+    "id": "native-system-regexp-unicode-set-operations",
+    "commands": ["正規表現マッチ", "JSON変換"],
+    "source": "JSON変換(正規表現マッチ(\"aé1_\",『/[\\w&&\\p{ASCII}]/gv』))を表示\nJSON変換(正規表現マッチ(\"AbEc\",『/[[a-z]--[aeiou]]/giv』))を表示\nJSON変換(正規表現マッチ(\"Aé😀\",『/[\\p{Any}--\\p{ASCII}]/gv』))を表示\nJSON変換(正規表現マッチ(\"A1é\",『/[\\p{ASCII}&&\\p{Letter}]/gv』))を表示\n"
+  },
+  {
     "id": "native-system-regexp-invalid-capture-name-error",
     "oracle": "official-generated",
     "commands": ["正規表現マッチ"],
