@@ -5915,14 +5915,15 @@
         "native-system-table-sparse-map-filter",
         "native-system-table-function-properties",
         "native-system-table-inherited-properties",
-        "native-system-byte-buffer-property"
+        "native-system-byte-buffer-property",
+        "native-system-byte-buffer-backing"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムでBuffer・Uint8Array・ArrayBufferのlengthと数値添字、byteLength・byteOffset・BYTES_PER_ELEMENTなどのproperty、表列取得の疎配列map挙動、および匿名関数のname/length propertyを実装し、公式差分テストに成功"
+      "reason": "Zig製ランタイムでBuffer・Uint8Array・ArrayBufferのlengthと数値添字、byteLength・byteOffset・BYTES_PER_ELEMENT・bufferなどのproperty、表列取得の疎配列map挙動、および匿名関数のname/length propertyを実装し、公式差分テストに成功"
     },
     {
       "id": "command-0222",
@@ -7247,7 +7248,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-types"
+        "plugin-system-types",
+        "native-system-byte-buffer-backing"
       ],
       "platforms": [
         "macos-aarch64",
@@ -7273,7 +7275,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-types"
+        "plugin-system-types",
+        "native-system-byte-buffer-backing"
       ],
       "platforms": [
         "macos-aarch64",
@@ -12727,7 +12730,8 @@
         "native-node-crypto",
         "native-system-table-byte-row-properties",
         "native-system-table-byte-row-slice-alias",
-        "native-system-byte-buffer-property"
+        "native-system-byte-buffer-property",
+        "native-system-byte-buffer-backing"
       ],
       "platforms": [
         "macos-aarch64",
@@ -12780,14 +12784,15 @@
       "tests": [
         "plugin-node-crypto",
         "native-node-crypto",
-        "native-system-byte-buffer-property"
+        "native-system-byte-buffer-property",
+        "native-system-byte-buffer-backing"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "公式7経路のUint8Array長さ・要素境界とprototype propertyの差分テストに成功"
+      "reason": "公式7経路のUint8Array長さ・要素境界の差分テストに成功"
     },
     {
       "id": "command-0795",

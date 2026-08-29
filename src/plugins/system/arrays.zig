@@ -7,6 +7,7 @@ const regexp = @import("regexp.zig");
 
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
+pub const ByteKind = value_mod.ByteKind;
 
 const safe_array_element_limit: usize = 1_000_000;
 
@@ -1376,6 +1377,10 @@ fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) 
             if (buffer.kind == .array_buffer) return null;
             return @as(?Value, .{ .number = 1 });
         }
+        if (asciiUnitsEqual(units, "buffer")) {
+            if (buffer.kind == .array_buffer) return null;
+            return @as(?Value, try runtime.createByteBufferBackingBuffer(buffer));
+        }
         if (buffer.kind == .array_buffer) {
             if (asciiUnitsEqual(units, "maxByteLength")) return @as(?Value, .{ .number = @floatFromInt(buffer.bytes.len) });
             if (asciiUnitsEqual(units, "resizable") or asciiUnitsEqual(units, "detached")) return @as(?Value, .{ .boolean = false });
@@ -2078,6 +2083,8 @@ test "表行propertyはbyte bufferのprototype属性を解決する" {
     try roots.protect(&byte_offset_key);
     var bytes_per_element_key = try runtime.stringUtf8("BYTES_PER_ELEMENT");
     try roots.protect(&bytes_per_element_key);
+    var buffer_key = try runtime.stringUtf8("buffer");
+    try roots.protect(&buffer_key);
     var slice_key = try runtime.stringUtf8("slice");
     try roots.protect(&slice_key);
     var subarray_key = try runtime.stringUtf8("subarray");
@@ -2099,6 +2106,12 @@ test "表行propertyはbyte bufferのprototype属性を解決する" {
     try std.testing.expectEqual(@as(f64, 2), (try indexed(&runtime, buffer, byte_length_key)).number);
     try std.testing.expectEqual(@as(f64, 0), (try indexed(&runtime, buffer, byte_offset_key)).number);
     try std.testing.expectEqual(@as(f64, 1), (try indexed(&runtime, buffer, bytes_per_element_key)).number);
+    var buffer_backing = try indexed(&runtime, buffer, buffer_key);
+    try roots.protect(&buffer_backing);
+    try std.testing.expect(buffer_backing == .bytes);
+    try std.testing.expectEqual(ByteKind.array_buffer, buffer_backing.bytes.kind);
+    try std.testing.expectEqual(@as(usize, 2), buffer_backing.bytes.bytes.len);
+    try std.testing.expectEqual(@as(f64, 2), (try indexed(&runtime, buffer_backing, byte_length_key)).number);
     var slice = try indexed(&runtime, buffer, slice_key);
     try roots.protect(&slice);
     var slice_name = try indexed(&runtime, slice, name_key);
@@ -2117,6 +2130,11 @@ test "表行propertyはbyte bufferのprototype属性を解決する" {
     try std.testing.expectEqualSlices(u16, &.{ 'U', 'i', 'n', 't', '8', 'A', 'r', 'r', 'a', 'y' }, constructor_name.string.units);
     try std.testing.expectEqual(@as(f64, 2), (try indexed(&runtime, uint8, byte_length_key)).number);
     try std.testing.expectEqual(@as(f64, 1), (try indexed(&runtime, uint8, bytes_per_element_key)).number);
+    var uint8_backing = try indexed(&runtime, uint8, buffer_key);
+    try roots.protect(&uint8_backing);
+    try std.testing.expect(uint8_backing == .bytes);
+    try std.testing.expectEqual(ByteKind.array_buffer, uint8_backing.bytes.kind);
+    try std.testing.expectEqual(@as(usize, 2), uint8_backing.bytes.bytes.len);
     var subarray = try indexed(&runtime, uint8, subarray_key);
     try roots.protect(&subarray);
     var subarray_name = try indexed(&runtime, subarray, name_key);
@@ -2133,6 +2151,7 @@ test "表行propertyはbyte bufferのprototype属性を解決する" {
     try std.testing.expect(!(try indexed(&runtime, array_buffer, resizable_key)).boolean);
     try std.testing.expect(!(try indexed(&runtime, array_buffer, detached_key)).boolean);
     try std.testing.expect((try indexed(&runtime, array_buffer, bytes_per_element_key)) == .undefined);
+    try std.testing.expect((try indexed(&runtime, array_buffer, buffer_key)) == .undefined);
 }
 
 test "表ソートは最上位配列のholeと明示的undefinedをpresence順に保持する" {

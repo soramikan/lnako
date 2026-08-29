@@ -674,6 +674,28 @@ pub const Runtime = struct {
         return .{ .bytes = result };
     }
 
+    /// Return the ArrayBuffer backing a Buffer/Uint8Array without copying it.
+    /// The returned view owns another reference to the same storage so either
+    /// value can outlive the other.  A Buffer view exposes the complete backing
+    /// allocation here, matching `typedArray.buffer` rather than the view's
+    /// narrowed byte slice.
+    pub fn createByteBufferBackingBuffer(self: *Runtime, buffer: *ByteBuffer) !Value {
+        const storage = buffer.storage;
+        storage.retain();
+        errdefer storage.release();
+        try self.beforeAllocation();
+        const result = try self.allocator().create(ByteBuffer);
+        errdefer self.allocator().destroy(result);
+        result.* = .{
+            .allocator = self.allocator(),
+            .bytes = storage.bytes,
+            .kind = .array_buffer,
+            .storage = storage,
+        };
+        try self.objects.append(self.allocator(), .{ .bytes = result });
+        return .{ .bytes = result };
+    }
+
     pub fn bigIntLiteral(self: *Runtime, source: []const u8) !Value {
         try self.beforeAllocation();
         const result = try self.allocator().create(BigInt);

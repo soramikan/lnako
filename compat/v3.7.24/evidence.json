@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 314,
-    "nativeAot": 223,
+    "total": 315,
+    "nativeAot": 224,
     "interpreter": 96,
     "compatJs": 9
   },
@@ -7778,6 +7778,7 @@
       ],
       "aotFixtureIds": [
         "native-system-array-own-properties",
+        "native-system-byte-buffer-backing",
         "native-system-byte-buffer-property",
         "native-system-table-byte-row-properties",
         "native-system-table-column-null-row-error",
@@ -7796,6 +7797,10 @@
         },
         "aot": {
           "native-system-array-own-properties": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
+          "native-system-byte-buffer-backing": [
             "fixture.commands",
             "implemented.tests"
           ],
@@ -7832,8 +7837,8 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 8件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製ランタイムでBuffer・Uint8Array・ArrayBufferのlengthと数値添字、byteLength・byteOffset・BYTES_PER_ELEMENTなどのproperty、表列取得の疎配列map挙動、および匿名関数のname/length propertyを実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 9件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Zig製ランタイムでBuffer・Uint8Array・ArrayBufferのlengthと数値添字、byteLength・byteOffset・BYTES_PER_ELEMENT・bufferなどのproperty、表列取得の疎配列map挙動、および匿名関数のname/length propertyを実装し、公式差分テストに成功"
     },
     {
       "id": "command-0222",
@@ -9524,6 +9529,7 @@
         "plugin-system-types"
       ],
       "aotFixtureIds": [
+        "native-system-byte-buffer-backing",
         "native-system-typeof-command"
       ],
       "compatJsFixtureIds": [],
@@ -9535,6 +9541,10 @@
           ]
         },
         "aot": {
+          "native-system-byte-buffer-backing": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
           "native-system-typeof-command": [
             "fixture.commands"
           ]
@@ -9545,7 +9555,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -9557,6 +9567,7 @@
         "plugin-system-types"
       ],
       "aotFixtureIds": [
+        "native-system-byte-buffer-backing",
         "native-system-typeof-command"
       ],
       "compatJsFixtureIds": [],
@@ -9568,6 +9579,10 @@
           ]
         },
         "aot": {
+          "native-system-byte-buffer-backing": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
           "native-system-typeof-command": [
             "fixture.commands"
           ]
@@ -9578,7 +9593,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -16992,6 +17007,7 @@
       ],
       "aotFixtureIds": [
         "native-node-crypto",
+        "native-system-byte-buffer-backing",
         "native-system-byte-buffer-property",
         "native-system-table-byte-row-properties",
         "native-system-table-byte-row-slice",
@@ -17009,6 +17025,10 @@
         },
         "aot": {
           "native-node-crypto": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
+          "native-system-byte-buffer-backing": [
             "fixture.commands",
             "implemented.tests"
           ],
@@ -17040,7 +17060,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 7件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 8件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式7経路のSHA-256・Buffer境界とエンコード形式の差分テストに成功"
     },
     {
@@ -17087,6 +17107,7 @@
       ],
       "aotFixtureIds": [
         "native-node-crypto",
+        "native-system-byte-buffer-backing",
         "native-system-byte-buffer-property"
       ],
       "compatJsFixtureIds": [],
@@ -17102,6 +17123,10 @@
             "fixture.commands",
             "implemented.tests"
           ],
+          "native-system-byte-buffer-backing": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
           "native-system-byte-buffer-property": [
             "fixture.commands",
             "implemented.tests"
@@ -17113,8 +17138,8 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "公式7経路のUint8Array長さ・要素境界とprototype propertyの差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "公式7経路のUint8Array長さ・要素境界の差分テストに成功"
     },
     {
       "id": "command-0795",

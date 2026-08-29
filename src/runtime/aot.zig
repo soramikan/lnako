@@ -838,6 +838,17 @@ const Runtime = struct {
         return self.createObject(.{ .byte_buffer = .{ .bytes = bytes, .kind = kind, .storage = storage } }, .byte_buffer);
     }
 
+    /// Return the complete backing allocation as an ArrayBuffer view.  Keep
+    /// the storage shared so a Buffer/Uint8Array and its `.buffer` observe the
+    /// same bytes; the caller's GC roots keep the source live while allocating.
+    fn createByteBufferBackingBuffer(self: *Runtime, buffer: ByteBuffer) !Value {
+        const storage = buffer.storage;
+        storage.retain();
+        errdefer storage.release();
+        try self.beforeAllocation();
+        return self.createObject(.{ .byte_buffer = .{ .bytes = storage.bytes, .kind = .array_buffer, .storage = storage } }, .byte_buffer);
+    }
+
     fn setAotSourceDirectory(self: *Runtime, path: []const u8) !void {
         const owned = try self.allocator.dupe(u8, path);
         if (self.aot_source_directory) |previous| self.allocator.free(previous);
@@ -1208,6 +1219,16 @@ const Runtime = struct {
             .byte_buffer => |buffer| {
                 if (sameKey(key, staticStringValue("length"))) {
                     return if (buffer.kind == .array_buffer) .{} else numberValue(@floatFromInt(buffer.bytes.len));
+                }
+                if (sameKey(key, staticStringValue("buffer")) and buffer.kind != .array_buffer) {
+                    var rooted = [_]Value{container};
+                    var frame = RootFrame{};
+                    self.pushRoots(&frame, &rooted, rooted.len);
+                    defer self.popRoots(&frame);
+                    return self.createByteBufferBackingBuffer(rooted[0].object().?.payload.byte_buffer) catch |failure| {
+                        self.setFailure(failure);
+                        return .{};
+                    };
                 }
                 if (aotByteBufferScalarProperty(buffer, key)) |value| return value;
                 const index = valueIndex(key) orelse return .{};
@@ -14065,6 +14086,10 @@ fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []
             if (buffer.kind == .array_buffer) return null;
             return @as(?Value, numberValue(1));
         }
+        if (tableAsciiUnitsEqual(units, "buffer")) {
+            if (buffer.kind == .array_buffer) return null;
+            return @as(?Value, try runtime.createByteBufferBackingBuffer(buffer));
+        }
         if (buffer.kind == .array_buffer) {
             if (tableAsciiUnitsEqual(units, "maxByteLength")) return @as(?Value, numberValue(@floatFromInt(buffer.bytes.len)));
             if (tableAsciiUnitsEqual(units, "resizable") or tableAsciiUnitsEqual(units, "detached")) {
@@ -19964,6 +19989,11 @@ test "AOT byte bufferのprototype属性とscalar propertyを解決する" {
     try std.testing.expectEqual(@as(f64, 2), valueToNumber(runtime.indexGet(roots[0], staticStringValue("byteLength"))));
     try std.testing.expectEqual(@as(f64, 0), valueToNumber(runtime.indexGet(roots[0], staticStringValue("byteOffset"))));
     try std.testing.expectEqual(@as(f64, 1), valueToNumber(runtime.indexGet(roots[0], staticStringValue("BYTES_PER_ELEMENT"))));
+    roots[17] = runtime.indexGet(roots[0], staticStringValue("buffer"));
+    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @enumFromInt(roots[17].tag)));
+    try std.testing.expectEqual(ByteKind.array_buffer, roots[17].object().?.payload.byte_buffer.kind);
+    try std.testing.expectEqual(@as(usize, 2), roots[17].object().?.payload.byte_buffer.bytes.len);
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(runtime.indexGet(roots[17], staticStringValue("byteLength"))));
     try std.testing.expectEqual(@as(f64, 2), valueToNumber(runtime.indexGet(roots[2], staticStringValue("byteLength"))));
     try std.testing.expectEqual(@as(f64, 2), valueToNumber(runtime.indexGet(roots[2], staticStringValue("maxByteLength"))));
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(runtime.indexGet(roots[2], staticStringValue("length")).tag)));
@@ -19984,6 +20014,14 @@ test "AOT byte bufferのprototype属性とscalar propertyを解決する" {
     roots[11] = try tableRowProperty(&runtime, roots[1], staticStringValue("map"));
     roots[12] = try tableRowProperty(&runtime, roots[11], staticStringValue("name"));
     try expectUtf16String(&runtime, roots[12], "map");
+    roots[18] = try tableRowProperty(&runtime, roots[0], staticStringValue("buffer"));
+    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @enumFromInt(roots[18].tag)));
+    try std.testing.expectEqual(ByteKind.array_buffer, roots[18].object().?.payload.byte_buffer.kind);
+    try std.testing.expectEqual(@as(usize, 2), roots[18].object().?.payload.byte_buffer.bytes.len);
+    roots[19] = runtime.indexGet(roots[1], staticStringValue("buffer"));
+    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @enumFromInt(roots[19].tag)));
+    try std.testing.expectEqual(ByteKind.array_buffer, roots[19].object().?.payload.byte_buffer.kind);
+    try std.testing.expectEqual(@as(usize, 2), roots[19].object().?.payload.byte_buffer.bytes.len);
 
     roots[13] = try tableRowProperty(&runtime, roots[2], staticStringValue("constructor"));
     roots[14] = try tableRowProperty(&runtime, roots[13], staticStringValue("name"));
@@ -19995,6 +20033,7 @@ test "AOT byte bufferのprototype属性とscalar propertyを解決する" {
     try std.testing.expect(runtime.indexGet(roots[2], staticStringValue("resizable")).payload == 0);
     try std.testing.expectEqual(Tag.boolean, @as(Tag, @enumFromInt(runtime.indexGet(roots[2], staticStringValue("detached")).tag)));
     try std.testing.expect(runtime.indexGet(roots[2], staticStringValue("detached")).payload == 0);
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(runtime.indexGet(roots[2], staticStringValue("buffer")).tag)));
 }
 
 test "AOT表変換系は欠損列・負位置・JS加算を公式どおり処理する" {

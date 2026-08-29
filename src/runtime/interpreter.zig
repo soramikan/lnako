@@ -1752,21 +1752,29 @@ pub const Interpreter = struct {
 
     fn getOne(self: *Interpreter, container: Value, key: Value) !Value {
         if (container == .bytes) {
+            var container_root = container;
+            var roots = self.runtime.rootFrame();
+            defer roots.deinit();
+            try roots.protect(&container_root);
             const key_text = try self.runtime.valueToString(key);
             if (std.mem.eql(u16, key_text.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) {
-                return if (container.bytes.kind == .array_buffer) .undefined else .{ .number = @floatFromInt(container.bytes.bytes.len) };
+                return if (container_root.bytes.kind == .array_buffer) .undefined else .{ .number = @floatFromInt(container_root.bytes.bytes.len) };
             }
-            if (std.mem.eql(u16, key_text.string.units, &.{ 'b', 'y', 't', 'e', 'L', 'e', 'n', 'g', 't', 'h' })) return .{ .number = @floatFromInt(container.bytes.bytes.len) };
+            if (std.mem.eql(u16, key_text.string.units, &.{ 'b', 'u', 'f', 'f', 'e', 'r' })) {
+                if (container_root.bytes.kind != .array_buffer) return self.runtime.createByteBufferBackingBuffer(container_root.bytes);
+                return .undefined;
+            }
+            if (std.mem.eql(u16, key_text.string.units, &.{ 'b', 'y', 't', 'e', 'L', 'e', 'n', 'g', 't', 'h' })) return .{ .number = @floatFromInt(container_root.bytes.bytes.len) };
             if (std.mem.eql(u16, key_text.string.units, &.{ 'b', 'y', 't', 'e', 'O', 'f', 'f', 's', 'e', 't' })) {
-                if (container.bytes.kind == .array_buffer) return .undefined;
-                const offset = if (container.bytes.bytes.len == 0) 0 else @intFromPtr(container.bytes.bytes.ptr) - @intFromPtr(container.bytes.storage.bytes.ptr);
+                if (container_root.bytes.kind == .array_buffer) return .undefined;
+                const offset = if (container_root.bytes.bytes.len == 0) 0 else @intFromPtr(container_root.bytes.bytes.ptr) - @intFromPtr(container_root.bytes.storage.bytes.ptr);
                 return .{ .number = @floatFromInt(offset) };
             }
             if (std.mem.eql(u16, key_text.string.units, &.{ 'B', 'Y', 'T', 'E', 'S', '_', 'P', 'E', 'R', '_', 'E', 'L', 'E', 'M', 'E', 'N', 'T' })) {
-                return if (container.bytes.kind == .array_buffer) .undefined else .{ .number = 1 };
+                return if (container_root.bytes.kind == .array_buffer) .undefined else .{ .number = 1 };
             }
-            if (container.bytes.kind == .array_buffer) return .undefined;
-            return container.bytes.get(try valueIndex(self.runtime, key));
+            if (container_root.bytes.kind == .array_buffer) return .undefined;
+            return container_root.bytes.get(try valueIndex(self.runtime, key));
         }
         if (container == .array) return try getArrayProperty(self.runtime, container.array, key);
         if (container == .dictionary) {
