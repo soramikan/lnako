@@ -172,9 +172,29 @@ pub const RootFrame = extern struct {
 
 const DictionaryEntry = struct { key: Value, value: Value };
 const ByteKind = enum { buffer, uint8_array, array_buffer };
+const ByteStorage = struct {
+    allocator: std.mem.Allocator,
+    bytes: []u8,
+    ref_count: usize = 1,
+
+    fn retain(self: *ByteStorage) void {
+        std.debug.assert(self.ref_count > 0);
+        self.ref_count += 1;
+    }
+
+    fn release(self: *ByteStorage) void {
+        std.debug.assert(self.ref_count > 0);
+        self.ref_count -= 1;
+        if (self.ref_count != 0) return;
+        self.allocator.free(self.bytes);
+        self.allocator.destroy(self);
+    }
+};
+
 const ByteBuffer = struct {
     bytes: []u8,
     kind: ByteKind,
+    storage: *ByteStorage,
 };
 const AotTimer = struct {
     id: u64,
@@ -791,11 +811,31 @@ const Runtime = struct {
         return self.createByteBuffer(bytes, .array_buffer);
     }
 
+    fn createByteStorage(self: *Runtime, bytes: []const u8) !*ByteStorage {
+        const storage = try self.allocator.create(ByteStorage);
+        errdefer self.allocator.destroy(storage);
+        storage.* = .{ .allocator = self.allocator, .bytes = try self.allocator.dupe(u8, bytes) };
+        return storage;
+    }
+
     fn createByteBuffer(self: *Runtime, bytes: []const u8, kind: ByteKind) !Value {
         try self.beforeAllocation();
-        const owned = try self.allocator.dupe(u8, bytes);
-        errdefer self.allocator.free(owned);
-        return self.createObject(.{ .byte_buffer = .{ .bytes = owned, .kind = kind } }, .byte_buffer);
+        const storage = try self.createByteStorage(bytes);
+        errdefer storage.release();
+        return self.createObject(.{ .byte_buffer = .{ .bytes = storage.bytes, .kind = kind, .storage = storage } }, .byte_buffer);
+    }
+
+    fn createByteBufferView(self: *Runtime, buffer: ByteBuffer, start: usize, end: usize) !Value {
+        if (start > end or end > buffer.bytes.len) return error.InvalidByteBufferSlice;
+        const storage = buffer.storage;
+        const bytes = buffer.bytes[start..end];
+        const kind = buffer.kind;
+        // Retain before a possible collection so the source object may be
+        // reclaimed without invalidating the view's backing allocation.
+        storage.retain();
+        errdefer storage.release();
+        try self.beforeAllocation();
+        return self.createObject(.{ .byte_buffer = .{ .bytes = bytes, .kind = kind, .storage = storage } }, .byte_buffer);
     }
 
     fn setAotSourceDirectory(self: *Runtime, path: []const u8) !void {
@@ -1131,7 +1171,7 @@ const Runtime = struct {
     fn destroyObject(self: *Runtime, object: *Object) void {
         switch (object.payload) {
             .utf16_string => |units| self.allocator.free(units),
-            .byte_buffer => |buffer| self.allocator.free(buffer.bytes),
+            .byte_buffer => |buffer| buffer.storage.release(),
             .bigint => |*value| value.deinit(),
             .array => |*items| {
                 items.deinit(self.allocator);
@@ -14263,7 +14303,7 @@ fn tableInsertColumnBuiltin(runtime: *Runtime, source: Value, column: Value, val
 fn aotByteBufferSlice(runtime: *Runtime, buffer: ByteBuffer, start: usize, end: usize) !Value {
     const bytes = buffer.bytes[start..end];
     return switch (buffer.kind) {
-        .buffer => runtime.createBytes(bytes),
+        .buffer => runtime.createByteBufferView(buffer, start, end),
         .uint8_array => runtime.createUint8Array(bytes),
         .array_buffer => runtime.createArrayBuffer(bytes),
     };
@@ -19718,6 +19758,35 @@ test "AOT表列挿入はbyte bufferの種類とslice内容を保持する" {
     try std.testing.expectEqualSlices(u8, &.{0x41}, row[0].object().?.payload.byte_buffer.bytes);
     try std.testing.expectEqual(@as(f64, 9), valueToNumber(row[1]));
     try std.testing.expectEqualSlices(u8, &.{ 0x42, 0x43 }, row[2].object().?.payload.byte_buffer.bytes);
+}
+
+test "AOT表列挿入はBufferのsliceだけを共有しTypedArrayのsliceを複製する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 10;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createBytes(&.{ 1, 2, 3 });
+    roots[1] = try runtime.createArray(&.{roots[0]});
+    roots[2] = try runtime.createArray(&.{numberValue(9)});
+    roots[3] = try tableBuiltin(&runtime, .table_insert_column, &.{ roots[1], numberValue(1), roots[2] });
+    const inserted_row = roots[3].object().?.payload.array.items[0].object().?.payload.array.items;
+    try runtime.indexSet(roots[0], numberValue(0), numberValue(7));
+    try runtime.indexSet(roots[0], numberValue(1), numberValue(8));
+    try std.testing.expectEqual(@as(u8, 7), inserted_row[0].object().?.payload.byte_buffer.bytes[0]);
+    try std.testing.expectEqual(@as(u8, 8), inserted_row[2].object().?.payload.byte_buffer.bytes[0]);
+
+    roots[4] = try runtime.createUint8Array(&.{ 4, 5 });
+    roots[5] = try aotByteBufferSlice(&runtime, roots[4].object().?.payload.byte_buffer, 0, 1);
+    try runtime.indexSet(roots[4], numberValue(0), numberValue(6));
+    try std.testing.expectEqual(@as(u8, 4), roots[5].object().?.payload.byte_buffer.bytes[0]);
+
+    roots[6] = try runtime.createArrayBuffer(&.{ 10, 11 });
+    roots[7] = try aotByteBufferSlice(&runtime, roots[6].object().?.payload.byte_buffer, 0, 1);
+    try runtime.indexSet(roots[6], numberValue(0), numberValue(12));
+    try std.testing.expectEqual(@as(u8, 10), roots[7].object().?.payload.byte_buffer.bytes[0]);
 }
 
 test "AOT表命令はbyte bufferのlengthと数値添字を読む" {

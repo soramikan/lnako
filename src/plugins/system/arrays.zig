@@ -1121,7 +1121,7 @@ fn tableInsertColumn(runtime: *Runtime, source: Value, column_value: Value, valu
 fn byteBufferSlice(runtime: *Runtime, buffer: *value_mod.ByteBuffer, start: usize, end: usize) !Value {
     const bytes = buffer.bytes[start..end];
     return switch (buffer.kind) {
-        .buffer => runtime.createBytes(bytes),
+        .buffer => runtime.createByteBufferView(buffer, start, end),
         .uint8_array => runtime.createUint8Array(bytes),
         .array_buffer => runtime.createArrayBuffer(bytes),
     };
@@ -2235,6 +2235,42 @@ test "表変換系はGCストレス下で文字列行とJSキー規則を保持�
     var empty_insert = try tableInsertColumn(&runtime, empty, bigint_index, .null_value);
     try roots.protect(&empty_insert);
     try std.testing.expectEqual(@as(usize, 0), empty_insert.array.len());
+}
+
+test "表列挿入はBufferのsliceだけを共有しTypedArrayのsliceを複製する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var buffer = try runtime.createBytes(&.{ 1, 2, 3 });
+    try roots.protect(&buffer);
+    var table = try common.arrayFromValues(&runtime, &.{buffer});
+    try roots.protect(&table);
+    var values = try common.arrayFromValues(&runtime, &.{.{ .number = 9 }});
+    try roots.protect(&values);
+    var inserted = try tableInsertColumn(&runtime, table, .{ .number = 1 }, values);
+    try roots.protect(&inserted);
+    buffer.bytes.set(0, 7);
+    buffer.bytes.set(1, 8);
+    const inserted_row = inserted.array.get(0).array;
+    try std.testing.expectEqual(@as(f64, 7), inserted_row.get(0).bytes.get(0).number);
+    try std.testing.expectEqual(@as(f64, 8), inserted_row.get(2).bytes.get(0).number);
+
+    var uint8 = try runtime.createUint8Array(&.{ 4, 5 });
+    try roots.protect(&uint8);
+    var uint8_slice = try byteBufferSlice(&runtime, uint8.bytes, 0, 1);
+    try roots.protect(&uint8_slice);
+    uint8.bytes.set(0, 6);
+    try std.testing.expectEqual(@as(f64, 4), uint8_slice.bytes.get(0).number);
+
+    var array_buffer = try runtime.createArrayBuffer(&.{ 10, 11 });
+    try roots.protect(&array_buffer);
+    var array_buffer_slice = try byteBufferSlice(&runtime, array_buffer.bytes, 0, 1);
+    try roots.protect(&array_buffer_slice);
+    array_buffer.bytes.set(0, 12);
+    try std.testing.expectEqual(@as(f64, 10), array_buffer_slice.bytes.get(0).number);
 }
 
 test "配列コピーと参照はJSONとJavaScript添字の境界を保つ" {

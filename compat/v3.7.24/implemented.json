@@ -1775,9 +1775,10 @@
       "native-system-table-transform-commands",
       "native-system-table-insert-bigint-index-error",
       "native-system-table-byte-row-slice",
+      "native-system-table-byte-row-slice-alias",
       "native-system-table-sparse-foreach-slice"
     ],
-    "reason": "配列・文字列・byte buffer行のprefix/suffixと疎行のslice presenceをZig製ランタイムで実装し、公式差分テストに成功。Buffer slice/view identityはTODO: table-insert-byte-row-slice / aot-byte-buffer-value"
+    "reason": "配列・文字列・byte buffer行のprefix/suffixと疎行のslice presenceをZig製ランタイムで実装し、Bufferはview共有、Uint8Array・ArrayBufferはcopyとなる公式差分テストに成功。byte buffer全体のprototype・view境界はTODO: aot-byte-buffer-value"
   },
   "表列削除": {
     "status": "native",
@@ -3158,7 +3159,8 @@
     "tests": [
       "plugin-node-crypto",
       "native-node-crypto",
-      "native-system-table-byte-row-properties"
+      "native-system-table-byte-row-properties",
+      "native-system-table-byte-row-slice-alias"
     ],
     "reason": "公式7経路のSHA-256・Buffer境界とエンコード形式の差分テストに成功"
   },

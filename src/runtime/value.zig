@@ -18,14 +18,34 @@ pub const ExternalHandle = struct {
     }
 };
 
+pub const ByteStorage = struct {
+    allocator: std.mem.Allocator,
+    bytes: []u8,
+    ref_count: usize = 1,
+
+    pub fn retain(self: *ByteStorage) void {
+        std.debug.assert(self.ref_count > 0);
+        self.ref_count += 1;
+    }
+
+    pub fn release(self: *ByteStorage) void {
+        std.debug.assert(self.ref_count > 0);
+        self.ref_count -= 1;
+        if (self.ref_count != 0) return;
+        self.allocator.free(self.bytes);
+        self.allocator.destroy(self);
+    }
+};
+
 pub const ByteBuffer = struct {
     gc_marked: bool = false,
     allocator: std.mem.Allocator,
     bytes: []u8,
     kind: ByteKind = .buffer,
+    storage: *ByteStorage,
 
     pub fn deinit(self: *ByteBuffer) void {
-        self.allocator.free(self.bytes);
+        self.storage.release();
         self.* = undefined;
     }
 
@@ -609,12 +629,47 @@ pub const Runtime = struct {
         return self.createByteBuffer(bytes, .array_buffer);
     }
 
+    fn createByteStorage(self: *Runtime, bytes: []const u8) !*ByteStorage {
+        const storage = try self.allocator().create(ByteStorage);
+        errdefer self.allocator().destroy(storage);
+        storage.* = .{ .allocator = self.allocator(), .bytes = try self.allocator().dupe(u8, bytes) };
+        return storage;
+    }
+
     fn createByteBuffer(self: *Runtime, bytes: []const u8, kind: ByteKind) !Value {
+        try self.beforeAllocation();
+        const storage = try self.createByteStorage(bytes);
+        errdefer storage.release();
+        const result = try self.allocator().create(ByteBuffer);
+        errdefer self.allocator().destroy(result);
+        result.* = .{
+            .allocator = self.allocator(),
+            .bytes = storage.bytes,
+            .kind = kind,
+            .storage = storage,
+        };
+        try self.objects.append(self.allocator(), .{ .bytes = result });
+        return .{ .bytes = result };
+    }
+
+    pub fn createByteBufferView(self: *Runtime, buffer: *ByteBuffer, start: usize, end: usize) !Value {
+        if (start > end or end > buffer.bytes.len) return error.InvalidByteBufferSlice;
+        const storage = buffer.storage;
+        const bytes = buffer.bytes[start..end];
+        const kind = buffer.kind;
+        // Retain before a possible collection so an unrooted source cannot
+        // release the backing allocation while the view is being created.
+        storage.retain();
+        errdefer storage.release();
         try self.beforeAllocation();
         const result = try self.allocator().create(ByteBuffer);
         errdefer self.allocator().destroy(result);
-        result.* = .{ .allocator = self.allocator(), .bytes = try self.allocator().dupe(u8, bytes), .kind = kind };
-        errdefer result.deinit();
+        result.* = .{
+            .allocator = self.allocator(),
+            .bytes = bytes,
+            .kind = kind,
+            .storage = storage,
+        };
         try self.objects.append(self.allocator(), .{ .bytes = result });
         return .{ .bytes = result };
     }
