@@ -136,6 +136,7 @@ jobs:
         if: matrix.suite == 'core'
         run: |
           node tools/generate_unicode_case.mjs --check
+          node tools/generate_unicode_properties.mjs --check
           node tools/update_plugin_system_implemented.mjs --check
           node tools/check_plugin_system_coverage.mjs
           node tools/check_system_runtime_coverage.mjs

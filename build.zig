@@ -13,6 +13,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = .ReleaseSafe,
     });
+    const unicode_properties = b.createModule(.{
+        .root_source_file = b.path("src/generated/unicode_properties.zig"),
+        .target = target,
+        .optimize = .ReleaseSafe,
+    });
 
     const lnako = b.addModule("lnako", .{
         .root_source_file = b.path("src/root.zig"),
@@ -22,6 +27,7 @@ pub fn build(b: *std.Build) void {
     });
     lnako.addOptions("build_options", build_options);
     lnako.addImport("unicode_case", unicode_case);
+    lnako.addImport("unicode_properties", unicode_properties);
     if (compat_js) {
         configureQuickJs(b, lnako, target.result.os.tag);
     } else {
@@ -50,6 +56,7 @@ pub fn build(b: *std.Build) void {
     });
     aot_module.addOptions("build_options", build_options);
     aot_module.addImport("unicode_case", unicode_case);
+    aot_module.addImport("unicode_properties", unicode_properties);
     aot_module.addIncludePath(b.path("src/compat"));
     aot_module.addCSourceFiles(.{ .root = b.path("src/compat"), .files = &.{"quickjs_stub.c"} });
     const aot_runtime = b.addLibrary(.{

@@ -641,6 +641,18 @@
     "source": "正規表現マッチ(\"x\",『/a{,/u』)を表示\n"
   },
   {
+    "id": "native-system-regexp-unicode-properties",
+    "commands": ["正規表現マッチ", "JSON変換"],
+    "source": "JSON変換(正規表現マッチ(\"A1あ😀\",『/\\p{Letter}/gu』))を表示\nJSON変換(正規表現マッチ(\"A1あ😀\",『/\\p{Decimal_Number}/gu』))を表示\nJSON変換(正規表現マッチ(\"A1あ😀\",『/\\p{Script=Hiragana}/gu』))を表示\nJSON変換(正規表現マッチ(\"A1あ😀\",『/[\\p{Letter}\\p{Decimal_Number}]/gu』))を表示\n"
+  },
+  {
+    "id": "native-system-regexp-unicode-property-error",
+    "oracle": "official-generated",
+    "commands": ["正規表現マッチ"],
+    "stderrIncludes": "Invalid regular expression: /\\p{Nope}/u: Invalid property name",
+    "source": "正規表現マッチ(\"x\",『/\\p{Nope}/u』)を表示\n"
+  },
+  {
     "id": "native-system-regexp-invalid-capture-name-error",
     "oracle": "official-generated",
     "commands": ["正規表現マッチ"],

@@ -2,6 +2,7 @@ const std = @import("std");
 const value_mod = @import("../../runtime/value.zig");
 const common = @import("common.zig");
 const unicode_case = @import("unicode_case");
+const unicode_properties = @import("unicode_properties");
 
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
@@ -21,6 +22,7 @@ pub const Flags = struct {
 pub const Span = struct { start: usize = 0, end: usize = 0, matched: bool = false };
 const Candidate = struct { position: usize, captures: [max_captures]Span };
 pub const Match = struct { span: Span, captures: [max_captures]Span };
+const UnicodeProperty = struct { property: unicode_properties.Property, negated: bool };
 
 const ClassItem = union(enum) {
     literal: u16,
@@ -32,6 +34,7 @@ const ClassItem = union(enum) {
     not_word,
     space,
     not_space,
+    unicode_property: UnicodeProperty,
 };
 const CharacterClass = struct { negated: bool, items: []const ClassItem };
 const Group = struct { expression: *Expression, capture: ?usize, name: ?[]const u16 };
@@ -47,6 +50,7 @@ const Atom = union(enum) {
     end_anchor,
     word_boundary: bool,
     backreference: usize,
+    unicode_property: UnicodeProperty,
 };
 const Piece = struct { atom: Atom, minimum: usize = 1, maximum: ?usize = 1, lazy: bool = false };
 const Sequence = struct { pieces: []const Piece };
@@ -106,7 +110,8 @@ const Parser = struct {
             '[' => .{ .class = try self.parseClass() },
             '(' => try self.parseGroup(),
             '\\' => try self.parseEscape(false),
-            '*', '+', '?', '{' => error.QuantifierWithoutAtom,
+            '*', '+', '?' => error.QuantifierWithoutAtom,
+            '{' => if (self.unicode) error.QuantifierWithoutAtom else .{ .literal = unit },
             else => if (self.unicode and isHighSurrogate(unit) and self.index < self.source.len and isLowSurrogate(self.source[self.index])) blk: {
                 const code_point = surrogatePairCodePoint(unit, self.source[self.index]);
                 self.index += 1;
@@ -191,6 +196,7 @@ const Parser = struct {
             .literal => |literal| .{ .literal = literal },
             .code_point => |code_point| .{ .code_point = code_point },
             .class => |class| if (class.items.len == 1) class.items[0] else error.InvalidClassEscape,
+            .unicode_property => |property| .{ .unicode_property = property },
             else => error.InvalidClassEscape,
         };
     }
@@ -220,6 +226,7 @@ const Parser = struct {
             else
                 .{ .literal = try self.parseHex(4) },
             '1'...'9' => if (in_class) .{ .literal = escaped } else .{ .backreference = escaped - '1' },
+            'p', 'P' => try self.parseUnicodeProperty(escaped == 'P'),
             else => if (self.unicode and !isUnicodeIdentityEscape(escaped, in_class))
                 error.InvalidIdentityEscape
             else
@@ -236,6 +243,17 @@ const Parser = struct {
         }
         self.index += count;
         return result;
+    }
+
+    fn parseUnicodeProperty(self: *Parser, negated: bool) !Atom {
+        if (!self.unicode) return .{ .literal = if (negated) 'P' else 'p' };
+        if (!consume(self, '{')) return error.InvalidUnicodeProperty;
+        const start = self.index;
+        while (self.index < self.source.len and self.source[self.index] != '}') self.index += 1;
+        if (self.index == start or self.index >= self.source.len) return error.InvalidUnicodeProperty;
+        const property = lookupUnicodeProperty(self.source[start..self.index]) orelse return error.InvalidUnicodeProperty;
+        self.index += 1;
+        return .{ .unicode_property = .{ .property = property, .negated = negated } };
     }
 
     fn parseCodePointEscape(self: *Parser) !u21 {
@@ -436,6 +454,7 @@ pub fn compileFailureMessageAlloc(allocator: std.mem.Allocator, specification: [
         error.InvalidNamedCapture => "Invalid capture group name",
         error.DuplicateNamedCapture => "Duplicate capture group name",
         error.UnsupportedGroupAssertion => "Invalid group",
+        error.InvalidUnicodeProperty => "Invalid property name",
         error.InvalidUnicodeEscape => "Invalid Unicode escape",
         error.InvalidEscape => "\\ at end of pattern",
         error.InvalidIdentityEscape => "Invalid escape",
@@ -620,6 +639,16 @@ fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: Atom, init
             var candidate = initial;
             candidate.position += codePointWidth(source, initial.position, flags.unicode);
             try output.append(allocator, candidate);
+        },
+        .unicode_property => |property| if (initial.position < source.len) {
+            if (codePointAt(source, initial.position)) |actual| {
+                const matches = unicode_properties.contains(property.property, actual.value);
+                if (matches != property.negated) {
+                    var candidate = initial;
+                    candidate.position += actual.width;
+                    try output.append(allocator, candidate);
+                }
+            }
         },
         .start_anchor => if (initial.position == 0 or (flags.multiline and initial.position > 0 and isLineTerminator(source[initial.position - 1]))) try output.append(allocator, initial),
         .end_anchor => if (initial.position == source.len or (flags.multiline and initial.position < source.len and isLineTerminator(source[initial.position]))) try output.append(allocator, initial),
@@ -880,6 +909,7 @@ fn classMatches(class: CharacterClass, source: []const u16, position: usize, fla
             .not_word => !isWord(unit),
             .space => isWhitespace(unit),
             .not_space => !isWhitespace(unit),
+            .unicode_property => |property| unicode_properties.contains(property.property, code_point.value) != property.negated,
         };
         if (matched) break;
     }
@@ -968,6 +998,56 @@ fn isUnicodeIdentityEscape(unit: u16, in_class: bool) bool {
         '-' => in_class,
         else => false,
     };
+}
+
+fn lookupUnicodeProperty(name: []const u16) ?unicode_properties.Property {
+    if (asciiEquals(name, "ASCII")) return .ascii;
+    if (asciiEquals(name, "Any")) return .any;
+    if (asciiEquals(name, "ASCII_Hex_Digit")) return .ascii_hex_digit;
+    if (asciiEquals(name, "Assigned")) return .assigned;
+    if (asciiEquals(name, "Alphabetic")) return .alphabetic;
+    if (asciiEquals(name, "White_Space")) return .white_space;
+    if (asciiEquals(name, "Emoji")) return .emoji;
+    if (asciiEquals(name, "Emoji_Presentation")) return .emoji_presentation;
+    if (asciiEquals(name, "Extended_Pictographic")) return .extended_pictographic;
+    if (asciiEquals(name, "ID_Start")) return .id_start;
+    if (asciiEquals(name, "ID_Continue")) return .id_continue;
+
+    if (oneOf(name, &.{ "Letter", "L", "General_Category=Letter", "General_Category=L", "gc=Letter", "gc=L" })) return .letter;
+    if (oneOf(name, &.{ "Lowercase_Letter", "Ll", "General_Category=Lowercase_Letter", "General_Category=Ll", "gc=Lowercase_Letter", "gc=Ll" })) return .lowercase_letter;
+    if (oneOf(name, &.{ "Uppercase_Letter", "Lu", "General_Category=Uppercase_Letter", "General_Category=Lu", "gc=Uppercase_Letter", "gc=Lu" })) return .uppercase_letter;
+    if (oneOf(name, &.{ "Mark", "M", "General_Category=Mark", "General_Category=M", "gc=Mark", "gc=M" })) return .mark;
+    if (oneOf(name, &.{ "Number", "N", "General_Category=Number", "General_Category=N", "gc=Number", "gc=N" })) return .number;
+    if (oneOf(name, &.{ "Decimal_Number", "Nd", "General_Category=Decimal_Number", "General_Category=Nd", "gc=Decimal_Number", "gc=Nd" })) return .decimal_number;
+    if (oneOf(name, &.{ "Punctuation", "P", "General_Category=Punctuation", "General_Category=P", "gc=Punctuation", "gc=P" })) return .punctuation;
+    if (oneOf(name, &.{ "Symbol", "S", "General_Category=Symbol", "General_Category=S", "gc=Symbol", "gc=S" })) return .symbol;
+    if (oneOf(name, &.{ "Separator", "Z", "General_Category=Separator", "General_Category=Z", "gc=Separator", "gc=Z" })) return .separator;
+
+    if (oneOf(name, &.{ "Script=Latin", "sc=Latin", "Script=Latn", "sc=Latn" })) return .script_latin;
+    if (oneOf(name, &.{ "Script=Greek", "sc=Greek", "Script=Grek", "sc=Grek" })) return .script_greek;
+    if (oneOf(name, &.{ "Script=Cyrillic", "sc=Cyrillic", "Script=Cyrl", "sc=Cyrl" })) return .script_cyrillic;
+    if (oneOf(name, &.{ "Script=Hiragana", "sc=Hiragana", "Script=Hira", "sc=Hira" })) return .script_hiragana;
+    if (oneOf(name, &.{ "Script=Katakana", "sc=Katakana", "Script=Kana", "sc=Kana" })) return .script_katakana;
+    if (oneOf(name, &.{ "Script=Han", "sc=Han", "Script=Hani", "sc=Hani" })) return .script_han;
+    if (oneOf(name, &.{ "Script=Arabic", "sc=Arabic", "Script=Arab", "sc=Arab" })) return .script_arabic;
+    if (oneOf(name, &.{ "Script=Hebrew", "sc=Hebrew", "Script=Hebr", "sc=Hebr" })) return .script_hebrew;
+    if (oneOf(name, &.{ "Script=Devanagari", "sc=Devanagari", "Script=Deva", "sc=Deva" })) return .script_devanagari;
+    if (oneOf(name, &.{ "Script=Thai", "sc=Thai" })) return .script_thai;
+    if (oneOf(name, &.{ "Script=Hangul", "sc=Hangul", "Script=Hang", "sc=Hang" })) return .script_hangul;
+    if (oneOf(name, &.{ "Script=Common", "sc=Common", "Script=Zyyy", "sc=Zyyy" })) return .script_common;
+    if (oneOf(name, &.{ "Script=Inherited", "sc=Inherited", "Script=Zinh", "sc=Zinh" })) return .script_inherited;
+    return null;
+}
+
+fn oneOf(name: []const u16, values: []const []const u8) bool {
+    for (values) |value| if (asciiEquals(name, value)) return true;
+    return false;
+}
+
+fn asciiEquals(units: []const u16, text: []const u8) bool {
+    if (units.len != text.len) return false;
+    for (text, 0..) |unit, index| if (units[index] != unit) return false;
+    return true;
 }
 
 fn isValidNamedCapture(name: []const u16) bool {
@@ -1219,4 +1299,53 @@ test "Unicode・sticky・indicesフラグはUTF-16共有エンジンで処理す
     try roots.protect(&indices_pattern);
     const indices = (try call(&runtime, "正規表現マッチ", &.{ source, indices_pattern })).?;
     try std.testing.expectEqualSlices(u16, &.{'x'}, indices.string.units);
+}
+
+test "Unicode property escapeは生成済み静的範囲を使う" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var source = try runtime.stringUtf8("A1あ😀 ");
+    try roots.protect(&source);
+    var letter_pattern = try runtime.stringUtf8("/\\p{Letter}/gu");
+    try roots.protect(&letter_pattern);
+    const letters = (try call(&runtime, "正規表現マッチ", &.{ source, letter_pattern })).?;
+    try std.testing.expectEqual(@as(usize, 2), letters.array.len());
+    try std.testing.expectEqualSlices(u16, &.{'A'}, letters.array.items.items[0].string.units);
+    try std.testing.expectEqualSlices(u16, &.{'あ'}, letters.array.items.items[1].string.units);
+
+    var non_ascii_pattern = try runtime.stringUtf8("/\\P{ASCII}/gu");
+    try roots.protect(&non_ascii_pattern);
+    const non_ascii = (try call(&runtime, "正規表現マッチ", &.{ source, non_ascii_pattern })).?;
+    try std.testing.expectEqual(@as(usize, 2), non_ascii.array.len());
+    try std.testing.expectEqualSlices(u16, &.{'あ'}, non_ascii.array.items.items[0].string.units);
+    try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00 }, non_ascii.array.items.items[1].string.units);
+
+    var number_source = try runtime.stringUtf8("1");
+    try roots.protect(&number_source);
+    var number_pattern = try runtime.stringUtf8("/\\p{Decimal_Number}/u");
+    try roots.protect(&number_pattern);
+    const number = (try call(&runtime, "正規表現マッチ", &.{ number_source, number_pattern })).?;
+    try std.testing.expectEqualSlices(u16, &.{'1'}, number.string.units);
+
+    var hiragana_source = try runtime.stringUtf8("あ");
+    try roots.protect(&hiragana_source);
+    var hiragana_pattern = try runtime.stringUtf8("/\\p{Script=Hiragana}/u");
+    try roots.protect(&hiragana_pattern);
+    const hiragana = (try call(&runtime, "正規表現マッチ", &.{ hiragana_source, hiragana_pattern })).?;
+    try std.testing.expectEqualSlices(u16, &.{'あ'}, hiragana.string.units);
+
+    var class_source = try runtime.stringUtf8("A1");
+    try roots.protect(&class_source);
+    var class_pattern = try runtime.stringUtf8("/[\\p{Letter}\\p{Decimal_Number}]/gu");
+    try roots.protect(&class_pattern);
+    const class_matches = (try call(&runtime, "正規表現マッチ", &.{ class_source, class_pattern })).?;
+    try std.testing.expectEqual(@as(usize, 2), class_matches.array.len());
+
+    var invalid_pattern = try runtime.stringUtf8("/\\p{Nope}/u");
+    try roots.protect(&invalid_pattern);
+    try std.testing.expectError(error.InvalidUnicodeProperty, call(&runtime, "正規表現マッチ", &.{ source, invalid_pattern }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /\\p{Nope}/u: Invalid property name", runtime.failureMessage().?);
 }
