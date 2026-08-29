@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 320,
-    "nativeAot": 229,
+    "total": 321,
+    "nativeAot": 230,
     "interpreter": 96,
     "compatJs": 9
   },
@@ -10131,6 +10131,7 @@
       "aotFixtureIds": [
         "native-system-array-sparse-copy-reference-concat",
         "native-system-array-sparse-splice",
+        "native-system-dictionary-buffer-enumerable-properties",
         "native-system-dictionary-byte-buffer-enumeration",
         "native-system-json-encode",
         "native-system-regexp-unicode-sticky",
@@ -10156,6 +10157,10 @@
           ],
           "native-system-array-sparse-splice": [
             "fixture.commands"
+          ],
+          "native-system-dictionary-buffer-enumerable-properties": [
+            "fixture.commands",
+            "implemented.tests"
           ],
           "native-system-dictionary-byte-buffer-enumeration": [
             "fixture.commands",
@@ -10186,7 +10191,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 2件、AOT 9件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 2件、AOT 10件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "純LLVM AOTのJSON.stringify互換エンコーダと公式CLI・生成JavaScriptとの差分テストに成功"
     },
     {
@@ -10659,6 +10664,7 @@
         "native-system-array-sparse-ordering",
         "native-system-array-sparse-presence",
         "native-system-array-sparse-splice",
+        "native-system-dictionary-buffer-enumerable-properties",
         "native-system-dictionary-byte-buffer-enumeration",
         "native-system-dictionary-hash-commands",
         "native-system-table-sparse-foreach-slice",
@@ -10691,6 +10697,10 @@
           "native-system-array-sparse-splice": [
             "fixture.commands"
           ],
+          "native-system-dictionary-buffer-enumerable-properties": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
           "native-system-dictionary-byte-buffer-enumeration": [
             "fixture.commands",
             "implemented.tests"
@@ -10714,7 +10724,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 10件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 11件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "ECMAScriptのproperty key順、配列・関数・byte buffer境界、疎配列holeの除外をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
@@ -10890,6 +10900,7 @@
         "native-system-array-sparse-ordering",
         "native-system-array-sparse-presence",
         "native-system-array-sparse-splice",
+        "native-system-dictionary-buffer-enumerable-properties",
         "native-system-dictionary-byte-buffer-enumeration",
         "native-system-dictionary-hash-commands",
         "native-system-table-sparse-foreach-slice",
@@ -10922,6 +10933,10 @@
           "native-system-array-sparse-splice": [
             "fixture.commands"
           ],
+          "native-system-dictionary-buffer-enumerable-properties": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
           "native-system-dictionary-byte-buffer-enumeration": [
             "fixture.commands",
             "implemented.tests"
@@ -10945,7 +10960,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 10件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 11件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "辞書のproperty key順、配列・関数・byte bufferの内容列挙、疎配列holeの除外をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
@@ -17078,6 +17093,7 @@
         "native-node-crypto",
         "native-system-byte-buffer-backing",
         "native-system-byte-buffer-property",
+        "native-system-dictionary-buffer-enumerable-properties",
         "native-system-dictionary-byte-buffer-enumeration",
         "native-system-dictionary-byte-buffer-properties",
         "native-system-table-byte-row-properties",
@@ -17104,6 +17120,10 @@
             "implemented.tests"
           ],
           "native-system-byte-buffer-property": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
+          "native-system-dictionary-buffer-enumerable-properties": [
             "fixture.commands",
             "implemented.tests"
           ],
@@ -17139,7 +17159,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 10件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 11件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式7経路のSHA-256・Buffer境界とエンコード形式の差分テストに成功"
     },
     {

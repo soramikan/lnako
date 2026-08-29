@@ -7699,7 +7699,8 @@
         "plugin-system-json",
         "plugin-system-json-ecmascript-boundaries",
         "native-system-json-encode",
-        "native-system-dictionary-byte-buffer-enumeration"
+        "native-system-dictionary-byte-buffer-enumeration",
+        "native-system-dictionary-buffer-enumerable-properties"
       ],
       "platforms": [
         "macos-aarch64",
@@ -8063,7 +8064,8 @@
         "native-system-dictionary-hash-commands",
         "native-system-array-own-properties",
         "native-system-array-sparse-presence",
-        "native-system-dictionary-byte-buffer-enumeration"
+        "native-system-dictionary-byte-buffer-enumeration",
+        "native-system-dictionary-buffer-enumerable-properties"
       ],
       "platforms": [
         "macos-aarch64",
@@ -8182,7 +8184,8 @@
         "native-system-dictionary-hash-commands",
         "native-system-array-own-properties",
         "native-system-array-sparse-presence",
-        "native-system-dictionary-byte-buffer-enumeration"
+        "native-system-dictionary-byte-buffer-enumeration",
+        "native-system-dictionary-buffer-enumerable-properties"
       ],
       "platforms": [
         "macos-aarch64",
@@ -12746,7 +12749,8 @@
         "native-system-byte-buffer-property",
         "native-system-byte-buffer-backing",
         "native-system-dictionary-byte-buffer-properties",
-        "native-system-dictionary-byte-buffer-enumeration"
+        "native-system-dictionary-byte-buffer-enumeration",
+        "native-system-dictionary-buffer-enumerable-properties"
       ],
       "platforms": [
         "macos-aarch64",

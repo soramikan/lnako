@@ -13609,6 +13609,15 @@ fn dictionaryKeysBuiltin(runtime: *Runtime, source: Value) !Value {
                 const key = try runtime.createString(units[0..unit_len]);
                 try result.append(runtime.allocator, key);
             }
+            if (buffer.kind == .buffer) for (table_byte_buffer_buffer_enumerable_property_names) |name| {
+                var units: [128]u16 = undefined;
+                const unit_len = std.unicode.utf8ToUtf16Le(&units, name) catch return error.InvalidUtf8;
+                var key = try runtime.createString(units[0..unit_len]);
+                var key_frame = RootFrame{};
+                runtime.pushRoots(&key_frame, @ptrCast(&key), 1);
+                defer runtime.popRoots(&key_frame);
+                try result.append(runtime.allocator, key);
+            };
         },
         .function => {},
         else => return error.DictionaryKeysReceiver,
@@ -13641,6 +13650,23 @@ fn dictionaryValuesBuiltin(runtime: *Runtime, source: Value) !Value {
             const buffer = roots[0].object().?.payload.byte_buffer;
             if (buffer.kind == .array_buffer) return roots[1];
             for (buffer.bytes) |byte| try result.append(runtime.allocator, numberValue(@floatFromInt(byte)));
+            if (buffer.kind == .buffer) for (table_byte_buffer_buffer_enumerable_property_names) |name| {
+                var property: Value = undefined;
+                if (std.mem.eql(u8, name, "parent")) {
+                    property = try runtime.createByteBufferBackingBuffer(buffer);
+                } else if (std.mem.eql(u8, name, "offset")) {
+                    const offset = if (buffer.bytes.len == 0) 0 else @intFromPtr(buffer.bytes.ptr) - @intFromPtr(buffer.storage.bytes.ptr);
+                    property = numberValue(@floatFromInt(offset));
+                } else {
+                    var units: [128]u16 = undefined;
+                    const unit_len = std.unicode.utf8ToUtf16Le(&units, name) catch return error.InvalidUtf8;
+                    property = (try tableInheritedProperty(runtime, roots[0], .byte_buffer, units[0..unit_len])) orelse .{};
+                }
+                var property_frame = RootFrame{};
+                runtime.pushRoots(&property_frame, @ptrCast(&property), 1);
+                defer runtime.popRoots(&property_frame);
+                try result.append(runtime.allocator, property);
+            };
         },
         .function => {},
         else => return error.DictionaryValuesReceiver,
@@ -14115,16 +14141,102 @@ const table_byte_buffer_typed_array_method_names = [_][]const u8{
     "with",
 };
 
-const table_byte_buffer_buffer_method_names = [_][]const u8{
+const table_byte_buffer_buffer_enumerable_property_names = [_][]const u8{
+    "readBigUInt64LE",
+    "readBigUInt64BE",
+    "readBigUint64LE",
+    "readBigUint64BE",
+    "readBigInt64LE",
+    "readBigInt64BE",
+    "writeBigUInt64LE",
+    "writeBigUInt64BE",
+    "writeBigUint64LE",
+    "writeBigUint64BE",
+    "writeBigInt64LE",
+    "writeBigInt64BE",
+    "readUIntLE",
+    "readUInt32LE",
+    "readUInt16LE",
+    "readUInt8",
+    "readUIntBE",
+    "readUInt32BE",
+    "readUInt16BE",
+    "readUintLE",
+    "readUint32LE",
+    "readUint16LE",
+    "readUint8",
+    "readUintBE",
+    "readUint32BE",
+    "readUint16BE",
+    "readIntLE",
+    "readInt32LE",
+    "readInt16LE",
+    "readInt8",
+    "readIntBE",
+    "readInt32BE",
+    "readInt16BE",
+    "writeUIntLE",
+    "writeUInt32LE",
+    "writeUInt16LE",
+    "writeUInt8",
+    "writeUIntBE",
+    "writeUInt32BE",
+    "writeUInt16BE",
+    "writeUintLE",
+    "writeUint32LE",
+    "writeUint16LE",
+    "writeUint8",
+    "writeUintBE",
+    "writeUint32BE",
+    "writeUint16BE",
+    "writeIntLE",
+    "writeInt32LE",
+    "writeInt16LE",
+    "writeInt8",
+    "writeIntBE",
+    "writeInt32BE",
+    "writeInt16BE",
+    "readFloatLE",
+    "readFloatBE",
+    "readDoubleLE",
+    "readDoubleBE",
+    "writeFloatLE",
+    "writeFloatBE",
+    "writeDoubleLE",
+    "writeDoubleBE",
+    "asciiSlice",
+    "base64Slice",
+    "base64urlSlice",
+    "latin1Slice",
+    "hexSlice",
+    "ucs2Slice",
+    "utf8Slice",
+    "asciiWrite",
+    "base64Write",
+    "base64urlWrite",
+    "latin1Write",
+    "hexWrite",
+    "ucs2Write",
+    "utf8Write",
+    "parent",
+    "offset",
     "copy",
+    "toString",
     "equals",
     "inspect",
     "compare",
+    "indexOf",
+    "lastIndexOf",
+    "includes",
+    "fill",
     "write",
     "toJSON",
+    "subarray",
+    "slice",
     "swap16",
     "swap32",
     "swap64",
+    "toLocaleString",
 };
 
 const table_byte_buffer_array_buffer_method_names = [_][]const u8{
@@ -14202,10 +14314,23 @@ fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []
             }
             if (tableInheritedMethodName(units, &table_byte_buffer_array_buffer_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
         } else {
+            if (buffer.kind == .buffer and tableAsciiUnitsEqual(units, "parent")) {
+                return @as(?Value, try runtime.createByteBufferBackingBuffer(buffer));
+            }
+            if (buffer.kind == .buffer and tableAsciiUnitsEqual(units, "offset")) {
+                const offset = if (buffer.bytes.len == 0) 0 else @intFromPtr(buffer.bytes.ptr) - @intFromPtr(buffer.storage.bytes.ptr);
+                return @as(?Value, numberValue(@floatFromInt(offset)));
+            }
+            if (buffer.kind == .buffer and tableAsciiUnitsEqual(units, "toLocaleString")) {
+                return @as(?Value, try tableInheritedFunction(runtime, "toString"));
+            }
             if (tableInheritedMethodName(units, &table_byte_buffer_typed_array_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
             if (buffer.kind == .buffer) {
-                if (tableInheritedMethodName(units, &table_byte_buffer_buffer_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
-                if (tableAsciiUnitsEqual(units, "toLocaleString")) return @as(?Value, try tableInheritedFunction(runtime, "toString"));
+                if (tableInheritedMethodName(units, &table_byte_buffer_buffer_enumerable_property_names)) |name| {
+                    if (!tableAsciiUnitsEqual(units, "parent") and !tableAsciiUnitsEqual(units, "offset")) {
+                        return @as(?Value, try tableInheritedFunction(runtime, name));
+                    }
+                }
             }
         }
     }
@@ -20504,7 +20629,7 @@ test "AOT辞書キー列挙とハッシュ内容列挙はbyte bufferのown要素
     roots[0] = try runtime.createBytes(&.{ 85, 66 });
     roots[1] = try runtime.createUint8Array(&.{ 85, 66 });
     roots[2] = try runtime.createArrayBuffer(&.{ 85, 66 });
-    roots[3] = try dictionaryKeysBuiltin(&runtime, roots[0]);
+    roots[3] = try dictionaryKeysBuiltin(&runtime, roots[1]);
     try std.testing.expectEqual(@as(usize, 2), roots[3].object().?.payload.array.items.len);
     try expectUtf16String(&runtime, roots[3].object().?.payload.array.items[0], "0");
     try expectUtf16String(&runtime, roots[3].object().?.payload.array.items[1], "1");
@@ -20523,6 +20648,46 @@ test "AOT辞書キー列挙とハッシュ内容列挙はbyte bufferのown要素
     try expectUtf16String(&runtime, runtime.takeException(), "Cannot delete property '0' of [object Uint8Array]");
     try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[0], staticStringValue("0")));
     try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[1], staticStringValue("0")));
+}
+
+test "AOT Bufferの列挙はenumerable prototype propertyの順序と値を保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 4;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createBytes(&.{ 85, 66 });
+    roots[1] = try dictionaryKeysBuiltin(&runtime, roots[0]);
+    roots[2] = try dictionaryValuesBuiltin(&runtime, roots[0]);
+
+    const property_names = table_byte_buffer_buffer_enumerable_property_names[0..];
+    try std.testing.expectEqual(@as(usize, 2 + property_names.len), roots[1].object().?.payload.array.items.len);
+    try expectUtf16String(&runtime, roots[1].object().?.payload.array.items[0], "0");
+    try expectUtf16String(&runtime, roots[1].object().?.payload.array.items[1], "1");
+    for (property_names, 0..) |name, index| {
+        try expectUtf16String(&runtime, roots[1].object().?.payload.array.items[index + 2], name);
+    }
+
+    const values = roots[2].object().?.payload.array.items;
+    try std.testing.expectEqual(@as(usize, 2 + property_names.len), values.len);
+    try std.testing.expectEqual(@as(f64, 85), valueToNumber(values[0]));
+    try std.testing.expectEqual(@as(f64, 66), valueToNumber(values[1]));
+    for (property_names, 0..) |name, index| {
+        const property = values[index + 2];
+        if (std.mem.eql(u8, name, "parent")) {
+            try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @enumFromInt(property.tag)));
+            try std.testing.expectEqual(ByteKind.array_buffer, property.object().?.payload.byte_buffer.kind);
+        } else if (std.mem.eql(u8, name, "offset")) {
+            try std.testing.expectEqual(@as(f64, 0), valueToNumber(property));
+        } else {
+            try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(property.tag)));
+        }
+    }
+    const last_property = values[values.len - 1];
+    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(last_property.tag)));
+    try std.testing.expectEqualStrings("toString", last_property.object().?.payload.function.name);
 }
 
 test "AOT HTTPのqueryとform parserはURL decode境界を保つ" {

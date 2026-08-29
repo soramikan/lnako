@@ -47,6 +47,11 @@ fn keys(runtime: *Runtime, source: Value) !Value {
                 const key = try runtime.stringUtf8(text);
                 _ = try result.array.push(key);
             }
+            if (bytes.kind == .buffer) for (arrays.byteBufferBufferEnumerablePropertyNames) |name| {
+                var key = try runtime.stringUtf8(name);
+                try roots.protect(&key);
+                _ = try result.array.push(key);
+            };
         },
         .function => {},
         else => return error.DictionaryKeysReceiver,
@@ -76,6 +81,21 @@ fn values(runtime: *Runtime, source: Value) !Value {
         .bytes => |bytes| {
             if (bytes.kind == .array_buffer) return result;
             for (bytes.bytes) |byte| _ = try result.array.push(.{ .number = @floatFromInt(byte) });
+            if (bytes.kind == .buffer) for (arrays.byteBufferBufferEnumerablePropertyNames) |name| {
+                var property_roots = runtime.rootFrame();
+                defer property_roots.deinit();
+                var property: Value = if (std.mem.eql(u8, name, "parent"))
+                    try runtime.createByteBufferBackingBuffer(bytes)
+                else if (std.mem.eql(u8, name, "offset"))
+                    .{ .number = @floatFromInt(if (bytes.bytes.len == 0) 0 else @intFromPtr(bytes.bytes.ptr) - @intFromPtr(bytes.storage.bytes.ptr)) }
+                else blk: {
+                    var units: [128]u16 = undefined;
+                    const unit_len = std.unicode.utf8ToUtf16Le(&units, name) catch return error.InvalidUtf8;
+                    break :blk (try arrays.standardInheritedProperty(runtime, rooted_source, units[0..unit_len])) orelse .undefined;
+                };
+                try property_roots.protect(&property);
+                _ = try result.array.push(property);
+            };
         },
         .function => {},
         else => return error.DictionaryValuesReceiver,
@@ -397,7 +417,7 @@ test "辞書キー列挙とハッシュ内容列挙はbyte bufferのown要素を
     var array_buffer = try runtime.createArrayBuffer(&.{ 85, 66 });
     try roots.protect(&array_buffer);
 
-    var buffer_keys = (try call(&runtime, "辞書キー列挙", &.{buffer})).?;
+    var buffer_keys = (try call(&runtime, "辞書キー列挙", &.{uint8})).?;
     try roots.protect(&buffer_keys);
     try std.testing.expectEqual(@as(usize, 2), buffer_keys.array.len());
     try std.testing.expectEqualSlices(u16, &.{'0'}, buffer_keys.array.get(0).string.units);
@@ -426,6 +446,51 @@ test "辞書キー列挙とハッシュ内容列挙はbyte bufferのown要素を
     runtime.clearFailureMessage();
     try std.testing.expect((try call(&runtime, "辞書キー存在", &.{ buffer, zero_key })).?.boolean);
     try std.testing.expect((try call(&runtime, "ハッシュキー存在", &.{ uint8, zero_key })).?.boolean);
+}
+
+test "Bufferの列挙はenumerable prototype propertyの順序と値を保持する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var buffer = try runtime.createBytes(&.{ 85, 66 });
+    try roots.protect(&buffer);
+    var keys_result = (try call(&runtime, "辞書キー列挙", &.{buffer})).?;
+    try roots.protect(&keys_result);
+    var values_result = (try call(&runtime, "ハッシュ内容列挙", &.{buffer})).?;
+    try roots.protect(&values_result);
+
+    const property_names = arrays.byteBufferBufferEnumerablePropertyNames[0..];
+    try std.testing.expectEqual(@as(usize, 2 + property_names.len), keys_result.array.len());
+    try std.testing.expectEqualSlices(u16, &.{'0'}, keys_result.array.get(0).string.units);
+    try std.testing.expectEqualSlices(u16, &.{'1'}, keys_result.array.get(1).string.units);
+    for (property_names, 0..) |name, index| {
+        var expected = try runtime.stringUtf8(name);
+        try roots.protect(&expected);
+        try std.testing.expectEqualSlices(u16, expected.string.units, keys_result.array.get(index + 2).string.units);
+    }
+
+    try std.testing.expectEqual(@as(usize, 2 + property_names.len), values_result.array.len());
+    try std.testing.expectEqual(@as(f64, 85), values_result.array.get(0).number);
+    try std.testing.expectEqual(@as(f64, 66), values_result.array.get(1).number);
+    for (property_names, 0..) |name, index| {
+        const property = values_result.array.get(index + 2);
+        if (std.mem.eql(u8, name, "parent")) {
+            try std.testing.expect(property == .bytes);
+            try std.testing.expectEqual(value_mod.ByteKind.array_buffer, property.bytes.kind);
+        } else if (std.mem.eql(u8, name, "offset")) {
+            try std.testing.expectEqual(@as(f64, 0), property.number);
+        } else {
+            try std.testing.expect(property == .function);
+        }
+    }
+    const last_property = values_result.array.get(values_result.array.len() - 1);
+    try std.testing.expect(last_property == .function);
+    const last_name = try last_property.function.name.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(last_name);
+    try std.testing.expectEqualStrings("toString", last_name);
 }
 
 fn dictionaryHasErrorAllocationTest(allocator: std.mem.Allocator) !void {

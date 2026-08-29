@@ -1291,16 +1291,102 @@ const byteBufferTypedArrayMethodNames = [_][]const u8{
     "with",
 };
 
-const byteBufferBufferMethodNames = [_][]const u8{
+pub const byteBufferBufferEnumerablePropertyNames = [_][]const u8{
+    "readBigUInt64LE",
+    "readBigUInt64BE",
+    "readBigUint64LE",
+    "readBigUint64BE",
+    "readBigInt64LE",
+    "readBigInt64BE",
+    "writeBigUInt64LE",
+    "writeBigUInt64BE",
+    "writeBigUint64LE",
+    "writeBigUint64BE",
+    "writeBigInt64LE",
+    "writeBigInt64BE",
+    "readUIntLE",
+    "readUInt32LE",
+    "readUInt16LE",
+    "readUInt8",
+    "readUIntBE",
+    "readUInt32BE",
+    "readUInt16BE",
+    "readUintLE",
+    "readUint32LE",
+    "readUint16LE",
+    "readUint8",
+    "readUintBE",
+    "readUint32BE",
+    "readUint16BE",
+    "readIntLE",
+    "readInt32LE",
+    "readInt16LE",
+    "readInt8",
+    "readIntBE",
+    "readInt32BE",
+    "readInt16BE",
+    "writeUIntLE",
+    "writeUInt32LE",
+    "writeUInt16LE",
+    "writeUInt8",
+    "writeUIntBE",
+    "writeUInt32BE",
+    "writeUInt16BE",
+    "writeUintLE",
+    "writeUint32LE",
+    "writeUint16LE",
+    "writeUint8",
+    "writeUintBE",
+    "writeUint32BE",
+    "writeUint16BE",
+    "writeIntLE",
+    "writeInt32LE",
+    "writeInt16LE",
+    "writeInt8",
+    "writeIntBE",
+    "writeInt32BE",
+    "writeInt16BE",
+    "readFloatLE",
+    "readFloatBE",
+    "readDoubleLE",
+    "readDoubleBE",
+    "writeFloatLE",
+    "writeFloatBE",
+    "writeDoubleLE",
+    "writeDoubleBE",
+    "asciiSlice",
+    "base64Slice",
+    "base64urlSlice",
+    "latin1Slice",
+    "hexSlice",
+    "ucs2Slice",
+    "utf8Slice",
+    "asciiWrite",
+    "base64Write",
+    "base64urlWrite",
+    "latin1Write",
+    "hexWrite",
+    "ucs2Write",
+    "utf8Write",
+    "parent",
+    "offset",
     "copy",
+    "toString",
     "equals",
     "inspect",
     "compare",
+    "indexOf",
+    "lastIndexOf",
+    "includes",
+    "fill",
     "write",
     "toJSON",
+    "subarray",
+    "slice",
     "swap16",
     "swap32",
     "swap64",
+    "toLocaleString",
 };
 
 const byteBufferArrayBufferMethodNames = [_][]const u8{
@@ -1389,10 +1475,23 @@ fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) 
             if (asciiUnitsEqual(units, "resizable") or asciiUnitsEqual(units, "detached")) return @as(?Value, .{ .boolean = false });
             if (inheritedMethodName(units, &byteBufferArrayBufferMethodNames)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
         } else {
+            if (buffer.kind == .buffer and asciiUnitsEqual(units, "parent")) {
+                return @as(?Value, try runtime.createByteBufferBackingBuffer(buffer));
+            }
+            if (buffer.kind == .buffer and asciiUnitsEqual(units, "offset")) {
+                const offset = if (buffer.bytes.len == 0) 0 else @intFromPtr(buffer.bytes.ptr) - @intFromPtr(buffer.storage.bytes.ptr);
+                return @as(?Value, .{ .number = @floatFromInt(offset) });
+            }
+            if (buffer.kind == .buffer and asciiUnitsEqual(units, "toLocaleString")) {
+                return @as(?Value, try tableInheritedFunction(runtime, "toString"));
+            }
             if (inheritedMethodName(units, &byteBufferTypedArrayMethodNames)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
             if (buffer.kind == .buffer) {
-                if (inheritedMethodName(units, &byteBufferBufferMethodNames)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
-                if (asciiUnitsEqual(units, "toLocaleString")) return @as(?Value, try tableInheritedFunction(runtime, "toString"));
+                if (inheritedMethodName(units, &byteBufferBufferEnumerablePropertyNames)) |name| {
+                    if (!asciiUnitsEqual(units, "parent") and !asciiUnitsEqual(units, "offset")) {
+                        return @as(?Value, try tableInheritedFunction(runtime, name));
+                    }
+                }
             }
         }
     }
@@ -1415,6 +1514,10 @@ fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) 
 
 pub fn hasStandardInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) !bool {
     return (try tableInheritedProperty(runtime, source, units)) != null;
+}
+
+pub fn standardInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) !?Value {
+    return try tableInheritedProperty(runtime, source, units);
 }
 
 test "表行propertyはown値を優先して標準prototypeを解決する" {

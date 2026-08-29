@@ -5,7 +5,8 @@
       "plugin-system-json",
       "plugin-system-json-ecmascript-boundaries",
       "native-system-json-encode",
-      "native-system-dictionary-byte-buffer-enumeration"
+      "native-system-dictionary-byte-buffer-enumeration",
+      "native-system-dictionary-buffer-enumerable-properties"
     ],
     "reason": "純LLVM AOTのJSON.stringify互換エンコーダと公式CLI・生成JavaScriptとの差分テストに成功"
   },
@@ -1835,7 +1836,8 @@
       "native-system-dictionary-hash-commands",
       "native-system-array-own-properties",
       "native-system-array-sparse-presence",
-      "native-system-dictionary-byte-buffer-enumeration"
+      "native-system-dictionary-byte-buffer-enumeration",
+      "native-system-dictionary-buffer-enumerable-properties"
     ],
     "reason": "ECMAScriptのproperty key順、配列・関数・byte buffer境界、疎配列holeの除外をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
   },
@@ -1878,7 +1880,8 @@
       "native-system-dictionary-hash-commands",
       "native-system-array-own-properties",
       "native-system-array-sparse-presence",
-      "native-system-dictionary-byte-buffer-enumeration"
+      "native-system-dictionary-byte-buffer-enumeration",
+      "native-system-dictionary-buffer-enumerable-properties"
     ],
     "reason": "辞書のproperty key順、配列・関数・byte bufferの内容列挙、疎配列holeの除外をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
   },
@@ -3182,7 +3185,8 @@
       "native-system-byte-buffer-property",
       "native-system-byte-buffer-backing",
       "native-system-dictionary-byte-buffer-properties",
-      "native-system-dictionary-byte-buffer-enumeration"
+      "native-system-dictionary-byte-buffer-enumeration",
+      "native-system-dictionary-buffer-enumerable-properties"
     ],
     "reason": "公式7経路のSHA-256・Buffer境界とエンコード形式の差分テストに成功"
   },
