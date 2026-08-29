@@ -14468,13 +14468,13 @@ fn arrayRangeCopyBuiltin(runtime: *Runtime, source: Value, index: Value) !Value 
     for (values) |item| {
         var cloned = try deepCloneValue(runtime, item, &state);
         if (cloned.tag == @intFromEnum(Tag.undefined) or cloned.tag == @intFromEnum(Tag.function)) cloned = .{ .tag = @intFromEnum(Tag.null_value) };
-        try rooted[2].object().?.payload.array.append(runtime.allocator, cloned);
+        try appendAotArraySlot(runtime, rooted[2].object().?, cloned, true);
     }
     return rooted[2];
 }
 
 fn referenceBuiltin(runtime: *Runtime, source: Value, index: Value) !Value {
-    var rooted = [_]Value{ source, index };
+    var rooted = [_]Value{ source, index, .{} };
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &rooted, rooted.len);
     defer runtime.popRoots(&frame);
@@ -14504,7 +14504,16 @@ fn referenceBuiltin(runtime: *Runtime, source: Value, index: Value) !Value {
         const range = (try sliceRange(runtime, rooted[1], items.items.len)) orelse return .{};
         const start = @min(range.start, items.items.len);
         const end = @min(@max(range.end, start), items.items.len);
-        return runtime.createArray(items.items[start..end]);
+        const source_object = rooted[0].object().?;
+        try runtime.normalizeAotArrayPresence(source_object);
+        rooted[2] = try runtime.createArray(&.{});
+        const result_object = rooted[2].object().?;
+        try result_object.payload.array.ensureTotalCapacity(runtime.allocator, end - start);
+        try result_object.array_presence.ensureTotalCapacity(runtime.allocator, end - start);
+        for (items.items[start..end], start..) |item, source_index| {
+            try appendAotArraySlot(runtime, result_object, item, runtime.aotArrayIsPresent(source_object, source_index));
+        }
+        return rooted[2];
     }
     if (rooted[0].tag == @intFromEnum(Tag.dictionary)) {
         const key = try valueUtf16Alloc(runtime, rooted[1]);
@@ -14533,20 +14542,42 @@ fn invalidStringRangeBuiltin(runtime: *Runtime, index: Value) !Value {
     return error.InvalidStringRange;
 }
 
+fn appendAotArraySlot(runtime: *Runtime, object: *Object, value: Value, present: bool) !void {
+    const index = object.payload.array.items.len;
+    try runtime.aotArrayAppend(object, value);
+    if (!present) object.array_presence.items[index] = false;
+}
+
 fn arrayAddBuiltin(runtime: *Runtime, source: Value, other: Value) !Value {
-    if (source.tag != @intFromEnum(Tag.array)) return deepCloneBuiltin(runtime, source);
-    const source_items = try arrayItems(source);
     var roots = [_]Value{ source, other, .{} };
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
+    if (roots[0].tag != @intFromEnum(Tag.array)) return deepCloneBuiltin(runtime, roots[0]);
     roots[2] = try runtime.createArray(&.{});
-    const result = try arrayItems(roots[2]);
+    const source_object = roots[0].object().?;
+    try runtime.normalizeAotArrayPresence(source_object);
+    const source_items = &source_object.payload.array;
+    const other_is_array = roots[1].tag == @intFromEnum(Tag.array);
+    const other_object = if (other_is_array) roots[1].object().? else null;
+    if (other_object) |object| try runtime.normalizeAotArrayPresence(object);
     const extra: usize = if (roots[1].tag == @intFromEnum(Tag.array)) (try arrayItems(roots[1])).items.len else 1;
     const final_length = std.math.add(usize, source_items.items.len, extra) catch return error.ArrayTooLarge;
+    const result_object = roots[2].object().?;
+    const result = &result_object.payload.array;
     try result.ensureTotalCapacity(runtime.allocator, final_length);
-    try result.appendSlice(runtime.allocator, source_items.items);
-    if (roots[1].tag == @intFromEnum(Tag.array)) try result.appendSlice(runtime.allocator, (try arrayItems(roots[1])).items) else try result.append(runtime.allocator, roots[1]);
+    try result_object.array_presence.ensureTotalCapacity(runtime.allocator, final_length);
+    for (source_items.items, 0..) |item, source_index| {
+        try appendAotArraySlot(runtime, result_object, item, runtime.aotArrayIsPresent(source_object, source_index));
+    }
+    if (other_is_array) {
+        const other_array = other_object.?;
+        for (other_array.payload.array.items, 0..) |item, other_index| {
+            try appendAotArraySlot(runtime, result_object, item, runtime.aotArrayIsPresent(other_array, other_index));
+        }
+    } else {
+        try appendAotArraySlot(runtime, result_object, roots[1], true);
+    }
     return roots[2];
 }
 
@@ -18712,6 +18743,38 @@ test "AOT疎配列のsplice系操作は削除側と戻り値側のpresenceを移
     try std.testing.expectEqualSlices(bool, &.{ true, true, true, false, true }, roots[4].object().?.array_presence.items);
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try arrayItems(roots[4])).items[1].tag)));
     try std.testing.expectEqual(@as(f64, 7), valueToNumber((try arrayItems(roots[4])).items[2]));
+}
+
+test "AOT疎配列の参照と配列足は穴のpresenceを保ち範囲コピーだけJSON化する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 8;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createArray(&.{});
+    try runtime.indexSet(roots[0], numberValue(0), numberValue(1));
+    try runtime.indexSet(roots[0], numberValue(2), numberValue(3));
+    try runtime.indexSet(roots[0], numberValue(3), .{});
+    roots[1] = try runtime.createDictionary(&.{ staticStringValue("先頭"), numberValue(0), staticStringValue("末尾"), numberValue(3) });
+
+    roots[2] = try referenceBuiltin(&runtime, roots[0], roots[1]);
+    try std.testing.expectEqualSlices(bool, &.{ true, false, true, true }, roots[2].object().?.array_presence.items);
+
+    roots[3] = try arrayRangeCopyBuiltin(&runtime, roots[0], roots[1]);
+    try std.testing.expectEqualSlices(bool, &.{ true, true, true, true }, roots[3].object().?.array_presence.items);
+    try std.testing.expectEqual(Tag.null_value, @as(Tag, @enumFromInt((try arrayItems(roots[3])).items[1].tag)));
+    try std.testing.expectEqual(Tag.null_value, @as(Tag, @enumFromInt((try arrayItems(roots[3])).items[3].tag)));
+
+    roots[4] = try runtime.createArray(&.{ numberValue(4), numberValue(5) });
+    roots[5] = try arrayAddBuiltin(&runtime, roots[0], roots[4]);
+    try std.testing.expectEqualSlices(bool, &.{ true, false, true, true, true, true }, roots[5].object().?.array_presence.items);
+
+    roots[6] = try runtime.createArray(&.{});
+    try runtime.indexSet(roots[6], numberValue(1), numberValue(7));
+    roots[7] = try arrayAddBuiltin(&runtime, roots[0], roots[6]);
+    try std.testing.expectEqualSlices(bool, &.{ true, false, true, true, false, true }, roots[7].object().?.array_presence.items);
 }
 
 test "AOT配列シャッフルはFisher-Yatesの置換と同一配列を保つ" {

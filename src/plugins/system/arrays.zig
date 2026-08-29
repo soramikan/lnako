@@ -493,6 +493,11 @@ fn spliceArray(runtime: *Runtime, array: *value_mod.Array, start: usize, count: 
     return result;
 }
 
+fn appendArraySlot(array: *value_mod.Array, value: Value, present: bool) !void {
+    const length = try array.push(value);
+    if (!present) _ = try array.deleteIndex(length - 1);
+}
+
 fn pop(source: Value) !Value {
     if (source != .array) return error.ArrayExpected;
     return source.array.pop();
@@ -589,7 +594,10 @@ fn reference(runtime: *Runtime, source: Value, index_value: Value) !Value {
         const range = (try rangeBounds(runtime, index, source_value.array.len())) orelse return .undefined;
         var result = try runtime.createArray();
         try roots.protect(&result);
-        for (source_value.array.items.items[range.start .. range.start + range.count]) |item| _ = try result.array.push(item);
+        try source_value.array.normalizePresence();
+        for (source_value.array.items.items[range.start .. range.start + range.count], range.start..) |item, source_index| {
+            try appendArraySlot(result.array, item, source_value.array.isPresent(source_index));
+        }
         return result;
     }
     if (source_value == .dictionary) {
@@ -626,16 +634,26 @@ fn invalidStringRange(runtime: *Runtime, index: Value) !Value {
 }
 
 fn arrayAdd(runtime: *Runtime, source: Value, other: Value) !Value {
-    if (source != .array) return deepClone(runtime, source);
-    var result = try runtime.createArray();
     var roots = runtime.rootFrame();
     defer roots.deinit();
+    var rooted_source = source;
+    var rooted_other = other;
+    try roots.protect(&rooted_source);
+    try roots.protect(&rooted_other);
+    if (rooted_source != .array) return deepClone(runtime, rooted_source);
+    var result = try runtime.createArray();
     try roots.protect(&result);
-    for (source.array.items.items) |item| _ = try result.array.push(item);
-    if (other == .array) {
-        for (other.array.items.items) |item| _ = try result.array.push(item);
+    try rooted_source.array.normalizePresence();
+    for (rooted_source.array.items.items, 0..) |item, source_index| {
+        try appendArraySlot(result.array, item, rooted_source.array.isPresent(source_index));
+    }
+    if (rooted_other == .array) {
+        try rooted_other.array.normalizePresence();
+        for (rooted_other.array.items.items, 0..) |item, other_index| {
+            try appendArraySlot(result.array, item, rooted_other.array.isPresent(other_index));
+        }
     } else {
-        _ = try result.array.push(other);
+        try appendArraySlot(result.array, rooted_other, true);
     }
     return result;
 }
@@ -1916,6 +1934,52 @@ test "配列コピーと参照はJSONとJavaScript添字の境界を保つ" {
     var missing_last_text = try reference(&runtime, text, range);
     try roots.protect(&missing_last_text);
     try std.testing.expectEqualSlices(u16, &.{ 'A', 'B' }, missing_last_text.string.units);
+}
+
+test "疎配列の参照と配列足は穴のpresenceを保ち範囲コピーだけJSON化する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var sparse = try runtime.createArray();
+    try roots.protect(&sparse);
+    try sparse.array.set(0, .{ .number = 1 });
+    try sparse.array.set(2, .{ .number = 3 });
+    try sparse.array.set(3, .undefined);
+
+    var range = try runtime.createDictionary();
+    try roots.protect(&range);
+    var first_key = try runtime.stringUtf8("先頭");
+    try roots.protect(&first_key);
+    var last_key = try runtime.stringUtf8("末尾");
+    try roots.protect(&last_key);
+    try range.dictionary.set(first_key.string, .{ .number = 0 });
+    try range.dictionary.set(last_key.string, .{ .number = 3 });
+
+    var referenced = try reference(&runtime, sparse, range);
+    try roots.protect(&referenced);
+    try std.testing.expectEqualSlices(bool, &.{ true, false, true, true }, referenced.array.presence.items);
+
+    var copied = try rangeCopy(&runtime, sparse, range);
+    try roots.protect(&copied);
+    try std.testing.expectEqualSlices(bool, &.{ true, true, true, true }, copied.array.presence.items);
+    try std.testing.expectEqual(Value.null_value, copied.array.get(1));
+    try std.testing.expectEqual(Value.null_value, copied.array.get(3));
+
+    var dense_extra = try common.arrayFromValues(&runtime, &.{ .{ .number = 4 }, .{ .number = 5 } });
+    try roots.protect(&dense_extra);
+    var concatenated = try arrayAdd(&runtime, sparse, dense_extra);
+    try roots.protect(&concatenated);
+    try std.testing.expectEqualSlices(bool, &.{ true, false, true, true, true, true }, concatenated.array.presence.items);
+
+    var sparse_extra = try runtime.createArray();
+    try roots.protect(&sparse_extra);
+    try sparse_extra.array.set(1, .{ .number = 7 });
+    var sparse_concatenated = try arrayAdd(&runtime, sparse, sparse_extra);
+    try roots.protect(&sparse_concatenated);
+    try std.testing.expectEqualSlices(bool, &.{ true, false, true, true, false, true }, sparse_concatenated.array.presence.items);
 }
 
 fn bigintRangeAllocationCase(allocator: std.mem.Allocator) !void {
