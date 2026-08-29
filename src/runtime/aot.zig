@@ -12520,16 +12520,32 @@ const search_element_limit: usize = 1_000_000;
 /// `何文字目` uses `Array.from(value)` and then compares joined windows.  A
 /// single concatenated string is not sufficient: a match may start only at
 /// an Array.from element boundary (for example, `['AB', 'C']` must not match
-/// `BC`).  Keep each element as owned UTF-16 while searching so no temporary
-/// GC value needs to remain rooted between allocations.
+/// `BC`).  Keep ordinary values as owned UTF-16 while searching, but retain
+/// dictionary array-like values as a lazy indexed view so a first match does
+/// not eagerly materialize every missing element.
 const SearchElements = struct {
     runtime: *Runtime,
     items: std.ArrayList([]u16) = .empty,
+    dictionary: ?Value = null,
+    dictionary_length: usize = 0,
 
     fn deinit(self: *SearchElements) void {
         for (self.items.items) |units| if (units.len != 0) self.runtime.allocator.free(units);
         self.items.deinit(self.runtime.allocator);
         self.* = undefined;
+    }
+
+    fn len(self: SearchElements) usize {
+        return if (self.dictionary != null) self.dictionary_length else self.items.items.len;
+    }
+
+    fn element(self: *const SearchElements, index: usize) !SearchElement {
+        if (self.dictionary) |dictionary| {
+            var key_buffer: [32]u16 = undefined;
+            const key = searchIndexKey(&key_buffer, index);
+            return SearchElement.fromValue(self.runtime, dictionaryProperty(dictionary, key));
+        }
+        return .{ .units = self.items.items[index] };
     }
 
     fn appendEmpty(self: *SearchElements) !void {
@@ -12548,6 +12564,27 @@ const SearchElements = struct {
             .binding_cell => try self.appendValue(value.object().?.payload.binding_cell),
             else => try self.appendOwned(try valueUtf16Alloc(self.runtime, value)),
         }
+    }
+};
+
+const SearchElement = struct {
+    units: []const u16,
+    owned: ?[]u16 = null,
+
+    fn fromValue(runtime: *Runtime, value: Value) !SearchElement {
+        return switch (@as(Tag, @enumFromInt(value.tag))) {
+            .undefined, .null_value => .{ .units = &.{} },
+            .binding_cell => try fromValue(runtime, value.object().?.payload.binding_cell),
+            else => blk: {
+                const units = try valueUtf16Alloc(runtime, value);
+                break :blk .{ .units = units, .owned = units };
+            },
+        };
+    }
+
+    fn deinit(self: *SearchElement, runtime: *Runtime) void {
+        if (self.owned) |units| runtime.allocator.free(units);
+        self.* = undefined;
     }
 };
 
@@ -12570,16 +12607,9 @@ fn appendStringSearchElements(elements: *SearchElements, value: Value) !void {
 }
 
 fn appendDictionarySearchElements(elements: *SearchElements, value: Value) !void {
-    // TODO: aot-array-from-dictionary-lazy-length
-    // Array.from({length: huge, 0: "hit"}) can observe index 0 before any
-    // later index is read.  The bounded eager representation is retained for
-    // OOM safety until the AOT value model grows a lazy array-like view.
     const length = searchArrayFromLength(elements.runtime, dictionaryProperty(value, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) catch |failure| return failure;
-    var key_buffer: [32]u16 = undefined;
-    for (0..length) |index| {
-        const key = searchIndexKey(&key_buffer, index);
-        try elements.appendValue(dictionaryProperty(value, key));
-    }
+    elements.dictionary = value;
+    elements.dictionary_length = length;
 }
 
 fn searchIndexKey(buffer: *[32]u16, index: usize) []const u16 {
@@ -12619,25 +12649,44 @@ fn appendSearchElements(runtime: *Runtime, value: Value) !SearchElements {
     return elements;
 }
 
-fn joinedSearchElementsEqual(source: SearchElements, start: usize, count: usize, needle: SearchElements) bool {
+fn joinedSearchElementsEqual(runtime: *Runtime, source: SearchElements, start: usize, count: usize, needle: SearchElements) !bool {
     const source_end = start + count;
     var source_index = start;
     var source_offset: usize = 0;
     var needle_index: usize = 0;
     var needle_offset: usize = 0;
+    var source_element = SearchElement{ .units = &.{} };
+    var source_loaded = false;
+    defer if (source_loaded) source_element.deinit(runtime);
+    var needle_element = SearchElement{ .units = &.{} };
+    var needle_loaded = false;
+    defer if (needle_loaded) needle_element.deinit(runtime);
+
     while (true) {
-        while (source_index < source_end and source_offset == source.items.items[source_index].len) {
-            source_index += 1;
+        while (source_index < source_end and (!source_loaded or source_offset == source_element.units.len)) {
+            if (source_loaded) {
+                source_element.deinit(runtime);
+                source_loaded = false;
+            }
+            source_element = try source.element(source_index);
+            source_loaded = true;
             source_offset = 0;
+            source_index += 1;
         }
-        while (needle_index < needle.items.items.len and needle_offset == needle.items.items[needle_index].len) {
-            needle_index += 1;
+        while (needle_index < needle.len() and (!needle_loaded or needle_offset == needle_element.units.len)) {
+            if (needle_loaded) {
+                needle_element.deinit(runtime);
+                needle_loaded = false;
+            }
+            needle_element = try needle.element(needle_index);
+            needle_loaded = true;
             needle_offset = 0;
+            needle_index += 1;
         }
-        const source_done = source_index == source_end;
-        const needle_done = needle_index == needle.items.items.len;
+        const source_done = !source_loaded or (source_index == source_end and source_offset == source_element.units.len);
+        const needle_done = !needle_loaded or (needle_index == needle.len() and needle_offset == needle_element.units.len);
         if (source_done or needle_done) return source_done and needle_done;
-        if (source.items.items[source_index][source_offset] != needle.items.items[needle_index][needle_offset]) return false;
+        if (source_element.units[source_offset] != needle_element.units[needle_offset]) return false;
         source_offset += 1;
         needle_offset += 1;
     }
@@ -12655,9 +12704,12 @@ fn codePointFindBuiltin(runtime: *Runtime, source: Value, needle: Value) !usize 
     defer source_elements.deinit();
     var needle_elements = try appendSearchElements(runtime, roots[1]);
     defer needle_elements.deinit();
-    for (source_elements.items.items, 0..) |_, index| {
-        const count = @min(needle_elements.items.items.len, source_elements.items.items.len - index);
-        if (joinedSearchElementsEqual(source_elements, index, count, needle_elements)) return index + 1;
+    const source_length = source_elements.len();
+    const needle_length = needle_elements.len();
+    var index: usize = 0;
+    while (index < source_length) : (index += 1) {
+        const count = @min(needle_length, source_length - index);
+        if (try joinedSearchElementsEqual(runtime, source_elements, index, count, needle_elements)) return index + 1;
     }
     return 0;
 }
@@ -17610,6 +17662,8 @@ test "AOT何文字目はArray.from要素境界と辞書ToLengthを再現する" 
     try std.testing.expectEqualSlices(u16, expected_undefined, undefined_message);
     try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, staticStringValue("abc"), staticStringValue("a")));
 
+    roots[18] = try runtime.createDictionary(&.{ staticStringValue("length"), numberValue(@floatFromInt(search_element_limit)), staticStringValue("0"), staticStringValue("hit") });
+    try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, roots[18], staticStringValue("hit")));
     roots[16] = try runtime.createDictionary(&.{ staticStringValue("length"), numberValue(@floatFromInt(search_element_limit + 1)), staticStringValue("0"), staticStringValue("hit") });
     try std.testing.expectError(error.ArraySizeLimitExceeded, codePointFindBuiltin(&runtime, roots[16], staticStringValue("hit")));
 }

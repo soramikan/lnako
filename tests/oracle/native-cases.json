@@ -161,6 +161,11 @@
     "source": "(\"STR2:\"&何文字目(\"abc\",\"b\"))を表示\n(\"ARR2:\"&何文字目([\"a\",\"b\",\"c\"],\"b\"))を表示\n(\"NULL-ELEM1:\"&何文字目([\"a\",NULL,\"b\"],[\"a\",NULL]))を表示\n(\"UNDEF-ELEM1:\"&何文字目([\"a\",undefined,\"b\"],[\"a\",undefined]))を表示\n(\"NESTED1:\"&何文字目([[\"a\",\"b\"],\"c\"],[[\"a\",\"b\"]]))を表示\n(\"NESTED-DIFF0:\"&何文字目([[\"a\",\"b\"],\"c\"],\"a,b\"))を表示\n(\"EMPTY-SOURCE0:\"&何文字目(\"\",\"\"))を表示\n(\"EMPTY-NEEDLE1:\"&何文字目(\"abc\",\"\"))を表示\n(\"NUMBER-SOURCE0:\"&何文字目(123,12))を表示\n(\"NUMBER-NEEDLE1:\"&何文字目(\"abc\",12))を表示\n(\"BOOL-SOURCE0:\"&何文字目(はい,\"x\"))を表示\n(\"BOOL-NEEDLE1:\"&何文字目(\"abc\",はい))を表示\n(\"BIGINT-SOURCE0:\"&何文字目(123n,1n))を表示\n(\"BIGINT-NEEDLE1:\"&何文字目(\"abc\",1n))を表示\nD0={}\n(\"DICT0:0:\"&何文字目(D0,\"x\"))を表示\nD1={\"length\":1,\"0\":\"x\"}\n(\"DICT1:1:\"&何文字目(D1,\"x\"))を表示\nD2={\"length\":2,\"1\":\"x\"}\n(\"DICT2:2:\"&何文字目(D2,\"x\"))を表示\nD3={\"length\":2,\"0\":\"a\",\"1\":\"b\"}\n(\"DICT-PAIR:1:\"&何文字目(D3,[\"a\",\"b\"]))を表示\n(\"EDGE-123:2:\"&何文字目([\"a\",12,3],\"123\"))を表示\n(\"EDGE-12:0:\"&何文字目([\"a\",12,3],\"12\"))を表示\n(\"TRAILING-NULL:1:\"&何文字目([\"a\",NULL],[\"a\",NULL]))を表示\n(\"SURROGATE-PREFIX0:\"&何文字目(CHR(128512),CHR(55357)))を表示\nF=関数(A,B)それはA;ここまで\n(\"FUNCTION-SOURCE0:\"&何文字目(F,\"x\"))を表示\n(\"FUNCTION-NEEDLE1:\"&何文字目(\"abc\",F))を表示\n"
   },
   {
+    "id": "native-system-string-array-from-dictionary-lazy-length",
+    "commands": ["何文字目"],
+    "source": "D={\"length\":1000000,\"0\":\"hit\"}\n何文字目(D,\"hit\")を表示\n"
+  },
+  {
     "id": "native-system-string-array-from-null-errors",
     "source": "エラー監視\n何文字目(NULL,\"x\")を表示\nエラーならば\n(\"NULL-SOURCE:\"&エラーメッセージ)を表示\nここまで\nエラー監視\n何文字目(\"abc\",NULL)を表示\nエラーならば\n(\"NULL-NEEDLE:\"&エラーメッセージ)を表示\nここまで\nエラー監視\n何文字目(undefined,\"x\")を表示\nエラーならば\n(\"UNDEFINED-SOURCE:\"&エラーメッセージ)を表示\nここまで\nエラー監視\n何文字目(\"abc\",undefined)を表示\nエラーならば\n(\"UNDEFINED-NEEDLE:\"&エラーメッセージ)を表示\nここまで\n\"RECOVERED\"を表示\n"
   },

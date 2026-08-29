@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 316,
-    "nativeAot": 225,
+    "total": 317,
+    "nativeAot": 226,
     "interpreter": 96,
     "compatJs": 9
   },
@@ -4075,6 +4075,7 @@
       ],
       "aotFixtureIds": [
         "native-system-string-array-from-coercion",
+        "native-system-string-array-from-dictionary-lazy-length",
         "native-system-string-array-from-null-errors",
         "native-system-string-array-from-null-uncaught",
         "native-system-string-length-search-boundary-commands"
@@ -4089,6 +4090,10 @@
         },
         "aot": {
           "native-system-string-array-from-coercion": [
+            "implemented.tests"
+          ],
+          "native-system-string-array-from-dictionary-lazy-length": [
+            "fixture.commands",
             "implemented.tests"
           ],
           "native-system-string-array-from-null-errors": [
@@ -4107,8 +4112,8 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 4件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "文字列・配列・primitive・own array-like辞書・関数を対象に両引数のArray.from相当系列化とslice-join検索を実装し、公式7経路差分テストに成功。AOTバイト列値はTODO: aot-byte-buffer-value、継承array-likeプロパティはTODO: array-from-inherited-properties、辞書巨大lengthの遅延viewはTODO: aot-array-from-dictionary-lazy-length、配列要素内の関数文字列化はTODO: aot-function-string-nameとしてCOMPATIBILITY_QUIRKS.mdで追跡"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 5件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "文字列・配列・primitive・own array-like辞書・関数を対象に両引数のArray.from相当系列化とslice-join検索を実装し、辞書array-likeは検索窓ごとの遅延参照で公式7経路差分テストに成功。AOTバイト列値はTODO: aot-byte-buffer-value、継承array-likeプロパティはTODO: array-from-inherited-properties、配列要素内の関数文字列化はTODO: aot-function-string-nameとしてCOMPATIBILITY_QUIRKS.mdで追跡"
     },
     {
       "id": "command-0122",

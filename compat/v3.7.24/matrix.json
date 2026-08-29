@@ -3185,6 +3185,7 @@
       "tests": [
         "plugin-system-string-core",
         "native-system-string-array-from-coercion",
+        "native-system-string-array-from-dictionary-lazy-length",
         "native-system-string-array-from-null-errors",
         "native-system-string-array-from-null-uncaught"
       ],
@@ -3193,7 +3194,7 @@
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "文字列・配列・primitive・own array-like辞書・関数を対象に両引数のArray.from相当系列化とslice-join検索を実装し、公式7経路差分テストに成功。AOTバイト列値はTODO: aot-byte-buffer-value、継承array-likeプロパティはTODO: array-from-inherited-properties、辞書巨大lengthの遅延viewはTODO: aot-array-from-dictionary-lazy-length、配列要素内の関数文字列化はTODO: aot-function-string-nameとしてCOMPATIBILITY_QUIRKS.mdで追跡"
+      "reason": "文字列・配列・primitive・own array-like辞書・関数を対象に両引数のArray.from相当系列化とslice-join検索を実装し、辞書array-likeは検索窓ごとの遅延参照で公式7経路差分テストに成功。AOTバイト列値はTODO: aot-byte-buffer-value、継承array-likeプロパティはTODO: array-from-inherited-properties、配列要素内の関数文字列化はTODO: aot-function-string-nameとしてCOMPATIBILITY_QUIRKS.mdで追跡"
     },
     {
       "id": "command-0122",
