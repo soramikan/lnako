@@ -15593,8 +15593,11 @@ fn cloneFillValue(runtime: *Runtime, value: Value) !Value {
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
     const destination = try arrayItems(roots[1]);
+    try runtime.normalizeAotArrayPresence(roots[0].object().?);
     try destination.ensureTotalCapacity(runtime.allocator, source.items.len);
-    for (source.items) |item| try destination.append(runtime.allocator, try cloneFillValue(runtime, item));
+    for (source.items, 0..) |item, index| {
+        try appendAotArraySlot(runtime, roots[1].object().?, try cloneFillValue(runtime, item), runtime.aotArrayIsPresent(roots[0].object().?, index));
+    }
     return roots[1];
 }
 
@@ -19560,6 +19563,22 @@ test "AOT配列の集約・入替・連番・要素生成を公式境界で処�
     const cloned = try arrayItems(roots[12]);
     try runtime.indexSet(cloned.items[0], numberValue(0), numberValue(9));
     try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(runtime.indexGet(cloned.items[1], numberValue(0)).payload)));
+
+    roots[11] = try runtime.createArray(&.{});
+    try runtime.indexSet(roots[11], numberValue(1), numberValue(2));
+    try runtime.indexSet(roots[11], numberValue(2), .{});
+    roots[12] = try arrayFillBuiltin(&runtime, roots[11], numberValue(1));
+    const sparse_outer = try arrayItems(roots[12]);
+    const sparse_clone_value = sparse_outer.items[0];
+    const sparse_clone = try arrayItems(sparse_clone_value);
+    try std.testing.expectEqual(@as(usize, 3), sparse_clone.items.len);
+    try std.testing.expect(!runtime.aotArrayIsPresent(sparse_clone_value.object().?, 0));
+    try std.testing.expect(runtime.aotArrayIsPresent(sparse_clone_value.object().?, 1));
+    try std.testing.expect(runtime.aotArrayIsPresent(sparse_clone_value.object().?, 2));
+    try runtime.indexSet(sparse_clone_value, numberValue(0), numberValue(9));
+    const sparse_source = try arrayItems(roots[11]);
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(sparse_source.items[0].tag)));
+    try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(sparse_source.items[1].payload)));
 }
 
 test "AOT配列ソート系は安定mergeとundefined末尾と同一配列を保つ" {

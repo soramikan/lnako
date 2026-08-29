@@ -5520,14 +5520,15 @@
       "status": "native",
       "tests": [
         "plugin-system-array-core",
-        "native-system-array-aggregate-create-commands"
+        "native-system-array-aggregate-create-commands",
+        "native-system-array-fill-sparse-clone"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "多次元配列、空shape、要素複製、総量事前検査を実装。ホスト固有オブジェクトと100万要素上限はTODO: array-fill-dictionary-json-clone / array-fill-total-size-limit"
+      "reason": "多次元配列、空shape、要素複製、疎配列のpresence保持、総量事前検査を実装。ホスト固有オブジェクトと100万要素上限はTODO: array-fill-dictionary-json-clone / array-fill-total-size-limit"
     },
     {
       "id": "command-0208",

@@ -837,7 +837,10 @@ fn cloneFillValue(runtime: *Runtime, value: Value) !Value {
     defer roots.deinit();
     try roots.protect(&source);
     try roots.protect(&result);
-    for (source.array.items.items) |item| _ = try result.array.push(try cloneFillValue(runtime, item));
+    try source.array.normalizePresence();
+    for (source.array.items.items, 0..) |item, index| {
+        try appendArraySlot(result.array, try cloneFillValue(runtime, item), source.array.isPresent(index));
+    }
     return result;
 }
 
@@ -3220,6 +3223,21 @@ test "配列集約・連番・要素生成の型変換と複製境界を保つ" 
     try roots.protect(&independent_fill);
     try independent_fill.array.get(0).array.set(0, .{ .number = 9 });
     try std.testing.expectEqual(@as(f64, 1), independent_fill.array.get(1).array.get(0).number);
+
+    var sparse_value = try runtime.createArray();
+    try roots.protect(&sparse_value);
+    try sparse_value.array.set(1, .{ .number = 2 });
+    try sparse_value.array.set(2, .undefined);
+    var sparse_fill = try fill(&runtime, sparse_value, .{ .number = 1 });
+    try roots.protect(&sparse_fill);
+    const sparse_clone = sparse_fill.array.get(0).array;
+    try std.testing.expectEqual(@as(usize, 3), sparse_clone.len());
+    try std.testing.expect(!sparse_clone.isPresent(0));
+    try std.testing.expect(sparse_clone.isPresent(1));
+    try std.testing.expect(sparse_clone.isPresent(2));
+    try sparse_clone.set(0, .{ .number = 9 });
+    try std.testing.expectEqual(Value.undefined, sparse_value.array.get(0));
+    try std.testing.expectEqual(@as(f64, 2), sparse_value.array.get(1).number);
 }
 
 test "配列入替はcanonical添字以外をown propertyとして保持する" {
