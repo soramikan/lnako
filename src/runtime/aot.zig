@@ -14257,29 +14257,43 @@ fn tableBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []co
         .table_column_count => return tableColumnCountBuiltin(runtime, source),
         .table_column => {
             if (arguments.len < 2) return error.InvalidArgumentCount;
-            var roots = [_]Value{ source, arguments[1], .{} };
+            var roots = [_]Value{ source, arguments[1], .{}, .{} };
             var frame = RootFrame{};
             runtime.pushRoots(&frame, &roots, roots.len);
             defer runtime.popRoots(&frame);
             roots[2] = try runtime.createArray(&.{});
-            const result = try arrayItems(roots[2]);
-            for ((try arrayItems(roots[0])).items) |row| try result.append(runtime.allocator, try tableRowProperty(runtime, row, roots[1]));
+            const source_object = roots[0].object().?;
+            try runtime.normalizeAotArrayPresence(source_object);
+            const result_object = roots[2].object().?;
+            for (source_object.payload.array.items, 0..) |row, index| {
+                if (!runtime.aotArrayIsPresent(source_object, index)) {
+                    try appendAotArraySlot(runtime, result_object, .{}, false);
+                    continue;
+                }
+                roots[3] = try tableRowProperty(runtime, row, roots[1]);
+                try appendAotArraySlot(runtime, result_object, roots[3], true);
+            }
             return roots[2];
         },
         .table_pickup, .table_exact_pickup => {
             if (arguments.len < 3) return error.InvalidArgumentCount;
-            var roots = [_]Value{ source, arguments[1], arguments[2], .{} };
+            var roots = [_]Value{ source, arguments[1], arguments[2], .{}, .{} };
             var frame = RootFrame{};
             runtime.pushRoots(&frame, &roots, roots.len);
             defer runtime.popRoots(&frame);
             roots[3] = try runtime.createArray(&.{});
             const result = try arrayItems(roots[3]);
-            for ((try arrayItems(roots[0])).items) |row| {
-                const cell = try tableRowProperty(runtime, row, roots[1]);
+            const source_object = roots[0].object().?;
+            try runtime.normalizeAotArrayPresence(source_object);
+            for (source_object.payload.array.items, 0..) |row, index| {
+                // Array.prototype.filter skips holes but still invokes its
+                // callback for an explicit undefined row.
+                if (!runtime.aotArrayIsPresent(source_object, index)) continue;
+                roots[4] = try tableRowProperty(runtime, row, roots[1]);
                 const matches = if (command == .table_exact_pickup)
-                    try strictEqual(runtime, cell, roots[2])
+                    try strictEqual(runtime, roots[4], roots[2])
                 else blk: {
-                    const cell_units = try valueUtf16Alloc(runtime, cell);
+                    const cell_units = try valueUtf16Alloc(runtime, roots[4]);
                     defer runtime.allocator.free(cell_units);
                     const needle_units = try valueUtf16Alloc(runtime, roots[2]);
                     defer runtime.allocator.free(needle_units);
@@ -19253,6 +19267,34 @@ test "AOT表ソートは最上位配列のholeと明示的undefinedをpresence�
     try std.testing.expectEqual(roots[4].payload, (try arrayItems(roots[5])).items[0].payload);
     try std.testing.expectEqual(roots[3].payload, (try arrayItems(roots[5])).items[1].payload);
     try std.testing.expectEqualSlices(bool, &.{ true, true, true, false }, roots[5].object().?.array_presence.items);
+}
+
+test "AOT表列取得と表ピックアップは最上位のholeをArrayメソッドどおり扱う" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 8;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createArray(&.{ numberValue(2), numberValue(20) });
+    roots[1] = try runtime.createArray(&.{numberValue(1)});
+    roots[2] = try runtime.createArray(&.{});
+    try runtime.indexSet(roots[2], numberValue(0), roots[0]);
+    try runtime.indexSet(roots[2], numberValue(2), roots[1]);
+
+    roots[3] = try tableBuiltin(&runtime, .table_column, &.{ roots[2], numberValue(1) });
+    try std.testing.expectEqualSlices(bool, &.{ true, false, true }, roots[3].object().?.array_presence.items);
+    try std.testing.expectEqual(@as(f64, 20), valueToNumber(roots[3].object().?.payload.array.items[0]));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[3].object().?.payload.array.items[1].tag)));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[3].object().?.payload.array.items[2].tag)));
+
+    roots[4] = try tableBuiltin(&runtime, .table_pickup, &.{ roots[2], numberValue(0), numberValue(1) });
+    try std.testing.expectEqual(@as(usize, 1), roots[4].object().?.payload.array.items.len);
+    try std.testing.expectEqual(roots[1].payload, roots[4].object().?.payload.array.items[0].payload);
+    roots[5] = try tableBuiltin(&runtime, .table_exact_pickup, &.{ roots[2], numberValue(0), numberValue(2) });
+    try std.testing.expectEqual(@as(usize, 1), roots[5].object().?.payload.array.items.len);
+    try std.testing.expectEqual(roots[0].payload, roots[5].object().?.payload.array.items[0].payload);
 }
 
 test "AOT敬語命令は未定義初期値と礼節レベルを公式どおり処理する" {

@@ -432,6 +432,13 @@ ABI値の所有権と非同期スレッド制約は[`NATIVE_PLUGIN_ABI.md`](NATI
 |---|---|---|---|
 | `参照` / `配列参照` / `配列足` / `配列範囲コピー` | 配列の`slice`（`参照`・`配列参照`）と、配列オペランドを展開する`concat`（`配列足`）は、配列長とown indexの欠損を保つ。穴を読み出した値は`undefined`だが、`slice`/`concat`結果の同じ位置はown propertyにならない。一方、`配列範囲コピー`は`slice`結果をJSON.stringify/parseするため、穴と明示的`undefined`のどちらも`null`のown要素になる。非配列の第2引数を`配列足`へ渡した場合は1要素として追加する | Interpreterと純LLVM AOTは値配列とpresence bitmapを同時に範囲コピー・連結し、`参照`/`配列参照`/配列同士の`配列足`では穴を維持する。`配列範囲コピー`は既存のJSON境界で穴を`null`へmaterializeする。これは意図的制限ではなく実装済みの公式互換で、QuickJS互換モードは標準命令の証拠経路に含めない。継承propertyと表命令内の疎配列は未実装境界として別TODOに残す | `native-system-array-sparse-copy-reference-concat`、`native-system-array-copy-reference-commands`、`TODO: reference-inherited-properties`、`TODO: sparse-array-presence` |
 
+## 表命令のmap/filterと最上位疎配列
+
+| 命令 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID / TODO |
+|---|---|---|---|
+| `表列取得` | `Array.map`相当なので、最上位配列のholeではcallbackを呼ばず、戻り値の同じ位置もholeになる。実在する行の内部propertyが欠損している場合は`undefined`を明示的な要素として返す。実在する`undefined`/`null`行はproperty参照時に例外になる | Interpreterと純LLVM AOTでsourceのpresenceを確認してholeを結果へ伝播し、実在行の欠損列は明示的`undefined`として追加する。QuickJS互換モードは対象外。継承propertyは`TODO: table-inherited-properties`、他の表命令の疎配列経路は`TODO: sparse-array-presence`として分離する | `native-system-table-sparse-map-filter`、`native-system-table-column-null-row-error`、`TODO: table-inherited-properties`、`TODO: sparse-array-presence` |
+| `表ピックアップ` / `表完全一致ピックアップ` | `Array.filter`相当なので、最上位配列のholeはcallbackを呼ばず結果へ入らない。実在する行だけを判定し、結果はdense配列になる。実在する`undefined`/`null`行はproperty参照時に例外になる | Interpreterと純LLVM AOTでholeをスキップし、条件に一致した実在行だけをdenseな結果へ追加する。実在するnullish行は既存の`TableRowMissing`経路で失敗させる。QuickJS互換モードは対象外。継承propertyは`TODO: table-inherited-properties`、他の表命令の疎配列経路は`TODO: sparse-array-presence`として分離する | `native-system-table-sparse-map-filter`、`native-system-table-byte-row-properties`、`TODO: table-inherited-properties`、`TODO: sparse-array-presence` |
+
 ## 更新規則
 
 - 説明文と実装が食い違う場合は、固定した公式v3.7.24の実行結果を優先する。

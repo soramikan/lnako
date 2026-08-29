@@ -918,7 +918,11 @@ fn tablePickup(runtime: *Runtime, source: Value, column: Value, needle: Value, e
     for (&rooted) |*root| try roots.protect(root);
     rooted[3] = try runtime.createArray();
     if (!exact) rooted[4] = try runtime.valueToString(rooted[2]);
-    for (rooted[0].array.items.items) |row| {
+    try rooted[0].array.normalizePresence();
+    for (rooted[0].array.items.items, 0..) |row, index| {
+        // Array.prototype.filter skips holes but invokes the callback for an
+        // explicit undefined row, which then fails during row[index].
+        if (!rooted[0].array.isPresent(index)) continue;
         rooted[5] = try indexed(runtime, row, rooted[1]);
         const matches = if (exact) Value.strictEqual(rooted[5], rooted[2]) else blk: {
             rooted[6] = try runtime.valueToString(rooted[5]);
@@ -1047,7 +1051,14 @@ fn tableColumn(runtime: *Runtime, source: Value, column: Value) !Value {
     defer roots.deinit();
     for (&rooted) |*root| try roots.protect(root);
     rooted[2] = try runtime.createArray();
-    for (rooted[0].array.items.items) |row| _ = try rooted[2].array.push(try indexed(runtime, row, rooted[1]));
+    try rooted[0].array.normalizePresence();
+    for (rooted[0].array.items.items, 0..) |row, index| {
+        if (rooted[0].array.isPresent(index)) {
+            _ = try rooted[2].array.push(try indexed(runtime, row, rooted[1]));
+        } else {
+            try appendArraySlot(rooted[2].array, .undefined, false);
+        }
+    }
     return rooted[2];
 }
 
@@ -1731,6 +1742,39 @@ test "表ソートは最上位配列のholeと明示的undefinedをpresence順�
     try std.testing.expectEqual(numeric_low.array, numeric_table.array.get(0).array);
     try std.testing.expectEqual(numeric_high.array, numeric_table.array.get(1).array);
     try std.testing.expectEqualSlices(bool, &.{ true, true, true, false }, numeric_table.array.presence.items);
+}
+
+test "表列取得と表ピックアップは最上位のholeをArrayメソッドどおり扱う" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var first = try common.arrayFromValues(&runtime, &.{ .{ .number = 2 }, .{ .number = 20 } });
+    try roots.protect(&first);
+    var second = try common.arrayFromValues(&runtime, &.{.{ .number = 1 }});
+    try roots.protect(&second);
+    var table = try runtime.createArray();
+    try roots.protect(&table);
+    try table.array.set(0, first);
+    try table.array.set(2, second);
+
+    var column = try tableColumn(&runtime, table, .{ .number = 1 });
+    try roots.protect(&column);
+    try std.testing.expectEqualSlices(bool, &.{ true, false, true }, column.array.presence.items);
+    try std.testing.expectEqual(@as(f64, 20), column.array.get(0).number);
+    try std.testing.expectEqual(Value.undefined, column.array.get(1));
+    try std.testing.expectEqual(Value.undefined, column.array.get(2));
+
+    var partial = try tablePickup(&runtime, table, .{ .number = 0 }, .{ .number = 1 }, false);
+    try roots.protect(&partial);
+    try std.testing.expectEqual(@as(usize, 1), partial.array.len());
+    try std.testing.expectEqual(second.array, partial.array.get(0).array);
+    var exact = try tablePickup(&runtime, table, .{ .number = 0 }, .{ .number = 2 }, true);
+    try roots.protect(&exact);
+    try std.testing.expectEqual(@as(usize, 1), exact.array.len());
+    try std.testing.expectEqual(first.array, exact.array.get(0).array);
 }
 
 test "表正規表現系はraw RegExpと浅いコピーとGCを保つ" {

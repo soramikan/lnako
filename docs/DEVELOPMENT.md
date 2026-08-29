@@ -100,7 +100,7 @@ loopbackサーバーを使って公式CLI・公式生成JavaScript・Interpreter
 この指定を使った差異は `docs/COMPATIBILITY_QUIRKS.md` に両経路の実測結果と採用理由を記録し、ハーネスの
 成功表示にも基準別の件数を出します。
 
-`native-cases.json`全202件の実行結果を保存する必要がある検証では、任意の絶対パスを明示してJSON artifactを生成できます。
+`native-cases.json`全203件の実行結果を保存する必要がある検証では、任意の絶対パスを明示してJSON artifactを生成できます。
 通常実行のstdout、所要時間、比較処理は変わりません。
 
 fixtureに`stdin`を指定した場合は、公式CLI・公式生成JavaScript・`lnako run`・LLVM AOTのO0〜O3の実行経路へ同じUTF-8入力を渡します。コンパイル経路そのものへは入力を渡しません。

@@ -1682,9 +1682,10 @@
       "plugin-system-table",
       "native-system-table-query-commands",
       "native-system-table-byte-row-properties",
-      "native-system-array-own-properties"
+      "native-system-array-own-properties",
+      "native-system-table-sparse-map-filter"
     ],
-    "reason": "Zig製ランタイムでbyte bufferのlength・数値添字を実装し、公式差分テストに成功"
+    "reason": "Zig製ランタイムでbyte bufferのlength・数値添字と最上位疎配列のfilter挙動を実装し、公式差分テストに成功"
   },
   "表完全一致ピックアップ": {
     "status": "native",
@@ -1692,9 +1693,10 @@
       "plugin-system-table",
       "native-system-table-query-commands",
       "native-system-table-byte-row-properties",
-      "native-system-array-own-properties"
+      "native-system-array-own-properties",
+      "native-system-table-sparse-map-filter"
     ],
-    "reason": "Zig製ランタイムでbyte bufferのlength・数値添字を実装し、公式差分テストに成功"
+    "reason": "Zig製ランタイムでbyte bufferのlength・数値添字と最上位疎配列のfilter挙動を実装し、公式差分テストに成功"
   },
   "表検索": {
     "status": "native",
@@ -1758,9 +1760,10 @@
       "native-system-table-query-commands",
       "native-system-table-column-null-row-error",
       "native-system-table-byte-row-properties",
-      "native-system-array-own-properties"
+      "native-system-array-own-properties",
+      "native-system-table-sparse-map-filter"
     ],
-    "reason": "Zig製ランタイムでBuffer・Uint8Array・ArrayBufferのlengthと数値添字を実装し、公式差分テストに成功"
+    "reason": "Zig製ランタイムでBuffer・Uint8Array・ArrayBufferのlengthと数値添字、および表列取得の疎配列map挙動を実装し、公式差分テストに成功"
   },
   "表列挿入": {
     "status": "native",
