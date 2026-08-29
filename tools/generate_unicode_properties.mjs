@@ -6,7 +6,7 @@ const root = resolve(import.meta.dirname, "..");
 const outputPath = resolve(root, "src/generated/unicode_properties.zig");
 const check = process.argv.includes("--check");
 
-// Keep the initial table deliberately explicit.  Each expression is evaluated
+// Keep the property inventory deliberately explicit.  Each expression is evaluated
 // by Node 24 only while generating the static table; the product runtime never
 // embeds or invokes JavaScript for Unicode property matching.
 const definitions = [
@@ -114,6 +114,19 @@ const definitions = [
   { id: "script_hangul", expression: "Script=Hangul" },
   { id: "script_common", expression: "Script=Common" },
   { id: "script_inherited", expression: "Script=Inherited" },
+  { id: "script_extensions_latin", expression: "Script_Extensions=Latin" },
+  { id: "script_extensions_greek", expression: "Script_Extensions=Greek" },
+  { id: "script_extensions_cyrillic", expression: "Script_Extensions=Cyrillic" },
+  { id: "script_extensions_hiragana", expression: "Script_Extensions=Hiragana" },
+  { id: "script_extensions_katakana", expression: "Script_Extensions=Katakana" },
+  { id: "script_extensions_han", expression: "Script_Extensions=Han" },
+  { id: "script_extensions_arabic", expression: "Script_Extensions=Arabic" },
+  { id: "script_extensions_hebrew", expression: "Script_Extensions=Hebrew" },
+  { id: "script_extensions_devanagari", expression: "Script_Extensions=Devanagari" },
+  { id: "script_extensions_thai", expression: "Script_Extensions=Thai" },
+  { id: "script_extensions_hangul", expression: "Script_Extensions=Hangul" },
+  { id: "script_extensions_common", expression: "Script_Extensions=Common" },
+  { id: "script_extensions_inherited", expression: "Script_Extensions=Inherited" },
 ];
 
 const ranges = definitions.map((definition) => ({

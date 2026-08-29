@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 339,
-    "nativeAot": 245,
+    "total": 340,
+    "nativeAot": 246,
     "interpreter": 99,
     "compatJs": 9
   },
@@ -10232,6 +10232,7 @@
         "native-system-json-encode",
         "native-system-regexp-unicode-properties",
         "native-system-regexp-unicode-property-aliases",
+        "native-system-regexp-unicode-script-extensions",
         "native-system-regexp-unicode-sticky",
         "native-system-string-array-from-inherited-properties",
         "native-system-table-byte-row-slice",
@@ -10281,6 +10282,9 @@
             "fixture.commands"
           ],
           "native-system-regexp-unicode-property-aliases": [
+            "fixture.commands"
+          ],
+          "native-system-regexp-unicode-script-extensions": [
             "fixture.commands"
           ],
           "native-system-regexp-unicode-sticky": [
@@ -10604,6 +10608,7 @@
         "native-system-regexp-unicode-properties",
         "native-system-regexp-unicode-property-aliases",
         "native-system-regexp-unicode-property-error",
+        "native-system-regexp-unicode-script-extensions",
         "native-system-regexp-unicode-sticky"
       ],
       "compatJsFixtureIds": [],
@@ -10651,6 +10656,9 @@
           "native-system-regexp-unicode-property-error": [
             "fixture.commands"
           ],
+          "native-system-regexp-unicode-script-extensions": [
+            "fixture.commands"
+          ],
           "native-system-regexp-unicode-sticky": [
             "fixture.commands"
           ]
@@ -10661,7 +10669,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 13件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 14件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "共有Zig正規表現エンジンと抽出副作用をAOTへ実装し、公式7経路差分テストに成功"
     },
     {

@@ -1112,6 +1112,19 @@ fn lookupUnicodeProperty(name: []const u16) ?unicode_properties.Property {
     if (oneOf(name, &.{ "Script=Hangul", "sc=Hangul", "Script=Hang", "sc=Hang" })) return .script_hangul;
     if (oneOf(name, &.{ "Script=Common", "sc=Common", "Script=Zyyy", "sc=Zyyy" })) return .script_common;
     if (oneOf(name, &.{ "Script=Inherited", "sc=Inherited", "Script=Zinh", "sc=Zinh" })) return .script_inherited;
+    if (oneOf(name, &.{ "Script_Extensions=Latin", "scx=Latin", "Script_Extensions=Latn", "scx=Latn" })) return .script_extensions_latin;
+    if (oneOf(name, &.{ "Script_Extensions=Greek", "scx=Greek", "Script_Extensions=Grek", "scx=Grek" })) return .script_extensions_greek;
+    if (oneOf(name, &.{ "Script_Extensions=Cyrillic", "scx=Cyrillic", "Script_Extensions=Cyrl", "scx=Cyrl" })) return .script_extensions_cyrillic;
+    if (oneOf(name, &.{ "Script_Extensions=Hiragana", "scx=Hiragana", "Script_Extensions=Hira", "scx=Hira" })) return .script_extensions_hiragana;
+    if (oneOf(name, &.{ "Script_Extensions=Katakana", "scx=Katakana", "Script_Extensions=Kana", "scx=Kana" })) return .script_extensions_katakana;
+    if (oneOf(name, &.{ "Script_Extensions=Han", "scx=Han", "Script_Extensions=Hani", "scx=Hani" })) return .script_extensions_han;
+    if (oneOf(name, &.{ "Script_Extensions=Arabic", "scx=Arabic", "Script_Extensions=Arab", "scx=Arab" })) return .script_extensions_arabic;
+    if (oneOf(name, &.{ "Script_Extensions=Hebrew", "scx=Hebrew", "Script_Extensions=Hebr", "scx=Hebr" })) return .script_extensions_hebrew;
+    if (oneOf(name, &.{ "Script_Extensions=Devanagari", "scx=Devanagari", "Script_Extensions=Deva", "scx=Deva" })) return .script_extensions_devanagari;
+    if (oneOf(name, &.{ "Script_Extensions=Thai", "scx=Thai" })) return .script_extensions_thai;
+    if (oneOf(name, &.{ "Script_Extensions=Hangul", "scx=Hangul", "Script_Extensions=Hang", "scx=Hang" })) return .script_extensions_hangul;
+    if (oneOf(name, &.{ "Script_Extensions=Common", "scx=Common", "Script_Extensions=Zyyy", "scx=Zyyy" })) return .script_extensions_common;
+    if (oneOf(name, &.{ "Script_Extensions=Inherited", "scx=Inherited", "Script_Extensions=Zinh", "scx=Zinh" })) return .script_extensions_inherited;
     return null;
 }
 
@@ -1431,6 +1444,25 @@ test "Unicode property escapeは生成済み静的範囲を使う" {
     try roots.protect(&xid_pattern);
     const xid = (try call(&runtime, "正規表現マッチ", &.{ hiragana_source, xid_pattern })).?;
     try std.testing.expectEqualSlices(u16, &.{'あ'}, xid.string.units);
+
+    var script_extensions_source = try runtime.stringUtf8("ー゠・々あア漢");
+    try roots.protect(&script_extensions_source);
+    var script_extensions_pattern = try runtime.stringUtf8("/\\p{scx=Hira}/gu");
+    try roots.protect(&script_extensions_pattern);
+    const hiragana_extensions = (try call(&runtime, "正規表現マッチ", &.{ script_extensions_source, script_extensions_pattern })).?;
+    try std.testing.expectEqual(@as(usize, 4), hiragana_extensions.array.len());
+    try std.testing.expectEqualSlices(u16, &.{'ー'}, hiragana_extensions.array.items.items[0].string.units);
+    try std.testing.expectEqualSlices(u16, &.{'゠'}, hiragana_extensions.array.items.items[1].string.units);
+    try std.testing.expectEqualSlices(u16, &.{'・'}, hiragana_extensions.array.items.items[2].string.units);
+    try std.testing.expectEqualSlices(u16, &.{'あ'}, hiragana_extensions.array.items.items[3].string.units);
+
+    var han_extensions_pattern = try runtime.stringUtf8("/\\p{Script_Extensions=Han}/gu");
+    try roots.protect(&han_extensions_pattern);
+    const han_extensions = (try call(&runtime, "正規表現マッチ", &.{ script_extensions_source, han_extensions_pattern })).?;
+    try std.testing.expectEqual(@as(usize, 3), han_extensions.array.len());
+    try std.testing.expectEqualSlices(u16, &.{'・'}, han_extensions.array.items.items[0].string.units);
+    try std.testing.expectEqualSlices(u16, &.{'々'}, han_extensions.array.items.items[1].string.units);
+    try std.testing.expectEqualSlices(u16, &.{'漢'}, han_extensions.array.items.items[2].string.units);
 
     var invalid_pattern = try runtime.stringUtf8("/\\p{Nope}/u");
     try roots.protect(&invalid_pattern);
