@@ -127,7 +127,8 @@ traceのschemaは2です。
 その場合は`trace-end`が得られないため、検証ハーネスが実行基盤エラーとして拒否します。
 
 `node tools/check_dispatch_trace.mjs`はtrace有無の実行結果一致、JSONL構造、
-`切取`・`範囲切取`のInterpreter/AOT実dispatchと、同名system命令よりNode routeが優先される
+`切取`・`範囲切取`・`配列結合`・`LEN`・`文字列変換`・`JSON変換`・`CHR`・`表示`の
+Interpreter/AOT実dispatchと、同名system命令よりNode routeが優先される
 `ファイル名抽出`・`パス抽出`を固定fixtureで検証します。
 通常実行は作業ツリーを変更せず、`--evidence-output`を指定した場合だけ公式source・生成JavaScriptとの
 差分を追加確認し、絶対パスへ新規証拠を生成します。`sync_compat_evidence.mjs --check`はその証拠の
