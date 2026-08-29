@@ -281,12 +281,14 @@ const Parser = struct {
                 self.index += 1;
                 const minimum = self.parseDecimal() orelse {
                     self.index = saved;
+                    if (self.unicode) return error.IncompleteQuantifier;
                     return;
                 };
                 var maximum: ?usize = minimum;
                 if (consume(self, ',')) maximum = self.parseDecimal();
                 if (!consume(self, '}')) {
                     self.index = saved;
+                    if (self.unicode) return error.IncompleteQuantifier;
                     return;
                 }
                 if (maximum) |limit| if (limit < minimum) return error.InvalidQuantifierRange;
@@ -428,6 +430,8 @@ pub fn compileFailureMessageAlloc(allocator: std.mem.Allocator, specification: [
         error.UnclosedGroup => "Unterminated group",
         error.QuantifierWithoutAtom => "Nothing to repeat",
         error.InvalidCharacterRange => "Range out of order in character class",
+        error.InvalidHexEscape => "Invalid escape",
+        error.IncompleteQuantifier => "Incomplete quantifier",
         error.InvalidQuantifierRange => "numbers out of order in {} quantifier",
         error.InvalidNamedCapture => "Invalid capture group name",
         error.DuplicateNamedCapture => "Duplicate capture group name",
@@ -1075,6 +1079,16 @@ test "正規表現構文エラーはV8互換の文言を設定する" {
     const duplicate_capture_name = try runtime.stringUtf8("/(?<a>a)(?<a>b)/");
     try std.testing.expectError(error.DuplicateNamedCapture, call(&runtime, "正規表現マッチ", &.{ source, duplicate_capture_name }));
     try std.testing.expectEqualStrings("Invalid regular expression: /(?<a>a)(?<a>b)/: Duplicate capture group name", runtime.failureMessage().?);
+
+    runtime.clearFailureMessage();
+    const invalid_hex_escape = try runtime.stringUtf8("/\\xZZ/u");
+    try std.testing.expectError(error.InvalidHexEscape, call(&runtime, "正規表現マッチ", &.{ source, invalid_hex_escape }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /\\xZZ/u: Invalid escape", runtime.failureMessage().?);
+
+    runtime.clearFailureMessage();
+    const incomplete_quantifier = try runtime.stringUtf8("/a{,/u");
+    try std.testing.expectError(error.IncompleteQuantifier, call(&runtime, "正規表現マッチ", &.{ source, incomplete_quantifier }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /a{,/u: Incomplete quantifier", runtime.failureMessage().?);
 }
 
 test "名前付きキャプチャと非貪欲量指定を処理する" {

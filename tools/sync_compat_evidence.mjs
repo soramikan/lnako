@@ -373,6 +373,14 @@ function validateDispatchEvidence(evidence, lock, standard, records, inputSha256
     throw new Error("dispatch証拠のbaselineがupstream.lock.jsonと一致しません");
   }
   if (evidence.attestation !== null) validateAttestation(evidence.attestation, evidence, inputSha256, inputPath, bundlePath, bundleBytes);
+  // Historical dispatch evidence may intentionally reference a fixture from
+  // the attested commit rather than the current checkout. Reject an invalid
+  // historical commit before comparing that historical fixture hash with the
+  // current native-cases.json, so the security check remains about commit
+  // identity instead of depending on later fixture edits.
+  if (historicalCommit !== null && evidence?.provenance?.lnako?.commit !== historicalCommit) {
+    throw new Error("--historical-commitとdispatch証拠のcommitが一致しません");
+  }
   assertKnownObjectKeys(evidence.fixture, ["id", "file", "sourceSha256"], "dispatch-evidence.fixture");
   const fixture = records.find((record) => record.id === evidence.fixture?.id);
   if (fixture === undefined || fixture.file !== "native-cases.json") throw new Error("dispatch証拠のfixtureがnative-cases.jsonにありません");
@@ -417,9 +425,6 @@ function validateDispatchEvidence(evidence, lock, standard, records, inputSha256
     throw new Error("dispatch証拠のprovenanceが不正です");
   }
   const currentGit = readGitState();
-  if (historicalCommit !== null && evidence.provenance.lnako.commit !== historicalCommit) {
-    throw new Error("--historical-commitとdispatch証拠のcommitが一致しません");
-  }
   if (evidence.provenance.lnako.commit !== currentGit.commit && evidence.provenance.lnako.dirty !== true && historicalCommit !== evidence.provenance.lnako.commit) {
     throw new Error("cleanなdispatch証拠のlnako commitが現行HEADと一致しません");
   }

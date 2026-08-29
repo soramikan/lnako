@@ -627,6 +627,20 @@
     "source": "正規表現マッチ(\"x\",『/\\q/u』)を表示\n"
   },
   {
+    "id": "native-system-regexp-invalid-hex-escape-error",
+    "oracle": "official-generated",
+    "commands": ["正規表現マッチ"],
+    "stderrIncludes": "Invalid regular expression: /\\xZZ/u: Invalid escape",
+    "source": "正規表現マッチ(\"x\",『/\\xZZ/u』)を表示\n"
+  },
+  {
+    "id": "native-system-regexp-incomplete-quantifier-error",
+    "oracle": "official-generated",
+    "commands": ["正規表現マッチ"],
+    "stderrIncludes": "Invalid regular expression: /a{,/u: Incomplete quantifier",
+    "source": "正規表現マッチ(\"x\",『/a{,/u』)を表示\n"
+  },
+  {
     "id": "native-system-regexp-invalid-capture-name-error",
     "oracle": "official-generated",
     "commands": ["正規表現マッチ"],
