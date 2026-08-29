@@ -141,6 +141,10 @@ const Parser = struct {
                     while (self.index < self.source.len and self.source[self.index] != '>') self.index += 1;
                     if (self.index == self.source.len or self.index == start) return error.InvalidNamedCapture;
                     name = self.source[start..self.index];
+                    if (!isValidNamedCapture(name.?)) return error.InvalidNamedCapture;
+                    for (self.capture_names[0..self.capture_count]) |existing| {
+                        if (existing) |candidate| if (std.mem.eql(u16, candidate, name.?)) return error.DuplicateNamedCapture;
+                    }
                     self.index += 1;
                 }
             } else return error.UnsupportedGroupAssertion;
@@ -426,6 +430,7 @@ pub fn compileFailureMessageAlloc(allocator: std.mem.Allocator, specification: [
         error.InvalidCharacterRange => "Range out of order in character class",
         error.InvalidQuantifierRange => "numbers out of order in {} quantifier",
         error.InvalidNamedCapture => "Invalid capture group name",
+        error.DuplicateNamedCapture => "Duplicate capture group name",
         error.UnsupportedGroupAssertion => "Invalid group",
         error.InvalidUnicodeEscape => "Invalid Unicode escape",
         error.InvalidEscape => "\\ at end of pattern",
@@ -961,6 +966,22 @@ fn isUnicodeIdentityEscape(unit: u16, in_class: bool) bool {
     };
 }
 
+fn isValidNamedCapture(name: []const u16) bool {
+    if (name.len == 0) return false;
+    var ascii = true;
+    for (name) |unit| if (unit > 0x7f) {
+        ascii = false;
+        break;
+    };
+    if (!ascii) return true;
+    const first = name[0];
+    if (!((first >= 'A' and first <= 'Z') or (first >= 'a' and first <= 'z') or first == '_' or first == '$')) return false;
+    for (name[1..]) |unit| {
+        if (!((unit >= 'A' and unit <= 'Z') or (unit >= 'a' and unit <= 'z') or (unit >= '0' and unit <= '9') or unit == '_' or unit == '$')) return false;
+    }
+    return true;
+}
+
 fn namedCaptureIndex(compiled: *const Compiled, name: []const u16) ?usize {
     for (compiled.capture_names[0..compiled.capture_count], 0..) |candidate, index| if (candidate) |actual| {
         if (std.mem.eql(u16, actual, name)) return index;
@@ -1044,6 +1065,16 @@ test "正規表現構文エラーはV8互換の文言を設定する" {
     const invalid_identity_escape = try runtime.stringUtf8("/\\q/u");
     try std.testing.expectError(error.InvalidIdentityEscape, call(&runtime, "正規表現マッチ", &.{ source, invalid_identity_escape }));
     try std.testing.expectEqualStrings("Invalid regular expression: /\\q/u: Invalid escape", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
+
+    const invalid_capture_name = try runtime.stringUtf8("/(?<1>a)/");
+    try std.testing.expectError(error.InvalidNamedCapture, call(&runtime, "正規表現マッチ", &.{ source, invalid_capture_name }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /(?<1>a)/: Invalid capture group name", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
+
+    const duplicate_capture_name = try runtime.stringUtf8("/(?<a>a)(?<a>b)/");
+    try std.testing.expectError(error.DuplicateNamedCapture, call(&runtime, "正規表現マッチ", &.{ source, duplicate_capture_name }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /(?<a>a)(?<a>b)/: Duplicate capture group name", runtime.failureMessage().?);
 }
 
 test "名前付きキャプチャと非貪欲量指定を処理する" {

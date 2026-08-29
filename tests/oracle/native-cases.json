@@ -607,6 +607,20 @@
     "source": "正規表現マッチ(\"x\",『/\\q/u』)を表示\n"
   },
   {
+    "id": "native-system-regexp-invalid-capture-name-error",
+    "oracle": "official-generated",
+    "commands": ["正規表現マッチ"],
+    "stderrIncludes": "Invalid regular expression: /(?<1>a)/: Invalid capture group name",
+    "source": "正規表現マッチ(\"x\",『/(?<1>a)/』)を表示\n"
+  },
+  {
+    "id": "native-system-regexp-duplicate-capture-name-error",
+    "oracle": "official-generated",
+    "commands": ["正規表現マッチ"],
+    "stderrIncludes": "Invalid regular expression: /(?<a>a)(?<a>b)/: Duplicate capture group name",
+    "source": "正規表現マッチ(\"x\",『/(?<a>a)(?<a>b)/』)を表示\n"
+  },
+  {
     "id": "native-system-table-regexp-null-row-error",
     "oracle": "official-generated",
     "source": "表正規表現ピックアップ([NULL],0,\"a\")を表示\n"
