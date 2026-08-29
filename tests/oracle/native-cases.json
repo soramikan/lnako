@@ -653,6 +653,11 @@
     "source": "正規表現マッチ(\"x\",『/\\p{Nope}/u』)を表示\n"
   },
   {
+    "id": "native-system-regexp-unicode-property-aliases",
+    "commands": ["正規表現マッチ", "JSON変換"],
+    "source": "JSON変換(正規表現マッチ(\"F🏻$あ\",『/[\\p{AHex}\\p{Emoji_Modifier}\\p{gc=Sc}\\p{XID_Start}]/gu』))を表示\nJSON変換(正規表現マッチ(\"A\",『/\\p{Cased_Letter}/u』))を表示\n"
+  },
+  {
     "id": "native-system-regexp-invalid-capture-name-error",
     "oracle": "official-generated",
     "commands": ["正規表現マッチ"],

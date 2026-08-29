@@ -455,6 +455,14 @@ ABI値の所有権と非同期スレッド制約は[`NATIVE_PLUGIN_ABI.md`](NATI
 | `表列取得`などの関数行property | 公式生成の匿名なでしこ関数は`Function.name`が空文字列で、rest引数wrapperのため`Function.length`が0になる。表命令はこのpropertyをそのまま読み出す | Interpreterと純LLVM AOTはlowering時の内部`__lambda$...`名を公開せず、`name`を空文字列へ変換し、`length`を0として返す。さらにown propertyを優先して標準prototypeのconstructor・代表的method・`__proto__`を読み出し、ユーザー関数のprototype objectも辞書として扱う。標準methodとbyte bufferの代表的methodは名前を持つ合成関数値であり、抽出したBuffer `slice`の未束縛呼出しエラーを実装する。その他のreceiver付き呼出し、descriptor・identity・prototype変更、backing buffer identityは未実装境界として残す | `native-system-table-function-properties`、`native-system-table-inherited-properties`、`native-system-byte-buffer-property`、`native-system-byte-buffer-method-calls`、`TODO: table-inherited-properties`、`TODO: aot-byte-buffer-value` |
 | `表列取得`などの継承property | 公式のrow property lookupはown propertyを優先した上で、Object/Array/String/Functionおよび数値・真偽値・BigIntのprototype chainを参照する。Buffer/Uint8ArrayはTypedArray/Buffer chain、ArrayBufferはArrayBuffer chainも参照し、constructor・代表的method・byteLength系scalar propertyを返す | Interpreterと純LLVM AOTは、表命令のrow property lookupで標準prototypeのfixture対象propertyを解決する。合成したmethod関数は公式の表示名を持ち、抽出したBuffer `slice`は未束縛エラーになるが、receiverを保持した成功呼出し、その他のreceiver付き呼出し、同一propertyのidentity、property descriptor、prototypeの変更、`__proto__`の完全なprototype object、RegExp・host objectの全property chainまでは再現しない。own propertyがある場合は継承値より優先する | `native-system-table-inherited-properties`、`native-system-byte-buffer-property`、`native-system-byte-buffer-method-calls`、`TODO: table-inherited-properties`、`TODO: aot-byte-buffer-value` |
 
+## 正規表現Unicode propertyの静的範囲
+
+Node 24のECMAScript property escapeを生成時oracleとして、General_Category 38種とECMAScript binary property 53種、および主要Scriptの範囲を`src/generated/unicode_properties.zig`へ固定する。実行時にNode/JavaScriptを呼び出さず、Interpreter・純LLVM AOTとも同じ静的範囲表を二分探索する。長名とUnicode短縮alias、`General_Category=` / `gc=`、主要Scriptの`Script=` / `sc=`をfixtureで比較する。`Script_Extensions`、`v`のUnicode set、未収録Script alias、`i`時の全Unicode折畳みは`TODO: regexp-unicode-flags`として完成扱いにしない。
+
+| 対象 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID / TODO |
+|---|---|---|---|
+| `\\p{...}` / `\\P{...}`のproperty名 | `u`フラグ時にECMAScriptのbinary property、General_Category、Script propertyと規定aliasを解決し、未知名は`Invalid property name`で失敗する | 生成済みZig範囲表でbinary 53種・General_Category 38種と主要Scriptを解決する。通常モードはJS runtimeを使わない | `native-system-regexp-unicode-properties`、`native-system-regexp-unicode-property-aliases`、`native-system-regexp-unicode-property-error`、`TODO: regexp-unicode-flags` |
+
 ## 更新規則
 
 - 説明文と実装が食い違う場合は、固定した公式v3.7.24の実行結果を優先する。
