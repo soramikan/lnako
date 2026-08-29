@@ -13677,7 +13677,7 @@ fn dictionaryHasBuiltin(runtime: *Runtime, source: Value, key: Value) !bool {
             const key_units = try valueUtf16Alloc(runtime, roots[1]);
             defer runtime.allocator.free(key_units);
             for (roots[0].object().?.payload.dictionary.items) |entry| if (try aotPropertyKeyEqual(runtime, entry.key, key_units)) return true;
-            return false;
+            return (try tableInheritedProperty(runtime, roots[0], .dictionary, key_units)) != null;
         },
         .array => {
             const key_units = try valueUtf16Alloc(runtime, roots[1]);
@@ -13687,12 +13687,13 @@ fn dictionaryHasBuiltin(runtime: *Runtime, source: Value, key: Value) !bool {
                 return runtime.aotArrayIsPresent(roots[0].object().?, index);
             }
             for (roots[0].object().?.array_properties.items) |property| if (runtime.aotPropertyKeyMatchesUnits(property.key, key_units)) return true;
-            return false;
+            return (try tableInheritedProperty(runtime, roots[0], .array, key_units)) != null;
         },
         .function => {
             const key_units = try valueUtf16Alloc(runtime, roots[1]);
             defer runtime.allocator.free(key_units);
-            return std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) or std.mem.eql(u16, key_units, &.{ 'n', 'a', 'm', 'e' });
+            if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) or std.mem.eql(u16, key_units, &.{ 'n', 'a', 'm', 'e' })) return true;
+            return (try tableInheritedProperty(runtime, roots[0], .function, key_units)) != null;
         },
         else => {
             const key_units = try valueUtf16Alloc(runtime, roots[1]);
@@ -20393,6 +20394,28 @@ test "AOT辞書キー存在の型エラーは動的な公式文言を保つ" {
     const message = try pendingExceptionMessageUtf8Alloc(&runtime);
     defer runtime.allocator.free(message);
     try std.testing.expectEqualStrings("Cannot use 'in' operator to search for 'x�' in null", message);
+}
+
+test "AOT辞書キー存在は標準prototype propertyを含む" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 3;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createDictionary(&.{});
+    roots[1] = try runtime.createArray(&.{numberValue(1)});
+    roots[2] = try runtime.createFunction(testAotFunction, 1, &.{});
+
+    try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[0], staticStringValue("toString")));
+    try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[0], staticStringValue("constructor")));
+    try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[0], staticStringValue("__proto__")));
+    try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[1], staticStringValue("map")));
+    try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[1], staticStringValue("toString")));
+    try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[2], staticStringValue("toString")));
+    try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[2], staticStringValue("prototype")));
+    try std.testing.expect(!(try dictionaryHasBuiltin(&runtime, roots[0], staticStringValue("missing"))));
 }
 
 test "AOT HTTPのqueryとform parserはURL decode境界を保つ" {

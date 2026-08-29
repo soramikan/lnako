@@ -1,6 +1,7 @@
 const std = @import("std");
 const value_mod = @import("../../runtime/value.zig");
 const common = @import("common.zig");
+const arrays = @import("arrays.zig");
 
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
@@ -82,25 +83,36 @@ fn remove(runtime: *Runtime, source: Value, key_value: Value) !Value {
 }
 
 fn has(runtime: *Runtime, source: Value, key_value: Value) !bool {
-    if (source == .dictionary) {
-        const key = try runtime.valueToString(key_value);
-        return source.dictionary.has(key.string);
-    }
-    if (source == .array) {
-        const key = try runtime.valueToString(key_value);
-        if (std.mem.eql(u16, key.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return true;
-        if (canonicalArrayIndex(key.string.units)) |index| return source.array.isPresent(index);
-        return source.array.hasProperty(key.string);
-    }
-    if (source == .function) {
-        const key = try runtime.valueToString(key_value);
-        return std.mem.eql(u16, key.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) or std.mem.eql(u16, key.string.units, &.{ 'n', 'a', 'm', 'e' });
-    }
-    var key = try runtime.valueToString(key_value);
+    var rooted_source = source;
+    var rooted_key_value = key_value;
     var roots = runtime.rootFrame();
     defer roots.deinit();
+    try roots.protect(&rooted_source);
+    try roots.protect(&rooted_key_value);
+
+    if (rooted_source == .dictionary) {
+        var key = try runtime.valueToString(rooted_key_value);
+        try roots.protect(&key);
+        if (rooted_source.dictionary.has(key.string)) return true;
+        return arrays.hasStandardInheritedProperty(runtime, rooted_source, key.string.units);
+    }
+    if (rooted_source == .array) {
+        var key = try runtime.valueToString(rooted_key_value);
+        try roots.protect(&key);
+        if (std.mem.eql(u16, key.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return true;
+        if (canonicalArrayIndex(key.string.units)) |index| return rooted_source.array.isPresent(index);
+        if (rooted_source.array.hasProperty(key.string)) return true;
+        return arrays.hasStandardInheritedProperty(runtime, rooted_source, key.string.units);
+    }
+    if (rooted_source == .function) {
+        var key = try runtime.valueToString(rooted_key_value);
+        try roots.protect(&key);
+        if (std.mem.eql(u16, key.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) or std.mem.eql(u16, key.string.units, &.{ 'n', 'a', 'm', 'e' })) return true;
+        return arrays.hasStandardInheritedProperty(runtime, rooted_source, key.string.units);
+    }
+    var key = try runtime.valueToString(rooted_key_value);
     try roots.protect(&key);
-    var receiver = try runtime.valueToString(source);
+    var receiver = try runtime.valueToString(rooted_source);
     try roots.protect(&receiver);
     const key_utf8 = try key.string.toUtf8Lossy(runtime.allocator());
     defer runtime.allocator().free(key_utf8);
@@ -222,6 +234,51 @@ test "配列の非index own propertyをキーと内容の列挙・削除へ含�
     _ = (try call(&runtime, "辞書キー削除", &.{ array, foo })).?;
     try std.testing.expect(!(try call(&runtime, "辞書キー存在", &.{ array, foo })).?.boolean);
     try std.testing.expectEqual(@as(usize, 1), array.array.properties.items.len);
+}
+
+test "辞書キー存在は標準prototype propertyを含む" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var dictionary = try runtime.createDictionary();
+    try roots.protect(&dictionary);
+    var array = try runtime.createArray();
+    try roots.protect(&array);
+    var function_name = try runtime.stringUtf8("利用者関数");
+    try roots.protect(&function_name);
+    var function = try runtime.createIrFunction(function_name.string, 1, 0, &.{});
+    try roots.protect(&function);
+
+    var to_string_key = try runtime.stringUtf8("toString");
+    try roots.protect(&to_string_key);
+    var constructor_key = try runtime.stringUtf8("constructor");
+    try roots.protect(&constructor_key);
+    var proto_key = try runtime.stringUtf8("__proto__");
+    try roots.protect(&proto_key);
+    var map_key = try runtime.stringUtf8("map");
+    try roots.protect(&map_key);
+    var prototype_key = try runtime.stringUtf8("prototype");
+    try roots.protect(&prototype_key);
+    var missing_key = try runtime.stringUtf8("missing");
+    try roots.protect(&missing_key);
+
+    const probes = [_]struct { source: Value, key: Value, expected: bool }{
+        .{ .source = dictionary, .key = to_string_key, .expected = true },
+        .{ .source = dictionary, .key = constructor_key, .expected = true },
+        .{ .source = dictionary, .key = proto_key, .expected = true },
+        .{ .source = array, .key = map_key, .expected = true },
+        .{ .source = array, .key = to_string_key, .expected = true },
+        .{ .source = function, .key = to_string_key, .expected = true },
+        .{ .source = function, .key = prototype_key, .expected = true },
+        .{ .source = dictionary, .key = missing_key, .expected = false },
+    };
+    for (probes) |probe| {
+        const result = (try call(&runtime, "辞書キー存在", &.{ probe.source, probe.key })).?;
+        try std.testing.expectEqual(probe.expected, result.boolean);
+    }
 }
 
 fn dictionaryHasErrorAllocationTest(allocator: std.mem.Allocator) !void {

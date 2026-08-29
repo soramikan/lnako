@@ -1413,6 +1413,10 @@ fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) 
     return null;
 }
 
+pub fn hasStandardInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) !bool {
+    return (try tableInheritedProperty(runtime, source, units)) != null;
+}
+
 test "表行propertyはown値を優先して標準prototypeを解決する" {
     var runtime = Runtime.init(std.testing.allocator);
     defer runtime.deinit();
