@@ -2112,6 +2112,12 @@ fn regexpCommandName(command: aot_builtin.Command) ?[]const u8 {
     };
 }
 
+fn setRegexpCompileFailureMessage(runtime: *Runtime, specification: []const u16, failure: anyerror) !void {
+    const message = try regexp.compileFailureMessageAlloc(runtime.allocator, specification, failure) orelse return;
+    defer runtime.allocator.free(message);
+    runtime.setFailureText(message);
+}
+
 fn regexpBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !RegexpCallResult {
     _ = regexpCommandName(command) orelse return error.UnknownCommand;
     const required: usize = if (command == .regexp_replace) 3 else 2;
@@ -2126,7 +2132,10 @@ fn regexpBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []c
     defer runtime.allocator.free(source_units);
     const pattern_units = try valueUtf16Alloc(runtime, rooted[1]);
     defer runtime.allocator.free(pattern_units);
-    var compiled = try regexp.compilePattern(runtime.allocator, pattern_units, true);
+    var compiled = regexp.compilePattern(runtime.allocator, pattern_units, true) catch |failure| {
+        try setRegexpCompileFailureMessage(runtime, pattern_units, failure);
+        return failure;
+    };
     defer compiled.deinit();
 
     if (command == .regexp_replace) {
@@ -2240,7 +2249,7 @@ pub export fn lnako_aot_regexp_call_site(out: *Value, captures: ?*Value, argumen
     }
     const values = if (arguments) |pointer| pointer[0..len] else &.{};
     const result = regexpBuiltin(runtime, command, values) catch |failure| {
-        runtime.setFailure(failure);
+        if (!runtime.has_pending_exception) runtime.setFailure(failure);
         return;
     };
     out.* = result.value;
@@ -8378,7 +8387,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         .table_sort, .table_numeric_sort, .table_pickup, .table_exact_pickup, .table_search, .table_column_count, .table_row_count, .table_column, .table_transpose, .table_rotate, .table_unique, .table_insert_column, .table_delete_column, .table_column_sum, .table_regexp_search, .table_regexp_pickup => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = tableBuiltin(runtime, command, actual) catch |failure| {
-                runtime.setFailure(failure);
+                if (!runtime.has_pending_exception) runtime.setFailure(failure);
                 return;
             };
         },
@@ -14813,7 +14822,10 @@ fn tableRegexpSearchBuiltin(runtime: *Runtime, source: Value, row_value: Value, 
     defer runtime.popRoots(&frame);
     const pattern_units = try tableRegexpPatternUnitsAlloc(runtime, roots[3]);
     defer runtime.allocator.free(pattern_units);
-    var compiled = try regexp.RawPattern.init(runtime.allocator, pattern_units, false);
+    var compiled = regexp.RawPattern.init(runtime.allocator, pattern_units, false) catch |failure| {
+        try setRegexpCompileFailureMessage(runtime, pattern_units, failure);
+        return failure;
+    };
     defer compiled.deinit();
     const rows = try arrayItems(roots[0]);
     while (try compareValues(runtime, .less, roots[4], numberValue(@floatFromInt(rows.items.len)))) {
@@ -14834,7 +14846,10 @@ fn tableRegexpPickupBuiltin(runtime: *Runtime, source: Value, column: Value, pat
     defer runtime.popRoots(&frame);
     const pattern_units = try tableRegexpPatternUnitsAlloc(runtime, roots[2]);
     defer runtime.allocator.free(pattern_units);
-    var compiled = try regexp.RawPattern.init(runtime.allocator, pattern_units, false);
+    var compiled = regexp.RawPattern.init(runtime.allocator, pattern_units, false) catch |failure| {
+        try setRegexpCompileFailureMessage(runtime, pattern_units, failure);
+        return failure;
+    };
     defer compiled.deinit();
     roots[3] = try runtime.createArray(&.{});
     const result = try arrayItems(roots[3]);
@@ -20224,7 +20239,15 @@ test "AOT表正規表現系はraw RegExpと浅いコピーを保つ" {
     try std.testing.expectError(error.TableRowMissing, tableBuiltin(&runtime, .table_regexp_pickup, &.{ roots[5], numberValue(0), raw }));
     roots[6] = try runtime.createArray(&.{});
     try std.testing.expectError(error.UnclosedCharacterClass, tableBuiltin(&runtime, .table_regexp_search, &.{ roots[6], numberValue(0), numberValue(0), staticStringValue("[") }));
+    const search_message = try pendingExceptionMessageUtf8Alloc(&runtime);
+    defer runtime.allocator.free(search_message);
+    try std.testing.expectEqualStrings("Invalid regular expression: /[/: Unterminated character class", search_message);
+    _ = runtime.takeException();
     try std.testing.expectError(error.UnclosedCharacterClass, tableBuiltin(&runtime, .table_regexp_pickup, &.{ roots[6], numberValue(0), staticStringValue("[") }));
+    const pickup_message = try pendingExceptionMessageUtf8Alloc(&runtime);
+    defer runtime.allocator.free(pickup_message);
+    try std.testing.expectEqualStrings("Invalid regular expression: /[/: Unterminated character class", pickup_message);
+    _ = runtime.takeException();
 }
 
 test "AOT表正規表現ピックアップはBufferのsliceを共有する" {
@@ -20514,6 +20537,12 @@ test "AOT一般正規表現命令は共有エンジンと抽出副作用を保�
     const split = try regexpBuiltin(&runtime, .regexp_split, &.{ staticStringValue("a,b"), staticStringValue("/(,)/") });
     roots[7] = split.value;
     try std.testing.expectEqual(@as(usize, 3), roots[7].object().?.payload.array.items.len);
+
+    try std.testing.expectError(error.UnclosedCharacterClass, regexpBuiltin(&runtime, .regexp_match, &.{ staticStringValue("x"), staticStringValue("[") }));
+    const invalid_message = try pendingExceptionMessageUtf8Alloc(&runtime);
+    defer runtime.allocator.free(invalid_message);
+    try std.testing.expectEqualStrings("Invalid regular expression: /[/: Unterminated character class", invalid_message);
+    _ = runtime.takeException();
 }
 
 test "AOT JSONエンコードはcompact prettyとECMAScript境界を保つ" {

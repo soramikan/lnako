@@ -589,6 +589,7 @@
   {
     "id": "native-system-table-regexp-invalid-pattern-error",
     "oracle": "official-generated",
+    "stderrIncludes": "Invalid regular expression: /[/: Unterminated character class",
     "source": "表曖昧検索([],0,0,\"[\")を表示\n"
   },
   {

@@ -326,7 +326,10 @@ pub fn callWithEffects(runtime: *Runtime, name: []const u8, arguments: []const V
     defer source_string.deinit();
     var pattern_string = try ownedText(runtime, common.argument(arguments, 1));
     defer pattern_string.deinit();
-    var compiled = try compile(runtime.allocator(), pattern_string.units, defaultGlobal(name));
+    var compiled = compile(runtime.allocator(), pattern_string.units, defaultGlobal(name)) catch |failure| {
+        try setCompileFailureMessage(runtime, pattern_string.units, failure);
+        return failure;
+    };
     defer compiled.deinit();
     if (eql(name, "正規表現マッチ")) return try matchCommand(runtime, source_string.units, &compiled);
     if (eql(name, "正規表現抽出")) return try extractCommand(runtime, source_string.units, &compiled);
@@ -377,50 +380,99 @@ pub fn testRaw(allocator: std.mem.Allocator, pattern: []const u16, source: []con
     return compiled.matches(source);
 }
 
-fn compile(allocator: std.mem.Allocator, specification: []const u16, default_global: bool) !Compiled {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    errdefer arena.deinit();
-    var pattern = specification;
-    var flags = Flags{ .global = default_global };
+const SpecificationParts = struct {
+    pattern: []const u16,
+    flags: []const u16,
+    delimited: bool,
+};
+
+fn splitSpecification(specification: []const u16) SpecificationParts {
     if (specification.len >= 2 and specification[0] == '/') {
-        var last_slash: ?usize = null;
         var index = specification.len;
         while (index > 1) {
             index -= 1;
             if (specification[index] == '/' and !escapedAt(specification, index)) {
-                last_slash = index;
+                if (index > 1) return .{
+                    .pattern = specification[1..index],
+                    .flags = specification[index + 1 ..],
+                    .delimited = true,
+                };
                 break;
             }
         }
-        if (last_slash) |slash| if (slash > 1) {
-            pattern = specification[1..slash];
-            flags = .{};
-            var seen_flags: u8 = 0;
-            for (specification[slash + 1 ..]) |flag| {
-                const bit: u8 = switch (flag) {
-                    'g' => 1 << 0,
-                    'i' => 1 << 1,
-                    'm' => 1 << 2,
-                    's' => 1 << 3,
-                    'u' => 1 << 4,
-                    'd' => 1 << 5,
-                    'y' => 1 << 6,
-                    else => return error.UnsupportedRegularExpressionFlag,
-                };
-                if (seen_flags & bit != 0) return error.DuplicateRegularExpressionFlag;
-                seen_flags |= bit;
-                switch (flag) {
-                    'g' => flags.global = true,
-                    'i' => flags.ignore_case = true,
-                    'm' => flags.multiline = true,
-                    's' => flags.dot_all = true,
-                    'u' => flags.unicode = true,
-                    'd' => flags.indices = true,
-                    'y' => flags.sticky = true,
-                    else => unreachable,
-                }
+    }
+    return .{ .pattern = specification, .flags = &.{}, .delimited = false };
+}
+
+/// Format the part of V8's RegExp constructor error that is stable across
+/// the interpreter, AOT, and table-regexp routes.  The parser still returns
+/// the typed Zig error; callers use this text only for the user-visible
+/// failure message.
+pub fn compileFailureMessageAlloc(allocator: std.mem.Allocator, specification: []const u16, failure: anyerror) !?[]u8 {
+    const parts = splitSpecification(specification);
+    if (failure == error.UnsupportedRegularExpressionFlag or failure == error.DuplicateRegularExpressionFlag) {
+        if (!parts.delimited) return null;
+        const flags_utf8 = try (value_mod.String{ .allocator = allocator, .units = @constCast(parts.flags) }).toUtf8Lossy(allocator);
+        defer allocator.free(flags_utf8);
+        return try std.fmt.allocPrint(allocator, "Invalid flags supplied to RegExp constructor '{s}'", .{flags_utf8});
+    }
+    const reason = switch (failure) {
+        error.UnclosedCharacterClass => "Unterminated character class",
+        error.UnclosedGroup => "Unterminated group",
+        error.QuantifierWithoutAtom => "Nothing to repeat",
+        error.InvalidCharacterRange => "Range out of order in character class",
+        error.InvalidQuantifierRange => "numbers out of order in {} quantifier",
+        error.InvalidNamedCapture => "Invalid capture group name",
+        error.UnsupportedGroupAssertion => "Invalid group",
+        error.InvalidUnicodeEscape => "Invalid Unicode escape",
+        else => return null,
+    };
+    const pattern_utf8 = try (value_mod.String{ .allocator = allocator, .units = @constCast(parts.pattern) }).toUtf8Lossy(allocator);
+    defer allocator.free(pattern_utf8);
+    const flags_utf8 = try (value_mod.String{ .allocator = allocator, .units = @constCast(parts.flags) }).toUtf8Lossy(allocator);
+    defer allocator.free(flags_utf8);
+    return try std.fmt.allocPrint(allocator, "Invalid regular expression: /{s}/{s}: {s}", .{ pattern_utf8, flags_utf8, reason });
+}
+
+pub fn setCompileFailureMessage(runtime: *Runtime, specification: []const u16, failure: anyerror) !void {
+    const message = try compileFailureMessageAlloc(runtime.allocator(), specification, failure) orelse return;
+    defer runtime.allocator().free(message);
+    try runtime.setFailureMessage(message);
+}
+
+fn compile(allocator: std.mem.Allocator, specification: []const u16, default_global: bool) !Compiled {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    errdefer arena.deinit();
+    const parts = splitSpecification(specification);
+    const pattern = parts.pattern;
+    var flags = Flags{ .global = default_global };
+    if (parts.delimited) {
+        flags = .{};
+        var seen_flags: u8 = 0;
+        for (parts.flags) |flag| {
+            const bit: u8 = switch (flag) {
+                'g' => 1 << 0,
+                'i' => 1 << 1,
+                'm' => 1 << 2,
+                's' => 1 << 3,
+                'u' => 1 << 4,
+                'd' => 1 << 5,
+                'y' => 1 << 6,
+                else => return error.UnsupportedRegularExpressionFlag,
+            };
+            if (seen_flags & bit != 0) return error.DuplicateRegularExpressionFlag;
+            seen_flags |= bit;
+            switch (flag) {
+                'g' => flags.global = true,
+                'i' => flags.ignore_case = true,
+                'm' => flags.multiline = true,
+                's' => flags.dot_all = true,
+                'u' => flags.unicode = true,
+                'd' => flags.indices = true,
+                'y' => flags.sticky = true,
+                else => unreachable,
             }
-        };
+        }
     }
     const owned_pattern = try arena.allocator().dupe(u16, pattern);
     var parser = Parser{ .allocator = arena.allocator(), .source = owned_pattern, .unicode = flags.unicode };
@@ -935,6 +987,26 @@ test "正規表現の量指定・キャプチャ・置換・区切を処理す�
     try roots.protect(&split_pattern);
     const split = (try call(&runtime, "正規表現区切", &.{ source, split_pattern })).?;
     try std.testing.expectEqual(@as(usize, 3), split.array.len());
+}
+
+test "正規表現構文エラーはV8互換の文言を設定する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const source = try runtime.stringUtf8("x");
+
+    const raw_invalid = try runtime.stringUtf8("[");
+    try std.testing.expectError(error.UnclosedCharacterClass, call(&runtime, "正規表現マッチ", &.{ source, raw_invalid }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /[/: Unterminated character class", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
+
+    const delimited_invalid = try runtime.stringUtf8("/[/u");
+    try std.testing.expectError(error.UnclosedCharacterClass, call(&runtime, "正規表現マッチ", &.{ source, delimited_invalid }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /[/u: Unterminated character class", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
+
+    const invalid_flags = try runtime.stringUtf8("/a/gg");
+    try std.testing.expectError(error.DuplicateRegularExpressionFlag, call(&runtime, "正規表現マッチ", &.{ source, invalid_flags }));
+    try std.testing.expectEqualStrings("Invalid flags supplied to RegExp constructor 'gg'", runtime.failureMessage().?);
 }
 
 test "名前付きキャプチャと非貪欲量指定を処理する" {

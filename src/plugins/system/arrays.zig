@@ -1764,7 +1764,10 @@ fn tableRegexpSearch(runtime: *Runtime, source: Value, row_value: Value, column:
     // makes an invalid pattern fail even when the table is empty or the raw
     // start value is already out of range.
     rooted[7] = if (rooted[3] == .undefined) try runtime.stringCodeUnits(&.{}) else try runtime.valueToString(rooted[3]);
-    var compiled = try regexp.RawPattern.init(runtime.allocator(), rooted[7].string.units, false);
+    var compiled = regexp.RawPattern.init(runtime.allocator(), rooted[7].string.units, false) catch |failure| {
+        try regexp.setCompileFailureMessage(runtime, rooted[7].string.units, failure);
+        return failure;
+    };
     defer compiled.deinit();
     while ((try operators.compare(runtime, rooted[4], .{ .number = @floatFromInt(rooted[0].array.len()) })) == .lt) {
         rooted[5] = try indexed(runtime, rooted[0], rooted[4]);
@@ -1783,7 +1786,10 @@ fn tableRegexpPickup(runtime: *Runtime, source: Value, column: Value, pattern: V
     defer roots.deinit();
     for (&rooted) |*root| try roots.protect(root);
     rooted[6] = if (rooted[2] == .undefined) try runtime.stringCodeUnits(&.{}) else try runtime.valueToString(rooted[2]);
-    var compiled = try regexp.RawPattern.init(runtime.allocator(), rooted[6].string.units, false);
+    var compiled = regexp.RawPattern.init(runtime.allocator(), rooted[6].string.units, false) catch |failure| {
+        try regexp.setCompileFailureMessage(runtime, rooted[6].string.units, failure);
+        return failure;
+    };
     defer compiled.deinit();
     rooted[3] = try runtime.createArray();
     for (rooted[0].array.items.items) |row| {
@@ -2590,7 +2596,11 @@ test "表正規表現系はraw RegExpと浅いコピーとGCを保つ" {
     var empty = try runtime.createArray();
     try roots.protect(&empty);
     try std.testing.expectError(error.UnclosedCharacterClass, tableRegexpSearch(&runtime, empty, .{ .number = 0 }, .{ .number = 0 }, invalid));
+    try std.testing.expectEqualStrings("Invalid regular expression: /[/: Unterminated character class", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
     try std.testing.expectError(error.UnclosedCharacterClass, tableRegexpPickup(&runtime, empty, .{ .number = 0 }, invalid));
+    try std.testing.expectEqualStrings("Invalid regular expression: /[/: Unterminated character class", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
 
     var null_row = try common.arrayFromValues(&runtime, &.{Value.null_value});
     try roots.protect(&null_row);
