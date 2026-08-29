@@ -2112,8 +2112,8 @@ fn regexpCommandName(command: aot_builtin.Command) ?[]const u8 {
     };
 }
 
-fn setRegexpCompileFailureMessage(runtime: *Runtime, specification: []const u16, failure: anyerror) !void {
-    const message = try regexp.compileFailureMessageAlloc(runtime.allocator, specification, failure) orelse return;
+fn setRegexpCompileFailureMessage(runtime: *Runtime, specification: []const u16, default_global: bool, failure: anyerror) !void {
+    const message = try regexp.compileFailureMessageAlloc(runtime.allocator, specification, default_global, failure) orelse return;
     defer runtime.allocator.free(message);
     runtime.setFailureText(message);
 }
@@ -2133,7 +2133,7 @@ fn regexpBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []c
     const pattern_units = try valueUtf16Alloc(runtime, rooted[1]);
     defer runtime.allocator.free(pattern_units);
     var compiled = regexp.compilePattern(runtime.allocator, pattern_units, true) catch |failure| {
-        try setRegexpCompileFailureMessage(runtime, pattern_units, failure);
+        try setRegexpCompileFailureMessage(runtime, pattern_units, true, failure);
         return failure;
     };
     defer compiled.deinit();
@@ -14823,7 +14823,7 @@ fn tableRegexpSearchBuiltin(runtime: *Runtime, source: Value, row_value: Value, 
     const pattern_units = try tableRegexpPatternUnitsAlloc(runtime, roots[3]);
     defer runtime.allocator.free(pattern_units);
     var compiled = regexp.RawPattern.init(runtime.allocator, pattern_units, false) catch |failure| {
-        try setRegexpCompileFailureMessage(runtime, pattern_units, failure);
+        try setRegexpCompileFailureMessage(runtime, pattern_units, false, failure);
         return failure;
     };
     defer compiled.deinit();
@@ -14847,7 +14847,7 @@ fn tableRegexpPickupBuiltin(runtime: *Runtime, source: Value, column: Value, pat
     const pattern_units = try tableRegexpPatternUnitsAlloc(runtime, roots[2]);
     defer runtime.allocator.free(pattern_units);
     var compiled = regexp.RawPattern.init(runtime.allocator, pattern_units, false) catch |failure| {
-        try setRegexpCompileFailureMessage(runtime, pattern_units, failure);
+        try setRegexpCompileFailureMessage(runtime, pattern_units, false, failure);
         return failure;
     };
     defer compiled.deinit();
@@ -20541,7 +20541,7 @@ test "AOT一般正規表現命令は共有エンジンと抽出副作用を保�
     try std.testing.expectError(error.UnclosedCharacterClass, regexpBuiltin(&runtime, .regexp_match, &.{ staticStringValue("x"), staticStringValue("[") }));
     const invalid_message = try pendingExceptionMessageUtf8Alloc(&runtime);
     defer runtime.allocator.free(invalid_message);
-    try std.testing.expectEqualStrings("Invalid regular expression: /[/: Unterminated character class", invalid_message);
+    try std.testing.expectEqualStrings("Invalid regular expression: /[/g: Unterminated character class", invalid_message);
     _ = runtime.takeException();
 }
 

@@ -1765,7 +1765,7 @@ fn tableRegexpSearch(runtime: *Runtime, source: Value, row_value: Value, column:
     // start value is already out of range.
     rooted[7] = if (rooted[3] == .undefined) try runtime.stringCodeUnits(&.{}) else try runtime.valueToString(rooted[3]);
     var compiled = regexp.RawPattern.init(runtime.allocator(), rooted[7].string.units, false) catch |failure| {
-        try regexp.setCompileFailureMessage(runtime, rooted[7].string.units, failure);
+        try regexp.setCompileFailureMessage(runtime, rooted[7].string.units, false, failure);
         return failure;
     };
     defer compiled.deinit();
@@ -1787,7 +1787,7 @@ fn tableRegexpPickup(runtime: *Runtime, source: Value, column: Value, pattern: V
     for (&rooted) |*root| try roots.protect(root);
     rooted[6] = if (rooted[2] == .undefined) try runtime.stringCodeUnits(&.{}) else try runtime.valueToString(rooted[2]);
     var compiled = regexp.RawPattern.init(runtime.allocator(), rooted[6].string.units, false) catch |failure| {
-        try regexp.setCompileFailureMessage(runtime, rooted[6].string.units, failure);
+        try regexp.setCompileFailureMessage(runtime, rooted[6].string.units, false, failure);
         return failure;
     };
     defer compiled.deinit();

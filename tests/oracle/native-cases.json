@@ -593,6 +593,13 @@
     "source": "表曖昧検索([],0,0,\"[\")を表示\n"
   },
   {
+    "id": "native-system-regexp-invalid-pattern-error",
+    "oracle": "official-generated",
+    "commands": ["正規表現マッチ"],
+    "stderrIncludes": "Invalid regular expression: /[/g: Unterminated character class",
+    "source": "正規表現マッチ(\"x\",\"[\")を表示\n"
+  },
+  {
     "id": "native-system-table-regexp-null-row-error",
     "oracle": "official-generated",
     "source": "表正規表現ピックアップ([NULL],0,\"a\")を表示\n"

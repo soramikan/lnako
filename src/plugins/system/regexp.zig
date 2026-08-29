@@ -327,7 +327,7 @@ pub fn callWithEffects(runtime: *Runtime, name: []const u8, arguments: []const V
     var pattern_string = try ownedText(runtime, common.argument(arguments, 1));
     defer pattern_string.deinit();
     var compiled = compile(runtime.allocator(), pattern_string.units, defaultGlobal(name)) catch |failure| {
-        try setCompileFailureMessage(runtime, pattern_string.units, failure);
+        try setCompileFailureMessage(runtime, pattern_string.units, defaultGlobal(name), failure);
         return failure;
     };
     defer compiled.deinit();
@@ -408,7 +408,7 @@ fn splitSpecification(specification: []const u16) SpecificationParts {
 /// the interpreter, AOT, and table-regexp routes.  The parser still returns
 /// the typed Zig error; callers use this text only for the user-visible
 /// failure message.
-pub fn compileFailureMessageAlloc(allocator: std.mem.Allocator, specification: []const u16, failure: anyerror) !?[]u8 {
+pub fn compileFailureMessageAlloc(allocator: std.mem.Allocator, specification: []const u16, default_global: bool, failure: anyerror) !?[]u8 {
     const parts = splitSpecification(specification);
     if (failure == error.UnsupportedRegularExpressionFlag or failure == error.DuplicateRegularExpressionFlag) {
         if (!parts.delimited) return null;
@@ -425,17 +425,22 @@ pub fn compileFailureMessageAlloc(allocator: std.mem.Allocator, specification: [
         error.InvalidNamedCapture => "Invalid capture group name",
         error.UnsupportedGroupAssertion => "Invalid group",
         error.InvalidUnicodeEscape => "Invalid Unicode escape",
+        error.InvalidEscape => "\\ at end of pattern",
+        error.UnexpectedPatternToken => "Unmatched ')'",
         else => return null,
     };
     const pattern_utf8 = try (value_mod.String{ .allocator = allocator, .units = @constCast(parts.pattern) }).toUtf8Lossy(allocator);
     defer allocator.free(pattern_utf8);
-    const flags_utf8 = try (value_mod.String{ .allocator = allocator, .units = @constCast(parts.flags) }).toUtf8Lossy(allocator);
-    defer allocator.free(flags_utf8);
-    return try std.fmt.allocPrint(allocator, "Invalid regular expression: /{s}/{s}: {s}", .{ pattern_utf8, flags_utf8, reason });
+    if (parts.delimited) {
+        const flags_utf8 = try (value_mod.String{ .allocator = allocator, .units = @constCast(parts.flags) }).toUtf8Lossy(allocator);
+        defer allocator.free(flags_utf8);
+        return try std.fmt.allocPrint(allocator, "Invalid regular expression: /{s}/{s}: {s}", .{ pattern_utf8, flags_utf8, reason });
+    }
+    return try std.fmt.allocPrint(allocator, "Invalid regular expression: /{s}/{s}: {s}", .{ pattern_utf8, if (default_global) "g" else "", reason });
 }
 
-pub fn setCompileFailureMessage(runtime: *Runtime, specification: []const u16, failure: anyerror) !void {
-    const message = try compileFailureMessageAlloc(runtime.allocator(), specification, failure) orelse return;
+pub fn setCompileFailureMessage(runtime: *Runtime, specification: []const u16, default_global: bool, failure: anyerror) !void {
+    const message = try compileFailureMessageAlloc(runtime.allocator(), specification, default_global, failure) orelse return;
     defer runtime.allocator().free(message);
     try runtime.setFailureMessage(message);
 }
@@ -996,7 +1001,7 @@ test "正規表現構文エラーはV8互換の文言を設定する" {
 
     const raw_invalid = try runtime.stringUtf8("[");
     try std.testing.expectError(error.UnclosedCharacterClass, call(&runtime, "正規表現マッチ", &.{ source, raw_invalid }));
-    try std.testing.expectEqualStrings("Invalid regular expression: /[/: Unterminated character class", runtime.failureMessage().?);
+    try std.testing.expectEqualStrings("Invalid regular expression: /[/g: Unterminated character class", runtime.failureMessage().?);
     runtime.clearFailureMessage();
 
     const delimited_invalid = try runtime.stringUtf8("/[/u");
@@ -1007,6 +1012,21 @@ test "正規表現構文エラーはV8互換の文言を設定する" {
     const invalid_flags = try runtime.stringUtf8("/a/gg");
     try std.testing.expectError(error.DuplicateRegularExpressionFlag, call(&runtime, "正規表現マッチ", &.{ source, invalid_flags }));
     try std.testing.expectEqualStrings("Invalid flags supplied to RegExp constructor 'gg'", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
+
+    const trailing_escape = try runtime.stringUtf8("\\");
+    try std.testing.expectError(error.InvalidEscape, call(&runtime, "正規表現マッチ", &.{ source, trailing_escape }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /\\/g: \\ at end of pattern", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
+
+    const unmatched_close = try runtime.stringUtf8(")");
+    try std.testing.expectError(error.UnexpectedPatternToken, call(&runtime, "正規表現マッチ", &.{ source, unmatched_close }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /)/g: Unmatched ')'", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
+
+    const invalid_unicode = try runtime.stringUtf8("/\\u{/u");
+    try std.testing.expectError(error.InvalidUnicodeEscape, call(&runtime, "正規表現マッチ", &.{ source, invalid_unicode }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /\\u{/u: Invalid Unicode escape", runtime.failureMessage().?);
 }
 
 test "名前付きキャプチャと非貪欲量指定を処理する" {
