@@ -772,6 +772,11 @@
     "source": "JSON変換(正規表現マッチ(\"😀\",『/\\uDE00/u』))を表示\nJSON変換(正規表現マッチ(\"😀\",『/\\uD83D/u』))を表示\nJSON変換(正規表現マッチ(\"😀\",『/[\\uDE00]/u』))を表示\nJSON変換(正規表現マッチ(\"😀\",『/\\uDE00/』))を表示\n"
   },
   {
+    "id": "native-system-regexp-unicode-lookbehind-boundary",
+    "commands": ["正規表現マッチ", "JSON変換"],
+    "source": "JSON変換(正規表現マッチ(\"😀x\",『/(?<=\\uDE00)x/u』))を表示\nJSON変換(正規表現マッチ(\"😀x\",『/(?<=\\uD83D)x/u』))を表示\nJSON変換(正規表現マッチ(\"😀x\",『/(?<=😀)x/u』))を表示\nJSON変換(正規表現マッチ(\"😀x\",『/(?<=\\uDE00)x/』))を表示\n"
+  },
+  {
     "id": "native-system-regexp-unicode-word-boundary",
     "commands": ["正規表現マッチ", "JSON変換"],
     "source": "JSON変換(正規表現マッチ(\"K\",『/^\\w$/iu』))を表示\nJSON変換(正規表現マッチ(\"K\",『/^\\b.\\b$/iu』))を表示\nJSON変換(正規表現マッチ(\"K\",『/^\\w$/u』))を表示\nJSON変換(正規表現マッチ(\"ſ\",『/^\\w$/iv』))を表示\nJSON変換(正規表現マッチ(\"xKx\",『/^x\\BK\\Bx$/iu』))を表示\n"

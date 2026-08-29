@@ -886,7 +886,7 @@ fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: Atom, init
             } else {
                 var matched = false;
                 var start: usize = 0;
-                while (start <= initial.position) : (start += 1) {
+                while (start <= initial.position) {
                     const behind_initial = Candidate{ .position = start, .captures = initial.captures };
                     const candidates = try matchExpression(allocator, source, assertion.expression, behind_initial, flags);
                     for (candidates) |candidate| if (candidate.position == initial.position) {
@@ -897,6 +897,8 @@ fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: Atom, init
                             try output.append(allocator, accepted);
                         }
                     };
+                    if (start == initial.position) break;
+                    start = advanceStringIndex(source, start, flags.unicode);
                 }
                 if (!assertion.positive and !matched) try output.append(allocator, initial);
             }
@@ -1678,6 +1680,33 @@ test "Unicode正規表現の探索はサロゲート対内部へ進まない" {
     try roots.protect(&non_unicode_pattern);
     const non_unicode = (try call(&runtime, "正規表現マッチ", &.{ source, non_unicode_pattern })).?;
     try std.testing.expectEqualSlices(u16, &.{0xde00}, non_unicode.string.units);
+}
+
+test "Unicode lookbehindはサロゲート対内部を開始位置にしない" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var source = try runtime.stringUtf8("😀x");
+    try roots.protect(&source);
+    var low_unicode_pattern = try runtime.stringUtf8("/(?<=\\uDE00)x/u");
+    try roots.protect(&low_unicode_pattern);
+    try std.testing.expect((try call(&runtime, "正規表現マッチ", &.{ source, low_unicode_pattern })).? == .null_value);
+
+    var high_unicode_pattern = try runtime.stringUtf8("/(?<=\\uD83D)x/u");
+    try roots.protect(&high_unicode_pattern);
+    try std.testing.expect((try call(&runtime, "正規表現マッチ", &.{ source, high_unicode_pattern })).? == .null_value);
+
+    var pair_pattern = try runtime.stringUtf8("/(?<=😀)x/u");
+    try roots.protect(&pair_pattern);
+    const pair = (try call(&runtime, "正規表現マッチ", &.{ source, pair_pattern })).?;
+    try std.testing.expectEqualSlices(u16, &.{'x'}, pair.string.units);
+
+    var non_unicode_pattern = try runtime.stringUtf8("/(?<=\\uDE00)x/");
+    try roots.protect(&non_unicode_pattern);
+    const non_unicode = (try call(&runtime, "正規表現マッチ", &.{ source, non_unicode_pattern })).?;
+    try std.testing.expectEqualSlices(u16, &.{'x'}, non_unicode.string.units);
 }
 
 test "Unicode大小文字無視のword判定を拡張する" {

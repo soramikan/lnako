@@ -104,6 +104,8 @@ Unicode `u`+`i` / `v`+`i` の`\w`は、ASCII word文字へsimple foldされるKe
 
 vフラグの文字クラスは、基本的なcode point集合のintersection（`&&`）とsubtraction（`--`）を左結合で評価し、nested class・Unicode property・word classをoperandとして扱う。文字列property escapeや未対応の集合構文は引き続き拒否する。`native-system-regexp-unicode-set-operations`でInterpreter・AOTの7経路を比較する。
 
+Unicode lookbehindの候補開始位置も`AdvanceStringIndex`相当で進め、paired surrogate内部をlookbehindの起点にしない。`/(?<=\\uDE00)x/u`は`"😀x"`で不一致、正しい`(?<=😀)`と非Unicodeのlow surrogate参照は一致する公式差を、`native-system-regexp-unicode-lookbehind-boundary`でInterpreter・AOTの7経路比較へ固定する。
+
 根拠は固定オラクルの
 [`core/src/plugin_system_array.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_array.mts) と
 [`core/src/plugin_system_dict.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_dict.mts) です。
