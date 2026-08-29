@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 349,
-    "nativeAot": 255,
+    "total": 350,
+    "nativeAot": 256,
     "interpreter": 99,
     "compatJs": 9
   },
@@ -1326,6 +1326,7 @@
         "native-system-array-sparse-copy-reference-concat",
         "native-system-array-sparse-splice",
         "native-system-empty-collection-truth-command",
+        "native-system-table-regexp-sparse-hole",
         "native-system-table-sparse-foreach-slice",
         "native-system-table-sparse-map-filter",
         "native-system-table-sparse-sort"
@@ -1351,6 +1352,9 @@
           "native-system-empty-collection-truth-command": [
             "fixture.commands"
           ],
+          "native-system-table-regexp-sparse-hole": [
+            "fixture.commands"
+          ],
           "native-system-table-sparse-foreach-slice": [
             "fixture.commands"
           ],
@@ -1367,7 +1371,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 7件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 8件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -8189,7 +8193,8 @@
       "aotFixtureIds": [
         "native-system-table-regexp-buffer-slice-alias",
         "native-system-table-regexp-commands",
-        "native-system-table-regexp-null-row-error"
+        "native-system-table-regexp-null-row-error",
+        "native-system-table-regexp-sparse-hole"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -8209,6 +8214,10 @@
           ],
           "native-system-table-regexp-null-row-error": [
             "implemented.tests"
+          ],
+          "native-system-table-regexp-sparse-hole": [
+            "fixture.commands",
+            "implemented.tests"
           ]
         },
         "compatJs": {}
@@ -8217,8 +8226,8 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "生patternの事前コンパイル、配列・文字列行のrow.slice(0)相当、Bufferのview共有、GCルートをAOTとインタプリタへ実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 4件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "生patternの事前コンパイル、配列・文字列行のrow.slice(0)相当、Bufferのview共有、nullish行と疎配列holeのV8形式property read error、GCルートをAOTとインタプリタへ実装し、公式差分テストに成功"
     },
     {
       "id": "command-0227",

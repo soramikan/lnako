@@ -14603,8 +14603,10 @@ fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []
 /// not silently produce undefined.
 fn tableRowProperty(runtime: *Runtime, row: Value, column: Value) !Value {
     const row_tag: Tag = @enumFromInt(row.tag);
-    if (row_tag == .undefined) return error.TableRowMissing;
-    if (row_tag == .null_value) return error.TableRowMissing;
+    if (row_tag == .undefined or row_tag == .null_value) {
+        try setTableRowPropertyFailure(runtime, row, column);
+        return error.TableRowMissing;
+    }
     const key_units = try valueUtf16Alloc(runtime, column);
     defer runtime.allocator.free(key_units);
     if (row_tag == .array) {
@@ -14678,6 +14680,21 @@ fn tableRowProperty(runtime: *Runtime, row: Value, column: Value) !Value {
     // Number, boolean, bigint, etc. have no relevant own indexed properties
     // in this runtime; JavaScript returns undefined here.
     return .{};
+}
+
+fn setTableRowPropertyFailure(runtime: *Runtime, row: Value, column: Value) !void {
+    var rooted = [_]Value{ row, column };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &rooted, rooted.len);
+    defer runtime.popRoots(&frame);
+    const column_units = try valueUtf16Alloc(runtime, rooted[1]);
+    defer runtime.allocator.free(column_units);
+    const column_utf8 = try utf16FailureMessageUtf8Alloc(runtime.allocator, column_units);
+    defer runtime.allocator.free(column_utf8);
+    const receiver = if (rooted[0].tag == @intFromEnum(Tag.null_value)) "null" else "undefined";
+    const message = try std.fmt.allocPrint(runtime.allocator, "Cannot read properties of {s} (reading '{s}')", .{ receiver, column_utf8 });
+    defer runtime.allocator.free(message);
+    runtime.setFailureText(message);
 }
 
 fn tablePropertyKeyEqual(runtime: *Runtime, key: Value, units: []const u16) !bool {
@@ -20716,7 +20733,28 @@ test "AOT表正規表現系はraw RegExpと浅いコピーを保つ" {
 
     roots[5] = try runtime.createArray(&.{.{ .tag = @intFromEnum(Tag.null_value), .payload = 0 }});
     try std.testing.expectError(error.TableRowMissing, tableBuiltin(&runtime, .table_regexp_search, &.{ roots[5], numberValue(0), numberValue(0), raw }));
+    const null_search_message = try pendingExceptionMessageUtf8Alloc(&runtime);
+    defer runtime.allocator.free(null_search_message);
+    try std.testing.expectEqualStrings("Cannot read properties of null (reading '0')", null_search_message);
+    _ = runtime.takeException();
     try std.testing.expectError(error.TableRowMissing, tableBuiltin(&runtime, .table_regexp_pickup, &.{ roots[5], numberValue(0), raw }));
+    const null_pickup_message = try pendingExceptionMessageUtf8Alloc(&runtime);
+    defer runtime.allocator.free(null_pickup_message);
+    try std.testing.expectEqualStrings("Cannot read properties of null (reading '0')", null_pickup_message);
+    _ = runtime.takeException();
+    roots[10] = try runtime.createArray(&.{});
+    try runtime.indexSet(roots[10], numberValue(0), roots[0]);
+    try runtime.indexSet(roots[10], numberValue(2), roots[1]);
+    try std.testing.expectError(error.TableRowMissing, tableBuiltin(&runtime, .table_regexp_search, &.{ roots[10], numberValue(0), numberValue(0), staticStringValue("^bob") }));
+    const sparse_search_message = try pendingExceptionMessageUtf8Alloc(&runtime);
+    defer runtime.allocator.free(sparse_search_message);
+    try std.testing.expectEqualStrings("Cannot read properties of undefined (reading '0')", sparse_search_message);
+    _ = runtime.takeException();
+    try std.testing.expectError(error.TableRowMissing, tableBuiltin(&runtime, .table_regexp_pickup, &.{ roots[10], numberValue(0), raw }));
+    const sparse_pickup_message = try pendingExceptionMessageUtf8Alloc(&runtime);
+    defer runtime.allocator.free(sparse_pickup_message);
+    try std.testing.expectEqualStrings("Cannot read properties of undefined (reading '0')", sparse_pickup_message);
+    _ = runtime.takeException();
     roots[6] = try runtime.createArray(&.{});
     try std.testing.expectError(error.UnclosedCharacterClass, tableBuiltin(&runtime, .table_regexp_search, &.{ roots[6], numberValue(0), numberValue(0), staticStringValue("[") }));
     const search_message = try pendingExceptionMessageUtf8Alloc(&runtime);

@@ -1921,7 +1921,10 @@ fn indexed(runtime: *Runtime, source: Value, key: Value) !Value {
     var roots = runtime.rootFrame();
     defer roots.deinit();
     for (&rooted) |*root| try roots.protect(root);
-    if (rooted[0] == .null_value or rooted[0] == .undefined) return error.TableRowMissing;
+    if (rooted[0] == .null_value or rooted[0] == .undefined) {
+        try setTableRowPropertyFailure(runtime, rooted[0], rooted[1]);
+        return error.TableRowMissing;
+    }
     rooted[2] = try runtime.valueToString(rooted[1]);
     if (rooted[0] == .array) {
         if (std.mem.eql(u16, rooted[2].string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return .{ .number = @floatFromInt(rooted[0].array.len()) };
@@ -1962,6 +1965,20 @@ fn indexed(runtime: *Runtime, source: Value, key: Value) !Value {
     }
     if (try tableInheritedProperty(runtime, rooted[0], rooted[2].string.units)) |value| return value;
     return .undefined;
+}
+
+fn setTableRowPropertyFailure(runtime: *Runtime, row: Value, column: Value) !void {
+    var rooted = [3]Value{ row, column, .undefined };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    for (&rooted) |*root| try roots.protect(root);
+    rooted[2] = try runtime.valueToString(rooted[1]);
+    const column_utf8 = try rooted[2].string.toUtf8Lossy(runtime.allocator());
+    defer runtime.allocator().free(column_utf8);
+    const receiver = if (rooted[0] == .null_value) "null" else "undefined";
+    const message = try std.fmt.allocPrint(runtime.allocator(), "Cannot read properties of {s} (reading '{s}')", .{ receiver, column_utf8 });
+    defer runtime.allocator().free(message);
+    try runtime.setFailureMessage(message);
 }
 
 fn propertyIndexUnits(units: []const u16) ?usize {
@@ -2718,7 +2735,22 @@ test "表正規表現系はraw RegExpと浅いコピーとGCを保つ" {
     var null_row = try common.arrayFromValues(&runtime, &.{Value.null_value});
     try roots.protect(&null_row);
     try std.testing.expectError(error.TableRowMissing, tableRegexpSearch(&runtime, null_row, .{ .number = 0 }, .{ .number = 0 }, raw_pattern));
+    try std.testing.expectEqualStrings("Cannot read properties of null (reading '0')", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
     try std.testing.expectError(error.TableRowMissing, tableRegexpPickup(&runtime, null_row, .{ .number = 0 }, raw_pattern));
+    try std.testing.expectEqualStrings("Cannot read properties of null (reading '0')", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
+
+    var sparse_table = try runtime.createArray();
+    try roots.protect(&sparse_table);
+    try sparse_table.array.set(0, first);
+    try sparse_table.array.set(2, second);
+    try std.testing.expectError(error.TableRowMissing, tableRegexpSearch(&runtime, sparse_table, .{ .number = 0 }, .{ .number = 0 }, bob_pattern));
+    try std.testing.expectEqualStrings("Cannot read properties of undefined (reading '0')", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
+    try std.testing.expectError(error.TableRowMissing, tableRegexpPickup(&runtime, sparse_table, .{ .number = 0 }, raw_pattern));
+    try std.testing.expectEqualStrings("Cannot read properties of undefined (reading '0')", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
 }
 
 test "表変換系はGCストレス下で文字列行とJSキー規則を保持する" {

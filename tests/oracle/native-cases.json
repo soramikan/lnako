@@ -917,6 +917,13 @@
     "source": "S=空配列()\nS[0]=[2,20]\nS[2]=[1]\nC=表列取得(S,1)\nJSON変換(辞書キー列挙(C))を表示\nJSON変換(ハッシュ内容列挙(C))を表示\n辞書キー存在(C,1)を表示\nJSON変換(C)を表示\nP=表ピックアップ(S,0,1)\nJSON変換(P)を表示\nQ=表完全一致ピックアップ(S,0,2)\nJSON変換(Q)を表示\n"
   },
   {
+    "id": "native-system-table-regexp-sparse-hole",
+    "oracle": "official-generated",
+    "stderrIncludes": "Cannot read properties of undefined (reading '0')",
+    "commands": ["空配列", "表正規表現ピックアップ"],
+    "source": "S=空配列()\nS[0]=[\"alpha\"]\nS[2]=[\"atom\"]\n表正規表現ピックアップ(S,0,\"^a\")を表示\n"
+  },
+  {
     "id": "native-system-table-sparse-foreach-slice",
     "commands": ["空配列", "表列挿入", "表列削除", "表列合計", "辞書キー列挙", "ハッシュ内容列挙", "辞書キー存在", "JSON変換"],
     "source": "S=空配列()\nS[0]=空配列()\nS[0][0]=1\nS[0][2]=3\nS[2]=[4,5]\nI=表列挿入(S,1,[9,8,7])\nJSON変換(辞書キー列挙(I[0]))を表示\nJSON変換(ハッシュ内容列挙(I[0]))を表示\n辞書キー存在(I[0],2)を表示\nJSON変換(I)を表示\nD=表列削除(S,1)\nJSON変換(D)を表示\n表列合計(S,0)を表示\n"
