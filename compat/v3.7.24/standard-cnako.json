@@ -5913,7 +5913,8 @@
         "native-system-table-byte-row-properties",
         "native-system-array-own-properties",
         "native-system-table-sparse-map-filter",
-        "native-system-table-function-properties"
+        "native-system-table-function-properties",
+        "native-system-table-inherited-properties"
       ],
       "platforms": [
         "macos-aarch64",
@@ -7295,7 +7296,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-types"
+        "plugin-system-types",
+        "native-system-table-inherited-properties"
       ],
       "platforms": [
         "macos-aarch64",
@@ -8243,7 +8245,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-system-stdio"
+        "plugin-system-stdio",
+        "native-system-table-inherited-properties"
       ],
       "platforms": [
         "macos-aarch64",

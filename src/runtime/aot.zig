@@ -1281,11 +1281,15 @@ const Runtime = struct {
 
     fn aotArrayPropertyGetUnits(self: *Runtime, object: *const Object, key_units: []const u16) Value {
         if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return numberValue(@floatFromInt(object.payload.array.items.len));
-        if (self.aotCanonicalArrayIndexUnits(key_units)) |index| return if (index < object.payload.array.items.len) object.payload.array.items[index] else .{};
+        return self.aotArrayOwnPropertyGetUnits(object, key_units) orelse .{};
+    }
+
+    fn aotArrayOwnPropertyGetUnits(self: *Runtime, object: *const Object, key_units: []const u16) ?Value {
+        if (self.aotCanonicalArrayIndexUnits(key_units)) |index| return if (index < object.payload.array.items.len) object.payload.array.items[index] else null;
         for (object.array_properties.items) |property| {
             if (self.aotPropertyKeyMatchesUnits(property.key, key_units)) return property.value;
         }
-        return .{};
+        return null;
     }
 
     fn aotPropertyKeyMatchesUnits(_: *Runtime, key: Value, units: []const u16) bool {
@@ -13791,6 +13795,165 @@ fn arrayMutationBuiltin(runtime: *Runtime, command: aot_builtin.Command, argumen
 
 const table_length_key = [_]u16{ 'l', 'e', 'n', 'g', 't', 'h' };
 
+const table_object_prototype_method_names = [_][]const u8{
+    "__defineGetter__",
+    "__defineSetter__",
+    "hasOwnProperty",
+    "__lookupGetter__",
+    "__lookupSetter__",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+    "toLocaleString",
+    "toString",
+    "valueOf",
+};
+
+const table_function_prototype_method_names = [_][]const u8{ "apply", "bind", "call" };
+
+const table_array_prototype_method_names = [_][]const u8{
+    "at",
+    "concat",
+    "copyWithin",
+    "entries",
+    "every",
+    "fill",
+    "filter",
+    "find",
+    "findIndex",
+    "findLast",
+    "findLastIndex",
+    "flat",
+    "flatMap",
+    "forEach",
+    "includes",
+    "indexOf",
+    "join",
+    "keys",
+    "lastIndexOf",
+    "map",
+    "pop",
+    "push",
+    "reduce",
+    "reduceRight",
+    "reverse",
+    "shift",
+    "slice",
+    "some",
+    "sort",
+    "splice",
+    "unshift",
+    "values",
+    "with",
+};
+
+const table_string_prototype_method_names = [_][]const u8{
+    "anchor",
+    "at",
+    "big",
+    "blink",
+    "bold",
+    "charAt",
+    "charCodeAt",
+    "codePointAt",
+    "concat",
+    "endsWith",
+    "fixed",
+    "fontcolor",
+    "fontsize",
+    "includes",
+    "indexOf",
+    "isWellFormed",
+    "italics",
+    "lastIndexOf",
+    "link",
+    "localeCompare",
+    "match",
+    "matchAll",
+    "normalize",
+    "padEnd",
+    "padStart",
+    "repeat",
+    "replace",
+    "replaceAll",
+    "search",
+    "slice",
+    "small",
+    "split",
+    "startsWith",
+    "strike",
+    "sub",
+    "substr",
+    "substring",
+    "toLocaleLowerCase",
+    "toLocaleUpperCase",
+    "toLowerCase",
+    "toUpperCase",
+    "toWellFormed",
+    "trim",
+    "trimEnd",
+    "trimLeft",
+    "trimRight",
+    "trimStart",
+};
+
+fn tableAsciiUnitsEqual(units: []const u16, ascii: []const u8) bool {
+    if (units.len != ascii.len) return false;
+    for (units, ascii) |unit, byte| if (unit != byte) return false;
+    return true;
+}
+
+fn tableInheritedMethodName(units: []const u16, names: []const []const u8) ?[]const u8 {
+    for (names) |name| if (tableAsciiUnitsEqual(units, name)) return name;
+    return null;
+}
+
+fn tableInheritedFunction(runtime: *Runtime, name: []const u8) !Value {
+    return runtime.createMethodFunction(promiseSentinel, 0, name, &.{});
+}
+
+fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []const u16) !?Value {
+    if (tableAsciiUnitsEqual(units, "__proto__")) {
+        return switch (row_tag) {
+            .dictionary => @as(?Value, try runtime.createDictionary(&.{})),
+            .array => @as(?Value, try runtime.createArray(&.{})),
+            .static_utf8_string, .utf16_string => @as(?Value, try runtime.createString(&.{})),
+            .function => @as(?Value, try tableInheritedFunction(runtime, "")),
+            else => null,
+        };
+    }
+
+    if (tableAsciiUnitsEqual(units, "prototype") and row_tag == .function) return @as(?Value, try runtime.createDictionary(&.{}));
+
+    const constructor_name: ?[]const u8 = switch (row_tag) {
+        .dictionary => "Object",
+        .array => "Array",
+        .static_utf8_string, .utf16_string => "String",
+        .function => "Function",
+        .number => "Number",
+        .boolean => "Boolean",
+        .bigint => "BigInt",
+        else => null,
+    };
+    if (constructor_name) |name| if (tableAsciiUnitsEqual(units, "constructor")) return @as(?Value, try tableInheritedFunction(runtime, name));
+
+    const supports_object_prototype = row_tag == .dictionary or row_tag == .array or row_tag == .static_utf8_string or
+        row_tag == .utf16_string or row_tag == .function or row_tag == .number or row_tag == .boolean or row_tag == .bigint;
+    if (supports_object_prototype) {
+        if (tableInheritedMethodName(units, &table_object_prototype_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
+    }
+    if (row_tag == .function) {
+        if (tableInheritedMethodName(units, &table_function_prototype_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
+    }
+    if (row_tag == .array) {
+        if (tableInheritedMethodName(units, &table_array_prototype_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
+    }
+    if (row_tag == .static_utf8_string or row_tag == .utf16_string) {
+        if (tableInheritedMethodName(units, &table_string_prototype_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
+    }
+    _ = row;
+    return null;
+}
+
 /// Read a row property using the same useful subset of JavaScript's
 /// `row[column]` semantics used by the official table commands.  In
 /// particular, strings expose UTF-16 code units and dictionaries only expose
@@ -13806,7 +13969,10 @@ fn tableRowProperty(runtime: *Runtime, row: Value, column: Value) !Value {
     if (row_tag == .array) {
         const object = row.object() orelse return error.InvalidArray;
         if (object.payload != .array) return error.InvalidArray;
-        return runtime.aotArrayPropertyGetUnits(object, key_units);
+        if (std.mem.eql(u16, key_units, &table_length_key)) return numberValue(@floatFromInt(object.payload.array.items.len));
+        if (runtime.aotArrayOwnPropertyGetUnits(object, key_units)) |value| return value;
+        if (try tableInheritedProperty(runtime, row, row_tag, key_units)) |value| return value;
+        return .{};
     }
     if (row_tag == .dictionary) {
         const object = row.object() orelse return error.InvalidDictionary;
@@ -13814,6 +13980,7 @@ fn tableRowProperty(runtime: *Runtime, row: Value, column: Value) !Value {
         for (object.payload.dictionary.items) |entry| {
             if (try tablePropertyKeyEqual(runtime, entry.key, key_units)) return entry.value;
         }
+        if (try tableInheritedProperty(runtime, row, row_tag, key_units)) |value| return value;
         return .{};
     }
     if (row_tag == .byte_buffer) {
@@ -13836,7 +14003,10 @@ fn tableRowProperty(runtime: *Runtime, row: Value, column: Value) !Value {
         const units = try valueUtf16Alloc(runtime, row);
         defer runtime.allocator.free(units);
         if (std.mem.eql(u16, key_units, &table_length_key)) return numberValue(@floatFromInt(units.len));
-        const index = tablePropertyIndex(key_units) orelse return .{};
+        const index = tablePropertyIndex(key_units) orelse {
+            if (try tableInheritedProperty(runtime, row, row_tag, key_units)) |value| return value;
+            return .{};
+        };
         if (index >= units.len) return .{};
         return try runtime.createString(&.{units[index]});
     }
@@ -13861,6 +14031,7 @@ fn tableRowProperty(runtime: *Runtime, row: Value, column: Value) !Value {
             return runtime.createString(units);
         }
     }
+    if (try tableInheritedProperty(runtime, row, row_tag, key_units)) |value| return value;
     // Number, boolean, bigint, etc. have no relevant own indexed properties
     // in this runtime; JavaScript returns undefined here.
     return .{};
@@ -19414,6 +19585,40 @@ test "AOT表検索系は行プロパティとraw開始値を公式どおり処�
     try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast((try tableRowProperty(&runtime, roots[17], staticStringValue("length"))).payload)));
     const function_name = try tableRowProperty(&runtime, roots[17], staticStringValue("name"));
     try expectUtf16String(&runtime, function_name, "");
+}
+
+test "AOT表行propertyはown値を優先して標準prototypeを解決する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 20;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createDictionary(&.{ staticStringValue("toString"), staticStringValue("own") });
+    roots[1] = try runtime.createArray(&.{});
+    roots[2] = try runtime.createString(&.{'x'});
+    roots[3] = try runtime.createFunction(testAotFunction, 1, &.{});
+
+    try expectUtf16String(&runtime, try tableRowProperty(&runtime, roots[0], staticStringValue("toString")), "own");
+    roots[4] = try tableRowProperty(&runtime, roots[0], staticStringValue("constructor"));
+    roots[5] = try tableRowProperty(&runtime, roots[4], staticStringValue("name"));
+    try expectUtf16String(&runtime, roots[5], "Object");
+    roots[6] = try tableRowProperty(&runtime, roots[1], staticStringValue("map"));
+    roots[7] = try tableRowProperty(&runtime, roots[6], staticStringValue("name"));
+    try expectUtf16String(&runtime, roots[7], "map");
+    roots[8] = try tableRowProperty(&runtime, roots[2], staticStringValue("constructor"));
+    roots[9] = try tableRowProperty(&runtime, roots[8], staticStringValue("name"));
+    try expectUtf16String(&runtime, roots[9], "String");
+    roots[10] = try tableRowProperty(&runtime, roots[2], staticStringValue("toUpperCase"));
+    roots[11] = try tableRowProperty(&runtime, roots[10], staticStringValue("name"));
+    try expectUtf16String(&runtime, roots[11], "toUpperCase");
+    roots[12] = try tableRowProperty(&runtime, roots[3], staticStringValue("prototype"));
+    try expectUtf16String(&runtime, try tableRowProperty(&runtime, roots[12], staticStringValue("toString")), "function toString() { [native code] }");
+    roots[13] = try tableRowProperty(&runtime, roots[0], staticStringValue("__proto__"));
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(roots[13].tag)));
+    roots[14] = try tableRowProperty(&runtime, roots[1], staticStringValue("__proto__"));
+    try std.testing.expectEqual(Tag.array, @as(Tag, @enumFromInt(roots[14].tag)));
 }
 
 test "AOT表列挿入削除合計は外側と行内部のholeをforEachとsliceどおり扱う" {

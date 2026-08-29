@@ -728,6 +728,11 @@
     "source": "F=関数(A,B)それはA;ここまで\nN=表列取得([F],\"name\")\nL=表列取得([F],\"length\")\n文字列変換(N[0])を表示\nL[0]を表示\n"
   },
   {
+    "id": "native-system-table-inherited-properties",
+    "commands": ["表列取得", "文字列変換", "表示"],
+    "source": "D={}\nA=[]\nS=\"x\"\nF=関数(X)それはX;ここまで\nO={\"toString\":\"own\"}\nX=表列取得([D],\"constructor\")\n文字列変換(X[0])を表示\nX=表列取得([D],\"toString\")\n文字列変換(X[0])を表示\nX=表列取得([D],\"hasOwnProperty\")\n文字列変換(X[0])を表示\nX=表列取得([O],\"toString\")\n文字列変換(X[0])を表示\nX=表列取得([D],\"__proto__\")\n文字列変換(X[0])を表示\nX=表列取得([A],\"constructor\")\n文字列変換(X[0])を表示\nX=表列取得([A],\"map\")\n文字列変換(X[0])を表示\nX=表列取得([A],\"__proto__\")\n文字列変換(X[0])を表示\nX=表列取得([S],\"constructor\")\n文字列変換(X[0])を表示\nX=表列取得([S],\"toUpperCase\")\n文字列変換(X[0])を表示\nX=表列取得([F],\"constructor\")\n文字列変換(X[0])を表示\nX=表列取得([F],\"prototype\")\n文字列変換(X[0])を表示\nX=表列取得([F],\"toString\")\n文字列変換(X[0])を表示\nX=表列取得([F],\"__proto__\")\n文字列変換(X[0])を表示\nX=表列取得([D],\"missing\")\n文字列変換(X[0])を表示\n"
+  },
+  {
     "id": "native-system-courtesy",
     "commands": ["ください", "お願", "です", "拝啓", "敬具", "礼節レベル取得"],
     "source": "敬具()\n礼節レベル取得()を表示\n敬具()\n礼節レベル取得()を表示\nください()\nです()\nお願()\n礼節レベル取得()を表示\n拝啓()\n敬具()\n礼節レベル取得()を表示\n"

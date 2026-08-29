@@ -776,7 +776,8 @@
   "文字列変換": {
     "status": "native",
     "tests": [
-      "plugin-system-types"
+      "plugin-system-types",
+      "native-system-table-inherited-properties"
     ],
     "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
   },
@@ -1762,7 +1763,8 @@
       "native-system-table-byte-row-properties",
       "native-system-array-own-properties",
       "native-system-table-sparse-map-filter",
-      "native-system-table-function-properties"
+      "native-system-table-function-properties",
+      "native-system-table-inherited-properties"
     ],
     "reason": "Zig製ランタイムでBuffer・Uint8Array・ArrayBufferのlengthと数値添字、表列取得の疎配列map挙動、および匿名関数のname/length propertyを実装し、公式差分テストに成功"
   },
@@ -2154,7 +2156,8 @@
   "表示": {
     "status": "native",
     "tests": [
-      "plugin-system-stdio"
+      "plugin-system-stdio",
+      "native-system-table-inherited-properties"
     ],
     "reason": "継続表示プールと表示ログを含めて実装し、公式差分テストに成功"
   },

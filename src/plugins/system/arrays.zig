@@ -1154,6 +1154,246 @@ fn isObjectPrototypeKey(units: []const u16) bool {
     return false;
 }
 
+const objectPrototypeMethodNames = [_][]const u8{
+    "__defineGetter__",
+    "__defineSetter__",
+    "hasOwnProperty",
+    "__lookupGetter__",
+    "__lookupSetter__",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+    "toLocaleString",
+    "toString",
+    "valueOf",
+};
+
+const functionPrototypeMethodNames = [_][]const u8{ "apply", "bind", "call" };
+
+const arrayPrototypeMethodNames = [_][]const u8{
+    "at",
+    "concat",
+    "copyWithin",
+    "entries",
+    "every",
+    "fill",
+    "filter",
+    "find",
+    "findIndex",
+    "findLast",
+    "findLastIndex",
+    "flat",
+    "flatMap",
+    "forEach",
+    "includes",
+    "indexOf",
+    "join",
+    "keys",
+    "lastIndexOf",
+    "map",
+    "pop",
+    "push",
+    "reduce",
+    "reduceRight",
+    "reverse",
+    "shift",
+    "slice",
+    "some",
+    "sort",
+    "splice",
+    "unshift",
+    "values",
+    "with",
+};
+
+const stringPrototypeMethodNames = [_][]const u8{
+    "anchor",
+    "at",
+    "big",
+    "blink",
+    "bold",
+    "charAt",
+    "charCodeAt",
+    "codePointAt",
+    "concat",
+    "endsWith",
+    "fixed",
+    "fontcolor",
+    "fontsize",
+    "includes",
+    "indexOf",
+    "isWellFormed",
+    "italics",
+    "lastIndexOf",
+    "link",
+    "localeCompare",
+    "match",
+    "matchAll",
+    "normalize",
+    "padEnd",
+    "padStart",
+    "repeat",
+    "replace",
+    "replaceAll",
+    "search",
+    "slice",
+    "small",
+    "split",
+    "startsWith",
+    "strike",
+    "sub",
+    "substr",
+    "substring",
+    "toLocaleLowerCase",
+    "toLocaleUpperCase",
+    "toLowerCase",
+    "toUpperCase",
+    "toWellFormed",
+    "trim",
+    "trimEnd",
+    "trimLeft",
+    "trimRight",
+    "trimStart",
+};
+
+fn asciiUnitsEqual(units: []const u16, ascii: []const u8) bool {
+    if (units.len != ascii.len) return false;
+    for (units, ascii) |unit, byte| if (unit != byte) return false;
+    return true;
+}
+
+fn inheritedMethodName(units: []const u16, names: []const []const u8) ?[]const u8 {
+    for (names) |name| if (asciiUnitsEqual(units, name)) return name;
+    return null;
+}
+
+fn tableInheritedFunction(runtime: *Runtime, name: []const u8) !Value {
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var function_name = try runtime.stringUtf8(name);
+    try roots.protect(&function_name);
+    return runtime.createNativeFunction(function_name.string, 0, tableInheritedFunctionSentinel, &.{});
+}
+
+fn tableInheritedFunctionSentinel(_: *Runtime, _: []const Value) !Value {
+    return .undefined;
+}
+
+fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) !?Value {
+    if (asciiUnitsEqual(units, "__proto__")) {
+        return switch (source) {
+            .dictionary => @as(?Value, try runtime.createDictionary()),
+            .array => @as(?Value, try runtime.createArray()),
+            .string => @as(?Value, try runtime.stringCodeUnits(&.{})),
+            .function => @as(?Value, try tableInheritedFunction(runtime, "")),
+            else => null,
+        };
+    }
+
+    if (asciiUnitsEqual(units, "prototype") and source == .function) {
+        return switch (source.function.kind) {
+            .ir => @as(?Value, try runtime.createDictionary()),
+            .native, .external => null,
+        };
+    }
+
+    const constructor_name: ?[]const u8 = switch (source) {
+        .dictionary => "Object",
+        .array => "Array",
+        .string => "String",
+        .function => "Function",
+        .number => "Number",
+        .boolean => "Boolean",
+        .bigint => "BigInt",
+        else => null,
+    };
+    if (constructor_name) |name| if (asciiUnitsEqual(units, "constructor")) return @as(?Value, try tableInheritedFunction(runtime, name));
+
+    if (inheritedMethodName(units, &objectPrototypeMethodNames)) |name| {
+        if (source == .dictionary or source == .array or source == .string or source == .function or
+            source == .number or source == .boolean or source == .bigint) return @as(?Value, try tableInheritedFunction(runtime, name));
+    }
+    if (source == .function) {
+        if (inheritedMethodName(units, &functionPrototypeMethodNames)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
+    }
+    if (source == .array) {
+        if (inheritedMethodName(units, &arrayPrototypeMethodNames)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
+    }
+    if (source == .string) {
+        if (inheritedMethodName(units, &stringPrototypeMethodNames)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
+    }
+    return null;
+}
+
+test "表行propertyはown値を優先して標準prototypeを解決する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var dictionary = try runtime.createDictionary();
+    try roots.protect(&dictionary);
+    var array = try runtime.createArray();
+    try roots.protect(&array);
+    var text = try runtime.stringUtf8("x");
+    try roots.protect(&text);
+    var function_name = try runtime.stringUtf8("利用者関数");
+    try roots.protect(&function_name);
+    var function = try runtime.createIrFunction(function_name.string, 1, 0, &.{});
+    try roots.protect(&function);
+
+    var constructor_key = try runtime.stringUtf8("constructor");
+    try roots.protect(&constructor_key);
+    var map_key = try runtime.stringUtf8("map");
+    try roots.protect(&map_key);
+    var upper_key = try runtime.stringUtf8("toUpperCase");
+    try roots.protect(&upper_key);
+    var prototype_key = try runtime.stringUtf8("prototype");
+    try roots.protect(&prototype_key);
+    var proto_key = try runtime.stringUtf8("__proto__");
+    try roots.protect(&proto_key);
+    var name_key = try runtime.stringUtf8("name");
+    try roots.protect(&name_key);
+    var to_string_key = try runtime.stringUtf8("toString");
+    try roots.protect(&to_string_key);
+
+    try dictionary.dictionary.set(to_string_key.string, .{ .number = 7 });
+    var own_value = try indexed(&runtime, dictionary, to_string_key);
+    try roots.protect(&own_value);
+    try std.testing.expectEqual(@as(f64, 7), own_value.number);
+
+    var dictionary_constructor = try indexed(&runtime, dictionary, constructor_key);
+    try roots.protect(&dictionary_constructor);
+    var dictionary_constructor_name = try indexed(&runtime, dictionary_constructor, name_key);
+    try roots.protect(&dictionary_constructor_name);
+    try std.testing.expectEqualSlices(u16, &.{ 'O', 'b', 'j', 'e', 'c', 't' }, dictionary_constructor_name.string.units);
+
+    var array_method = try indexed(&runtime, array, map_key);
+    try roots.protect(&array_method);
+    var array_method_name = try indexed(&runtime, array_method, name_key);
+    try roots.protect(&array_method_name);
+    try std.testing.expectEqualSlices(u16, &.{ 'm', 'a', 'p' }, array_method_name.string.units);
+    var array_proto = try indexed(&runtime, array, proto_key);
+    try roots.protect(&array_proto);
+    try std.testing.expect(array_proto == .array);
+
+    var string_method = try indexed(&runtime, text, upper_key);
+    try roots.protect(&string_method);
+    var string_method_name = try indexed(&runtime, string_method, name_key);
+    try roots.protect(&string_method_name);
+    try std.testing.expectEqualSlices(u16, &.{ 't', 'o', 'U', 'p', 'p', 'e', 'r', 'C', 'a', 's', 'e' }, string_method_name.string.units);
+
+    var function_proto = try indexed(&runtime, function, prototype_key);
+    try roots.protect(&function_proto);
+    try std.testing.expect(function_proto == .dictionary);
+
+    var number_constructor = try indexed(&runtime, .{ .number = 1 }, constructor_key);
+    try roots.protect(&number_constructor);
+    var number_constructor_name = try indexed(&runtime, number_constructor, name_key);
+    try roots.protect(&number_constructor_name);
+    try std.testing.expectEqualSlices(u16, &.{ 'N', 'u', 'm', 'b', 'e', 'r' }, number_constructor_name.string.units);
+}
+
 fn tableDeleteColumn(runtime: *Runtime, source: Value, column_value: Value) !Value {
     if (source != .array) return error.ArrayExpected;
     var rooted = [4]Value{ source, column_value, .undefined, .undefined };
@@ -1269,12 +1509,21 @@ fn indexed(runtime: *Runtime, source: Value, key: Value) !Value {
     if (rooted[0] == .array) {
         if (std.mem.eql(u16, rooted[2].string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return .{ .number = @floatFromInt(rooted[0].array.len()) };
         const index = propertyIndexUnits(rooted[2].string.units);
+        if (index == null) if (rooted[0].array.getProperty(rooted[2].string)) |value| return value;
+        if (try tableInheritedProperty(runtime, rooted[0], rooted[2].string.units)) |value| return value;
         return arrayPropertyGet(rooted[0].array, rooted[2].string, index);
     }
-    if (rooted[0] == .dictionary) return rooted[0].dictionary.get(rooted[2].string) orelse .undefined;
+    if (rooted[0] == .dictionary) {
+        if (rooted[0].dictionary.get(rooted[2].string)) |value| return value;
+        if (try tableInheritedProperty(runtime, rooted[0], rooted[2].string.units)) |value| return value;
+        return .undefined;
+    }
     if (rooted[0] == .string) {
         if (std.mem.eql(u16, rooted[2].string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return .{ .number = @floatFromInt(rooted[0].string.len()) };
-        const index = propertyIndexUnits(rooted[2].string.units) orelse return .undefined;
+        const index = propertyIndexUnits(rooted[2].string.units) orelse {
+            if (try tableInheritedProperty(runtime, rooted[0], rooted[2].string.units)) |value| return value;
+            return .undefined;
+        };
         if (index >= rooted[0].string.len()) return .undefined;
         return try runtime.stringCodeUnits(&.{rooted[0].string.units[index]});
     }
@@ -1294,6 +1543,7 @@ fn indexed(runtime: *Runtime, source: Value, key: Value) !Value {
             return runtime.stringCodeUnits(name);
         }
     }
+    if (try tableInheritedProperty(runtime, rooted[0], rooted[2].string.units)) |value| return value;
     return .undefined;
 }
 
