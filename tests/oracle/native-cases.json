@@ -260,6 +260,11 @@
     "source": "A=空配列()\nA[1]=2\nA[2]=undefined\nB=配列要素作成(A,1)\nJSON変換(辞書キー列挙(B[0]))を表示\nJSON変換(ハッシュ内容列挙(B[0]))を表示\n辞書キー存在(B[0],0)を表示\n辞書キー存在(B[0],1)を表示\n辞書キー存在(B[0],2)を表示\nB[0][0]=9\nB[0][1]=8\nJSON変換(B[0])を表示\nJSON変換(A)を表示\n"
   },
   {
+    "id": "native-system-array-fill-byte-buffer-json-clone",
+    "commands": ["JSON変換", "TYPEOF", "ハッシュ値計算", "ランダム配列生成", "配列要素作成"],
+    "source": "B=ハッシュ値計算(\"A\",\"sha256\",undefined)\nU=ランダム配列生成(2)\nU[0]=139\nU[1]=103\nAB=B[\"buffer\"]\nCB=配列要素作成(B,1)\nCU=配列要素作成(U,1)\nCA=配列要素作成(AB,1)\nTYPEOF(CB[0])を表示\nJSON変換(CB[0])を表示\nTYPEOF(CU[0])を表示\nJSON変換(CU[0])を表示\nTYPEOF(CA[0])を表示\nJSON変換(CA[0])を表示\nCB[0][\"data\"][0]=9\nCU[0][0]=8\nJSON変換(CB[0])を表示\nJSON変換(B)を表示\nJSON変換(CU[0])を表示\nJSON変換(U)を表示\n"
+  },
+  {
     "id": "native-system-array-clone-undefined-error",
     "oracle": "official-generated",
     "source": "配列複製(undefined)\n"

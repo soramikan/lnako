@@ -830,7 +830,10 @@ fn fillCount(runtime: *Runtime, value: Value, count: usize) !Value {
 }
 
 fn cloneFillValue(runtime: *Runtime, value: Value) !Value {
-    if (value != .array) return if (value == .dictionary) deepClone(runtime, value) else value;
+    if (value != .array) return switch (value) {
+        .dictionary, .bytes, .promise => deepClone(runtime, value),
+        else => value,
+    };
     var source = value;
     var result = try runtime.createArray();
     var roots = runtime.rootFrame();
@@ -3238,6 +3241,34 @@ test "配列集約・連番・要素生成の型変換と複製境界を保つ" 
     try sparse_clone.set(0, .{ .number = 9 });
     try std.testing.expectEqual(Value.undefined, sparse_value.array.get(0));
     try std.testing.expectEqual(@as(f64, 2), sparse_value.array.get(1).number);
+
+    var fill_buffer = try runtime.createBytes(&.{ 85, 154 });
+    try roots.protect(&fill_buffer);
+    var buffer_fill = try fill(&runtime, fill_buffer, .{ .number = 1 });
+    try roots.protect(&buffer_fill);
+    try std.testing.expectEqual(std.meta.Tag(Value).dictionary, std.meta.activeTag(buffer_fill.array.get(0)));
+    var data_key = try runtime.stringUtf8("data");
+    try roots.protect(&data_key);
+    const buffer_data = buffer_fill.array.get(0).dictionary.get(data_key.string).?;
+    try std.testing.expectEqual(@as(f64, 85), buffer_data.array.get(0).number);
+    try buffer_data.array.set(0, .{ .number = 9 });
+    try std.testing.expectEqual(@as(u8, 85), fill_buffer.bytes.bytes[0]);
+
+    var fill_uint8 = try runtime.createUint8Array(&.{ 139, 103 });
+    try roots.protect(&fill_uint8);
+    var uint8_fill = try fill(&runtime, fill_uint8, .{ .number = 1 });
+    try roots.protect(&uint8_fill);
+    try std.testing.expectEqual(std.meta.Tag(Value).dictionary, std.meta.activeTag(uint8_fill.array.get(0)));
+    var zero_key = try runtime.stringUtf8("0");
+    try roots.protect(&zero_key);
+    try std.testing.expectEqual(@as(f64, 139), uint8_fill.array.get(0).dictionary.get(zero_key.string).?.number);
+
+    var fill_array_buffer = try runtime.createArrayBuffer(&.{ 1, 2 });
+    try roots.protect(&fill_array_buffer);
+    var array_buffer_fill = try fill(&runtime, fill_array_buffer, .{ .number = 1 });
+    try roots.protect(&array_buffer_fill);
+    try std.testing.expectEqual(std.meta.Tag(Value).dictionary, std.meta.activeTag(array_buffer_fill.array.get(0)));
+    try std.testing.expectEqual(@as(usize, 0), array_buffer_fill.array.get(0).dictionary.len());
 }
 
 test "配列入替はcanonical添字以外をown propertyとして保持する" {

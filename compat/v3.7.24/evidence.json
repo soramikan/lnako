@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 330,
-    "nativeAot": 239,
+    "total": 331,
+    "nativeAot": 240,
     "interpreter": 96,
     "compatJs": 9
   },
@@ -7267,6 +7267,7 @@
       ],
       "aotFixtureIds": [
         "native-system-array-aggregate-create-commands",
+        "native-system-array-fill-byte-buffer-json-clone",
         "native-system-array-fill-sparse-clone"
       ],
       "compatJsFixtureIds": [],
@@ -7281,6 +7282,10 @@
           "native-system-array-aggregate-create-commands": [
             "implemented.tests"
           ],
+          "native-system-array-fill-byte-buffer-json-clone": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
           "native-system-array-fill-sparse-clone": [
             "fixture.commands",
             "implemented.tests"
@@ -7292,8 +7297,8 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "多次元配列、空shape、要素複製、疎配列のpresence保持、総量事前検査を実装。ホスト固有オブジェクトと100万要素上限はTODO: array-fill-dictionary-json-clone / array-fill-total-size-limit"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "多次元配列、空shape、要素複製、疎配列のpresence保持、Buffer/Uint8Array/ArrayBufferのJSON複製、総量事前検査を実装。100万要素上限はTODO: array-fill-total-size-limit"
     },
     {
       "id": "command-0208",
@@ -9607,6 +9612,7 @@
       ],
       "aotFixtureIds": [
         "native-system-array-cut-inherited-dictionary-properties",
+        "native-system-array-fill-byte-buffer-json-clone",
         "native-system-byte-buffer-backing",
         "native-system-byte-buffer-direct-properties",
         "native-system-reference-inherited-properties",
@@ -9622,6 +9628,9 @@
         },
         "aot": {
           "native-system-array-cut-inherited-dictionary-properties": [
+            "fixture.commands"
+          ],
+          "native-system-array-fill-byte-buffer-json-clone": [
             "fixture.commands"
           ],
           "native-system-byte-buffer-backing": [
@@ -9645,7 +9654,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 5件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 6件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -10162,6 +10171,7 @@
         "plugin-system-json-ecmascript-boundaries"
       ],
       "aotFixtureIds": [
+        "native-system-array-fill-byte-buffer-json-clone",
         "native-system-array-fill-sparse-clone",
         "native-system-array-sparse-copy-reference-concat",
         "native-system-array-sparse-splice",
@@ -10187,6 +10197,9 @@
           ]
         },
         "aot": {
+          "native-system-array-fill-byte-buffer-json-clone": [
+            "fixture.commands"
+          ],
           "native-system-array-fill-sparse-clone": [
             "fixture.commands"
           ],
@@ -10232,7 +10245,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 2件、AOT 12件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 2件、AOT 13件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "純LLVM AOTのJSON.stringify互換エンコーダと公式CLI・生成JavaScriptとの差分テストに成功"
     },
     {
@@ -17168,6 +17181,7 @@
       ],
       "aotFixtureIds": [
         "native-node-crypto",
+        "native-system-array-fill-byte-buffer-json-clone",
         "native-system-byte-buffer-backing",
         "native-system-byte-buffer-direct-properties",
         "native-system-byte-buffer-method-calls",
@@ -17193,6 +17207,9 @@
           "native-node-crypto": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-system-array-fill-byte-buffer-json-clone": [
+            "fixture.commands"
           ],
           "native-system-byte-buffer-backing": [
             "fixture.commands",
@@ -17244,7 +17261,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 13件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 14件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式7経路のSHA-256・Buffer境界とエンコード形式の差分テストに成功"
     },
     {
@@ -17291,6 +17308,7 @@
       ],
       "aotFixtureIds": [
         "native-node-crypto",
+        "native-system-array-fill-byte-buffer-json-clone",
         "native-system-byte-buffer-backing",
         "native-system-byte-buffer-direct-properties",
         "native-system-byte-buffer-property",
@@ -17309,6 +17327,9 @@
           "native-node-crypto": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-system-array-fill-byte-buffer-json-clone": [
+            "fixture.commands"
           ],
           "native-system-byte-buffer-backing": [
             "fixture.commands",
@@ -17336,7 +17357,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 6件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 7件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式7経路のUint8Array長さ・要素境界の差分テストに成功"
     },
     {

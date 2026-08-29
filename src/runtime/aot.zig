@@ -15585,7 +15585,10 @@ fn validateFillDimensions(runtime: *Runtime, shape: Value) !void {
 }
 
 fn cloneFillValue(runtime: *Runtime, value: Value) !Value {
-    if (value.tag != @intFromEnum(Tag.array)) return if (value.tag == @intFromEnum(Tag.dictionary)) deepCloneBuiltin(runtime, value) else value;
+    if (value.tag != @intFromEnum(Tag.array)) return switch (@as(Tag, @enumFromInt(value.tag))) {
+        .dictionary, .byte_buffer, .iterator, .promise => deepCloneBuiltin(runtime, value),
+        else => value,
+    };
     const source = try arrayItems(value);
     const result = try runtime.createArray(&.{});
     var roots = [_]Value{ value, result };
@@ -19501,7 +19504,7 @@ test "回数・範囲・配列・辞書の反復状態と元コレクション�
 test "AOT配列の集約・入替・連番・要素生成を公式境界で処理する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 14;
+    var roots = [_]Value{.{}} ** 20;
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -19579,6 +19582,27 @@ test "AOT配列の集約・入替・連番・要素生成を公式境界で処�
     const sparse_source = try arrayItems(roots[11]);
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(sparse_source.items[0].tag)));
     try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(sparse_source.items[1].payload)));
+
+    roots[14] = try runtime.createBytes(&.{ 85, 154 });
+    roots[15] = try arrayFillBuiltin(&runtime, roots[14], numberValue(1));
+    const buffer_clone = (try arrayItems(roots[15])).items[0];
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(buffer_clone.tag)));
+    const buffer_data = runtime.indexGet(buffer_clone, staticStringValue("data"));
+    try std.testing.expectEqual(@as(f64, 85), @as(f64, @bitCast((try arrayItems(buffer_data)).items[0].payload)));
+    try runtime.indexSet(buffer_data, numberValue(0), numberValue(9));
+    try std.testing.expectEqual(@as(u8, 85), roots[14].object().?.payload.byte_buffer.bytes[0]);
+
+    roots[16] = try runtime.createUint8Array(&.{ 139, 103 });
+    roots[17] = try arrayFillBuiltin(&runtime, roots[16], numberValue(1));
+    const uint8_clone = (try arrayItems(roots[17])).items[0];
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(uint8_clone.tag)));
+    try std.testing.expectEqual(@as(f64, 139), @as(f64, @bitCast(runtime.indexGet(uint8_clone, staticStringValue("0")).payload)));
+
+    roots[18] = try runtime.createArrayBuffer(&.{ 1, 2 });
+    roots[19] = try arrayFillBuiltin(&runtime, roots[18], numberValue(1));
+    const array_buffer_clone = (try arrayItems(roots[19])).items[0];
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(array_buffer_clone.tag)));
+    try std.testing.expectEqual(@as(usize, 0), array_buffer_clone.object().?.payload.dictionary.items.len);
 }
 
 test "AOT配列ソート系は安定mergeとundefined末尾と同一配列を保つ" {
