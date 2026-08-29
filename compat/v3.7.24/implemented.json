@@ -1557,7 +1557,8 @@
     "status": "native",
     "tests": [
       "plugin-system-array-mutation-quirks",
-      "native-system-array-mutation-commands"
+      "native-system-array-mutation-commands",
+      "native-system-array-sparse-splice"
     ],
     "reason": "元配列を更新し空配列を返す公式挙動を実装し、公式差分テストに成功"
   },
@@ -1565,7 +1566,8 @@
     "status": "native",
     "tests": [
       "plugin-system-array-mutation-quirks",
-      "native-system-array-mutation-commands"
+      "native-system-array-mutation-commands",
+      "native-system-array-sparse-splice"
     ],
     "reason": "元配列を更新して元配列を返す公式挙動を実装し、自己一括挿入の安全差をTODOとして分離して公式差分テストに成功"
   },
@@ -1573,7 +1575,8 @@
     "status": "native",
     "tests": [
       "plugin-system-array-mutation-quirks",
-      "native-system-array-mutation-commands"
+      "native-system-array-mutation-commands",
+      "native-system-array-sparse-splice"
     ],
     "reason": "配列切取の別名として実装し、公式差分テストに成功"
   },
@@ -1581,7 +1584,8 @@
     "status": "native",
     "tests": [
       "plugin-system-array-mutation-quirks",
-      "native-system-array-mutation-commands"
+      "native-system-array-mutation-commands",
+      "native-system-array-sparse-splice"
     ],
     "reason": "辞書のtruthy判定を実装し、JavaScript継承プロパティ差をTODOとして分離して公式差分テストに成功"
   },
@@ -1589,7 +1593,8 @@
     "status": "native",
     "tests": [
       "plugin-system-array-mutation-quirks",
-      "native-system-array-mutation-commands"
+      "native-system-array-mutation-commands",
+      "native-system-array-sparse-splice"
     ],
     "reason": "破壊的な範囲取り出しを実装し、公式差分テストに成功"
   },

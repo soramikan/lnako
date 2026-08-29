@@ -483,7 +483,13 @@ fn spliceArray(runtime: *Runtime, array: *value_mod.Array, start: usize, count: 
     defer roots.deinit();
     try roots.protect(&result);
     const actual = @min(count, array.len() - @min(start, array.len()));
-    for (0..actual) |_| _ = try result.array.push(array.remove(start));
+    try array.normalizePresence();
+    for (0..actual) |_| {
+        const was_present = array.isPresent(start);
+        const value = array.remove(start);
+        const result_length = try result.array.push(value);
+        if (!was_present) _ = try result.array.deleteIndex(result_length - 1);
+    }
     return result;
 }
 
@@ -1503,6 +1509,55 @@ test "疎配列の順序操作は値とpresenceの公式境界を保つ" {
     try std.testing.expectEqual(Value.undefined, shuffled.array.get(0));
     try std.testing.expectEqual(@as(f64, 3), shuffled.array.get(1).number);
     try std.testing.expectEqual(@as(f64, 1), shuffled.array.get(2).number);
+}
+
+test "疎配列のsplice系操作は削除側と戻り値側のpresenceを移動する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var removed_source = try runtime.createArray();
+    try roots.protect(&removed_source);
+    try removed_source.array.set(0, .{ .number = 1 });
+    try removed_source.array.set(2, .{ .number = 3 });
+    const removed = (try call(&runtime, "配列削除", &.{ removed_source, .{ .number = 1 } }, null)).?;
+    try std.testing.expectEqual(Value.undefined, removed);
+    try std.testing.expectEqualSlices(bool, &.{ true, true }, removed_source.array.presence.items);
+    try std.testing.expectEqual(@as(f64, 3), removed_source.array.get(1).number);
+
+    var taken_source = try runtime.createArray();
+    try roots.protect(&taken_source);
+    try taken_source.array.set(0, .{ .number = 1 });
+    try taken_source.array.set(2, .{ .number = 3 });
+    const taken = (try call(&runtime, "配列取出", &.{ taken_source, .{ .number = 1 }, .{ .number = 2 } }, null)).?;
+    try std.testing.expectEqualSlices(bool, &.{ false, true }, taken.array.presence.items);
+    try std.testing.expectEqual(Value.undefined, taken.array.get(0));
+    try std.testing.expectEqual(@as(f64, 3), taken.array.get(1).number);
+    try std.testing.expectEqualSlices(bool, &.{true}, taken_source.array.presence.items);
+    try std.testing.expectEqual(@as(f64, 1), taken_source.array.get(0).number);
+
+    var inserted = try runtime.createArray();
+    try roots.protect(&inserted);
+    try inserted.array.set(0, .{ .number = 1 });
+    try inserted.array.set(2, .{ .number = 3 });
+    _ = try call(&runtime, "配列挿入", &.{ inserted, .{ .number = 1 }, .{ .number = 9 } }, null);
+    try std.testing.expectEqualSlices(bool, &.{ true, true, false, true }, inserted.array.presence.items);
+    try std.testing.expectEqual(@as(f64, 9), inserted.array.get(1).number);
+    try std.testing.expectEqual(@as(f64, 3), inserted.array.get(3).number);
+
+    var bulk = try runtime.createArray();
+    try roots.protect(&bulk);
+    try bulk.array.set(0, .{ .number = 1 });
+    try bulk.array.set(2, .{ .number = 3 });
+    var values = try runtime.createArray();
+    try roots.protect(&values);
+    try values.array.set(1, .{ .number = 7 });
+    _ = try call(&runtime, "配列一括挿入", &.{ bulk, .{ .number = 1 }, values }, null);
+    try std.testing.expectEqualSlices(bool, &.{ true, true, true, false, true }, bulk.array.presence.items);
+    try std.testing.expectEqual(Value.undefined, bulk.array.get(1));
+    try std.testing.expectEqual(@as(f64, 7), bulk.array.get(2).number);
+    try std.testing.expectEqual(@as(f64, 3), bulk.array.get(4).number);
 }
 
 test "表検索系はlengthとraw開始値の型を保持する" {

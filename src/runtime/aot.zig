@@ -13604,16 +13604,26 @@ fn spliceArrayBuiltin(runtime: *Runtime, source: Value, start: usize, count: usi
     defer runtime.popRoots(&frame);
 
     const items = try arrayItems(roots[0]);
+    const source_object = roots[0].object() orelse return error.InvalidArray;
+    try runtime.normalizeAotArrayPresence(source_object);
     const old_length = items.items.len;
     const actual = @min(count, old_length - start);
     roots[1] = try runtime.createArray(&.{});
+    const result_object = roots[1].object() orelse return error.InvalidArray;
     const removed = try arrayItems(roots[1]);
     try removed.ensureTotalCapacity(runtime.allocator, actual);
     removed.items.len = actual;
-    if (actual > 0) @memcpy(removed.items, items.items[start .. start + actual]);
+    try result_object.array_presence.ensureTotalCapacity(runtime.allocator, actual);
+    result_object.array_presence.items.len = actual;
+    if (actual > 0) {
+        @memcpy(removed.items, items.items[start .. start + actual]);
+        @memcpy(result_object.array_presence.items, source_object.array_presence.items[start .. start + actual]);
+    }
     if (actual > 0) {
         @memmove(items.items[start .. old_length - actual], items.items[start + actual .. old_length]);
+        @memmove(source_object.array_presence.items[start .. old_length - actual], source_object.array_presence.items[start + actual .. old_length]);
         items.items.len = old_length - actual;
+        source_object.array_presence.items.len = old_length - actual;
     }
     return roots[1];
 }
@@ -13628,18 +13638,29 @@ fn insertValuesAssumeCapacity(items: *std.ArrayList(Value), start: usize, values
     std.debug.assert(items.items.len == old_length + values.len);
 }
 
+fn insertPresenceAssumeCapacity(presence: *std.ArrayList(bool), start: usize, count: usize) void {
+    const old_length = presence.items.len;
+    _ = presence.addManyAtAssumeCapacity(start, count);
+    @memset(presence.items[start .. start + count], true);
+    std.debug.assert(presence.items.len == old_length + count);
+}
+
 fn arrayInsertBuiltin(runtime: *Runtime, source: Value, index: Value, item: Value) !Value {
     var roots = [_]Value{ source, index, item, .{} };
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
     if (roots[0].tag != @intFromEnum(Tag.array)) return error.ArrayInsertReceiver;
+    const object = roots[0].object() orelse return error.InvalidArray;
+    try runtime.normalizeAotArrayPresence(object);
     const items = try arrayItems(roots[0]);
     const start = try spliceIndexRuntime(runtime, roots[1], items.items.len);
     roots[3] = try runtime.createArray(&.{});
     const old_length = items.items.len;
     try items.ensureTotalCapacity(runtime.allocator, std.math.add(usize, old_length, 1) catch return error.ArrayTooLarge);
+    try object.array_presence.ensureTotalCapacity(runtime.allocator, std.math.add(usize, old_length, 1) catch return error.ArrayTooLarge);
     insertValuesAssumeCapacity(items, start, roots[2..3]);
+    insertPresenceAssumeCapacity(&object.array_presence, start, 1);
     return roots[3];
 }
 
@@ -13649,6 +13670,8 @@ fn arrayInsertManyBuiltin(runtime: *Runtime, source: Value, index: Value, values
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
     if (roots[0].tag != @intFromEnum(Tag.array) or roots[2].tag != @intFromEnum(Tag.array)) return error.ArrayInsertManyReceiver;
+    const target_object = roots[0].object() orelse return error.InvalidArray;
+    try runtime.normalizeAotArrayPresence(target_object);
     const target = try arrayItems(roots[0]);
     const insertion = try arrayItems(roots[2]);
     // The official loop reads b[j] while mutating a.  Copying first is
@@ -13668,8 +13691,10 @@ fn arrayInsertManyBuiltin(runtime: *Runtime, source: Value, index: Value, values
     }
     const final_length = std.math.add(usize, old_length, copy.len) catch return error.ArrayTooLarge;
     try target.ensureTotalCapacity(runtime.allocator, final_length);
+    try target_object.array_presence.ensureTotalCapacity(runtime.allocator, final_length);
     for (positions, 0..) |start, offset| {
         insertValuesAssumeCapacity(target, start, copy[offset .. offset + 1]);
+        insertPresenceAssumeCapacity(&target_object.array_presence, start, 1);
     }
     return roots[0];
 }
@@ -18646,6 +18671,47 @@ test "AOT疎配列の順序操作は値とpresenceの公式境界を保つ" {
     try runtime.indexSet(roots[4], numberValue(2), numberValue(3));
     _ = try arrayOrderingBuiltin(&runtime, .array_shuffle, roots[4]);
     try std.testing.expectEqualSlices(bool, &.{ true, true, true }, roots[4].object().?.array_presence.items);
+}
+
+test "AOT疎配列のsplice系操作は削除側と戻り値側のpresenceを移動する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 6;
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createArray(&.{});
+    try runtime.indexSet(roots[0], numberValue(0), numberValue(1));
+    try runtime.indexSet(roots[0], numberValue(2), numberValue(3));
+    _ = try arrayCutBuiltin(&runtime, roots[0], numberValue(1));
+    try std.testing.expectEqualSlices(bool, &.{ true, true }, roots[0].object().?.array_presence.items);
+    try std.testing.expectEqual(@as(f64, 3), valueToNumber((try arrayItems(roots[0])).items[1]));
+
+    roots[1] = try runtime.createArray(&.{});
+    try runtime.indexSet(roots[1], numberValue(0), numberValue(1));
+    try runtime.indexSet(roots[1], numberValue(2), numberValue(3));
+    roots[2] = try arrayTakeBuiltin(&runtime, roots[1], numberValue(1), numberValue(2));
+    try std.testing.expectEqualSlices(bool, &.{ false, true }, roots[2].object().?.array_presence.items);
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try arrayItems(roots[2])).items[0].tag)));
+    try std.testing.expectEqual(@as(f64, 3), valueToNumber((try arrayItems(roots[2])).items[1]));
+    try std.testing.expectEqualSlices(bool, &.{true}, roots[1].object().?.array_presence.items);
+
+    roots[3] = try runtime.createArray(&.{});
+    try runtime.indexSet(roots[3], numberValue(0), numberValue(1));
+    try runtime.indexSet(roots[3], numberValue(2), numberValue(3));
+    _ = try arrayInsertBuiltin(&runtime, roots[3], numberValue(1), numberValue(9));
+    try std.testing.expectEqualSlices(bool, &.{ true, true, false, true }, roots[3].object().?.array_presence.items);
+
+    roots[4] = try runtime.createArray(&.{});
+    try runtime.indexSet(roots[4], numberValue(0), numberValue(1));
+    try runtime.indexSet(roots[4], numberValue(2), numberValue(3));
+    roots[5] = try runtime.createArray(&.{});
+    try runtime.indexSet(roots[5], numberValue(1), numberValue(7));
+    _ = try arrayInsertManyBuiltin(&runtime, roots[4], numberValue(1), roots[5]);
+    try std.testing.expectEqualSlices(bool, &.{ true, true, true, false, true }, roots[4].object().?.array_presence.items);
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try arrayItems(roots[4])).items[1].tag)));
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber((try arrayItems(roots[4])).items[2]));
 }
 
 test "AOT配列シャッフルはFisher-Yatesの置換と同一配列を保つ" {

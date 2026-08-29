@@ -4832,7 +4832,8 @@
       "status": "native",
       "tests": [
         "plugin-system-array-mutation-quirks",
-        "native-system-array-mutation-commands"
+        "native-system-array-mutation-commands",
+        "native-system-array-sparse-splice"
       ],
       "platforms": [
         "macos-aarch64",
@@ -4859,7 +4860,8 @@
       "status": "native",
       "tests": [
         "plugin-system-array-mutation-quirks",
-        "native-system-array-mutation-commands"
+        "native-system-array-mutation-commands",
+        "native-system-array-sparse-splice"
       ],
       "platforms": [
         "macos-aarch64",
@@ -5053,7 +5055,8 @@
       "status": "native",
       "tests": [
         "plugin-system-array-mutation-quirks",
-        "native-system-array-mutation-commands"
+        "native-system-array-mutation-commands",
+        "native-system-array-sparse-splice"
       ],
       "platforms": [
         "macos-aarch64",
@@ -5080,7 +5083,8 @@
       "status": "native",
       "tests": [
         "plugin-system-array-mutation-quirks",
-        "native-system-array-mutation-commands"
+        "native-system-array-mutation-commands",
+        "native-system-array-sparse-splice"
       ],
       "platforms": [
         "macos-aarch64",
@@ -5107,7 +5111,8 @@
       "status": "native",
       "tests": [
         "plugin-system-array-mutation-quirks",
-        "native-system-array-mutation-commands"
+        "native-system-array-mutation-commands",
+        "native-system-array-sparse-splice"
       ],
       "platforms": [
         "macos-aarch64",
