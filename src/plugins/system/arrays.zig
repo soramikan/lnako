@@ -1070,19 +1070,25 @@ fn tableInsertColumn(runtime: *Runtime, source: Value, column_value: Value, valu
     for (&rooted) |*root| try roots.protect(root);
     rooted[3] = try runtime.createArray();
     if (rooted[0].array.len() == 0) return rooted[3];
+    try rooted[0].array.normalizePresence();
     const positive_order = try operators.compare(runtime, rooted[1], .{ .number = 0 });
     const positive = positive_order != null and positive_order.? == .gt;
     for (rooted[0].array.items.items, 0..) |row, index| {
+        // Array.prototype.forEach skips holes in the outer table.  An
+        // explicit undefined row remains observable and therefore follows
+        // the existing row-type error path below.
+        if (!rooted[0].array.isPresent(index)) continue;
         rooted[4] = try runtime.createArray();
         if (row == .array) {
+            try row.array.normalizePresence();
             if (positive) {
                 const prefix = spliceIndex(try runtime.valueToNumber(rooted[1]), row.array.len());
-                for (row.array.items.items[0..prefix]) |item| _ = try rooted[4].array.push(item);
+                for (row.array.items.items[0..prefix], 0..) |item, row_index| try appendArraySlot(rooted[4].array, item, row.array.isPresent(row_index));
             }
             rooted[5] = if (rooted[2] == .array) rooted[2].array.get(index) else try indexed(runtime, rooted[2], .{ .number = @floatFromInt(index) });
             _ = try rooted[4].array.push(rooted[5]);
             const suffix = spliceIndex(try runtime.valueToNumber(rooted[1]), row.array.len());
-            for (row.array.items.items[suffix..]) |item| _ = try rooted[4].array.push(item);
+            for (row.array.items.items[suffix..], suffix..) |item, row_index| try appendArraySlot(rooted[4].array, item, row.array.isPresent(row_index));
         } else if (row == .string) {
             if (positive) {
                 const prefix = spliceIndex(try runtime.valueToNumber(rooted[1]), row.string.len());
@@ -1155,12 +1161,15 @@ fn tableDeleteColumn(runtime: *Runtime, source: Value, column_value: Value) !Val
     defer roots.deinit();
     for (&rooted) |*root| try roots.protect(root);
     rooted[2] = try runtime.createArray();
-    for (rooted[0].array.items.items) |row| {
+    try rooted[0].array.normalizePresence();
+    for (rooted[0].array.items.items, 0..) |row, row_index| {
+        if (!rooted[0].array.isPresent(row_index)) continue;
         if (row != .array) return error.ArrayExpected;
         rooted[3] = try runtime.createArray();
+        try row.array.normalizePresence();
         const column = spliceIndex(try runtime.valueToNumber(rooted[1]), row.array.len());
         for (row.array.items.items, 0..) |item, index| {
-            if (index != column) _ = try rooted[3].array.push(item);
+            if (index != column) try appendArraySlot(rooted[3].array, item, row.array.isPresent(index));
         }
         _ = try rooted[2].array.push(rooted[3]);
     }
@@ -1173,7 +1182,9 @@ fn tableColumnSum(runtime: *Runtime, source: Value, column: Value) !Value {
     var roots = runtime.rootFrame();
     defer roots.deinit();
     for (&rooted) |*root| try roots.protect(root);
-    for (rooted[0].array.items.items) |row| {
+    try rooted[0].array.normalizePresence();
+    for (rooted[0].array.items.items, 0..) |row, index| {
+        if (!rooted[0].array.isPresent(index)) continue;
         rooted[3] = try indexed(runtime, row, rooted[1]);
         rooted[2] = try operators.binary(runtime, .add, rooted[2], rooted[3]);
     }
@@ -1775,6 +1786,51 @@ test "表列取得と表ピックアップは最上位のholeをArrayメソッ�
     try roots.protect(&exact);
     try std.testing.expectEqual(@as(usize, 1), exact.array.len());
     try std.testing.expectEqual(first.array, exact.array.get(0).array);
+}
+
+test "表列挿入削除合計は外側と行内部のholeをforEachとsliceどおり扱う" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var sparse_row = try runtime.createArray();
+    try roots.protect(&sparse_row);
+    try sparse_row.array.set(0, .{ .number = 1 });
+    try sparse_row.array.set(2, .{ .number = 3 });
+    var dense_row = try common.arrayFromValues(&runtime, &.{ .{ .number = 4 }, .{ .number = 5 } });
+    try roots.protect(&dense_row);
+    var table = try runtime.createArray();
+    try roots.protect(&table);
+    try table.array.set(0, sparse_row);
+    try table.array.set(2, dense_row);
+    var values = try common.arrayFromValues(&runtime, &.{ .{ .number = 9 }, .{ .number = 8 }, .{ .number = 7 } });
+    try roots.protect(&values);
+
+    var inserted = try tableInsertColumn(&runtime, table, .{ .number = 1 }, values);
+    try roots.protect(&inserted);
+    try std.testing.expectEqual(@as(usize, 2), inserted.array.len());
+    try std.testing.expectEqualSlices(bool, &.{ true, true, false, true }, inserted.array.get(0).array.presence.items);
+    try std.testing.expectEqual(@as(f64, 1), inserted.array.get(0).array.get(0).number);
+    try std.testing.expectEqual(@as(f64, 9), inserted.array.get(0).array.get(1).number);
+    try std.testing.expectEqual(Value.undefined, inserted.array.get(0).array.get(2));
+    try std.testing.expectEqual(@as(f64, 3), inserted.array.get(0).array.get(3).number);
+    try std.testing.expectEqual(@as(f64, 7), inserted.array.get(1).array.get(1).number);
+
+    var deleted = try tableDeleteColumn(&runtime, table, .{ .number = 1 });
+    try roots.protect(&deleted);
+    try std.testing.expectEqual(@as(usize, 2), deleted.array.len());
+    try std.testing.expectEqualSlices(bool, &.{ true, true }, deleted.array.get(0).array.presence.items);
+    try std.testing.expectEqual(@as(f64, 1), deleted.array.get(0).array.get(0).number);
+    try std.testing.expectEqual(@as(f64, 3), deleted.array.get(0).array.get(1).number);
+    try std.testing.expectEqual(@as(f64, 4), deleted.array.get(1).array.get(0).number);
+
+    try std.testing.expectEqualSlices(bool, &.{ true, false, true }, table.array.presence.items);
+    try std.testing.expectEqual(@as(f64, 1), table.array.get(0).array.get(0).number);
+    try std.testing.expectEqual(@as(f64, 4), table.array.get(2).array.get(0).number);
+    const sum_value = try tableColumnSum(&runtime, table, .{ .number = 0 });
+    try std.testing.expectEqual(@as(f64, 5), sum_value.number);
 }
 
 test "表正規表現系はraw RegExpと浅いコピーとGCを保つ" {

@@ -5941,14 +5941,15 @@
         "plugin-system-table",
         "native-system-table-transform-commands",
         "native-system-table-insert-bigint-index-error",
-        "native-system-table-byte-row-slice"
+        "native-system-table-byte-row-slice",
+        "native-system-table-sparse-foreach-slice"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "配列・文字列・byte buffer行のprefix/suffixをZig製ランタイムで実装し、公式差分テストに成功。Buffer slice/view identityはTODO: table-insert-byte-row-slice / aot-byte-buffer-value"
+      "reason": "配列・文字列・byte buffer行のprefix/suffixと疎行のslice presenceをZig製ランタイムで実装し、公式差分テストに成功。Buffer slice/view identityはTODO: table-insert-byte-row-slice / aot-byte-buffer-value"
     },
     {
       "id": "command-0223",
@@ -5969,14 +5970,15 @@
       "tests": [
         "plugin-system-table",
         "native-system-table-transform-commands",
-        "native-system-table-delete-bigint-index-error"
+        "native-system-table-delete-bigint-index-error",
+        "native-system-table-sparse-foreach-slice"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
+      "reason": "Zig製ランタイムで外側forEachと行sliceの疎配列presenceを含めて実装し、公式差分テストに成功"
     },
     {
       "id": "command-0224",
@@ -5998,14 +6000,15 @@
         "plugin-system-table",
         "native-system-table-transform-commands",
         "native-system-table-column-sum-bigint-error",
-        "native-system-table-byte-row-properties"
+        "native-system-table-byte-row-properties",
+        "native-system-table-sparse-foreach-slice"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "JavaScript互換加算とbyte buffer rowの数値添字で実装し、公式差分テストに成功"
+      "reason": "JavaScript互換加算、byte buffer rowの数値添字、外側forEachの疎配列スキップを実装し、公式差分テストに成功"
     },
     {
       "id": "command-0225",

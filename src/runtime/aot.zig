@@ -14006,20 +14006,26 @@ fn tableInsertColumnBuiltin(runtime: *Runtime, source: Value, column: Value, val
     const rows = try arrayItems(roots[0]);
     roots[3] = try runtime.createArray(&.{});
     if (rows.items.len == 0) return roots[3];
+    const source_object = roots[0].object().?;
+    try runtime.normalizeAotArrayPresence(source_object);
     const result = try arrayItems(roots[3]);
     const positive = try compareValues(runtime, .greater, roots[1], numberValue(0));
     for (rows.items, 0..) |row, row_index| {
+        // Array.prototype.forEach skips holes in the outer table.
+        if (!runtime.aotArrayIsPresent(source_object, row_index)) continue;
         roots[4] = try runtime.createArray(&.{});
         const new_row = try arrayItems(roots[4]);
         const row_tag = @as(Tag, @enumFromInt(row.tag));
         if (row_tag == .array) {
+            const row_object = row.object().?;
+            try runtime.normalizeAotArrayPresence(row_object);
             const row_items = try arrayItems(row);
             const total = std.math.add(usize, row_items.items.len, 1) catch return error.ArraySizeLimitExceeded;
             if (total > safe_array_element_limit) return error.ArraySizeLimitExceeded;
             try new_row.ensureTotalCapacity(runtime.allocator, total);
             if (positive) {
                 const prefix = try spliceIndexRuntime(runtime, roots[1], row_items.items.len);
-                try new_row.appendSlice(runtime.allocator, row_items.items[0..prefix]);
+                for (row_items.items[0..prefix], 0..) |item, index| try appendAotArraySlot(runtime, roots[4].object().?, item, runtime.aotArrayIsPresent(row_object, index));
             }
         } else if (isString(row)) {
             const row_units = try valueUtf16Alloc(runtime, row);
@@ -14049,7 +14055,8 @@ fn tableInsertColumnBuiltin(runtime: *Runtime, source: Value, column: Value, val
         if (row_tag == .array) {
             const row_items = try arrayItems(row);
             const suffix = try spliceIndexRuntime(runtime, roots[1], row_items.items.len);
-            try new_row.appendSlice(runtime.allocator, row_items.items[suffix..]);
+            const row_object = row.object().?;
+            for (row_items.items[suffix..], suffix..) |item, index| try appendAotArraySlot(runtime, roots[4].object().?, item, runtime.aotArrayIsPresent(row_object, index));
         } else if (isString(row)) {
             const row_units = try valueUtf16Alloc(runtime, row);
             defer runtime.allocator.free(row_units);
@@ -14084,13 +14091,18 @@ fn tableDeleteColumnBuiltin(runtime: *Runtime, source: Value, column: Value) !Va
     const rows = try arrayItems(roots[0]);
     roots[2] = try runtime.createArray(&.{});
     const result = try arrayItems(roots[2]);
-    for (rows.items) |row| {
+    const source_object = roots[0].object().?;
+    try runtime.normalizeAotArrayPresence(source_object);
+    for (rows.items, 0..) |row, row_index| {
+        if (!runtime.aotArrayIsPresent(source_object, row_index)) continue;
         const row_items = try arrayItems(row);
+        const row_object = row.object().?;
+        try runtime.normalizeAotArrayPresence(row_object);
         const index = try spliceIndexRuntime(runtime, roots[1], row_items.items.len);
         roots[3] = try runtime.createArray(&.{});
         const new_row = try arrayItems(roots[3]);
         try new_row.ensureTotalCapacity(runtime.allocator, row_items.items.len - @intFromBool(index < row_items.items.len));
-        for (row_items.items, 0..) |item, item_index| if (item_index != index) try new_row.append(runtime.allocator, item);
+        for (row_items.items, 0..) |item, item_index| if (item_index != index) try appendAotArraySlot(runtime, roots[3].object().?, item, runtime.aotArrayIsPresent(row_object, item_index));
         try result.append(runtime.allocator, roots[3]);
     }
     return roots[2];
@@ -14101,7 +14113,10 @@ fn tableColumnSumBuiltin(runtime: *Runtime, source: Value, column: Value) !Value
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
-    for ((try arrayItems(roots[0])).items) |row| {
+    const source_object = roots[0].object().?;
+    try runtime.normalizeAotArrayPresence(source_object);
+    for (source_object.payload.array.items, 0..) |row, index| {
+        if (!runtime.aotArrayIsPresent(source_object, index)) continue;
         roots[3] = try tableRowProperty(runtime, row, roots[1]);
         roots[2] = try jsAdd(runtime, roots[2], roots[3]);
     }
@@ -19382,6 +19397,43 @@ test "AOT表検索系は行プロパティとraw開始値を公式どおり処�
     try std.testing.expectEqual(@as(i64, 2), bigint_columns.object().?.payload.bigint.toI64());
     roots[17] = try runtime.createFunction(testAotFunction, 2, &.{});
     try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast((try tableRowProperty(&runtime, roots[17], staticStringValue("length"))).payload)));
+}
+
+test "AOT表列挿入削除合計は外側と行内部のholeをforEachとsliceどおり扱う" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 12;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createArray(&.{});
+    try runtime.indexSet(roots[0], numberValue(0), numberValue(1));
+    try runtime.indexSet(roots[0], numberValue(2), numberValue(3));
+    roots[1] = try runtime.createArray(&.{ numberValue(4), numberValue(5) });
+    roots[2] = try runtime.createArray(&.{});
+    try runtime.indexSet(roots[2], numberValue(0), roots[0]);
+    try runtime.indexSet(roots[2], numberValue(2), roots[1]);
+    roots[3] = try runtime.createArray(&.{ numberValue(9), numberValue(8), numberValue(7) });
+    roots[4] = try tableBuiltin(&runtime, .table_insert_column, &.{ roots[2], numberValue(1), roots[3] });
+    try std.testing.expectEqual(@as(usize, 2), roots[4].object().?.payload.array.items.len);
+    const inserted_row = roots[4].object().?.payload.array.items[0].object().?;
+    try std.testing.expectEqualSlices(bool, &.{ true, true, false, true }, inserted_row.array_presence.items);
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(inserted_row.payload.array.items[0]));
+    try std.testing.expectEqual(@as(f64, 9), valueToNumber(inserted_row.payload.array.items[1]));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(inserted_row.payload.array.items[2].tag)));
+    try std.testing.expectEqual(@as(f64, 3), valueToNumber(inserted_row.payload.array.items[3]));
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[4].object().?.payload.array.items[1].object().?.payload.array.items[1]));
+
+    roots[5] = try tableBuiltin(&runtime, .table_delete_column, &.{ roots[2], numberValue(1) });
+    const deleted_row = roots[5].object().?.payload.array.items[0].object().?;
+    try std.testing.expectEqualSlices(bool, &.{ true, true }, deleted_row.array_presence.items);
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(deleted_row.payload.array.items[0]));
+    try std.testing.expectEqual(@as(f64, 3), valueToNumber(deleted_row.payload.array.items[1]));
+    try std.testing.expectEqual(@as(f64, 4), valueToNumber(roots[5].object().?.payload.array.items[1].object().?.payload.array.items[0]));
+
+    roots[6] = try tableBuiltin(&runtime, .table_column_sum, &.{ roots[2], numberValue(0) });
+    try std.testing.expectEqual(@as(f64, 5), valueToNumber(roots[6]));
 }
 
 test "AOT表正規表現系はraw RegExpと浅いコピーを保つ" {

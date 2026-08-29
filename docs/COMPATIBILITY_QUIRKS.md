@@ -439,6 +439,12 @@ ABI値の所有権と非同期スレッド制約は[`NATIVE_PLUGIN_ABI.md`](NATI
 | `表列取得` | `Array.map`相当なので、最上位配列のholeではcallbackを呼ばず、戻り値の同じ位置もholeになる。実在する行の内部propertyが欠損している場合は`undefined`を明示的な要素として返す。実在する`undefined`/`null`行はproperty参照時に例外になる | Interpreterと純LLVM AOTでsourceのpresenceを確認してholeを結果へ伝播し、実在行の欠損列は明示的`undefined`として追加する。QuickJS互換モードは対象外。継承propertyは`TODO: table-inherited-properties`、他の表命令の疎配列経路は`TODO: sparse-array-presence`として分離する | `native-system-table-sparse-map-filter`、`native-system-table-column-null-row-error`、`TODO: table-inherited-properties`、`TODO: sparse-array-presence` |
 | `表ピックアップ` / `表完全一致ピックアップ` | `Array.filter`相当なので、最上位配列のholeはcallbackを呼ばず結果へ入らない。実在する行だけを判定し、結果はdense配列になる。実在する`undefined`/`null`行はproperty参照時に例外になる | Interpreterと純LLVM AOTでholeをスキップし、条件に一致した実在行だけをdenseな結果へ追加する。実在するnullish行は既存の`TableRowMissing`経路で失敗させる。QuickJS互換モードは対象外。継承propertyは`TODO: table-inherited-properties`、他の表命令の疎配列経路は`TODO: sparse-array-presence`として分離する | `native-system-table-sparse-map-filter`、`native-system-table-byte-row-properties`、`TODO: table-inherited-properties`、`TODO: sparse-array-presence` |
 
+## 表命令のforEachと行slice
+
+| 命令 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID / TODO |
+|---|---|---|---|
+| `表列挿入` / `表列削除` / `表列合計` | 外側の`forEach`は最上位配列のholeをスキップする。配列行の`slice`・`splice`は行内部のholeを保持し、列挿入後も欠損位置をown propertyにしない。`表列合計`は実在行だけを加算する | Interpreterと純LLVM AOTで外側のholeをスキップし、配列行のprefix/suffix・削除結果を値とpresence bitmapごと生成する。列挿入値は`undefined`読込後の代入なので明示要素になる。QuickJS互換モードは対象外。Bufferのslice/view identityは`TODO: table-insert-byte-row-slice`、他の表命令の疎配列経路は`TODO: sparse-array-presence`として分離する | `native-system-table-sparse-foreach-slice`、`native-system-table-byte-row-slice`、`TODO: table-insert-byte-row-slice`、`TODO: sparse-array-presence` |
+
 ## 更新規則
 
 - 説明文と実装が食い違う場合は、固定した公式v3.7.24の実行結果を優先する。

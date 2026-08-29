@@ -1771,18 +1771,20 @@
       "plugin-system-table",
       "native-system-table-transform-commands",
       "native-system-table-insert-bigint-index-error",
-      "native-system-table-byte-row-slice"
+      "native-system-table-byte-row-slice",
+      "native-system-table-sparse-foreach-slice"
     ],
-    "reason": "配列・文字列・byte buffer行のprefix/suffixをZig製ランタイムで実装し、公式差分テストに成功。Buffer slice/view identityはTODO: table-insert-byte-row-slice / aot-byte-buffer-value"
+    "reason": "配列・文字列・byte buffer行のprefix/suffixと疎行のslice presenceをZig製ランタイムで実装し、公式差分テストに成功。Buffer slice/view identityはTODO: table-insert-byte-row-slice / aot-byte-buffer-value"
   },
   "表列削除": {
     "status": "native",
     "tests": [
       "plugin-system-table",
       "native-system-table-transform-commands",
-      "native-system-table-delete-bigint-index-error"
+      "native-system-table-delete-bigint-index-error",
+      "native-system-table-sparse-foreach-slice"
     ],
-    "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
+    "reason": "Zig製ランタイムで外側forEachと行sliceの疎配列presenceを含めて実装し、公式差分テストに成功"
   },
   "表列合計": {
     "status": "native",
@@ -1790,9 +1792,10 @@
       "plugin-system-table",
       "native-system-table-transform-commands",
       "native-system-table-column-sum-bigint-error",
-      "native-system-table-byte-row-properties"
+      "native-system-table-byte-row-properties",
+      "native-system-table-sparse-foreach-slice"
     ],
-    "reason": "JavaScript互換加算とbyte buffer rowの数値添字で実装し、公式差分テストに成功"
+    "reason": "JavaScript互換加算、byte buffer rowの数値添字、外側forEachの疎配列スキップを実装し、公式差分テストに成功"
   },
   "表曖昧検索": {
     "status": "native",
