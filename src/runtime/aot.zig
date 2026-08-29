@@ -624,6 +624,7 @@ const Object = struct {
     grey_next: ?*Object = null,
     marked: bool = false,
     array_properties: std.ArrayList(DictionaryEntry) = .empty,
+    array_presence: std.ArrayList(bool) = .empty,
     payload: Payload,
 };
 
@@ -931,11 +932,18 @@ const Runtime = struct {
 
     fn createObject(self: *Runtime, payload: Payload, tag: Tag) !Value {
         const object = try self.allocator.create(Object);
-        errdefer self.allocator.destroy(object);
+        errdefer {
+            object.array_presence.deinit(self.allocator);
+            self.allocator.destroy(object);
+        }
         object.* = .{
             .next = self.objects,
             .payload = payload,
         };
+        if (tag == .array) {
+            try object.array_presence.resize(self.allocator, object.payload.array.items.len);
+            @memset(object.array_presence.items, true);
+        }
         self.objects = object;
         self.object_count += 1;
         return .{ .tag = @intFromEnum(tag), .payload = @intFromPtr(object) };
@@ -1128,6 +1136,7 @@ const Runtime = struct {
             .array => |*items| {
                 items.deinit(self.allocator);
                 object.array_properties.deinit(self.allocator);
+                object.array_presence.deinit(self.allocator);
             },
             .dictionary => |*entries| entries.deinit(self.allocator),
             .function => |function| {
@@ -1216,17 +1225,54 @@ const Runtime = struct {
         return self.aotArrayPropertyGetUnits(object, key_units);
     }
 
+    fn aotArrayIsPresent(_: *Runtime, object: *const Object, index: usize) bool {
+        if (object.payload.array.items.len <= index) return false;
+        return if (index < object.array_presence.items.len) object.array_presence.items[index] else true;
+    }
+
+    fn normalizeAotArrayPresence(self: *Runtime, object: *Object) !void {
+        if (object.array_presence.items.len >= object.payload.array.items.len) return;
+        const previous_len = object.array_presence.items.len;
+        try object.array_presence.resize(self.allocator, object.payload.array.items.len);
+        // Low-level append sites predate presence tracking; existing slots are
+        // dense values when the metadata is first synchronized.
+        @memset(object.array_presence.items[previous_len..], true);
+    }
+
+    fn aotArraySetIndex(self: *Runtime, object: *Object, index: usize, value: Value) !void {
+        try self.normalizeAotArrayPresence(object);
+        if (index >= object.payload.array.items.len) {
+            const previous_len = object.payload.array.items.len;
+            try object.payload.array.resize(self.allocator, index + 1);
+            @memset(object.payload.array.items[previous_len..], .{});
+            try object.array_presence.resize(self.allocator, index + 1);
+            @memset(object.array_presence.items[previous_len..], false);
+        }
+        object.payload.array.items[index] = value;
+        object.array_presence.items[index] = true;
+    }
+
+    fn aotArrayDeleteIndex(self: *Runtime, object: *Object, index: usize) !bool {
+        if (index >= object.payload.array.items.len) return false;
+        try self.normalizeAotArrayPresence(object);
+        object.payload.array.items[index] = .{};
+        object.array_presence.items[index] = false;
+        return true;
+    }
+
+    fn aotArrayAppend(self: *Runtime, object: *Object, value: Value) !void {
+        try self.normalizeAotArrayPresence(object);
+        try object.payload.array.append(self.allocator, value);
+        errdefer _ = object.payload.array.pop();
+        try object.array_presence.append(self.allocator, true);
+    }
+
     fn aotArrayPropertySet(self: *Runtime, object: *Object, key: Value, value: Value) !void {
         const key_units = try valueUtf16Alloc(self, key);
         defer self.allocator.free(key_units);
         if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return error.ArrayLengthAssignment;
         if (self.aotCanonicalArrayIndexUnits(key_units)) |index| {
-            if (index >= object.payload.array.items.len) {
-                const previous_len = object.payload.array.items.len;
-                try object.payload.array.resize(self.allocator, index + 1);
-                @memset(object.payload.array.items[previous_len..], .{});
-            }
-            object.payload.array.items[index] = value;
+            try self.aotArraySetIndex(object, index, value);
             return;
         }
         const normalized = try self.propertyKey(key);
@@ -12947,6 +12993,7 @@ fn arraySearchBuiltin(runtime: *Runtime, source: Value, needle: Value) !f64 {
     const object = source.object() orelse return error.InvalidArray;
     if (object.payload != .array) return error.InvalidArray;
     for (object.payload.array.items, 0..) |item, index| {
+        if (!runtime.aotArrayIsPresent(object, index)) continue;
         if (try strictEqual(runtime, item, needle)) return @floatFromInt(index);
     }
     return -1;
@@ -13339,8 +13386,10 @@ fn dictionaryKeysBuiltin(runtime: *Runtime, source: Value) !Value {
             }
         },
         .array => {
-            const items = roots[0].object().?.payload.array.items;
+            const object = roots[0].object().?;
+            const items = object.payload.array.items;
             for (items, 0..) |_, index| {
+                if (!runtime.aotArrayIsPresent(object, index)) continue;
                 var text: [32]u8 = undefined;
                 const encoded = std.fmt.bufPrint(&text, "{d}", .{index}) catch return error.ArrayTooLarge;
                 var units: [32]u16 = undefined;
@@ -13371,9 +13420,11 @@ fn dictionaryValuesBuiltin(runtime: *Runtime, source: Value) !Value {
             for (order) |index| try result.append(runtime.allocator, entries[index].value);
         },
         .array => {
-            const items = roots[0].object().?.payload.array.items;
-            try result.appendSlice(runtime.allocator, items);
-            for (roots[0].object().?.array_properties.items) |property| try result.append(runtime.allocator, property.value);
+            const object = roots[0].object().?;
+            for (object.payload.array.items, 0..) |item, index| {
+                if (runtime.aotArrayIsPresent(object, index)) try result.append(runtime.allocator, item);
+            }
+            for (object.array_properties.items) |property| try result.append(runtime.allocator, property.value);
         },
         .function => {},
         else => return error.DictionaryValuesReceiver,
@@ -13402,8 +13453,7 @@ fn dictionaryRemoveBuiltin(runtime: *Runtime, source: Value, key: Value) !Value 
             defer runtime.allocator.free(key_units);
             if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return error.ArrayLengthDelete;
             if (runtime.aotCanonicalArrayIndexUnits(key_units)) |index| {
-                const items = &roots[0].object().?.payload.array.items;
-                if (index < items.len) items.*[index] = .{};
+                _ = try runtime.aotArrayDeleteIndex(roots[0].object().?, index);
             } else {
                 const properties = &roots[0].object().?.array_properties;
                 for (properties.items, 0..) |property, index| if (runtime.aotPropertyKeyMatchesUnits(property.key, key_units)) {
@@ -13435,8 +13485,7 @@ fn dictionaryHasBuiltin(runtime: *Runtime, source: Value, key: Value) !bool {
             defer runtime.allocator.free(key_units);
             if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return true;
             if (runtime.aotCanonicalArrayIndexUnits(key_units)) |index| {
-                const items = roots[0].object().?.payload.array.items;
-                return index < items.len;
+                return runtime.aotArrayIsPresent(roots[0].object().?, index);
             }
             for (roots[0].object().?.array_properties.items) |property| if (runtime.aotPropertyKeyMatchesUnits(property.key, key_units)) return true;
             return false;
@@ -13617,16 +13666,19 @@ fn arrayPopBuiltin(_: *Runtime, source: Value) !Value {
     if (source.tag != @intFromEnum(Tag.array)) return error.ArrayPopReceiver;
     const object = source.object() orelse return error.InvalidArray;
     if (object.payload != .array) return error.InvalidArray;
-    return object.payload.array.pop() orelse .{};
+    const length = object.payload.array.items.len;
+    if (length == 0) return .{};
+    const result = object.payload.array.items[length - 1];
+    _ = object.payload.array.pop();
+    if (object.array_presence.items.len >= length) _ = object.array_presence.pop();
+    return result;
 }
 
 fn arrayPushBuiltin(runtime: *Runtime, source: Value, item: Value) !Value {
     if (source.tag != @intFromEnum(Tag.array)) return error.ArrayPushReceiver;
     const object = source.object() orelse return error.InvalidArray;
     if (object.payload != .array) return error.InvalidArray;
-    const items = &object.payload.array;
-    try items.ensureTotalCapacity(runtime.allocator, std.math.add(usize, items.items.len, 1) catch return error.ArrayTooLarge);
-    items.appendAssumeCapacity(item);
+    try runtime.aotArrayAppend(object, item);
     return source;
 }
 
@@ -14418,11 +14470,23 @@ fn arrayAddBuiltin(runtime: *Runtime, source: Value, other: Value) !Value {
 
 fn arrayExtremumBuiltin(runtime: *Runtime, source: Value, maximum: bool) !Value {
     if (source.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
-    const items = try arrayItems(source);
-    if (items.items.len == 0) return error.NonEmptyArrayExpected;
-    if (items.items.len == 1) return items.items[0];
-    var result = try valueToNumberRuntime(runtime, items.items[0]);
-    for (items.items[1..]) |item| {
+    const object = source.object() orelse return error.InvalidArray;
+    if (object.payload != .array) return error.InvalidArray;
+    const items = object.payload.array.items;
+    var first_index: ?usize = null;
+    for (items, 0..) |_, index| if (runtime.aotArrayIsPresent(object, index)) {
+        first_index = index;
+        break;
+    };
+    const first = first_index orelse return error.NonEmptyArrayExpected;
+    var present_count: usize = 0;
+    for (items, 0..) |_, index| {
+        if (runtime.aotArrayIsPresent(object, index)) present_count += 1;
+    }
+    if (present_count == 1) return items[first];
+    var result = try valueToNumberRuntime(runtime, items[first]);
+    for (items[first + 1 ..], 0..) |item, offset| {
+        if (!runtime.aotArrayIsPresent(object, first + 1 + offset)) continue;
         const number = try valueToNumberRuntime(runtime, item);
         if (std.math.isNan(number) or std.math.isNan(result)) {
             result = std.math.nan(f64);
@@ -14441,8 +14505,11 @@ fn isNegativeZero(number: f64) bool {
 
 fn arraySumBuiltin(runtime: *Runtime, source: Value) !Value {
     if (source.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
+    const object = source.object() orelse return error.InvalidArray;
+    if (object.payload != .array) return error.InvalidArray;
     var total: f64 = 0;
-    for ((try arrayItems(source)).items) |item| {
+    for (object.payload.array.items, 0..) |item, index| {
+        if (!runtime.aotArrayIsPresent(object, index)) continue;
         const number = try parseFloatBuiltin(runtime, item);
         if (!std.math.isNan(number)) total += number;
     }

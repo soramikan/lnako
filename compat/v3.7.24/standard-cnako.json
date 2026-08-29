@@ -4726,14 +4726,15 @@
       "tests": [
         "plugin-system-array-core",
         "native-system-array-join-search-commands",
-        "native-system-array-particle-omission"
+        "native-system-array-particle-omission",
+        "native-system-array-sparse-presence"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
+      "reason": "Zig製ランタイムでstrict equalityと疎配列holeのスキップを実装し、公式差分テストに成功"
     },
     {
       "id": "command-0180",
@@ -5362,14 +5363,15 @@
       "status": "native",
       "tests": [
         "plugin-system-array-core",
-        "native-system-array-aggregate-create-commands"
+        "native-system-array-aggregate-create-commands",
+        "native-system-array-sparse-presence"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "単一要素の型保持を含めZig製ランタイムで実装し、公式差分テストとNaN・BigInt・±0境界の単体テストに成功。疎配列はTODO: sparse-array-presence"
+      "reason": "単一要素の型保持とreduce相当の疎配列holeスキップを含めZig製ランタイムで実装し、公式差分テストとNaN・BigInt・±0境界の単体テストに成功"
     },
     {
       "id": "command-0203",
@@ -5389,14 +5391,15 @@
       "status": "native",
       "tests": [
         "plugin-system-array-core",
-        "native-system-array-aggregate-create-commands"
+        "native-system-array-aggregate-create-commands",
+        "native-system-array-sparse-presence"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "単一要素の型保持を含めZig製ランタイムで実装し、公式差分テストとNaN・BigInt・±0境界の単体テストに成功。疎配列はTODO: sparse-array-presence"
+      "reason": "単一要素の型保持とreduce相当の疎配列holeスキップを含めZig製ランタイムで実装し、公式差分テストとNaN・BigInt・±0境界の単体テストに成功"
     },
     {
       "id": "command-0204",
@@ -8023,14 +8026,15 @@
       "tests": [
         "plugin-system-dictionary-hash",
         "native-system-dictionary-hash-commands",
-        "native-system-array-own-properties"
+        "native-system-array-own-properties",
+        "native-system-array-sparse-presence"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "ECMAScriptのproperty key順と配列・関数境界をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
+      "reason": "ECMAScriptのproperty key順、配列・関数境界、疎配列holeの除外をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0301",
@@ -8050,14 +8054,15 @@
       "status": "native",
       "tests": [
         "plugin-system-dictionary-hash",
-        "native-system-dictionary-hash-commands"
+        "native-system-dictionary-hash-commands",
+        "native-system-array-sparse-presence"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "property key正規化と配列length削除エラーをInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
+      "reason": "property key正規化、配列indexのhole化、配列length削除エラーをInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0302",
@@ -8078,14 +8083,15 @@
       "tests": [
         "plugin-system-dictionary-hash",
         "native-system-dictionary-hash-commands",
-        "native-system-array-own-properties"
+        "native-system-array-own-properties",
+        "native-system-array-sparse-presence"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "辞書・配列・関数の存在判定と動的エラー文言をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
+      "reason": "辞書・配列・関数の存在判定、配列holeの非存在化、動的エラー文言をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0303",
@@ -8133,14 +8139,15 @@
       "tests": [
         "plugin-system-dictionary-hash",
         "native-system-dictionary-hash-commands",
-        "native-system-array-own-properties"
+        "native-system-array-own-properties",
+        "native-system-array-sparse-presence"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "辞書のproperty key順と配列・関数の内容列挙をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
+      "reason": "辞書のproperty key順、配列・関数の内容列挙、疎配列holeの除外をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0305",

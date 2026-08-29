@@ -124,7 +124,10 @@ fn join(runtime: *Runtime, source: Value, separator: Value) !Value {
 
 fn arraySearch(source: Value, needle: Value) i64 {
     if (source != .array) return -1;
-    for (source.array.items.items, 0..) |item, index| if (Value.strictEqual(item, needle)) return @intCast(index);
+    for (source.array.items.items, 0..) |item, index| {
+        if (!source.array.isPresent(index)) continue;
+        if (Value.strictEqual(item, needle)) return @intCast(index);
+    }
     return -1;
 }
 
@@ -575,10 +578,21 @@ fn arrayAdd(runtime: *Runtime, source: Value, other: Value) !Value {
 
 fn reduceExtremum(runtime: *Runtime, source: Value, maximum: bool) !Value {
     if (source != .array) return error.ArrayExpected;
-    if (source.array.len() == 0) return error.NonEmptyArrayExpected;
-    if (source.array.len() == 1) return source.array.get(0);
-    var result = try runtime.valueToNumber(source.array.get(0));
-    for (source.array.items.items[1..]) |item| {
+    var first_index: ?usize = null;
+    for (0..source.array.len()) |index| if (source.array.isPresent(index)) {
+        first_index = index;
+        break;
+    };
+    const first = first_index orelse return error.NonEmptyArrayExpected;
+    var present_count: usize = 0;
+    for (0..source.array.len()) |index| {
+        if (source.array.isPresent(index)) present_count += 1;
+    }
+    if (present_count == 1) return source.array.get(first);
+    var result = try runtime.valueToNumber(source.array.get(first));
+    for (source.array.items.items[first + 1 ..], 0..) |item, offset| {
+        const index = first + 1 + offset;
+        if (!source.array.isPresent(index)) continue;
         const number = try runtime.valueToNumber(item);
         if (std.math.isNan(number) or std.math.isNan(result)) {
             result = std.math.nan(f64);
@@ -598,7 +612,8 @@ fn isNegativeZero(number: f64) bool {
 fn sum(runtime: *Runtime, source: Value) !Value {
     if (source != .array) return error.ArrayExpected;
     var result: f64 = 0;
-    for (source.array.items.items) |item| {
+    for (source.array.items.items, 0..) |item, index| {
+        if (!source.array.isPresent(index)) continue;
         const number = try common.parseFloatValue(runtime, item);
         if (!std.math.isNan(number)) result += number;
     }

@@ -28,6 +28,7 @@ fn keys(runtime: *Runtime, source: Value) !Value {
         },
         .array => |array| {
             for (0..array.len()) |index| {
+                if (!array.isPresent(index)) continue;
                 var buffer: [32]u8 = undefined;
                 const text = std.fmt.bufPrint(&buffer, "{d}", .{index}) catch return error.ArrayTooLarge;
                 const key = try runtime.stringUtf8(text);
@@ -54,7 +55,9 @@ fn values(runtime: *Runtime, source: Value) !Value {
             for (order) |index| _ = try result.array.push(dictionary.values()[index]);
         },
         .array => |array| {
-            for (0..array.len()) |index| _ = try result.array.push(array.get(index));
+            for (0..array.len()) |index| {
+                if (array.isPresent(index)) _ = try result.array.push(array.get(index));
+            }
             for (array.properties.items) |property| _ = try result.array.push(property.value);
         },
         else => return error.DictionaryValuesReceiver,
@@ -67,7 +70,7 @@ fn remove(runtime: *Runtime, source: Value, key_value: Value) !Value {
         const key = try runtime.valueToString(key_value);
         if (std.mem.eql(u16, key.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return error.ArrayLengthDelete;
         if (canonicalArrayIndex(key.string.units)) |index| {
-            if (index < source.array.len()) source.array.items.items[index] = .undefined;
+            _ = try source.array.deleteIndex(index);
         } else _ = source.array.removeProperty(key.string);
         return source;
     }
@@ -86,7 +89,7 @@ fn has(runtime: *Runtime, source: Value, key_value: Value) !bool {
     if (source == .array) {
         const key = try runtime.valueToString(key_value);
         if (std.mem.eql(u16, key.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return true;
-        if (canonicalArrayIndex(key.string.units)) |index| return index < source.array.len();
+        if (canonicalArrayIndex(key.string.units)) |index| return source.array.isPresent(index);
         return source.array.hasProperty(key.string);
     }
     if (source == .function) {

@@ -43,12 +43,18 @@ pub const Array = struct {
     gc_marked: bool = false,
     allocator: std.mem.Allocator,
     items: std.ArrayList(Value) = .empty,
+    /// Array storage remains dense for bounded allocation, while this list
+    /// records whether an indexed property actually exists.  A missing entry
+    /// is treated as present for legacy low-level append callers until the
+    /// presence list is normalized.
+    presence: std.ArrayList(bool) = .empty,
     properties: std.ArrayList(ArrayProperty) = .empty,
     external: ?ExternalHandle = null,
 
     pub fn deinit(self: *Array) void {
         if (self.external) |binding| binding.deinit();
         self.items.deinit(self.allocator);
+        self.presence.deinit(self.allocator);
         self.properties.deinit(self.allocator);
         self.* = undefined;
     }
@@ -62,41 +68,85 @@ pub const Array = struct {
         return self.items.items[index];
     }
 
+    pub fn isPresent(self: Array, index: usize) bool {
+        if (index >= self.items.items.len) return false;
+        return if (index < self.presence.items.len) self.presence.items[index] else true;
+    }
+
+    fn normalizePresence(self: *Array) !void {
+        if (self.presence.items.len >= self.items.items.len) return;
+        const previous_len = self.presence.items.len;
+        try self.presence.resize(self.allocator, self.items.items.len);
+        // Direct ArrayList appends predate presence tracking. Treat those
+        // existing slots as ordinary present properties when first touched.
+        @memset(self.presence.items[previous_len..], true);
+    }
+
     pub fn set(self: *Array, index: usize, value: Value) !void {
+        try self.normalizePresence();
         if (index >= self.items.items.len) {
             const old_len = self.items.items.len;
             try self.items.resize(self.allocator, index + 1);
             @memset(self.items.items[old_len..], .undefined);
+            try self.presence.resize(self.allocator, index + 1);
+            @memset(self.presence.items[old_len..], false);
         }
         self.items.items[index] = value;
+        self.presence.items[index] = true;
     }
 
     pub fn push(self: *Array, value: Value) !usize {
+        try self.normalizePresence();
         try self.items.append(self.allocator, value);
+        errdefer _ = self.items.pop();
+        try self.presence.append(self.allocator, true);
         return self.items.items.len;
     }
 
     pub fn pop(self: *Array) Value {
-        return self.items.pop() orelse .undefined;
+        const old_len = self.items.items.len;
+        const result = self.items.pop() orelse return .undefined;
+        if (self.presence.items.len >= old_len) _ = self.presence.pop();
+        return result;
     }
 
     pub fn unshift(self: *Array, value: Value) !usize {
+        try self.normalizePresence();
         try self.items.insert(self.allocator, 0, value);
+        errdefer _ = self.items.orderedRemove(0);
+        try self.presence.insert(self.allocator, 0, true);
         return self.items.items.len;
     }
 
     pub fn shift(self: *Array) Value {
         if (self.items.items.len == 0) return .undefined;
-        return self.items.orderedRemove(0);
+        const result = self.items.orderedRemove(0);
+        if (self.presence.items.len > 0) _ = self.presence.orderedRemove(0);
+        return result;
     }
 
     pub fn insert(self: *Array, index: usize, value: Value) !void {
-        try self.items.insert(self.allocator, @min(index, self.items.items.len), value);
+        try self.normalizePresence();
+        const position = @min(index, self.items.items.len);
+        try self.items.insert(self.allocator, position, value);
+        errdefer _ = self.items.orderedRemove(position);
+        try self.presence.insert(self.allocator, position, true);
     }
 
     pub fn remove(self: *Array, index: usize) Value {
         if (index >= self.items.items.len) return .undefined;
-        return self.items.orderedRemove(index);
+        const result = self.items.orderedRemove(index);
+        if (self.presence.items.len > index) _ = self.presence.orderedRemove(index);
+        return result;
+    }
+
+    pub fn deleteIndex(self: *Array, index: usize) !bool {
+        if (index >= self.items.items.len) return false;
+        const was_present = self.isPresent(index);
+        try self.normalizePresence();
+        self.items.items[index] = .undefined;
+        self.presence.items[index] = false;
+        return was_present;
     }
 
     pub fn getProperty(self: Array, key: *String) ?Value {
@@ -1150,6 +1200,23 @@ test "配列の伸長と挿入順辞書の更新を扱う" {
     const other_key = try runtime.stringUtf8("a");
     try other_dictionary.dictionary.set(other_key.string, .{ .number = 3 });
     try std.testing.expect(!(try runtime.abstractEqual(dictionary, other_dictionary)));
+}
+
+test "配列の伸長はholeを明示的undefinedと区別し削除後の長さを保つ" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const array = try runtime.createArray();
+    try array.array.set(0, .{ .number = 1 });
+    try array.array.set(2, .{ .number = 3 });
+    try std.testing.expectEqual(@as(usize, 3), array.array.len());
+    try std.testing.expect(array.array.isPresent(0));
+    try std.testing.expect(!array.array.isPresent(1));
+    try std.testing.expect(array.array.isPresent(2));
+    try std.testing.expect(array.array.get(1) == .undefined);
+    try std.testing.expect(try array.array.deleteIndex(0));
+    try std.testing.expectEqual(@as(usize, 3), array.array.len());
+    try std.testing.expect(!array.array.isPresent(0));
+    try std.testing.expect(!try array.array.deleteIndex(0));
 }
 
 test "循環した配列と辞書を正確なmark-and-sweepで回収する" {
