@@ -90,6 +90,8 @@ UTF-16コード単位を直接解析する明示スタックパーサーへ接�
 
 正規表現の空幅量指定では、公式Node 24が`(?:){2}`、`(){100,}`のように入力位置を進めないatomも指定回数を反映して空一致させる。lnakoは有限量指定と下限付き無限量指定の候補を保持し、無限展開を避ける。`native-system-regexp-zero-width-quantifier`で公式CLI・生成JavaScript・Interpreter・LLVM AOT O0〜O3を比較し、複雑な選択・捕捉状態の呼出順は`TODO: regexp-backtracking-edge`として未実装扱いにする。
 
+Unicode正規表現では、単独の`\\0`はNULとして受理するが、後続の数字を持つ`\\00`などは公式V8の`Invalid decimal escape`になる。`native-system-regexp-unicode-zero-escape-error`で生成JavaScript・Interpreter・LLVM AOTの診断本文を比較する。
+
 根拠は固定オラクルの
 [`core/src/plugin_system_array.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_array.mts) と
 [`core/src/plugin_system_dict.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_dict.mts) です。

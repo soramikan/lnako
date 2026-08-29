@@ -733,6 +733,13 @@
     "source": "正規表現マッチ(\"x\",『/[\\1]/u』)を表示\n"
   },
   {
+    "id": "native-system-regexp-unicode-zero-escape-error",
+    "oracle": "official-generated",
+    "commands": ["正規表現マッチ"],
+    "stderrIncludes": "Invalid regular expression: /\\00/u: Invalid decimal escape",
+    "source": "正規表現マッチ(\"x\",『/\\00/u』)を表示\n"
+  },
+  {
     "id": "native-system-regexp-unicode-named-backreference",
     "commands": ["正規表現マッチ", "JSON変換"],
     "source": "JSON変換(正規表現マッチ(\"foo-foo\",『/(?<word>[a-z]+)-\\k<word>/u』))を表示\nJSON変換(正規表現マッチ(\"y\",『/(?<optional>x)?\\k<optional>/u』))を表示\n"

@@ -233,7 +233,10 @@ const Parser = struct {
             't' => .{ .literal = '\t' },
             'f' => .{ .literal = 0x0c },
             'v' => .{ .literal = 0x0b },
-            '0' => .{ .literal = 0 },
+            '0' => if (self.unicode and self.index < self.source.len and self.source[self.index] >= '0' and self.source[self.index] <= '9')
+                error.InvalidDecimalEscape
+            else
+                .{ .literal = 0 },
             'c' => try self.parseControlEscape(),
             'k' => if (self.unicode) try self.parseNamedBackreference() else .{ .literal = 'k' },
             'x' => .{ .literal = try self.parseHex(2) },
@@ -1391,6 +1394,11 @@ test "正規表現構文エラーはV8互換の文言を設定する" {
     const invalid_decimal_escape = try runtime.stringUtf8("/[\\1]/u");
     try std.testing.expectError(error.InvalidDecimalEscape, call(&runtime, "正規表現マッチ", &.{ source, invalid_decimal_escape }));
     try std.testing.expectEqualStrings("Invalid regular expression: /[\\1]/u: Invalid decimal escape", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
+
+    const invalid_zero_escape = try runtime.stringUtf8("/\\00/u");
+    try std.testing.expectError(error.InvalidDecimalEscape, call(&runtime, "正規表現マッチ", &.{ source, invalid_zero_escape }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /\\00/u: Invalid decimal escape", runtime.failureMessage().?);
     runtime.clearFailureMessage();
 
     const invalid_class = try runtime.stringUtf8("/[\\d-a]/u");
