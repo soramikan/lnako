@@ -80,6 +80,8 @@ pub const Node = struct {
     is_async: bool = false,
     check_array_init: bool = false,
     grouped: bool = false,
+    /// C風の `命令(...)` 呼び出しだけを、助詞構文と区別する。
+    is_c_style_call: bool = false,
     loop_direction: LoopDirection = .automatic,
 };
 

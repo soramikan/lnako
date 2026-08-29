@@ -38,6 +38,15 @@ for (const [index, testCase] of cases.entries()) {
     failures += 1;
     console.error(`引数個数診断位置の差分 ${id}: officialLine=${officialError.line} lnako=${JSON.stringify(diagnostic)}`);
   }
+  if (testCase.checkMessage) {
+    const officialMessage = String(officialError.message ?? "");
+    const separator = officialMessage.lastIndexOf(": ");
+    const expectedMessage = separator >= 0 ? officialMessage.slice(separator + 2) : officialMessage;
+    if (diagnostic.message !== expectedMessage) {
+      failures += 1;
+      console.error(`引数個数診断文言の差分 ${id}: official=${JSON.stringify(expectedMessage)} lnako=${JSON.stringify(diagnostic.message)}`);
+    }
+  }
 }
 if (failures > 0) throw new Error(`意味診断の差分が${failures}件あります`);
 console.log(`公式v3.7.24との意味診断差分テスト: ${cases.length}件成功`);

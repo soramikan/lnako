@@ -42,6 +42,8 @@ pub fn main(init: std.process.Init) !void {
             try std.json.Stringify.value(@tagName(item.code), .{}, stdout);
             try stdout.writeAll(",\"line\":");
             try stdout.print("{d}", .{item.span.line});
+            try stdout.writeAll(",\"message\":");
+            try std.json.Stringify.value(item.message, .{}, stdout);
             try stdout.writeByte('}');
         }
         try stdout.writeAll("}\n");

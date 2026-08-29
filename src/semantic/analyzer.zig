@@ -230,6 +230,18 @@ const Analyzer = struct {
             return;
         }
         if (self.builtins.get(name) != null) {
+            if (node.is_c_style_call) {
+                if (builtin_catalog.findArity(name)) |spec| {
+                    if (!spec.is_variable and node.children.len != spec.count) {
+                        const message = try std.fmt.allocPrint(
+                            self.allocator,
+                            "関数『{s}』で引数{d}個が指定されましたが、{d}個の引数を指定してください。",
+                            .{ name, node.children.len, spec.count },
+                        );
+                        try self.addDiagnostic(.invalid_argument_count, node.span, self.modules.items[module_index].path, message);
+                    }
+                }
+            }
             try self.bind(node, .builtin, name, name, null);
             return;
         }
@@ -440,6 +452,27 @@ test "静的に解決したユーザー関数の引数個数差を拒否する" 
         if (item.code == .invalid_argument_count) count += 1;
     }
     try std.testing.expectEqual(@as(usize, 2), count);
+}
+
+test "標準組み込み命令のC形式引数個数を診断し可変引数と助詞構文を許可する" {
+    const parser = @import("../frontend/parser.zig");
+    const source = "切取(\"a\")\n切取(\"a\",\"b\")\n切取(\"a\",\"b\",\"c\")\n今(1)\n連結()\n連結(1,2)\nCSVオプション設定({})\nAを配列結合\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "builtin-arity.nako3");
+    defer parsed.deinit();
+    var program = try analyze(std.testing.allocator, parsed.root.?, "builtin-arity.nako3");
+    defer program.deinit();
+
+    var messages: [3][]const u8 = undefined;
+    var count: usize = 0;
+    for (program.diagnostics) |item| if (item.code == .invalid_argument_count) {
+        try std.testing.expect(count < messages.len);
+        messages[count] = item.message;
+        count += 1;
+    };
+    try std.testing.expectEqual(@as(usize, messages.len), count);
+    try std.testing.expectEqualStrings("関数『切取』で引数1個が指定されましたが、2個の引数を指定してください。", messages[0]);
+    try std.testing.expectEqualStrings("関数『切取』で引数3個が指定されましたが、2個の引数を指定してください。", messages[1]);
+    try std.testing.expectEqualStrings("関数『今』で引数1個が指定されましたが、0個の引数を指定してください。", messages[2]);
 }
 
 test "裸の名前付き関数は1引数以下だけ暗黙呼び出しとして解決する" {

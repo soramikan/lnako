@@ -90,6 +90,15 @@ AST差分テストは公式の `core/test/fixtures/parser_corpus.mjs` を直接�
 node tools/fuzz_parser_oracle.mjs --iterations 1024 --seed 20260830
 ```
 
+標準命令のC形式呼び出しは、`standard-cnako.json`の助詞表記から関数arityと可変引数属性を生成し、意味解析で
+公式と同じ引数個数診断を行います。助詞構文の`undefined`補完と、可変引数命令の0個以上の呼び出しはこの診断から分離しています。
+公式のエラー位置・文言を確認する場合は次を実行します。
+
+```sh
+node tools/compare_semantic_diagnostics_oracle.mjs
+node tools/check_builtin_catalog.mjs
+```
+
 AOT差分ケースは `tests/oracle/native-cases.json` に置きます。公式CLIの直接実行と `--compile` 生成物、
 `lnako run`、LLVM AOT `-O0` / `-O1` / `-O2` / `-O3`生成物の7経路を比較します。固定LLVM配布物は `tools/setup_llvm.mjs` が
 `toolchain.lock.json` のURLとSHA-256から構築し、CIでは `LNAKO_LLVM_DIR` とアーカイブ内で検出した

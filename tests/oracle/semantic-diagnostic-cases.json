@@ -10,5 +10,20 @@
   {
     "id": "semantic-diagnostic-bare-function-arity",
     "source": "●(AとBを)Fとは\nA+Bで戻る\nここまで\nTYPEOF(F)を表示\n"
+  },
+  {
+    "id": "semantic-diagnostic-builtin-arity-missing",
+    "source": "切取(\"a\")\n",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-builtin-arity-extra",
+    "source": "切取(\"a\",\"b\",\"c\")\n",
+    "checkMessage": true
+  },
+  {
+    "id": "semantic-diagnostic-builtin-arity-zero",
+    "source": "今(1)\n",
+    "checkMessage": true
   }
 ]

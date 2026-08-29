@@ -832,6 +832,7 @@ const Parser = struct {
                 call.name = value.value;
                 call.josi = close.josi;
                 call.raw_josi = close.raw_josi;
+                call.is_c_style_call = true;
                 value = call;
                 continue;
             }
@@ -1287,6 +1288,14 @@ test "代入・演算子優先順位・命令呼び出しを構文解析する" 
     try std.testing.expectEqualStrings("表示", call.name);
     try std.testing.expectEqual(ast.Kind.binary_operator, call.children[0].kind);
     try std.testing.expectEqualStrings("+", call.children[0].operator);
+}
+
+test "C風呼び出しを助詞付き命令呼び出しと区別する" {
+    var result = try parse(std.testing.allocator, "表示(1)\nAを表示\n", "call-form.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    try std.testing.expect(result.root.?.children[0].is_c_style_call);
+    try std.testing.expect(!result.root.?.children[2].is_c_style_call);
 }
 
 test "識別子変数を途中の命令と誤認せず複数引数を構文解析する" {
