@@ -206,7 +206,14 @@ const Parser = struct {
         if (self.index >= self.source.len) return error.UnclosedCharacterClass;
         const unit = self.source[self.index];
         self.index += 1;
-        if (unit != '\\') return .{ .literal = unit };
+        if (unit != '\\') {
+            if (self.unicode and isHighSurrogate(unit) and self.index < self.source.len and isLowSurrogate(self.source[self.index])) {
+                const code_point = surrogatePairCodePoint(unit, self.source[self.index]);
+                self.index += 1;
+                return .{ .code_point = code_point };
+            }
+            return .{ .literal = unit };
+        }
         const atom = try self.parseEscape(true);
         return switch (atom) {
             .literal => |literal| .{ .literal = literal },
@@ -1484,6 +1491,11 @@ test "Unicode文字クラスの補助平面コードポイント範囲を処理�
     const result = (try call(&runtime, "正規表現マッチ", &.{ source, pattern })).?;
     try std.testing.expectEqual(@as(usize, 1), result.array.len());
     try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00 }, result.array.items.items[0].string.units);
+
+    var raw_pattern = try runtime.stringUtf8("/[😀]/u");
+    try roots.protect(&raw_pattern);
+    const raw_result = (try call(&runtime, "正規表現マッチ", &.{ source, raw_pattern })).?;
+    try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00 }, raw_result.string.units);
 }
 
 test "正規表現の空幅量指定は下限と上限内の反復を保持する" {
