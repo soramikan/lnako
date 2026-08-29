@@ -653,6 +653,12 @@
     "source": "B=ハッシュ値計算(\"A\",\"sha256\",undefined)\nU=ランダム配列生成(2)\nAB=B[\"buffer\"]\n辞書キー存在(B,0)を表示\nハッシュキー存在(B,\"length\")を表示\n辞書キー存在(B,\"byteLength\")を表示\nハッシュキー存在(B,\"buffer\")を表示\n辞書キー存在(U,0)を表示\nハッシュキー存在(U,\"length\")を表示\n辞書キー存在(U,\"map\")を表示\nハッシュキー存在(U,\"byteLength\")を表示\n辞書キー存在(AB,\"byteLength\")を表示\nハッシュキー存在(AB,\"maxByteLength\")を表示\n辞書キー存在(AB,\"toString\")を表示\nハッシュキー存在(AB,0)を表示\n辞書キー存在(AB,\"length\")を表示\nハッシュキー存在(AB,\"buffer\")を表示\n辞書キー存在(B,\"missing\")を表示\n"
   },
   {
+    "id": "native-system-dictionary-byte-buffer-enumeration",
+    "oracle": "official-generated",
+    "commands": ["辞書キー列挙", "ハッシュキー列挙", "ハッシュ内容列挙", "辞書キー削除", "辞書キー存在", "ハッシュ値計算", "ランダム配列生成", "JSON変換"],
+    "source": "B=ハッシュ値計算(\"A\",\"sha256\",undefined)\nU=ランダム配列生成(2)\nU[0]=85\nU[1]=66\nAB=B[\"buffer\"]\nJSON変換(ハッシュキー列挙(U))を表示\nJSON変換(ハッシュ内容列挙(U))を表示\nJSON変換(辞書キー列挙(AB))を表示\nJSON変換(ハッシュ内容列挙(AB))を表示\n辞書キー存在(B,0)を表示\n辞書キー削除(B,0)\n"
+  },
+  {
     "id": "native-system-byte-buffer-backing",
     "commands": ["表列取得", "ハッシュ値計算", "ランダム配列生成", "変数型確認", "TYPEOF"],
     "source": "B=ハッシュ値計算(\"A\",\"sha256\",undefined)\nU=ランダム配列生成(2)\nBB=B[\"buffer\"]\nBB[\"byteLength\"]を表示\nBB[\"byteOffset\"]を表示\nTYPEOF(BB)を表示\nTYPEOF(BB[\"buffer\"])を表示\nC=表列取得([B],\"buffer\")\nC=表列取得(C,\"constructor\")\nC=表列取得(C,\"name\")\nC[0]を表示\nUB=U[\"buffer\"]\nUB[\"byteLength\"]を表示\nUB[\"byteOffset\"]を表示\nC=表列取得([U],\"buffer\")\nC=表列取得(C,\"constructor\")\nC=表列取得(C,\"name\")\nC[0]を表示\n"

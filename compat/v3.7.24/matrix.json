@@ -7698,7 +7698,8 @@
       "tests": [
         "plugin-system-json",
         "plugin-system-json-ecmascript-boundaries",
-        "native-system-json-encode"
+        "native-system-json-encode",
+        "native-system-dictionary-byte-buffer-enumeration"
       ],
       "platforms": [
         "macos-aarch64",
@@ -8061,14 +8062,15 @@
         "plugin-system-dictionary-hash",
         "native-system-dictionary-hash-commands",
         "native-system-array-own-properties",
-        "native-system-array-sparse-presence"
+        "native-system-array-sparse-presence",
+        "native-system-dictionary-byte-buffer-enumeration"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "ECMAScriptのproperty key順、配列・関数境界、疎配列holeの除外をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
+      "reason": "ECMAScriptのproperty key順、配列・関数・byte buffer境界、疎配列holeの除外をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0301",
@@ -8089,14 +8091,15 @@
       "tests": [
         "plugin-system-dictionary-hash",
         "native-system-dictionary-hash-commands",
-        "native-system-array-sparse-presence"
+        "native-system-array-sparse-presence",
+        "native-system-dictionary-byte-buffer-enumeration"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "property key正規化、配列indexのhole化、配列length削除エラーをInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
+      "reason": "property key正規化、配列indexのhole化、byte bufferの非削除property、配列length削除エラーをInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0302",
@@ -8120,7 +8123,8 @@
         "native-system-array-own-properties",
         "native-system-array-sparse-presence",
         "native-system-dictionary-inherited-properties",
-        "native-system-dictionary-byte-buffer-properties"
+        "native-system-dictionary-byte-buffer-properties",
+        "native-system-dictionary-byte-buffer-enumeration"
       ],
       "platforms": [
         "macos-aarch64",
@@ -8147,14 +8151,15 @@
       "status": "native",
       "tests": [
         "plugin-system-dictionary-hash",
-        "native-system-dictionary-hash-commands"
+        "native-system-dictionary-hash-commands",
+        "native-system-dictionary-byte-buffer-enumeration"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "ECMAScriptのproperty key順と配列・関数境界をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
+      "reason": "ECMAScriptのproperty key順と配列・関数・byte buffer境界をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0304",
@@ -8176,14 +8181,15 @@
         "plugin-system-dictionary-hash",
         "native-system-dictionary-hash-commands",
         "native-system-array-own-properties",
-        "native-system-array-sparse-presence"
+        "native-system-array-sparse-presence",
+        "native-system-dictionary-byte-buffer-enumeration"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "辞書のproperty key順、配列・関数の内容列挙、疎配列holeの除外をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
+      "reason": "辞書のproperty key順、配列・関数・byte bufferの内容列挙、疎配列holeの除外をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0305",
@@ -18337,7 +18343,8 @@
         "native-system-table-byte-row-slice-alias",
         "native-system-byte-buffer-property",
         "native-system-byte-buffer-backing",
-        "native-system-dictionary-byte-buffer-properties"
+        "native-system-dictionary-byte-buffer-properties",
+        "native-system-dictionary-byte-buffer-enumeration"
       ],
       "platforms": [
         "macos-aarch64",
@@ -18392,7 +18399,8 @@
         "native-node-crypto",
         "native-system-byte-buffer-property",
         "native-system-byte-buffer-backing",
-        "native-system-dictionary-byte-buffer-properties"
+        "native-system-dictionary-byte-buffer-properties",
+        "native-system-dictionary-byte-buffer-enumeration"
       ],
       "platforms": [
         "macos-aarch64",

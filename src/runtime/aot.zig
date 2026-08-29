@@ -13598,6 +13598,18 @@ fn dictionaryKeysBuiltin(runtime: *Runtime, source: Value) !Value {
             }
             for (roots[0].object().?.array_properties.items) |property| try result.append(runtime.allocator, property.key);
         },
+        .byte_buffer => {
+            const buffer = roots[0].object().?.payload.byte_buffer;
+            if (buffer.kind == .array_buffer) return roots[1];
+            for (0..buffer.bytes.len) |index| {
+                var text: [32]u8 = undefined;
+                const encoded = std.fmt.bufPrint(&text, "{d}", .{index}) catch return error.ArrayTooLarge;
+                var units: [32]u16 = undefined;
+                const unit_len = std.unicode.utf8ToUtf16Le(&units, encoded) catch return error.ArrayTooLarge;
+                const key = try runtime.createString(units[0..unit_len]);
+                try result.append(runtime.allocator, key);
+            }
+        },
         .function => {},
         else => return error.DictionaryKeysReceiver,
     }
@@ -13624,6 +13636,11 @@ fn dictionaryValuesBuiltin(runtime: *Runtime, source: Value) !Value {
                 if (runtime.aotArrayIsPresent(object, index)) try result.append(runtime.allocator, item);
             }
             for (object.array_properties.items) |property| try result.append(runtime.allocator, property.value);
+        },
+        .byte_buffer => {
+            const buffer = roots[0].object().?.payload.byte_buffer;
+            if (buffer.kind == .array_buffer) return roots[1];
+            for (buffer.bytes) |byte| try result.append(runtime.allocator, numberValue(@floatFromInt(byte)));
         },
         .function => {},
         else => return error.DictionaryValuesReceiver,
@@ -13662,9 +13679,29 @@ fn dictionaryRemoveBuiltin(runtime: *Runtime, source: Value, key: Value) !Value 
             }
             return roots[0];
         },
+        .byte_buffer => {
+            const key_units = try valueUtf16Alloc(runtime, roots[1]);
+            defer runtime.allocator.free(key_units);
+            const buffer = roots[0].object().?.payload.byte_buffer;
+            if (buffer.kind != .array_buffer) if (runtime.aotCanonicalArrayIndexUnits(key_units)) |index| {
+                if (index < buffer.bytes.len) {
+                    try byteBufferIndexDeleteFailure(runtime, key_units);
+                    return error.ByteBufferIndexDelete;
+                }
+            };
+            return roots[0];
+        },
         .function => return roots[0],
         else => return error.DictionaryRemoveReceiver,
     }
+}
+
+fn byteBufferIndexDeleteFailure(runtime: *Runtime, key_units: []const u16) !void {
+    const key_utf8 = try utf16FailureMessageUtf8Alloc(runtime.allocator, key_units);
+    defer runtime.allocator.free(key_utf8);
+    const message = try std.fmt.allocPrint(runtime.allocator, "Cannot delete property '{s}' of [object Uint8Array]", .{key_utf8});
+    defer runtime.allocator.free(message);
+    runtime.setFailureText(message);
 }
 
 fn dictionaryHasBuiltin(runtime: *Runtime, source: Value, key: Value) !bool {
@@ -20454,6 +20491,38 @@ test "AOT辞書キー存在はbyte bufferのown indexとprototype propertyを含
     try std.testing.expect(!(try dictionaryHasBuiltin(&runtime, roots[2], staticStringValue("length"))));
     try std.testing.expect(!(try dictionaryHasBuiltin(&runtime, roots[2], staticStringValue("buffer"))));
     try std.testing.expect(!(try dictionaryHasBuiltin(&runtime, roots[0], staticStringValue("missing"))));
+}
+
+test "AOT辞書キー列挙とハッシュ内容列挙はbyte bufferのown要素を扱う" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 7;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createBytes(&.{ 85, 66 });
+    roots[1] = try runtime.createUint8Array(&.{ 85, 66 });
+    roots[2] = try runtime.createArrayBuffer(&.{ 85, 66 });
+    roots[3] = try dictionaryKeysBuiltin(&runtime, roots[0]);
+    try std.testing.expectEqual(@as(usize, 2), roots[3].object().?.payload.array.items.len);
+    try expectUtf16String(&runtime, roots[3].object().?.payload.array.items[0], "0");
+    try expectUtf16String(&runtime, roots[3].object().?.payload.array.items[1], "1");
+    roots[4] = try dictionaryValuesBuiltin(&runtime, roots[1]);
+    try std.testing.expectEqual(@as(usize, 2), roots[4].object().?.payload.array.items.len);
+    try std.testing.expectEqual(@as(f64, 85), valueToNumber(roots[4].object().?.payload.array.items[0]));
+    try std.testing.expectEqual(@as(f64, 66), valueToNumber(roots[4].object().?.payload.array.items[1]));
+    roots[5] = try dictionaryKeysBuiltin(&runtime, roots[2]);
+    roots[6] = try dictionaryValuesBuiltin(&runtime, roots[2]);
+    try std.testing.expectEqual(@as(usize, 0), roots[5].object().?.payload.array.items.len);
+    try std.testing.expectEqual(@as(usize, 0), roots[6].object().?.payload.array.items.len);
+
+    try std.testing.expectError(error.ByteBufferIndexDelete, dictionaryRemoveBuiltin(&runtime, roots[0], staticStringValue("0")));
+    try expectUtf16String(&runtime, runtime.takeException(), "Cannot delete property '0' of [object Uint8Array]");
+    try std.testing.expectError(error.ByteBufferIndexDelete, dictionaryRemoveBuiltin(&runtime, roots[1], staticStringValue("0")));
+    try expectUtf16String(&runtime, runtime.takeException(), "Cannot delete property '0' of [object Uint8Array]");
+    try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[0], staticStringValue("0")));
+    try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[1], staticStringValue("0")));
 }
 
 test "AOT HTTPのqueryとform parserはURL decode境界を保つ" {
