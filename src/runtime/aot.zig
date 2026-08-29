@@ -15574,7 +15574,7 @@ fn arrayFillBuiltin(runtime: *Runtime, value: Value, shape: Value) !Value {
 fn validateFillDimensions(runtime: *Runtime, shape: Value) !void {
     const dimensions = try arrayItems(shape);
     var product: usize = 1;
-    var total: usize = 1;
+    var total: usize = 0;
     for (dimensions.items) |dimension| {
         const count = try fillArrayLength(try valueToNumberRuntime(runtime, dimension), safe_array_element_limit);
         product = std.math.mul(usize, product, count) catch return error.ArraySizeLimitExceeded;
@@ -19552,6 +19552,10 @@ test "AOT配列の集約・入替・連番・要素生成を公式境界で処�
 
     roots[11] = try runtime.createArray(&.{ numberValue(@floatFromInt(safe_array_element_limit)), numberValue(2) });
     try std.testing.expectError(error.ArraySizeLimitExceeded, arrayFillBuiltin(&runtime, numberValue(0), roots[11]));
+    roots[11] = try runtime.createArray(&.{ numberValue(1), numberValue(@floatFromInt(safe_array_element_limit - 1)) });
+    try validateFillDimensions(&runtime, roots[11]);
+    roots[11] = try runtime.createArray(&.{ numberValue(1), numberValue(@floatFromInt(safe_array_element_limit)) });
+    try std.testing.expectError(error.ArraySizeLimitExceeded, validateFillDimensions(&runtime, roots[11]));
     roots[11] = try runtime.createArray(&.{});
     roots[12] = try arrayFillBuiltin(&runtime, numberValue(7), roots[11]);
     try std.testing.expectEqual(@as(usize, 0), (try arrayItems(roots[12])).items.len);

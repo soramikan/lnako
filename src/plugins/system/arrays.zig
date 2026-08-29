@@ -799,7 +799,7 @@ fn fill(runtime: *Runtime, value: Value, shape: Value) !Value {
 
 fn validateFillDimensions(runtime: *Runtime, dimensions: []const Value) !void {
     var product: usize = 1;
-    var total: usize = 1;
+    var total: usize = 0;
     for (dimensions) |dimension| {
         const count = try fillLength(try runtime.valueToNumber(dimension), safe_array_element_limit);
         product = std.math.mul(usize, product, count) catch return error.ArraySizeLimitExceeded;
@@ -3220,6 +3220,12 @@ test "配列集約・連番・要素生成の型変換と複製境界を保つ" 
     var huge_shape = try common.arrayFromValues(&runtime, &.{ .{ .number = @floatFromInt(safe_array_element_limit) }, .{ .number = 2 } });
     try roots.protect(&huge_shape);
     try std.testing.expectError(error.ArraySizeLimitExceeded, fill(&runtime, .{ .number = 0 }, huge_shape));
+    var boundary_shape = try common.arrayFromValues(&runtime, &.{ .{ .number = 1 }, .{ .number = @floatFromInt(safe_array_element_limit - 1) } });
+    try roots.protect(&boundary_shape);
+    try validateFillDimensions(&runtime, boundary_shape.array.items.items);
+    var over_boundary_shape = try common.arrayFromValues(&runtime, &.{ .{ .number = 1 }, .{ .number = @floatFromInt(safe_array_element_limit) } });
+    try roots.protect(&over_boundary_shape);
+    try std.testing.expectError(error.ArraySizeLimitExceeded, validateFillDimensions(&runtime, over_boundary_shape.array.items.items));
     var nested_value = try common.arrayFromValues(&runtime, &.{.{ .number = 1 }});
     try roots.protect(&nested_value);
     var independent_fill = try fill(&runtime, nested_value, .{ .number = 2 });
