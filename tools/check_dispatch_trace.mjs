@@ -77,6 +77,8 @@ try {
   assertCommand(interpreterEvents, "LEN", "plugin_system", "success");
   assertCommand(interpreterEvents, "文字列変換", "plugin_system", "success");
   assertCommand(interpreterEvents, "JSON変換", "plugin_system", "success");
+  assertCommand(interpreterEvents, "表ソート", "plugin_system", "success");
+  assertCommand(interpreterEvents, "表数値ソート", "plugin_system", "success");
   assertCommand(interpreterEvents, "表示", "interpreter-core", "success");
   assertCatalogResolution("切取", "plugin_system", "command-0141", "unique-name");
   assertCatalogResolution("範囲切取", "plugin_system", "command-0142", "unique-name");
@@ -84,9 +86,11 @@ try {
   assertCatalogResolution("LEN", "plugin_system", "command-0182", "unique-name");
   assertCatalogResolution("文字列変換", "plugin_system", "command-0272", "unique-name");
   assertCatalogResolution("JSON変換", "plugin_system", "command-0287", "unique-name");
+  assertCatalogResolution("表ソート", "plugin_system", "command-0211", "unique-name");
+  assertCatalogResolution("表数値ソート", "plugin_system", "command-0212", "unique-name");
   assertCatalogResolution("表示", "interpreter-core", "command-0307", "unique-name");
-  assertOnlyCommands(interpreterEvents, new Set(["切取", "範囲切取", "表示", "CHR", "配列結合", "LEN", "文字列変換", "JSON変換"]));
-  assertStaticCommandsHaveSites(interpreterEvents, new Set(["切取", "範囲切取", "表示", "CHR", "配列結合", "LEN", "文字列変換", "JSON変換"]));
+  assertOnlyCommands(interpreterEvents, new Set(["切取", "範囲切取", "表示", "CHR", "配列結合", "LEN", "文字列変換", "JSON変換", "表ソート", "表数値ソート"]));
+  assertStaticCommandsHaveSites(interpreterEvents, new Set(["切取", "範囲切取", "表示", "CHR", "配列結合", "LEN", "文字列変換", "JSON変換", "表ソート", "表数値ソート"]));
   await assertExistingTracePreserved("Interpreter", compiler, ["run", source], interpretedWithoutTrace, resolve(temporary, "interpreter-existing.jsonl"), baseEnvironment, temporary);
 
   const nodeEnvironment = { ...baseEnvironment, LNAKO_NODE_TEST: "dispatch-trace" };
@@ -119,7 +123,9 @@ try {
   assertManifestCommand(manifestEntries, "LEN", "element_count", "builtin", "command-0182");
   assertManifestCommand(manifestEntries, "文字列変換", "to_string", "builtin", "command-0272");
   assertManifestCommand(manifestEntries, "JSON変換", "json_encode", "builtin", "command-0287");
-  assertOnlyManifestCommands(manifestEntries, new Set(["切取", "範囲切取", "CHR", "表示", "配列結合", "LEN", "文字列変換", "JSON変換"]));
+  assertManifestCommand(manifestEntries, "表ソート", "table_sort", "builtin", "command-0211");
+  assertManifestCommand(manifestEntries, "表数値ソート", "table_numeric_sort", "builtin", "command-0212");
+  assertOnlyManifestCommands(manifestEntries, new Set(["切取", "範囲切取", "CHR", "表示", "配列結合", "LEN", "文字列変換", "JSON変換", "表ソート", "表数値ソート"]));
   await assertExistingManifestPreserved(compiler, source, baseEnvironment, temporary);
   await assertFailedManifestRemoved(compiler, source, baseEnvironment, temporary);
   const aotWithoutTrace = run(native, [], baseEnvironment, temporary);
@@ -137,8 +143,10 @@ try {
   assertCanonicalCommand(aotEvents, "element_count", "builtin");
   assertCanonicalCommand(aotEvents, "to_string", "builtin");
   assertCanonicalCommand(aotEvents, "json_encode", "builtin");
+  assertCanonicalCommand(aotEvents, "table_sort", "builtin");
+  assertCanonicalCommand(aotEvents, "table_numeric_sort", "builtin");
   assertCanonicalCommand(aotEvents, "display", "direct-display");
-  assertOnlyCommands(aotEvents, new Set(["cut", "cut_range", "chr", "display", "array_join", "element_count", "to_string", "json_encode"]));
+  assertOnlyCommands(aotEvents, new Set(["cut", "cut_range", "chr", "display", "array_join", "element_count", "to_string", "json_encode", "table_sort", "table_numeric_sort"]));
   assertTraceSitesContained(aotEvents, manifestEntries);
   assertTraceSitesContained(interpreterEvents, manifestEntries);
   assertSameStaticSiteSet(interpreterEvents, aotEvents);

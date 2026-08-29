@@ -3,7 +3,7 @@
 `compat/v3.7.24/evidence.json`は、標準cnako 527 entryをカタログID単位で
 既存fixtureへ関連付ける台帳です。通常のfixture関連付けは実行結果やdispatch接続を証明しません。
 追跡中の証拠は、macOS arm64の単一実行環境で、明示fixture `native-cut-commands`についてcompile manifest、Interpreter/AOT trace、公式差分を
-同一fixture・siteで突き合わせられた一意名8 entryが`trace-confirmed-unattested`です。追跡中のJSONにはattestationを記録しないため、ローカルの`verified`は0件で、残り519 entryが`unverified`です。
+同一fixture・siteで突き合わせられた一意名10 entryが`trace-confirmed-unattested`です。追跡中のJSONにはattestationを記録しないため、ローカルの`verified`は0件で、残り517 entryが`unverified`です。
 
 AOT差分artifactとdispatch証拠は入力・実行物・結果のSHA-256を内包します。CIのmain push/workflow_dispatchでは、3正式OSのdispatch JSONを
 公式`actions/attest`のmulti-subject artifact attestationへ結び付け、公式`gh attestation verify`で署名、SLSA predicate、workflow identity、
@@ -17,7 +17,7 @@ Actions artifactの保持期限後も外部検証できるよう、run `32983175
 historical catalogのdigestとworkflow identityを固定し、`node tools/check_tracked_dispatch_attestation.mjs`が禁止field、対象commit、bundleの
 in-toto subject、SLSA predicate、GitHub Actions workflow identityを検査する。bundleの署名を暗号学的に再検証する場合は、保存したbundleを
 公式`gh attestation verify`へ同じ厳格なidentity引数で渡す。固定されたhistorical catalogの`verified: 4`は現在commitの台帳へ自動反映せず、
-追跡中の`compat/v3.7.24/evidence.json`は`verified: 0`、`trace-confirmed-unattested: 8`を維持する。catalog再生成時の`--historical-commit`は
+追跡中の`compat/v3.7.24/evidence.json`は`verified: 0`、`trace-confirmed-unattested: 10`を維持する。catalog再生成時の`--historical-commit`は
 この明示的な履歴検査でだけ対象commitとの差異を許可し、明示的な非canonical outputを必須にする（通常のsync検査の現行HEAD一致制約とcanonical output保護は緩めない）。target commitとこの履歴固定を追加する後続commitを混同しない。
 
 ## 生成と検証
@@ -88,7 +88,7 @@ fixtureのソース本文から命令名を推測することはしません。�
 全346件（AOT 252件、Interpreter 99件、QuickJS 9件）です。正規表現のUnicode Script/Script_Extensions propertyと/v基本照合は`native-system-regexp-unicode-script-extensions`、`native-system-regexp-unicode-all-scripts`、`native-system-regexp-unicode-ignore-case`、`native-system-regexp-unicode-v-basic`、`native-system-regexp-unicode-v-invalid-flags-error`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較します。`plugin-node-native-archive`は圧縮・解凍4命令を含み、`plugin-node-process`と関連fixtureはNodeプロセス7命令を含み、`plugin-node-file-callbacks`はファイル完了callback、進捗、停止を含み、InterpreterとAOT O0〜O3で実行・生成物を検証します。`plugin-node-http-*`はHTTP clientのloopback通信を含み、AOT対象7 fixtureをO0〜O3で実行・比較します。疎配列のsort・数値変換・reverse・shuffleは`native-system-array-sparse-ordering`でpresence境界を比較し、splice系は`native-system-array-sparse-splice`で削除元と戻り値のpresenceを比較し、参照・配列足・範囲コピーは`native-system-array-sparse-copy-reference-concat`でslice/concatとJSON往復のpresence境界を比較し、配列要素作成の複製元配列holeは`native-system-array-fill-sparse-clone`でpresence境界と複製独立性を比較し、配列要素作成のBuffer/Uint8Array/ArrayBuffer JSON複製は`native-system-array-fill-byte-buffer-json-clone`でオブジェクト化と複製独立性を比較し、表ソートは`native-system-table-sparse-sort`で行配列の並べ替えと最上位配列のpresence境界を比較し、表数値ソートのBigInt同士・BigInt/Number混在の型境界は`native-system-table-numeric-sort-bigint-error`と`native-system-table-numeric-sort-mixed-bigint-error`で公式エラーを7経路比較し、表列取得・表ピックアップ系は`native-system-table-sparse-map-filter`でmap/filterのhole境界を比較し、表列挿入・削除・合計は`native-system-table-sparse-foreach-slice`でforEachと行sliceのhole境界を比較し、匿名関数のname/length propertyは`native-system-table-function-properties`で比較し、Object/Array/String/Functionとprimitiveの標準prototype property読み出しは`native-system-table-inherited-properties`で比較します。Bufferの表列挿入slice共有とTypedArray/ArrayBufferのcopy境界は`native-system-table-byte-row-slice-alias`で比較し、Bufferの表正規表現ピックアップslice共有は`native-system-table-regexp-buffer-slice-alias`で比較し、Buffer/Uint8Arrayのscalar propertyと代表的prototype methodは`native-system-byte-buffer-property`で比較し、Buffer/Uint8Array/ArrayBufferの直接property参照は`native-system-byte-buffer-direct-properties`で比較し、Buffer/Uint8Arrayの`.buffer`が共有backing ArrayBuffer viewとなること、ArrayBuffer自身の`.buffer`が`undefined`となることは`native-system-byte-buffer-backing`で比較します。byte bufferから抽出したBuffer `slice`関数のreceiver未束縛エラーは`native-system-byte-buffer-method-calls`で比較します。辞書・配列・関数の`辞書キー存在`/`ハッシュキー存在`がown propertyに加えて標準prototype propertyを確認することは`native-system-dictionary-inherited-properties`で比較し、Buffer/Uint8Array/ArrayBufferのown index・`length`・標準prototype propertyの存在判定は`native-system-dictionary-byte-buffer-properties`で比較し、辞書・配列の`参照`/`配列参照`における標準prototype propertyとown値優先は`native-system-reference-inherited-properties`で比較します。辞書array-likeの先頭一致でAOTが`length`分をeager展開しないことは`native-system-string-array-from-dictionary-lazy-length`で比較します。object-literalの`__proto__`から辞書の`length`と数値添字を継承する系列化、およびJSONでprototypeをown entryから除外する境界は`native-system-string-array-from-inherited-properties`で比較します。辞書に対する`配列切取`のown/prototype lookup、truthy判定、継承property非削除は`native-system-array-cut-inherited-dictionary-properties`で比較します。命令のfixture coverageは`paired` 523 entry、
 Node Bufferのenumerable prototype property 95件の順序・`parent`・`offset`・内容値は`native-system-dictionary-buffer-enumerable-properties`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較します。
 `interpreter-only` 0 entryです。execution evidenceは`verified` 0、
-`trace-confirmed-unattested` 8、`unverified` 519のままです。
+`trace-confirmed-unattested` 10、`unverified` 517のままです。
 fixtureの関連付けを変更した場合は、次で派生台帳の生成と検査を行います。
 
 ```sh
@@ -127,7 +127,7 @@ traceのschemaは2です。
 その場合は`trace-end`が得られないため、検証ハーネスが実行基盤エラーとして拒否します。
 
 `node tools/check_dispatch_trace.mjs`はtrace有無の実行結果一致、JSONL構造、
-`切取`・`範囲切取`・`配列結合`・`LEN`・`文字列変換`・`JSON変換`・`CHR`・`表示`の
+`切取`・`範囲切取`・`配列結合`・`LEN`・`文字列変換`・`JSON変換`・`表ソート`・`表数値ソート`・`CHR`・`表示`の
 Interpreter/AOT実dispatchと、同名system命令よりNode routeが優先される
 `ファイル名抽出`・`パス抽出`を固定fixtureで検証します。
 通常実行は作業ツリーを変更せず、`--evidence-output`を指定した場合だけ公式source・生成JavaScriptとの

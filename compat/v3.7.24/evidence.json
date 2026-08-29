@@ -22,8 +22,8 @@
   },
   "executionEvidenceStates": {
     "verified": 0,
-    "trace-confirmed-unattested": 8,
-    "unverified": 519
+    "trace-confirmed-unattested": 10,
+    "unverified": 517
   },
   "entries": [
     {
@@ -7445,6 +7445,7 @@
         "plugin-system-table"
       ],
       "aotFixtureIds": [
+        "native-cut-commands",
         "native-system-table-sort",
         "native-system-table-sparse-sort"
       ],
@@ -7457,6 +7458,9 @@
           ]
         },
         "aot": {
+          "native-cut-commands": [
+            "fixture.commands"
+          ],
           "native-system-table-sort": [
             "fixture.commands",
             "implemented.tests"
@@ -7470,9 +7474,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x0000000000000030"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Zig製ランタイムと純LLVM AOT dispatchを実装し、最上位疎配列のhole・undefined順序を含む公式7経路差分テストに成功"
     },
     {
@@ -7484,6 +7501,7 @@
         "plugin-system-table"
       ],
       "aotFixtureIds": [
+        "native-cut-commands",
         "native-system-table-numeric-sort-bigint-error",
         "native-system-table-numeric-sort-mixed-bigint-error",
         "native-system-table-sort",
@@ -7498,6 +7516,9 @@
           ]
         },
         "aot": {
+          "native-cut-commands": [
+            "fixture.commands"
+          ],
           "native-system-table-numeric-sort-bigint-error": [
             "fixture.commands"
           ],
@@ -7517,9 +7538,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 4件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x0000000000000033"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Zig製ランタイムと純LLVM AOT dispatchを実装し、最上位疎配列のhole・undefined順序を含む公式7経路差分テストに成功"
     },
     {
@@ -10335,7 +10369,9 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000000000002e"
+          "0x000000000000002e",
+          "0x0000000000000031",
+          "0x0000000000000034"
         ],
         "officialComparison": [
           "officialSource",
@@ -10345,7 +10381,7 @@
         ],
         "state": "trace-confirmed-unattested"
       },
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（3 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "純LLVM AOTのJSON.stringify互換エンコーダと公式CLI・生成JavaScriptとの差分テストに成功"
     },
     {
@@ -11336,7 +11372,9 @@
           "0x0000000000000029",
           "0x000000000000002b",
           "0x000000000000002d",
-          "0x000000000000002f"
+          "0x000000000000002f",
+          "0x0000000000000032",
+          "0x0000000000000035"
         ],
         "officialComparison": [
           "officialSource",
@@ -11346,7 +11384,7 @@
         ],
         "state": "trace-confirmed-unattested"
       },
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（26 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（28 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "継続表示プールと表示ログを含めて実装し、公式差分テストに成功"
     },
     {
