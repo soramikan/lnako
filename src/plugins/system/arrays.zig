@@ -1255,6 +1255,57 @@ const stringPrototypeMethodNames = [_][]const u8{
     "trimStart",
 };
 
+const byteBufferTypedArrayMethodNames = [_][]const u8{
+    "at",
+    "copyWithin",
+    "entries",
+    "every",
+    "fill",
+    "filter",
+    "find",
+    "findIndex",
+    "findLast",
+    "findLastIndex",
+    "forEach",
+    "includes",
+    "indexOf",
+    "join",
+    "keys",
+    "lastIndexOf",
+    "map",
+    "reverse",
+    "reduce",
+    "reduceRight",
+    "set",
+    "slice",
+    "some",
+    "sort",
+    "subarray",
+    "toReversed",
+    "toSorted",
+    "values",
+    "with",
+};
+
+const byteBufferBufferMethodNames = [_][]const u8{
+    "copy",
+    "equals",
+    "inspect",
+    "compare",
+    "write",
+    "toJSON",
+    "swap16",
+    "swap32",
+    "swap64",
+};
+
+const byteBufferArrayBufferMethodNames = [_][]const u8{
+    "slice",
+    "resize",
+    "transfer",
+    "transferToFixedLength",
+};
+
 fn asciiUnitsEqual(units: []const u16, ascii: []const u8) bool {
     if (units.len != ascii.len) return false;
     for (units, ascii) |unit, byte| if (unit != byte) return false;
@@ -1304,13 +1355,43 @@ fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) 
         .number => "Number",
         .boolean => "Boolean",
         .bigint => "BigInt",
+        .bytes => switch (source.bytes.kind) {
+            .buffer => "Buffer",
+            .uint8_array => "Uint8Array",
+            .array_buffer => "ArrayBuffer",
+        },
         else => null,
     };
     if (constructor_name) |name| if (asciiUnitsEqual(units, "constructor")) return @as(?Value, try tableInheritedFunction(runtime, name));
 
+    if (source == .bytes) {
+        const buffer = source.bytes;
+        if (asciiUnitsEqual(units, "byteLength")) return @as(?Value, .{ .number = @floatFromInt(buffer.bytes.len) });
+        if (asciiUnitsEqual(units, "byteOffset")) {
+            if (buffer.kind == .array_buffer) return null;
+            const offset = if (buffer.bytes.len == 0) 0 else @intFromPtr(buffer.bytes.ptr) - @intFromPtr(buffer.storage.bytes.ptr);
+            return @as(?Value, .{ .number = @floatFromInt(offset) });
+        }
+        if (asciiUnitsEqual(units, "BYTES_PER_ELEMENT")) {
+            if (buffer.kind == .array_buffer) return null;
+            return @as(?Value, .{ .number = 1 });
+        }
+        if (buffer.kind == .array_buffer) {
+            if (asciiUnitsEqual(units, "maxByteLength")) return @as(?Value, .{ .number = @floatFromInt(buffer.bytes.len) });
+            if (asciiUnitsEqual(units, "resizable") or asciiUnitsEqual(units, "detached")) return @as(?Value, .{ .boolean = false });
+            if (inheritedMethodName(units, &byteBufferArrayBufferMethodNames)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
+        } else {
+            if (inheritedMethodName(units, &byteBufferTypedArrayMethodNames)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
+            if (buffer.kind == .buffer) {
+                if (inheritedMethodName(units, &byteBufferBufferMethodNames)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
+                if (asciiUnitsEqual(units, "toLocaleString")) return @as(?Value, try tableInheritedFunction(runtime, "toString"));
+            }
+        }
+    }
+
     if (inheritedMethodName(units, &objectPrototypeMethodNames)) |name| {
         if (source == .dictionary or source == .array or source == .string or source == .function or
-            source == .number or source == .boolean or source == .bigint) return @as(?Value, try tableInheritedFunction(runtime, name));
+            source == .number or source == .boolean or source == .bigint or source == .bytes) return @as(?Value, try tableInheritedFunction(runtime, name));
     }
     if (source == .function) {
         if (inheritedMethodName(units, &functionPrototypeMethodNames)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
@@ -1528,10 +1609,10 @@ fn indexed(runtime: *Runtime, source: Value, key: Value) !Value {
         return try runtime.stringCodeUnits(&.{rooted[0].string.units[index]});
     }
     if (rooted[0] == .bytes) {
-        if (rooted[0].bytes.kind == .array_buffer) return .undefined;
-        if (std.mem.eql(u16, rooted[2].string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return .{ .number = @floatFromInt(rooted[0].bytes.bytes.len) };
-        const index = propertyIndexUnits(rooted[2].string.units) orelse return .undefined;
-        return rooted[0].bytes.get(index);
+        if (rooted[0].bytes.kind != .array_buffer and std.mem.eql(u16, rooted[2].string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return .{ .number = @floatFromInt(rooted[0].bytes.bytes.len) };
+        if (rooted[0].bytes.kind != .array_buffer) if (propertyIndexUnits(rooted[2].string.units)) |index| return rooted[0].bytes.get(index);
+        if (try tableInheritedProperty(runtime, rooted[0], rooted[2].string.units)) |value| return value;
+        return .undefined;
     }
     if (rooted[0] == .function) {
         if (std.mem.eql(u16, rooted[2].string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return .{ .number = 0 };
@@ -1972,6 +2053,86 @@ test "表検索系はlengthとraw開始値の型を保持する" {
     var array_buffer = try runtime.createArrayBuffer(&.{ 85, 9 });
     try roots.protect(&array_buffer);
     try std.testing.expect((try indexed(&runtime, array_buffer, length_key)) == .undefined);
+}
+
+test "表行propertyはbyte bufferのprototype属性を解決する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var buffer = try runtime.createBytes(&.{ 85, 66 });
+    try roots.protect(&buffer);
+    var uint8 = try runtime.createUint8Array(&.{ 85, 66 });
+    try roots.protect(&uint8);
+    var array_buffer = try runtime.createArrayBuffer(&.{ 85, 66 });
+    try roots.protect(&array_buffer);
+    var constructor_key = try runtime.stringUtf8("constructor");
+    try roots.protect(&constructor_key);
+    var name_key = try runtime.stringUtf8("name");
+    try roots.protect(&name_key);
+    var byte_length_key = try runtime.stringUtf8("byteLength");
+    try roots.protect(&byte_length_key);
+    var byte_offset_key = try runtime.stringUtf8("byteOffset");
+    try roots.protect(&byte_offset_key);
+    var bytes_per_element_key = try runtime.stringUtf8("BYTES_PER_ELEMENT");
+    try roots.protect(&bytes_per_element_key);
+    var slice_key = try runtime.stringUtf8("slice");
+    try roots.protect(&slice_key);
+    var subarray_key = try runtime.stringUtf8("subarray");
+    try roots.protect(&subarray_key);
+    var locale_key = try runtime.stringUtf8("toLocaleString");
+    try roots.protect(&locale_key);
+    var max_byte_length_key = try runtime.stringUtf8("maxByteLength");
+    try roots.protect(&max_byte_length_key);
+    var resizable_key = try runtime.stringUtf8("resizable");
+    try roots.protect(&resizable_key);
+    var detached_key = try runtime.stringUtf8("detached");
+    try roots.protect(&detached_key);
+
+    var constructor = try indexed(&runtime, buffer, constructor_key);
+    try roots.protect(&constructor);
+    var constructor_name = try indexed(&runtime, constructor, name_key);
+    try roots.protect(&constructor_name);
+    try std.testing.expectEqualSlices(u16, &.{ 'B', 'u', 'f', 'f', 'e', 'r' }, constructor_name.string.units);
+    try std.testing.expectEqual(@as(f64, 2), (try indexed(&runtime, buffer, byte_length_key)).number);
+    try std.testing.expectEqual(@as(f64, 0), (try indexed(&runtime, buffer, byte_offset_key)).number);
+    try std.testing.expectEqual(@as(f64, 1), (try indexed(&runtime, buffer, bytes_per_element_key)).number);
+    var slice = try indexed(&runtime, buffer, slice_key);
+    try roots.protect(&slice);
+    var slice_name = try indexed(&runtime, slice, name_key);
+    try roots.protect(&slice_name);
+    try std.testing.expectEqualSlices(u16, &.{ 's', 'l', 'i', 'c', 'e' }, slice_name.string.units);
+    var locale = try indexed(&runtime, buffer, locale_key);
+    try roots.protect(&locale);
+    var locale_name = try indexed(&runtime, locale, name_key);
+    try roots.protect(&locale_name);
+    try std.testing.expectEqualSlices(u16, &.{ 't', 'o', 'S', 't', 'r', 'i', 'n', 'g' }, locale_name.string.units);
+
+    constructor = try indexed(&runtime, uint8, constructor_key);
+    try roots.protect(&constructor);
+    constructor_name = try indexed(&runtime, constructor, name_key);
+    try roots.protect(&constructor_name);
+    try std.testing.expectEqualSlices(u16, &.{ 'U', 'i', 'n', 't', '8', 'A', 'r', 'r', 'a', 'y' }, constructor_name.string.units);
+    try std.testing.expectEqual(@as(f64, 2), (try indexed(&runtime, uint8, byte_length_key)).number);
+    try std.testing.expectEqual(@as(f64, 1), (try indexed(&runtime, uint8, bytes_per_element_key)).number);
+    var subarray = try indexed(&runtime, uint8, subarray_key);
+    try roots.protect(&subarray);
+    var subarray_name = try indexed(&runtime, subarray, name_key);
+    try roots.protect(&subarray_name);
+    try std.testing.expectEqualSlices(u16, &.{ 's', 'u', 'b', 'a', 'r', 'r', 'a', 'y' }, subarray_name.string.units);
+
+    constructor = try indexed(&runtime, array_buffer, constructor_key);
+    try roots.protect(&constructor);
+    constructor_name = try indexed(&runtime, constructor, name_key);
+    try roots.protect(&constructor_name);
+    try std.testing.expectEqualSlices(u16, &.{ 'A', 'r', 'r', 'a', 'y', 'B', 'u', 'f', 'f', 'e', 'r' }, constructor_name.string.units);
+    try std.testing.expectEqual(@as(f64, 2), (try indexed(&runtime, array_buffer, byte_length_key)).number);
+    try std.testing.expectEqual(@as(f64, 2), (try indexed(&runtime, array_buffer, max_byte_length_key)).number);
+    try std.testing.expect(!(try indexed(&runtime, array_buffer, resizable_key)).boolean);
+    try std.testing.expect(!(try indexed(&runtime, array_buffer, detached_key)).boolean);
+    try std.testing.expect((try indexed(&runtime, array_buffer, bytes_per_element_key)) == .undefined);
 }
 
 test "表ソートは最上位配列のholeと明示的undefinedをpresence順に保持する" {

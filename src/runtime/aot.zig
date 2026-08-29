@@ -1209,6 +1209,7 @@ const Runtime = struct {
                 if (sameKey(key, staticStringValue("length"))) {
                     return if (buffer.kind == .array_buffer) .{} else numberValue(@floatFromInt(buffer.bytes.len));
                 }
+                if (aotByteBufferScalarProperty(buffer, key)) |value| return value;
                 const index = valueIndex(key) orelse return .{};
                 return if (buffer.kind == .array_buffer or index >= buffer.bytes.len) .{} else numberValue(@floatFromInt(buffer.bytes[index]));
             },
@@ -1914,6 +1915,26 @@ fn valueIndex(value: Value) ?usize {
     const number: f64 = @bitCast(value.payload);
     if (!std.math.isFinite(number) or number < 0 or @trunc(number) != number or number > @as(f64, @floatFromInt(std.math.maxInt(usize)))) return null;
     return @intFromFloat(number);
+}
+
+fn aotByteBufferScalarProperty(buffer: ByteBuffer, key: Value) ?Value {
+    if (sameKey(key, staticStringValue("byteLength"))) return numberValue(@floatFromInt(buffer.bytes.len));
+    if (sameKey(key, staticStringValue("byteOffset"))) {
+        if (buffer.kind == .array_buffer) return null;
+        const offset = if (buffer.bytes.len == 0) 0 else @intFromPtr(buffer.bytes.ptr) - @intFromPtr(buffer.storage.bytes.ptr);
+        return numberValue(@floatFromInt(offset));
+    }
+    if (sameKey(key, staticStringValue("BYTES_PER_ELEMENT"))) {
+        if (buffer.kind == .array_buffer) return null;
+        return numberValue(1);
+    }
+    if (buffer.kind == .array_buffer) {
+        if (sameKey(key, staticStringValue("maxByteLength"))) return numberValue(@floatFromInt(buffer.bytes.len));
+        if (sameKey(key, staticStringValue("resizable")) or sameKey(key, staticStringValue("detached"))) {
+            return .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
+        }
+    }
+    return null;
 }
 
 fn valueToNumber(value: Value) f64 {
@@ -13936,6 +13957,57 @@ const table_string_prototype_method_names = [_][]const u8{
     "trimStart",
 };
 
+const table_byte_buffer_typed_array_method_names = [_][]const u8{
+    "at",
+    "copyWithin",
+    "entries",
+    "every",
+    "fill",
+    "filter",
+    "find",
+    "findIndex",
+    "findLast",
+    "findLastIndex",
+    "forEach",
+    "includes",
+    "indexOf",
+    "join",
+    "keys",
+    "lastIndexOf",
+    "map",
+    "reverse",
+    "reduce",
+    "reduceRight",
+    "set",
+    "slice",
+    "some",
+    "sort",
+    "subarray",
+    "toReversed",
+    "toSorted",
+    "values",
+    "with",
+};
+
+const table_byte_buffer_buffer_method_names = [_][]const u8{
+    "copy",
+    "equals",
+    "inspect",
+    "compare",
+    "write",
+    "toJSON",
+    "swap16",
+    "swap32",
+    "swap64",
+};
+
+const table_byte_buffer_array_buffer_method_names = [_][]const u8{
+    "slice",
+    "resize",
+    "transfer",
+    "transferToFixedLength",
+};
+
 fn tableAsciiUnitsEqual(units: []const u16, ascii: []const u8) bool {
     if (units.len != ascii.len) return false;
     for (units, ascii) |unit, byte| if (unit != byte) return false;
@@ -13972,12 +14044,44 @@ fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []
         .number => "Number",
         .boolean => "Boolean",
         .bigint => "BigInt",
+        .byte_buffer => switch (row.object().?.payload.byte_buffer.kind) {
+            .buffer => "Buffer",
+            .uint8_array => "Uint8Array",
+            .array_buffer => "ArrayBuffer",
+        },
         else => null,
     };
     if (constructor_name) |name| if (tableAsciiUnitsEqual(units, "constructor")) return @as(?Value, try tableInheritedFunction(runtime, name));
 
+    if (row_tag == .byte_buffer) {
+        const buffer = row.object().?.payload.byte_buffer;
+        if (tableAsciiUnitsEqual(units, "byteLength")) return @as(?Value, numberValue(@floatFromInt(buffer.bytes.len)));
+        if (tableAsciiUnitsEqual(units, "byteOffset")) {
+            if (buffer.kind == .array_buffer) return null;
+            const offset = if (buffer.bytes.len == 0) 0 else @intFromPtr(buffer.bytes.ptr) - @intFromPtr(buffer.storage.bytes.ptr);
+            return @as(?Value, numberValue(@floatFromInt(offset)));
+        }
+        if (tableAsciiUnitsEqual(units, "BYTES_PER_ELEMENT")) {
+            if (buffer.kind == .array_buffer) return null;
+            return @as(?Value, numberValue(1));
+        }
+        if (buffer.kind == .array_buffer) {
+            if (tableAsciiUnitsEqual(units, "maxByteLength")) return @as(?Value, numberValue(@floatFromInt(buffer.bytes.len)));
+            if (tableAsciiUnitsEqual(units, "resizable") or tableAsciiUnitsEqual(units, "detached")) {
+                return @as(?Value, .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 });
+            }
+            if (tableInheritedMethodName(units, &table_byte_buffer_array_buffer_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
+        } else {
+            if (tableInheritedMethodName(units, &table_byte_buffer_typed_array_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
+            if (buffer.kind == .buffer) {
+                if (tableInheritedMethodName(units, &table_byte_buffer_buffer_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
+                if (tableAsciiUnitsEqual(units, "toLocaleString")) return @as(?Value, try tableInheritedFunction(runtime, "toString"));
+            }
+        }
+    }
+
     const supports_object_prototype = row_tag == .dictionary or row_tag == .array or row_tag == .static_utf8_string or
-        row_tag == .utf16_string or row_tag == .function or row_tag == .number or row_tag == .boolean or row_tag == .bigint;
+        row_tag == .utf16_string or row_tag == .function or row_tag == .number or row_tag == .boolean or row_tag == .bigint or row_tag == .byte_buffer;
     if (supports_object_prototype) {
         if (tableInheritedMethodName(units, &table_object_prototype_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
     }
@@ -13990,7 +14094,6 @@ fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []
     if (row_tag == .static_utf8_string or row_tag == .utf16_string) {
         if (tableInheritedMethodName(units, &table_string_prototype_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
     }
-    _ = row;
     return null;
 }
 
@@ -14032,12 +14135,14 @@ fn tableRowProperty(runtime: *Runtime, row: Value, column: Value) !Value {
             else
                 numberValue(@floatFromInt(object.payload.byte_buffer.bytes.len));
         }
-        if (object.payload.byte_buffer.kind == .array_buffer) return .{};
-        const index = tablePropertyIndex(key_units) orelse return .{};
-        return if (index < object.payload.byte_buffer.bytes.len)
-            numberValue(@floatFromInt(object.payload.byte_buffer.bytes[index]))
-        else
-            .{};
+        if (object.payload.byte_buffer.kind != .array_buffer) if (tablePropertyIndex(key_units)) |index| {
+            return if (index < object.payload.byte_buffer.bytes.len)
+                numberValue(@floatFromInt(object.payload.byte_buffer.bytes[index]))
+            else
+                .{};
+        };
+        if (try tableInheritedProperty(runtime, row, row_tag, key_units)) |value| return value;
+        return .{};
     }
     if (isString(row)) {
         const units = try valueUtf16Alloc(runtime, row);
@@ -19842,6 +19947,54 @@ test "AOT表命令はbyte bufferのlengthと数値添字を読む" {
     try std.testing.expectEqual(@as(f64, 0), valueToNumber(roots[8]));
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try tableRowProperty(&runtime, roots[2], staticStringValue("length"))).tag)));
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try tableRowProperty(&runtime, roots[2], numberValue(0))).tag)));
+}
+
+test "AOT byte bufferのprototype属性とscalar propertyを解決する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    runtime.next_collection = 1;
+    var roots = [_]Value{.{}} ** 24;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createBytes(&.{ 85, 66 });
+    roots[1] = try runtime.createUint8Array(&.{ 85, 66 });
+    roots[2] = try runtime.createArrayBuffer(&.{ 85, 66 });
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(runtime.indexGet(roots[0], staticStringValue("byteLength"))));
+    try std.testing.expectEqual(@as(f64, 0), valueToNumber(runtime.indexGet(roots[0], staticStringValue("byteOffset"))));
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(runtime.indexGet(roots[0], staticStringValue("BYTES_PER_ELEMENT"))));
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(runtime.indexGet(roots[2], staticStringValue("byteLength"))));
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(runtime.indexGet(roots[2], staticStringValue("maxByteLength"))));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(runtime.indexGet(roots[2], staticStringValue("length")).tag)));
+
+    roots[3] = try tableRowProperty(&runtime, roots[0], staticStringValue("constructor"));
+    roots[4] = try tableRowProperty(&runtime, roots[3], staticStringValue("name"));
+    try expectUtf16String(&runtime, roots[4], "Buffer");
+    roots[5] = try tableRowProperty(&runtime, roots[0], staticStringValue("subarray"));
+    roots[6] = try tableRowProperty(&runtime, roots[5], staticStringValue("name"));
+    try expectUtf16String(&runtime, roots[6], "subarray");
+    roots[7] = try tableRowProperty(&runtime, roots[0], staticStringValue("toLocaleString"));
+    roots[8] = try tableRowProperty(&runtime, roots[7], staticStringValue("name"));
+    try expectUtf16String(&runtime, roots[8], "toString");
+
+    roots[9] = try tableRowProperty(&runtime, roots[1], staticStringValue("constructor"));
+    roots[10] = try tableRowProperty(&runtime, roots[9], staticStringValue("name"));
+    try expectUtf16String(&runtime, roots[10], "Uint8Array");
+    roots[11] = try tableRowProperty(&runtime, roots[1], staticStringValue("map"));
+    roots[12] = try tableRowProperty(&runtime, roots[11], staticStringValue("name"));
+    try expectUtf16String(&runtime, roots[12], "map");
+
+    roots[13] = try tableRowProperty(&runtime, roots[2], staticStringValue("constructor"));
+    roots[14] = try tableRowProperty(&runtime, roots[13], staticStringValue("name"));
+    try expectUtf16String(&runtime, roots[14], "ArrayBuffer");
+    roots[15] = try tableRowProperty(&runtime, roots[2], staticStringValue("slice"));
+    roots[16] = try tableRowProperty(&runtime, roots[15], staticStringValue("name"));
+    try expectUtf16String(&runtime, roots[16], "slice");
+    try std.testing.expectEqual(Tag.boolean, @as(Tag, @enumFromInt(runtime.indexGet(roots[2], staticStringValue("resizable")).tag)));
+    try std.testing.expect(runtime.indexGet(roots[2], staticStringValue("resizable")).payload == 0);
+    try std.testing.expectEqual(Tag.boolean, @as(Tag, @enumFromInt(runtime.indexGet(roots[2], staticStringValue("detached")).tag)));
+    try std.testing.expect(runtime.indexGet(roots[2], staticStringValue("detached")).payload == 0);
 }
 
 test "AOT表変換系は欠損列・負位置・JS加算を公式どおり処理する" {

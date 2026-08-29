@@ -1751,7 +1751,23 @@ pub const Interpreter = struct {
     }
 
     fn getOne(self: *Interpreter, container: Value, key: Value) !Value {
-        if (container == .bytes) return container.bytes.get(try valueIndex(self.runtime, key));
+        if (container == .bytes) {
+            const key_text = try self.runtime.valueToString(key);
+            if (std.mem.eql(u16, key_text.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) {
+                return if (container.bytes.kind == .array_buffer) .undefined else .{ .number = @floatFromInt(container.bytes.bytes.len) };
+            }
+            if (std.mem.eql(u16, key_text.string.units, &.{ 'b', 'y', 't', 'e', 'L', 'e', 'n', 'g', 't', 'h' })) return .{ .number = @floatFromInt(container.bytes.bytes.len) };
+            if (std.mem.eql(u16, key_text.string.units, &.{ 'b', 'y', 't', 'e', 'O', 'f', 'f', 's', 'e', 't' })) {
+                if (container.bytes.kind == .array_buffer) return .undefined;
+                const offset = if (container.bytes.bytes.len == 0) 0 else @intFromPtr(container.bytes.bytes.ptr) - @intFromPtr(container.bytes.storage.bytes.ptr);
+                return .{ .number = @floatFromInt(offset) };
+            }
+            if (std.mem.eql(u16, key_text.string.units, &.{ 'B', 'Y', 'T', 'E', 'S', '_', 'P', 'E', 'R', '_', 'E', 'L', 'E', 'M', 'E', 'N', 'T' })) {
+                return if (container.bytes.kind == .array_buffer) .undefined else .{ .number = 1 };
+            }
+            if (container.bytes.kind == .array_buffer) return .undefined;
+            return container.bytes.get(try valueIndex(self.runtime, key));
+        }
         if (container == .array) return try getArrayProperty(self.runtime, container.array, key);
         if (container == .dictionary) {
             const text = try self.runtime.valueToString(key);
