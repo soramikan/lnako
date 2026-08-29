@@ -759,7 +759,7 @@
   {
     "id": "native-system-regexp-unicode-code-point-range",
     "commands": ["正規表現マッチ", "JSON変換"],
-    "source": "JSON変換(正規表現マッチ(\"😀A\",『/[\\u{1F600}-\\u{1F64F}]/gu』))を表示\nJSON変換(正規表現マッチ(\"😀A\",『/[😀]/u』))を表示\n"
+    "source": "JSON変換(正規表現マッチ(\"😀A\",『/[\\u{1F600}-\\u{1F64F}]/gu』))を表示\nJSON変換(正規表現マッチ(\"😀A\",『/[😀]/u』))を表示\nJSON変換(正規表現マッチ(\"😀A\",『/[\\uD83D\\uDE00]/u』))を表示\n"
   },
   {
     "id": "native-system-regexp-invalid-capture-name-error",

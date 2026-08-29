@@ -92,7 +92,9 @@ UTF-16コード単位を直接解析する明示スタックパーサーへ接�
 
 Unicode正規表現では、単独の`\\0`はNULとして受理するが、後続の数字を持つ`\\00`などは公式V8の`Invalid decimal escape`になる。`native-system-regexp-unicode-zero-escape-error`で生成JavaScript・Interpreter・LLVM AOTの診断本文を比較する。
 
-Unicode文字クラスの範囲端点はBMP外のコードポイントも取り、`[\\u{1F600}-\\u{1F64F}]`のような範囲をu21で比較する。クラス内の生UTF-16 surrogate pairも1項目へ合成する。`native-system-regexp-unicode-code-point-range`で補助平面の範囲・生文字一致とUTF-16結果を7経路比較する。`\\uD83D\\uDE00`のように個別の`\\u` escapeを連続させたクラスは別境界として未検証のまま残す。
+Unicode文字クラスの範囲端点はBMP外のコードポイントも取り、`[\\u{1F600}-\\u{1F64F}]`のような範囲をu21で比較する。クラス内の生UTF-16 surrogate pairも1項目へ合成する。`native-system-regexp-unicode-code-point-range`で補助平面の範囲・生文字一致とUTF-16結果を7経路比較する。個別のUnicode escapeを連続させたクラスの組合せは別境界として未検証のまま残す。
+
+Unicode文字クラスでは、4桁Unicode escapeで表した高・低surrogate pairも1コードポイントへ合成する。その他のescapeや可変長のUnicode escapeを個別に連続させたクラスはこの合成対象外である。
 
 根拠は固定オラクルの
 [`core/src/plugin_system_array.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_array.mts) と

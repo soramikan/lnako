@@ -214,9 +214,10 @@ const Parser = struct {
             }
             return .{ .literal = unit };
         }
+        const escaped_unit = if (self.index < self.source.len) self.source[self.index] else 0;
         const atom = try self.parseEscape(true);
         return switch (atom) {
-            .literal => |literal| .{ .literal = literal },
+            .literal => |literal| if (self.unicode and escaped_unit == 'u' and isHighSurrogate(literal)) if (consumeLowSurrogateEscape(self)) |low| .{ .code_point = surrogatePairCodePoint(literal, low) } else .{ .literal = literal } else .{ .literal = literal },
             .code_point => |code_point| .{ .code_point = code_point },
             .class => |class| if (class.items.len == 1) class.items[0] else error.InvalidClassEscape,
             .unicode_property => |property| .{ .unicode_property = property },
@@ -1156,6 +1157,18 @@ fn classItemCodePoint(item: ClassItem) ?u21 {
     };
 }
 
+fn consumeLowSurrogateEscape(parser: *Parser) ?u16 {
+    if (parser.index + 6 > parser.source.len or parser.source[parser.index] != '\\' or parser.source[parser.index + 1] != 'u') return null;
+    var value: u16 = 0;
+    for (parser.source[parser.index + 2 .. parser.index + 6]) |unit| {
+        if (unit > 0x7f) return null;
+        value = value * 16 + (std.fmt.charToDigit(@intCast(unit), 16) catch return null);
+    }
+    if (!isLowSurrogate(value)) return null;
+    parser.index += 6;
+    return value;
+}
+
 fn isLineTerminator(unit: u16) bool {
     return unit == '\n' or unit == '\r' or unit == 0x2028 or unit == 0x2029;
 }
@@ -1496,6 +1509,11 @@ test "Unicode文字クラスの補助平面コードポイント範囲を処理�
     try roots.protect(&raw_pattern);
     const raw_result = (try call(&runtime, "正規表現マッチ", &.{ source, raw_pattern })).?;
     try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00 }, raw_result.string.units);
+
+    var escaped_pair_pattern = try runtime.stringUtf8("/[\\uD83D\\uDE00]/u");
+    try roots.protect(&escaped_pair_pattern);
+    const escaped_pair_result = (try call(&runtime, "正規表現マッチ", &.{ source, escaped_pair_pattern })).?;
+    try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00 }, escaped_pair_result.string.units);
 }
 
 test "正規表現の空幅量指定は下限と上限内の反復を保持する" {
