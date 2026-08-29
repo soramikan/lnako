@@ -700,6 +700,39 @@
     "source": "正規表現マッチ(\"x\",『/x/uv』)を表示\n"
   },
   {
+    "id": "native-system-regexp-unicode-escape-boundaries",
+    "commands": ["正規表現マッチ", "JSON変換", "CHR"],
+    "source": "JSON変換(正規表現マッチ(CHR(1),『/\\cA/u』))を表示\nJSON変換(正規表現マッチ(CHR(55296),『/\\u{D800}/u』))を表示\n"
+  },
+  {
+    "id": "native-system-regexp-unicode-control-escape-error",
+    "oracle": "official-generated",
+    "commands": ["正規表現マッチ"],
+    "stderrIncludes": "Invalid regular expression: /\\c1/u: Invalid Unicode escape",
+    "source": "正規表現マッチ(\"x\",『/\\c1/u』)を表示\n"
+  },
+  {
+    "id": "native-system-regexp-unicode-backreference-error",
+    "oracle": "official-generated",
+    "commands": ["正規表現マッチ"],
+    "stderrIncludes": "Invalid regular expression: /\\1/u: Invalid escape",
+    "source": "正規表現マッチ(\"x\",『/\\1/u』)を表示\n"
+  },
+  {
+    "id": "native-system-regexp-unicode-class-error",
+    "oracle": "official-generated",
+    "commands": ["正規表現マッチ"],
+    "stderrIncludes": "Invalid regular expression: /[\\d-a]/u: Invalid character class",
+    "source": "正規表現マッチ(\"x\",『/[\\d-a]/u』)を表示\n"
+  },
+  {
+    "id": "native-system-regexp-unicode-decimal-escape-error",
+    "oracle": "official-generated",
+    "commands": ["正規表現マッチ"],
+    "stderrIncludes": "Invalid regular expression: /[\\1]/u: Invalid decimal escape",
+    "source": "正規表現マッチ(\"x\",『/[\\1]/u』)を表示\n"
+  },
+  {
     "id": "native-system-regexp-invalid-capture-name-error",
     "oracle": "official-generated",
     "commands": ["正規表現マッチ"],

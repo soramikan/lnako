@@ -7939,14 +7939,19 @@
         "plugin-system-regexp",
         "native-system-regexp-commands",
         "native-system-regexp-boundaries",
-        "native-system-regexp-error-preserves-captures"
+        "native-system-regexp-error-preserves-captures",
+        "native-system-regexp-unicode-escape-boundaries",
+        "native-system-regexp-unicode-control-escape-error",
+        "native-system-regexp-unicode-backreference-error",
+        "native-system-regexp-unicode-class-error",
+        "native-system-regexp-unicode-decimal-escape-error"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "共有Zig正規表現エンジンと抽出副作用をAOTへ実装し、公式7経路差分テストに成功"
+      "reason": "共有Zig正規表現エンジンと抽出副作用をAOTへ実装し、Unicode制御・コードポイント・不正エスケープ診断を追加して公式7経路差分テストに成功"
     },
     {
       "id": "command-0296",

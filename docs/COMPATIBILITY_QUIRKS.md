@@ -86,6 +86,8 @@ UTF-16コード単位を直接解析する明示スタックパーサーへ接�
 | プリミティブ値への添字代入 | 公式CLI直接実行はNumber、Boolean、String、BigIntへの`A[0]=値`を変更も例外もなく無視する。一方、公式生成JavaScriptはES moduleのstrict modeで動くため、最初のNumber代入から`Cannot create property '0' on number '1'`例外になる。`null`と`undefined`への代入は両経路で`Cannot set properties of null/undefined (setting 'キー')`になる | 通常の利用経路である公式CLI直接実行に合わせ、数値・真偽値・文字列・BigIntへの代入を無操作にする。差分ケースは`oracle: official-source`を明示する。`null` / `undefined`ではキーを文字列化した公式文言を保留例外にし、AOTでも最内側の監視へ渡す | `native-primitive-index-assignment-and-empty-iteration`、`native-nullish-index-assignment-exception`、`プリミティブへの添字代入を無視し非反復値を空として扱う` |
 | 反復不能値の`反復` | `null`、`undefined`、Boolean、BigInt、関数は例外にせず要素数0として扱い、反復本体を実行しない | 全ての値を反復入力として受理し、配列・辞書・文字列・Number以外は空反復子へ変換する | `native-primitive-index-assignment-and-empty-iteration`、`プリミティブへの添字代入を無視し非反復値を空として扱う` |
 
+正規表現の追加Unicode境界では、`cA`形式の制御エスケープ、孤立サロゲートを含むコードポイントエスケープ、Unicode時の不正10進エスケープと文字クラス範囲を公式V8の実測本文へ変換する。`native-system-regexp-unicode-escape-boundaries`、`native-system-regexp-unicode-control-escape-error`、`native-system-regexp-unicode-backreference-error`、`native-system-regexp-unicode-class-error`、`native-system-regexp-unicode-decimal-escape-error`でInterpreter・AOTの7経路を比較する。Unicode propertyの集合演算・文字列property、未検証の大小文字境界とバックトラッキング境界は引き続きTODOとして扱う。
+
 根拠は固定オラクルの
 [`core/src/plugin_system_array.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_array.mts) と
 [`core/src/plugin_system_dict.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_dict.mts) です。

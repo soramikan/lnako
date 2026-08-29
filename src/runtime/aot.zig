@@ -21061,6 +21061,40 @@ test "AOT一般正規表現命令は共有エンジンと抽出副作用を保�
     defer runtime.allocator.free(invalid_message);
     try std.testing.expectEqualStrings("Invalid regular expression: /[/g: Unterminated character class", invalid_message);
     _ = runtime.takeException();
+
+    roots[8] = try runtime.createString(&.{1});
+    const control = try regexpBuiltin(&runtime, .regexp_match, &.{ roots[8], staticStringValue("/\\cA/u") });
+    roots[9] = control.value;
+    try std.testing.expectEqualSlices(u16, &.{1}, roots[9].object().?.payload.utf16_string);
+
+    roots[10] = try runtime.createString(&.{0xd800});
+    const lone_surrogate = try regexpBuiltin(&runtime, .regexp_match, &.{ roots[10], staticStringValue("/\\u{D800}/u") });
+    roots[11] = lone_surrogate.value;
+    try std.testing.expectEqualSlices(u16, &.{0xd800}, roots[11].object().?.payload.utf16_string);
+
+    try std.testing.expectError(error.InvalidUnicodeEscape, regexpBuiltin(&runtime, .regexp_match, &.{ staticStringValue("x"), staticStringValue("/\\c1/u") }));
+    const invalid_control_message = try pendingExceptionMessageUtf8Alloc(&runtime);
+    defer runtime.allocator.free(invalid_control_message);
+    try std.testing.expectEqualStrings("Invalid regular expression: /\\c1/u: Invalid Unicode escape", invalid_control_message);
+    _ = runtime.takeException();
+
+    try std.testing.expectError(error.InvalidBackreference, regexpBuiltin(&runtime, .regexp_match, &.{ staticStringValue("x"), staticStringValue("/\\1/u") }));
+    const invalid_backreference_message = try pendingExceptionMessageUtf8Alloc(&runtime);
+    defer runtime.allocator.free(invalid_backreference_message);
+    try std.testing.expectEqualStrings("Invalid regular expression: /\\1/u: Invalid escape", invalid_backreference_message);
+    _ = runtime.takeException();
+
+    try std.testing.expectError(error.InvalidDecimalEscape, regexpBuiltin(&runtime, .regexp_match, &.{ staticStringValue("x"), staticStringValue("/[\\1]/u") }));
+    const invalid_decimal_message = try pendingExceptionMessageUtf8Alloc(&runtime);
+    defer runtime.allocator.free(invalid_decimal_message);
+    try std.testing.expectEqualStrings("Invalid regular expression: /[\\1]/u: Invalid decimal escape", invalid_decimal_message);
+    _ = runtime.takeException();
+
+    try std.testing.expectError(error.InvalidCharacterClass, regexpBuiltin(&runtime, .regexp_match, &.{ staticStringValue("x"), staticStringValue("/[\\d-a]/u") }));
+    const invalid_class_message = try pendingExceptionMessageUtf8Alloc(&runtime);
+    defer runtime.allocator.free(invalid_class_message);
+    try std.testing.expectEqualStrings("Invalid regular expression: /[\\d-a]/u: Invalid character class", invalid_class_message);
+    _ = runtime.takeException();
 }
 
 test "AOT JSONエンコードはcompact prettyとECMAScript境界を保つ" {

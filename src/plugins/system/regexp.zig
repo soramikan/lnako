@@ -77,6 +77,7 @@ const Parser = struct {
     unicode_sets: bool = false,
     index: usize = 0,
     capture_count: usize = 0,
+    max_backreference: ?usize = null,
     capture_names: [max_captures]?[]const u16 = [_]?[]const u16{null} ** max_captures,
 
     fn parseExpression(self: *Parser) anyerror!*Expression {
@@ -188,8 +189,11 @@ const Parser = struct {
             if (first == .literal and self.index + 1 < self.source.len and self.source[self.index] == '-' and self.source[self.index + 1] != ']') {
                 self.index += 1;
                 const last = try self.parseClassItem();
-                if (last != .literal or last.literal < first.literal) return error.InvalidCharacterRange;
+                if (last != .literal) return if (self.unicode) error.InvalidCharacterClass else error.InvalidCharacterRange;
+                if (last.literal < first.literal) return error.InvalidCharacterRange;
                 try items.append(self.allocator, .{ .range = .{ .first = first.literal, .last = last.literal } });
+            } else if (self.unicode and first != .literal and self.index + 1 < self.source.len and self.source[self.index] == '-' and self.source[self.index + 1] != ']') {
+                return error.InvalidCharacterClass;
             } else try items.append(self.allocator, first);
         }
         return error.UnclosedCharacterClass;
@@ -229,12 +233,23 @@ const Parser = struct {
             'f' => .{ .literal = 0x0c },
             'v' => .{ .literal = 0x0b },
             '0' => .{ .literal = 0 },
+            'c' => try self.parseControlEscape(),
             'x' => .{ .literal = try self.parseHex(2) },
             'u' => if (self.index < self.source.len and self.source[self.index] == '{')
                 .{ .code_point = try self.parseCodePointEscape() }
             else
                 .{ .literal = try self.parseHex(4) },
-            '1'...'9' => if (in_class) .{ .literal = escaped } else .{ .backreference = escaped - '1' },
+            '1'...'9' => blk: {
+                if (in_class and self.unicode) return error.InvalidDecimalEscape;
+                if (in_class) break :blk .{ .literal = escaped };
+                const capture_index = escaped - '1';
+                if (self.unicode) {
+                    if (self.max_backreference) |current| {
+                        if (capture_index > current) self.max_backreference = capture_index;
+                    } else self.max_backreference = capture_index;
+                }
+                break :blk .{ .backreference = capture_index };
+            },
             'p', 'P' => try self.parseUnicodeProperty(escaped == 'P'),
             else => if (self.unicode and !isUnicodeIdentityEscape(escaped, in_class))
                 error.InvalidIdentityEscape
@@ -281,8 +296,21 @@ const Parser = struct {
         }
         if (self.index == start or self.index >= self.source.len) return error.InvalidUnicodeEscape;
         self.index += 1;
-        if (value >= 0xd800 and value <= 0xdfff) return error.InvalidUnicodeEscape;
+        // ECMAScript permits Unicode escapes for surrogate code units.  A
+        // lone surrogate remains observable in a UTF-16 string and is only
+        // combined when the input contains a matching pair.
         return @intCast(value);
+    }
+
+    fn parseControlEscape(self: *Parser) !Atom {
+        if (self.index >= self.source.len) return if (self.unicode) error.InvalidUnicodeEscape else .{ .literal = 'c' };
+        const unit = self.source[self.index];
+        const upper = if (unit >= 'a' and unit <= 'z') unit - ('a' - 'A') else unit;
+        if (upper >= 'A' and upper <= 'Z') {
+            self.index += 1;
+            return .{ .literal = @intCast(upper - 'A' + 1) };
+        }
+        return if (self.unicode) error.InvalidUnicodeEscape else .{ .literal = 'c' };
     }
 
     fn parseQuantifier(self: *Parser, piece: *Piece) !void {
@@ -388,6 +416,7 @@ pub const RawPattern = struct {
         var parser = Parser{ .allocator = arena.allocator(), .source = owned_pattern, .unicode = false };
         const expression = try parser.parseExpression();
         if (parser.index != owned_pattern.len) return error.UnexpectedPatternToken;
+        if (parser.max_backreference) |capture_index| if (capture_index >= parser.capture_count) return error.InvalidBackreference;
         return .{
             .allocator = allocator,
             .compiled = .{
@@ -457,9 +486,12 @@ pub fn compileFailureMessageAlloc(allocator: std.mem.Allocator, specification: [
         error.UnclosedGroup => "Unterminated group",
         error.QuantifierWithoutAtom => "Nothing to repeat",
         error.InvalidCharacterRange => "Range out of order in character class",
+        error.InvalidCharacterClass => "Invalid character class",
         error.InvalidHexEscape => "Invalid escape",
         error.IncompleteQuantifier => "Incomplete quantifier",
         error.InvalidQuantifierRange => "numbers out of order in {} quantifier",
+        error.InvalidBackreference => "Invalid escape",
+        error.InvalidDecimalEscape => "Invalid decimal escape",
         error.InvalidNamedCapture => "Invalid capture group name",
         error.DuplicateNamedCapture => "Duplicate capture group name",
         error.UnsupportedGroupAssertion => "Invalid group",
@@ -536,6 +568,7 @@ fn compile(allocator: std.mem.Allocator, specification: []const u16, default_glo
     };
     const expression = try parser.parseExpression();
     if (parser.index != owned_pattern.len) return error.UnexpectedPatternToken;
+    if (parser.max_backreference) |capture_index| if (capture_index >= parser.capture_count) return error.InvalidBackreference;
     return .{ .arena = arena, .expression = expression, .flags = flags, .capture_count = parser.capture_count, .capture_names = parser.capture_names };
 }
 
@@ -1276,6 +1309,26 @@ test "正規表現構文エラーはV8互換の文言を設定する" {
     try std.testing.expectEqualStrings("Invalid regular expression: /\\u{/u: Invalid Unicode escape", runtime.failureMessage().?);
     runtime.clearFailureMessage();
 
+    const invalid_control = try runtime.stringUtf8("/\\c1/u");
+    try std.testing.expectError(error.InvalidUnicodeEscape, call(&runtime, "正規表現マッチ", &.{ source, invalid_control }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /\\c1/u: Invalid Unicode escape", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
+
+    const invalid_backreference = try runtime.stringUtf8("/\\1/u");
+    try std.testing.expectError(error.InvalidBackreference, call(&runtime, "正規表現マッチ", &.{ source, invalid_backreference }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /\\1/u: Invalid escape", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
+
+    const invalid_decimal_escape = try runtime.stringUtf8("/[\\1]/u");
+    try std.testing.expectError(error.InvalidDecimalEscape, call(&runtime, "正規表現マッチ", &.{ source, invalid_decimal_escape }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /[\\1]/u: Invalid decimal escape", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
+
+    const invalid_class = try runtime.stringUtf8("/[\\d-a]/u");
+    try std.testing.expectError(error.InvalidCharacterClass, call(&runtime, "正規表現マッチ", &.{ source, invalid_class }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /[\\d-a]/u: Invalid character class", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
+
     const invalid_identity_escape = try runtime.stringUtf8("/\\q/u");
     try std.testing.expectError(error.InvalidIdentityEscape, call(&runtime, "正規表現マッチ", &.{ source, invalid_identity_escape }));
     try std.testing.expectEqualStrings("Invalid regular expression: /\\q/u: Invalid escape", runtime.failureMessage().?);
@@ -1445,6 +1498,20 @@ test "Unicode・sticky・indicesフラグはUTF-16共有エンジンで処理す
     try roots.protect(&indices_pattern);
     const indices = (try call(&runtime, "正規表現マッチ", &.{ source, indices_pattern })).?;
     try std.testing.expectEqualSlices(u16, &.{'x'}, indices.string.units);
+
+    var control_source = try runtime.stringCodeUnits(&.{1});
+    try roots.protect(&control_source);
+    var control_pattern = try runtime.stringUtf8("/\\cA/u");
+    try roots.protect(&control_pattern);
+    const control = (try call(&runtime, "正規表現マッチ", &.{ control_source, control_pattern })).?;
+    try std.testing.expectEqualSlices(u16, &.{1}, control.string.units);
+
+    var lone_surrogate_source = try runtime.stringCodeUnits(&.{0xd800});
+    try roots.protect(&lone_surrogate_source);
+    var lone_surrogate_pattern = try runtime.stringUtf8("/\\u{D800}/u");
+    try roots.protect(&lone_surrogate_pattern);
+    const lone_surrogate = (try call(&runtime, "正規表現マッチ", &.{ lone_surrogate_source, lone_surrogate_pattern })).?;
+    try std.testing.expectEqualSlices(u16, &.{0xd800}, lone_surrogate.string.units);
 }
 
 test "Unicode setsのvフラグは基本照合を行い未実装集合演算を拒否する" {
