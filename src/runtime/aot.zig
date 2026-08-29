@@ -7191,6 +7191,12 @@ fn promiseSentinel(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) cal
     out.* = .{};
 }
 
+fn byteBufferUnboundSliceCallback(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (active_runtime) |*active| active else return;
+    runtime.setFailureText("Cannot read properties of undefined (reading 'subarray')");
+}
+
 /// Dedicated ABI for the two commands that update the system `対象` value.
 /// The target is explicit so a local variable named 対象 can never shadow the
 /// command's side effect in generated LLVM.
@@ -14336,6 +14342,13 @@ fn tableInheritedFunction(runtime: *Runtime, name: []const u8) !Value {
     return runtime.createMethodFunction(promiseSentinel, 0, name, &.{});
 }
 
+fn tableInheritedByteBufferMethod(runtime: *Runtime, receiver: Value, name: []const u8) !Value {
+    if (@as(Tag, @enumFromInt(receiver.tag)) == .byte_buffer and receiver.object().?.payload.byte_buffer.kind == .buffer and std.mem.eql(u8, name, "slice")) {
+        return runtime.createMethodFunction(byteBufferUnboundSliceCallback, 0, name, &.{});
+    }
+    return tableInheritedFunction(runtime, name);
+}
+
 fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []const u16) !?Value {
     if (tableAsciiUnitsEqual(units, "__proto__")) {
         return switch (row_tag) {
@@ -14387,7 +14400,7 @@ fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []
             if (tableAsciiUnitsEqual(units, "resizable") or tableAsciiUnitsEqual(units, "detached")) {
                 return @as(?Value, .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 });
             }
-            if (tableInheritedMethodName(units, &table_byte_buffer_array_buffer_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
+            if (tableInheritedMethodName(units, &table_byte_buffer_array_buffer_method_names)) |name| return @as(?Value, try tableInheritedByteBufferMethod(runtime, row, name));
         } else {
             if (buffer.kind == .buffer and tableAsciiUnitsEqual(units, "parent")) {
                 return @as(?Value, try runtime.createByteBufferBackingBuffer(buffer));
@@ -14399,11 +14412,11 @@ fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []
             if (buffer.kind == .buffer and tableAsciiUnitsEqual(units, "toLocaleString")) {
                 return @as(?Value, try tableInheritedFunction(runtime, "toString"));
             }
-            if (tableInheritedMethodName(units, &table_byte_buffer_typed_array_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
+            if (tableInheritedMethodName(units, &table_byte_buffer_typed_array_method_names)) |name| return @as(?Value, try tableInheritedByteBufferMethod(runtime, row, name));
             if (buffer.kind == .buffer) {
                 if (tableInheritedMethodName(units, &table_byte_buffer_buffer_enumerable_property_names)) |name| {
                     if (!tableAsciiUnitsEqual(units, "parent") and !tableAsciiUnitsEqual(units, "offset")) {
-                        return @as(?Value, try tableInheritedFunction(runtime, tableBufferEnumerableFunctionName(name)));
+                        return @as(?Value, try tableInheritedByteBufferMethod(runtime, row, tableBufferEnumerableFunctionName(name)));
                     }
                 }
             }
@@ -20392,6 +20405,31 @@ test "AOT byte bufferのprototype属性とscalar propertyを解決する" {
     try std.testing.expectEqualStrings("slice", roots[25].object().?.payload.function.name);
     roots[26] = runtime.indexGet(roots[0], staticStringValue("missing"));
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[26].tag)));
+}
+
+test "AOT byte bufferから抽出したslice関数は未束縛エラーを再現する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    const active = &active_runtime.?;
+    var roots = [_]Value{.{}} ** 3;
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+
+    roots[0] = try active.createBytes(&.{ 1, 2, 3, 4 });
+    roots[1] = active.indexGet(roots[0], staticStringValue("slice"));
+    var slice_arguments = [_]Value{ numberValue(0), numberValue(2) };
+    lnako_aot_function_call(&roots[2], &roots[1], @ptrCast(&slice_arguments), slice_arguments.len);
+    try std.testing.expect(active.has_pending_exception);
+    const message = try pendingExceptionMessageUtf8Alloc(active);
+    _ = active.takeException();
+    defer active.allocator.free(message);
+    try std.testing.expectEqualStrings("Cannot read properties of undefined (reading 'subarray')", message);
 }
 
 test "AOT表変換系は欠損列・負位置・JS加算を公式どおり処理する" {

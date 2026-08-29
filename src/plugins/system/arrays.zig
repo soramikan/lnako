@@ -1482,6 +1482,22 @@ fn tableInheritedFunctionSentinel(_: *Runtime, _: []const Value) !Value {
     return .undefined;
 }
 
+fn byteBufferUnboundSlice(runtime: *Runtime, _: []const Value) !Value {
+    try runtime.setFailureMessage("Cannot read properties of undefined (reading 'subarray')");
+    return error.NotCallable;
+}
+
+fn tableInheritedByteBufferMethod(runtime: *Runtime, receiver: Value, name: []const u8) !Value {
+    if (receiver == .bytes and receiver.bytes.kind == .buffer and std.mem.eql(u8, name, "slice")) {
+        var roots = runtime.rootFrame();
+        defer roots.deinit();
+        var function_name = try runtime.stringUtf8(name);
+        try roots.protect(&function_name);
+        return runtime.createNativeFunction(function_name.string, 0, byteBufferUnboundSlice, &.{});
+    }
+    return tableInheritedFunction(runtime, name);
+}
+
 fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) !?Value {
     if (asciiUnitsEqual(units, "__proto__")) {
         return switch (source) {
@@ -1536,7 +1552,7 @@ fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) 
         if (buffer.kind == .array_buffer) {
             if (asciiUnitsEqual(units, "maxByteLength")) return @as(?Value, .{ .number = @floatFromInt(buffer.bytes.len) });
             if (asciiUnitsEqual(units, "resizable") or asciiUnitsEqual(units, "detached")) return @as(?Value, .{ .boolean = false });
-            if (inheritedMethodName(units, &byteBufferArrayBufferMethodNames)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
+            if (inheritedMethodName(units, &byteBufferArrayBufferMethodNames)) |name| return @as(?Value, try tableInheritedByteBufferMethod(runtime, source, name));
         } else {
             if (buffer.kind == .buffer and asciiUnitsEqual(units, "parent")) {
                 return @as(?Value, try runtime.createByteBufferBackingBuffer(buffer));
@@ -1548,11 +1564,11 @@ fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) 
             if (buffer.kind == .buffer and asciiUnitsEqual(units, "toLocaleString")) {
                 return @as(?Value, try tableInheritedFunction(runtime, "toString"));
             }
-            if (inheritedMethodName(units, &byteBufferTypedArrayMethodNames)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
+            if (inheritedMethodName(units, &byteBufferTypedArrayMethodNames)) |name| return @as(?Value, try tableInheritedByteBufferMethod(runtime, source, name));
             if (buffer.kind == .buffer) {
                 if (inheritedMethodName(units, &byteBufferBufferEnumerablePropertyNames)) |name| {
                     if (!asciiUnitsEqual(units, "parent") and !asciiUnitsEqual(units, "offset")) {
-                        return @as(?Value, try tableInheritedFunction(runtime, bufferEnumerableFunctionName(name)));
+                        return @as(?Value, try tableInheritedByteBufferMethod(runtime, source, bufferEnumerableFunctionName(name)));
                     }
                 }
             }
@@ -2373,6 +2389,23 @@ test "表行propertyはbyte bufferのprototype属性を解決する" {
     try std.testing.expect(!(try indexed(&runtime, array_buffer, detached_key)).boolean);
     try std.testing.expect((try indexed(&runtime, array_buffer, bytes_per_element_key)) == .undefined);
     try std.testing.expect((try indexed(&runtime, array_buffer, buffer_key)) == .undefined);
+}
+
+test "byte bufferから抽出したslice関数は未束縛エラーを再現する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var buffer = try runtime.createBytes(&.{ 1, 2, 3, 4 });
+    try roots.protect(&buffer);
+    var slice_key = try runtime.stringUtf8("slice");
+    try roots.protect(&slice_key);
+    var buffer_slice_function = try indexed(&runtime, buffer, slice_key);
+    try roots.protect(&buffer_slice_function);
+    try std.testing.expectError(error.NotCallable, runtime.call(buffer_slice_function, &.{ .{ .number = 0 }, .{ .number = 2 } }));
+    try std.testing.expectEqualStrings("Cannot read properties of undefined (reading 'subarray')", runtime.failureMessage().?);
 }
 
 test "表ソートは最上位配列のholeと明示的undefinedをpresence順に保持する" {

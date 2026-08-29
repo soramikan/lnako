@@ -674,6 +674,13 @@
     "source": "B=ハッシュ値計算(\"A\",\"sha256\",undefined)\nU=ランダム配列生成(2)\nTYPEOF(B[\"readUInt8\"])を表示\nC=表列取得([B[\"readUInt8\"]],\"name\")\nC[0]を表示\nB[\"parent\"][\"byteLength\"]を表示\nB[\"offset\"]を表示\nC=表列取得([B[\"toLocaleString\"]],\"name\")\nC[0]を表示\nC=表列取得([U[\"map\"]],\"name\")\nC[0]を表示\nAB=B[\"parent\"]\nC=表列取得([AB[\"slice\"]],\"name\")\nC[0]を表示\n"
   },
   {
+    "id": "native-system-byte-buffer-method-calls",
+    "oracle": "official-generated",
+    "stderrIncludes": "Cannot read properties of undefined (reading 'subarray')",
+    "commands": ["ハッシュ値計算"],
+    "source": "B=ハッシュ値計算(\"A\",\"sha256\",undefined)\nF=B[\"slice\"]\nF(0,2)を表示\n"
+  },
+  {
     "id": "native-system-table-transpose-null-row-error",
     "oracle": "official-generated",
     "source": "表行列交換([[1],NULL])を表示\n"
