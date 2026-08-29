@@ -98,6 +98,8 @@ Unicode文字クラスでは、4桁Unicode escapeで表した高・低surrogate 
 
 正規表現の量指定探索は、入れ子のatom内部にある貪欲な選択を外側の追加反復より先に試す。`/(a+)+b/`のcaptureが公式と同じ最長の`aaa`になることを`native-system-regexp-backtracking-boundaries`で7経路比較する。複雑な選択・捕捉状態の副作用順序は`TODO: regexp-backtracking-edge`として残す。
 
+Unicode正規表現の非sticky探索は、UTF-16のlow surrogate位置から再試行しない。例えば`/\\uDE00/u`と`/\\uD83D/u`は`"😀"`内の対内部を単独コード単位として一致させず、非Unicodeの`/\\uDE00/`だけがlow surrogateへ一致する。共有エンジンはUnicode時の探索開始位置を`AdvanceStringIndex`相当で進め、`native-system-regexp-unicode-search-boundary`でInterpreter・AOTの7経路を比較する。
+
 根拠は固定オラクルの
 [`core/src/plugin_system_array.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_array.mts) と
 [`core/src/plugin_system_dict.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_dict.mts) です。

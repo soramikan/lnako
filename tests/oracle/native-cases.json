@@ -767,6 +767,11 @@
     "source": "JSON変換(正規表現マッチ(\"ab\",『/(a|ab)*/』))を表示\nJSON変換(正規表現マッチ(\"ab\",『/(ab|a)*/』))を表示\nJSON変換(正規表現マッチ(\"ab\",『/(a|ab)*b/』))を表示\nJSON変換(正規表現マッチ(\"abc\",『/(a|ab)c/』))を表示\nJSON変換(正規表現抽出(\"aaab\",『/(a+)+b/』))を表示\nJSON変換(正規表現抽出(\"abc\",『/(?<=([ab]+))c/』))を表示\n"
   },
   {
+    "id": "native-system-regexp-unicode-search-boundary",
+    "commands": ["正規表現マッチ", "JSON変換"],
+    "source": "JSON変換(正規表現マッチ(\"😀\",『/\\uDE00/u』))を表示\nJSON変換(正規表現マッチ(\"😀\",『/\\uD83D/u』))を表示\nJSON変換(正規表現マッチ(\"😀\",『/[\\uDE00]/u』))を表示\nJSON変換(正規表現マッチ(\"😀\",『/\\uDE00/』))を表示\n"
+  },
+  {
     "id": "native-system-regexp-invalid-capture-name-error",
     "oracle": "official-generated",
     "commands": ["正規表現マッチ"],

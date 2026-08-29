@@ -658,10 +658,15 @@ fn findOne(allocator: std.mem.Allocator, source: []const u16, compiled: *const C
     defer arena.deinit();
     var start = @min(from, source.len);
     const last_start = if (compiled.flags.sticky) start else source.len;
-    while (start <= last_start) : (start += 1) {
+    while (start <= last_start) {
         const initial = Candidate{ .position = start, .captures = [_]Span{.{}} ** max_captures };
         const candidates = try matchExpression(arena.allocator(), source, compiled.expression, initial, compiled.flags);
         if (candidates.len > 0) return .{ .span = .{ .start = start, .end = candidates[0].position, .matched = true }, .captures = candidates[0].captures };
+        if (start == last_start) break;
+        // RegExp's non-sticky Unicode search advances by StringIndex, so a
+        // paired surrogate is never revisited from its low-surrogate code
+        // unit. Non-Unicode search remains code-unit based.
+        start = advanceStringIndex(source, start, compiled.flags.unicode);
     }
     return null;
 }
@@ -1547,6 +1552,35 @@ test "正規表現の入れ子貪欲量指定は内側の選択を先に試す" 
     const result = (try callWithEffects(&runtime, "正規表現マッチ", &.{ source, pattern })).?;
     try std.testing.expectEqualSlices(u16, source.string.units, result.value.string.units);
     try std.testing.expectEqualSlices(u16, &.{ 'a', 'a', 'a' }, result.captures.?.array.items.items[0].string.units);
+}
+
+test "Unicode正規表現の探索はサロゲート対内部へ進まない" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var source = try runtime.stringCodeUnits(&.{ 0xd83d, 0xde00 });
+    try roots.protect(&source);
+    var low_unicode_pattern = try runtime.stringUtf8("/\\uDE00/u");
+    try roots.protect(&low_unicode_pattern);
+    const low_unicode = (try call(&runtime, "正規表現マッチ", &.{ source, low_unicode_pattern })).?;
+    try std.testing.expect(low_unicode == .null_value);
+
+    var high_unicode_pattern = try runtime.stringUtf8("/\\uD83D/u");
+    try roots.protect(&high_unicode_pattern);
+    const high_unicode = (try call(&runtime, "正規表現マッチ", &.{ source, high_unicode_pattern })).?;
+    try std.testing.expect(high_unicode == .null_value);
+
+    var class_pattern = try runtime.stringUtf8("/[\\uDE00]/u");
+    try roots.protect(&class_pattern);
+    const class_unicode = (try call(&runtime, "正規表現マッチ", &.{ source, class_pattern })).?;
+    try std.testing.expect(class_unicode == .null_value);
+
+    var non_unicode_pattern = try runtime.stringUtf8("/\\uDE00/");
+    try roots.protect(&non_unicode_pattern);
+    const non_unicode = (try call(&runtime, "正規表現マッチ", &.{ source, non_unicode_pattern })).?;
+    try std.testing.expectEqualSlices(u16, &.{0xde00}, non_unicode.string.units);
 }
 
 test "アンカー・空クラス・先読み・後読みを処理する" {
