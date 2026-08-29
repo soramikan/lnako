@@ -2,6 +2,7 @@ const std = @import("std");
 const value_mod = @import("../../runtime/value.zig");
 const operators = @import("../../runtime/operators.zig");
 const common = @import("common.zig");
+const json = @import("json.zig");
 
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
@@ -26,8 +27,8 @@ pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Val
     if (eql(name, "超")) return try relation(runtime, a, b, .gt);
     if (eql(name, "等")) return .{ .boolean = Value.strictEqual(a, b) };
     if (eql(name, "等無")) return .{ .boolean = !Value.strictEqual(a, b) };
-    if (eql(name, "一致")) return .{ .boolean = deepEqual(a, b) };
-    if (eql(name, "不一致")) return .{ .boolean = !deepEqual(a, b) };
+    if (eql(name, "一致")) return .{ .boolean = try deepEqual(runtime, a, b) };
+    if (eql(name, "不一致")) return .{ .boolean = !(try deepEqual(runtime, a, b)) };
     if (eql(name, "範囲内")) {
         const lower = try relation(runtime, a, b, .gte);
         const upper = try relation(runtime, a, common.argument(arguments, 2), .lte);
@@ -201,23 +202,32 @@ fn toBigInt(runtime: *Runtime, value: Value) !Value {
     };
 }
 
-fn deepEqual(left: Value, right: Value) bool {
-    if (std.meta.activeTag(left) != std.meta.activeTag(right)) return false;
-    return switch (left) {
-        .array => |array| blk: {
-            if (array.items.items.len != right.array.items.items.len) break :blk false;
-            for (array.items.items, right.array.items.items) |a, b| if (!deepEqual(a, b)) break :blk false;
-            break :blk true;
-        },
-        .dictionary => |dictionary| blk: {
-            if (dictionary.len() != right.dictionary.len()) break :blk false;
-            for (dictionary.keys(), dictionary.values(), 0..) |key, value, index| {
-                if (!value_mod.String.eql(key.*, right.dictionary.keys()[index].*)) break :blk false;
-                if (!deepEqual(value, right.dictionary.values()[index])) break :blk false;
-            }
-            break :blk true;
-        },
-        else => Value.strictEqual(left, right),
+fn deepEqual(runtime: *Runtime, left: Value, right: Value) !bool {
+    // plugin_system_math delegates object comparison to JSON.stringify. Keep
+    // the same one-sided check: a primitive left operand uses strict equality
+    // even when the right operand is an object.
+    if (isJsonObject(left)) {
+        var left_root = left;
+        var right_root = right;
+        var left_json: Value = .undefined;
+        var right_json: Value = .undefined;
+        var roots = runtime.rootFrame();
+        defer roots.deinit();
+        try roots.protect(&left_root);
+        try roots.protect(&right_root);
+        left_json = (try json.call(runtime, "JSON変換", &.{left_root})).?;
+        try roots.protect(&left_json);
+        right_json = (try json.call(runtime, "JSON変換", &.{right_root})).?;
+        try roots.protect(&right_json);
+        return Value.strictEqual(left_json, right_json);
+    }
+    return Value.strictEqual(left, right);
+}
+
+fn isJsonObject(value: Value) bool {
+    return switch (value) {
+        .null_value, .bytes, .array, .dictionary, .promise => true,
+        else => false,
     };
 }
 
@@ -255,4 +265,30 @@ test "合計は先頭配列だけを集計しNaNを飛ばす" {
     _ = try array.array.push(try runtime.stringUtf8("x"));
     _ = try array.array.push(.{ .number = 2 });
     try std.testing.expectEqual(@as(f64, 3), (try call(&runtime, "合計", &.{ array, .{ .number = 100 } })).?.number);
+}
+
+test "一致は左辺オブジェクトをJSON.stringifyして比較する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var undefined_array = try runtime.createArray();
+    try roots.protect(&undefined_array);
+    var null_array = try runtime.createArray();
+    try roots.protect(&null_array);
+    var with_undefined = try runtime.createDictionary();
+    try roots.protect(&with_undefined);
+    var empty = try runtime.createDictionary();
+    try roots.protect(&empty);
+    _ = try undefined_array.array.push(.undefined);
+    _ = try null_array.array.push(.{ .null_value = {} });
+    try common.dictionarySetUtf8(&runtime, with_undefined.dictionary, "x", .undefined);
+
+    try std.testing.expect((try call(&runtime, "一致", &.{ .{ .null_value = {} }, .{ .null_value = {} } })).?.boolean);
+    try std.testing.expect(!(try call(&runtime, "一致", &.{ .{ .null_value = {} }, .undefined })).?.boolean);
+    try std.testing.expect((try call(&runtime, "不一致", &.{ .{ .null_value = {} }, .undefined })).?.boolean);
+    try std.testing.expect((try call(&runtime, "一致", &.{ undefined_array, null_array })).?.boolean);
+    try std.testing.expect(!(try call(&runtime, "不一致", &.{ undefined_array, null_array })).?.boolean);
+    try std.testing.expect((try call(&runtime, "一致", &.{ with_undefined, empty })).?.boolean);
 }

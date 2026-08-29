@@ -3207,35 +3207,25 @@ fn relationalOrder(runtime: *Runtime, left: Value, right: Value) !?std.math.Orde
 }
 
 fn deepEqual(runtime: *Runtime, left: Value, right: Value) !bool {
-    if (isString(left) and isString(right)) return stringEqual(runtime, left, right);
-    if (left.tag != right.tag) return false;
-    return switch (@as(Tag, @enumFromInt(left.tag))) {
-        .array => blk: {
-            const left_object = left.object() orelse break :blk false;
-            const right_object = right.object() orelse break :blk false;
-            if (left_object.payload != .array or right_object.payload != .array) break :blk false;
-            const left_items = left_object.payload.array.items;
-            const right_items = right_object.payload.array.items;
-            if (left_items.len != right_items.len) break :blk false;
-            for (left_items, right_items) |left_item, right_item| {
-                if (!try deepEqual(runtime, left_item, right_item)) break :blk false;
-            }
-            break :blk true;
-        },
-        .dictionary => blk: {
-            const left_object = left.object() orelse break :blk false;
-            const right_object = right.object() orelse break :blk false;
-            if (left_object.payload != .dictionary or right_object.payload != .dictionary) break :blk false;
-            const left_entries = left_object.payload.dictionary.items;
-            const right_entries = right_object.payload.dictionary.items;
-            if (left_entries.len != right_entries.len) break :blk false;
-            for (left_entries, right_entries) |left_entry, right_entry| {
-                if (!try strictEqual(runtime, left_entry.key, right_entry.key)) break :blk false;
-                if (!try deepEqual(runtime, left_entry.value, right_entry.value)) break :blk false;
-            }
-            break :blk true;
-        },
-        else => strictEqual(runtime, left, right),
+    // plugin_system_math uses JSON.stringify only when the left operand is an
+    // object. Preserve that asymmetric dispatch and let the shared AOT JSON
+    // serializer provide omission, NaN, byte-buffer, and cycle semantics.
+    if (isJsonStringifyObject(left)) {
+        var roots = [_]Value{ left, right, .{}, .{} };
+        var frame = RootFrame{};
+        runtime.pushRoots(&frame, &roots, roots.len);
+        defer runtime.popRoots(&frame);
+        roots[2] = try jsonEncodeBuiltin(runtime, roots[0], false);
+        roots[3] = try jsonEncodeBuiltin(runtime, roots[1], false);
+        return strictEqual(runtime, roots[2], roots[3]);
+    }
+    return strictEqual(runtime, left, right);
+}
+
+fn isJsonStringifyObject(value: Value) bool {
+    return switch (@as(Tag, @enumFromInt(value.tag))) {
+        .null_value, .byte_buffer, .array, .dictionary, .iterator, .promise => true,
+        else => false,
     };
 }
 

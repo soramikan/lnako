@@ -675,7 +675,7 @@
   {
     "id": "native-system-deep-comparison",
     "commands": ["一致", "不一致"],
-    "source": "A={\"x\":[1,2]}\nB={\"x\":[1,2]}\nC={\"x\":[1,3]}\n一致(A,B)を表示\n不一致(A,C)を表示\n一致(1,1)を表示\n不一致(1,\"1\")を表示\n"
+    "source": "A={\"x\":[1,2]}\nB={\"x\":[1,2]}\nC={\"x\":[1,3]}\n一致(A,B)を表示\n不一致(A,C)を表示\n一致(1,1)を表示\n不一致(1,\"1\")を表示\n一致(NULL,NULL)を表示\n一致(NULL,undefined)を表示\n不一致(NULL,undefined)を表示\n一致([undefined],[NULL])を表示\n不一致([非数],[NULL])を表示\nD={\"x\":undefined}\nE={}\n一致(D,E)を表示\n"
   },
   {
     "id": "native-system-table-sort",
