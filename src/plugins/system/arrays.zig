@@ -1389,6 +1389,38 @@ pub const byteBufferBufferEnumerablePropertyNames = [_][]const u8{
     "toLocaleString",
 };
 
+const byteBufferEmptyFunctionNames = [_][]const u8{
+    "readUInt32LE",
+    "readUInt16LE",
+    "readUInt8",
+    "readUInt32BE",
+    "readUInt16BE",
+    "readUint32LE",
+    "readUint16LE",
+    "readUint8",
+    "readUint32BE",
+    "readUint16BE",
+    "readInt32LE",
+    "readInt16LE",
+    "readInt8",
+    "readInt32BE",
+    "readInt16BE",
+    "asciiSlice",
+    "base64Slice",
+    "base64urlSlice",
+    "latin1Slice",
+    "hexSlice",
+    "ucs2Slice",
+    "utf8Slice",
+    "asciiWrite",
+    "base64Write",
+    "base64urlWrite",
+    "latin1Write",
+    "hexWrite",
+    "ucs2Write",
+    "utf8Write",
+};
+
 const byteBufferArrayBufferMethodNames = [_][]const u8{
     "slice",
     "resize",
@@ -1405,6 +1437,37 @@ fn asciiUnitsEqual(units: []const u16, ascii: []const u8) bool {
 fn inheritedMethodName(units: []const u16, names: []const []const u8) ?[]const u8 {
     for (names) |name| if (asciiUnitsEqual(units, name)) return name;
     return null;
+}
+
+fn bufferEnumerableFunctionName(name: []const u8) []const u8 {
+    if (std.mem.eql(u8, name, "readBigUint64LE")) return "readBigUInt64LE";
+    if (std.mem.eql(u8, name, "readBigUint64BE")) return "readBigUInt64BE";
+    if (std.mem.eql(u8, name, "writeBigUint64LE")) return "writeBigUInt64LE";
+    if (std.mem.eql(u8, name, "writeBigUint64BE")) return "writeBigUInt64BE";
+    if (std.mem.eql(u8, name, "readUintLE")) return "readUIntLE";
+    if (std.mem.eql(u8, name, "readUint32LE")) return "readUInt32LE";
+    if (std.mem.eql(u8, name, "readUint16LE")) return "readUInt16LE";
+    if (std.mem.eql(u8, name, "readUint8")) return "readUInt8";
+    if (std.mem.eql(u8, name, "readUintBE")) return "readUIntBE";
+    if (std.mem.eql(u8, name, "readUint32BE")) return "readUInt32BE";
+    if (std.mem.eql(u8, name, "readUint16BE")) return "readUInt16BE";
+    if (std.mem.eql(u8, name, "writeUintLE")) return "writeUIntLE";
+    if (std.mem.eql(u8, name, "writeUint32LE")) return "writeUInt32LE";
+    if (std.mem.eql(u8, name, "writeUint16LE")) return "writeUInt16LE";
+    if (std.mem.eql(u8, name, "writeUint8")) return "writeUInt8";
+    if (std.mem.eql(u8, name, "writeUintBE")) return "writeUIntBE";
+    if (std.mem.eql(u8, name, "writeUint32BE")) return "writeUInt32BE";
+    if (std.mem.eql(u8, name, "writeUint16BE")) return "writeUInt16BE";
+    if (std.mem.eql(u8, name, "readFloatLE")) return "readFloatForwards";
+    if (std.mem.eql(u8, name, "readFloatBE")) return "readFloatBackwards";
+    if (std.mem.eql(u8, name, "readDoubleLE")) return "readDoubleForwards";
+    if (std.mem.eql(u8, name, "readDoubleBE")) return "readDoubleBackwards";
+    if (std.mem.eql(u8, name, "writeFloatLE")) return "writeFloatForwards";
+    if (std.mem.eql(u8, name, "writeFloatBE")) return "writeFloatBackwards";
+    if (std.mem.eql(u8, name, "writeDoubleLE")) return "writeDoubleForwards";
+    if (std.mem.eql(u8, name, "writeDoubleBE")) return "writeDoubleBackwards";
+    for (byteBufferEmptyFunctionNames) |empty_name| if (std.mem.eql(u8, name, empty_name)) return "";
+    return name;
 }
 
 fn tableInheritedFunction(runtime: *Runtime, name: []const u8) !Value {
@@ -1489,7 +1552,7 @@ fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) 
             if (buffer.kind == .buffer) {
                 if (inheritedMethodName(units, &byteBufferBufferEnumerablePropertyNames)) |name| {
                     if (!asciiUnitsEqual(units, "parent") and !asciiUnitsEqual(units, "offset")) {
-                        return @as(?Value, try tableInheritedFunction(runtime, name));
+                        return @as(?Value, try tableInheritedFunction(runtime, bufferEnumerableFunctionName(name)));
                     }
                 }
             }

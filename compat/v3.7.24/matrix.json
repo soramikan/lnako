@@ -5919,7 +5919,8 @@
         "native-system-table-function-properties",
         "native-system-table-inherited-properties",
         "native-system-byte-buffer-property",
-        "native-system-byte-buffer-backing"
+        "native-system-byte-buffer-backing",
+        "native-system-byte-buffer-direct-properties"
       ],
       "platforms": [
         "macos-aarch64",
@@ -7279,7 +7280,8 @@
       "status": "native",
       "tests": [
         "plugin-system-types",
-        "native-system-byte-buffer-backing"
+        "native-system-byte-buffer-backing",
+        "native-system-byte-buffer-direct-properties"
       ],
       "platforms": [
         "macos-aarch64",
@@ -8065,7 +8067,8 @@
         "native-system-array-own-properties",
         "native-system-array-sparse-presence",
         "native-system-dictionary-byte-buffer-enumeration",
-        "native-system-dictionary-buffer-enumerable-properties"
+        "native-system-dictionary-buffer-enumerable-properties",
+        "native-system-byte-buffer-direct-properties"
       ],
       "platforms": [
         "macos-aarch64",
@@ -8126,7 +8129,8 @@
         "native-system-array-sparse-presence",
         "native-system-dictionary-inherited-properties",
         "native-system-dictionary-byte-buffer-properties",
-        "native-system-dictionary-byte-buffer-enumeration"
+        "native-system-dictionary-byte-buffer-enumeration",
+        "native-system-byte-buffer-direct-properties"
       ],
       "platforms": [
         "macos-aarch64",

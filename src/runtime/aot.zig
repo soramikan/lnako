@@ -1216,23 +1216,35 @@ const Runtime = struct {
         }
         const object = container.object() orelse return .{};
         return switch (object.payload) {
-            .byte_buffer => |buffer| {
-                if (sameKey(key, staticStringValue("length"))) {
-                    return if (buffer.kind == .array_buffer) .{} else numberValue(@floatFromInt(buffer.bytes.len));
+            .byte_buffer => {
+                var rooted = [_]Value{ container, key };
+                var frame = RootFrame{};
+                self.pushRoots(&frame, &rooted, rooted.len);
+                defer self.popRoots(&frame);
+                const source = rooted[0];
+                const rooted_buffer = source.object().?.payload.byte_buffer;
+                if (sameKey(rooted[1], staticStringValue("length"))) {
+                    return if (rooted_buffer.kind == .array_buffer) .{} else numberValue(@floatFromInt(rooted_buffer.bytes.len));
                 }
-                if (sameKey(key, staticStringValue("buffer")) and buffer.kind != .array_buffer) {
-                    var rooted = [_]Value{container};
-                    var frame = RootFrame{};
-                    self.pushRoots(&frame, &rooted, rooted.len);
-                    defer self.popRoots(&frame);
-                    return self.createByteBufferBackingBuffer(rooted[0].object().?.payload.byte_buffer) catch |failure| {
+                if (sameKey(rooted[1], staticStringValue("buffer")) and rooted_buffer.kind != .array_buffer) {
+                    return self.createByteBufferBackingBuffer(rooted_buffer) catch |failure| {
                         self.setFailure(failure);
                         return .{};
                     };
                 }
-                if (aotByteBufferScalarProperty(buffer, key)) |value| return value;
-                const index = valueIndex(key) orelse return .{};
-                return if (buffer.kind == .array_buffer or index >= buffer.bytes.len) .{} else numberValue(@floatFromInt(buffer.bytes[index]));
+                if (aotByteBufferScalarProperty(rooted_buffer, rooted[1])) |value| return value;
+                const key_units = valueUtf16Alloc(self, rooted[1]) catch |failure| {
+                    self.setFailure(failure);
+                    return .{};
+                };
+                defer self.allocator.free(key_units);
+                const inherited = tableInheritedProperty(self, source, .byte_buffer, key_units) catch |failure| {
+                    self.setFailure(failure);
+                    return .{};
+                };
+                if (inherited) |value| return value;
+                const index = valueIndex(rooted[1]) orelse return .{};
+                return if (rooted_buffer.kind == .array_buffer or index >= rooted_buffer.bytes.len) .{} else numberValue(@floatFromInt(rooted_buffer.bytes[index]));
             },
             .array => aotArrayPropertyGet(self, object, key),
             .dictionary => |entries| blk: {
@@ -14239,6 +14251,38 @@ const table_byte_buffer_buffer_enumerable_property_names = [_][]const u8{
     "toLocaleString",
 };
 
+const table_byte_buffer_empty_function_names = [_][]const u8{
+    "readUInt32LE",
+    "readUInt16LE",
+    "readUInt8",
+    "readUInt32BE",
+    "readUInt16BE",
+    "readUint32LE",
+    "readUint16LE",
+    "readUint8",
+    "readUint32BE",
+    "readUint16BE",
+    "readInt32LE",
+    "readInt16LE",
+    "readInt8",
+    "readInt32BE",
+    "readInt16BE",
+    "asciiSlice",
+    "base64Slice",
+    "base64urlSlice",
+    "latin1Slice",
+    "hexSlice",
+    "ucs2Slice",
+    "utf8Slice",
+    "asciiWrite",
+    "base64Write",
+    "base64urlWrite",
+    "latin1Write",
+    "hexWrite",
+    "ucs2Write",
+    "utf8Write",
+};
+
 const table_byte_buffer_array_buffer_method_names = [_][]const u8{
     "slice",
     "resize",
@@ -14255,6 +14299,37 @@ fn tableAsciiUnitsEqual(units: []const u16, ascii: []const u8) bool {
 fn tableInheritedMethodName(units: []const u16, names: []const []const u8) ?[]const u8 {
     for (names) |name| if (tableAsciiUnitsEqual(units, name)) return name;
     return null;
+}
+
+fn tableBufferEnumerableFunctionName(name: []const u8) []const u8 {
+    if (std.mem.eql(u8, name, "readBigUint64LE")) return "readBigUInt64LE";
+    if (std.mem.eql(u8, name, "readBigUint64BE")) return "readBigUInt64BE";
+    if (std.mem.eql(u8, name, "writeBigUint64LE")) return "writeBigUInt64LE";
+    if (std.mem.eql(u8, name, "writeBigUint64BE")) return "writeBigUInt64BE";
+    if (std.mem.eql(u8, name, "readUintLE")) return "readUIntLE";
+    if (std.mem.eql(u8, name, "readUint32LE")) return "readUInt32LE";
+    if (std.mem.eql(u8, name, "readUint16LE")) return "readUInt16LE";
+    if (std.mem.eql(u8, name, "readUint8")) return "readUInt8";
+    if (std.mem.eql(u8, name, "readUintBE")) return "readUIntBE";
+    if (std.mem.eql(u8, name, "readUint32BE")) return "readUInt32BE";
+    if (std.mem.eql(u8, name, "readUint16BE")) return "readUInt16BE";
+    if (std.mem.eql(u8, name, "writeUintLE")) return "writeUIntLE";
+    if (std.mem.eql(u8, name, "writeUint32LE")) return "writeUInt32LE";
+    if (std.mem.eql(u8, name, "writeUint16LE")) return "writeUInt16LE";
+    if (std.mem.eql(u8, name, "writeUint8")) return "writeUInt8";
+    if (std.mem.eql(u8, name, "writeUintBE")) return "writeUIntBE";
+    if (std.mem.eql(u8, name, "writeUint32BE")) return "writeUInt32BE";
+    if (std.mem.eql(u8, name, "writeUint16BE")) return "writeUInt16BE";
+    if (std.mem.eql(u8, name, "readFloatLE")) return "readFloatForwards";
+    if (std.mem.eql(u8, name, "readFloatBE")) return "readFloatBackwards";
+    if (std.mem.eql(u8, name, "readDoubleLE")) return "readDoubleForwards";
+    if (std.mem.eql(u8, name, "readDoubleBE")) return "readDoubleBackwards";
+    if (std.mem.eql(u8, name, "writeFloatLE")) return "writeFloatForwards";
+    if (std.mem.eql(u8, name, "writeFloatBE")) return "writeFloatBackwards";
+    if (std.mem.eql(u8, name, "writeDoubleLE")) return "writeDoubleForwards";
+    if (std.mem.eql(u8, name, "writeDoubleBE")) return "writeDoubleBackwards";
+    for (table_byte_buffer_empty_function_names) |empty_name| if (std.mem.eql(u8, name, empty_name)) return "";
+    return name;
 }
 
 fn tableInheritedFunction(runtime: *Runtime, name: []const u8) !Value {
@@ -14328,7 +14403,7 @@ fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []
             if (buffer.kind == .buffer) {
                 if (tableInheritedMethodName(units, &table_byte_buffer_buffer_enumerable_property_names)) |name| {
                     if (!tableAsciiUnitsEqual(units, "parent") and !tableAsciiUnitsEqual(units, "offset")) {
-                        return @as(?Value, try tableInheritedFunction(runtime, name));
+                        return @as(?Value, try tableInheritedFunction(runtime, tableBufferEnumerableFunctionName(name)));
                     }
                 }
             }
@@ -20240,7 +20315,7 @@ test "AOT byte bufferのprototype属性とscalar propertyを解決する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
     runtime.next_collection = 1;
-    var roots = [_]Value{.{}} ** 24;
+    var roots = [_]Value{.{}} ** 32;
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -20296,6 +20371,27 @@ test "AOT byte bufferのprototype属性とscalar propertyを解決する" {
     try std.testing.expectEqual(Tag.boolean, @as(Tag, @enumFromInt(runtime.indexGet(roots[2], staticStringValue("detached")).tag)));
     try std.testing.expect(runtime.indexGet(roots[2], staticStringValue("detached")).payload == 0);
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(runtime.indexGet(roots[2], staticStringValue("buffer")).tag)));
+
+    roots[20] = runtime.indexGet(roots[0], staticStringValue("readUInt8"));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[20].tag)));
+    try std.testing.expectEqualStrings("", roots[20].object().?.payload.function.name);
+    roots[21] = runtime.indexGet(roots[0], staticStringValue("parent"));
+    try std.testing.expectEqual(Tag.byte_buffer, @as(Tag, @enumFromInt(roots[21].tag)));
+    try std.testing.expectEqual(ByteKind.array_buffer, roots[21].object().?.payload.byte_buffer.kind);
+    try std.testing.expectEqual(@as(usize, 2), roots[21].object().?.payload.byte_buffer.bytes.len);
+    roots[22] = runtime.indexGet(roots[0], staticStringValue("offset"));
+    try std.testing.expectEqual(@as(f64, 0), valueToNumber(roots[22]));
+    roots[23] = runtime.indexGet(roots[0], staticStringValue("toLocaleString"));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[23].tag)));
+    try std.testing.expectEqualStrings("toString", roots[23].object().?.payload.function.name);
+    roots[24] = runtime.indexGet(roots[1], staticStringValue("map"));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[24].tag)));
+    try std.testing.expectEqualStrings("map", roots[24].object().?.payload.function.name);
+    roots[25] = runtime.indexGet(roots[2], staticStringValue("slice"));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[25].tag)));
+    try std.testing.expectEqualStrings("slice", roots[25].object().?.payload.function.name);
+    roots[26] = runtime.indexGet(roots[0], staticStringValue("missing"));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[26].tag)));
 }
 
 test "AOT表変換系は欠損列・負位置・JS加算を公式どおり処理する" {

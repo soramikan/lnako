@@ -1752,11 +1752,14 @@ pub const Interpreter = struct {
 
     fn getOne(self: *Interpreter, container: Value, key: Value) !Value {
         if (container == .bytes) {
-            var container_root = container;
+            var rooted = [2]Value{ container, key };
             var roots = self.runtime.rootFrame();
             defer roots.deinit();
-            try roots.protect(&container_root);
-            const key_text = try self.runtime.valueToString(key);
+            try roots.protect(&rooted[0]);
+            try roots.protect(&rooted[1]);
+            const container_root = rooted[0];
+            var key_text = try self.runtime.valueToString(rooted[1]);
+            try roots.protect(&key_text);
             if (std.mem.eql(u16, key_text.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) {
                 return if (container_root.bytes.kind == .array_buffer) .undefined else .{ .number = @floatFromInt(container_root.bytes.bytes.len) };
             }
@@ -1773,8 +1776,9 @@ pub const Interpreter = struct {
             if (std.mem.eql(u16, key_text.string.units, &.{ 'B', 'Y', 'T', 'E', 'S', '_', 'P', 'E', 'R', '_', 'E', 'L', 'E', 'M', 'E', 'N', 'T' })) {
                 return if (container_root.bytes.kind == .array_buffer) .undefined else .{ .number = 1 };
             }
+            if (try plugin_system.arrays.standardInheritedProperty(self.runtime, container_root, key_text.string.units)) |value| return value;
             if (container_root.bytes.kind == .array_buffer) return .undefined;
-            return container_root.bytes.get(try valueIndex(self.runtime, key));
+            return container_root.bytes.get(try valueIndex(self.runtime, rooted[1]));
         }
         if (container == .array) return try getArrayProperty(self.runtime, container.array, key);
         if (container == .dictionary) {

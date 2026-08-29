@@ -773,7 +773,8 @@
     "status": "native",
     "tests": [
       "plugin-system-types",
-      "native-system-byte-buffer-backing"
+      "native-system-byte-buffer-backing",
+      "native-system-byte-buffer-direct-properties"
     ],
     "reason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
   },
@@ -1773,7 +1774,8 @@
       "native-system-table-function-properties",
       "native-system-table-inherited-properties",
       "native-system-byte-buffer-property",
-      "native-system-byte-buffer-backing"
+      "native-system-byte-buffer-backing",
+      "native-system-byte-buffer-direct-properties"
     ],
     "reason": "Zig製ランタイムでBuffer・Uint8Array・ArrayBufferのlengthと数値添字、byteLength・byteOffset・BYTES_PER_ELEMENT・bufferなどのproperty、表列取得の疎配列map挙動、および匿名関数のname/length propertyを実装し、公式差分テストに成功"
   },
@@ -1837,7 +1839,8 @@
       "native-system-array-own-properties",
       "native-system-array-sparse-presence",
       "native-system-dictionary-byte-buffer-enumeration",
-      "native-system-dictionary-buffer-enumerable-properties"
+      "native-system-dictionary-buffer-enumerable-properties",
+      "native-system-byte-buffer-direct-properties"
     ],
     "reason": "ECMAScriptのproperty key順、配列・関数・byte buffer境界、疎配列holeの除外をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
   },
@@ -1860,7 +1863,8 @@
       "native-system-array-sparse-presence",
       "native-system-dictionary-inherited-properties",
       "native-system-dictionary-byte-buffer-properties",
-      "native-system-dictionary-byte-buffer-enumeration"
+      "native-system-dictionary-byte-buffer-enumeration",
+      "native-system-byte-buffer-direct-properties"
     ],
     "reason": "辞書・配列・関数・Buffer/Uint8Array/ArrayBufferのown propertyと標準prototype propertyの存在判定、配列holeの非存在化、動的エラー文言をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
   },

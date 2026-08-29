@@ -669,6 +669,11 @@
     "source": "B=ハッシュ値計算(\"A\",\"sha256\",undefined)\nU=ランダム配列生成(2)\nBB=B[\"buffer\"]\nBB[\"byteLength\"]を表示\nBB[\"byteOffset\"]を表示\nTYPEOF(BB)を表示\nTYPEOF(BB[\"buffer\"])を表示\nC=表列取得([B],\"buffer\")\nC=表列取得(C,\"constructor\")\nC=表列取得(C,\"name\")\nC[0]を表示\nUB=U[\"buffer\"]\nUB[\"byteLength\"]を表示\nUB[\"byteOffset\"]を表示\nC=表列取得([U],\"buffer\")\nC=表列取得(C,\"constructor\")\nC=表列取得(C,\"name\")\nC[0]を表示\n"
   },
   {
+    "id": "native-system-byte-buffer-direct-properties",
+    "commands": ["表列取得", "ハッシュ値計算", "ランダム配列生成", "TYPEOF"],
+    "source": "B=ハッシュ値計算(\"A\",\"sha256\",undefined)\nU=ランダム配列生成(2)\nTYPEOF(B[\"readUInt8\"])を表示\nC=表列取得([B[\"readUInt8\"]],\"name\")\nC[0]を表示\nB[\"parent\"][\"byteLength\"]を表示\nB[\"offset\"]を表示\nC=表列取得([B[\"toLocaleString\"]],\"name\")\nC[0]を表示\nC=表列取得([U[\"map\"]],\"name\")\nC[0]を表示\nAB=B[\"parent\"]\nC=表列取得([AB[\"slice\"]],\"name\")\nC[0]を表示\n"
+  },
+  {
     "id": "native-system-table-transpose-null-row-error",
     "oracle": "official-generated",
     "source": "表行列交換([[1],NULL])を表示\n"
