@@ -18,6 +18,7 @@ pub const Runtime = value_mod.Runtime;
 
 pub const Context = struct {
     arrays: arrays.Context,
+    strings: strings.Context,
     datetime: datetime.Context,
     path_separator: []const u8 = std.fs.path.sep_str,
 };
@@ -31,7 +32,7 @@ pub fn callWithContext(runtime: *Runtime, name: []const u8, arguments: []const V
     if (std.mem.eql(u8, name, "空辞書") or std.mem.eql(u8, name, "空ハッシュ") or std.mem.eql(u8, name, "空オブジェクト")) return try runtime.createDictionary();
     if (try math.call(runtime, name, arguments)) |value| return value;
     if (try types.call(runtime, name, arguments)) |value| return value;
-    if (try strings.call(runtime, name, arguments)) |value| return value;
+    if (try strings.callWithContext(runtime, name, arguments, if (context) |actual| actual.strings else null)) |value| return value;
     if (try json.call(runtime, name, arguments)) |value| return value;
     if (try regexp.call(runtime, name, arguments)) |value| return value;
     if (try arrays.call(runtime, name, arguments, if (context) |actual| actual.arrays else null)) |value| return value;

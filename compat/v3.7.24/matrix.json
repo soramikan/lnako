@@ -4267,14 +4267,15 @@
       "tests": [
         "plugin-system-string-conversion",
         "native-system-width-kana-full-non-string-coercion",
-        "native-system-width-function-receiver"
+        "native-system-width-function-receiver",
+        "native-system-width-custom-string-methods"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "raw length/substring分岐と公式エラー文言をInterpreter/AOTで実装し、公式差分テストに成功。動的own substring/splitはTODO: system-width-custom-string-methods、AOTバイト列値はTODO: aot-byte-buffer-value"
+      "reason": "raw length/substring分岐と公式エラー文言をInterpreter/AOTで実装し、辞書・prototypeのsubstring/charAt関数呼出しを公式差分テストで検証。AOTバイト列値はTODO: aot-byte-buffer-value"
     },
     {
       "id": "command-0163",
@@ -4295,14 +4296,15 @@
       "tests": [
         "plugin-system-string-conversion",
         "native-system-width-kana-half-non-string-coercion",
-        "native-system-width-function-receiver"
+        "native-system-width-function-receiver",
+        "native-system-width-custom-string-methods"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "raw split分岐と公式エラー文言をInterpreter/AOTで実装し、公式差分テストに成功。動的own substring/splitはTODO: system-width-custom-string-methods、AOTバイト列値はTODO: aot-byte-buffer-value"
+      "reason": "raw split分岐と公式エラー文言をInterpreter/AOTで実装し、辞書・prototypeのsplit関数呼出しを公式差分テストで検証。AOTバイト列値はTODO: aot-byte-buffer-value"
     },
     {
       "id": "command-0164",
@@ -4323,14 +4325,15 @@
       "tests": [
         "plugin-system-string-conversion",
         "native-system-width-kana-full-non-string-coercion",
-        "native-system-width-function-receiver"
+        "native-system-width-function-receiver",
+        "native-system-width-custom-string-methods"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "カナraw length/substring分岐からASCII String変換へ合成する公式順序をInterpreter/AOTで実装し、公式差分テストに成功。動的own substring/splitはTODO: system-width-custom-string-methods、AOTバイト列値はTODO: aot-byte-buffer-value"
+      "reason": "カナraw length/substring分岐からASCII String変換へ合成する公式順序をInterpreter/AOTで実装し、辞書・prototypeのsubstring/charAt関数呼出しを含む公式差分テストで検証。AOTバイト列値はTODO: aot-byte-buffer-value"
     },
     {
       "id": "command-0165",
@@ -4352,14 +4355,15 @@
         "plugin-system-string-conversion",
         "native-system-width-kana-half-non-string-coercion",
         "native-system-width-function-receiver",
-        "native-system-width-half-uncaught-error"
+        "native-system-width-half-uncaught-error",
+        "native-system-width-custom-string-methods"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "カナraw split分岐からASCII String変換へ合成する公式順序と未捕捉エラーをInterpreter/AOTで実装し、公式差分テストに成功。動的own substring/splitはTODO: system-width-custom-string-methods、AOTバイト列値はTODO: aot-byte-buffer-value"
+      "reason": "カナraw split分岐からASCII String変換へ合成する公式順序と未捕捉エラーをInterpreter/AOTで実装し、辞書・prototypeのsplit関数呼出しを含む公式差分テストで検証。AOTバイト列値はTODO: aot-byte-buffer-value"
     },
     {
       "id": "command-0166",

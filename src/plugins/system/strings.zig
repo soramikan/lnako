@@ -10,7 +10,22 @@ pub const Runtime = value_mod.Runtime;
 
 pub const CutResult = struct { result: Value, remainder: Value };
 
+pub const Context = struct {
+    context: *anyopaque,
+    callFn: ?*const fn (context: *anyopaque, callable: Value, arguments: []const Value) anyerror!Value = null,
+
+    fn invoke(self: ?Context, callable: Value, arguments: []const Value) !Value {
+        const actual = self orelse return error.CallbackExecutionUnavailable;
+        const function = actual.callFn orelse return error.CallbackExecutionUnavailable;
+        return function(actual.context, callable, arguments);
+    }
+};
+
 pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Value {
+    return callWithContext(runtime, name, arguments, null);
+}
+
+pub fn callWithContext(runtime: *Runtime, name: []const u8, arguments: []const Value, context: ?Context) !?Value {
     // 後段プラグインがBufferなど非文字列値を受け取る場合があるため、
     // このモジュールが担当しない命令の引数は先に文字列化しない。
     if (!handles(name)) return null;
@@ -35,15 +50,15 @@ pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Val
     if (eql(name, "英数半角変換")) return try fullWidthAscii(runtime, a_root, false);
     if (eql(name, "英数記号全角変換")) return try asciiFullWidth(runtime, a_root, true);
     if (eql(name, "英数記号半角変換")) return try fullWidthAscii(runtime, a_root, true);
-    if (eql(name, "カタカナ全角変換")) return try katakanaFullWidth(runtime, a_root);
-    if (eql(name, "カタカナ半角変換")) return try katakanaHalfWidth(runtime, a_root);
+    if (eql(name, "カタカナ全角変換")) return try katakanaFullWidth(runtime, a_root, context);
+    if (eql(name, "カタカナ半角変換")) return try katakanaHalfWidth(runtime, a_root, context);
     if (eql(name, "全角変換")) {
-        var kana = try katakanaFullWidth(runtime, a_root);
+        var kana = try katakanaFullWidth(runtime, a_root, context);
         try text_roots.protect(&kana);
         return try asciiFullWidth(runtime, kana, true);
     }
     if (eql(name, "半角変換")) {
-        var kana = try katakanaHalfWidth(runtime, a_root);
+        var kana = try katakanaHalfWidth(runtime, a_root, context);
         try text_roots.protect(&kana);
         return try fullWidthAscii(runtime, kana, true);
     }
@@ -651,15 +666,15 @@ fn fullWidthAscii(runtime: *Runtime, source: Value, symbols: bool) !Value {
     return runtime.stringCodeUnits(output);
 }
 
-fn katakanaFullWidth(runtime: *Runtime, source: Value) !Value {
-    return mapKana(runtime, source, true);
+fn katakanaFullWidth(runtime: *Runtime, source: Value, context: ?Context) !Value {
+    return mapKana(runtime, source, true, context);
 }
 
-fn katakanaHalfWidth(runtime: *Runtime, source: Value) !Value {
-    return mapKana(runtime, source, false);
+fn katakanaHalfWidth(runtime: *Runtime, source: Value, context: ?Context) !Value {
+    return mapKana(runtime, source, false, context);
 }
 
-fn mapKana(runtime: *Runtime, source: Value, to_full: bool) !Value {
+fn mapKana(runtime: *Runtime, source: Value, to_full: bool, context: ?Context) !Value {
     var roots = runtime.rootFrame();
     defer roots.deinit();
     var source_root = source;
@@ -667,6 +682,10 @@ fn mapKana(runtime: *Runtime, source: Value, to_full: bool) !Value {
 
     const source_units: []const u16 = blk: {
         if (source_root == .string) break :blk source_root.string.units;
+        if (source_root == .dictionary) {
+            if (to_full) return mapKanaDictionaryFullWidth(runtime, source_root, context, &roots);
+            return mapKanaDictionaryHalfWidth(runtime, source_root, context, &roots);
+        }
         if (!to_full) break :blk switch (source_root) {
             .null_value => return error.KatakanaHalfWidthSplitNull,
             .undefined => return error.KatakanaHalfWidthSplitUndefined,
@@ -736,6 +755,120 @@ fn mapKana(runtime: *Runtime, source: Value, to_full: bool) !Value {
             try output.appendSlice(runtime.allocator(), half_voiced[position * 2 .. position * 2 + 2]);
         } else try output.append(runtime.allocator(), unit);
         index += 1;
+    }
+    return runtime.stringCodeUnits(output.items);
+}
+
+fn mapKanaDictionaryFullWidth(runtime: *Runtime, source: Value, context: ?Context, roots: *value_mod.RootFrame) !Value {
+    const length = value_mod.dictionaryPropertyUnits(source.dictionary, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) orelse .undefined;
+    var length_root = length;
+    try roots.protect(&length_root);
+    // The official loop is `while (i < s.length)`.  Keep the existing empty
+    // receiver behavior, but once the receiver is non-empty resolve its
+    // dynamic substring/charAt methods instead of treating it as a string.
+    const positive = if (try operators.compare(runtime, .{ .number = 0 }, length_root)) |order| order == .lt else false;
+    if (!positive) return runtime.stringCodeUnits(&.{});
+    const length_number = try runtime.valueToExplicitRangeNumber(length_root);
+    if (!std.math.isFinite(length_number) or length_number > @as(f64, @floatFromInt(raw_array_element_limit))) return error.ArraySizeLimitExceeded;
+    const iterations: usize = @intFromFloat(@ceil(length_number));
+
+    var substring_method = value_mod.dictionaryPropertyUnits(source.dictionary, &.{ 's', 'u', 'b', 's', 't', 'r', 'i', 'n', 'g' }) orelse return error.KatakanaFullWidthSubstringReceiver;
+    var char_at_method = value_mod.dictionaryPropertyUnits(source.dictionary, &.{ 'c', 'h', 'a', 'r', 'A', 't' }) orelse return error.KatakanaFullWidthCharAtReceiver;
+    try roots.protect(&substring_method);
+    try roots.protect(&char_at_method);
+    if (substring_method != .function) return error.KatakanaFullWidthSubstringReceiver;
+    if (char_at_method != .function) return error.KatakanaFullWidthCharAtReceiver;
+
+    var full_string = try string_mod.String.fromUtf8(runtime.allocator(), full_kana);
+    defer full_string.deinit();
+    var half_string = try string_mod.String.fromUtf8(runtime.allocator(), half_kana);
+    defer half_string.deinit();
+    var full_voiced_string = try string_mod.String.fromUtf8(runtime.allocator(), full_voiced_kana);
+    defer full_voiced_string.deinit();
+    var half_voiced_string = try string_mod.String.fromUtf8(runtime.allocator(), half_voiced_kana);
+    defer half_voiced_string.deinit();
+    const full = full_string.units;
+    const half = half_string.units;
+    const full_voiced = full_voiced_string.units;
+    const half_voiced = half_voiced_string.units;
+
+    var output: std.ArrayList(u16) = .empty;
+    defer output.deinit(runtime.allocator());
+    var callback_result: Value = .undefined;
+    var callback_text: Value = .undefined;
+    var callback_arguments = [_]Value{ .{ .number = 0 }, .{ .number = 2 } };
+    try roots.protect(&callback_result);
+    try roots.protect(&callback_text);
+    try roots.protect(&callback_arguments[0]);
+    try roots.protect(&callback_arguments[1]);
+
+    var index: usize = 0;
+    while (index < iterations) : (index += 1) {
+        callback_arguments[0] = .{ .number = @floatFromInt(index) };
+        callback_arguments[1] = .{ .number = @floatFromInt(index + 2) };
+        callback_result = try Context.invoke(context, substring_method, &callback_arguments);
+        callback_text = try runtime.valueToString(callback_result);
+        const candidate = callback_text.string.units;
+        if (indexOfUnits(half_voiced, candidate, 0)) |position| {
+            try output.append(runtime.allocator(), full_voiced[position / 2]);
+            index += 1;
+            continue;
+        }
+
+        callback_arguments[0] = .{ .number = @floatFromInt(index) };
+        callback_result = try Context.invoke(context, char_at_method, callback_arguments[0..1]);
+        callback_text = try runtime.valueToString(callback_result);
+        const character = callback_text.string.units;
+        if (indexOfUnits(half, character, 0)) |position| {
+            if (position < full.len) try output.append(runtime.allocator(), full[position]);
+        } else try output.appendSlice(runtime.allocator(), character);
+    }
+    return runtime.stringCodeUnits(output.items);
+}
+
+fn mapKanaDictionaryHalfWidth(runtime: *Runtime, source: Value, context: ?Context, roots: *value_mod.RootFrame) !Value {
+    var split_method = value_mod.dictionaryPropertyUnits(source.dictionary, &.{ 's', 'p', 'l', 'i', 't' }) orelse return error.KatakanaHalfWidthSplitReceiver;
+    try roots.protect(&split_method);
+    if (split_method != .function) return error.KatakanaHalfWidthSplitReceiver;
+
+    var empty_separator = try runtime.stringUtf8("");
+    try roots.protect(&empty_separator);
+    var split_result = try Context.invoke(context, split_method, &.{empty_separator});
+    try roots.protect(&split_result);
+    if (split_result != .array) return error.KatakanaHalfWidthMapReceiver;
+
+    var full_string = try string_mod.String.fromUtf8(runtime.allocator(), full_kana);
+    defer full_string.deinit();
+    var half_string = try string_mod.String.fromUtf8(runtime.allocator(), half_kana);
+    defer half_string.deinit();
+    var full_voiced_string = try string_mod.String.fromUtf8(runtime.allocator(), full_voiced_kana);
+    defer full_voiced_string.deinit();
+    var half_voiced_string = try string_mod.String.fromUtf8(runtime.allocator(), half_voiced_kana);
+    defer half_voiced_string.deinit();
+    const full = full_string.units;
+    const half = half_string.units;
+    const full_voiced = full_voiced_string.units;
+    const half_voiced = half_voiced_string.units;
+
+    var output: std.ArrayList(u16) = .empty;
+    defer output.deinit(runtime.allocator());
+    var item: Value = .undefined;
+    var item_text: Value = .undefined;
+    try roots.protect(&item);
+    try roots.protect(&item_text);
+    for (split_result.array.items.items, 0..) |value, index| {
+        if (!split_result.array.isPresent(index)) continue;
+        item = value;
+        item_text = try runtime.valueToString(item);
+        const character = item_text.string.units;
+        if (indexOfUnits(full, character, 0)) |position| {
+            if (position < half.len) try output.append(runtime.allocator(), half[position]);
+        } else if (indexOfUnits(full_voiced, character, 0)) |position| {
+            const start = position * 2;
+            if (start + 2 <= half_voiced.len) try output.appendSlice(runtime.allocator(), half_voiced[start .. start + 2]);
+        } else if (item != .undefined and item != .null_value) {
+            try output.appendSlice(runtime.allocator(), character);
+        }
     }
     return runtime.stringCodeUnits(output.items);
 }

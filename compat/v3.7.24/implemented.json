@@ -1199,27 +1199,30 @@
     "tests": [
       "plugin-system-string-conversion",
       "native-system-width-kana-full-non-string-coercion",
-      "native-system-width-function-receiver"
+      "native-system-width-function-receiver",
+      "native-system-width-custom-string-methods"
     ],
-    "reason": "raw length/substring分岐と公式エラー文言をInterpreter/AOTで実装し、公式差分テストに成功。動的own substring/splitはTODO: system-width-custom-string-methods、AOTバイト列値はTODO: aot-byte-buffer-value"
+    "reason": "raw length/substring分岐と公式エラー文言をInterpreter/AOTで実装し、辞書・prototypeのsubstring/charAt関数呼出しを公式差分テストで検証。AOTバイト列値はTODO: aot-byte-buffer-value"
   },
   "カタカナ半角変換": {
     "status": "native",
     "tests": [
       "plugin-system-string-conversion",
       "native-system-width-kana-half-non-string-coercion",
-      "native-system-width-function-receiver"
+      "native-system-width-function-receiver",
+      "native-system-width-custom-string-methods"
     ],
-    "reason": "raw split分岐と公式エラー文言をInterpreter/AOTで実装し、公式差分テストに成功。動的own substring/splitはTODO: system-width-custom-string-methods、AOTバイト列値はTODO: aot-byte-buffer-value"
+    "reason": "raw split分岐と公式エラー文言をInterpreter/AOTで実装し、辞書・prototypeのsplit関数呼出しを公式差分テストで検証。AOTバイト列値はTODO: aot-byte-buffer-value"
   },
   "全角変換": {
     "status": "native",
     "tests": [
       "plugin-system-string-conversion",
       "native-system-width-kana-full-non-string-coercion",
-      "native-system-width-function-receiver"
+      "native-system-width-function-receiver",
+      "native-system-width-custom-string-methods"
     ],
-    "reason": "カナraw length/substring分岐からASCII String変換へ合成する公式順序をInterpreter/AOTで実装し、公式差分テストに成功。動的own substring/splitはTODO: system-width-custom-string-methods、AOTバイト列値はTODO: aot-byte-buffer-value"
+    "reason": "カナraw length/substring分岐からASCII String変換へ合成する公式順序をInterpreter/AOTで実装し、辞書・prototypeのsubstring/charAt関数呼出しを含む公式差分テストで検証。AOTバイト列値はTODO: aot-byte-buffer-value"
   },
   "半角変換": {
     "status": "native",
@@ -1227,9 +1230,10 @@
       "plugin-system-string-conversion",
       "native-system-width-kana-half-non-string-coercion",
       "native-system-width-function-receiver",
-      "native-system-width-half-uncaught-error"
+      "native-system-width-half-uncaught-error",
+      "native-system-width-custom-string-methods"
     ],
-    "reason": "カナraw split分岐からASCII String変換へ合成する公式順序と未捕捉エラーをInterpreter/AOTで実装し、公式差分テストに成功。動的own substring/splitはTODO: system-width-custom-string-methods、AOTバイト列値はTODO: aot-byte-buffer-value"
+    "reason": "カナraw split分岐からASCII String変換へ合成する公式順序と未捕捉エラーをInterpreter/AOTで実装し、辞書・prototypeのsplit関数呼出しを含む公式差分テストで検証。AOTバイト列値はTODO: aot-byte-buffer-value"
   },
   "全角カナ一覧": {
     "status": "native",

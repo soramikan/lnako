@@ -576,6 +576,11 @@
     "source": "F=関数(A)それはA;ここまで\n(\"KF-F:\"&カタカナ全角変換(F))を表示\n(\"FULL-F:\"&全角変換(F))を表示\nエラー監視\nカタカナ半角変換(F)を表示\nエラーならば\n(\"KH-F:E:\"&エラーメッセージ)を表示\nここまで\nエラー監視\n半角変換(F)を表示\nエラーならば\n(\"HALF-F:E:\"&エラーメッセージ)を表示\nここまで\n"
   },
   {
+    "id": "native-system-width-custom-string-methods",
+    "commands": ["カタカナ全角変換", "カタカナ半角変換", "全角変換", "半角変換"],
+    "source": "P={}\nP[\"substring\"]=関数(A,B)それは\"x\";ここまで\nP[\"charAt\"]=関数(A)それは\"ｱ\";ここまで\nD={\"__proto__\":P,\"length\":2}\nカタカナ全角変換(D)を表示\nQ={}\nQ[\"split\"]=関数(A)それは[\"ガ\",\"ッ\",\"ツ\"];ここまで\nE={\"__proto__\":Q}\nカタカナ半角変換(E)を表示\n全角変換(D)を表示\n半角変換(E)を表示\n"
+  },
+  {
     "id": "native-system-width-half-uncaught-error",
     "commands": ["半角変換"],
     "oracle": "official-generated",

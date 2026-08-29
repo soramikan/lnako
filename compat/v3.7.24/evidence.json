@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 347,
-    "nativeAot": 253,
+    "total": 348,
+    "nativeAot": 254,
     "interpreter": 99,
     "compatJs": 9
   },
@@ -5549,6 +5549,7 @@
       ],
       "aotFixtureIds": [
         "native-system-width-conversion-commands",
+        "native-system-width-custom-string-methods",
         "native-system-width-function-receiver",
         "native-system-width-kana-full-non-string-coercion"
       ],
@@ -5563,6 +5564,10 @@
         "aot": {
           "native-system-width-conversion-commands": [
             "fixture.commands"
+          ],
+          "native-system-width-custom-string-methods": [
+            "fixture.commands",
+            "implemented.tests"
           ],
           "native-system-width-function-receiver": [
             "fixture.commands",
@@ -5579,8 +5584,8 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "raw length/substring分岐と公式エラー文言をInterpreter/AOTで実装し、公式差分テストに成功。動的own substring/splitはTODO: system-width-custom-string-methods、AOTバイト列値はTODO: aot-byte-buffer-value"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 4件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "raw length/substring分岐と公式エラー文言をInterpreter/AOTで実装し、辞書・prototypeのsubstring/charAt関数呼出しを公式差分テストで検証。AOTバイト列値はTODO: aot-byte-buffer-value"
     },
     {
       "id": "command-0163",
@@ -5592,6 +5597,7 @@
       ],
       "aotFixtureIds": [
         "native-system-width-conversion-commands",
+        "native-system-width-custom-string-methods",
         "native-system-width-function-receiver",
         "native-system-width-kana-half-non-string-coercion"
       ],
@@ -5606,6 +5612,10 @@
         "aot": {
           "native-system-width-conversion-commands": [
             "fixture.commands"
+          ],
+          "native-system-width-custom-string-methods": [
+            "fixture.commands",
+            "implemented.tests"
           ],
           "native-system-width-function-receiver": [
             "fixture.commands",
@@ -5622,8 +5632,8 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "raw split分岐と公式エラー文言をInterpreter/AOTで実装し、公式差分テストに成功。動的own substring/splitはTODO: system-width-custom-string-methods、AOTバイト列値はTODO: aot-byte-buffer-value"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 4件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "raw split分岐と公式エラー文言をInterpreter/AOTで実装し、辞書・prototypeのsplit関数呼出しを公式差分テストで検証。AOTバイト列値はTODO: aot-byte-buffer-value"
     },
     {
       "id": "command-0164",
@@ -5635,6 +5645,7 @@
       ],
       "aotFixtureIds": [
         "native-system-width-conversion-commands",
+        "native-system-width-custom-string-methods",
         "native-system-width-function-receiver",
         "native-system-width-kana-full-non-string-coercion"
       ],
@@ -5649,6 +5660,10 @@
         "aot": {
           "native-system-width-conversion-commands": [
             "fixture.commands"
+          ],
+          "native-system-width-custom-string-methods": [
+            "fixture.commands",
+            "implemented.tests"
           ],
           "native-system-width-function-receiver": [
             "fixture.commands",
@@ -5665,8 +5680,8 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "カナraw length/substring分岐からASCII String変換へ合成する公式順序をInterpreter/AOTで実装し、公式差分テストに成功。動的own substring/splitはTODO: system-width-custom-string-methods、AOTバイト列値はTODO: aot-byte-buffer-value"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 4件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "カナraw length/substring分岐からASCII String変換へ合成する公式順序をInterpreter/AOTで実装し、辞書・prototypeのsubstring/charAt関数呼出しを含む公式差分テストで検証。AOTバイト列値はTODO: aot-byte-buffer-value"
     },
     {
       "id": "command-0165",
@@ -5678,6 +5693,7 @@
       ],
       "aotFixtureIds": [
         "native-system-width-conversion-commands",
+        "native-system-width-custom-string-methods",
         "native-system-width-function-receiver",
         "native-system-width-half-uncaught-error",
         "native-system-width-kana-half-non-string-coercion"
@@ -5693,6 +5709,10 @@
         "aot": {
           "native-system-width-conversion-commands": [
             "fixture.commands"
+          ],
+          "native-system-width-custom-string-methods": [
+            "fixture.commands",
+            "implemented.tests"
           ],
           "native-system-width-function-receiver": [
             "fixture.commands",
@@ -5713,8 +5733,8 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 4件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "カナraw split分岐からASCII String変換へ合成する公式順序と未捕捉エラーをInterpreter/AOTで実装し、公式差分テストに成功。動的own substring/splitはTODO: system-width-custom-string-methods、AOTバイト列値はTODO: aot-byte-buffer-value"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 5件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "カナraw split分岐からASCII String変換へ合成する公式順序と未捕捉エラーをInterpreter/AOTで実装し、辞書・prototypeのsplit関数呼出しを含む公式差分テストで検証。AOTバイト列値はTODO: aot-byte-buffer-value"
     },
     {
       "id": "command-0166",

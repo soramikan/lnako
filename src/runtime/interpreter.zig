@@ -1331,6 +1331,10 @@ pub const Interpreter = struct {
                 .callFn = pluginCall,
                 .resolveFn = pluginResolve,
             },
+            .strings = .{
+                .context = self,
+                .callFn = pluginCall,
+            },
             .datetime = .{
                 .now_milliseconds = try self.host.nowMilliseconds(),
                 .monotonic_milliseconds = try self.host.monotonicMilliseconds(),
@@ -2237,6 +2241,34 @@ test "SSA IRで条件・反復・関数・配列辞書を実行する" {
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("10\n5\n7\n", host.written());
+}
+
+test "Interpreter幅変換は辞書のカスタムsubstring・charAt・splitとprototypeを呼び出す" {
+    const source =
+        "P={}\n" ++
+        "P[\"substring\"]=関数(A,B)それは\"x\";ここまで\n" ++
+        "P[\"charAt\"]=関数(A)それは\"ｱ\";ここまで\n" ++
+        "D={\"__proto__\":P,\"length\":2}\n" ++
+        "カタカナ全角変換(D)を表示\n" ++
+        "Q={}\n" ++
+        "Q[\"split\"]=関数(A)それは[\"ガ\",\"ッ\",\"ツ\"];ここまで\n" ++
+        "E={\"__proto__\":Q}\n" ++
+        "カタカナ半角変換(E)を表示\n" ++
+        "全角変換(D)を表示\n" ++
+        "半角変換(E)を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("アア\nｶﾞｯﾂ\nアア\nｶﾞｯﾂ\n", host.written());
 }
 
 test "礼節状態と名前空間スタックと公開言語カタログを実行する" {
