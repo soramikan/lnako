@@ -28,7 +28,7 @@ const UnicodeProperty = struct { property: unicode_properties.Property, negated:
 const ClassItem = union(enum) {
     literal: u16,
     code_point: u21,
-    range: struct { first: u16, last: u16 },
+    range: struct { first: u21, last: u21 },
     digit,
     not_digit,
     word,
@@ -187,13 +187,15 @@ const Parser = struct {
                 return error.UnsupportedUnicodeSetOperation;
             }
             const first = try self.parseClassItem();
-            if (first == .literal and self.index + 1 < self.source.len and self.source[self.index] == '-' and self.source[self.index + 1] != ']') {
-                self.index += 1;
-                const last = try self.parseClassItem();
-                if (last != .literal) return if (self.unicode) error.InvalidCharacterClass else error.InvalidCharacterRange;
-                if (last.literal < first.literal) return error.InvalidCharacterRange;
-                try items.append(self.allocator, .{ .range = .{ .first = first.literal, .last = last.literal } });
-            } else if (self.unicode and first != .literal and self.index + 1 < self.source.len and self.source[self.index] == '-' and self.source[self.index + 1] != ']') {
+            if (classItemCodePoint(first)) |first_code_point| {
+                if (self.index + 1 < self.source.len and self.source[self.index] == '-' and self.source[self.index + 1] != ']') {
+                    self.index += 1;
+                    const last = try self.parseClassItem();
+                    const last_code_point = classItemCodePoint(last) orelse return if (self.unicode) error.InvalidCharacterClass else error.InvalidCharacterRange;
+                    if (last_code_point < first_code_point) return error.InvalidCharacterRange;
+                    try items.append(self.allocator, .{ .range = .{ .first = first_code_point, .last = last_code_point } });
+                } else try items.append(self.allocator, first);
+            } else if (self.unicode and self.index + 1 < self.source.len and self.source[self.index] == '-' and self.source[self.index + 1] != ']') {
                 return error.InvalidCharacterClass;
             } else try items.append(self.allocator, first);
         }
@@ -1139,6 +1141,14 @@ fn isWhitespace(unit: u16) bool {
     };
 }
 
+fn classItemCodePoint(item: ClassItem) ?u21 {
+    return switch (item) {
+        .literal => |literal| literal,
+        .code_point => |code_point| code_point,
+        else => null,
+    };
+}
+
 fn isLineTerminator(unit: u16) bool {
     return unit == '\n' or unit == '\r' or unit == 0x2028 or unit == 0x2029;
 }
@@ -1460,6 +1470,20 @@ test "Unicode名前付き後方参照と未マッチ群の空一致を処理す�
     try roots.protect(&optional_pattern);
     const empty = (try call(&runtime, "正規表現マッチ", &.{ optional_source, optional_pattern })).?;
     try std.testing.expectEqualSlices(u16, &.{}, empty.string.units);
+}
+
+test "Unicode文字クラスの補助平面コードポイント範囲を処理する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var source = try runtime.stringUtf8("😀A");
+    try roots.protect(&source);
+    var pattern = try runtime.stringUtf8("/[\\u{1F600}-\\u{1F64F}]/gu");
+    try roots.protect(&pattern);
+    const result = (try call(&runtime, "正規表現マッチ", &.{ source, pattern })).?;
+    try std.testing.expectEqual(@as(usize, 1), result.array.len());
+    try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00 }, result.array.items.items[0].string.units);
 }
 
 test "正規表現の空幅量指定は下限と上限内の反復を保持する" {
