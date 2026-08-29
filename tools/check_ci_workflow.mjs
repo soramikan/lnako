@@ -47,6 +47,7 @@ const stepSuites = new Map([
   ["Differential lexer test", "core"],
   ["Differential syntax transform test", "core"],
   ["Differential parser test", "core"],
+  ["Grammar-generating parser fuzz test", "core"],
   ["Differential parser diagnostic test", "core"],
   ["Differential semantic test", "core"],
   ["Differential semantic diagnostic test", "core"],

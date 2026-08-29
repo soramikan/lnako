@@ -28,7 +28,7 @@ Linuxログでは通常のmath・CSV・TOML・Promise差分は約0.8秒で完了
 
 | スイート | 検証内容 |
 |---|---|
-| `core` | 互換台帳、字句・構文変換・構文・意味・動的値・インタープリタ・plugin_system差分、format、全Zig単体テスト |
+| `core` | 互換台帳、字句・構文変換・構文・文法生成fuzz・意味・動的値・インタープリタ・plugin_system差分、format、全Zig単体テスト |
 | `standard` | math・CSV・TOML・Promise、markup・caniuse・kansujiの公式差分と全生成コーパス |
 | `host` | QuickJS互換差分、ネイティブプラグインABI、ファイル・プロセス・HTTP・暗号・文字コード・圧縮などNodeホスト差分 |
 | `aot` | 公式CLI・公式生成JavaScript・インタープリタ・LLVM AOT O0〜O3差分、通常/QuickJSビルドとスモークテスト |

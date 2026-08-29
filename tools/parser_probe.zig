@@ -11,7 +11,12 @@ pub fn main(init: std.process.Init) !void {
     defer stdout.flush() catch {};
 
     for (process_args[1..]) |source| {
-        var result = try lnako.frontend.parser.parse(allocator, source, "main.nako3");
+        var result = lnako.frontend.parser.parse(allocator, source, "main.nako3") catch |err| {
+            try stdout.writeAll("{\"diagnostics\":[{\"severity\":\"error\",\"code\":");
+            try std.json.Stringify.value(@errorName(err), .{}, stdout);
+            try stdout.writeAll(",\"message\":\"フロントエンドエラー\"}]}\n");
+            continue;
+        };
         defer result.deinit();
         if (result.root) |root| {
             try writeNode(stdout, root);

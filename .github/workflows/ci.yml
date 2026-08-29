@@ -114,6 +114,9 @@ jobs:
       - name: Differential parser test
         if: matrix.suite == 'core'
         run: node tools/compare_parser_oracle.mjs
+      - name: Grammar-generating parser fuzz test
+        if: matrix.suite == 'core'
+        run: node tools/fuzz_parser_oracle.mjs --iterations 1024 --seed 20260830
       - name: Differential parser diagnostic test
         if: matrix.suite == 'core'
         run: node tools/compare_parser_diagnostics_oracle.mjs

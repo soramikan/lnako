@@ -453,7 +453,7 @@ const Parser = struct {
             }
             if (self.at(.keyword_repeat_count)) {
                 const keyword = self.advance();
-                const count = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try self.numberOne(keyword);
+                const count = if (arguments.items.len > 0) arguments.items[arguments.items.len - 1] else try self.implicitIt(keyword);
                 return self.parseRepeatTimes(start, count);
             }
             if (self.at(.keyword_repeat_while)) {
@@ -691,7 +691,10 @@ const Parser = struct {
         self.skipCommas();
         if (self.at(.keyword_repeat)) _ = self.advance();
         const body = try self.parseLoopBody("『間』繰り返し");
-        return self.makeNodeWithChildren(.while_statement, start, try self.copyChildren(&.{ condition, body }));
+        const result = try self.makeNodeWithChildren(.while_statement, start, try self.copyChildren(&.{ condition, body }));
+        result.josi = "";
+        result.raw_josi = "";
+        return result;
     }
 
     fn parseFor(self: *Parser, start: Token, arguments: []const *ast.Node) ParseFailure!*ast.Node {
@@ -722,7 +725,10 @@ const Parser = struct {
 
     fn parseForeach(self: *Parser, start: Token, collection: *ast.Node) ParseFailure!*ast.Node {
         const body = try self.parseLoopBody("『反復』文");
-        return self.makeNodeWithChildren(.foreach_statement, start, try self.copyChildren(&.{ collection, body }));
+        const result = try self.makeNodeWithChildren(.foreach_statement, start, try self.copyChildren(&.{ collection, body }));
+        result.josi = "";
+        result.raw_josi = "";
+        return result;
     }
 
     fn parseLoopBody(self: *Parser, description: []const u8) ParseFailure!*ast.Node {
@@ -749,12 +755,16 @@ const Parser = struct {
     }
 
     fn parseExpression(self: *Parser, minimum_precedence: u8) ParseFailure!*ast.Node {
-        var left = try self.parseUnary();
+        return self.parseExpressionWithContext(minimum_precedence, false);
+    }
+
+    fn parseExpressionWithContext(self: *Parser, minimum_precedence: u8, allow_negative_number_literal: bool) ParseFailure!*ast.Node {
+        var left = try self.parseUnary(allow_negative_number_literal);
         while (operatorInfo(self.peek().kind)) |info| {
             if (info.precedence < minimum_precedence) break;
             const operator_token = self.advance();
             const next_precedence = info.precedence + @intFromBool(!info.right_associative);
-            const right = try self.parseExpression(next_precedence);
+            const right = try self.parseExpressionWithContext(next_precedence, true);
             if (operator_token.kind == .range) {
                 const range = try self.makeNodeWithChildren(.function_call, operator_token, try self.copyChildren(&.{ left, right }));
                 range.name = "範囲";
@@ -772,20 +782,22 @@ const Parser = struct {
         return left;
     }
 
-    fn parseUnary(self: *Parser) ParseFailure!*ast.Node {
+    fn parseUnary(self: *Parser, allow_negative_number_literal: bool) ParseFailure!*ast.Node {
         if (self.at(.plus)) return self.fail(.unexpected_token, "単項『+』は使用できません", self.peek());
-        if (self.delimited_expression_depth > 0 and self.at(.minus) and self.peekAhead(1).kind == .bigint) {
+        if (self.delimited_expression_depth > 0 and !allow_negative_number_literal and self.at(.minus) and self.peekAhead(1).kind == .bigint) {
             return self.fail(.unexpected_token, "括弧・配列・辞書の内側では負のBigIntリテラルを直接使用できません", self.peek());
         }
         if (self.at(.not) or self.at(.minus)) {
             const operator_token = self.advance();
-            const operand = try self.parseUnary();
+            const operand = try self.parseUnary(allow_negative_number_literal);
             if (operator_token.kind == .minus) {
-                if (operand.kind == .bigint) {
+                const can_fold_number = self.delimited_expression_depth == 0 or allow_negative_number_literal;
+                if (((operand.kind == .number and can_fold_number) or operand.kind == .bigint) and !operand.grouped) {
                     operand.value = if (std.mem.startsWith(u8, operand.value, "-"))
                         try self.allocator.dupe(u8, operand.value[1..])
                     else
                         try std.fmt.allocPrint(self.allocator, "-{s}", .{operand.value});
+                    if (operand.kind == .number) operand.number_value = -(operand.number_value orelse 0);
                     operand.span = operator_token.span;
                     return operand;
                 }
@@ -970,7 +982,8 @@ const Parser = struct {
                 _ = self.advance();
                 try values.append(self.allocator, try self.parseExpression(0));
             } else {
-                try values.append(self.allocator, try self.valueNode(.word, key_token));
+                const value_kind: ast.Kind = if (key_token.kind == .string) .string else .word;
+                try values.append(self.allocator, try self.valueNode(value_kind, key_token));
             }
             if (self.at(.comma)) _ = self.advance();
         }
@@ -1351,6 +1364,16 @@ test "間と繰り返すの間の読点を許可する" {
     try std.testing.expectEqual(ast.Kind.while_statement, result.root.?.children[0].kind);
 }
 
+test "回だけの繰り返しは公式同様に暗黙のそれを回数へ使う" {
+    var result = try parse(std.testing.allocator, "回\nここまで\n", "implicit-repeat-count.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const repeat = result.root.?.children[0];
+    try std.testing.expectEqual(ast.Kind.repeat_times, repeat.kind);
+    try std.testing.expectEqual(ast.Kind.word, repeat.children[0].kind);
+    try std.testing.expectEqualStrings("それ", repeat.children[0].value);
+}
+
 test "それは構文を暗黙戻り値への代入として扱う" {
     var result = try parse(std.testing.allocator, "F=関数(A)それはA+1\nここまで\n", "関数.nako3");
     defer result.deinit();
@@ -1390,6 +1413,18 @@ test "配列・辞書・添字代入を構文解析する" {
     try std.testing.expect(result.succeeded());
     try std.testing.expectEqual(ast.Kind.object_literal, result.root.?.children[0].children[0].kind);
     try std.testing.expectEqual(ast.Kind.array_assignment, result.root.?.children[4].kind);
+}
+
+test "辞書の引用符付き省略値を文字列として構文解析する" {
+    var result = try parse(std.testing.allocator, "A={\"a\",\"b\"}\n", "quoted-object.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const object = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.object_literal, object.kind);
+    try std.testing.expectEqual(ast.Kind.string, object.children[0].kind);
+    try std.testing.expectEqual(ast.Kind.string, object.children[1].kind);
+    try std.testing.expectEqual(ast.Kind.string, object.children[2].kind);
+    try std.testing.expectEqual(ast.Kind.string, object.children[3].kind);
 }
 
 test "公式同様に辞書リテラルの数値キーを拒否する" {
@@ -1447,6 +1482,24 @@ test "負のBigIntリテラルと変数への単項マイナスを区別する" 
     try std.testing.expectEqualStrings("A", variable_negation.children[1].value);
 }
 
+test "負の数値リテラルを公式と同じ単一ノードへ畳み込む" {
+    var result = try parse(std.testing.allocator, "A=-1.5\nB=A/-1\nF(1/-1)\n", "negative-number.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const literal = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.number, literal.kind);
+    try std.testing.expectEqualStrings("-1.5", literal.value);
+    try std.testing.expectEqual(@as(?f64, -1.5), literal.number_value);
+    const division = result.root.?.children[2].children[0];
+    try std.testing.expectEqual(ast.Kind.binary_operator, division.kind);
+    try std.testing.expectEqual(ast.Kind.number, division.children[1].kind);
+    try std.testing.expectEqualStrings("-1", division.children[1].value);
+    const c_call = result.root.?.children[4];
+    try std.testing.expectEqual(ast.Kind.function_call, c_call.kind);
+    try std.testing.expectEqual(ast.Kind.number, c_call.children[0].children[1].kind);
+    try std.testing.expectEqualStrings("-1", c_call.children[0].children[1].value);
+}
+
 test "公式同様に区切り内の負のBigInt直接指定を拒否する" {
     const rejected = [_][]const u8{
         "A=(-1n)\n",
@@ -1461,7 +1514,7 @@ test "公式同様に区切り内の負のBigInt直接指定を拒否する" {
         try std.testing.expectEqual(diagnostic.Code.unexpected_token, result.diagnostics[0].code);
         try std.testing.expectEqual(@as(usize, 0), result.diagnostics[0].span.line);
     }
-    var workaround = try parse(std.testing.allocator, "A=-1n\nB=(0n-1n)\n", "negative-bigint.nako3");
+    var workaround = try parse(std.testing.allocator, "A=-1n\nB=(0n-1n)\nC=1/-1n\nD=[1/-1n]\n", "negative-bigint.nako3");
     defer workaround.deinit();
     try std.testing.expect(workaround.succeeded());
 }

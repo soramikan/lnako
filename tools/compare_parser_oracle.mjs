@@ -44,14 +44,27 @@ function normalizeOfficial(node) {
 }
 
 function normalizeLnako(node) {
+  let children = node.children;
+  // lnako keeps the variable expression as the first internal child so HIR
+  // lowering can evaluate it. The official AST stores that expression in
+  // ref_array/ref_prop.name and exposes only the indexes as children.
+  if ((node.type === "ref_array" || node.type === "ref_prop") &&
+      children.length > 0 &&
+      (children[0].type === "word" || children[0].type === "ref_array" || children[0].type === "ref_prop")) {
+    children = children.slice(1);
+  }
+  // Boolean and NULL literals are represented as primitive nodes internally;
+  // the official parser keeps these built-in names as word nodes and resolves
+  // them through the standard catalog later.
+  const type = node.type === "boolean" || node.type === "null_value" ? "word" : node.type;
   return {
-    type: node.type,
+    type,
     name: cleanName(node.name),
     value: cleanName(node.value),
     operator: node.operator,
     josi: node.josi,
     arguments: node.arguments.map((arg) => ({ name: cleanName(arg.name), josi: arg.josi })),
-    children: node.children.map(normalizeLnako),
+    children: children.map(normalizeLnako),
   };
 }
 
@@ -62,6 +75,21 @@ function fingerprint(node, output = []) {
   }
   for (const child of node.children) fingerprint(child, output);
   return output;
+}
+
+function canonicalize(node) {
+  const children = node.children.map(canonicalize);
+  if (node.type === "op" && node.operator === "*" && children.length === 2 &&
+      children[0].type === "number" && children[0].value === "-1" && children[1].type === "number") {
+    return {
+      ...node,
+      type: "number",
+      value: String(-Number(children[1].value)),
+      operator: "",
+      children: [],
+    };
+  }
+  return { ...node, children };
 }
 
 let failures = 0;
@@ -80,8 +108,8 @@ for (const [index, source] of cases.entries()) {
     console.error(`公式構文エラー: ${JSON.stringify(source)}\n${error}`);
     continue;
   }
-  const expectedFingerprint = fingerprint(normalizeOfficial(official));
-  const actualFingerprint = fingerprint(normalizeLnako(actual));
+  const expectedFingerprint = fingerprint(canonicalize(normalizeOfficial(official)));
+  const actualFingerprint = fingerprint(canonicalize(normalizeLnako(actual)));
   if (JSON.stringify(actualFingerprint) !== JSON.stringify(expectedFingerprint)) {
     failures += 1;
     console.error(`AST差分: ${JSON.stringify(source)}\nofficial=${JSON.stringify(expectedFingerprint)}\nlnako  =${JSON.stringify(actualFingerprint)}`);

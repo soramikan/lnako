@@ -81,6 +81,15 @@ AST差分テストは公式の `core/test/fixtures/parser_corpus.mjs` を直接�
 実行差分ケースは `tests/oracle/interpreter-cases.json` に置き、公式CLIと `lnako run` の双方で成功することを
 必須にします。
 
+文法生成fuzzは固定seedで制御構文・式・配列・辞書・関数呼び出しを生成し、公式v3.7.24とlnakoの受理状態・
+構文フィンガープリントを比較します。既知の回帰は `tests/oracle/fuzz-regressions.json` に置き、差分発生時は
+行・Unicodeコードポイント単位の縮小器で再現を小さくできます。縮小結果をfixtureへ保存する場合だけ
+`--record` で出力先を明示します。
+
+```sh
+node tools/fuzz_parser_oracle.mjs --iterations 1024 --seed 20260830
+```
+
 AOT差分ケースは `tests/oracle/native-cases.json` に置きます。公式CLIの直接実行と `--compile` 生成物、
 `lnako run`、LLVM AOT `-O0` / `-O1` / `-O2` / `-O3`生成物の7経路を比較します。固定LLVM配布物は `tools/setup_llvm.mjs` が
 `toolchain.lock.json` のURLとSHA-256から構築し、CIでは `LNAKO_LLVM_DIR` とアーカイブ内で検出した
