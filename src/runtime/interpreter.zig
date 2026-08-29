@@ -1792,12 +1792,16 @@ pub const Interpreter = struct {
         }
         if (container == .array) return try getArrayProperty(self.runtime, container.array, key);
         if (container == .dictionary) {
-            const text = try self.runtime.valueToString(key);
-            if (container.dictionary.get(text.string)) |value| return value;
-            if (std.mem.eql(u16, text.string.units, &.{ '_', '_', 'p', 'r', 'o', 't', 'o', '_', '_' })) {
-                return if (container.dictionary.prototype != .undefined) container.dictionary.prototype else .undefined;
-            }
-            return value_mod.dictionaryPrototypePropertyUnits(container.dictionary, text.string.units) orelse .undefined;
+            var rooted = [_]Value{ container, key, .undefined };
+            var roots = self.runtime.rootFrame();
+            defer roots.deinit();
+            try roots.protect(&rooted[0]);
+            try roots.protect(&rooted[1]);
+            rooted[2] = try self.runtime.valueToString(rooted[1]);
+            try roots.protect(&rooted[2]);
+            if (rooted[0].dictionary.get(rooted[2].string)) |value| return value;
+            if (try plugin_system.arrays.standardInheritedProperty(self.runtime, rooted[0], rooted[2].string.units)) |value| return value;
+            return .undefined;
         }
         if (container == .string) {
             const unit = container.string.codeUnitAt(try valueIndex(self.runtime, key)) orelse return .undefined;

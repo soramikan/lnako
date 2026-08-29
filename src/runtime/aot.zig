@@ -1276,12 +1276,21 @@ const Runtime = struct {
             },
             .array => aotArrayPropertyGet(self, object, key),
             .dictionary => blk: {
-                const key_units = valueUtf16Alloc(self, key) catch |failure| {
+                var rooted = [_]Value{ container, key, .{} };
+                var dictionary_frame = RootFrame{};
+                self.pushRoots(&dictionary_frame, &rooted, rooted.len);
+                defer self.popRoots(&dictionary_frame);
+                const key_units = valueUtf16Alloc(self, rooted[1]) catch |failure| {
                     self.setFailure(failure);
                     break :blk .{};
                 };
                 defer self.allocator.free(key_units);
-                break :blk dictionaryProperty(container, key_units);
+                if (dictionaryOwnProperty(rooted[0], key_units)) |value| break :blk value;
+                rooted[2] = (tableInheritedProperty(self, rooted[0], .dictionary, key_units) catch |failure| {
+                    self.setFailure(failure);
+                    break :blk .{};
+                }) orelse .{};
+                break :blk rooted[2];
             },
             else => .{},
         };
@@ -14042,14 +14051,25 @@ fn arrayCutBuiltin(runtime: *Runtime, source: Value, index: Value) !Value {
     if (roots[0].tag == @intFromEnum(Tag.dictionary) and isString(roots[1])) {
         const object = roots[0].object() orelse return error.InvalidDictionary;
         if (object.payload != .dictionary) return error.InvalidDictionary;
+        const key_units = try valueUtf16Alloc(runtime, roots[1]);
+        defer runtime.allocator.free(key_units);
         const entries = &object.payload.dictionary;
+        var own_index: ?usize = null;
         for (entries.items, 0..) |entry, entry_index| {
-            if (!try stringValuesEqual(runtime, entry.key, roots[1])) continue;
-            if (!valueTruthy(entry.value)) return .{};
-            const old = entries.orderedRemove(entry_index);
-            return old.value;
+            if (try aotPropertyKeyEqual(runtime, entry.key, key_units)) {
+                own_index = entry_index;
+                break;
+            }
         }
-        return .{};
+        if (own_index) |entry_index| {
+            const old = entries.items[entry_index].value;
+            if (!valueTruthy(old)) return .{};
+            const removed = entries.orderedRemove(entry_index);
+            return removed.value;
+        }
+        roots[2] = (try tableInheritedProperty(runtime, roots[0], .dictionary, key_units)) orelse return .{};
+        if (!valueTruthy(roots[2])) return .{};
+        return roots[2];
     }
     return error.ArrayCutReceiver;
 }
@@ -18620,6 +18640,47 @@ test "AOT参照は辞書と配列の標準prototype propertyを解決する" {
     roots[8] = try runtime.createDictionary(&.{ staticStringValue("toString"), numberValue(7) });
     roots[9] = try referenceBuiltin(&runtime, roots[8], staticStringValue("toString"));
     try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[9]));
+}
+
+test "AOT配列切取は辞書のownと継承propertyを分ける" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 10;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    runtime.next_collection = 1;
+
+    roots[0] = try runtime.createDictionary(&.{
+        staticStringValue("x"),    numberValue(1),
+        staticStringValue("zero"), numberValue(0),
+    });
+    roots[1] = try runtime.createDictionary(&.{});
+    roots[1].object().?.prototype = roots[0];
+    try runtime.setDictionary(&roots[1].object().?.payload.dictionary, staticStringValue("own"), numberValue(2));
+
+    roots[2] = try arrayCutBuiltin(&runtime, roots[1], staticStringValue("x"));
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(roots[2]));
+    roots[3] = try referenceBuiltin(&runtime, roots[1], staticStringValue("x"));
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(roots[3]));
+
+    roots[4] = try arrayCutBuiltin(&runtime, roots[1], staticStringValue("zero"));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[4].tag)));
+    roots[5] = try referenceBuiltin(&runtime, roots[1], staticStringValue("zero"));
+    try std.testing.expectEqual(@as(f64, 0), valueToNumber(roots[5]));
+
+    roots[6] = try arrayCutBuiltin(&runtime, roots[1], staticStringValue("__proto__"));
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(roots[6].tag)));
+    try std.testing.expectEqual(roots[0].payload, roots[6].payload);
+    roots[7] = try arrayCutBuiltin(&runtime, roots[1], staticStringValue("toString"));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[7].tag)));
+    roots[8] = try referenceBuiltin(&runtime, roots[1], staticStringValue("toString"));
+    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[8].tag)));
+
+    roots[9] = try arrayCutBuiltin(&runtime, roots[1], staticStringValue("own"));
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(roots[9]));
+    const own_after = try referenceBuiltin(&runtime, roots[1], staticStringValue("own"));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(own_after.tag)));
 }
 
 fn referenceAotArrayStringKeyAllocationTest(allocator: std.mem.Allocator) !void {

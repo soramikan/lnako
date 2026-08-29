@@ -5086,14 +5086,15 @@
       "tests": [
         "plugin-system-array-mutation-quirks",
         "native-system-array-mutation-commands",
-        "native-system-array-sparse-splice"
+        "native-system-array-sparse-splice",
+        "native-system-array-cut-inherited-dictionary-properties"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "辞書のtruthy判定を実装し、JavaScript継承プロパティ差をTODOとして分離して公式差分テストに成功"
+      "reason": "辞書のownおよびprototype継承propertyをtruthy規則と削除副作用を分けて実装し、公式差分テストに成功"
     },
     {
       "id": "command-0193",

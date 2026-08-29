@@ -171,6 +171,11 @@
     "source": "P={\"length\":2,\"0\":\"a\",\"1\":\"b\"}\nD={\"__proto__\":P}\n(\"PAIR:\"&何文字目(D,\"ab\"))を表示\n(\"INDEX:\"&D[\"0\"])を表示\n(\"LENGTH:\"&D[\"length\"])を表示\n(\"JSON:\"&JSON変換(D))を表示\nD[\"0\"]=\"own\"\n(\"OWN:\"&何文字目(D,\"ownb\"))を表示\nD[\"length\"]=1\n(\"OWN-LENGTH:\"&何文字目(D,\"own\"))を表示\n"
   },
   {
+    "id": "native-system-array-cut-inherited-dictionary-properties",
+    "commands": ["配列切取", "TYPEOF"],
+    "source": "P={\"x\":1,\"zero\":0}\nD={\"__proto__\":P}\n(\"X:\"&配列切取(D,\"x\"))を表示\n(\"X-AFTER:\"&D[\"x\"])を表示\n(\"X-TYPE:\"&TYPEOF(配列切取(D,\"x\")))を表示\n(\"ZERO:\"&配列切取(D,\"zero\"))を表示\n(\"ZERO-AFTER:\"&D[\"zero\"])を表示\n(\"PROTO-TYPE:\"&TYPEOF(配列切取(D,\"__proto__\")))を表示\n(\"PROTO-X:\"&D[\"x\"])を表示\n(\"TOSTRING-TYPE:\"&TYPEOF(配列切取(D,\"toString\")))を表示\n(\"TOSTRING-AFTER:\"&TYPEOF(D[\"toString\"]))を表示\nD[\"own\"]=2\n(\"OWN:\"&配列切取(D,\"own\"))を表示\n(\"OWN-AFTER:\"&D[\"own\"])を表示\n"
+  },
+  {
     "id": "native-system-string-array-from-null-errors",
     "source": "エラー監視\n何文字目(NULL,\"x\")を表示\nエラーならば\n(\"NULL-SOURCE:\"&エラーメッセージ)を表示\nここまで\nエラー監視\n何文字目(\"abc\",NULL)を表示\nエラーならば\n(\"NULL-NEEDLE:\"&エラーメッセージ)を表示\nここまで\nエラー監視\n何文字目(undefined,\"x\")を表示\nエラーならば\n(\"UNDEFINED-SOURCE:\"&エラーメッセージ)を表示\nここまで\nエラー監視\n何文字目(\"abc\",undefined)を表示\nエラーならば\n(\"UNDEFINED-NEEDLE:\"&エラーメッセージ)を表示\nここまで\n\"RECOVERED\"を表示\n"
   },

@@ -463,9 +463,19 @@ fn cut(runtime: *Runtime, source: Value, index_value: Value) !Value {
         return .null_value;
     }
     if (source == .dictionary and index_value == .string) {
-        const old = source.dictionary.get(index_value.string) orelse return .undefined;
+        var roots = runtime.rootFrame();
+        defer roots.deinit();
+        var rooted_source = source;
+        var rooted_index = index_value;
+        try roots.protect(&rooted_source);
+        try roots.protect(&rooted_index);
+        var own = false;
+        const old = if (rooted_source.dictionary.get(rooted_index.string)) |value| blk: {
+            own = true;
+            break :blk value;
+        } else (try tableInheritedProperty(runtime, rooted_source, rooted_index.string.units)) orelse return .undefined;
         if (!old.toBoolean()) return .undefined;
-        _ = source.dictionary.remove(index_value.string);
+        if (own) _ = rooted_source.dictionary.remove(rooted_index.string);
         return old;
     }
     return error.ArrayExpected;
@@ -1721,6 +1731,65 @@ test "参照は辞書と配列の標準prototype propertyを解決する" {
     var own_value = try reference(&runtime, dictionary, to_string_key);
     try roots.protect(&own_value);
     try std.testing.expectEqual(@as(f64, 7), own_value.number);
+}
+
+test "配列切取は辞書のownと継承propertyを分ける" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var prototype = try runtime.createDictionary();
+    try roots.protect(&prototype);
+    var source = try runtime.createDictionary();
+    try roots.protect(&source);
+    var x_key = try runtime.stringUtf8("x");
+    try roots.protect(&x_key);
+    var zero_key = try runtime.stringUtf8("zero");
+    try roots.protect(&zero_key);
+    var proto_key = try runtime.stringUtf8("__proto__");
+    try roots.protect(&proto_key);
+    var to_string_key = try runtime.stringUtf8("toString");
+    try roots.protect(&to_string_key);
+    var own_key = try runtime.stringUtf8("own");
+    try roots.protect(&own_key);
+
+    try prototype.dictionary.set(x_key.string, .{ .number = 1 });
+    try prototype.dictionary.set(zero_key.string, .{ .number = 0 });
+    source.dictionary.prototype = prototype;
+
+    var inherited = try cut(&runtime, source, x_key);
+    try roots.protect(&inherited);
+    try std.testing.expectEqual(@as(f64, 1), inherited.number);
+    var inherited_after = try reference(&runtime, source, x_key);
+    try roots.protect(&inherited_after);
+    try std.testing.expectEqual(@as(f64, 1), inherited_after.number);
+
+    var falsy_inherited = try cut(&runtime, source, zero_key);
+    try roots.protect(&falsy_inherited);
+    try std.testing.expectEqual(Value.undefined, falsy_inherited);
+    var falsy_after = try reference(&runtime, source, zero_key);
+    try roots.protect(&falsy_after);
+    try std.testing.expectEqual(@as(f64, 0), falsy_after.number);
+
+    var inherited_proto = try cut(&runtime, source, proto_key);
+    try roots.protect(&inherited_proto);
+    try std.testing.expect(inherited_proto == .dictionary);
+    try std.testing.expect(inherited_proto.dictionary == prototype.dictionary);
+
+    var inherited_method = try cut(&runtime, source, to_string_key);
+    try roots.protect(&inherited_method);
+    try std.testing.expect(inherited_method == .function);
+    var method_after = try reference(&runtime, source, to_string_key);
+    try roots.protect(&method_after);
+    try std.testing.expect(method_after == .function);
+
+    try source.dictionary.set(own_key.string, .{ .number = 2 });
+    var own_value = try cut(&runtime, source, own_key);
+    try roots.protect(&own_value);
+    try std.testing.expectEqual(@as(f64, 2), own_value.number);
+    try std.testing.expect(source.dictionary.get(own_key.string) == null);
 }
 
 fn tableDeleteColumn(runtime: *Runtime, source: Value, column_value: Value) !Value {
