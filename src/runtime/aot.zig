@@ -14406,6 +14406,13 @@ fn tableRegexpPickupBuiltin(runtime: *Runtime, source: Value, column: Value, pat
             try copy.appendSlice(runtime.allocator, row_items.items);
         } else if (isString(row)) {
             roots[5] = row;
+        } else if (row.tag == @intFromEnum(Tag.byte_buffer)) {
+            const buffer = row.object().?.payload.byte_buffer;
+            roots[5] = switch (buffer.kind) {
+                .buffer => try runtime.createByteBufferView(buffer, 0, buffer.bytes.len),
+                .uint8_array => try runtime.createUint8Array(buffer.bytes),
+                .array_buffer => try runtime.createArrayBuffer(buffer.bytes),
+            };
         } else return error.ArrayExpected;
         try result.append(runtime.allocator, roots[5]);
     }
@@ -19738,6 +19745,23 @@ test "AOT表正規表現系はraw RegExpと浅いコピーを保つ" {
     roots[6] = try runtime.createArray(&.{});
     try std.testing.expectError(error.UnclosedCharacterClass, tableBuiltin(&runtime, .table_regexp_search, &.{ roots[6], numberValue(0), numberValue(0), staticStringValue("[") }));
     try std.testing.expectError(error.UnclosedCharacterClass, tableBuiltin(&runtime, .table_regexp_pickup, &.{ roots[6], numberValue(0), staticStringValue("[") }));
+}
+
+test "AOT表正規表現ピックアップはBufferのsliceを共有する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    runtime.next_collection = 1;
+    var roots = [_]Value{.{}} ** 8;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createBytes(&.{ 85, 66 });
+    roots[1] = try runtime.createArray(&.{roots[0]});
+    roots[2] = try tableBuiltin(&runtime, .table_regexp_pickup, &.{ roots[1], numberValue(0), staticStringValue("^85") });
+    try runtime.indexSet(roots[0], numberValue(0), numberValue(7));
+    const picked_row = roots[2].object().?.payload.array.items[0];
+    try std.testing.expectEqual(@as(u8, 7), picked_row.object().?.payload.byte_buffer.bytes[0]);
 }
 
 test "AOT表列挿入はbyte bufferの種類とslice内容を保持する" {

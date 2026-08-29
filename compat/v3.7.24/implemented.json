@@ -1815,9 +1815,10 @@
     "tests": [
       "plugin-system-table",
       "native-system-table-regexp-commands",
-      "native-system-table-regexp-null-row-error"
+      "native-system-table-regexp-null-row-error",
+      "native-system-table-regexp-buffer-slice-alias"
     ],
-    "reason": "生patternの事前コンパイル、配列・文字列行のrow.slice(0)相当、GCルートをAOTとインタプリタへ実装し、公式差分テストに成功"
+    "reason": "生patternの事前コンパイル、配列・文字列行のrow.slice(0)相当、Bufferのview共有、GCルートをAOTとインタプリタへ実装し、公式差分テストに成功"
   },
   "辞書キー列挙": {
     "status": "native",

@@ -1476,7 +1476,7 @@ fn tableRegexpPickup(runtime: *Runtime, source: Value, column: Value, pattern: V
             },
             .string => row,
             .bytes => |buffer| switch (buffer.kind) {
-                .buffer => try runtime.createBytes(buffer.bytes),
+                .buffer => try runtime.createByteBufferView(buffer, 0, buffer.bytes.len),
                 .uint8_array => try runtime.createUint8Array(buffer.bytes),
                 .array_buffer => try runtime.createArrayBuffer(buffer.bytes),
             },
@@ -2235,6 +2235,25 @@ test "表変換系はGCストレス下で文字列行とJSキー規則を保持�
     var empty_insert = try tableInsertColumn(&runtime, empty, bigint_index, .null_value);
     try roots.protect(&empty_insert);
     try std.testing.expectEqual(@as(usize, 0), empty_insert.array.len());
+}
+
+test "表正規表現ピックアップはBufferのsliceを共有する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var buffer = try runtime.createBytes(&.{ 85, 66 });
+    try roots.protect(&buffer);
+    var table = try common.arrayFromValues(&runtime, &.{buffer});
+    try roots.protect(&table);
+    var pattern = try runtime.stringUtf8("^85");
+    try roots.protect(&pattern);
+    var picked = try tableRegexpPickup(&runtime, table, .{ .number = 0 }, pattern);
+    try roots.protect(&picked);
+    buffer.bytes.set(0, 7);
+    try std.testing.expectEqual(@as(f64, 7), picked.array.get(0).bytes.get(0).number);
 }
 
 test "表列挿入はBufferのsliceだけを共有しTypedArrayのsliceを複製する" {
