@@ -67,7 +67,7 @@ pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value, conte
     if (eql(name, "配列最大値")) return try reduceExtremum(runtime, a, true);
     if (eql(name, "配列最小値")) return try reduceExtremum(runtime, a, false);
     if (eql(name, "配列合計")) return try sum(runtime, a);
-    if (eql(name, "配列入替")) return try swap(a, b, c);
+    if (eql(name, "配列入替")) return try swap(runtime, a, b, c);
     if (eql(name, "配列連番作成")) return try sequence(runtime, a, b);
     if (eql(name, "配列要素作成")) return try fill(runtime, a, b);
     if (isAny(name, &.{ "配列関数適用", "配列マップ" })) return try map(runtime, a, b, context, false);
@@ -518,9 +518,7 @@ fn reference(runtime: *Runtime, source: Value, index_value: Value) !Value {
         return runtime.stringCodeUnits(source_value.string.units[range.start .. range.start + range.count]);
     }
     if (source_value == .array) {
-        if (index == .number) return source_value.array.get(propertyIndex(index.number) orelse return .undefined);
-        if (index == .bigint) return source_value.array.get(bigIntPropertyIndex(index.bigint, source_value.array.len()) orelse return .undefined);
-        if (index == .string) return indexed(runtime, source_value, index);
+        if (index == .number or index == .bigint or index == .string) return try indexed(runtime, source_value, index);
         const range = (try rangeBounds(runtime, index, source_value.array.len())) orelse return .undefined;
         var result = try runtime.createArray();
         try roots.protect(&result);
@@ -607,17 +605,31 @@ fn sum(runtime: *Runtime, source: Value) !Value {
     return .{ .number = result };
 }
 
-fn swap(source: Value, first_value: Value, second_value: Value) !Value {
+fn swap(runtime: *Runtime, source: Value, first_value: Value, second_value: Value) !Value {
     if (source != .array) return error.ArrayExpected;
-    const first = if (first_value == .number) directIndex(first_value.number) orelse return error.InvalidArrayIndex else return error.InvalidArrayIndex;
-    const second = if (second_value == .number) directIndex(second_value.number) orelse return error.InvalidArrayIndex else return error.InvalidArrayIndex;
-    const required_length = std.math.add(usize, @max(first, second), 1) catch return error.ArraySizeLimitExceeded;
-    if (required_length > source.array.len() and required_length > safe_array_element_limit) return error.ArraySizeLimitExceeded;
-    const first_item = source.array.get(first);
-    const second_item = source.array.get(second);
-    try source.array.set(first, second_item);
-    try source.array.set(second, first_item);
-    return source;
+    var rooted = [5]Value{ source, first_value, second_value, .undefined, .undefined };
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    for (&rooted) |*root| try roots.protect(root);
+    rooted[3] = try runtime.valueToString(rooted[1]);
+    rooted[4] = try runtime.valueToString(rooted[2]);
+    const first_index = propertyIndexUnits(rooted[3].string.units);
+    const second_index = propertyIndexUnits(rooted[4].string.units);
+    const largest_index = if (first_index) |first| if (second_index) |second| @max(first, second) else first else second_index;
+    if (largest_index) |index| {
+        const required_length = std.math.add(usize, index, 1) catch return error.ArraySizeLimitExceeded;
+        if (required_length > rooted[0].array.len() and required_length > safe_array_element_limit) return error.ArraySizeLimitExceeded;
+    }
+    // Array length is read-only for this command's two assignment steps when
+    // represented by the native dense array.  Keep the failure atomic instead
+    // of mutating one side before the second assignment can be validated.
+    if (std.mem.eql(u16, rooted[3].string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) or
+        std.mem.eql(u16, rooted[4].string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return error.ArrayLengthAssignment;
+    const first_item = arrayPropertyGet(rooted[0].array, rooted[3].string, first_index);
+    const second_item = arrayPropertyGet(rooted[0].array, rooted[4].string, second_index);
+    try arrayPropertySet(rooted[0].array, rooted[3].string, first_index, second_item);
+    try arrayPropertySet(rooted[0].array, rooted[4].string, second_index, first_item);
+    return rooted[0];
 }
 
 fn sequence(runtime: *Runtime, first_value: Value, last_value: Value) !Value {
@@ -1071,6 +1083,18 @@ fn tableRegexpPickup(runtime: *Runtime, source: Value, column: Value, pattern: V
     return rooted[3];
 }
 
+fn arrayPropertyGet(array: *value_mod.Array, key: *value_mod.String, index: ?usize) Value {
+    if (index) |position| return array.get(position);
+    if (std.mem.eql(u16, key.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return .{ .number = @floatFromInt(array.len()) };
+    return array.getProperty(key) orelse .undefined;
+}
+
+fn arrayPropertySet(array: *value_mod.Array, key: *value_mod.String, index: ?usize, value: Value) !void {
+    if (index) |position| return array.set(position, value);
+    if (std.mem.eql(u16, key.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return error.ArrayLengthAssignment;
+    return array.setProperty(key, value);
+}
+
 fn indexed(runtime: *Runtime, source: Value, key: Value) !Value {
     var rooted = [3]Value{ source, key, .undefined };
     var roots = runtime.rootFrame();
@@ -1080,8 +1104,8 @@ fn indexed(runtime: *Runtime, source: Value, key: Value) !Value {
     rooted[2] = try runtime.valueToString(rooted[1]);
     if (rooted[0] == .array) {
         if (std.mem.eql(u16, rooted[2].string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return .{ .number = @floatFromInt(rooted[0].array.len()) };
-        const index = propertyIndexUnits(rooted[2].string.units) orelse return .undefined;
-        return rooted[0].array.get(index);
+        const index = propertyIndexUnits(rooted[2].string.units);
+        return arrayPropertyGet(rooted[0].array, rooted[2].string, index);
     }
     if (rooted[0] == .dictionary) return rooted[0].dictionary.get(rooted[2].string) orelse .undefined;
     if (rooted[0] == .string) {
@@ -1877,7 +1901,7 @@ test "配列集約・連番・要素生成の型変換と複製境界を保つ" 
 
     var swap_source = try common.arrayFromValues(&runtime, &.{.{ .number = 0 }});
     try roots.protect(&swap_source);
-    try std.testing.expectError(error.ArraySizeLimitExceeded, swap(swap_source, .{ .number = 0 }, .{ .number = @floatFromInt(safe_array_element_limit) }));
+    try std.testing.expectError(error.ArraySizeLimitExceeded, swap(&runtime, swap_source, .{ .number = 0 }, .{ .number = @floatFromInt(safe_array_element_limit) }));
 
     var first = try runtime.stringUtf8("2");
     try roots.protect(&first);
@@ -1916,4 +1940,31 @@ test "配列集約・連番・要素生成の型変換と複製境界を保つ" 
     try roots.protect(&independent_fill);
     try independent_fill.array.get(0).array.set(0, .{ .number = 9 });
     try std.testing.expectEqual(@as(f64, 1), independent_fill.array.get(1).array.get(0).number);
+}
+
+test "配列入替はcanonical添字以外をown propertyとして保持する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var source = try common.arrayFromValues(&runtime, &.{ .{ .number = 10 }, .{ .number = 20 } });
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&source);
+    var foo = try runtime.stringUtf8("foo");
+    try roots.protect(&foo);
+    var bar = try runtime.stringUtf8("bar");
+    try roots.protect(&bar);
+    var leading_zero = try runtime.stringUtf8("01");
+    try roots.protect(&leading_zero);
+    try source.array.setProperty(foo.string, .{ .number = 7 });
+    try source.array.setProperty(leading_zero.string, .{ .number = 8 });
+    try std.testing.expectEqual(@as(f64, 7), (try indexed(&runtime, source, foo)).number);
+    _ = try swap(&runtime, source, foo, bar);
+    try std.testing.expectEqual(Value.undefined, try indexed(&runtime, source, foo));
+    try std.testing.expectEqual(@as(f64, 7), (try indexed(&runtime, source, bar)).number);
+    try std.testing.expectEqual(@as(f64, 8), (try indexed(&runtime, source, leading_zero)).number);
+    try std.testing.expectEqual(@as(usize, 3), source.array.properties.items.len);
+    const first_key = try source.array.properties.items[0].key.toUtf8Lossy(runtime.allocator());
+    defer runtime.allocator().free(first_key);
+    try std.testing.expectEqualStrings("foo", first_key);
 }

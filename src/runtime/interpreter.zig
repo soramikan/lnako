@@ -1752,7 +1752,7 @@ pub const Interpreter = struct {
 
     fn getOne(self: *Interpreter, container: Value, key: Value) !Value {
         if (container == .bytes) return container.bytes.get(try valueIndex(self.runtime, key));
-        if (container == .array) return container.array.get(try valueIndex(self.runtime, key));
+        if (container == .array) return try getArrayProperty(self.runtime, container.array, key);
         if (container == .dictionary) {
             const text = try self.runtime.valueToString(key);
             return container.dictionary.get(text.string) orelse .undefined;
@@ -1781,7 +1781,12 @@ pub const Interpreter = struct {
             container.bytes.set(try valueIndex(self.runtime, key), byte);
             return;
         }
-        if (container == .array) return container.array.set(try valueIndex(self.runtime, key), value);
+        if (container == .array) {
+            const key_text = try self.runtime.valueToString(key);
+            if (std.mem.eql(u16, key_text.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return error.ArrayLengthAssignment;
+            if (interpreterArrayIndex(key_text.string.units)) |position| return container.array.set(position, value);
+            return container.array.setProperty(key_text.string, value);
+        }
         if (container == .dictionary) {
             const text = try self.runtime.valueToString(key);
             return container.dictionary.set(text.string, value);
@@ -2068,6 +2073,24 @@ fn valueIndex(runtime: *Runtime, value: Value) !usize {
     const number = try runtime.valueToNumber(value);
     if (!std.math.isFinite(number) or number < 0 or number >= @as(f64, @floatFromInt(std.math.maxInt(usize)))) return error.InvalidIndex;
     return @intFromFloat(@trunc(number));
+}
+
+fn getArrayProperty(runtime: *Runtime, array: *value_mod.Array, key: Value) !Value {
+    const key_text = try runtime.valueToString(key);
+    if (std.mem.eql(u16, key_text.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return .{ .number = @floatFromInt(array.len()) };
+    if (interpreterArrayIndex(key_text.string.units)) |position| return array.get(position);
+    return array.getProperty(key_text.string) orelse .undefined;
+}
+
+fn interpreterArrayIndex(units: []const u16) ?usize {
+    if (units.len == 0 or (units.len > 1 and units[0] == '0')) return null;
+    var result: usize = 0;
+    for (units) |unit| {
+        if (unit < '0' or unit > '9') return null;
+        result = std.math.mul(usize, result, 10) catch return null;
+        result = std.math.add(usize, result, unit - '0') catch return null;
+    }
+    return if (result <= 4_294_967_294) result else null;
 }
 
 fn repeatCount(number: f64) !usize {

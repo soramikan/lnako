@@ -623,6 +623,7 @@ const Object = struct {
     next: ?*Object = null,
     grey_next: ?*Object = null,
     marked: bool = false,
+    array_properties: std.ArrayList(DictionaryEntry) = .empty,
     payload: Payload,
 };
 
@@ -1016,7 +1017,13 @@ const Runtime = struct {
                     }
                 },
                 .binding_cell => |value| self.markValue(value),
-                .array => |items| for (items.items) |value| self.markValue(value),
+                .array => |items| {
+                    for (items.items) |value| self.markValue(value);
+                    for (object.array_properties.items) |property| {
+                        self.markValue(property.key);
+                        self.markValue(property.value);
+                    }
+                },
                 .dictionary => |entries| for (entries.items) |entry| {
                     self.markValue(entry.key);
                     self.markValue(entry.value);
@@ -1118,7 +1125,10 @@ const Runtime = struct {
             .utf16_string => |units| self.allocator.free(units),
             .byte_buffer => |buffer| self.allocator.free(buffer.bytes),
             .bigint => |*value| value.deinit(),
-            .array => |*items| items.deinit(self.allocator),
+            .array => |*items| {
+                items.deinit(self.allocator);
+                object.array_properties.deinit(self.allocator);
+            },
             .dictionary => |*entries| entries.deinit(self.allocator),
             .function => |function| {
                 var index: usize = 0;
@@ -1153,7 +1163,7 @@ const Runtime = struct {
                 const index = valueIndex(key) orelse return .{};
                 return if (buffer.kind == .array_buffer or index >= buffer.bytes.len) .{} else numberValue(@floatFromInt(buffer.bytes[index]));
             },
-            .array => |items| if (valueIndex(key)) |index| if (index < items.items.len) items.items[index] else .{} else .{},
+            .array => aotArrayPropertyGet(self, object, key),
             .dictionary => |entries| blk: {
                 for (entries.items) |entry| if (sameKey(entry.key, key)) break :blk entry.value;
                 break :blk .{};
@@ -1176,14 +1186,8 @@ const Runtime = struct {
             else => {},
         };
         switch (object.payload) {
-            .array => |*items| {
-                const index = valueIndex(key) orelse return error.InvalidIndex;
-                if (index >= items.items.len) {
-                    const previous_len = items.items.len;
-                    try items.resize(self.allocator, index + 1);
-                    @memset(items.items[previous_len..], .{});
-                }
-                items.items[index] = value;
+            .array => {
+                try aotArrayPropertySet(self, object, key, value);
             },
             .dictionary => |*entries| {
                 var rooted = [_]Value{ container, key, value };
@@ -1204,6 +1208,57 @@ const Runtime = struct {
             },
             .utf16_string, .bigint, .function, .iterator, .binding_cell, .promise => {},
         }
+    }
+
+    fn aotArrayPropertyGet(self: *Runtime, object: *const Object, key: Value) Value {
+        const key_units = valueUtf16Alloc(self, key) catch return .{};
+        defer self.allocator.free(key_units);
+        return self.aotArrayPropertyGetUnits(object, key_units);
+    }
+
+    fn aotArrayPropertySet(self: *Runtime, object: *Object, key: Value, value: Value) !void {
+        const key_units = try valueUtf16Alloc(self, key);
+        defer self.allocator.free(key_units);
+        if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return error.ArrayLengthAssignment;
+        if (self.aotCanonicalArrayIndexUnits(key_units)) |index| {
+            if (index >= object.payload.array.items.len) {
+                const previous_len = object.payload.array.items.len;
+                try object.payload.array.resize(self.allocator, index + 1);
+                @memset(object.payload.array.items[previous_len..], .{});
+            }
+            object.payload.array.items[index] = value;
+            return;
+        }
+        const normalized = try self.propertyKey(key);
+        try self.setDictionary(&object.array_properties, normalized, value);
+    }
+
+    fn aotArrayPropertyGetUnits(self: *Runtime, object: *const Object, key_units: []const u16) Value {
+        if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return numberValue(@floatFromInt(object.payload.array.items.len));
+        if (self.aotCanonicalArrayIndexUnits(key_units)) |index| return if (index < object.payload.array.items.len) object.payload.array.items[index] else .{};
+        for (object.array_properties.items) |property| {
+            if (self.aotPropertyKeyMatchesUnits(property.key, key_units)) return property.value;
+        }
+        return .{};
+    }
+
+    fn aotPropertyKeyMatchesUnits(_: *Runtime, key: Value, units: []const u16) bool {
+        return switch (@as(Tag, @enumFromInt(key.tag))) {
+            .static_utf8_string => staticUtf8EqualsUtf16(staticUtf8(key), units),
+            .utf16_string => std.mem.eql(u16, key.object().?.payload.utf16_string, units),
+            else => false,
+        };
+    }
+
+    fn aotCanonicalArrayIndexUnits(_: *Runtime, units: []const u16) ?usize {
+        if (units.len == 0 or (units.len > 1 and units[0] == '0')) return null;
+        var result: usize = 0;
+        for (units) |unit| {
+            if (unit < '0' or unit > '9') return null;
+            result = std.math.mul(usize, result, 10) catch return null;
+            result = std.math.add(usize, result, unit - '0') catch return null;
+        }
+        return if (result <= 4_294_967_294) result else null;
     }
 
     fn iteratorHasNext(_: *Runtime, value: Value) bool {
@@ -1522,6 +1577,14 @@ fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror!dyn
             defer roots.deinit();
             try roots.protect(&result);
             for (value.object().?.payload.array.items) |item| _ = try result.array.push(try aotToDynamicValue(state, item));
+            for (value.object().?.array_properties.items) |property| {
+                var key = try aotToDynamicValue(state, property.key);
+                var item = try aotToDynamicValue(state, property.value);
+                try roots.protect(&key);
+                try roots.protect(&item);
+                if (key != .string) return error.DynamicValueUnsupported;
+                try result.array.setProperty(key.string, item);
+            }
             return result;
         },
         .dictionary => {
@@ -1568,6 +1631,17 @@ fn dynamicToAotValue(state: *DynamicInterpreterState, value: dynamic_value.Value
             owner.pushRoots(&roots, @ptrCast(&result), 1);
             defer owner.popRoots(&roots);
             for (array.items.items) |item| try result.object().?.payload.array.append(owner.allocator, try dynamicToAotValue(state, item));
+            for (array.properties.items) |property| {
+                var converted_key = try owner.createString(property.key.units);
+                var key_roots = RootFrame{};
+                owner.pushRoots(&key_roots, @ptrCast(&converted_key), 1);
+                var converted_item = try dynamicToAotValue(state, property.value);
+                var item_roots = RootFrame{};
+                owner.pushRoots(&item_roots, @ptrCast(&converted_item), 1);
+                try owner.setDictionary(&result.object().?.array_properties, converted_key, converted_item);
+                owner.popRoots(&item_roots);
+                owner.popRoots(&key_roots);
+            }
             break :blk result;
         },
         .dictionary => |dictionary| blk: {
@@ -13274,6 +13348,7 @@ fn dictionaryKeysBuiltin(runtime: *Runtime, source: Value) !Value {
                 const key = try runtime.createString(units[0..unit_len]);
                 try result.append(runtime.allocator, key);
             }
+            for (roots[0].object().?.array_properties.items) |property| try result.append(runtime.allocator, property.key);
         },
         .function => {},
         else => return error.DictionaryKeysReceiver,
@@ -13298,6 +13373,7 @@ fn dictionaryValuesBuiltin(runtime: *Runtime, source: Value) !Value {
         .array => {
             const items = roots[0].object().?.payload.array.items;
             try result.appendSlice(runtime.allocator, items);
+            for (roots[0].object().?.array_properties.items) |property| try result.append(runtime.allocator, property.value);
         },
         .function => {},
         else => return error.DictionaryValuesReceiver,
@@ -13325,9 +13401,15 @@ fn dictionaryRemoveBuiltin(runtime: *Runtime, source: Value, key: Value) !Value 
             const key_units = try valueUtf16Alloc(runtime, roots[1]);
             defer runtime.allocator.free(key_units);
             if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return error.ArrayLengthDelete;
-            if (aotCanonicalArrayIndex(roots[1])) |index| {
-                const items = &roots[0].object().?.payload.array;
-                if (index < items.items.len) items.items[index] = .{};
+            if (runtime.aotCanonicalArrayIndexUnits(key_units)) |index| {
+                const items = &roots[0].object().?.payload.array.items;
+                if (index < items.len) items.*[index] = .{};
+            } else {
+                const properties = &roots[0].object().?.array_properties;
+                for (properties.items, 0..) |property, index| if (runtime.aotPropertyKeyMatchesUnits(property.key, key_units)) {
+                    _ = properties.orderedRemove(index);
+                    break;
+                };
             }
             return roots[0];
         },
@@ -13352,9 +13434,12 @@ fn dictionaryHasBuiltin(runtime: *Runtime, source: Value, key: Value) !bool {
             const key_units = try valueUtf16Alloc(runtime, roots[1]);
             defer runtime.allocator.free(key_units);
             if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return true;
-            const index = aotCanonicalArrayIndex(roots[1]) orelse return false;
-            const items = roots[0].object().?.payload.array.items;
-            return index < items.len;
+            if (runtime.aotCanonicalArrayIndexUnits(key_units)) |index| {
+                const items = roots[0].object().?.payload.array.items;
+                return index < items.len;
+            }
+            for (roots[0].object().?.array_properties.items) |property| if (runtime.aotPropertyKeyMatchesUnits(property.key, key_units)) return true;
+            return false;
         },
         .function => {
             const key_units = try valueUtf16Alloc(runtime, roots[1]);
@@ -13587,9 +13672,7 @@ fn tableRowProperty(runtime: *Runtime, row: Value, column: Value) !Value {
     if (row_tag == .array) {
         const object = row.object() orelse return error.InvalidArray;
         if (object.payload != .array) return error.InvalidArray;
-        if (std.mem.eql(u16, key_units, &table_length_key)) return numberValue(@floatFromInt(object.payload.array.items.len));
-        const index = tablePropertyIndex(key_units) orelse return .{};
-        return if (index < object.payload.array.items.len) object.payload.array.items[index] else .{};
+        return runtime.aotArrayPropertyGetUnits(object, key_units);
     }
     if (row_tag == .dictionary) {
         const object = row.object() orelse return error.InvalidDictionary;
@@ -14276,11 +14359,11 @@ fn referenceBuiltin(runtime: *Runtime, source: Value, index: Value) !Value {
     if (rooted[0].tag == @intFromEnum(Tag.array)) {
         const items = try arrayItems(rooted[0]);
         if (rooted[1].tag == @intFromEnum(Tag.number)) {
-            const position = directIndex(@bitCast(rooted[1].payload)) orelse return .{};
-            return if (position < items.items.len) items.items[position] else .{};
+            const position = directIndex(@bitCast(rooted[1].payload)) orelse return runtime.aotArrayPropertyGet(rooted[0].object().?, rooted[1]);
+            return if (position <= 4_294_967_294 and position < items.items.len) items.items[position] else runtime.aotArrayPropertyGet(rooted[0].object().?, rooted[1]);
         }
         if (rooted[1].tag == @intFromEnum(Tag.bigint)) {
-            const position = bigIntPropertyIndex(rooted[1].object().?.payload.bigint, items.items.len) orelse return .{};
+            const position = bigIntPropertyIndex(rooted[1].object().?.payload.bigint, items.items.len) orelse return runtime.aotArrayPropertyGet(rooted[0].object().?, rooted[1]);
             return items.items[position];
         }
         if (isString(rooted[1])) return tableRowProperty(runtime, rooted[0], rooted[1]);
@@ -14372,20 +14455,25 @@ fn arraySwapBuiltin(runtime: *Runtime, source: Value, first_value: Value, second
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
     if (roots[0].tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
-    const first = directIndex(try valueToNumberRuntime(runtime, roots[1])) orelse return error.InvalidArrayIndex;
-    const second = directIndex(try valueToNumberRuntime(runtime, roots[2])) orelse return error.InvalidArrayIndex;
-    const items = try arrayItems(roots[0]);
-    const first_item: Value = if (first < items.items.len) items.items[first] else .{};
-    const second_item: Value = if (second < items.items.len) items.items[second] else .{};
-    const required_length = std.math.add(usize, @max(first, second), 1) catch return error.ArraySizeLimitExceeded;
-    if (required_length > items.items.len and required_length > safe_array_element_limit) return error.ArraySizeLimitExceeded;
-    const length = @max(items.items.len, required_length);
-    const old_length = items.items.len;
-    try items.ensureTotalCapacity(runtime.allocator, length);
-    try items.resize(runtime.allocator, length);
-    @memset(items.items[old_length..], .{});
-    items.items[first] = second_item;
-    items.items[second] = first_item;
+    const first_units = try valueUtf16Alloc(runtime, roots[1]);
+    defer runtime.allocator.free(first_units);
+    const second_units = try valueUtf16Alloc(runtime, roots[2]);
+    defer runtime.allocator.free(second_units);
+    if (std.mem.eql(u16, first_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) or
+        std.mem.eql(u16, second_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return error.ArrayLengthAssignment;
+    const first = runtime.aotCanonicalArrayIndexUnits(first_units);
+    const second = runtime.aotCanonicalArrayIndexUnits(second_units);
+    const largest_index = if (first) |first_index| if (second) |second_index| @max(first_index, second_index) else first_index else second;
+    if (largest_index) |index| {
+        const required_length = std.math.add(usize, index, 1) catch return error.ArraySizeLimitExceeded;
+        const items = &roots[0].object().?.payload.array.items;
+        if (required_length > items.len and required_length > safe_array_element_limit) return error.ArraySizeLimitExceeded;
+    }
+    const array = roots[0].object().?;
+    const first_item = runtime.aotArrayPropertyGet(array, roots[1]);
+    const second_item = runtime.aotArrayPropertyGet(array, roots[2]);
+    try runtime.aotArrayPropertySet(array, roots[1], second_item);
+    try runtime.aotArrayPropertySet(array, roots[2], first_item);
     return roots[0];
 }
 

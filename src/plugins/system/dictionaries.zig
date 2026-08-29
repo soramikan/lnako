@@ -33,6 +33,7 @@ fn keys(runtime: *Runtime, source: Value) !Value {
                 const key = try runtime.stringUtf8(text);
                 _ = try result.array.push(key);
             }
+            for (array.properties.items) |property| _ = try result.array.push(.{ .string = property.key });
         },
         .function => {},
         else => return error.DictionaryKeysReceiver,
@@ -54,6 +55,7 @@ fn values(runtime: *Runtime, source: Value) !Value {
         },
         .array => |array| {
             for (0..array.len()) |index| _ = try result.array.push(array.get(index));
+            for (array.properties.items) |property| _ = try result.array.push(property.value);
         },
         else => return error.DictionaryValuesReceiver,
     }
@@ -64,8 +66,9 @@ fn remove(runtime: *Runtime, source: Value, key_value: Value) !Value {
     if (source == .array) {
         const key = try runtime.valueToString(key_value);
         if (std.mem.eql(u16, key.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return error.ArrayLengthDelete;
-        const index = canonicalArrayIndex(key.string.units) orelse return source;
-        if (index < source.array.len()) source.array.items.items[index] = .undefined;
+        if (canonicalArrayIndex(key.string.units)) |index| {
+            if (index < source.array.len()) source.array.items.items[index] = .undefined;
+        } else _ = source.array.removeProperty(key.string);
         return source;
     }
     if (source == .function) return source;
@@ -83,8 +86,8 @@ fn has(runtime: *Runtime, source: Value, key_value: Value) !bool {
     if (source == .array) {
         const key = try runtime.valueToString(key_value);
         if (std.mem.eql(u16, key.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return true;
-        const index = canonicalArrayIndex(key.string.units) orelse return false;
-        return index < source.array.len();
+        if (canonicalArrayIndex(key.string.units)) |index| return index < source.array.len();
+        return source.array.hasProperty(key.string);
     }
     if (source == .function) {
         const key = try runtime.valueToString(key_value);
@@ -190,6 +193,32 @@ test "辞書・配列のプロパティ順と型変換を公式規則で扱う" 
     try std.testing.expectError(error.DictionaryKeysReceiver, call(&runtime, "辞書キー列挙", &.{numberValueForTest(3)}));
     try std.testing.expectError(error.DictionaryHasReceiver, call(&runtime, "辞書キー存在", &.{ .null_value, try runtime.stringUtf8("x") }));
     try std.testing.expectEqualStrings("Cannot use 'in' operator to search for 'x' in null", runtime.failureMessage().?);
+}
+
+test "配列の非index own propertyをキーと内容の列挙・削除へ含める" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var array = try runtime.createArray();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&array);
+    _ = try array.array.push(.{ .number = 10 });
+    var foo = try runtime.stringUtf8("foo");
+    try roots.protect(&foo);
+    var leading_zero = try runtime.stringUtf8("01");
+    try roots.protect(&leading_zero);
+    try array.array.setProperty(foo.string, .{ .number = 7 });
+    try array.array.setProperty(leading_zero.string, .{ .number = 8 });
+    const keys_result = (try call(&runtime, "辞書キー列挙", &.{array})).?;
+    try std.testing.expectEqual(@as(usize, 3), keys_result.array.len());
+    try std.testing.expectEqualSlices(u16, &.{ 'f', 'o', 'o' }, keys_result.array.get(1).string.units);
+    const values_result = (try call(&runtime, "ハッシュ内容列挙", &.{array})).?;
+    try std.testing.expectEqual(@as(f64, 7), values_result.array.get(1).number);
+    try std.testing.expect((try call(&runtime, "辞書キー存在", &.{ array, foo })).?.boolean);
+    _ = (try call(&runtime, "辞書キー削除", &.{ array, foo })).?;
+    try std.testing.expect(!(try call(&runtime, "辞書キー存在", &.{ array, foo })).?.boolean);
+    try std.testing.expectEqual(@as(usize, 1), array.array.properties.items.len);
 }
 
 fn dictionaryHasErrorAllocationTest(allocator: std.mem.Allocator) !void {

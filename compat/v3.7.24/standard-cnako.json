@@ -5274,14 +5274,15 @@
         "native-system-reference-string-range-error",
         "native-system-reference-string-range-error-details",
         "native-system-reference-array-string-properties",
-        "native-system-array-range-copy-bigint-coercion"
+        "native-system-array-range-copy-bigint-coercion",
+        "native-system-array-own-properties"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "UTF-16文字列・配列・own辞書の参照、canonical文字列添字、length、明示的なBigInt範囲端のNumber変換を実装し、任意の配列own文字列プロパティはTODO: reference-array-own-properties、継承プロパティはTODO: reference-inherited-propertiesとして分離して公式差分テストに成功"
+      "reason": "UTF-16文字列・配列・own辞書の参照、canonical文字列添字、length、明示的なBigInt範囲端のNumber変換、非index配列own property表を実装し、継承プロパティはTODO: reference-inherited-propertiesとして分離して公式差分テストに成功"
     },
     {
       "id": "command-0200",
@@ -5306,14 +5307,15 @@
         "native-system-reference-string-range-error",
         "native-system-reference-string-range-error-details",
         "native-system-reference-array-string-properties",
-        "native-system-array-range-copy-bigint-coercion"
+        "native-system-array-range-copy-bigint-coercion",
+        "native-system-array-own-properties"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "参照の別名としてcanonical文字列添字とlengthを含めて実装し、任意の配列own文字列プロパティはTODO: reference-array-own-properties、継承プロパティはTODO: reference-inherited-propertiesとして分離して公式差分テストに成功"
+      "reason": "参照の別名としてcanonical文字列添字、length、非index配列own property表を含めて実装し、継承プロパティはTODO: reference-inherited-propertiesとして分離して公式差分テストに成功"
     },
     {
       "id": "command-0201",
@@ -5441,14 +5443,15 @@
       "status": "native",
       "tests": [
         "plugin-system-array-core",
-        "native-system-array-aggregate-create-commands"
+        "native-system-array-aggregate-create-commands",
+        "native-system-array-own-properties"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "非負整数添字と範囲外伸長をZig製ランタイムで実装。非indexプロパティと疎配列の巨大伸長はTODO: array-swap-non-index-property / array-swap-dense-length-limit"
+      "reason": "非負整数添字、範囲外伸長、ToPropertyKeyによる非index own propertyをZig製ランタイムで実装。疎配列の巨大伸長はTODO: array-swap-dense-length-limit"
     },
     {
       "id": "command-0206",
@@ -5658,7 +5661,8 @@
       "tests": [
         "plugin-system-table",
         "native-system-table-query-commands",
-        "native-system-table-byte-row-properties"
+        "native-system-table-byte-row-properties",
+        "native-system-array-own-properties"
       ],
       "platforms": [
         "macos-aarch64",
@@ -5686,7 +5690,8 @@
       "tests": [
         "plugin-system-table",
         "native-system-table-query-commands",
-        "native-system-table-byte-row-properties"
+        "native-system-table-byte-row-properties",
+        "native-system-array-own-properties"
       ],
       "platforms": [
         "macos-aarch64",
@@ -5715,7 +5720,8 @@
         "plugin-system-table",
         "native-system-table-query-commands",
         "native-system-table-search-negative-row-error",
-        "native-system-table-byte-row-properties"
+        "native-system-table-byte-row-properties",
+        "native-system-array-own-properties"
       ],
       "platforms": [
         "macos-aarch64",
@@ -5883,7 +5889,8 @@
         "plugin-system-table",
         "native-system-table-query-commands",
         "native-system-table-column-null-row-error",
-        "native-system-table-byte-row-properties"
+        "native-system-table-byte-row-properties",
+        "native-system-array-own-properties"
       ],
       "platforms": [
         "macos-aarch64",
@@ -8015,7 +8022,8 @@
       "status": "native",
       "tests": [
         "plugin-system-dictionary-hash",
-        "native-system-dictionary-hash-commands"
+        "native-system-dictionary-hash-commands",
+        "native-system-array-own-properties"
       ],
       "platforms": [
         "macos-aarch64",
@@ -8069,7 +8077,8 @@
       "status": "native",
       "tests": [
         "plugin-system-dictionary-hash",
-        "native-system-dictionary-hash-commands"
+        "native-system-dictionary-hash-commands",
+        "native-system-array-own-properties"
       ],
       "platforms": [
         "macos-aarch64",
@@ -8123,7 +8132,8 @@
       "status": "native",
       "tests": [
         "plugin-system-dictionary-hash",
-        "native-system-dictionary-hash-commands"
+        "native-system-dictionary-hash-commands",
+        "native-system-array-own-properties"
       ],
       "platforms": [
         "macos-aarch64",

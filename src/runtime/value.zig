@@ -43,11 +43,13 @@ pub const Array = struct {
     gc_marked: bool = false,
     allocator: std.mem.Allocator,
     items: std.ArrayList(Value) = .empty,
+    properties: std.ArrayList(ArrayProperty) = .empty,
     external: ?ExternalHandle = null,
 
     pub fn deinit(self: *Array) void {
         if (self.external) |binding| binding.deinit();
         self.items.deinit(self.allocator);
+        self.properties.deinit(self.allocator);
         self.* = undefined;
     }
 
@@ -96,6 +98,37 @@ pub const Array = struct {
         if (index >= self.items.items.len) return .undefined;
         return self.items.orderedRemove(index);
     }
+
+    pub fn getProperty(self: Array, key: *String) ?Value {
+        for (self.properties.items) |property| if (String.eql(property.key.*, key.*)) return property.value;
+        return null;
+    }
+
+    pub fn hasProperty(self: Array, key: *String) bool {
+        for (self.properties.items) |property| if (String.eql(property.key.*, key.*)) return true;
+        return false;
+    }
+
+    pub fn setProperty(self: *Array, key: *String, value: Value) !void {
+        for (self.properties.items) |*property| if (String.eql(property.key.*, key.*)) {
+            property.value = value;
+            return;
+        };
+        try self.properties.append(self.allocator, .{ .key = key, .value = value });
+    }
+
+    pub fn removeProperty(self: *Array, key: *String) bool {
+        for (self.properties.items, 0..) |property, index| if (String.eql(property.key.*, key.*)) {
+            _ = self.properties.orderedRemove(index);
+            return true;
+        };
+        return false;
+    }
+};
+
+pub const ArrayProperty = struct {
+    key: *String,
+    value: Value,
 };
 
 const StringKeyContext = struct {
@@ -914,7 +947,13 @@ pub const Runtime = struct {
     fn traceGreyObjects(self: *Runtime) !void {
         while (self.grey_objects.pop()) |object| switch (object) {
             .binding_cell => |cell| try self.markValue(cell.value),
-            .array => |array| for (array.items.items) |item| try self.markValue(item),
+            .array => |array| {
+                for (array.items.items) |item| try self.markValue(item);
+                for (array.properties.items) |property| {
+                    try self.markValue(.{ .string = property.key });
+                    try self.markValue(property.value);
+                }
+            },
             .dictionary => |dictionary| {
                 for (dictionary.keys()) |key| try self.markValue(.{ .string = key });
                 for (dictionary.values()) |item| try self.markValue(item);
