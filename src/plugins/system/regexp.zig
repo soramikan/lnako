@@ -16,6 +16,7 @@ pub const Flags = struct {
     multiline: bool = false,
     dot_all: bool = false,
     unicode: bool = false,
+    unicode_sets: bool = false,
     sticky: bool = false,
     indices: bool = false,
 };
@@ -73,6 +74,7 @@ const Parser = struct {
     allocator: std.mem.Allocator,
     source: []const u16,
     unicode: bool = false,
+    unicode_sets: bool = false,
     index: usize = 0,
     capture_count: usize = 0,
     capture_names: [max_captures]?[]const u16 = [_]?[]const u16{null} ** max_captures,
@@ -174,6 +176,13 @@ const Parser = struct {
             if (self.source[self.index] == ']') {
                 self.index += 1;
                 return .{ .negated = negated, .items = try items.toOwnedSlice(self.allocator) };
+            }
+            if (self.unicode_sets and (self.source[self.index] == '[' or
+                (self.index + 1 < self.source.len and
+                    ((self.source[self.index] == '&' and self.source[self.index + 1] == '&') or
+                        (self.source[self.index] == '-' and self.source[self.index + 1] == '-')))))
+            {
+                return error.UnsupportedUnicodeSetOperation;
             }
             const first = try self.parseClassItem();
             if (first == .literal and self.index + 1 < self.source.len and self.source[self.index] == '-' and self.source[self.index + 1] != ']') {
@@ -455,6 +464,7 @@ pub fn compileFailureMessageAlloc(allocator: std.mem.Allocator, specification: [
         error.DuplicateNamedCapture => "Duplicate capture group name",
         error.UnsupportedGroupAssertion => "Invalid group",
         error.InvalidUnicodeProperty => "Invalid property name",
+        error.UnsupportedUnicodeSetOperation => "Invalid set operation in character class",
         error.InvalidUnicodeEscape => "Invalid Unicode escape",
         error.InvalidEscape => "\\ at end of pattern",
         error.InvalidIdentityEscape => "Invalid escape",
@@ -495,6 +505,7 @@ fn compile(allocator: std.mem.Allocator, specification: []const u16, default_glo
                 'u' => 1 << 4,
                 'd' => 1 << 5,
                 'y' => 1 << 6,
+                'v' => 1 << 7,
                 else => return error.UnsupportedRegularExpressionFlag,
             };
             if (seen_flags & bit != 0) return error.DuplicateRegularExpressionFlag;
@@ -507,12 +518,22 @@ fn compile(allocator: std.mem.Allocator, specification: []const u16, default_glo
                 'u' => flags.unicode = true,
                 'd' => flags.indices = true,
                 'y' => flags.sticky = true,
+                'v' => {
+                    flags.unicode = true;
+                    flags.unicode_sets = true;
+                },
                 else => unreachable,
             }
         }
+        if (flags.unicode_sets and seen_flags & (1 << 4) != 0) return error.UnsupportedRegularExpressionFlag;
     }
     const owned_pattern = try arena.allocator().dupe(u16, pattern);
-    var parser = Parser{ .allocator = arena.allocator(), .source = owned_pattern, .unicode = flags.unicode };
+    var parser = Parser{
+        .allocator = arena.allocator(),
+        .source = owned_pattern,
+        .unicode = flags.unicode,
+        .unicode_sets = flags.unicode_sets,
+    };
     const expression = try parser.parseExpression();
     if (parser.index != owned_pattern.len) return error.UnexpectedPatternToken;
     return .{ .arena = arena, .expression = expression, .flags = flags, .capture_count = parser.capture_count, .capture_names = parser.capture_names };
@@ -1424,6 +1445,39 @@ test "Unicode・sticky・indicesフラグはUTF-16共有エンジンで処理す
     try roots.protect(&indices_pattern);
     const indices = (try call(&runtime, "正規表現マッチ", &.{ source, indices_pattern })).?;
     try std.testing.expectEqualSlices(u16, &.{'x'}, indices.string.units);
+}
+
+test "Unicode setsのvフラグは基本照合を行い未実装集合演算を拒否する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var source = try runtime.stringUtf8("😀A1あ");
+    try roots.protect(&source);
+    var any_pattern = try runtime.stringUtf8("/./vg");
+    try roots.protect(&any_pattern);
+    const any = (try call(&runtime, "正規表現マッチ", &.{ source, any_pattern })).?;
+    try std.testing.expectEqual(@as(usize, 4), any.array.len());
+    try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00 }, any.array.items.items[0].string.units);
+
+    var property_pattern = try runtime.stringUtf8("/\\p{Letter}/vg");
+    try roots.protect(&property_pattern);
+    const letters = (try call(&runtime, "正規表現マッチ", &.{ source, property_pattern })).?;
+    try std.testing.expectEqual(@as(usize, 2), letters.array.len());
+    try std.testing.expectEqualSlices(u16, &.{'A'}, letters.array.items.items[0].string.units);
+    try std.testing.expectEqualSlices(u16, &.{'あ'}, letters.array.items.items[1].string.units);
+
+    var invalid_flags = try runtime.stringUtf8("/a/uv");
+    try roots.protect(&invalid_flags);
+    try std.testing.expectError(error.UnsupportedRegularExpressionFlag, call(&runtime, "正規表現マッチ", &.{ source, invalid_flags }));
+    try std.testing.expectEqualStrings("Invalid flags supplied to RegExp constructor 'uv'", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
+
+    var unsupported_set = try runtime.stringUtf8("/[a-z--[aeiou]]/v");
+    try roots.protect(&unsupported_set);
+    try std.testing.expectError(error.UnsupportedUnicodeSetOperation, call(&runtime, "正規表現マッチ", &.{ source, unsupported_set }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /[a-z--[aeiou]]/v: Invalid set operation in character class", runtime.failureMessage().?);
 }
 
 test "Unicode property escapeは生成済み静的範囲を使う" {

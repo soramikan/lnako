@@ -673,6 +673,18 @@
     "source": "JSON変換(正規表現マッチ(\"𐐨ſK\",『/\\u{10400}sk/iu』))を表示\nJSON変換(正規表現マッチ(\"AK\",『/\\p{Lowercase_Letter}/giu』))を表示\n"
   },
   {
+    "id": "native-system-regexp-unicode-v-basic",
+    "commands": ["正規表現マッチ", "JSON変換"],
+    "source": "JSON変換(正規表現マッチ(\"😀A1あ\",『/./vg』))を表示\nJSON変換(正規表現マッチ(\"A1あ😀\",『/\\p{Letter}/vg』))を表示\nJSON変換(正規表現マッチ(\"AK\",『/\\p{Lowercase_Letter}/giv』))を表示\n"
+  },
+  {
+    "id": "native-system-regexp-unicode-v-invalid-flags-error",
+    "oracle": "official-generated",
+    "commands": ["正規表現マッチ"],
+    "stderrIncludes": "Invalid flags supplied to RegExp constructor 'uv'",
+    "source": "正規表現マッチ(\"x\",『/x/uv』)を表示\n"
+  },
+  {
     "id": "native-system-regexp-invalid-capture-name-error",
     "oracle": "official-generated",
     "commands": ["正規表現マッチ"],
