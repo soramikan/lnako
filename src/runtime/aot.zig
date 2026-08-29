@@ -15013,10 +15013,17 @@ fn compareTableRowsBuiltin(
     left_cell.* = try tableRowProperty(runtime, left, column);
     right_cell.* = try tableRowProperty(runtime, right, column);
     if (numeric) {
-        const left_number = try valueToNumberRuntime(runtime, left_cell.*);
-        const right_number = try valueToNumberRuntime(runtime, right_cell.*);
-        return if (std.math.isNan(left_number) or std.math.isNan(right_number)) .eq else std.math.order(left_number, right_number);
+        // Match the official `ns - ms` comparator.  Arithmetic performs
+        // ToNumeric first, so mixed BigInt/Number cells reject with the
+        // JavaScript mixing error and a BigInt result is rejected when the
+        // sort algorithm converts the comparator result to Number.
+        const difference = try arithmetic(runtime, .subtract, left_cell.*, right_cell.*);
+        const number = try valueToNumberRuntime(runtime, difference);
+        return if (std.math.isNan(number)) .eq else std.math.order(number, 0);
     }
+    // Keep the existing stable sort's relational result for unordered
+    // values; V8's comparator call order for that boundary remains a
+    // separate compatibility item.
     return (try relationalOrder(runtime, left_cell.*, right_cell.*)) orelse .eq;
 }
 
@@ -20214,6 +20221,26 @@ test "AOT表ソートは最上位配列のholeと明示的undefinedをpresence�
     try std.testing.expectEqual(roots[4].payload, (try arrayItems(roots[5])).items[0].payload);
     try std.testing.expectEqual(roots[3].payload, (try arrayItems(roots[5])).items[1].payload);
     try std.testing.expectEqualSlices(bool, &.{ true, true, true, false }, roots[5].object().?.array_presence.items);
+}
+
+test "AOT表数値ソートはns-msのBigInt型境界を公式どおり拒否する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 8;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createBigInt("1n");
+    roots[1] = try runtime.createBigInt("2n");
+    roots[2] = try runtime.createArray(&.{roots[0]});
+    roots[3] = try runtime.createArray(&.{roots[1]});
+    roots[4] = try runtime.createArray(&.{ roots[2], roots[3] });
+    try std.testing.expectError(error.CannotConvertBigIntToNumber, tableBuiltin(&runtime, .table_numeric_sort, &.{ roots[4], numberValue(0) }));
+
+    roots[5] = try runtime.createArray(&.{numberValue(2)});
+    roots[6] = try runtime.createArray(&.{ roots[2], roots[5] });
+    try std.testing.expectError(error.CannotMixBigIntAndNumber, tableBuiltin(&runtime, .table_numeric_sort, &.{ roots[6], numberValue(0) }));
 }
 
 test "AOT表列取得と表ピックアップは最上位のholeをArrayメソッドどおり扱う" {

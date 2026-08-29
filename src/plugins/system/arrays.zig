@@ -923,10 +923,17 @@ fn compareTableRows(
     left_cell.* = try indexed(runtime, left, column);
     right_cell.* = try indexed(runtime, right, column);
     if (numeric) {
-        const left_number = try runtime.valueToNumber(left_cell.*);
-        const right_number = try runtime.valueToNumber(right_cell.*);
-        return if (std.math.isNan(left_number) or std.math.isNan(right_number)) .eq else std.math.order(left_number, right_number);
+        // The official comparator is `ns - ms`, not two independent
+        // Number conversions.  Keeping the subtraction as a JavaScript-like
+        // binary operation preserves BigInt/Number mixing errors and lets the
+        // subsequent comparator-result ToNumber reject a BigInt result.
+        const difference = try operators.binary(runtime, .subtract, left_cell.*, right_cell.*);
+        const number = try runtime.valueToNumber(difference);
+        return if (std.math.isNan(number)) .eq else std.math.order(number, 0);
     }
+    // The V8 sort implementation can observe comparator call order for
+    // unordered values such as NaN and undefined. Keep the existing stable
+    // sort's relational result for that unresolved boundary.
     return (try operators.compare(runtime, left_cell.*, right_cell.*)) orelse .eq;
 }
 
@@ -2536,6 +2543,31 @@ test "表ソートは最上位配列のholeと明示的undefinedをpresence順�
     try std.testing.expectEqual(numeric_low.array, numeric_table.array.get(0).array);
     try std.testing.expectEqual(numeric_high.array, numeric_table.array.get(1).array);
     try std.testing.expectEqualSlices(bool, &.{ true, true, true, false }, numeric_table.array.presence.items);
+}
+
+test "表数値ソートはns-msのBigInt型境界を公式どおり拒否する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var first_bigint = try runtime.bigIntLiteral("1n");
+    try roots.protect(&first_bigint);
+    var second_bigint = try runtime.bigIntLiteral("2n");
+    try roots.protect(&second_bigint);
+    var first_row = try common.arrayFromValues(&runtime, &.{first_bigint});
+    try roots.protect(&first_row);
+    var second_row = try common.arrayFromValues(&runtime, &.{second_bigint});
+    try roots.protect(&second_row);
+    var bigint_table = try common.arrayFromValues(&runtime, &.{ first_row, second_row });
+    try roots.protect(&bigint_table);
+    try std.testing.expectError(error.CannotConvertBigIntToNumber, tableSort(&runtime, bigint_table, .{ .number = 0 }, true));
+
+    var number_row = try common.arrayFromValues(&runtime, &.{.{ .number = 2 }});
+    try roots.protect(&number_row);
+    var mixed_table = try common.arrayFromValues(&runtime, &.{ first_row, number_row });
+    try roots.protect(&mixed_table);
+    try std.testing.expectError(error.CannotMixBigIntAndNumber, tableSort(&runtime, mixed_table, .{ .number = 0 }, true));
 }
 
 test "表列取得と表ピックアップは最上位のholeをArrayメソッドどおり扱う" {
