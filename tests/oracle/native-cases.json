@@ -668,6 +668,11 @@
     "source": "JSON変換(正規表現マッチ(\"𞤀A\",『/\\p{sc=Adlm}/gu』))を表示\n"
   },
   {
+    "id": "native-system-regexp-unicode-ignore-case",
+    "commands": ["正規表現マッチ", "JSON変換"],
+    "source": "JSON変換(正規表現マッチ(\"𐐨ſK\",『/\\u{10400}sk/iu』))を表示\nJSON変換(正規表現マッチ(\"AK\",『/\\p{Lowercase_Letter}/giu』))を表示\n"
+  },
+  {
     "id": "native-system-regexp-invalid-capture-name-error",
     "oracle": "official-generated",
     "commands": ["正規表現マッチ"],

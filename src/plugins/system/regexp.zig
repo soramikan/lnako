@@ -620,12 +620,22 @@ fn expandPiece(allocator: std.mem.Allocator, source: []const u16, piece: Piece, 
 fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: Atom, initial: Candidate, flags: Flags) anyerror![]Candidate {
     var output: std.ArrayList(Candidate) = .empty;
     switch (atom) {
-        .literal => |literal| if (initial.position < source.len and unitsEqual(source[initial.position], literal, flags.ignore_case)) {
-            var candidate = initial;
-            candidate.position += 1;
-            try output.append(allocator, candidate);
+        .literal => |literal| {
+            if (flags.unicode) {
+                if (codePointAt(source, initial.position)) |actual| {
+                    if (codePointsEqual(actual.value, literal, flags)) {
+                        var candidate = initial;
+                        candidate.position += actual.width;
+                        try output.append(allocator, candidate);
+                    }
+                }
+            } else if (initial.position < source.len and unitsEqual(source[initial.position], literal, flags.ignore_case)) {
+                var candidate = initial;
+                candidate.position += 1;
+                try output.append(allocator, candidate);
+            }
         },
-        .code_point => |code_point| if (codePointAt(source, initial.position)) |actual| if (actual.value == code_point) {
+        .code_point => |code_point| if (codePointAt(source, initial.position)) |actual| if (codePointsEqual(actual.value, code_point, flags)) {
             var candidate = initial;
             candidate.position += actual.width;
             try output.append(allocator, candidate);
@@ -642,8 +652,7 @@ fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: Atom, init
         },
         .unicode_property => |property| if (initial.position < source.len) {
             if (codePointAt(source, initial.position)) |actual| {
-                const matches = unicode_properties.contains(property.property, actual.value);
-                if (matches != property.negated) {
+                if (propertyMatches(property, actual.value, flags)) {
                     var candidate = initial;
                     candidate.position += actual.width;
                     try output.append(allocator, candidate);
@@ -661,7 +670,7 @@ fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: Atom, init
             if (capture_index >= max_captures or !initial.captures[capture_index].matched) return output.toOwnedSlice(allocator);
             const span = initial.captures[capture_index];
             const length = span.end - span.start;
-            if (initial.position + length <= source.len and slicesEqual(source[span.start..span.end], source[initial.position .. initial.position + length], flags.ignore_case)) {
+            if (initial.position + length <= source.len and slicesEqual(source[span.start..span.end], source[initial.position .. initial.position + length], flags)) {
                 var candidate = initial;
                 candidate.position += length;
                 try output.append(allocator, candidate);
@@ -897,11 +906,15 @@ fn classMatches(class: CharacterClass, source: []const u16, position: usize, fla
     var matched = false;
     for (class.items) |item| {
         matched = switch (item) {
-            .literal => |literal| code_point.value <= std.math.maxInt(u16) and unitsEqual(unit, literal, flags.ignore_case),
-            .code_point => |literal| if (flags.unicode) code_point.value == literal else literal <= std.math.maxInt(u16) and unit == literal,
+            .literal => |literal| if (flags.unicode)
+                codePointsEqual(code_point.value, literal, flags)
+            else
+                unitsEqual(unit, literal, flags.ignore_case),
+            .code_point => |literal| if (flags.unicode) codePointsEqual(code_point.value, literal, flags) else literal <= std.math.maxInt(u16) and unit == literal,
             .range => |range| blk: {
-                const folded = foldAscii(unit, flags.ignore_case);
-                break :blk folded >= foldAscii(range.first, flags.ignore_case) and folded <= foldAscii(range.last, flags.ignore_case);
+                const value = if (flags.unicode) code_point.value else unit;
+                const folded = foldCodePoint(value, flags);
+                break :blk folded >= foldCodePoint(range.first, flags) and folded <= foldCodePoint(range.last, flags);
             },
             .digit => isDigit(unit),
             .not_digit => !isDigit(unit),
@@ -909,7 +922,7 @@ fn classMatches(class: CharacterClass, source: []const u16, position: usize, fla
             .not_word => !isWord(unit),
             .space => isWhitespace(unit),
             .not_space => !isWhitespace(unit),
-            .unicode_property => |property| unicode_properties.contains(property.property, code_point.value) != property.negated,
+            .unicode_property => |property| propertyMatches(property, code_point.value, flags),
         };
         if (matched) break;
     }
@@ -951,10 +964,42 @@ fn unitsEqual(left: u16, right: u16, ignore_case: bool) bool {
     return foldAscii(left, ignore_case) == foldAscii(right, ignore_case);
 }
 
-fn slicesEqual(left: []const u16, right: []const u16, ignore_case: bool) bool {
-    if (left.len != right.len) return false;
-    for (left, right) |a, b| if (!unitsEqual(a, b, ignore_case)) return false;
-    return true;
+fn codePointsEqual(left: u21, right: u21, flags: Flags) bool {
+    return foldCodePoint(left, flags) == foldCodePoint(right, flags);
+}
+
+fn propertyMatches(property: UnicodeProperty, codepoint: u21, flags: Flags) bool {
+    if (flags.ignore_case and flags.unicode) {
+        if (unicode_case.simpleFoldVariants(codepoint)) |variants| {
+            for (variants) |variant| if (unicode_properties.contains(property.property, variant) != property.negated) return true;
+            return false;
+        }
+    }
+    return unicode_properties.contains(property.property, codepoint) != property.negated;
+}
+
+fn slicesEqual(left: []const u16, right: []const u16, flags: Flags) bool {
+    if (!flags.unicode) {
+        if (left.len != right.len) return false;
+        for (left, right) |a, b| if (!unitsEqual(a, b, flags.ignore_case)) return false;
+        return true;
+    }
+    var left_index: usize = 0;
+    var right_index: usize = 0;
+    while (left_index < left.len and right_index < right.len) {
+        const left_point = codePointAt(left, left_index) orelse return false;
+        const right_point = codePointAt(right, right_index) orelse return false;
+        if (!codePointsEqual(left_point.value, right_point.value, flags)) return false;
+        left_index += left_point.width;
+        right_index += right_point.width;
+    }
+    return left_index == left.len and right_index == right.len;
+}
+
+fn foldCodePoint(codepoint: u21, flags: Flags) u21 {
+    if (flags.ignore_case and flags.unicode) return unicode_case.simpleFold(codepoint);
+    if (codepoint <= std.math.maxInt(u16)) return foldAscii(@intCast(codepoint), flags.ignore_case);
+    return codepoint;
 }
 
 fn foldAscii(unit: u16, enabled: bool) u16 {
@@ -1358,6 +1403,22 @@ test "Unicode・sticky・indicesフラグはUTF-16共有エンジンで処理す
     try roots.protect(&escaped_pattern);
     const escaped = (try call(&runtime, "正規表現マッチ", &.{ source, escaped_pattern })).?;
     try std.testing.expectEqualSlices(u16, &.{ 0xd83d, 0xde00 }, escaped.string.units);
+
+    var fold_source = try runtime.stringUtf8("𐐨ſK");
+    try roots.protect(&fold_source);
+    var fold_pattern = try runtime.stringUtf8("/\\u{10400}sk/iu");
+    try roots.protect(&fold_pattern);
+    const folded = (try call(&runtime, "正規表現マッチ", &.{ fold_source, fold_pattern })).?;
+    try std.testing.expectEqualSlices(u16, fold_source.string.units, folded.string.units);
+
+    var fold_property_source = try runtime.stringUtf8("AK");
+    try roots.protect(&fold_property_source);
+    var fold_property_pattern = try runtime.stringUtf8("/\\p{Lowercase_Letter}/giu");
+    try roots.protect(&fold_property_pattern);
+    const folded_properties = (try call(&runtime, "正規表現マッチ", &.{ fold_property_source, fold_property_pattern })).?;
+    try std.testing.expectEqual(@as(usize, 2), folded_properties.array.len());
+    try std.testing.expectEqualSlices(u16, &.{'A'}, folded_properties.array.items.items[0].string.units);
+    try std.testing.expectEqualSlices(u16, &.{0x212a}, folded_properties.array.items.items[1].string.units);
 
     var indices_pattern = try runtime.stringUtf8("/(x)/d");
     try roots.protect(&indices_pattern);
