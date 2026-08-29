@@ -600,6 +600,13 @@
     "source": "正規表現マッチ(\"x\",\"[\")を表示\n"
   },
   {
+    "id": "native-system-regexp-unicode-invalid-escape-error",
+    "oracle": "official-generated",
+    "commands": ["正規表現マッチ"],
+    "stderrIncludes": "Invalid regular expression: /\\q/u: Invalid escape",
+    "source": "正規表現マッチ(\"x\",『/\\q/u』)を表示\n"
+  },
+  {
     "id": "native-system-table-regexp-null-row-error",
     "oracle": "official-generated",
     "source": "表正規表現ピックアップ([NULL],0,\"a\")を表示\n"

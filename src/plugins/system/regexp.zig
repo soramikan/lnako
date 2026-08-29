@@ -216,7 +216,10 @@ const Parser = struct {
             else
                 .{ .literal = try self.parseHex(4) },
             '1'...'9' => if (in_class) .{ .literal = escaped } else .{ .backreference = escaped - '1' },
-            else => .{ .literal = escaped },
+            else => if (self.unicode and !isUnicodeIdentityEscape(escaped, in_class))
+                error.InvalidIdentityEscape
+            else
+                .{ .literal = escaped },
         };
     }
 
@@ -426,6 +429,7 @@ pub fn compileFailureMessageAlloc(allocator: std.mem.Allocator, specification: [
         error.UnsupportedGroupAssertion => "Invalid group",
         error.InvalidUnicodeEscape => "Invalid Unicode escape",
         error.InvalidEscape => "\\ at end of pattern",
+        error.InvalidIdentityEscape => "Invalid escape",
         error.UnexpectedPatternToken => "Unmatched ')'",
         else => return null,
     };
@@ -949,6 +953,14 @@ fn escapedAt(source: []const u16, index: usize) bool {
     return slashes % 2 == 1;
 }
 
+fn isUnicodeIdentityEscape(unit: u16, in_class: bool) bool {
+    return switch (unit) {
+        '^', '$', '\\', '.', '*', '+', '?', '(', ')', '[', ']', '{', '}', '|', '/' => true,
+        '-' => in_class,
+        else => false,
+    };
+}
+
 fn namedCaptureIndex(compiled: *const Compiled, name: []const u16) ?usize {
     for (compiled.capture_names[0..compiled.capture_count], 0..) |candidate, index| if (candidate) |actual| {
         if (std.mem.eql(u16, actual, name)) return index;
@@ -1027,6 +1039,11 @@ test "正規表現構文エラーはV8互換の文言を設定する" {
     const invalid_unicode = try runtime.stringUtf8("/\\u{/u");
     try std.testing.expectError(error.InvalidUnicodeEscape, call(&runtime, "正規表現マッチ", &.{ source, invalid_unicode }));
     try std.testing.expectEqualStrings("Invalid regular expression: /\\u{/u: Invalid Unicode escape", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
+
+    const invalid_identity_escape = try runtime.stringUtf8("/\\q/u");
+    try std.testing.expectError(error.InvalidIdentityEscape, call(&runtime, "正規表現マッチ", &.{ source, invalid_identity_escape }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /\\q/u: Invalid escape", runtime.failureMessage().?);
 }
 
 test "名前付きキャプチャと非貪欲量指定を処理する" {
