@@ -691,10 +691,7 @@ fn matchSequence(allocator: std.mem.Allocator, source: []const u16, sequence: Se
 }
 
 fn expandPiece(allocator: std.mem.Allocator, source: []const u16, piece: Piece, initial: Candidate, flags: Flags) anyerror![]Candidate {
-    var levels: std.ArrayList([]Candidate) = .empty;
-    const zero = try allocator.alloc(Candidate, 1);
-    zero[0] = initial;
-    try levels.append(allocator, zero);
+    var output: std.ArrayList(Candidate) = .empty;
     // A zero-width atom still counts as a repetition.  The previous
     // source-length bound was enough to prevent consuming atoms from
     // running past the input, but it incorrectly made `(){100,}` unable to
@@ -702,38 +699,47 @@ fn expandPiece(allocator: std.mem.Allocator, source: []const u16, piece: Piece, 
     // keep enough levels for the minimum and at least one level per input
     // code unit for consuming paths.
     const limit = piece.maximum orelse @max(source.len + 1, piece.minimum);
-    var repetition: usize = 0;
-    while (repetition < limit) : (repetition += 1) {
-        const frontier = levels.items[levels.items.len - 1];
-        var next: std.ArrayList(Candidate) = .empty;
-        for (frontier) |candidate| {
-            const atom_matches = try matchAtom(allocator, source, piece.atom, candidate, flags);
-            for (atom_matches) |atom_match| {
-                // An unbounded zero-width quantifier needs only its minimum
-                // number of zero-width repetitions.  Beyond that point the
-                // same candidate would form an infinite frontier.  Finite
-                // quantifiers are already bounded, so their zero-width
-                // repetitions must be retained through the declared limit.
-                if (atom_match.position == candidate.position and
-                    piece.maximum == null and repetition + 1 > piece.minimum) continue;
-                try next.append(allocator, atom_match);
-            }
-        }
-        if (next.items.len == 0) break;
-        try levels.append(allocator, try next.toOwnedSlice(allocator));
-    }
-    var output: std.ArrayList(Candidate) = .empty;
-    if (piece.lazy) {
-        var level = piece.minimum;
-        while (level < levels.items.len) : (level += 1) try output.appendSlice(allocator, levels.items[level]);
-    } else {
-        var level = levels.items.len;
-        while (level > piece.minimum) {
-            level -= 1;
-            try output.appendSlice(allocator, levels.items[level]);
-        }
-    }
+    try expandPieceOrdered(allocator, source, piece, initial, flags, 0, limit, &output);
     return output.toOwnedSlice(allocator);
+}
+
+fn expandPieceOrdered(
+    allocator: std.mem.Allocator,
+    source: []const u16,
+    piece: Piece,
+    candidate: Candidate,
+    flags: Flags,
+    repetition: usize,
+    limit: usize,
+    output: *std.ArrayList(Candidate),
+) anyerror!void {
+    const can_repeat = repetition < limit;
+    if (!piece.lazy and can_repeat) {
+        const atom_matches = try matchAtom(allocator, source, piece.atom, candidate, flags);
+        for (atom_matches) |atom_match| {
+            // An unbounded zero-width quantifier needs only its minimum
+            // number of zero-width repetitions.  Beyond that point the
+            // same candidate would form an infinite branch.  Finite
+            // quantifiers are already bounded, so their zero-width
+            // repetitions must be retained through the declared limit.
+            if (atom_match.position == candidate.position and
+                piece.maximum == null and repetition + 1 > piece.minimum) continue;
+            // A greedy quantifier explores the atom's own choices before
+            // trying the current repetition as a result.  This preserves
+            // the backtracking order of nested quantifiers such as
+            // `/(a+)+b/`, where the inner greedy `a+` must win first.
+            try expandPieceOrdered(allocator, source, piece, atom_match, flags, repetition + 1, limit, output);
+        }
+    }
+    if (repetition >= piece.minimum) try output.append(allocator, candidate);
+    if (piece.lazy and can_repeat) {
+        const atom_matches = try matchAtom(allocator, source, piece.atom, candidate, flags);
+        for (atom_matches) |atom_match| {
+            if (atom_match.position == candidate.position and
+                piece.maximum == null and repetition + 1 > piece.minimum) continue;
+            try expandPieceOrdered(allocator, source, piece, atom_match, flags, repetition + 1, limit, output);
+        }
+    }
 }
 
 fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: Atom, initial: Candidate, flags: Flags) anyerror![]Candidate {
@@ -1531,6 +1537,16 @@ test "正規表現の空幅量指定は下限と上限内の反復を保持す�
     const captures = unbounded_result.captures.?;
     try std.testing.expect(captures == .array);
     try std.testing.expectEqualSlices(u16, &.{}, captures.array.items.items[0].string.units);
+}
+
+test "正規表現の入れ子貪欲量指定は内側の選択を先に試す" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const source = try runtime.stringUtf8("aaab");
+    const pattern = try runtime.stringUtf8("/(a+)+b/");
+    const result = (try callWithEffects(&runtime, "正規表現マッチ", &.{ source, pattern })).?;
+    try std.testing.expectEqualSlices(u16, source.string.units, result.value.string.units);
+    try std.testing.expectEqualSlices(u16, &.{ 'a', 'a', 'a' }, result.captures.?.array.items.items[0].string.units);
 }
 
 test "アンカー・空クラス・先読み・後読みを処理する" {

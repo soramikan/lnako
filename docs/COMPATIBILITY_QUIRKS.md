@@ -96,6 +96,8 @@ Unicode文字クラスの範囲端点はBMP外のコードポイントも取り�
 
 Unicode文字クラスでは、4桁Unicode escapeで表した高・低surrogate pairも1コードポイントへ合成する。その他のescapeや可変長のUnicode escapeを個別に連続させたクラスはこの合成対象外である。
 
+正規表現の量指定探索は、入れ子のatom内部にある貪欲な選択を外側の追加反復より先に試す。`/(a+)+b/`のcaptureが公式と同じ最長の`aaa`になることを`native-system-regexp-backtracking-boundaries`で7経路比較する。複雑な選択・捕捉状態の副作用順序は`TODO: regexp-backtracking-edge`として残す。
+
 根拠は固定オラクルの
 [`core/src/plugin_system_array.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_array.mts) と
 [`core/src/plugin_system_dict.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_dict.mts) です。
