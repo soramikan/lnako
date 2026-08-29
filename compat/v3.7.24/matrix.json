@@ -5912,14 +5912,15 @@
         "native-system-table-column-null-row-error",
         "native-system-table-byte-row-properties",
         "native-system-array-own-properties",
-        "native-system-table-sparse-map-filter"
+        "native-system-table-sparse-map-filter",
+        "native-system-table-function-properties"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "Zig製ランタイムでBuffer・Uint8Array・ArrayBufferのlengthと数値添字、および表列取得の疎配列map挙動を実装し、公式差分テストに成功"
+      "reason": "Zig製ランタイムでBuffer・Uint8Array・ArrayBufferのlengthと数値添字、表列取得の疎配列map挙動、および匿名関数のname/length propertyを実装し、公式差分テストに成功"
     },
     {
       "id": "command-0222",

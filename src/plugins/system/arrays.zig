@@ -1284,7 +1284,16 @@ fn indexed(runtime: *Runtime, source: Value, key: Value) !Value {
         const index = propertyIndexUnits(rooted[2].string.units) orelse return .undefined;
         return rooted[0].bytes.get(index);
     }
-    if (rooted[0] == .function and std.mem.eql(u16, rooted[2].string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return .{ .number = 0 };
+    if (rooted[0] == .function) {
+        if (std.mem.eql(u16, rooted[2].string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return .{ .number = 0 };
+        if (std.mem.eql(u16, rooted[2].string.units, &.{ 'n', 'a', 'm', 'e' })) {
+            // An anonymous Nadesiko function is lowered to an internal
+            // __lambda$ name, but JavaScript Function.name remains empty.
+            const lambda_marker = [_]u16{ '_', '_', 'l', 'a', 'm', 'b', 'd', 'a', '$' };
+            const name = if (std.mem.indexOf(u16, rooted[0].function.name.units, &lambda_marker) != null) &.{} else rooted[0].function.name.units;
+            return runtime.stringCodeUnits(name);
+        }
+    }
     return .undefined;
 }
 
@@ -1668,6 +1677,9 @@ test "表検索系はlengthとraw開始値の型を保持する" {
     var function = try runtime.createNativeFunction(function_name.string, 2, testElementCountFunction, &.{});
     try roots.protect(&function);
     try std.testing.expectEqual(@as(f64, 0), (try indexed(&runtime, function, length_key)).number);
+    var name_key = try runtime.stringUtf8("name");
+    try roots.protect(&name_key);
+    try std.testing.expectEqualSlices(u16, &.{ '二', '引', '数' }, (try indexed(&runtime, function, name_key)).string.units);
 
     var zero_text = try runtime.stringUtf8("zero");
     try roots.protect(&zero_text);

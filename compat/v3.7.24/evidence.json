@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 309,
-    "nativeAot": 218,
+    "total": 310,
+    "nativeAot": 219,
     "interpreter": 96,
     "compatJs": 9
   },
@@ -7780,6 +7780,7 @@
         "native-system-array-own-properties",
         "native-system-table-byte-row-properties",
         "native-system-table-column-null-row-error",
+        "native-system-table-function-properties",
         "native-system-table-query-commands",
         "native-system-table-sparse-map-filter"
       ],
@@ -7803,6 +7804,10 @@
           "native-system-table-column-null-row-error": [
             "implemented.tests"
           ],
+          "native-system-table-function-properties": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
           "native-system-table-query-commands": [
             "implemented.tests"
           ],
@@ -7817,8 +7822,8 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 5件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "Zig製ランタイムでBuffer・Uint8Array・ArrayBufferのlengthと数値添字、および表列取得の疎配列map挙動を実装し、公式差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 6件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "Zig製ランタイムでBuffer・Uint8Array・ArrayBufferのlengthと数値添字、表列取得の疎配列map挙動、および匿名関数のname/length propertyを実装し、公式差分テストに成功"
     },
     {
       "id": "command-0222",
@@ -9565,6 +9570,7 @@
         "plugin-system-types"
       ],
       "aotFixtureIds": [
+        "native-system-table-function-properties",
         "native-system-to-string-command"
       ],
       "compatJsFixtureIds": [],
@@ -9576,6 +9582,9 @@
           ]
         },
         "aot": {
+          "native-system-table-function-properties": [
+            "fixture.commands"
+          ],
           "native-system-to-string-command": [
             "fixture.commands"
           ]
@@ -9586,7 +9595,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -10915,7 +10924,8 @@
         "plugin-system-stdio"
       ],
       "aotFixtureIds": [
-        "native-cut-commands"
+        "native-cut-commands",
+        "native-system-table-function-properties"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -10927,6 +10937,9 @@
         },
         "aot": {
           "native-cut-commands": [
+            "fixture.commands"
+          ],
+          "native-system-table-function-properties": [
             "fixture.commands"
           ]
         },

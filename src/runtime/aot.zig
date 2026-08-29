@@ -13840,11 +13840,26 @@ fn tableRowProperty(runtime: *Runtime, row: Value, column: Value) !Value {
         if (index >= units.len) return .{};
         return try runtime.createString(&.{units[index]});
     }
-    if (row_tag == .function and std.mem.eql(u16, key_units, &table_length_key)) {
-        // The official compiler exposes Nadesiko functions through a
-        // rest-argument wrapper, so Function.length is zero regardless of the
-        // language-level arity used by lnako's call dispatcher.
-        return numberValue(0);
+    if (row_tag == .function) {
+        const object = row.object() orelse return error.InvalidFunction;
+        if (object.payload != .function) return error.InvalidFunction;
+        if (std.mem.eql(u16, key_units, &table_length_key)) {
+            // The official compiler exposes Nadesiko functions through a
+            // rest-argument wrapper, so Function.length is zero regardless of
+            // the language-level arity used by lnako's call dispatcher.
+            return numberValue(0);
+        }
+        if (std.mem.eql(u16, key_units, &.{ 'n', 'a', 'm', 'e' })) {
+            // Lowering gives anonymous functions an internal __lambda$ name,
+            // while JavaScript Function.name remains the empty string.
+            const name = if (std.mem.indexOf(u8, object.payload.function.name, "__lambda$") != null)
+                &.{}
+            else
+                object.payload.function.name;
+            const units = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, name);
+            defer runtime.allocator.free(units);
+            return runtime.createString(units);
+        }
     }
     // Number, boolean, bigint, etc. have no relevant own indexed properties
     // in this runtime; JavaScript returns undefined here.
@@ -19397,6 +19412,8 @@ test "AOT表検索系は行プロパティとraw開始値を公式どおり処�
     try std.testing.expectEqual(@as(i64, 2), bigint_columns.object().?.payload.bigint.toI64());
     roots[17] = try runtime.createFunction(testAotFunction, 2, &.{});
     try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast((try tableRowProperty(&runtime, roots[17], staticStringValue("length"))).payload)));
+    const function_name = try tableRowProperty(&runtime, roots[17], staticStringValue("name"));
+    try expectUtf16String(&runtime, function_name, "");
 }
 
 test "AOT表列挿入削除合計は外側と行内部のholeをforEachとsliceどおり扱う" {
