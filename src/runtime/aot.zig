@@ -21095,6 +21095,28 @@ test "AOT一般正規表現命令は共有エンジンと抽出副作用を保�
     defer runtime.allocator.free(invalid_class_message);
     try std.testing.expectEqualStrings("Invalid regular expression: /[\\d-a]/u: Invalid character class", invalid_class_message);
     _ = runtime.takeException();
+
+    roots[8] = try runtime.createString(&.{ 'f', 'o', 'o', '-', 'f', 'o', 'o' });
+    const named = try regexpBuiltin(&runtime, .regexp_match, &.{ roots[8], staticStringValue("/(?<word>[a-z]+)-\\k<word>/u") });
+    roots[9] = named.value;
+    try std.testing.expectEqualSlices(u16, roots[8].object().?.payload.utf16_string, roots[9].object().?.payload.utf16_string);
+
+    roots[10] = try runtime.createString(&.{ 'y' });
+    const optional = try regexpBuiltin(&runtime, .regexp_match, &.{ roots[10], staticStringValue("/(?<optional>x)?\\k<optional>/u") });
+    roots[11] = optional.value;
+    try std.testing.expectEqual(@as(usize, 0), roots[11].object().?.payload.utf16_string.len);
+
+    try std.testing.expectError(error.InvalidNamedBackreference, regexpBuiltin(&runtime, .regexp_match, &.{ staticStringValue("x"), staticStringValue("/(?<a>a)\\k<b>/u") }));
+    const invalid_named_message = try pendingExceptionMessageUtf8Alloc(&runtime);
+    defer runtime.allocator.free(invalid_named_message);
+    try std.testing.expectEqualStrings("Invalid regular expression: /(?<a>a)\\k<b>/u: Invalid named capture referenced", invalid_named_message);
+    _ = runtime.takeException();
+
+    try std.testing.expectError(error.InvalidNamedReference, regexpBuiltin(&runtime, .regexp_match, &.{ staticStringValue("x"), staticStringValue("/\\k/u") }));
+    const malformed_named_message = try pendingExceptionMessageUtf8Alloc(&runtime);
+    defer runtime.allocator.free(malformed_named_message);
+    try std.testing.expectEqualStrings("Invalid regular expression: /\\k/u: Invalid named reference", malformed_named_message);
+    _ = runtime.takeException();
 }
 
 test "AOT JSONエンコードはcompact prettyとECMAScript境界を保つ" {

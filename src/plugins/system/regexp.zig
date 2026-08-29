@@ -51,6 +51,7 @@ const Atom = union(enum) {
     end_anchor,
     word_boundary: bool,
     backreference: usize,
+    named_backreference: []const u16,
     unicode_property: UnicodeProperty,
 };
 const Piece = struct { atom: Atom, minimum: usize = 1, maximum: ?usize = 1, lazy: bool = false };
@@ -234,6 +235,7 @@ const Parser = struct {
             'v' => .{ .literal = 0x0b },
             '0' => .{ .literal = 0 },
             'c' => try self.parseControlEscape(),
+            'k' => if (self.unicode) try self.parseNamedBackreference() else .{ .literal = 'k' },
             'x' => .{ .literal = try self.parseHex(2) },
             'u' => if (self.index < self.source.len and self.source[self.index] == '{')
                 .{ .code_point = try self.parseCodePointEscape() }
@@ -311,6 +313,17 @@ const Parser = struct {
             return .{ .literal = @intCast(upper - 'A' + 1) };
         }
         return if (self.unicode) error.InvalidUnicodeEscape else .{ .literal = 'c' };
+    }
+
+    fn parseNamedBackreference(self: *Parser) !Atom {
+        if (!self.consume('<')) return error.InvalidNamedReference;
+        const start = self.index;
+        while (self.index < self.source.len and self.source[self.index] != '>') self.index += 1;
+        if (self.index == start or self.index >= self.source.len) return error.InvalidNamedCapture;
+        const name = self.source[start..self.index];
+        if (!isValidNamedCapture(name)) return error.InvalidNamedCapture;
+        self.index += 1;
+        return .{ .named_backreference = name };
     }
 
     fn parseQuantifier(self: *Parser, piece: *Piece) !void {
@@ -492,6 +505,8 @@ pub fn compileFailureMessageAlloc(allocator: std.mem.Allocator, specification: [
         error.InvalidQuantifierRange => "numbers out of order in {} quantifier",
         error.InvalidBackreference => "Invalid escape",
         error.InvalidDecimalEscape => "Invalid decimal escape",
+        error.InvalidNamedReference => "Invalid named reference",
+        error.InvalidNamedBackreference => "Invalid named capture referenced",
         error.InvalidNamedCapture => "Invalid capture group name",
         error.DuplicateNamedCapture => "Duplicate capture group name",
         error.UnsupportedGroupAssertion => "Invalid group",
@@ -568,8 +583,33 @@ fn compile(allocator: std.mem.Allocator, specification: []const u16, default_glo
     };
     const expression = try parser.parseExpression();
     if (parser.index != owned_pattern.len) return error.UnexpectedPatternToken;
+    try resolveNamedBackreferences(expression, parser.capture_names[0..parser.capture_count]);
     if (parser.max_backreference) |capture_index| if (capture_index >= parser.capture_count) return error.InvalidBackreference;
     return .{ .arena = arena, .expression = expression, .flags = flags, .capture_count = parser.capture_count, .capture_names = parser.capture_names };
+}
+
+fn resolveNamedBackreferences(expression: *Expression, names: []const ?[]const u16) anyerror!void {
+    for (@constCast(expression.alternatives)) |*alternative| {
+        for (@constCast(alternative.pieces)) |*piece| try resolveNamedBackreferencesInAtom(&piece.atom, names);
+    }
+}
+
+fn resolveNamedBackreferencesInAtom(atom: *Atom, names: []const ?[]const u16) anyerror!void {
+    switch (atom.*) {
+        .group => |group| try resolveNamedBackreferences(group.expression, names),
+        .assertion => |assertion| try resolveNamedBackreferences(assertion.expression, names),
+        .named_backreference => |name| {
+            var resolved: ?usize = null;
+            for (names, 0..) |candidate, index| if (candidate) |actual| {
+                if (std.mem.eql(u16, actual, name)) {
+                    resolved = index;
+                    break;
+                }
+            };
+            atom.* = .{ .backreference = resolved orelse return error.InvalidNamedBackreference };
+        },
+        else => {},
+    }
 }
 
 /// Compile the public `/pattern/flags` specification for execution engines
@@ -721,7 +761,13 @@ fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: Atom, init
             if ((left_word != right_word) == expected) try output.append(allocator, initial);
         },
         .backreference => |capture_index| {
-            if (capture_index >= max_captures or !initial.captures[capture_index].matched) return output.toOwnedSlice(allocator);
+            if (capture_index >= max_captures) return output.toOwnedSlice(allocator);
+            if (!initial.captures[capture_index].matched) {
+                // ECMAScript backreferences to an unmatched capture consume
+                // an empty string rather than failing the candidate.
+                try output.append(allocator, initial);
+                return output.toOwnedSlice(allocator);
+            }
             const span = initial.captures[capture_index];
             const length = span.end - span.start;
             if (initial.position + length <= source.len and slicesEqual(source[span.start..span.end], source[initial.position .. initial.position + length], flags)) {
@@ -730,6 +776,7 @@ fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: Atom, init
                 try output.append(allocator, candidate);
             }
         },
+        .named_backreference => return output.toOwnedSlice(allocator),
         .group => |group| {
             const matches = try matchExpression(allocator, source, group.expression, initial, flags);
             for (matches) |match| {
@@ -1319,6 +1366,16 @@ test "正規表現構文エラーはV8互換の文言を設定する" {
     try std.testing.expectEqualStrings("Invalid regular expression: /\\1/u: Invalid escape", runtime.failureMessage().?);
     runtime.clearFailureMessage();
 
+    const invalid_named_reference = try runtime.stringUtf8("/(?<a>a)\\k<b>/u");
+    try std.testing.expectError(error.InvalidNamedBackreference, call(&runtime, "正規表現マッチ", &.{ source, invalid_named_reference }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /(?<a>a)\\k<b>/u: Invalid named capture referenced", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
+
+    const malformed_named_reference = try runtime.stringUtf8("/\\k/u");
+    try std.testing.expectError(error.InvalidNamedReference, call(&runtime, "正規表現マッチ", &.{ source, malformed_named_reference }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /\\k/u: Invalid named reference", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
+
     const invalid_decimal_escape = try runtime.stringUtf8("/[\\1]/u");
     try std.testing.expectError(error.InvalidDecimalEscape, call(&runtime, "正規表現マッチ", &.{ source, invalid_decimal_escape }));
     try std.testing.expectEqualStrings("Invalid regular expression: /[\\1]/u: Invalid decimal escape", runtime.failureMessage().?);
@@ -1362,6 +1419,27 @@ test "名前付きキャプチャと非貪欲量指定を処理する" {
     try std.testing.expectEqual(@as(usize, 2), result.value.array.len());
     try std.testing.expect(result.captures.? == .array);
     try std.testing.expectEqual(@as(usize, 2), result.captures.?.array.len());
+}
+
+test "Unicode名前付き後方参照と未マッチ群の空一致を処理する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var source = try runtime.stringUtf8("foo-foo");
+    try roots.protect(&source);
+    var pattern = try runtime.stringUtf8("/(?<word>[a-z]+)-\\k<word>/u");
+    try roots.protect(&pattern);
+    const matched = (try call(&runtime, "正規表現マッチ", &.{ source, pattern })).?;
+    try std.testing.expectEqualSlices(u16, source.string.units, matched.string.units);
+
+    var optional_source = try runtime.stringUtf8("y");
+    try roots.protect(&optional_source);
+    var optional_pattern = try runtime.stringUtf8("/(?<optional>x)?\\k<optional>/u");
+    try roots.protect(&optional_pattern);
+    const empty = (try call(&runtime, "正規表現マッチ", &.{ optional_source, optional_pattern })).?;
+    try std.testing.expectEqualSlices(u16, &.{}, empty.string.units);
 }
 
 test "アンカー・空クラス・先読み・後読みを処理する" {

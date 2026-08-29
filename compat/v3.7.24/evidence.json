@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 355,
-    "nativeAot": 261,
+    "total": 357,
+    "nativeAot": 263,
     "interpreter": 99,
     "compatJs": 9
   },
@@ -10336,6 +10336,7 @@
         "native-system-regexp-unicode-all-scripts",
         "native-system-regexp-unicode-escape-boundaries",
         "native-system-regexp-unicode-ignore-case",
+        "native-system-regexp-unicode-named-backreference",
         "native-system-regexp-unicode-properties",
         "native-system-regexp-unicode-property-aliases",
         "native-system-regexp-unicode-script-extensions",
@@ -10392,6 +10393,9 @@
             "fixture.commands"
           ],
           "native-system-regexp-unicode-ignore-case": [
+            "fixture.commands"
+          ],
+          "native-system-regexp-unicode-named-backreference": [
             "fixture.commands"
           ],
           "native-system-regexp-unicode-properties": [
@@ -10733,6 +10737,8 @@
         "native-system-regexp-unicode-escape-boundaries",
         "native-system-regexp-unicode-ignore-case",
         "native-system-regexp-unicode-invalid-escape-error",
+        "native-system-regexp-unicode-named-backreference",
+        "native-system-regexp-unicode-named-backreference-error",
         "native-system-regexp-unicode-properties",
         "native-system-regexp-unicode-property-aliases",
         "native-system-regexp-unicode-property-error",
@@ -10803,6 +10809,14 @@
           "native-system-regexp-unicode-invalid-escape-error": [
             "fixture.commands"
           ],
+          "native-system-regexp-unicode-named-backreference": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
+          "native-system-regexp-unicode-named-backreference-error": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
           "native-system-regexp-unicode-properties": [
             "fixture.commands"
           ],
@@ -10831,8 +10845,8 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 23件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "共有Zig正規表現エンジンと抽出副作用をAOTへ実装し、Unicode制御・コードポイント・不正エスケープ診断を追加して公式7経路差分テストに成功"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 25件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "共有Zig正規表現エンジンと抽出副作用をAOTへ実装し、Unicode制御・コードポイント・名前付き後方参照・不正エスケープ診断を追加して公式7経路差分テストに成功"
     },
     {
       "id": "command-0296",
