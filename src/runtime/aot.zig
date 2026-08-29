@@ -13695,6 +13695,17 @@ fn dictionaryHasBuiltin(runtime: *Runtime, source: Value, key: Value) !bool {
             if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) or std.mem.eql(u16, key_units, &.{ 'n', 'a', 'm', 'e' })) return true;
             return (try tableInheritedProperty(runtime, roots[0], .function, key_units)) != null;
         },
+        .byte_buffer => {
+            const key_units = try valueUtf16Alloc(runtime, roots[1]);
+            defer runtime.allocator.free(key_units);
+            const object = roots[0].object() orelse return error.InvalidByteBuffer;
+            const buffer = object.payload.byte_buffer;
+            if (buffer.kind != .array_buffer) {
+                if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return true;
+                if (runtime.aotCanonicalArrayIndexUnits(key_units)) |index| return index < buffer.bytes.len;
+            }
+            return (try tableInheritedProperty(runtime, roots[0], .byte_buffer, key_units)) != null;
+        },
         else => {
             const key_units = try valueUtf16Alloc(runtime, roots[1]);
             defer runtime.allocator.free(key_units);
@@ -20415,6 +20426,33 @@ test "AOT辞書キー存在は標準prototype propertyを含む" {
     try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[1], staticStringValue("toString")));
     try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[2], staticStringValue("toString")));
     try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[2], staticStringValue("prototype")));
+    try std.testing.expect(!(try dictionaryHasBuiltin(&runtime, roots[0], staticStringValue("missing"))));
+}
+
+test "AOT辞書キー存在はbyte bufferのown indexとprototype propertyを含む" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 3;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createBytes(&.{ 85, 66 });
+    roots[1] = try runtime.createUint8Array(&.{ 85, 66 });
+    roots[2] = try runtime.createArrayBuffer(&.{ 85, 66 });
+
+    try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[0], staticStringValue("0")));
+    try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[0], staticStringValue("length")));
+    try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[0], staticStringValue("byteLength")));
+    try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[0], staticStringValue("buffer")));
+    try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[1], staticStringValue("0")));
+    try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[1], staticStringValue("map")));
+    try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[2], staticStringValue("byteLength")));
+    try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[2], staticStringValue("maxByteLength")));
+    try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[2], staticStringValue("toString")));
+    try std.testing.expect(!(try dictionaryHasBuiltin(&runtime, roots[2], staticStringValue("0"))));
+    try std.testing.expect(!(try dictionaryHasBuiltin(&runtime, roots[2], staticStringValue("length"))));
+    try std.testing.expect(!(try dictionaryHasBuiltin(&runtime, roots[2], staticStringValue("buffer"))));
     try std.testing.expect(!(try dictionaryHasBuiltin(&runtime, roots[0], staticStringValue("missing"))));
 }
 

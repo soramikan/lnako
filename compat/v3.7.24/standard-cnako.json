@@ -8119,14 +8119,15 @@
         "native-system-dictionary-hash-commands",
         "native-system-array-own-properties",
         "native-system-array-sparse-presence",
-        "native-system-dictionary-inherited-properties"
+        "native-system-dictionary-inherited-properties",
+        "native-system-dictionary-byte-buffer-properties"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "辞書・配列・関数のown propertyと標準prototype propertyの存在判定、配列holeの非存在化、動的エラー文言をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
+      "reason": "辞書・配列・関数・Buffer/Uint8Array/ArrayBufferのown propertyと標準prototype propertyの存在判定、配列holeの非存在化、動的エラー文言をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0303",
@@ -8230,14 +8231,15 @@
       "tests": [
         "plugin-system-dictionary-hash",
         "native-system-dictionary-hash-commands",
-        "native-system-dictionary-inherited-properties"
+        "native-system-dictionary-inherited-properties",
+        "native-system-dictionary-byte-buffer-properties"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "辞書・配列・関数のown propertyと標準prototype propertyの存在判定、動的エラー文言をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
+      "reason": "辞書・配列・関数・Buffer/Uint8Array/ArrayBufferのown propertyと標準prototype propertyの存在判定、動的エラー文言をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
       "id": "command-0307",
@@ -12736,7 +12738,8 @@
         "native-system-table-byte-row-properties",
         "native-system-table-byte-row-slice-alias",
         "native-system-byte-buffer-property",
-        "native-system-byte-buffer-backing"
+        "native-system-byte-buffer-backing",
+        "native-system-dictionary-byte-buffer-properties"
       ],
       "platforms": [
         "macos-aarch64",
@@ -12790,7 +12793,8 @@
         "plugin-node-crypto",
         "native-node-crypto",
         "native-system-byte-buffer-property",
-        "native-system-byte-buffer-backing"
+        "native-system-byte-buffer-backing",
+        "native-system-dictionary-byte-buffer-properties"
       ],
       "platforms": [
         "macos-aarch64",

@@ -110,6 +110,15 @@ fn has(runtime: *Runtime, source: Value, key_value: Value) !bool {
         if (std.mem.eql(u16, key.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) or std.mem.eql(u16, key.string.units, &.{ 'n', 'a', 'm', 'e' })) return true;
         return arrays.hasStandardInheritedProperty(runtime, rooted_source, key.string.units);
     }
+    if (rooted_source == .bytes) {
+        var key = try runtime.valueToString(rooted_key_value);
+        try roots.protect(&key);
+        if (rooted_source.bytes.kind != .array_buffer) {
+            if (std.mem.eql(u16, key.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return true;
+            if (canonicalArrayIndex(key.string.units)) |index| return index < rooted_source.bytes.bytes.len;
+        }
+        return arrays.hasStandardInheritedProperty(runtime, rooted_source, key.string.units);
+    }
     var key = try runtime.valueToString(rooted_key_value);
     try roots.protect(&key);
     var receiver = try runtime.valueToString(rooted_source);
@@ -277,6 +286,58 @@ test "辞書キー存在は標準prototype propertyを含む" {
     };
     for (probes) |probe| {
         const result = (try call(&runtime, "辞書キー存在", &.{ probe.source, probe.key })).?;
+        try std.testing.expectEqual(probe.expected, result.boolean);
+    }
+}
+
+test "辞書キー存在はbyte bufferのown indexとprototype propertyを含む" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var buffer = try runtime.createBytes(&.{ 85, 66 });
+    try roots.protect(&buffer);
+    var uint8 = try runtime.createUint8Array(&.{ 85, 66 });
+    try roots.protect(&uint8);
+    var array_buffer = try runtime.createArrayBuffer(&.{ 85, 66 });
+    try roots.protect(&array_buffer);
+
+    var zero_key = try runtime.stringUtf8("0");
+    try roots.protect(&zero_key);
+    var length_key = try runtime.stringUtf8("length");
+    try roots.protect(&length_key);
+    var byte_length_key = try runtime.stringUtf8("byteLength");
+    try roots.protect(&byte_length_key);
+    var buffer_key = try runtime.stringUtf8("buffer");
+    try roots.protect(&buffer_key);
+    var map_key = try runtime.stringUtf8("map");
+    try roots.protect(&map_key);
+    var max_byte_length_key = try runtime.stringUtf8("maxByteLength");
+    try roots.protect(&max_byte_length_key);
+    var to_string_key = try runtime.stringUtf8("toString");
+    try roots.protect(&to_string_key);
+    var missing_key = try runtime.stringUtf8("missing");
+    try roots.protect(&missing_key);
+
+    const probes = [_]struct { source: Value, key: Value, expected: bool }{
+        .{ .source = buffer, .key = zero_key, .expected = true },
+        .{ .source = buffer, .key = length_key, .expected = true },
+        .{ .source = buffer, .key = byte_length_key, .expected = true },
+        .{ .source = buffer, .key = buffer_key, .expected = true },
+        .{ .source = uint8, .key = zero_key, .expected = true },
+        .{ .source = uint8, .key = map_key, .expected = true },
+        .{ .source = array_buffer, .key = byte_length_key, .expected = true },
+        .{ .source = array_buffer, .key = max_byte_length_key, .expected = true },
+        .{ .source = array_buffer, .key = to_string_key, .expected = true },
+        .{ .source = array_buffer, .key = zero_key, .expected = false },
+        .{ .source = array_buffer, .key = length_key, .expected = false },
+        .{ .source = array_buffer, .key = buffer_key, .expected = false },
+        .{ .source = buffer, .key = missing_key, .expected = false },
+    };
+    for (probes) |probe| {
+        const result = (try call(&runtime, "ハッシュキー存在", &.{ probe.source, probe.key })).?;
         try std.testing.expectEqual(probe.expected, result.boolean);
     }
 }
