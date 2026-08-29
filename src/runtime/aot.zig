@@ -13006,7 +13006,9 @@ fn arrayOrderingBuiltin(runtime: *Runtime, command: aot_builtin.Command, source:
     const items = &object.payload.array;
     switch (command) {
         .array_reverse => {
+            try runtime.normalizeAotArrayPresence(object);
             std.mem.reverse(Value, items.items);
+            std.mem.reverse(bool, object.array_presence.items);
             return source;
         },
         .array_numeric_convert => {
@@ -13014,7 +13016,13 @@ fn arrayOrderingBuiltin(runtime: *Runtime, command: aot_builtin.Command, source:
             var roots = RootFrame{};
             runtime.pushRoots(&roots, @ptrCast(&source_root), 1);
             defer runtime.popRoots(&roots);
-            for (items.items) |*item| item.* = numberValue(try parseFloatBuiltin(runtime, item.*));
+            try runtime.normalizeAotArrayPresence(object);
+            for (items.items, 0..) |*item, index| {
+                item.* = numberValue(try parseFloatBuiltin(runtime, item.*));
+                // Assignment through every indexed position materializes a
+                // hole as the parsed value of undefined (NaN).
+                object.array_presence.items[index] = true;
+            }
             return source_root;
         },
         .array_sort, .array_numeric_sort => return try stableArraySort(runtime, source, command == .array_numeric_sort),
@@ -13027,11 +13035,16 @@ fn arrayShuffleBuiltin(runtime: *Runtime, source: Value) !Value {
     if (source.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
     const object = source.object() orelse return error.InvalidArray;
     if (object.payload != .array) return error.InvalidArray;
+    try runtime.normalizeAotArrayPresence(object);
     var index = object.payload.array.items.len;
     while (index > 1) {
         index -= 1;
         const random_index: usize = @intFromFloat(@floor(nextRandom(runtime) * @as(f64, @floatFromInt(index + 1))));
         std.mem.swap(Value, &object.payload.array.items[index], &object.payload.array.items[random_index]);
+        // The upstream implementation uses two indexed assignments.  A hole
+        // reads as undefined, while both assignment targets become present.
+        object.array_presence.items[index] = true;
+        object.array_presence.items[random_index] = true;
     }
     return source;
 }
@@ -13065,10 +13078,17 @@ fn stableArrayCallbackSort(runtime: *Runtime, source: Value, callable: Value) !V
     const original_length = items.items.len;
     if (original_length < 2) return source;
 
+    const object = source.object() orelse return error.InvalidArray;
+    try runtime.normalizeAotArrayPresence(object);
+
     const first = try runtime.allocator.dupe(Value, items.items);
     defer runtime.allocator.free(first);
     const second = try runtime.allocator.dupe(Value, first);
     defer runtime.allocator.free(second);
+    const first_presence = try runtime.allocator.dupe(bool, object.array_presence.items);
+    defer runtime.allocator.free(first_presence);
+    const second_presence = try runtime.allocator.dupe(bool, first_presence);
+    defer runtime.allocator.free(second_presence);
 
     const root_count = std.math.add(usize, 3, std.math.mul(usize, original_length, 2) catch return error.ArrayTooLarge) catch return error.ArrayTooLarge;
     const root_values = try runtime.allocator.alloc(Value, root_count);
@@ -13087,6 +13107,8 @@ fn stableArrayCallbackSort(runtime: *Runtime, source: Value, callable: Value) !V
     while (width < original_length) : (width = std.math.mul(usize, width, 2) catch original_length) {
         const input = if (from_first) first else second;
         const output = if (from_first) second else first;
+        const input_presence = if (from_first) first_presence else second_presence;
+        const output_presence = if (from_first) second_presence else first_presence;
         var start: usize = 0;
         while (start < original_length) {
             const middle = @min(std.math.add(usize, start, width) catch original_length, original_length);
@@ -13095,12 +13117,14 @@ fn stableArrayCallbackSort(runtime: *Runtime, source: Value, callable: Value) !V
             var right = middle;
             var destination = start;
             while (left < middle and right < end) {
-                const order = try compareAotCallback(runtime, root_values[1], input[left], input[right], &root_values[2]);
+                const order = try compareAotCallback(runtime, root_values[1], input[left], input_presence[left], input[right], input_presence[right], &root_values[2]);
                 if (order == .gt) {
                     output[destination] = input[right];
+                    output_presence[destination] = input_presence[right];
                     right += 1;
                 } else {
                     output[destination] = input[left];
+                    output_presence[destination] = input_presence[left];
                     left += 1;
                 }
                 destination += 1;
@@ -13108,11 +13132,17 @@ fn stableArrayCallbackSort(runtime: *Runtime, source: Value, callable: Value) !V
             while (left < middle) : ({
                 left += 1;
                 destination += 1;
-            }) output[destination] = input[left];
+            }) {
+                output[destination] = input[left];
+                output_presence[destination] = input_presence[left];
+            }
             while (right < end) : ({
                 right += 1;
                 destination += 1;
-            }) output[destination] = input[right];
+            }) {
+                output[destination] = input[right];
+                output_presence[destination] = input_presence[right];
+            }
             start = end;
         }
         from_first = !from_first;
@@ -13122,13 +13152,19 @@ fn stableArrayCallbackSort(runtime: *Runtime, source: Value, callable: Value) !V
         const old_length = items.items.len;
         try items.resize(runtime.allocator, original_length);
         @memset(items.items[old_length..], .{});
+        try object.array_presence.resize(runtime.allocator, original_length);
+        @memset(object.array_presence.items[old_length..], false);
     }
     const sorted = if (from_first) first else second;
     std.mem.copyForwards(Value, items.items[0..original_length], sorted);
+    const sorted_presence = if (from_first) first_presence else second_presence;
+    std.mem.copyForwards(bool, object.array_presence.items[0..original_length], sorted_presence);
     return root_values[0];
 }
 
-fn compareAotCallback(runtime: *Runtime, callable: Value, left: Value, right: Value, result_root: *Value) !std.math.Order {
+fn compareAotCallback(runtime: *Runtime, callable: Value, left: Value, left_present: bool, right: Value, right_present: bool, result_root: *Value) !std.math.Order {
+    if (!left_present) return if (!right_present) .eq else .gt;
+    if (!right_present) return .lt;
     if (left.tag == @intFromEnum(Tag.undefined)) return if (right.tag == @intFromEnum(Tag.undefined)) .eq else .gt;
     if (right.tag == @intFromEnum(Tag.undefined)) return .lt;
     result_root.* = try invokeAotCallback(runtime, callable, @ptrCast(&[_]Value{ left, right }), 2);
@@ -13170,8 +13206,12 @@ fn registeredFunctionMatches(registered_name: []const u8, requested_name: []cons
 }
 
 fn stableArraySort(runtime: *Runtime, source: Value, numeric: bool) !Value {
-    const items = &source.object().?.payload.array;
+    const object = source.object() orelse return error.InvalidArray;
+    if (object.payload != .array) return error.InvalidArray;
+    const items = &object.payload.array;
     if (items.items.len < 2) return source;
+
+    try runtime.normalizeAotArrayPresence(object);
 
     // Keep the live array unchanged until the merge completes. The contiguous
     // root storage protects both the source object and every temporary value
@@ -13182,6 +13222,8 @@ fn stableArraySort(runtime: *Runtime, source: Value, numeric: bool) !Value {
     defer allocator.free(root_values);
     root_values[0] = source;
     std.mem.copyForwards(Value, root_values[1..], items.items);
+    const temporary_presence = try allocator.dupe(bool, object.array_presence.items);
+    defer allocator.free(temporary_presence);
     var roots = RootFrame{};
     runtime.pushRoots(&roots, root_values.ptr, root_values.len);
     defer runtime.popRoots(&roots);
@@ -13192,6 +13234,8 @@ fn stableArraySort(runtime: *Runtime, source: Value, numeric: bool) !Value {
     while (width < items.items.len) : (width = std.math.mul(usize, width, 2) catch items.items.len) {
         const input = if (from_source) items.items else temporary;
         const output = if (from_source) temporary else items.items;
+        const input_presence = if (from_source) object.array_presence.items else temporary_presence;
+        const output_presence = if (from_source) temporary_presence else object.array_presence.items;
         var start: usize = 0;
         while (start < input.len) {
             const middle = @min(std.math.add(usize, start, width) catch input.len, input.len);
@@ -13200,12 +13244,14 @@ fn stableArraySort(runtime: *Runtime, source: Value, numeric: bool) !Value {
             var right = middle;
             var destination = start;
             while (left < middle and right < end) {
-                const order = try compareArraySortValues(runtime, input[left], input[right], numeric);
+                const order = try compareArraySortValues(runtime, input[left], input_presence[left], input[right], input_presence[right], numeric);
                 if (order == .gt) {
                     output[destination] = input[right];
+                    output_presence[destination] = input_presence[right];
                     right += 1;
                 } else {
                     output[destination] = input[left];
+                    output_presence[destination] = input_presence[left];
                     left += 1;
                 }
                 destination += 1;
@@ -13213,20 +13259,31 @@ fn stableArraySort(runtime: *Runtime, source: Value, numeric: bool) !Value {
             while (left < middle) : ({
                 left += 1;
                 destination += 1;
-            }) output[destination] = input[left];
+            }) {
+                output[destination] = input[left];
+                output_presence[destination] = input_presence[left];
+            }
             while (right < end) : ({
                 right += 1;
                 destination += 1;
-            }) output[destination] = input[right];
+            }) {
+                output[destination] = input[right];
+                output_presence[destination] = input_presence[right];
+            }
             start = end;
         }
         from_source = !from_source;
     }
-    if (!from_source) std.mem.copyForwards(Value, items.items, temporary);
+    if (!from_source) {
+        std.mem.copyForwards(Value, items.items, temporary);
+        std.mem.copyForwards(bool, object.array_presence.items, temporary_presence);
+    }
     return source;
 }
 
-fn compareArraySortValues(runtime: *Runtime, left: Value, right: Value, numeric: bool) !std.math.Order {
+fn compareArraySortValues(runtime: *Runtime, left: Value, left_present: bool, right: Value, right_present: bool, numeric: bool) !std.math.Order {
+    if (!left_present) return if (!right_present) .eq else .gt;
+    if (!right_present) return .lt;
     if (left.tag == @intFromEnum(Tag.undefined)) return if (right.tag == @intFromEnum(Tag.undefined)) .eq else .gt;
     if (right.tag == @intFromEnum(Tag.undefined)) return .lt;
     if (numeric) {
@@ -18537,6 +18594,58 @@ test "AOT配列ソート系は安定mergeとundefined末尾と同一配列を保
     try std.testing.expect(std.math.isNan(valueToNumber((try arrayItems(roots[3])).items[5])));
     try std.testing.expectEqual(roots[3].payload, (try arrayOrderingBuiltin(&runtime, .array_reverse, roots[3])).payload);
     try std.testing.expect(std.math.isNan(valueToNumber((try arrayItems(roots[3])).items[0])));
+}
+
+test "AOT疎配列の順序操作は値とpresenceの公式境界を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator, .random_state = default_random_seed };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 5;
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createArray(&.{});
+    try runtime.indexSet(roots[0], numberValue(0), numberValue(3));
+    try runtime.indexSet(roots[0], numberValue(2), numberValue(1));
+    try runtime.indexSet(roots[0], numberValue(3), .{});
+    _ = try arrayOrderingBuiltin(&runtime, .array_sort, roots[0]);
+    const sorted = roots[0].object().?.array_presence.items;
+    try std.testing.expectEqualSlices(bool, &.{ true, true, true, false }, sorted);
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber((try arrayItems(roots[0])).items[0]));
+    try std.testing.expectEqual(@as(f64, 3), valueToNumber((try arrayItems(roots[0])).items[1]));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt((try arrayItems(roots[0])).items[2].tag)));
+
+    roots[1] = try runtime.createArray(&.{});
+    try runtime.indexSet(roots[1], numberValue(0), numberValue(10));
+    try runtime.indexSet(roots[1], numberValue(2), numberValue(2));
+    try runtime.indexSet(roots[1], numberValue(3), .{});
+    _ = try arrayOrderingBuiltin(&runtime, .array_numeric_sort, roots[1]);
+    try std.testing.expectEqualSlices(bool, &.{ true, true, true, false }, roots[1].object().?.array_presence.items);
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber((try arrayItems(roots[1])).items[0]));
+    try std.testing.expectEqual(@as(f64, 10), valueToNumber((try arrayItems(roots[1])).items[1]));
+
+    roots[2] = try runtime.createArray(&.{});
+    try runtime.indexSet(roots[2], numberValue(0), .{});
+    try runtime.indexSet(roots[2], numberValue(2), numberValue(4));
+    _ = try arrayOrderingBuiltin(&runtime, .array_numeric_convert, roots[2]);
+    try std.testing.expectEqualSlices(bool, &.{ true, true, true }, roots[2].object().?.array_presence.items);
+    try std.testing.expect(std.math.isNan(valueToNumber((try arrayItems(roots[2])).items[0])));
+    try std.testing.expect(std.math.isNan(valueToNumber((try arrayItems(roots[2])).items[1])));
+    try std.testing.expectEqual(@as(f64, 4), valueToNumber((try arrayItems(roots[2])).items[2]));
+
+    roots[3] = try runtime.createArray(&.{});
+    try runtime.indexSet(roots[3], numberValue(0), numberValue(1));
+    try runtime.indexSet(roots[3], numberValue(2), numberValue(3));
+    _ = try arrayOrderingBuiltin(&runtime, .array_reverse, roots[3]);
+    try std.testing.expectEqualSlices(bool, &.{ true, false, true }, roots[3].object().?.array_presence.items);
+    try std.testing.expectEqual(@as(f64, 3), valueToNumber((try arrayItems(roots[3])).items[0]));
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber((try arrayItems(roots[3])).items[2]));
+
+    roots[4] = try runtime.createArray(&.{});
+    try runtime.indexSet(roots[4], numberValue(0), numberValue(1));
+    try runtime.indexSet(roots[4], numberValue(2), numberValue(3));
+    _ = try arrayOrderingBuiltin(&runtime, .array_shuffle, roots[4]);
+    try std.testing.expectEqualSlices(bool, &.{ true, true, true }, roots[4].object().?.array_presence.items);
 }
 
 test "AOT配列シャッフルはFisher-Yatesの置換と同一配列を保つ" {

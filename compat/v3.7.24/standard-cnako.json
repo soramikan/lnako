@@ -4886,7 +4886,8 @@
       "status": "native",
       "tests": [
         "plugin-system-array-core",
-        "native-system-array-sort-commands"
+        "native-system-array-sort-commands",
+        "native-system-array-sparse-ordering"
       ],
       "platforms": [
         "macos-aarch64",
@@ -4913,7 +4914,8 @@
       "status": "native",
       "tests": [
         "plugin-system-array-core",
-        "native-system-array-sort-commands"
+        "native-system-array-sort-commands",
+        "native-system-array-sparse-ordering"
       ],
       "platforms": [
         "macos-aarch64",
@@ -4940,7 +4942,8 @@
       "status": "native",
       "tests": [
         "plugin-system-array-core",
-        "native-system-array-sort-commands"
+        "native-system-array-sort-commands",
+        "native-system-array-sparse-ordering"
       ],
       "platforms": [
         "macos-aarch64",
@@ -4994,7 +4997,8 @@
       "status": "native",
       "tests": [
         "plugin-system-array-core",
-        "native-system-array-sort-commands"
+        "native-system-array-sort-commands",
+        "native-system-array-sparse-ordering"
       ],
       "platforms": [
         "macos-aarch64",
@@ -5021,7 +5025,8 @@
       "status": "native",
       "tests": [
         "plugin-system-array-core",
-        "native-system-array-shuffle"
+        "native-system-array-shuffle",
+        "native-system-array-sparse-ordering"
       ],
       "platforms": [
         "macos-aarch64",

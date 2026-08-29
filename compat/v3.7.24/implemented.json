@@ -1403,7 +1403,8 @@
     "status": "native",
     "tests": [
       "plugin-system-array-core",
-      "native-system-array-sort-commands"
+      "native-system-array-sort-commands",
+      "native-system-array-sparse-ordering"
     ],
     "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
   },
@@ -1411,7 +1412,8 @@
     "status": "native",
     "tests": [
       "plugin-system-array-core",
-      "native-system-array-sort-commands"
+      "native-system-array-sort-commands",
+      "native-system-array-sparse-ordering"
     ],
     "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
   },
@@ -1419,7 +1421,8 @@
     "status": "native",
     "tests": [
       "plugin-system-array-core",
-      "native-system-array-sort-commands"
+      "native-system-array-sort-commands",
+      "native-system-array-sparse-ordering"
     ],
     "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
   },
@@ -1427,7 +1430,8 @@
     "status": "native",
     "tests": [
       "plugin-system-array-core",
-      "native-system-array-sort-commands"
+      "native-system-array-sort-commands",
+      "native-system-array-sparse-ordering"
     ],
     "reason": "Zig製ランタイムで実装し、公式差分テストに成功"
   },
@@ -1435,7 +1439,8 @@
     "status": "native",
     "tests": [
       "plugin-system-array-core",
-      "native-system-array-shuffle"
+      "native-system-array-shuffle",
+      "native-system-array-sparse-ordering"
     ],
     "reason": "Interpreterと純LLVM AOTでFisher-Yatesと同一配列戻り値を実装し、公式差分テストに成功"
   },

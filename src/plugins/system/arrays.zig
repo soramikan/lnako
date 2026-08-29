@@ -160,6 +160,12 @@ const TestMutatingSortContext = struct {
     }
 };
 
+const ZeroRandomContext = struct {
+    fn next(_: *anyopaque) anyerror!f64 {
+        return 0;
+    }
+};
+
 fn insertOne(runtime: *Runtime, source: Value, index_value: Value, item: Value) !Value {
     if (source != .array) return error.ArrayExpected;
     try source.array.insert(spliceIndex(try runtime.valueToNumber(index_value), source.array.len()), item);
@@ -201,10 +207,15 @@ fn numericConvert(runtime: *Runtime, source: Value) !Value {
     var roots = runtime.rootFrame();
     defer roots.deinit();
     try roots.protect(&source_root);
-    for (source_root.array.items.items) |*item| {
+    try source_root.array.normalizePresence();
+    for (source_root.array.items.items, 0..) |*item, index| {
         const original = item.*;
         const number = try common.parseFloatValue(runtime, original);
         item.* = .{ .number = number };
+        // The upstream implementation assigns through every indexed
+        // position.  Unlike sort/reverse, conversion therefore fills holes
+        // with the parsed value of undefined (NaN).
+        source_root.array.presence.items[index] = true;
     }
     return source_root;
 }
@@ -238,6 +249,8 @@ fn stableSort(runtime: *Runtime, source: Value, mode: SortMode, callback: ?SortC
     if (array.items.items.len < 2) return;
     if (mode == .callback) return stableCallbackSort(runtime, array, callback.?);
 
+    try array.normalizePresence();
+
     // Allocate initialized scratch storage before sorting. This avoids O(n^2)
     // behavior and prevents OOM from exposing an uninitialized array slot.
     var source_root = source;
@@ -246,6 +259,8 @@ fn stableSort(runtime: *Runtime, source: Value, mode: SortMode, callback: ?SortC
     try roots.protect(&source_root);
     const temporary = try runtime.allocator().dupe(Value, array.items.items);
     defer runtime.allocator().free(temporary);
+    const temporary_presence = try runtime.allocator().dupe(bool, array.presence.items);
+    defer runtime.allocator().free(temporary_presence);
     for (temporary) |*item| try roots.protect(item);
 
     var width: usize = 1;
@@ -253,6 +268,8 @@ fn stableSort(runtime: *Runtime, source: Value, mode: SortMode, callback: ?SortC
     while (width < array.items.items.len) : (width = std.math.mul(usize, width, 2) catch array.items.items.len) {
         const input = if (from_source) array.items.items else temporary;
         const output = if (from_source) temporary else array.items.items;
+        const input_presence = if (from_source) array.presence.items else temporary_presence;
+        const output_presence = if (from_source) temporary_presence else array.presence.items;
         var start: usize = 0;
         while (start < input.len) {
             const middle = @min(std.math.add(usize, start, width) catch input.len, input.len);
@@ -261,12 +278,14 @@ fn stableSort(runtime: *Runtime, source: Value, mode: SortMode, callback: ?SortC
             var right = middle;
             var destination = start;
             while (left < middle and right < end) {
-                const order = try compareForSort(runtime, input[left], input[right], mode, callback);
+                const order = try compareForSort(runtime, input[left], input_presence[left], input[right], input_presence[right], mode, callback);
                 if (order == .gt) {
                     output[destination] = input[right];
+                    output_presence[destination] = input_presence[right];
                     right += 1;
                 } else {
                     output[destination] = input[left];
+                    output_presence[destination] = input_presence[left];
                     left += 1;
                 }
                 destination += 1;
@@ -274,16 +293,25 @@ fn stableSort(runtime: *Runtime, source: Value, mode: SortMode, callback: ?SortC
             while (left < middle) : ({
                 left += 1;
                 destination += 1;
-            }) output[destination] = input[left];
+            }) {
+                output[destination] = input[left];
+                output_presence[destination] = input_presence[left];
+            }
             while (right < end) : ({
                 right += 1;
                 destination += 1;
-            }) output[destination] = input[right];
+            }) {
+                output[destination] = input[right];
+                output_presence[destination] = input_presence[right];
+            }
             start = end;
         }
         from_source = !from_source;
     }
-    if (!from_source) std.mem.copyForwards(Value, array.items.items, temporary);
+    if (!from_source) {
+        std.mem.copyForwards(Value, array.items.items, temporary);
+        std.mem.copyForwards(bool, array.presence.items, temporary_presence);
+    }
 }
 
 fn stableCallbackSort(runtime: *Runtime, array: *value_mod.Array, callback: SortCallback) !void {
@@ -291,10 +319,15 @@ fn stableCallbackSort(runtime: *Runtime, array: *value_mod.Array, callback: Sort
     // Keep both merge buffers detached from the live array so a callback may
     // resize or reallocate that array without invalidating an active slice.
     const original_length = array.len();
+    try array.normalizePresence();
     const first = try runtime.allocator().dupe(Value, array.items.items);
     defer runtime.allocator().free(first);
     const second = try runtime.allocator().dupe(Value, first);
     defer runtime.allocator().free(second);
+    const first_presence = try runtime.allocator().dupe(bool, array.presence.items);
+    defer runtime.allocator().free(first_presence);
+    const second_presence = try runtime.allocator().dupe(bool, first_presence);
+    defer runtime.allocator().free(second_presence);
     var roots = runtime.rootFrame();
     defer roots.deinit();
     for (first) |*item| try roots.protect(item);
@@ -305,6 +338,8 @@ fn stableCallbackSort(runtime: *Runtime, array: *value_mod.Array, callback: Sort
     while (width < original_length) : (width = std.math.mul(usize, width, 2) catch original_length) {
         const input = if (from_first) first else second;
         const output = if (from_first) second else first;
+        const input_presence = if (from_first) first_presence else second_presence;
+        const output_presence = if (from_first) second_presence else first_presence;
         var start: usize = 0;
         while (start < original_length) {
             const middle = @min(std.math.add(usize, start, width) catch original_length, original_length);
@@ -313,12 +348,14 @@ fn stableCallbackSort(runtime: *Runtime, array: *value_mod.Array, callback: Sort
             var right = middle;
             var destination = start;
             while (left < middle and right < end) {
-                const order = try compareForSort(runtime, input[left], input[right], .callback, callback);
+                const order = try compareForSort(runtime, input[left], input_presence[left], input[right], input_presence[right], .callback, callback);
                 if (order == .gt) {
                     output[destination] = input[right];
+                    output_presence[destination] = input_presence[right];
                     right += 1;
                 } else {
                     output[destination] = input[left];
+                    output_presence[destination] = input_presence[left];
                     left += 1;
                 }
                 destination += 1;
@@ -326,11 +363,17 @@ fn stableCallbackSort(runtime: *Runtime, array: *value_mod.Array, callback: Sort
             while (left < middle) : ({
                 left += 1;
                 destination += 1;
-            }) output[destination] = input[left];
+            }) {
+                output[destination] = input[left];
+                output_presence[destination] = input_presence[left];
+            }
             while (right < end) : ({
                 right += 1;
                 destination += 1;
-            }) output[destination] = input[right];
+            }) {
+                output[destination] = input[right];
+                output_presence[destination] = input_presence[right];
+            }
             start = end;
         }
         from_first = !from_first;
@@ -340,14 +383,21 @@ fn stableCallbackSort(runtime: *Runtime, array: *value_mod.Array, callback: Sort
         const old_length = array.len();
         try array.items.resize(runtime.allocator(), original_length);
         @memset(array.items.items[old_length..], .undefined);
+        try array.presence.resize(runtime.allocator(), original_length);
+        @memset(array.presence.items[old_length..], false);
     }
     const sorted = if (from_first) first else second;
     std.mem.copyForwards(Value, array.items.items[0..original_length], sorted);
+    const sorted_presence = if (from_first) first_presence else second_presence;
+    std.mem.copyForwards(bool, array.presence.items[0..original_length], sorted_presence);
 }
 
-fn compareForSort(runtime: *Runtime, left: Value, right: Value, mode: SortMode, callback: ?SortCallback) !std.math.Order {
-    // ECMAScript Array#sort places undefined (including dense stand-ins for
-    // holes) after all defined values without invoking the comparator.
+fn compareForSort(runtime: *Runtime, left: Value, left_present: bool, right: Value, right_present: bool, mode: SortMode, callback: ?SortCallback) !std.math.Order {
+    // ECMAScript Array#sort places undefined after all defined values without
+    // invoking the comparator. Holes are not collected by the spec, so they
+    // remain after explicit undefined.
+    if (!left_present) return if (!right_present) .eq else .gt;
+    if (!right_present) return .lt;
     if (left == .undefined) return if (right == .undefined) .eq else .gt;
     if (right == .undefined) return .lt;
     return switch (mode) {
@@ -382,17 +432,25 @@ fn compareForSort(runtime: *Runtime, left: Value, right: Value, mode: SortMode, 
 
 fn reverse(source: Value) !Value {
     if (source != .array) return error.ArrayExpected;
+    try source.array.normalizePresence();
     std.mem.reverse(Value, source.array.items.items);
+    std.mem.reverse(bool, source.array.presence.items);
     return source;
 }
 
 fn shuffle(source: Value, context: ?Context) !Value {
     if (source != .array) return error.ArrayExpected;
+    try source.array.normalizePresence();
     var index = source.array.len();
     while (index > 1) {
         index -= 1;
         const random_index: usize = @intFromFloat(@floor(try Context.random(context) * @as(f64, @floatFromInt(index + 1))));
         std.mem.swap(Value, &source.array.items.items[index], &source.array.items.items[random_index]);
+        // The upstream implementation performs two indexed assignments.
+        // Reading a hole yields undefined, but either assignment materializes
+        // its target property even when the source side was absent.
+        source.array.presence.items[index] = true;
+        source.array.presence.items[random_index] = true;
     }
     return source;
 }
@@ -1381,6 +1439,70 @@ test "配列ソート系は安定な破壊的操作とundefined末尾を保つ" 
     const reversed = (try call(&runtime, "配列逆順", &.{numeric}, null)).?;
     try std.testing.expectEqual(numeric.array, reversed.array);
     try std.testing.expect(std.math.isNan(numeric.array.get(0).number));
+}
+
+test "疎配列の順序操作は値とpresenceの公式境界を保つ" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var sorted = try runtime.createArray();
+    try roots.protect(&sorted);
+    try sorted.array.set(0, .{ .number = 3 });
+    try sorted.array.set(2, .{ .number = 1 });
+    try sorted.array.set(3, .undefined);
+    _ = try call(&runtime, "配列ソート", &.{sorted}, null);
+    try std.testing.expectEqualSlices(bool, &.{ true, true, true, false }, sorted.array.presence.items);
+    try std.testing.expectEqual(@as(f64, 1), sorted.array.get(0).number);
+    try std.testing.expectEqual(@as(f64, 3), sorted.array.get(1).number);
+    try std.testing.expectEqual(Value.undefined, sorted.array.get(2));
+    try std.testing.expectEqual(Value.undefined, sorted.array.get(3));
+
+    var numeric = try runtime.createArray();
+    try roots.protect(&numeric);
+    try numeric.array.set(0, .{ .number = 10 });
+    try numeric.array.set(2, .{ .number = 2 });
+    try numeric.array.set(3, .undefined);
+    _ = try call(&runtime, "配列数値ソート", &.{numeric}, null);
+    try std.testing.expectEqualSlices(bool, &.{ true, true, true, false }, numeric.array.presence.items);
+    try std.testing.expectEqual(@as(f64, 2), numeric.array.get(0).number);
+    try std.testing.expectEqual(@as(f64, 10), numeric.array.get(1).number);
+    try std.testing.expectEqual(Value.undefined, numeric.array.get(2));
+
+    var converted = try runtime.createArray();
+    try roots.protect(&converted);
+    try converted.array.set(0, .undefined);
+    try converted.array.set(2, .{ .number = 4 });
+    _ = try call(&runtime, "配列数値変換", &.{converted}, null);
+    try std.testing.expectEqualSlices(bool, &.{ true, true, true }, converted.array.presence.items);
+    try std.testing.expect(std.math.isNan(converted.array.get(0).number));
+    try std.testing.expect(std.math.isNan(converted.array.get(1).number));
+    try std.testing.expectEqual(@as(f64, 4), converted.array.get(2).number);
+
+    var reversed = try runtime.createArray();
+    try roots.protect(&reversed);
+    try reversed.array.set(0, .{ .number = 1 });
+    try reversed.array.set(2, .{ .number = 3 });
+    _ = try call(&runtime, "配列逆順", &.{reversed}, null);
+    try std.testing.expectEqualSlices(bool, &.{ true, false, true }, reversed.array.presence.items);
+    try std.testing.expectEqual(@as(f64, 3), reversed.array.get(0).number);
+    try std.testing.expectEqual(Value.undefined, reversed.array.get(1));
+    try std.testing.expectEqual(@as(f64, 1), reversed.array.get(2).number);
+
+    var shuffled = try runtime.createArray();
+    try roots.protect(&shuffled);
+    try shuffled.array.set(0, .{ .number = 1 });
+    try shuffled.array.set(2, .{ .number = 3 });
+    var random_state: u8 = 0;
+    _ = try call(&runtime, "配列シャッフル", &.{shuffled}, .{
+        .context = &random_state,
+        .randomFn = ZeroRandomContext.next,
+    });
+    try std.testing.expectEqualSlices(bool, &.{ true, true, true }, shuffled.array.presence.items);
+    try std.testing.expectEqual(Value.undefined, shuffled.array.get(0));
+    try std.testing.expectEqual(@as(f64, 3), shuffled.array.get(1).number);
+    try std.testing.expectEqual(@as(f64, 1), shuffled.array.get(2).number);
 }
 
 test "表検索系はlengthとraw開始値の型を保持する" {

@@ -73,7 +73,7 @@ pub const Array = struct {
         return if (index < self.presence.items.len) self.presence.items[index] else true;
     }
 
-    fn normalizePresence(self: *Array) !void {
+    pub fn normalizePresence(self: *Array) !void {
         if (self.presence.items.len >= self.items.items.len) return;
         const previous_len = self.presence.items.len;
         try self.presence.resize(self.allocator, self.items.items.len);
