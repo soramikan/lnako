@@ -88,6 +88,8 @@ UTF-16コード単位を直接解析する明示スタックパーサーへ接�
 
 正規表現の追加Unicode境界では、`cA`形式の制御エスケープ、孤立サロゲートを含むコードポイントエスケープ、名前付き後方参照、Unicode時の不正10進エスケープと文字クラス範囲を公式V8の実測本文へ変換する。`native-system-regexp-unicode-escape-boundaries`、`native-system-regexp-unicode-control-escape-error`、`native-system-regexp-unicode-backreference-error`、`native-system-regexp-unicode-class-error`、`native-system-regexp-unicode-decimal-escape-error`、`native-system-regexp-unicode-named-backreference`、`native-system-regexp-unicode-named-backreference-error`でInterpreter・AOTの7経路を比較する。Unicode propertyの集合演算・文字列property、未検証の大小文字境界とバックトラッキング境界は引き続きTODOとして扱う。
 
+正規表現の空幅量指定では、公式Node 24が`(?:){2}`、`(){100,}`のように入力位置を進めないatomも指定回数を反映して空一致させる。lnakoは有限量指定と下限付き無限量指定の候補を保持し、無限展開を避ける。`native-system-regexp-zero-width-quantifier`で公式CLI・生成JavaScript・Interpreter・LLVM AOT O0〜O3を比較し、複雑な選択・捕捉状態の呼出順は`TODO: regexp-backtracking-edge`として未実装扱いにする。
+
 根拠は固定オラクルの
 [`core/src/plugin_system_array.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_array.mts) と
 [`core/src/plugin_system_dict.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_dict.mts) です。

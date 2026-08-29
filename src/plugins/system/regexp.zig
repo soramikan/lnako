@@ -682,7 +682,13 @@ fn expandPiece(allocator: std.mem.Allocator, source: []const u16, piece: Piece, 
     const zero = try allocator.alloc(Candidate, 1);
     zero[0] = initial;
     try levels.append(allocator, zero);
-    const limit = piece.maximum orelse source.len + 1;
+    // A zero-width atom still counts as a repetition.  The previous
+    // source-length bound was enough to prevent consuming atoms from
+    // running past the input, but it incorrectly made `(){100,}` unable to
+    // satisfy its minimum on a short input.  For an unbounded quantifier,
+    // keep enough levels for the minimum and at least one level per input
+    // code unit for consuming paths.
+    const limit = piece.maximum orelse @max(source.len + 1, piece.minimum);
     var repetition: usize = 0;
     while (repetition < limit) : (repetition += 1) {
         const frontier = levels.items[levels.items.len - 1];
@@ -690,7 +696,13 @@ fn expandPiece(allocator: std.mem.Allocator, source: []const u16, piece: Piece, 
         for (frontier) |candidate| {
             const atom_matches = try matchAtom(allocator, source, piece.atom, candidate, flags);
             for (atom_matches) |atom_match| {
-                if (atom_match.position == candidate.position and !(piece.minimum == 1 and piece.maximum == 1)) continue;
+                // An unbounded zero-width quantifier needs only its minimum
+                // number of zero-width repetitions.  Beyond that point the
+                // same candidate would form an infinite frontier.  Finite
+                // quantifiers are already bounded, so their zero-width
+                // repetitions must be retained through the declared limit.
+                if (atom_match.position == candidate.position and
+                    piece.maximum == null and repetition + 1 > piece.minimum) continue;
                 try next.append(allocator, atom_match);
             }
         }
@@ -1440,6 +1452,23 @@ test "Unicode名前付き後方参照と未マッチ群の空一致を処理す�
     try roots.protect(&optional_pattern);
     const empty = (try call(&runtime, "正規表現マッチ", &.{ optional_source, optional_pattern })).?;
     try std.testing.expectEqualSlices(u16, &.{}, empty.string.units);
+}
+
+test "正規表現の空幅量指定は下限と上限内の反復を保持する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const source = try runtime.stringUtf8("xa");
+
+    const bounded = try runtime.stringUtf8("/(?:){2}a/");
+    const bounded_result = (try call(&runtime, "正規表現マッチ", &.{ source, bounded })).?;
+    try std.testing.expectEqualSlices(u16, &.{'a'}, bounded_result.string.units);
+
+    const unbounded = try runtime.stringUtf8("/(){100,}/");
+    const unbounded_result = (try callWithEffects(&runtime, "正規表現マッチ", &.{ source, unbounded })).?;
+    try std.testing.expectEqualSlices(u16, &.{}, unbounded_result.value.string.units);
+    const captures = unbounded_result.captures.?;
+    try std.testing.expect(captures == .array);
+    try std.testing.expectEqualSlices(u16, &.{}, captures.array.items.items[0].string.units);
 }
 
 test "アンカー・空クラス・先読み・後読みを処理する" {

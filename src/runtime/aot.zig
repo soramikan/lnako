@@ -21101,7 +21101,7 @@ test "AOT一般正規表現命令は共有エンジンと抽出副作用を保�
     roots[9] = named.value;
     try std.testing.expectEqualSlices(u16, roots[8].object().?.payload.utf16_string, roots[9].object().?.payload.utf16_string);
 
-    roots[10] = try runtime.createString(&.{ 'y' });
+    roots[10] = try runtime.createString(&.{'y'});
     const optional = try regexpBuiltin(&runtime, .regexp_match, &.{ roots[10], staticStringValue("/(?<optional>x)?\\k<optional>/u") });
     roots[11] = optional.value;
     try std.testing.expectEqual(@as(usize, 0), roots[11].object().?.payload.utf16_string.len);

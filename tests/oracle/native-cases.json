@@ -745,6 +745,11 @@
     "source": "正規表現マッチ(\"x\",『/(?<a>a)\\k<b>/u』)を表示\n"
   },
   {
+    "id": "native-system-regexp-zero-width-quantifier",
+    "commands": ["正規表現マッチ", "JSON変換"],
+    "source": "JSON変換(正規表現マッチ(\"xa\",『/(?:){2}a/』))を表示\nJSON変換(正規表現マッチ(\"xa\",『/(){100,}/』))を表示\n"
+  },
+  {
     "id": "native-system-regexp-invalid-capture-name-error",
     "oracle": "official-generated",
     "commands": ["正規表現マッチ"],
