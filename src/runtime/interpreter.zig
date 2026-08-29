@@ -340,6 +340,7 @@ pub const Interpreter = struct {
 
     pub fn deinit(self: *Interpreter) void {
         self.deactivateExternalRuntime();
+        self.runtime.clearPrimitiveHook(self);
         self.dispatch_trace.finish();
         // Native plugins may retain host handles and stop worker threads from
         // deinitialize, so tear them down while all interpreter services exist.
@@ -369,6 +370,7 @@ pub const Interpreter = struct {
     }
 
     pub fn run(self: *Interpreter) !Value {
+        self.ensurePrimitiveHook();
         try self.runtime.registerRootProvider(.{ .context = self, .traceFn = traceRoots });
         defer self.runtime.unregisterRootProvider(self);
         try self.initializeSystem();
@@ -378,6 +380,7 @@ pub const Interpreter = struct {
     }
 
     pub fn runTests(self: *Interpreter) ![]const TestResult {
+        self.ensurePrimitiveHook();
         try self.runtime.registerRootProvider(.{ .context = self, .traceFn = traceRoots });
         defer self.runtime.unregisterRootProvider(self);
         try self.initializeSystem();
@@ -414,6 +417,7 @@ pub const Interpreter = struct {
         prepare: ?DynamicPreparationFn,
         context: ?*anyopaque,
     ) !Value {
+        self.ensurePrimitiveHook();
         try self.runtime.registerRootProvider(.{ .context = self, .traceFn = traceRoots });
         defer self.runtime.unregisterRootProvider(self);
         try self.initializeSystem();
@@ -426,6 +430,7 @@ pub const Interpreter = struct {
     /// uses this boundary for the native-plugin bridge so plugin-owned values
     /// and asynchronous promises remain visible to the embedded runtime GC.
     pub fn activateExternalRuntime(self: *Interpreter) !void {
+        self.ensurePrimitiveHook();
         const newly_registered = !self.external_root_provider;
         if (newly_registered) {
             try self.runtime.registerRootProvider(.{ .context = self, .traceFn = traceRoots });
@@ -452,6 +457,48 @@ pub const Interpreter = struct {
     pub fn callExternalCommand(self: *Interpreter, name: []const u8, arguments: []const Value) !Value {
         try self.activateExternalRuntime();
         return self.callBuiltin(name, arguments, null);
+    }
+
+    fn ensurePrimitiveHook(self: *Interpreter) void {
+        self.runtime.setPrimitiveHook(.{ .context = self, .callFn = interpreterPrimitiveHook });
+    }
+
+    fn objectToPrimitive(self: *Interpreter, value: Value, hint: value_mod.PrimitiveHint) anyerror!?Value {
+        if (value != .dictionary) return null;
+
+        var rooted_value = value;
+        var roots = self.runtime.rootFrame();
+        defer roots.deinit();
+        try roots.protect(&rooted_value);
+
+        const to_string_name: []const u16 = &.{ 't', 'o', 'S', 't', 'r', 'i', 'n', 'g' };
+        const value_of_name: []const u16 = &.{ 'v', 'a', 'l', 'u', 'e', 'O', 'f' };
+        const first = if (hint == .string) to_string_name else value_of_name;
+        const second = if (hint == .string) value_of_name else to_string_name;
+        var custom_method_seen = false;
+
+        for ([_][]const u16{ first, second }) |name| {
+            if (value_mod.dictionaryPropertyUnits(rooted_value.dictionary, name)) |method| {
+                custom_method_seen = true;
+                if (method == .undefined or method == .null_value) continue;
+                if (method != .function) return error.NotCallable;
+                var rooted_method = method;
+                try roots.protect(&rooted_method);
+                var result = try self.callFunctionValue(rooted_method.function, &.{});
+                try roots.protect(&result);
+                if (!value_mod.isObjectValue(result)) return result;
+                continue;
+            }
+
+            // A missing toString method represents the standard
+            // Object.prototype.toString. A missing valueOf method represents
+            // the standard object-returning Object.prototype.valueOf.
+            if (std.mem.eql(u16, name, to_string_name)) {
+                return @as(?Value, try self.runtime.valueToStringDefault(rooted_value));
+            }
+        }
+        if (custom_method_seen) return error.CannotConvertObjectToPrimitive;
+        return null;
     }
 
     /// Polls native-plugin asynchronous completions without draining the
@@ -2090,6 +2137,17 @@ pub const Interpreter = struct {
     }
 };
 
+fn interpreterPrimitiveHook(
+    context: *anyopaque,
+    runtime: *Runtime,
+    value: Value,
+    hint: value_mod.PrimitiveHint,
+) anyerror!?Value {
+    const self: *Interpreter = @ptrCast(@alignCast(context));
+    std.debug.assert(self.runtime == runtime);
+    return self.objectToPrimitive(value, hint);
+}
+
 fn preservesResultVariable(name: []const u8) bool {
     return std.mem.eql(u8, name, "表示") or
         std.mem.eql(u8, name, "表示する") or
@@ -2364,6 +2422,49 @@ test "エラー発生は公式Error.messageの値変換を行う" {
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("U:\nN:123\n", host.written());
+}
+
+test "辞書のカスタムToPrimitiveはヒント順序と失敗を保つ" {
+    const source =
+        "D={}\n" ++
+        "D[\"toString\"]=関数()それは\"CUSTOM\";ここまで\n" ++
+        "文字列変換(D)を表示\n" ++
+        "P={}\n" ++
+        "P[\"toString\"]=関数()それは\"PROTO\";ここまで\n" ++
+        "D={\"__proto__\":P}\n" ++
+        "文字列変換(D)を表示\n" ++
+        "D={}\n" ++
+        "D[\"toString\"]=関数()それは\"12x\";ここまで\n" ++
+        "実数変換(D)を表示\n" ++
+        "D={}\n" ++
+        "D[\"valueOf\"]=関数()それは7;ここまで\n" ++
+        "(D-1)を表示\n" ++
+        "(D+1)を表示\n" ++
+        "D={}\n" ++
+        "D[\"toString\"]=関数()それは{};ここまで\n" ++
+        "D[\"valueOf\"]=関数()それは7;ここまで\n" ++
+        "文字列変換(D)を表示\n" ++
+        "D={}\n" ++
+        "D[\"toString\"]=関数()それは{};ここまで\n" ++
+        "D[\"valueOf\"]=関数()それは{};ここまで\n" ++
+        "エラー監視\n" ++
+        "文字列変換(D)を表示\n" ++
+        "エラーならば\n" ++
+        "エラーメッセージを表示\n" ++
+        "ここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("CUSTOM\nPROTO\n12\n6\nNaN\n7\nCannot convert object to primitive value\n", host.written());
 }
 
 test "テスト定義を個別に実行して結果を記録する" {

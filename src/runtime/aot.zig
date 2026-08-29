@@ -24,6 +24,7 @@ extern "c" fn fflush(stream: ?*std.c.FILE) c_int;
 extern "c" fn time(timer: ?*i64) i64;
 
 pub const Tag = aot_abi.Tag;
+const AotPrimitiveHint = enum { string, number };
 
 const safe_array_element_limit: usize = 1_000_000;
 const aot_timer_event_limit: usize = 100_000;
@@ -2042,7 +2043,7 @@ fn valueToNumberRuntime(runtime: *Runtime, value: Value) !f64 {
         .number => @bitCast(value.payload),
         .static_utf8_string, .utf16_string => parseStringNumber(runtime, value),
         .bigint => error.CannotConvertBigIntToNumber,
-        .byte_buffer, .array, .dictionary, .iterator, .function, .promise => valueToNumberRuntime(runtime, try valueToPrimitive(runtime, value)),
+        .byte_buffer, .array, .dictionary, .iterator, .function, .promise => valueToNumberRuntime(runtime, try valueToPrimitive(runtime, value, .number)),
         .binding_cell => unreachable,
     };
 }
@@ -2063,7 +2064,7 @@ fn valueToParseFloatRuntime(runtime: *Runtime, value: Value) !f64 {
             break :blk string_mod.parseFloatNumber(runtime.allocator, units);
         },
         .bigint => error.CannotConvertBigIntToNumber,
-        .byte_buffer, .array, .dictionary, .iterator, .function, .promise => valueToParseFloatRuntime(runtime, try valueToPrimitive(runtime, value)),
+        .byte_buffer, .array, .dictionary, .iterator, .function, .promise => valueToParseFloatRuntime(runtime, try valueToPrimitive(runtime, value, .string)),
         .binding_cell => unreachable,
         .undefined, .null_value, .boolean => std.math.nan(f64),
     };
@@ -3297,7 +3298,13 @@ fn valueUtf16Alloc(runtime: *Runtime, value: Value) anyerror![]u16 {
         .byte_buffer => return byteBufferUtf16Alloc(runtime, value.object().?.payload.byte_buffer),
         .bigint => try value.object().?.payload.bigint.toString(runtime.allocator, 10),
         .array => return arrayUtf16Alloc(runtime, value.object().?),
-        .dictionary => try runtime.allocator.dupe(u8, if (isAotHttpResponse(value)) "[object Response]" else "[object Object]"),
+        .dictionary => {
+            // `valueUtf16Alloc` is the AOT String(value) boundary. Resolve a
+            // dictionary's custom ToPrimitive result before falling back to
+            // the ordinary object tag text.
+            const primitive = try valueToPrimitive(runtime, value, .string);
+            return valueUtf16Alloc(runtime, primitive);
+        },
         .iterator => try runtime.allocator.dupe(u8, "[object Object]"),
         .promise => try runtime.allocator.dupe(u8, "[object Promise]"),
         .function => unreachable,
@@ -3351,7 +3358,14 @@ fn arrayUtf16Alloc(runtime: *Runtime, object: *Object) anyerror![]u16 {
     return output.toOwnedSlice(runtime.allocator);
 }
 
-fn valueToPrimitive(runtime: *Runtime, value: Value) !Value {
+fn isAotObjectValue(value: Value) bool {
+    return switch (@as(Tag, @enumFromInt(value.tag))) {
+        .byte_buffer, .array, .dictionary, .iterator, .function, .promise => true,
+        else => false,
+    };
+}
+
+fn valueToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint) !Value {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
         .byte_buffer => blk: {
             const units = try byteBufferUtf16Alloc(runtime, value.object().?.payload.byte_buffer);
@@ -3363,7 +3377,7 @@ fn valueToPrimitive(runtime: *Runtime, value: Value) !Value {
             defer runtime.allocator.free(units);
             break :blk try runtime.createString(units);
         },
-        .dictionary => if (isAotHttpResponse(value)) staticStringValue("[object Response]") else staticStringValue("[object Object]"),
+        .dictionary => try dictionaryToPrimitive(runtime, value, hint),
         .iterator => staticStringValue("[object Object]"),
         .promise => staticStringValue("[object Promise]"),
         .function => blk: {
@@ -3373,6 +3387,33 @@ fn valueToPrimitive(runtime: *Runtime, value: Value) !Value {
         },
         else => value,
     };
+}
+
+fn dictionaryToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint) !Value {
+    const to_string_name: []const u16 = &.{ 't', 'o', 'S', 't', 'r', 'i', 'n', 'g' };
+    const value_of_name: []const u16 = &.{ 'v', 'a', 'l', 'u', 'e', 'O', 'f' };
+    const first = if (hint == .string) to_string_name else value_of_name;
+    const second = if (hint == .string) value_of_name else to_string_name;
+
+    var roots = [_]Value{ value, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    for ([_][]const u16{ first, second }) |name| {
+        const method = dictionaryOwnProperty(roots[0], name) orelse dictionaryPrototypeProperty(roots[0], name);
+        if (method) |callable| {
+            if (callable.tag == @intFromEnum(Tag.undefined) or callable.tag == @intFromEnum(Tag.null_value)) continue;
+            if (callable.tag != @intFromEnum(Tag.function)) return error.NotCallable;
+            roots[1] = try invokeAotCallback(runtime, callable, null, 0);
+            if (!isAotObjectValue(roots[1])) return roots[1];
+            continue;
+        }
+        if (std.mem.eql(u16, name, to_string_name)) {
+            return if (isAotHttpResponse(roots[0])) staticStringValue("[object Response]") else staticStringValue("[object Object]");
+        }
+    }
+    return error.CannotConvertObjectToPrimitive;
 }
 
 fn stringEqual(runtime: *Runtime, left: Value, right: Value) !bool {
@@ -3448,8 +3489,8 @@ fn abstractEqual(runtime: *Runtime, left: Value, right: Value) !bool {
     if (isObject(left) and isObject(right)) return false;
     if (left_tag == .boolean) return abstractEqual(runtime, numberValue(if (left.payload == 0) 0 else 1), right);
     if (right_tag == .boolean) return abstractEqual(runtime, left, numberValue(if (right.payload == 0) 0 else 1));
-    if (left_tag == .array or left_tag == .dictionary or left_tag == .iterator or left_tag == .function) return abstractEqual(runtime, try valueToPrimitive(runtime, left), right);
-    if (right_tag == .array or right_tag == .dictionary or right_tag == .iterator or right_tag == .function) return abstractEqual(runtime, left, try valueToPrimitive(runtime, right));
+    if (left_tag == .array or left_tag == .dictionary or left_tag == .iterator or left_tag == .function) return abstractEqual(runtime, try valueToPrimitive(runtime, left, .number), right);
+    if (right_tag == .array or right_tag == .dictionary or right_tag == .iterator or right_tag == .function) return abstractEqual(runtime, left, try valueToPrimitive(runtime, right, .number));
     if (left_tag == .number and isString(right)) return @as(f64, @bitCast(left.payload)) == try valueToNumberRuntime(runtime, right);
     if (isString(left) and right_tag == .number) return try valueToNumberRuntime(runtime, left) == @as(f64, @bitCast(right.payload));
     if (left_tag == .bigint and isString(right)) return bigIntEqualsString(runtime, left.object().?.payload.bigint, right);
@@ -3464,8 +3505,8 @@ fn relationalOrder(runtime: *Runtime, left: Value, right: Value) !?std.math.Orde
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
-    roots[2] = try valueToPrimitive(runtime, roots[0]);
-    roots[3] = try valueToPrimitive(runtime, roots[1]);
+    roots[2] = try valueToPrimitive(runtime, roots[0], .number);
+    roots[3] = try valueToPrimitive(runtime, roots[1], .number);
     const left_primitive = roots[2];
     const right_primitive = roots[3];
     if (isString(left_primitive) and isString(right_primitive)) return @as(?std.math.Order, try stringOrder(runtime, left_primitive, right_primitive));
@@ -3578,8 +3619,9 @@ fn arithmetic(runtime: *Runtime, operator: Arithmetic, left: Value, right: Value
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
-    roots[2] = try valueToPrimitive(runtime, roots[0]);
-    roots[3] = try valueToPrimitive(runtime, roots[1]);
+    const hint: AotPrimitiveHint = if (operator == .add) .string else .number;
+    roots[2] = try valueToPrimitive(runtime, roots[0], hint);
+    roots[3] = try valueToPrimitive(runtime, roots[1], hint);
     const left_primitive = roots[2];
     const right_primitive = roots[3];
     if (left_primitive.tag == @intFromEnum(Tag.bigint) or right_primitive.tag == @intFromEnum(Tag.bigint)) {
@@ -3632,8 +3674,8 @@ fn shift(runtime: *Runtime, operator: ShiftOperator, left: Value, right: Value) 
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
-    roots[2] = try valueToPrimitive(runtime, roots[0]);
-    roots[3] = try valueToPrimitive(runtime, roots[1]);
+    roots[2] = try valueToPrimitive(runtime, roots[0], .number);
+    roots[3] = try valueToPrimitive(runtime, roots[1], .number);
     const left_primitive = roots[2];
     const right_primitive = roots[3];
     const left_is_bigint = left_primitive.tag == @intFromEnum(Tag.bigint);
@@ -3667,7 +3709,7 @@ fn bitNot(runtime: *Runtime, value: Value) !Value {
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
-    roots[1] = try valueToPrimitive(runtime, roots[0]);
+    roots[1] = try valueToPrimitive(runtime, roots[0], .number);
     const primitive = roots[1];
     if (primitive.tag == @intFromEnum(Tag.bigint)) {
         const result = try primitive.object().?.payload.bigint.bitNot(runtime.allocator);
@@ -12888,7 +12930,7 @@ fn toBigIntBuiltin(runtime: *Runtime, value: Value) !Value {
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
-    roots[1] = try valueToPrimitive(runtime, roots[0]);
+    roots[1] = try valueToPrimitive(runtime, roots[0], .number);
     const primitive = roots[1];
     return switch (@as(Tag, @enumFromInt(primitive.tag))) {
         .bigint => primitive,
@@ -12909,8 +12951,8 @@ fn jsAdd(runtime: *Runtime, left: Value, right: Value) !Value {
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
-    roots[2] = try valueToPrimitive(runtime, roots[0]);
-    roots[3] = try valueToPrimitive(runtime, roots[1]);
+    roots[2] = try valueToPrimitive(runtime, roots[0], .number);
+    roots[3] = try valueToPrimitive(runtime, roots[1], .number);
     if (isString(roots[2]) or isString(roots[3])) return concat(runtime, roots[2], roots[3]);
     if (roots[2].tag == @intFromEnum(Tag.bigint) or roots[3].tag == @intFromEnum(Tag.bigint)) return bigIntArithmetic(runtime, .add, roots[2], roots[3]);
     return numberValue(try valueToNumberRuntime(runtime, roots[2]) + try valueToNumberRuntime(runtime, roots[3]));
@@ -16429,6 +16471,15 @@ fn testAotFunction(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: 
     out.* = if (arguments == null or len != 1) .{} else arguments.?[0];
 }
 
+fn testAotCustomString(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    out.* = staticStringValue("CUSTOM");
+}
+
+fn testAotToPrimitiveObject(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    const runtime = if (active_runtime) |*active| active else return;
+    out.* = runtime.createDictionary(&.{}) catch |failure| runtimeFailure(failure);
+}
+
 fn testAotTimerStop(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
     if (arguments != null and len > 0) {
         var ignored = Value{};
@@ -16525,7 +16576,7 @@ test "AOT関数値の文字列化は生成ABIの関数名を保持する" {
     defer std.testing.allocator.free(expected_units);
     try std.testing.expectEqualSlices(u16, expected_units, text);
 
-    roots[1] = try valueToPrimitive(&active_runtime.?, roots[0]);
+    roots[1] = try valueToPrimitive(&active_runtime.?, roots[0], .number);
     try std.testing.expectEqualSlices(u16, expected_units, roots[1].object().?.payload.utf16_string);
 }
 
@@ -19365,6 +19416,46 @@ test "AOT動的数値演算は文字列・配列・辞書を公式規則で変�
     try std.testing.expectEqual(@as(f64, 7), @as(f64, @bitCast(prefix_result.payload)));
     const floor_result = try arithmetic(&runtime, .integer_divide, numberValue(-5), numberValue(2));
     try std.testing.expectEqual(@as(f64, -3), @as(f64, @bitCast(floor_result.payload)));
+}
+
+test "AOT辞書のカスタムToPrimitiveはヒント順序と失敗を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    const active = &active_runtime.?;
+    var roots = [_]Value{.{}} ** 8;
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+
+    roots[0] = try active.createDictionary(&.{});
+    roots[1] = try active.createFunction(testAotCustomString, 0, &.{});
+    roots[2] = try active.createFunction(testAotConstantSeven, 0, &.{});
+    roots[3] = try active.createFunction(testAotToPrimitiveObject, 0, &.{});
+    try active.setDictionary(&roots[0].object().?.payload.dictionary, staticStringValue("toString"), roots[1]);
+    try active.setDictionary(&roots[0].object().?.payload.dictionary, staticStringValue("valueOf"), roots[2]);
+    try expectUtf16String(active, try dictionaryToPrimitive(active, roots[0], .string), "CUSTOM");
+    try std.testing.expectEqual(@as(f64, 7), @as(f64, @bitCast((try dictionaryToPrimitive(active, roots[0], .number)).payload)));
+
+    roots[4] = try active.createDictionary(&.{});
+    try active.setDictionary(&roots[4].object().?.payload.dictionary, staticStringValue("valueOf"), roots[2]);
+    try std.testing.expectEqual(@as(f64, 7), @as(f64, @bitCast((try dictionaryToPrimitive(active, roots[4], .number)).payload)));
+    const object_add = try arithmetic(active, .add, roots[4], numberValue(1));
+    try std.testing.expect(std.math.isNan(@as(f64, @bitCast(object_add.payload))));
+
+    roots[6] = try active.createDictionary(&.{});
+    roots[7] = try active.createDictionary(&.{ staticStringValue("toString"), roots[1] });
+    roots[6].object().?.prototype = roots[7];
+    try expectUtf16String(active, try dictionaryToPrimitive(active, roots[6], .string), "CUSTOM");
+
+    roots[5] = try active.createDictionary(&.{});
+    try active.setDictionary(&roots[5].object().?.payload.dictionary, staticStringValue("toString"), roots[3]);
+    try active.setDictionary(&roots[5].object().?.payload.dictionary, staticStringValue("valueOf"), roots[3]);
+    try std.testing.expectError(error.CannotConvertObjectToPrimitive, dictionaryToPrimitive(active, roots[5], .string));
 }
 
 test "AOT BigInt比較をNumberとの間でも精度を落とさず処理する" {

@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 346,
-    "nativeAot": 252,
+    "total": 347,
+    "nativeAot": 253,
     "interpreter": 99,
     "compatJs": 9
   },
@@ -9743,6 +9743,7 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
+        "native-system-dictionary-to-primitive",
         "native-system-table-function-properties",
         "native-system-table-inherited-properties",
         "native-system-to-string-command"
@@ -9757,6 +9758,9 @@
         },
         "aot": {
           "native-cut-commands": [
+            "fixture.commands"
+          ],
+          "native-system-dictionary-to-primitive": [
             "fixture.commands"
           ],
           "native-system-table-function-properties": [
@@ -9900,6 +9904,7 @@
         "plugin-system-types"
       ],
       "aotFixtureIds": [
+        "native-system-dictionary-to-primitive",
         "native-system-number-conversion-commands"
       ],
       "compatJsFixtureIds": [],
@@ -9911,6 +9916,9 @@
           ]
         },
         "aot": {
+          "native-system-dictionary-to-primitive": [
+            "fixture.commands"
+          ],
           "native-system-number-conversion-commands": [
             "fixture.commands"
           ]
@@ -9921,7 +9929,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -11315,6 +11323,7 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
+        "native-system-dictionary-to-primitive",
         "native-system-table-function-properties",
         "native-system-table-inherited-properties"
       ],
@@ -11328,6 +11337,9 @@
         },
         "aot": {
           "native-cut-commands": [
+            "fixture.commands"
+          ],
+          "native-system-dictionary-to-primitive": [
             "fixture.commands"
           ],
           "native-system-table-function-properties": [

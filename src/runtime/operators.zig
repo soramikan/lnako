@@ -65,16 +65,23 @@ pub fn nadesikoAdd(runtime: *Runtime, left: Value, right: Value) !Value {
     defer frame.deinit();
     try frame.protect(&left_root);
     try frame.protect(&right_root);
-    const left_primitive = try runtime.valueToPrimitive(left_root);
-    const right_primitive = try runtime.valueToPrimitive(right_root);
-    if (left_primitive == .bigint or right_primitive == .bigint) {
+    // なでしこ式の`+`は元の値がBigIntのときだけBigInt加算へ進み、
+    // それ以外のオブジェクトは公式のparseFloat(object)と同じく
+    // 文字列hintのToPrimitiveを通してから数値化する。
+    if (left_root == .bigint or right_root == .bigint) {
+        const left_primitive = try runtime.valueToPrimitive(left_root);
+        const right_primitive = try runtime.valueToPrimitive(right_root);
         if (left_primitive != .bigint or right_primitive != .bigint) return error.CannotMixBigIntAndNumber;
         return bigIntBinary(runtime, .add, left_primitive.bigint.*, right_primitive.bigint.*);
     }
-    return .{ .number = try nadesikoAddNumber(runtime, left_primitive) + try nadesikoAddNumber(runtime, right_primitive) };
+    return .{ .number = try nadesikoAddNumber(runtime, left_root) + try nadesikoAddNumber(runtime, right_root) };
 }
 
 fn nadesikoAddNumber(runtime: *Runtime, value: Value) !f64 {
+    if (value_mod.isObjectValue(value)) {
+        const string_value = try runtime.valueToString(value);
+        return string_mod.parseFloatNumber(runtime.allocator(), string_value.string.units);
+    }
     return switch (value) {
         .number => |number| number,
         .string => |string| string_mod.parseFloatNumber(runtime.allocator(), string.units),

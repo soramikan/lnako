@@ -447,7 +447,7 @@ pub const Value = union(enum) {
     }
 };
 
-fn isObjectValue(value: Value) bool {
+pub fn isObjectValue(value: Value) bool {
     return switch (value) {
         .bytes, .array, .dictionary, .function, .promise => true,
         else => false,
@@ -515,6 +515,17 @@ pub const RootProvider = struct {
     traceFn: *const fn (context: *anyopaque, runtime: *Runtime) anyerror!void,
 };
 
+/// ECMAScriptのOrdinaryToPrimitiveが選択する変換のヒント。
+pub const PrimitiveHint = enum { string, number };
+
+/// IR関数を実行できる所有者が、辞書のカスタム`toString`/`valueOf`を
+/// Valueの共通変換へ接続するための任意フック。通常のRuntime単体利用
+/// では未設定のまま、従来の組み込み変換を使用する。
+pub const PrimitiveHook = struct {
+    context: *anyopaque,
+    callFn: *const fn (context: *anyopaque, runtime: *Runtime, value: Value, hint: PrimitiveHint) anyerror!?Value,
+};
+
 /// 生成コードはValueを格納したスタック領域のアドレスをこのフレームへ登録する。
 pub const RootFrame = struct {
     runtime: *Runtime,
@@ -539,6 +550,7 @@ pub const Runtime = struct {
     root_providers: std.ArrayList(RootProvider) = .empty,
     promise_tasks: std.ArrayList(PromiseTask) = .empty,
     stringifying_arrays: std.ArrayList(*Array) = .empty,
+    primitive_hook: ?PrimitiveHook = null,
     custom_failure_message: std.ArrayList(u8) = .empty,
     custom_failure_message_units: std.ArrayList(u16) = .empty,
     next_collection: usize = 64,
@@ -563,6 +575,16 @@ pub const Runtime = struct {
 
     pub fn allocator(self: *Runtime) std.mem.Allocator {
         return self.backing_allocator;
+    }
+
+    pub fn setPrimitiveHook(self: *Runtime, hook: PrimitiveHook) void {
+        self.primitive_hook = hook;
+    }
+
+    pub fn clearPrimitiveHook(self: *Runtime, context: *anyopaque) void {
+        if (self.primitive_hook) |hook| {
+            if (hook.context == context) self.primitive_hook = null;
+        }
     }
 
     /// 命令固有の動的な例外文言を、汎用error setとは別に保持する。
@@ -966,6 +988,25 @@ pub const Runtime = struct {
         var frame = self.rootFrame();
         defer frame.deinit();
         try frame.protect(&rooted_value);
+        if (isObjectValue(rooted_value)) if (self.primitive_hook) |hook| {
+            if (try hook.callFn(hook.context, self, rooted_value, .string)) |primitive| {
+                var rooted_primitive = primitive;
+                try frame.protect(&rooted_primitive);
+                if (isObjectValue(rooted_primitive)) return error.CannotConvertObjectToPrimitive;
+                return self.valueToStringDefault(rooted_primitive);
+            }
+        };
+        return self.valueToStringDefault(rooted_value);
+    }
+
+    /// カスタムToPrimitiveフックを呼ばず、組み込みの既定値だけを
+    /// 文字列化する。フック自身の既定`Object.prototype.toString`相当で
+    /// 再帰を起こさないために公開している。
+    pub fn valueToStringDefault(self: *Runtime, value: Value) anyerror!Value {
+        var rooted_value = value;
+        var frame = self.rootFrame();
+        defer frame.deinit();
+        try frame.protect(&rooted_value);
         return switch (rooted_value) {
             .undefined => self.stringUtf8("undefined"),
             .null_value => self.stringUtf8("null"),
@@ -1010,9 +1051,21 @@ pub const Runtime = struct {
     }
 
     pub fn valueToPrimitive(self: *Runtime, value: Value) !Value {
-        return switch (value) {
-            .bytes, .array, .dictionary, .function, .promise => self.valueToString(value),
-            else => value,
+        var rooted_value = value;
+        var frame = self.rootFrame();
+        defer frame.deinit();
+        try frame.protect(&rooted_value);
+        if (isObjectValue(rooted_value)) if (self.primitive_hook) |hook| {
+            if (try hook.callFn(hook.context, self, rooted_value, .number)) |primitive| {
+                var rooted_primitive = primitive;
+                try frame.protect(&rooted_primitive);
+                if (isObjectValue(rooted_primitive)) return error.CannotConvertObjectToPrimitive;
+                return rooted_primitive;
+            }
+        };
+        return switch (rooted_value) {
+            .bytes, .array, .dictionary, .function, .promise => self.valueToStringDefault(rooted_value),
+            else => rooted_value,
         };
     }
 
