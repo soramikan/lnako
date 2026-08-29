@@ -463,8 +463,24 @@ pub const Interpreter = struct {
         self.runtime.setPrimitiveHook(.{ .context = self, .callFn = interpreterPrimitiveHook });
     }
 
+    fn objectPrimitiveMethod(value: Value, name: []const u16) ?Value {
+        return switch (value) {
+            .dictionary => |dictionary| value_mod.dictionaryPropertyUnits(dictionary, name),
+            .array => |array| blk: {
+                for (array.properties.items) |property| {
+                    if (std.mem.eql(u16, property.key.units, name)) break :blk property.value;
+                }
+                break :blk null;
+            },
+            else => null,
+        };
+    }
+
     fn objectToPrimitive(self: *Interpreter, value: Value, hint: value_mod.PrimitiveHint) anyerror!?Value {
-        if (value != .dictionary) return null;
+        switch (value) {
+            .dictionary, .array => {},
+            else => return null,
+        }
 
         var rooted_value = value;
         var roots = self.runtime.rootFrame();
@@ -478,7 +494,7 @@ pub const Interpreter = struct {
         var custom_method_seen = false;
 
         for ([_][]const u16{ first, second }) |name| {
-            if (value_mod.dictionaryPropertyUnits(rooted_value.dictionary, name)) |method| {
+            if (objectPrimitiveMethod(rooted_value, name)) |method| {
                 custom_method_seen = true;
                 if (method == .undefined or method == .null_value) continue;
                 if (method != .function) return error.NotCallable;
@@ -2497,6 +2513,29 @@ test "辞書のカスタムToPrimitiveはヒント順序と失敗を保つ" {
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("CUSTOM\nPROTO\n12\n6\nNaN\n7\nCannot convert object to primitive value\n", host.written());
+}
+
+test "配列のカスタムToPrimitiveは文字列と数値hintへ接続する" {
+    const source =
+        "A=[1,2]\n" ++
+        "A[\"toString\"]=関数()それは\"ARRAY\";ここまで\n" ++
+        "文字列変換(A)を表示\n" ++
+        "B=[1,2]\n" ++
+        "B[\"valueOf\"]=関数()それは7;ここまで\n" ++
+        "(B-1)を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("ARRAY\n6\n", host.written());
 }
 
 test "テスト定義を個別に実行して結果を記録する" {

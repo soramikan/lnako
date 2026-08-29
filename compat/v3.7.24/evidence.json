@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 365,
-    "nativeAot": 271,
+    "total": 366,
+    "nativeAot": 272,
     "interpreter": 99,
     "compatJs": 9
   },
@@ -9796,6 +9796,7 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
+        "native-system-array-to-primitive",
         "native-system-dictionary-to-primitive",
         "native-system-table-function-properties",
         "native-system-table-inherited-properties",
@@ -9811,6 +9812,9 @@
         },
         "aot": {
           "native-cut-commands": [
+            "fixture.commands"
+          ],
+          "native-system-array-to-primitive": [
             "fixture.commands"
           ],
           "native-system-dictionary-to-primitive": [
@@ -11483,6 +11487,7 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
+        "native-system-array-to-primitive",
         "native-system-dictionary-to-primitive",
         "native-system-table-function-properties",
         "native-system-table-inherited-properties"
@@ -11497,6 +11502,9 @@
         },
         "aot": {
           "native-cut-commands": [
+            "fixture.commands"
+          ],
+          "native-system-array-to-primitive": [
             "fixture.commands"
           ],
           "native-system-dictionary-to-primitive": [

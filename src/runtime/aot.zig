@@ -3297,7 +3297,12 @@ fn valueUtf16Alloc(runtime: *Runtime, value: Value) anyerror![]u16 {
         .utf16_string => unreachable,
         .byte_buffer => return byteBufferUtf16Alloc(runtime, value.object().?.payload.byte_buffer),
         .bigint => try value.object().?.payload.bigint.toString(runtime.allocator, 10),
-        .array => return arrayUtf16Alloc(runtime, value.object().?),
+        .array => {
+            // `valueUtf16Alloc` is the AOT String(value) boundary. Resolve an
+            // array's own custom ToPrimitive method before the ordinary join.
+            const primitive = try valueToPrimitive(runtime, value, .string);
+            return valueUtf16Alloc(runtime, primitive);
+        },
         .dictionary => {
             // `valueUtf16Alloc` is the AOT String(value) boundary. Resolve a
             // dictionary's custom ToPrimitive result before falling back to
@@ -3372,11 +3377,7 @@ fn valueToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint) !Va
             defer runtime.allocator.free(units);
             break :blk try runtime.createString(units);
         },
-        .array => blk: {
-            const units = try arrayUtf16Alloc(runtime, value.object().?);
-            defer runtime.allocator.free(units);
-            break :blk try runtime.createString(units);
-        },
+        .array => try arrayToPrimitive(runtime, value, hint),
         .dictionary => try dictionaryToPrimitive(runtime, value, hint),
         .iterator => staticStringValue("[object Object]"),
         .promise => staticStringValue("[object Promise]"),
@@ -3387,6 +3388,35 @@ fn valueToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint) !Va
         },
         else => value,
     };
+}
+
+fn arrayToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint) !Value {
+    const to_string_name: []const u16 = &.{ 't', 'o', 'S', 't', 'r', 'i', 'n', 'g' };
+    const value_of_name: []const u16 = &.{ 'v', 'a', 'l', 'u', 'e', 'O', 'f' };
+    const first = if (hint == .string) to_string_name else value_of_name;
+    const second = if (hint == .string) value_of_name else to_string_name;
+
+    var roots = [_]Value{ value, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    for ([_][]const u16{ first, second }) |name| {
+        const method = runtime.aotArrayOwnPropertyGetUnits(roots[0].object().?, name);
+        if (method) |callable| {
+            if (callable.tag == @intFromEnum(Tag.undefined) or callable.tag == @intFromEnum(Tag.null_value)) continue;
+            if (callable.tag != @intFromEnum(Tag.function)) return error.NotCallable;
+            roots[1] = try invokeAotCallback(runtime, callable, null, 0);
+            if (!isAotObjectValue(roots[1])) return roots[1];
+            continue;
+        }
+        if (std.mem.eql(u16, name, to_string_name)) {
+            const units = try arrayUtf16Alloc(runtime, roots[0].object().?);
+            defer runtime.allocator.free(units);
+            return runtime.createString(units);
+        }
+    }
+    return error.CannotConvertObjectToPrimitive;
 }
 
 fn dictionaryToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint) !Value {
@@ -19631,6 +19661,42 @@ test "AOT辞書のカスタムToPrimitiveはヒント順序と失敗を保つ" {
     try active.setDictionary(&roots[5].object().?.payload.dictionary, staticStringValue("toString"), roots[3]);
     try active.setDictionary(&roots[5].object().?.payload.dictionary, staticStringValue("valueOf"), roots[3]);
     try std.testing.expectError(error.CannotConvertObjectToPrimitive, dictionaryToPrimitive(active, roots[5], .string));
+}
+
+test "AOT配列のカスタムToPrimitiveは文字列と数値hintへ接続する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    const active = &active_runtime.?;
+    var roots = [_]Value{.{}} ** 7;
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+
+    roots[0] = try active.createArray(&.{ numberValue(1), numberValue(2) });
+    roots[1] = try active.createFunction(testAotCustomString, 0, &.{});
+    roots[2] = try active.createFunction(testAotConstantSeven, 0, &.{});
+    try active.setDictionary(&roots[0].object().?.array_properties, staticStringValue("toString"), roots[1]);
+    try active.setDictionary(&roots[0].object().?.array_properties, staticStringValue("valueOf"), roots[2]);
+    try expectUtf16String(active, try valueToPrimitive(active, roots[0], .string), "CUSTOM");
+    try expectUtf16String(active, roots[0], "CUSTOM");
+    try std.testing.expectEqual(@as(f64, 7), @as(f64, @bitCast((try valueToPrimitive(active, roots[0], .number)).payload)));
+    const subtraction = try arithmetic(active, .subtract, roots[0], numberValue(1));
+    try std.testing.expectEqual(@as(f64, 6), @as(f64, @bitCast(subtraction.payload)));
+
+    roots[3] = try active.createArray(&.{ numberValue(1), numberValue(2) });
+    try active.setDictionary(&roots[3].object().?.array_properties, staticStringValue("valueOf"), roots[2]);
+    try expectUtf16String(active, roots[3], "1,2");
+    try std.testing.expectEqual(@as(f64, 7), @as(f64, @bitCast((try valueToPrimitive(active, roots[3], .number)).payload)));
+
+    roots[4] = try active.createArray(&.{ numberValue(1), numberValue(2) });
+    roots[5] = try active.createFunction(testAotToPrimitiveObject, 0, &.{});
+    try active.setDictionary(&roots[4].object().?.array_properties, staticStringValue("toString"), roots[5]);
+    try std.testing.expectError(error.CannotConvertObjectToPrimitive, valueToPrimitive(active, roots[4], .string));
 }
 
 test "AOT BigInt比較をNumberとの間でも精度を落とさず処理する" {
