@@ -1499,6 +1499,12 @@ fn tableInheritedByteBufferMethod(runtime: *Runtime, receiver: Value, name: []co
 }
 
 fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) !?Value {
+    if (source == .dictionary and source.dictionary.prototype != .undefined) {
+        if (asciiUnitsEqual(units, "__proto__")) return source.dictionary.prototype;
+        if (value_mod.dictionaryPrototypePropertyUnits(source.dictionary, units)) |value| return value;
+        if (value_mod.dictionaryPrototypeBlocksStandard(source.dictionary)) return null;
+    }
+
     if (asciiUnitsEqual(units, "__proto__")) {
         return switch (source) {
             .dictionary => @as(?Value, try runtime.createDictionary()),

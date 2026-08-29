@@ -909,8 +909,7 @@ fn rawArrayLength(runtime: *Runtime, value: Value) !usize {
         .array => |array| array.items.items.len,
         .bytes => |buffer| if (buffer.kind == .array_buffer) 0 else buffer.bytes.len,
         .dictionary => |dictionary| blk: {
-            const key = try runtime.stringUtf8("length");
-            const length_value = dictionary.get(key.string) orelse .undefined;
+            const length_value = value_mod.dictionaryPropertyUnits(dictionary, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) orelse .undefined;
             const number = try runtime.valueToNumber(length_value);
             if (std.math.isNan(number) or number <= 0) break :blk 0;
             if (!std.math.isFinite(number)) return error.ArraySizeLimitExceeded;
@@ -952,8 +951,9 @@ fn appendRawArrayElement(runtime: *Runtime, source: Value, index: usize, output:
         .dictionary => |dictionary| blk: {
             var key_buffer: [32]u8 = undefined;
             const key_text = std.fmt.bufPrint(&key_buffer, "{}", .{index}) catch return error.OutOfMemory;
-            const key = try runtime.stringUtf8(key_text);
-            break :blk dictionary.get(key.string) orelse .undefined;
+            var key_units: [32]u16 = undefined;
+            const key_len = std.unicode.utf8ToUtf16Le(&key_units, key_text) catch return error.OutOfMemory;
+            break :blk value_mod.dictionaryPropertyUnits(dictionary, key_units[0..key_len]) orelse .undefined;
         },
         else => .undefined,
     };
@@ -1189,6 +1189,19 @@ test "何文字目は公式のArray.fromとslice.joinを型別に再現する" {
     var object_needle = try runtime.stringUtf8("a");
     try roots.protect(&object_needle);
     try std.testing.expectEqual(@as(f64, 1), (try call(&runtime, "何文字目", &.{ object, object_needle })).?.number);
+
+    var inherited_prototype = try runtime.createDictionary();
+    var inherited_object = try runtime.createDictionary();
+    try roots.protect(&inherited_prototype);
+    try roots.protect(&inherited_object);
+    try common.dictionarySetUtf8(&runtime, inherited_prototype.dictionary, "length", .{ .number = 2 });
+    try common.dictionarySetUtf8(&runtime, inherited_prototype.dictionary, "0", try runtime.stringUtf8("a"));
+    try common.dictionarySetUtf8(&runtime, inherited_prototype.dictionary, "1", try runtime.stringUtf8("b"));
+    inherited_object.dictionary.prototype = inherited_prototype;
+    runtime.setGcStress(true);
+    try std.testing.expectEqual(@as(f64, 1), (try call(&runtime, "何文字目", &.{ inherited_object, try runtime.stringUtf8("ab") })).?.number);
+    runtime.setGcStress(false);
+
     try common.dictionarySetUtf8(&runtime, object.dictionary, "length", .{ .number = @floatFromInt(raw_array_element_limit) });
     try std.testing.expectEqual(@as(f64, 1), (try call(&runtime, "何文字目", &.{ object, object_needle })).?.number);
     try common.dictionarySetUtf8(&runtime, object.dictionary, "length", .{ .number = @floatFromInt(raw_array_element_limit + 1) });

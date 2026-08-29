@@ -222,6 +222,10 @@ pub const Dictionary = struct {
     kind: DictionaryKind = .ordinary,
     map: DictionaryMap = .empty,
     external: ?ExternalHandle = null,
+    /// Object-literal `__proto__` is represented separately from own
+    /// properties.  `undefined` means the ordinary Object prototype; an
+    /// explicit `null` keeps the object on a null-prototype chain.
+    prototype: Value = .undefined,
 
     pub fn deinit(self: *Dictionary) void {
         if (self.external) |binding| binding.deinit();
@@ -448,6 +452,50 @@ fn isObjectValue(value: Value) bool {
         .bytes, .array, .dictionary, .function, .promise => true,
         else => false,
     };
+}
+
+pub fn dictionaryOwnPropertyUnits(dictionary: *Dictionary, units: []const u16) ?Value {
+    for (dictionary.keys(), dictionary.values()) |key, value| {
+        if (std.mem.eql(u16, key.units, units)) return value;
+    }
+    return null;
+}
+
+/// Resolve a custom dictionary prototype without invoking the standard
+/// Object prototype.  The bounded walk also keeps malformed prototype cycles
+/// from turning property reads into an infinite loop.
+pub fn dictionaryPrototypePropertyUnits(dictionary: *Dictionary, units: []const u16) ?Value {
+    var current = dictionary.prototype;
+    var depth: usize = 0;
+    while (depth < 256) : (depth += 1) {
+        current = switch (current) {
+            .dictionary => |prototype| blk: {
+                if (dictionaryOwnPropertyUnits(prototype, units)) |value| return value;
+                break :blk prototype.prototype;
+            },
+            else => return null,
+        };
+        if (current == .undefined or current == .null_value) return null;
+    }
+    return null;
+}
+
+pub fn dictionaryPropertyUnits(dictionary: *Dictionary, units: []const u16) ?Value {
+    return dictionaryOwnPropertyUnits(dictionary, units) orelse dictionaryPrototypePropertyUnits(dictionary, units);
+}
+
+pub fn dictionaryPrototypeBlocksStandard(dictionary: *Dictionary) bool {
+    var current = dictionary.prototype;
+    var depth: usize = 0;
+    while (depth < 256) : (depth += 1) {
+        current = switch (current) {
+            .null_value => return true,
+            .dictionary => |prototype| prototype.prototype,
+            else => return false,
+        };
+        if (current == .undefined) return false;
+    }
+    return true;
 }
 
 const HeapObject = union(enum) {
@@ -1082,6 +1130,7 @@ pub const Runtime = struct {
                 }
             },
             .dictionary => |dictionary| {
+                try self.markValue(dictionary.prototype);
                 for (dictionary.keys()) |key| try self.markValue(.{ .string = key });
                 for (dictionary.values()) |item| try self.markValue(item);
             },

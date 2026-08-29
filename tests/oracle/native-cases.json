@@ -166,6 +166,11 @@
     "source": "D={\"length\":1000000,\"0\":\"hit\"}\n何文字目(D,\"hit\")を表示\n"
   },
   {
+    "id": "native-system-string-array-from-inherited-properties",
+    "commands": ["何文字目", "JSON変換"],
+    "source": "P={\"length\":2,\"0\":\"a\",\"1\":\"b\"}\nD={\"__proto__\":P}\n(\"PAIR:\"&何文字目(D,\"ab\"))を表示\n(\"INDEX:\"&D[\"0\"])を表示\n(\"LENGTH:\"&D[\"length\"])を表示\n(\"JSON:\"&JSON変換(D))を表示\nD[\"0\"]=\"own\"\n(\"OWN:\"&何文字目(D,\"ownb\"))を表示\nD[\"length\"]=1\n(\"OWN-LENGTH:\"&何文字目(D,\"own\"))を表示\n"
+  },
+  {
     "id": "native-system-string-array-from-null-errors",
     "source": "エラー監視\n何文字目(NULL,\"x\")を表示\nエラーならば\n(\"NULL-SOURCE:\"&エラーメッセージ)を表示\nここまで\nエラー監視\n何文字目(\"abc\",NULL)を表示\nエラーならば\n(\"NULL-NEEDLE:\"&エラーメッセージ)を表示\nここまで\nエラー監視\n何文字目(undefined,\"x\")を表示\nエラーならば\n(\"UNDEFINED-SOURCE:\"&エラーメッセージ)を表示\nここまで\nエラー監視\n何文字目(\"abc\",undefined)を表示\nエラーならば\n(\"UNDEFINED-NEEDLE:\"&エラーメッセージ)を表示\nここまで\n\"RECOVERED\"を表示\n"
   },

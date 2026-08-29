@@ -643,6 +643,9 @@ const Object = struct {
     next: ?*Object = null,
     grey_next: ?*Object = null,
     marked: bool = false,
+    /// Object-literal `__proto__`; the undefined value means the ordinary
+    /// Object prototype and explicit null preserves a null-prototype object.
+    prototype: Value = .{},
     array_properties: std.ArrayList(DictionaryEntry) = .empty,
     array_presence: std.ArrayList(bool) = .empty,
     payload: Payload,
@@ -902,6 +905,28 @@ const Runtime = struct {
         return roots[0];
     }
 
+    fn createObjectLiteral(self: *Runtime, values: []const Value) !Value {
+        var source_frame = RootFrame{};
+        self.pushRoots(&source_frame, if (values.len == 0) null else @constCast(values.ptr), values.len);
+        defer self.popRoots(&source_frame);
+
+        var roots = [_]Value{ try self.createDictionary(&.{}), .{}, .{} };
+        var result_frame = RootFrame{};
+        self.pushRoots(&result_frame, &roots, roots.len);
+        defer self.popRoots(&result_frame);
+        var index: usize = 0;
+        while (index + 1 < values.len) : (index += 2) {
+            roots[1] = try self.propertyKey(values[index]);
+            roots[2] = values[index + 1];
+            if (sameKey(roots[1], staticStringValue("__proto__"))) {
+                if (roots[2].tag == @intFromEnum(Tag.null_value) or roots[2].object() != null) {
+                    roots[0].object().?.prototype = roots[2];
+                }
+            } else try self.setDictionary(&roots[0].object().?.payload.dictionary, roots[1], roots[2]);
+        }
+        return roots[0];
+    }
+
     fn createIterator(self: *Runtime, values: []const Value, is_range: bool, direction: u8) !Value {
         if (values.len == 0) return error.InvalidIterator;
         try self.beforeAllocation();
@@ -1083,9 +1108,12 @@ const Runtime = struct {
                         self.markValue(property.value);
                     }
                 },
-                .dictionary => |entries| for (entries.items) |entry| {
-                    self.markValue(entry.key);
-                    self.markValue(entry.value);
+                .dictionary => |entries| {
+                    self.markValue(object.prototype);
+                    for (entries.items) |entry| {
+                        self.markValue(entry.key);
+                        self.markValue(entry.value);
+                    }
                 },
                 .iterator => |iterator| self.markValue(iterator.source),
                 .promise => |promise| {
@@ -1247,9 +1275,13 @@ const Runtime = struct {
                 return if (rooted_buffer.kind == .array_buffer or index >= rooted_buffer.bytes.len) .{} else numberValue(@floatFromInt(rooted_buffer.bytes[index]));
             },
             .array => aotArrayPropertyGet(self, object, key),
-            .dictionary => |entries| blk: {
-                for (entries.items) |entry| if (sameKey(entry.key, key)) break :blk entry.value;
-                break :blk .{};
+            .dictionary => blk: {
+                const key_units = valueUtf16Alloc(self, key) catch |failure| {
+                    self.setFailure(failure);
+                    break :blk .{};
+                };
+                defer self.allocator.free(key_units);
+                break :blk dictionaryProperty(container, key_units);
             },
             else => .{},
         };
@@ -1277,7 +1309,21 @@ const Runtime = struct {
                 var frame = RootFrame{};
                 self.pushRoots(&frame, &rooted, rooted.len);
                 defer self.popRoots(&frame);
-                try self.setDictionary(entries, try self.propertyKey(rooted[1]), rooted[2]);
+                rooted[1] = try self.propertyKey(rooted[1]);
+                var has_own_prototype_key = false;
+                if (sameKey(rooted[1], staticStringValue("__proto__"))) for (entries.items) |entry| {
+                    if (sameKey(entry.key, rooted[1])) {
+                        has_own_prototype_key = true;
+                        break;
+                    }
+                };
+                if (!has_own_prototype_key and sameKey(rooted[1], staticStringValue("__proto__"))) {
+                    if (rooted[2].tag == @intFromEnum(Tag.null_value) or rooted[2].object() != null) {
+                        object.prototype = rooted[2];
+                    }
+                    return;
+                }
+                try self.setDictionary(entries, rooted[1], rooted[2]);
             },
             .byte_buffer => |*buffer| {
                 if (buffer.kind == .array_buffer) return;
@@ -7039,7 +7085,7 @@ pub export fn lnako_aot_dictionary_new(out: *Value, values: ?[*]const Value, len
     out.* = .{};
     const runtime = if (active_runtime) |*value| value else return;
     const source = if (values) |pointer| pointer[0..len] else if (len == 0) &.{} else return;
-    out.* = runtime.createDictionary(source) catch return;
+    out.* = runtime.createObjectLiteral(source) catch return;
 }
 
 pub export fn lnako_aot_caniuse_agents_new(out: *Value) callconv(.c) void {
@@ -13528,8 +13574,40 @@ fn dictionaryOwnProperty(value: Value, key: []const u16) ?Value {
     return null;
 }
 
+fn dictionaryPrototypeProperty(value: Value, key: []const u16) ?Value {
+    const object = value.object() orelse return null;
+    if (object.payload != .dictionary) return null;
+    var current = object.prototype;
+    var depth: usize = 0;
+    while (depth < 256) : (depth += 1) {
+        if (current.tag == @intFromEnum(Tag.null_value) or current.tag == @intFromEnum(Tag.undefined)) return null;
+        if (current.tag != @intFromEnum(Tag.dictionary)) return null;
+        const prototype_object = current.object() orelse return null;
+        if (prototype_object.payload != .dictionary) return null;
+        if (dictionaryOwnProperty(current, key)) |property| return property;
+        current = prototype_object.prototype;
+    }
+    return null;
+}
+
+fn dictionaryPrototypeBlocksStandard(value: Value) bool {
+    const object = value.object() orelse return false;
+    if (object.payload != .dictionary) return false;
+    var current = object.prototype;
+    var depth: usize = 0;
+    while (depth < 256) : (depth += 1) {
+        if (current.tag == @intFromEnum(Tag.null_value)) return true;
+        if (current.tag == @intFromEnum(Tag.undefined)) return false;
+        if (current.tag != @intFromEnum(Tag.dictionary)) return false;
+        const prototype_object = current.object() orelse return false;
+        if (prototype_object.payload != .dictionary) return false;
+        current = prototype_object.prototype;
+    }
+    return true;
+}
+
 fn dictionaryProperty(value: Value, key: []const u16) Value {
-    return dictionaryOwnProperty(value, key) orelse .{};
+    return dictionaryOwnProperty(value, key) orelse dictionaryPrototypeProperty(value, key) orelse .{};
 }
 
 fn aotCanonicalArrayIndex(value: Value) ?usize {
@@ -14359,6 +14437,12 @@ fn tableInheritedByteBufferMethod(runtime: *Runtime, receiver: Value, name: []co
 }
 
 fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []const u16) !?Value {
+    if (row_tag == .dictionary and row.object().?.prototype.tag != @intFromEnum(Tag.undefined)) {
+        if (tableAsciiUnitsEqual(units, "__proto__")) return row.object().?.prototype;
+        if (dictionaryPrototypeProperty(row, units)) |value| return value;
+        if (dictionaryPrototypeBlocksStandard(row)) return null;
+    }
+
     if (tableAsciiUnitsEqual(units, "__proto__")) {
         return switch (row_tag) {
             .dictionary => @as(?Value, try runtime.createDictionary(&.{})),
@@ -17918,6 +18002,18 @@ test "AOT何文字目はArray.from要素境界と辞書ToLengthを再現する" 
     try std.testing.expectEqual(@as(usize, 0), try codePointFindBuiltin(&runtime, roots[13], staticStringValue("x")));
     roots[14] = try runtime.createDictionary(&.{ staticStringValue("length"), .{ .tag = @intFromEnum(Tag.null_value) }, staticStringValue("0"), staticStringValue("x") });
     try std.testing.expectEqual(@as(usize, 0), try codePointFindBuiltin(&runtime, roots[14], staticStringValue("x")));
+
+    roots[19] = try runtime.createDictionary(&.{
+        staticStringValue("length"), numberValue(2),
+        staticStringValue("0"),      staticStringValue("a"),
+        staticStringValue("1"),      staticStringValue("b"),
+    });
+    roots[20] = try runtime.createDictionary(&.{});
+    roots[20].object().?.prototype = roots[19];
+    _ = runtime.collect();
+    try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, roots[20], staticStringValue("ab")));
+    try expectUtf16String(&runtime, runtime.indexGet(roots[20], staticStringValue("0")), "a");
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(runtime.indexGet(roots[20], staticStringValue("length"))));
 
     roots[15] = try runtime.createFunction(testAotFunction, 1, &.{});
     try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, staticStringValue("abc"), roots[15]));

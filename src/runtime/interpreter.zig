@@ -1739,9 +1739,19 @@ pub const Interpreter = struct {
         var index: usize = 0;
         while (index + 1 < instruction.operands.len) : (index += 2) {
             const key = try self.runtime.valueToString(frame.values[instruction.operands[index]]);
-            try result.dictionary.set(key.string, frame.values[instruction.operands[index + 1]]);
+            const value = frame.values[instruction.operands[index + 1]];
+            if (std.mem.eql(u16, key.string.units, &.{ '_', '_', 'p', 'r', 'o', 't', 'o', '_', '_' })) {
+                if (value == .null_value or isPrototypeObject(value)) result.dictionary.prototype = value;
+            } else try result.dictionary.set(key.string, value);
         }
         return result;
+    }
+
+    fn isPrototypeObject(value: Value) bool {
+        return switch (value) {
+            .bytes, .array, .dictionary, .function, .promise => true,
+            else => false,
+        };
     }
 
     fn getIndexed(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
@@ -1783,7 +1793,11 @@ pub const Interpreter = struct {
         if (container == .array) return try getArrayProperty(self.runtime, container.array, key);
         if (container == .dictionary) {
             const text = try self.runtime.valueToString(key);
-            return container.dictionary.get(text.string) orelse .undefined;
+            if (container.dictionary.get(text.string)) |value| return value;
+            if (std.mem.eql(u16, text.string.units, &.{ '_', '_', 'p', 'r', 'o', 't', 'o', '_', '_' })) {
+                return if (container.dictionary.prototype != .undefined) container.dictionary.prototype else .undefined;
+            }
+            return value_mod.dictionaryPrototypePropertyUnits(container.dictionary, text.string.units) orelse .undefined;
         }
         if (container == .string) {
             const unit = container.string.codeUnitAt(try valueIndex(self.runtime, key)) orelse return .undefined;
@@ -1817,7 +1831,13 @@ pub const Interpreter = struct {
         }
         if (container == .dictionary) {
             const text = try self.runtime.valueToString(key);
-            return container.dictionary.set(text.string, value);
+            if (container.dictionary.get(text.string) != null or
+                !std.mem.eql(u16, text.string.units, &.{ '_', '_', 'p', 'r', 'o', 't', 'o', '_', '_' }))
+            {
+                return container.dictionary.set(text.string, value);
+            }
+            if (value == .null_value or isPrototypeObject(value)) container.dictionary.prototype = value;
+            return;
         }
         switch (container) {
             .undefined, .null_value => {

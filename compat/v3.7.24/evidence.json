@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 327,
-    "nativeAot": 236,
+    "total": 328,
+    "nativeAot": 237,
     "interpreter": 96,
     "compatJs": 9
   },
@@ -4076,6 +4076,7 @@
       "aotFixtureIds": [
         "native-system-string-array-from-coercion",
         "native-system-string-array-from-dictionary-lazy-length",
+        "native-system-string-array-from-inherited-properties",
         "native-system-string-array-from-null-errors",
         "native-system-string-array-from-null-uncaught",
         "native-system-string-length-search-boundary-commands"
@@ -4096,6 +4097,10 @@
             "fixture.commands",
             "implemented.tests"
           ],
+          "native-system-string-array-from-inherited-properties": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
           "native-system-string-array-from-null-errors": [
             "implemented.tests"
           ],
@@ -4112,8 +4117,8 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 5件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "文字列・配列・primitive・own array-like辞書・関数を対象に両引数のArray.from相当系列化とslice-join検索を実装し、辞書array-likeは検索窓ごとの遅延参照で公式7経路差分テストに成功。AOTバイト列値はTODO: aot-byte-buffer-value、継承array-likeプロパティはTODO: array-from-inherited-properties、配列要素内の関数文字列化はTODO: aot-function-string-nameとしてCOMPATIBILITY_QUIRKS.mdで追跡"
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 6件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "implementationReason": "文字列・配列・primitive・array-like辞書（ownおよびobject-literalの__proto__継承）・関数を対象に両引数のArray.from相当系列化とslice-join検索を実装し、辞書array-likeはlengthと数値添字を検索窓ごとの遅延参照で処理して公式7経路差分テストに成功。AOTバイト列値はTODO: aot-byte-buffer-value、配列要素内の関数文字列化はTODO: aot-function-string-nameとしてCOMPATIBILITY_QUIRKS.mdで追跡"
     },
     {
       "id": "command-0122",
@@ -10145,6 +10150,7 @@
         "native-system-dictionary-byte-buffer-enumeration",
         "native-system-json-encode",
         "native-system-regexp-unicode-sticky",
+        "native-system-string-array-from-inherited-properties",
         "native-system-table-byte-row-slice",
         "native-system-table-sparse-foreach-slice",
         "native-system-table-sparse-map-filter",
@@ -10182,6 +10188,9 @@
           "native-system-regexp-unicode-sticky": [
             "fixture.commands"
           ],
+          "native-system-string-array-from-inherited-properties": [
+            "fixture.commands"
+          ],
           "native-system-table-byte-row-slice": [
             "fixture.commands"
           ],
@@ -10201,7 +10210,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 2件、AOT 10件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 2件、AOT 11件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "純LLVM AOTのJSON.stringify互換エンコーダと公式CLI・生成JavaScriptとの差分テストに成功"
     },
     {
