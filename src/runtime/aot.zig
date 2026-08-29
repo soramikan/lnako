@@ -16121,6 +16121,11 @@ fn kanaMapBuiltin(runtime: *Runtime, value: Value, to_full: bool) !Value {
                 if (roots[0].object().?.payload.array.items.len > 0) return error.KatakanaFullWidthSubstringReceiver;
                 break :blk &.{};
             },
+            .byte_buffer => {
+                const buffer = roots[0].object().?.payload.byte_buffer;
+                if (buffer.kind != .array_buffer and buffer.bytes.len > 0) return error.KatakanaFullWidthSubstringReceiver;
+                break :blk &.{};
+            },
             .function => break :blk &.{},
             else => break :blk &.{},
         }
@@ -19208,6 +19213,10 @@ test "AOT幅変換のカナ系は生レシーバ分岐と保留例外を公式�
     lnako_aot_builtin_call(&roots[5], &succeeding, succeeding.len, @intFromEnum(aot_builtin.Command.half_width));
     try std.testing.expect(!rt.has_pending_exception);
     try std.testing.expectEqualSlices(u16, &.{ 0xff76, 0xff9e }, roots[5].object().?.payload.utf16_string);
+
+    roots[6] = try rt.createBytes(&.{0x41});
+    try std.testing.expectError(error.KatakanaFullWidthSubstringReceiver, kanaMapBuiltin(rt, roots[6], true));
+    try std.testing.expectError(error.KatakanaHalfWidthSplitReceiver, kanaMapBuiltin(rt, roots[6], false));
 }
 
 test "AOT幅変換は辞書のカスタムsubstring・charAt・splitとprototypeを呼び出す" {

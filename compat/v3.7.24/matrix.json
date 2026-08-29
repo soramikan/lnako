@@ -4268,14 +4268,15 @@
         "plugin-system-string-conversion",
         "native-system-width-kana-full-non-string-coercion",
         "native-system-width-function-receiver",
-        "native-system-width-custom-string-methods"
+        "native-system-width-custom-string-methods",
+        "native-system-width-byte-buffer-receiver"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "raw length/substring分岐と公式エラー文言をInterpreter/AOTで実装し、辞書・prototypeのsubstring/charAt関数呼出しを公式差分テストで検証。AOTバイト列値はTODO: aot-byte-buffer-value"
+      "reason": "raw length/substring分岐と公式エラー文言をInterpreter/AOTで実装し、辞書・prototypeのsubstring/charAt関数呼出しと非空Buffer/Uint8Arrayのreceiver境界を公式差分テストで検証。byte bufferの成功するmethod呼出しはTODO: aot-byte-buffer-value"
     },
     {
       "id": "command-0163",
@@ -4297,14 +4298,15 @@
         "plugin-system-string-conversion",
         "native-system-width-kana-half-non-string-coercion",
         "native-system-width-function-receiver",
-        "native-system-width-custom-string-methods"
+        "native-system-width-custom-string-methods",
+        "native-system-width-byte-buffer-receiver"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "raw split分岐と公式エラー文言をInterpreter/AOTで実装し、辞書・prototypeのsplit関数呼出しを公式差分テストで検証。AOTバイト列値はTODO: aot-byte-buffer-value"
+      "reason": "raw split分岐と公式エラー文言をInterpreter/AOTで実装し、辞書・prototypeのsplit関数呼出しと非空Buffer/Uint8Arrayのreceiver境界を公式差分テストで検証。byte bufferの成功するmethod呼出しはTODO: aot-byte-buffer-value"
     },
     {
       "id": "command-0164",
@@ -4326,14 +4328,15 @@
         "plugin-system-string-conversion",
         "native-system-width-kana-full-non-string-coercion",
         "native-system-width-function-receiver",
-        "native-system-width-custom-string-methods"
+        "native-system-width-custom-string-methods",
+        "native-system-width-byte-buffer-receiver"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "カナraw length/substring分岐からASCII String変換へ合成する公式順序をInterpreter/AOTで実装し、辞書・prototypeのsubstring/charAt関数呼出しを含む公式差分テストで検証。AOTバイト列値はTODO: aot-byte-buffer-value"
+      "reason": "カナraw length/substring分岐からASCII String変換へ合成する公式順序をInterpreter/AOTで実装し、辞書・prototypeのsubstring/charAt関数呼出しと非空Buffer/Uint8Arrayのreceiver境界を含む公式差分テストで検証。byte bufferの成功するmethod呼出しはTODO: aot-byte-buffer-value"
     },
     {
       "id": "command-0165",
@@ -4356,14 +4359,15 @@
         "native-system-width-kana-half-non-string-coercion",
         "native-system-width-function-receiver",
         "native-system-width-half-uncaught-error",
-        "native-system-width-custom-string-methods"
+        "native-system-width-custom-string-methods",
+        "native-system-width-byte-buffer-receiver"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "カナraw split分岐からASCII String変換へ合成する公式順序と未捕捉エラーをInterpreter/AOTで実装し、辞書・prototypeのsplit関数呼出しを含む公式差分テストで検証。AOTバイト列値はTODO: aot-byte-buffer-value"
+      "reason": "カナraw split分岐からASCII String変換へ合成する公式順序と未捕捉エラーをInterpreter/AOTで実装し、辞書・prototypeのsplit関数呼出しと非空Buffer/Uint8Arrayのreceiver境界を含む公式差分テストで検証。byte bufferの成功するmethod呼出しはTODO: aot-byte-buffer-value"
     },
     {
       "id": "command-0166",
@@ -18360,7 +18364,8 @@
         "native-system-byte-buffer-backing",
         "native-system-dictionary-byte-buffer-properties",
         "native-system-dictionary-byte-buffer-enumeration",
-        "native-system-dictionary-buffer-enumerable-properties"
+        "native-system-dictionary-buffer-enumerable-properties",
+        "native-system-width-byte-buffer-receiver"
       ],
       "platforms": [
         "macos-aarch64",

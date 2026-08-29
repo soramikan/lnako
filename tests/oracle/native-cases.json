@@ -581,6 +581,11 @@
     "source": "P={}\nP[\"substring\"]=関数(A,B)それは\"x\";ここまで\nP[\"charAt\"]=関数(A)それは\"ｱ\";ここまで\nD={\"__proto__\":P,\"length\":2}\nカタカナ全角変換(D)を表示\nQ={}\nQ[\"split\"]=関数(A)それは[\"ガ\",\"ッ\",\"ツ\"];ここまで\nE={\"__proto__\":Q}\nカタカナ半角変換(E)を表示\n全角変換(D)を表示\n半角変換(E)を表示\n"
   },
   {
+    "id": "native-system-width-byte-buffer-receiver",
+    "commands": ["カタカナ全角変換", "カタカナ半角変換", "全角変換", "半角変換", "ハッシュ値計算"],
+    "source": "B=ハッシュ値計算(\"A\",\"sha256\",undefined)\nU=ランダム配列生成(2)\nエラー監視\nカタカナ全角変換(B)を表示\nエラーならば\n(\"BUF-FULL:\"&エラーメッセージ)を表示\nここまで\nエラー監視\nカタカナ全角変換(U)を表示\nエラーならば\n(\"U8-FULL:\"&エラーメッセージ)を表示\nここまで\nエラー監視\nカタカナ半角変換(B)を表示\nエラーならば\n(\"BUF-KANA-HALF:\"&エラーメッセージ)を表示\nここまで\nエラー監視\nカタカナ半角変換(U)を表示\nエラーならば\n(\"U8-KANA-HALF:\"&エラーメッセージ)を表示\nここまで\nエラー監視\n全角変換(B)を表示\nエラーならば\n(\"BUF-FULL-WIDTH:\"&エラーメッセージ)を表示\nここまで\nエラー監視\n全角変換(U)を表示\nエラーならば\n(\"U8-FULL-WIDTH:\"&エラーメッセージ)を表示\nここまで\nエラー監視\n半角変換(B)を表示\nエラーならば\n(\"BUF-HALF-WIDTH:\"&エラーメッセージ)を表示\nここまで\nエラー監視\n半角変換(U)を表示\nエラーならば\n(\"U8-HALF-WIDTH:\"&エラーメッセージ)を表示\nここまで\n"
+  },
+  {
     "id": "native-system-width-half-uncaught-error",
     "commands": ["半角変換"],
     "oracle": "official-generated",

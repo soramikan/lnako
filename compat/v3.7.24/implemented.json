@@ -1200,9 +1200,10 @@
       "plugin-system-string-conversion",
       "native-system-width-kana-full-non-string-coercion",
       "native-system-width-function-receiver",
-      "native-system-width-custom-string-methods"
+      "native-system-width-custom-string-methods",
+      "native-system-width-byte-buffer-receiver"
     ],
-    "reason": "raw length/substring分岐と公式エラー文言をInterpreter/AOTで実装し、辞書・prototypeのsubstring/charAt関数呼出しを公式差分テストで検証。AOTバイト列値はTODO: aot-byte-buffer-value"
+    "reason": "raw length/substring分岐と公式エラー文言をInterpreter/AOTで実装し、辞書・prototypeのsubstring/charAt関数呼出しと非空Buffer/Uint8Arrayのreceiver境界を公式差分テストで検証。byte bufferの成功するmethod呼出しはTODO: aot-byte-buffer-value"
   },
   "カタカナ半角変換": {
     "status": "native",
@@ -1210,9 +1211,10 @@
       "plugin-system-string-conversion",
       "native-system-width-kana-half-non-string-coercion",
       "native-system-width-function-receiver",
-      "native-system-width-custom-string-methods"
+      "native-system-width-custom-string-methods",
+      "native-system-width-byte-buffer-receiver"
     ],
-    "reason": "raw split分岐と公式エラー文言をInterpreter/AOTで実装し、辞書・prototypeのsplit関数呼出しを公式差分テストで検証。AOTバイト列値はTODO: aot-byte-buffer-value"
+    "reason": "raw split分岐と公式エラー文言をInterpreter/AOTで実装し、辞書・prototypeのsplit関数呼出しと非空Buffer/Uint8Arrayのreceiver境界を公式差分テストで検証。byte bufferの成功するmethod呼出しはTODO: aot-byte-buffer-value"
   },
   "全角変換": {
     "status": "native",
@@ -1220,9 +1222,10 @@
       "plugin-system-string-conversion",
       "native-system-width-kana-full-non-string-coercion",
       "native-system-width-function-receiver",
-      "native-system-width-custom-string-methods"
+      "native-system-width-custom-string-methods",
+      "native-system-width-byte-buffer-receiver"
     ],
-    "reason": "カナraw length/substring分岐からASCII String変換へ合成する公式順序をInterpreter/AOTで実装し、辞書・prototypeのsubstring/charAt関数呼出しを含む公式差分テストで検証。AOTバイト列値はTODO: aot-byte-buffer-value"
+    "reason": "カナraw length/substring分岐からASCII String変換へ合成する公式順序をInterpreter/AOTで実装し、辞書・prototypeのsubstring/charAt関数呼出しと非空Buffer/Uint8Arrayのreceiver境界を含む公式差分テストで検証。byte bufferの成功するmethod呼出しはTODO: aot-byte-buffer-value"
   },
   "半角変換": {
     "status": "native",
@@ -1231,9 +1234,10 @@
       "native-system-width-kana-half-non-string-coercion",
       "native-system-width-function-receiver",
       "native-system-width-half-uncaught-error",
-      "native-system-width-custom-string-methods"
+      "native-system-width-custom-string-methods",
+      "native-system-width-byte-buffer-receiver"
     ],
-    "reason": "カナraw split分岐からASCII String変換へ合成する公式順序と未捕捉エラーをInterpreter/AOTで実装し、辞書・prototypeのsplit関数呼出しを含む公式差分テストで検証。AOTバイト列値はTODO: aot-byte-buffer-value"
+    "reason": "カナraw split分岐からASCII String変換へ合成する公式順序と未捕捉エラーをInterpreter/AOTで実装し、辞書・prototypeのsplit関数呼出しと非空Buffer/Uint8Arrayのreceiver境界を含む公式差分テストで検証。byte bufferの成功するmethod呼出しはTODO: aot-byte-buffer-value"
   },
   "全角カナ一覧": {
     "status": "native",
@@ -3198,7 +3202,8 @@
       "native-system-byte-buffer-backing",
       "native-system-dictionary-byte-buffer-properties",
       "native-system-dictionary-byte-buffer-enumeration",
-      "native-system-dictionary-buffer-enumerable-properties"
+      "native-system-dictionary-buffer-enumerable-properties",
+      "native-system-width-byte-buffer-receiver"
     ],
     "reason": "公式7経路のSHA-256・Buffer境界とエンコード形式の差分テストに成功"
   },
