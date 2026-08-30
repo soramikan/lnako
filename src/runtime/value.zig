@@ -70,6 +70,9 @@ pub const Array = struct {
     presence: std.ArrayList(bool) = .empty,
     properties: std.ArrayList(ArrayProperty) = .empty,
     external: ?ExternalHandle = null,
+    /// Array `__proto__`; `undefined` means the ordinary Array prototype and
+    /// an explicit null preserves a null-prototype array.
+    prototype: Value = .undefined,
 
     pub fn deinit(self: *Array) void {
         if (self.external) |binding| binding.deinit();
@@ -496,6 +499,34 @@ pub fn dictionaryPrototypeBlocksStandard(dictionary: *Dictionary) bool {
         if (current == .undefined) return false;
     }
     return true;
+}
+
+/// Resolve a custom array prototype without invoking the standard Array or
+/// Object prototype.  The prototype representation currently follows the
+/// dictionary chain used by object literals; a bounded walk prevents a
+/// malformed cycle from turning a property read into an infinite loop.
+pub fn arrayPrototypePropertyUnits(array: *Array, units: []const u16) ?Value {
+    var current = array.prototype;
+    var depth: usize = 0;
+    while (depth < 256) : (depth += 1) {
+        current = switch (current) {
+            .dictionary => |prototype| blk: {
+                if (dictionaryOwnPropertyUnits(prototype, units)) |value| return value;
+                break :blk prototype.prototype;
+            },
+            else => return null,
+        };
+        if (current == .undefined or current == .null_value) return null;
+    }
+    return null;
+}
+
+pub fn arrayPrototypeBlocksStandard(array: *Array) bool {
+    return switch (array.prototype) {
+        .null_value => true,
+        .dictionary => dictionaryPrototypeBlocksStandard(array.prototype.dictionary),
+        else => false,
+    };
 }
 
 const HeapObject = union(enum) {
@@ -1205,6 +1236,7 @@ pub const Runtime = struct {
         while (self.grey_objects.pop()) |object| switch (object) {
             .binding_cell => |cell| try self.markValue(cell.value),
             .array => |array| {
+                try self.markValue(array.prototype);
                 for (array.items.items) |item| try self.markValue(item);
                 for (array.properties.items) |property| {
                     try self.markValue(.{ .string = property.key });
@@ -1425,6 +1457,48 @@ test "配列の伸長はholeを明示的undefinedと区別し削除後の長さ�
     try std.testing.expectEqual(@as(usize, 3), array.array.len());
     try std.testing.expect(!array.array.isPresent(0));
     try std.testing.expect(!try array.array.deleteIndex(0));
+}
+
+test "配列のカスタムprototype chainをGC追跡し標準chainの遮断を扱う" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+
+    var owner_roots = runtime.rootFrame();
+    defer owner_roots.deinit();
+    var array = try runtime.createArray();
+    try owner_roots.protect(&array);
+
+    var build_roots = runtime.rootFrame();
+    var prototype = try runtime.createDictionary();
+    try build_roots.protect(&prototype);
+    var parent = try runtime.createDictionary();
+    try build_roots.protect(&parent);
+    var key_x = try runtime.stringUtf8("x");
+    try build_roots.protect(&key_x);
+    var key_y = try runtime.stringUtf8("y");
+    try build_roots.protect(&key_y);
+    var value_x = try runtime.stringUtf8("PROTO");
+    try build_roots.protect(&value_x);
+    var value_y = try runtime.stringUtf8("CHAIN");
+    try build_roots.protect(&value_y);
+    try prototype.dictionary.set(key_x.string, value_x);
+    try parent.dictionary.set(key_y.string, value_y);
+    prototype.dictionary.prototype = parent;
+    array.array.prototype = prototype;
+    build_roots.deinit();
+
+    _ = try runtime.collect();
+    const inherited_x = arrayPrototypePropertyUnits(array.array, &.{'x'}) orelse return error.TestExpectedEqual;
+    try std.testing.expect(inherited_x == .string);
+    try std.testing.expectEqualSlices(u16, &.{ 'P', 'R', 'O', 'T', 'O' }, inherited_x.string.units);
+    const inherited_y = arrayPrototypePropertyUnits(array.array, &.{'y'}) orelse return error.TestExpectedEqual;
+    try std.testing.expect(inherited_y == .string);
+    try std.testing.expectEqualSlices(u16, &.{ 'C', 'H', 'A', 'I', 'N' }, inherited_y.string.units);
+
+    array.array.prototype = .null_value;
+    try std.testing.expect(arrayPrototypeBlocksStandard(array.array));
+    try std.testing.expect(arrayPrototypePropertyUnits(array.array, &.{'x'}) == null);
 }
 
 test "循環した配列と辞書を正確なmark-and-sweepで回収する" {

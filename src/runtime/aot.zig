@@ -1130,6 +1130,7 @@ const Runtime = struct {
                 },
                 .binding_cell => |value| self.markValue(value),
                 .array => |items| {
+                    self.markValue(object.prototype);
                     for (items.items) |value| self.markValue(value);
                     for (object.array_properties.items) |property| {
                         self.markValue(property.key);
@@ -1377,9 +1378,16 @@ const Runtime = struct {
     }
 
     fn aotArrayPropertyGet(self: *Runtime, object: *const Object, key: Value) Value {
-        const key_units = valueUtf16Alloc(self, key) catch return .{};
+        var rooted = [_]Value{
+            .{ .tag = @intFromEnum(Tag.array), .payload = @intFromPtr(object) },
+            key,
+        };
+        var frame = RootFrame{};
+        self.pushRoots(&frame, &rooted, rooted.len);
+        defer self.popRoots(&frame);
+        const key_units = valueUtf16Alloc(self, rooted[1]) catch return .{};
         defer self.allocator.free(key_units);
-        return self.aotArrayPropertyGetUnits(object, key_units);
+        return self.aotArrayPropertyGetUnits(rooted[0].object().?, key_units);
     }
 
     fn aotArrayIsPresent(_: *Runtime, object: *const Object, index: usize) bool {
@@ -1425,20 +1433,39 @@ const Runtime = struct {
     }
 
     fn aotArrayPropertySet(self: *Runtime, object: *Object, key: Value, value: Value) !void {
-        const key_units = try valueUtf16Alloc(self, key);
+        var rooted = [_]Value{
+            .{ .tag = @intFromEnum(Tag.array), .payload = @intFromPtr(object) },
+            key,
+            value,
+        };
+        var frame = RootFrame{};
+        self.pushRoots(&frame, &rooted, rooted.len);
+        defer self.popRoots(&frame);
+        const key_units = try valueUtf16Alloc(self, rooted[1]);
         defer self.allocator.free(key_units);
         if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return error.ArrayLengthAssignment;
         if (self.aotCanonicalArrayIndexUnits(key_units)) |index| {
-            try self.aotArraySetIndex(object, index, value);
+            try self.aotArraySetIndex(rooted[0].object().?, index, rooted[2]);
             return;
         }
-        const normalized = try self.propertyKey(key);
-        try self.setDictionary(&object.array_properties, normalized, value);
+        const normalized = try self.propertyKey(rooted[1]);
+        if (std.mem.eql(u16, key_units, &.{ '_', '_', 'p', 'r', 'o', 't', 'o', '_', '_' }) and
+            self.aotArrayOwnPropertyGetUnits(rooted[0].object().?, key_units) == null)
+        {
+            if (rooted[2].tag == @intFromEnum(Tag.null_value) or rooted[2].object() != null) rooted[0].object().?.prototype = rooted[2];
+            return;
+        }
+        try self.setDictionary(&rooted[0].object().?.array_properties, normalized, rooted[2]);
     }
 
     fn aotArrayPropertyGetUnits(self: *Runtime, object: *const Object, key_units: []const u16) Value {
         if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return numberValue(@floatFromInt(object.payload.array.items.len));
-        return self.aotArrayOwnPropertyGetUnits(object, key_units) orelse .{};
+        if (self.aotArrayOwnPropertyGetUnits(object, key_units)) |value| return value;
+        const source = Value{ .tag = @intFromEnum(Tag.array), .payload = @intFromPtr(object) };
+        return (tableInheritedProperty(self, source, .array, key_units) catch |failure| {
+            self.setFailure(failure);
+            return .{};
+        }) orelse .{};
     }
 
     fn aotArrayOwnPropertyGetUnits(self: *Runtime, object: *const Object, key_units: []const u16) ?Value {
@@ -1783,6 +1810,9 @@ fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror!dyn
             var roots = state.value_runtime.rootFrame();
             defer roots.deinit();
             try roots.protect(&result);
+            var prototype = try aotToDynamicValue(state, value.object().?.prototype);
+            try roots.protect(&prototype);
+            result.array.prototype = prototype;
             for (value.object().?.payload.array.items) |item| _ = try result.array.push(try aotToDynamicValue(state, item));
             for (value.object().?.array_properties.items) |property| {
                 var key = try aotToDynamicValue(state, property.key);
@@ -1837,6 +1867,7 @@ fn dynamicToAotValue(state: *DynamicInterpreterState, value: dynamic_value.Value
             var roots = RootFrame{};
             owner.pushRoots(&roots, @ptrCast(&result), 1);
             defer owner.popRoots(&roots);
+            result.object().?.prototype = try dynamicToAotValue(state, array.prototype);
             for (array.items.items) |item| try result.object().?.payload.array.append(owner.allocator, try dynamicToAotValue(state, item));
             for (array.properties.items) |property| {
                 var converted_key = try owner.createString(property.key.units);
@@ -3429,7 +3460,7 @@ fn arrayToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint) !Va
     defer runtime.popRoots(&frame);
 
     for ([_][]const u16{ first, second }) |name| {
-        const method = runtime.aotArrayOwnPropertyGetUnits(roots[0].object().?, name);
+        const method = runtime.aotArrayOwnPropertyGetUnits(roots[0].object().?, name) orelse arrayPrototypeProperty(roots[0], name);
         if (method) |callable| {
             if (callable.tag == @intFromEnum(Tag.undefined) or callable.tag == @intFromEnum(Tag.null_value)) continue;
             if (callable.tag != @intFromEnum(Tag.function)) return error.NotCallable;
@@ -3437,7 +3468,7 @@ fn arrayToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint) !Va
             if (!isAotObjectValue(roots[1])) return roots[1];
             continue;
         }
-        if (std.mem.eql(u16, name, to_string_name)) {
+        if (std.mem.eql(u16, name, to_string_name) and !arrayPrototypeBlocksStandard(roots[0])) {
             const units = try arrayUtf16Alloc(runtime, roots[0].object().?);
             defer runtime.allocator.free(units);
             return runtime.createString(units);
@@ -14493,6 +14524,40 @@ fn dictionaryPrototypeBlocksStandard(value: Value) bool {
     return true;
 }
 
+fn arrayPrototypeProperty(value: Value, key: []const u16) ?Value {
+    if (value.tag != @intFromEnum(Tag.array)) return null;
+    const object = value.object() orelse return null;
+    if (object.payload != .array) return null;
+    var current = object.prototype;
+    var depth: usize = 0;
+    while (depth < 256) : (depth += 1) {
+        if (current.tag == @intFromEnum(Tag.null_value) or current.tag == @intFromEnum(Tag.undefined)) return null;
+        if (current.tag != @intFromEnum(Tag.dictionary)) return null;
+        if (dictionaryOwnProperty(current, key)) |property| return property;
+        const prototype_object = current.object() orelse return null;
+        if (prototype_object.payload != .dictionary) return null;
+        current = prototype_object.prototype;
+    }
+    return null;
+}
+
+fn arrayPrototypeBlocksStandard(value: Value) bool {
+    if (value.tag != @intFromEnum(Tag.array)) return false;
+    const object = value.object() orelse return false;
+    if (object.payload != .array) return false;
+    var current = object.prototype;
+    var depth: usize = 0;
+    while (depth < 256) : (depth += 1) {
+        if (current.tag == @intFromEnum(Tag.null_value)) return true;
+        if (current.tag == @intFromEnum(Tag.undefined)) return false;
+        if (current.tag != @intFromEnum(Tag.dictionary)) return false;
+        const prototype_object = current.object() orelse return false;
+        if (prototype_object.payload != .dictionary) return false;
+        current = prototype_object.prototype;
+    }
+    return true;
+}
+
 fn dictionaryProperty(value: Value, key: []const u16) Value {
     return dictionaryOwnProperty(value, key) orelse dictionaryPrototypeProperty(value, key) orelse .{};
 }
@@ -15386,6 +15451,11 @@ fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []
         if (tableAsciiUnitsEqual(units, "__proto__")) return row.object().?.prototype;
         if (dictionaryPrototypeProperty(row, units)) |value| return value;
         if (dictionaryPrototypeBlocksStandard(row)) return null;
+    }
+    if (row_tag == .array and row.object().?.prototype.tag != @intFromEnum(Tag.undefined)) {
+        if (tableAsciiUnitsEqual(units, "__proto__")) return if (row.object().?.prototype.tag == @intFromEnum(Tag.null_value)) .{} else row.object().?.prototype;
+        if (arrayPrototypeProperty(row, units)) |value| return value;
+        if (arrayPrototypeBlocksStandard(row)) return null;
     }
 
     if (tableAsciiUnitsEqual(units, "__proto__")) {

@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 372,
-    "nativeAot": 278,
+    "total": 373,
+    "nativeAot": 279,
     "interpreter": 99,
     "compatJs": 9
   },
@@ -7008,6 +7008,7 @@
       ],
       "aotFixtureIds": [
         "native-system-array-copy-reference-commands",
+        "native-system-array-custom-prototype-properties",
         "native-system-array-own-properties",
         "native-system-array-range-copy-bigint-coercion",
         "native-system-array-sparse-copy-reference-concat",
@@ -7028,6 +7029,9 @@
         "aot": {
           "native-system-array-copy-reference-commands": [
             "implemented.tests"
+          ],
+          "native-system-array-custom-prototype-properties": [
+            "fixture.commands"
           ],
           "native-system-array-own-properties": [
             "fixture.commands",
@@ -7063,7 +7067,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 9件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 10件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "UTF-16文字列・配列・辞書の参照、canonical文字列添字、length、明示的なBigInt範囲端のNumber変換、非index配列own property表、辞書・配列の標準prototype property、疎配列sliceの穴を実装し、custom prototype・descriptor・receiver・identity境界はTODO: reference-inherited-propertiesとして分離して公式差分テストに成功"
     },
     {
@@ -7972,6 +7976,7 @@
         "plugin-system-table"
       ],
       "aotFixtureIds": [
+        "native-system-array-custom-prototype-properties",
         "native-system-array-own-properties",
         "native-system-byte-buffer-backing",
         "native-system-byte-buffer-direct-properties",
@@ -7992,6 +7997,9 @@
           ]
         },
         "aot": {
+          "native-system-array-custom-prototype-properties": [
+            "fixture.commands"
+          ],
           "native-system-array-own-properties": [
             "fixture.commands",
             "implemented.tests"
@@ -8037,7 +8045,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 10件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 11件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムでBuffer・Uint8Array・ArrayBufferのlengthと数値添字、byteLength・byteOffset・BYTES_PER_ELEMENT・bufferなどのproperty、表列取得の疎配列map挙動、および匿名関数のname/length propertyを実装し、公式差分テストに成功"
     },
     {
@@ -9776,6 +9784,7 @@
         "plugin-system-types"
       ],
       "aotFixtureIds": [
+        "native-system-array-custom-prototype-properties",
         "native-system-array-cut-inherited-dictionary-properties",
         "native-system-array-fill-byte-buffer-json-clone",
         "native-system-byte-buffer-backing",
@@ -9792,6 +9801,9 @@
           ]
         },
         "aot": {
+          "native-system-array-custom-prototype-properties": [
+            "fixture.commands"
+          ],
           "native-system-array-cut-inherited-dictionary-properties": [
             "fixture.commands"
           ],
@@ -9819,7 +9831,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 6件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 7件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -9832,6 +9844,7 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
+        "native-system-array-custom-prototype-properties",
         "native-system-array-to-primitive",
         "native-system-dictionary-to-primitive",
         "native-system-table-function-properties",
@@ -9848,6 +9861,9 @@
         },
         "aot": {
           "native-cut-commands": [
+            "fixture.commands"
+          ],
+          "native-system-array-custom-prototype-properties": [
             "fixture.commands"
           ],
           "native-system-array-to-primitive": [
@@ -11253,6 +11269,7 @@
         "plugin-system-dictionary-hash"
       ],
       "aotFixtureIds": [
+        "native-system-array-custom-prototype-properties",
         "native-system-array-fill-sparse-clone",
         "native-system-array-own-properties",
         "native-system-array-sparse-copy-reference-concat",
@@ -11277,6 +11294,9 @@
           ]
         },
         "aot": {
+          "native-system-array-custom-prototype-properties": [
+            "fixture.commands"
+          ],
           "native-system-array-fill-sparse-clone": [
             "fixture.commands"
           ],
@@ -11331,7 +11351,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 14件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 15件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "辞書・配列・関数・Buffer/Uint8Array/ArrayBufferのown propertyと標準prototype propertyの存在判定、配列holeの非存在化、動的エラー文言をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {

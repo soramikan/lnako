@@ -470,6 +470,7 @@ pub const Interpreter = struct {
                 for (array.properties.items) |property| {
                     if (std.mem.eql(u16, property.key.units, name)) break :blk property.value;
                 }
+                if (value_mod.arrayPrototypePropertyUnits(array, name)) |inherited| break :blk inherited;
                 break :blk null;
             },
             else => null,
@@ -486,6 +487,10 @@ pub const Interpreter = struct {
         var roots = self.runtime.rootFrame();
         defer roots.deinit();
         try roots.protect(&rooted_value);
+        const array_standard_blocked = switch (rooted_value) {
+            .array => |array| value_mod.arrayPrototypeBlocksStandard(array),
+            else => false,
+        };
 
         const to_string_name: []const u16 = &.{ 't', 'o', 'S', 't', 'r', 'i', 'n', 'g' };
         const value_of_name: []const u16 = &.{ 'v', 'a', 'l', 'u', 'e', 'O', 'f' };
@@ -509,7 +514,7 @@ pub const Interpreter = struct {
             // A missing toString method represents the standard
             // Object.prototype.toString. A missing valueOf method represents
             // the standard object-returning Object.prototype.valueOf.
-            if (std.mem.eql(u16, name, to_string_name)) {
+            if (std.mem.eql(u16, name, to_string_name) and !array_standard_blocked) {
                 return @as(?Value, try self.runtime.valueToStringDefault(rooted_value));
             }
         }
@@ -1898,6 +1903,12 @@ pub const Interpreter = struct {
             const key_text = try self.runtime.valueToString(key);
             if (std.mem.eql(u16, key_text.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return error.ArrayLengthAssignment;
             if (interpreterArrayIndex(key_text.string.units)) |position| return container.array.set(position, value);
+            if (std.mem.eql(u16, key_text.string.units, &.{ '_', '_', 'p', 'r', 'o', 't', 'o', '_', '_' }) and
+                !container.array.hasProperty(key_text.string))
+            {
+                if (value == .null_value or isPrototypeObject(value)) container.array.prototype = value;
+                return;
+            }
             return container.array.setProperty(key_text.string, value);
         }
         if (container == .dictionary) {
@@ -2206,10 +2217,18 @@ fn valueIndex(runtime: *Runtime, value: Value) !usize {
 }
 
 fn getArrayProperty(runtime: *Runtime, array: *value_mod.Array, key: Value) !Value {
-    const key_text = try runtime.valueToString(key);
+    var rooted_array = Value{ .array = array };
+    var rooted_key = key;
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&rooted_array);
+    try roots.protect(&rooted_key);
+    var key_text = try runtime.valueToString(rooted_key);
+    try roots.protect(&key_text);
     if (std.mem.eql(u16, key_text.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return .{ .number = @floatFromInt(array.len()) };
     if (interpreterArrayIndex(key_text.string.units)) |position| return array.get(position);
-    return array.getProperty(key_text.string) orelse .undefined;
+    if (array.getProperty(key_text.string)) |value| return value;
+    return (try plugin_system.arrays.standardInheritedProperty(runtime, rooted_array, key_text.string.units)) orelse .undefined;
 }
 
 fn interpreterArrayIndex(units: []const u16) ?usize {

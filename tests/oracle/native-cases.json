@@ -332,6 +332,11 @@
     "source": "A=[0,1,2,3]\n参照(A,\"0\")を表示\n参照(A,\"1\")を表示\n参照(A,\"01\")を表示\n参照(A,\"-0\")を表示\n参照(A,\"-1\")を表示\n参照(A,\"1.0\")を表示\n参照(A,\"\")を表示\n参照(A,\"4294967295\")を表示\n参照(A,\"900719925474099999999999999\")を表示\n参照(A,\"length\")を表示\n配列参照(A,\"0\")を表示\n配列参照(A,\"length\")を表示\n"
   },
   {
+    "id": "native-system-array-custom-prototype-properties",
+    "commands": ["参照", "表列取得", "辞書キー存在", "TYPEOF", "文字列変換"],
+    "source": "P={\"x\":\"PROTO\",\"tag\":7}\nA=[]\nA[\"__proto__\"]=P\n(\"DIRECT:\"&A[\"x\"])を表示\nX=参照(A,\"x\")\n(\"REF:\"&X)を表示\nT=表列取得([A],\"x\")\n(\"TABLE:\"&T[0])を表示\n(\"PROTO:\"&A[\"__proto__\"][\"x\"])を表示\n辞書キー存在(A,\"x\")を表示\nP2={\"y\":\"CHAIN\"}\nP[\"__proto__\"]=P2\n(\"CHAIN:\"&A[\"y\"])を表示\nP[\"toString\"]=関数()それは\"PROTO-STRING\";ここまで\n文字列変換(A)を表示\nQ=[]\nQ[\"__proto__\"]=NULL\n辞書キー存在(Q,\"toString\")を表示\nTYPEOF(Q[\"__proto__\"])を表示\n"
+  },
+  {
     "id": "native-system-reference-inherited-properties",
     "commands": ["参照", "配列参照", "TYPEOF"],
     "source": "D={\"own\":7}\nA=[1]\nTYPEOF(参照(D,\"toString\"))を表示\nTYPEOF(参照(D,\"constructor\"))を表示\nTYPEOF(参照(D,\"__proto__\"))を表示\nTYPEOF(参照(A,\"map\"))を表示\nTYPEOF(配列参照(A,\"toString\"))を表示\nD1=参照(D,\"toString\")\nD2=参照(D,\"toString\")\nD1===D2を表示\nA1=参照(A,\"map\")\nA2=参照(A,\"map\")\nA1===A2を表示\nD1===A1を表示\nDC1=参照(D,\"constructor\")\nAC1=参照(A,\"constructor\")\nDC1===AC1を表示\nDP1=参照(D,\"__proto__\")\nDP2=参照(D,\"__proto__\")\nAP1=参照(A,\"__proto__\")\nDP1===DP2を表示\nDP1===AP1を表示\nDH=参照(D,\"hasOwnProperty\")\nAH=参照(A,\"hasOwnProperty\")\nDH===AHを表示\nD[\"toString\"]=9\n参照(D,\"toString\")を表示\n"

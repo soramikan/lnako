@@ -2494,6 +2494,11 @@ fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) 
         if (value_mod.dictionaryPrototypePropertyUnits(source.dictionary, units)) |value| return value;
         if (value_mod.dictionaryPrototypeBlocksStandard(source.dictionary)) return null;
     }
+    if (source == .array and source.array.prototype != .undefined) {
+        if (asciiUnitsEqual(units, "__proto__")) return if (source.array.prototype == .null_value) .undefined else source.array.prototype;
+        if (value_mod.arrayPrototypePropertyUnits(source.array, units)) |value| return value;
+        if (value_mod.arrayPrototypeBlocksStandard(source.array)) return null;
+    }
 
     if (asciiUnitsEqual(units, "__proto__")) {
         return switch (source) {
