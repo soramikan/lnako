@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 373,
-    "nativeAot": 279,
+    "total": 374,
+    "nativeAot": 280,
     "interpreter": 99,
     "compatJs": 9
   },
@@ -7793,7 +7793,8 @@
       ],
       "aotFixtureIds": [
         "native-system-table-byte-row-properties",
-        "native-system-table-query-commands"
+        "native-system-table-query-commands",
+        "native-system-table-sparse-length-errors"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -7810,6 +7811,9 @@
           ],
           "native-system-table-query-commands": [
             "implemented.tests"
+          ],
+          "native-system-table-sparse-length-errors": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
@@ -7818,7 +7822,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "空表で1を返す公式挙動とBuffer・Uint8Arrayのlengthを含めて実装し、公式差分テストに成功"
     },
     {
@@ -7864,6 +7868,7 @@
       ],
       "aotFixtureIds": [
         "native-system-table-byte-row-properties",
+        "native-system-table-sparse-length-errors",
         "native-system-table-transform-commands",
         "native-system-table-transpose-null-row-error"
       ],
@@ -7880,6 +7885,9 @@
             "fixture.commands",
             "implemented.tests"
           ],
+          "native-system-table-sparse-length-errors": [
+            "fixture.commands"
+          ],
           "native-system-table-transform-commands": [
             "implemented.tests"
           ],
@@ -7893,7 +7901,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 4件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "欠損列を空文字列で補う公式挙動とbyte buffer rowの数値添字を実装し、公式差分テストに成功"
     },
     {
@@ -7906,6 +7914,7 @@
       ],
       "aotFixtureIds": [
         "native-system-table-byte-row-properties",
+        "native-system-table-sparse-length-errors",
         "native-system-table-transform-commands"
       ],
       "compatJsFixtureIds": [],
@@ -7921,6 +7930,9 @@
             "fixture.commands",
             "implemented.tests"
           ],
+          "native-system-table-sparse-length-errors": [
+            "fixture.commands"
+          ],
           "native-system-table-transform-commands": [
             "implemented.tests"
           ]
@@ -7931,7 +7943,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "欠損列をundefinedにする公式挙動とbyte buffer rowの数値添字を実装し、公式差分テストに成功"
     },
     {

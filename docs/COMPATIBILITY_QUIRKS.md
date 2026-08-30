@@ -463,6 +463,10 @@ ABI値の所有権と非同期スレッド制約は[`NATIVE_PLUGIN_ABI.md`](NATI
 | `表列取得` | `Array.map`相当なので、最上位配列のholeではcallbackを呼ばず、戻り値の同じ位置もholeになる。実在する行の内部propertyが欠損している場合は`undefined`を明示的な要素として返す。実在する`undefined`/`null`行はproperty参照時に例外になる | Interpreterと純LLVM AOTでsourceのpresenceを確認してholeを結果へ伝播し、実在行の欠損列は明示的`undefined`として追加する。own propertyを優先した標準prototype propertyの読み出しも行う。QuickJS互換モードは対象外。関数prototypeのidentity/`constructor` back-referenceを含む標準property解決は実装済みで、合成methodのreceiver付き呼出し、descriptor・完全なcustom prototype semanticsは`TODO: table-inherited-properties`、他の表命令の疎配列経路は`TODO: sparse-array-presence`として分離する | `native-system-table-sparse-map-filter`、`native-system-table-column-null-row-error`、`native-system-table-inherited-properties`、`TODO: table-inherited-properties`、`TODO: sparse-array-presence` |
 | `表ピックアップ` / `表完全一致ピックアップ` | `Array.filter`相当なので、最上位配列のholeはcallbackを呼ばず結果へ入らない。実在する行だけを判定し、結果はdense配列になる。実在する`undefined`/`null`行はproperty参照時に例外になる | Interpreterと純LLVM AOTでholeをスキップし、条件に一致した実在行だけをdenseな結果へ追加する。実在するnullish行は既存の`TableRowMissing`経路で失敗させる。own propertyを優先した標準prototype propertyの読み出しも行う。QuickJS互換モードは対象外。合成methodのreceiver付き呼出し、descriptor・identity・完全なcustom prototype semanticsは`TODO: table-inherited-properties`、他の表命令の疎配列経路は`TODO: sparse-array-presence`として分離する | `native-system-table-sparse-map-filter`、`native-system-table-byte-row-properties`、`native-system-table-inherited-properties`、`TODO: table-inherited-properties`、`TODO: sparse-array-presence` |
 
+## 表命令のlength診断と疎な最上位配列
+
+公式では、最上位表の先頭にholeがある場合、`表列数`がそのholeを`undefined`行として読み、`length` property accessの時点で`Cannot read properties of undefined (reading 'length')`になる。null行では`Cannot read properties of null (reading 'length')`になる。`表行列交換`と`表右回転`も先に列数を求めるため同じ診断になる。Interpreterと純LLVM AOTはこのV8形式の本文を保持し、`native-system-table-sparse-length-errors`で3命令とhole/null行を7経路比較する。他の表命令における疎配列の未実装境界は`TODO: sparse-array-presence`へ分離する。
+
 ## 表命令のforEachと行slice
 
 | 命令 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID / TODO |

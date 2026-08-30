@@ -1915,18 +1915,24 @@ fn tableColumnCount(runtime: *Runtime, source: Value) !Value {
     defer roots.deinit();
     for (&rooted) |*root| try roots.protect(root);
     for (rooted[0].array.items.items) |row| {
-        const length = try rowLengthValue(row);
+        const length = try rowLengthValue(runtime, row);
         if ((try operators.compare(runtime, length, rooted[1])) == .gt) rooted[1] = length;
     }
     return rooted[1];
 }
 
-fn rowLengthValue(row: Value) !Value {
+fn rowLengthValue(runtime: *Runtime, row: Value) !Value {
     return switch (row) {
         .array => |array| .{ .number = @floatFromInt(array.len()) },
         .string => |string| .{ .number = @floatFromInt(string.len()) },
         .bytes => |buffer| if (buffer.kind == .array_buffer) .undefined else .{ .number = @floatFromInt(buffer.bytes.len) },
-        .null_value, .undefined => error.TableRowMissing,
+        .null_value, .undefined => {
+            const receiver = if (row == .null_value) "null" else "undefined";
+            const message = try std.fmt.allocPrint(runtime.allocator(), "Cannot read properties of {s} (reading 'length')", .{receiver});
+            defer runtime.allocator().free(message);
+            try runtime.setFailureMessage(message);
+            return error.TableRowMissing;
+        },
         .dictionary => |dictionary| blk: {
             var units = [_]u16{ 'l', 'e', 'n', 'g', 't', 'h' };
             var key = value_mod.String{ .allocator = dictionary.allocator, .units = &units };
@@ -3522,6 +3528,21 @@ test "表検索系はlengthとraw開始値の型を保持する" {
     var array_buffer = try runtime.createArrayBuffer(&.{ 85, 9 });
     try roots.protect(&array_buffer);
     try std.testing.expect((try indexed(&runtime, array_buffer, length_key)) == .undefined);
+
+    var sparse_table = try runtime.createArray();
+    try roots.protect(&sparse_table);
+    var sparse_row = try runtime.createArray();
+    try roots.protect(&sparse_row);
+    try sparse_table.array.set(2, sparse_row);
+    try std.testing.expectError(error.TableRowMissing, tableColumnCount(&runtime, sparse_table));
+    try std.testing.expectEqualStrings("Cannot read properties of undefined (reading 'length')", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
+
+    var null_table = try common.arrayFromValues(&runtime, &.{Value.null_value});
+    try roots.protect(&null_table);
+    try std.testing.expectError(error.TableRowMissing, tableColumnCount(&runtime, null_table));
+    try std.testing.expectEqualStrings("Cannot read properties of null (reading 'length')", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
 }
 
 test "表行propertyはbyte bufferのprototype属性を解決する" {
