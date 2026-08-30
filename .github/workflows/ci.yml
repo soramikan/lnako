@@ -171,6 +171,7 @@ jobs:
           node tools/compare_node_exit_oracle.mjs
           node tools/compare_node_interrupt_oracle.mjs
           node tools/check_node_current_directory_realpath.mjs
+          node tools/check_node_current_directory_errors.mjs
           node tools/check_node_archive_smoke.mjs
       - name: Differential native AOT test
         if: matrix.suite == 'aot'

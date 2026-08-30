@@ -8183,7 +8183,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         .node_change_directory => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = nodeChangeDirectoryBuiltin(runtime, actual) catch |failure| {
-                runtime.setFailure(failure);
+                if (!runtime.has_pending_exception) runtime.setFailure(failure);
                 return;
             };
         },
@@ -12618,12 +12618,63 @@ fn nodeChangeDirectoryBuiltin(runtime: *Runtime, arguments: []const Value) !Valu
     if (arguments.len < 1) return error.InvalidArgumentCount;
     const units = try valueUtf16Alloc(runtime, arguments[0]);
     defer runtime.allocator.free(units);
-    const path = try (string_mod.String{ .allocator = runtime.allocator, .units = units }).toUtf8Lossy(runtime.allocator);
+    const display_path = try (string_mod.String{ .allocator = runtime.allocator, .units = units }).toUtf8Lossy(runtime.allocator);
+    defer runtime.allocator.free(display_path);
+    const path = if (comptime builtin.os.tag == .windows)
+        try std.unicode.wtf16LeToWtf8Alloc(runtime.allocator, units)
+    else
+        try runtime.allocator.dupe(u8, display_path);
     defer runtime.allocator.free(path);
-    const path_z = try runtime.allocator.dupeZ(u8, path);
-    defer runtime.allocator.free(path_z);
-    if (std.c.chdir(path_z.ptr) != 0) return error.ChangeDirectoryFailed;
+    const cwd_raw = try currentDirectoryAlloc(runtime);
+    defer runtime.allocator.free(cwd_raw);
+    const cwd = try aotNodeErrorPathAlloc(runtime, cwd_raw);
+    defer runtime.allocator.free(cwd);
+    const io = std.Io.Threaded.global_single_threaded.io();
+    var directory = std.Io.Dir.cwd().openDir(io, path, .{}) catch |failure| {
+        try setAotNodeChangeDirectoryFailure(runtime, cwd, display_path, failure);
+        return failure;
+    };
+    defer directory.close(io);
+    std.process.setCurrentDir(io, directory) catch |failure| {
+        try setAotNodeChangeDirectoryFailure(runtime, cwd, display_path, failure);
+        return failure;
+    };
     return .{};
+}
+
+const AotNodeChangeDirectoryErrorInfo = struct {
+    code: []const u8,
+    description: []const u8,
+};
+
+fn aotNodeChangeDirectoryErrorInfo(failure: anyerror) ?AotNodeChangeDirectoryErrorInfo {
+    return switch (failure) {
+        error.FileNotFound => .{ .code = "ENOENT", .description = "no such file or directory" },
+        error.NotDir => .{ .code = "ENOTDIR", .description = "not a directory" },
+        error.AccessDenied, error.PermissionDenied => .{ .code = "EACCES", .description = "permission denied" },
+        error.NameTooLong => .{ .code = "ENAMETOOLONG", .description = "name too long" },
+        error.BadPathName, error.InvalidWtf8 => .{ .code = "EINVAL", .description = "invalid argument" },
+        error.SymLinkLoop => .{ .code = "ELOOP", .description = "too many levels of symbolic links" },
+        else => null,
+    };
+}
+
+fn aotNodeErrorPathAlloc(runtime: *Runtime, path: []const u8) ![]u8 {
+    if (comptime builtin.os.tag == .windows) {
+        return std.unicode.wtf8ToUtf8LossyAlloc(runtime.allocator, path);
+    }
+    return runtime.allocator.dupe(u8, path);
+}
+
+fn setAotNodeChangeDirectoryFailure(runtime: *Runtime, cwd: []const u8, path: []const u8, failure: anyerror) !void {
+    const info = aotNodeChangeDirectoryErrorInfo(failure) orelse return;
+    const message = try std.fmt.allocPrint(
+        runtime.allocator,
+        "{s}: {s}, chdir '{s}' -> '{s}'",
+        .{ info.code, info.description, cwd, path },
+    );
+    defer runtime.allocator.free(message);
+    runtime.setFailureText(message);
 }
 
 fn nodePathBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
@@ -19386,6 +19437,35 @@ test "AOTカレントディレクトリ変更は相対パスを受けてundefine
     var arguments = [_]Value{try runtimeUtf8String(&runtime, ".")};
     roots[0] = try nodeChangeDirectoryBuiltin(&runtime, &arguments);
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[0].tag)));
+}
+
+test "AOTカレントディレクトリ変更は失敗時にNodeのchdir診断を保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    const missing_path = "lnako-current-directory-missing-7f4b";
+    roots[0] = try runtimeUtf8String(&runtime, missing_path);
+    const cwd = try currentDirectoryAlloc(&runtime);
+    defer runtime.allocator.free(cwd);
+    const expected = try std.fmt.allocPrint(
+        runtime.allocator,
+        "ENOENT: no such file or directory, chdir '{s}' -> '{s}'",
+        .{ cwd, missing_path },
+    );
+    defer runtime.allocator.free(expected);
+
+    _ = nodeChangeDirectoryBuiltin(&runtime, roots[0..1]) catch |failure| {
+        try std.testing.expectEqual(error.FileNotFound, failure);
+        try std.testing.expect(runtime.has_pending_exception);
+        try expectUtf16String(&runtime, runtime.pending_exception, expected);
+        _ = runtime.takeException();
+        return;
+    };
+    return error.ExpectedFailure;
 }
 
 test "AOT対応ブラウザ一覧取得はv3.7.24の辞書をキャッシュする" {

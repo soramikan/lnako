@@ -362,9 +362,12 @@ pub fn call(runtime: *Runtime, state: *State, context: Context, effects: ?Effect
         return @as(?Value, try runtime.stringUtf8(cwd));
     }
     if (std.mem.eql(u8, name, "カレントディレクトリ変更") or std.mem.eql(u8, name, "作業フォルダ変更")) {
-        const path = try valueUtf8(runtime, source);
+        const path = try nodeFilesystemPath(runtime, source);
         defer runtime.allocator().free(path);
-        try context.chdir(path);
+        context.chdir(path) catch |failure| {
+            setNodeChangeDirectoryFailure(runtime, context, path, failure) catch {};
+            return failure;
+        };
         return @as(?Value, .undefined);
     }
     if (std.mem.eql(u8, name, "ホームディレクトリ取得")) return @as(?Value, if (context.home_directory) |home| try runtime.stringUtf8(home) else .undefined);
@@ -1220,6 +1223,55 @@ fn valueUtf8(runtime: *Runtime, value: Value) ![]u8 {
     return text.string.toUtf8Lossy(runtime.allocator());
 }
 
+const NodeChangeDirectoryErrorInfo = struct {
+    code: []const u8,
+    description: []const u8,
+};
+
+fn nodeChangeDirectoryErrorInfo(failure: anyerror) ?NodeChangeDirectoryErrorInfo {
+    return switch (failure) {
+        error.FileNotFound => .{ .code = "ENOENT", .description = "no such file or directory" },
+        error.NotDir => .{ .code = "ENOTDIR", .description = "not a directory" },
+        error.AccessDenied, error.PermissionDenied => .{ .code = "EACCES", .description = "permission denied" },
+        error.NameTooLong => .{ .code = "ENAMETOOLONG", .description = "name too long" },
+        error.BadPathName, error.InvalidWtf8 => .{ .code = "EINVAL", .description = "invalid argument" },
+        error.SymLinkLoop => .{ .code = "ELOOP", .description = "too many levels of symbolic links" },
+        else => null,
+    };
+}
+
+fn nodeFilesystemPath(runtime: *Runtime, value: Value) ![]u8 {
+    const text = try runtime.valueToString(value);
+    if (comptime builtin.os.tag == .windows) {
+        return std.unicode.wtf16LeToWtf8Alloc(runtime.allocator(), text.string.units);
+    }
+    return text.string.toUtf8Lossy(runtime.allocator());
+}
+
+fn nodeErrorPath(runtime: *Runtime, path: []const u8) ![]u8 {
+    if (comptime builtin.os.tag == .windows) {
+        return std.unicode.wtf8ToUtf8LossyAlloc(runtime.allocator(), path);
+    }
+    return runtime.allocator().dupe(u8, path);
+}
+
+fn setNodeChangeDirectoryFailure(runtime: *Runtime, context: Context, path: []const u8, failure: anyerror) !void {
+    const info = nodeChangeDirectoryErrorInfo(failure) orelse return;
+    const cwd_raw = context.cwd(runtime.allocator()) catch return;
+    defer runtime.allocator().free(cwd_raw);
+    const cwd = try nodeErrorPath(runtime, cwd_raw);
+    defer runtime.allocator().free(cwd);
+    const display_path = try nodeErrorPath(runtime, path);
+    defer runtime.allocator().free(display_path);
+    const message = try std.fmt.allocPrint(
+        runtime.allocator(),
+        "{s}: {s}, chdir '{s}' -> '{s}'",
+        .{ info.code, info.description, cwd, display_path },
+    );
+    defer runtime.allocator().free(message);
+    try runtime.setFailureMessage(message);
+}
+
 fn fileStatValue(runtime: *Runtime, stat: FileStat) !Value {
     var result = try runtime.createDictionary();
     var roots = runtime.rootFrame();
@@ -1437,6 +1489,38 @@ test "Node互換のパス・OS・環境変数命令を処理する" {
     const env_utf8 = try env.string.toUtf8Lossy(std.testing.allocator);
     defer std.testing.allocator.free(env_utf8);
     try std.testing.expectEqualStrings("ok", env_utf8);
+}
+
+test "Nodeカレントディレクトリ変更は失敗時にchdir診断を保持する" {
+    const TestHost = struct {
+        fn cwd(_: *anyopaque, allocator: std.mem.Allocator) ![]u8 {
+            return allocator.dupe(u8, "/work/project");
+        }
+
+        fn chdir(_: *anyopaque, _: []const u8) !void {
+            return error.FileNotFound;
+        }
+    };
+    var host = TestHost{};
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state = State{};
+    defer state.deinit(std.testing.allocator);
+    var path = try runtime.stringUtf8("missing-日本語-7f4b");
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&path);
+    const context = Context{ .context = &host, .cwdFn = TestHost.cwd, .chdirFn = TestHost.chdir };
+    _ = call(&runtime, &state, context, null, "カレントディレクトリ変更", &.{path}) catch |failure| {
+        try std.testing.expectEqual(error.FileNotFound, failure);
+        try std.testing.expectEqualStrings(
+            "ENOENT: no such file or directory, chdir '/work/project' -> 'missing-日本語-7f4b'",
+            runtime.failureMessage().?,
+        );
+        runtime.clearFailureMessage();
+        return;
+    };
+    return error.ExpectedFailure;
 }
 
 test "Node互換のbasenameとdirnameはルートと連続区切りを処理する" {
