@@ -892,9 +892,9 @@ fn v8MergeHighCallback(
     }
     if (length_b == 1) {
         destination -= length_a;
-        cursor_a -= length_a;
-        v8CopyRange(Value, items, destination + 1, items, cursor_a + 1, length_a);
-        v8CopyRange(bool, presence, destination + 1, presence, cursor_a + 1, length_a);
+        const source_a = cursor_a - (length_a - 1);
+        v8CopyRange(Value, items, destination + 1, items, source_a, length_a);
+        v8CopyRange(bool, presence, destination + 1, presence, source_a, length_a);
         items[destination] = temp[cursor_temp];
         presence[destination] = temp_presence[cursor_temp];
         return;
@@ -910,7 +910,6 @@ fn v8MergeHighCallback(
                 items[destination] = items[cursor_a];
                 presence[destination] = presence[cursor_a];
                 destination -= 1;
-                cursor_a -= 1;
                 length_a -= 1;
                 wins_a += 1;
                 wins_b = 0;
@@ -920,6 +919,7 @@ fn v8MergeHighCallback(
                     min_gallop_state.* = min_gallop;
                     return;
                 }
+                cursor_a -= 1;
                 if (wins_a >= min_gallop) break;
             } else {
                 items[destination] = temp[cursor_temp];
@@ -931,9 +931,9 @@ fn v8MergeHighCallback(
                 wins_a = 0;
                 if (length_b == 1) {
                     destination -= length_a;
-                    cursor_a -= length_a;
-                    v8CopyRange(Value, items, destination + 1, items, cursor_a + 1, length_a);
-                    v8CopyRange(bool, presence, destination + 1, presence, cursor_a + 1, length_a);
+                    const source_a = cursor_a - (length_a - 1);
+                    v8CopyRange(Value, items, destination + 1, items, source_a, length_a);
+                    v8CopyRange(bool, presence, destination + 1, presence, source_a, length_a);
                     items[destination] = temp[cursor_temp];
                     presence[destination] = temp_presence[cursor_temp];
                     min_gallop_state.* = min_gallop;
@@ -963,6 +963,15 @@ fn v8MergeHighCallback(
             );
             wins_a = length_a - gallop_index;
             if (wins_a > 0) {
+                if (wins_a == length_a) {
+                    destination -= length_a;
+                    const source_a = cursor_a - (length_a - 1);
+                    v8CopyRange(Value, items, destination + 1, items, source_a, length_a);
+                    v8CopyRange(bool, presence, destination + 1, presence, source_a, length_a);
+                    v8CopyRange(Value, items, destination - (length_b - 1), temp, 0, length_b);
+                    v8CopyRange(bool, presence, destination - (length_b - 1), temp_presence, 0, length_b);
+                    return;
+                }
                 destination -= wins_a;
                 cursor_a -= wins_a;
                 v8CopyRange(Value, items, destination + 1, items, cursor_a + 1, wins_a);
@@ -981,9 +990,9 @@ fn v8MergeHighCallback(
             length_b -= 1;
             if (length_b == 1) {
                 destination -= length_a;
-                cursor_a -= length_a;
-                v8CopyRange(Value, items, destination + 1, items, cursor_a + 1, length_a);
-                v8CopyRange(bool, presence, destination + 1, presence, cursor_a + 1, length_a);
+                const source_a = cursor_a - (length_a - 1);
+                v8CopyRange(Value, items, destination + 1, items, source_a, length_a);
+                v8CopyRange(bool, presence, destination + 1, presence, source_a, length_a);
                 items[destination] = temp[cursor_temp];
                 presence[destination] = temp_presence[cursor_temp];
                 return;
@@ -1002,6 +1011,12 @@ fn v8MergeHighCallback(
             );
             wins_b = length_b - gallop_left;
             if (wins_b > 0) {
+                if (wins_b == length_b) {
+                    destination -= length_b;
+                    v8CopyRange(Value, items, destination + 1, temp, 0, length_b);
+                    v8CopyRange(bool, presence, destination + 1, temp_presence, 0, length_b);
+                    return;
+                }
                 destination -= wins_b;
                 cursor_temp -= wins_b;
                 v8CopyRange(Value, items, destination + 1, temp, cursor_temp + 1, wins_b);
@@ -1009,9 +1024,9 @@ fn v8MergeHighCallback(
                 length_b -= wins_b;
                 if (length_b == 1) {
                     destination -= length_a;
-                    cursor_a -= length_a;
-                    v8CopyRange(Value, items, destination + 1, items, cursor_a + 1, length_a);
-                    v8CopyRange(bool, presence, destination + 1, presence, cursor_a + 1, length_a);
+                    const source_a = cursor_a - (length_a - 1);
+                    v8CopyRange(Value, items, destination + 1, items, source_a, length_a);
+                    v8CopyRange(bool, presence, destination + 1, presence, source_a, length_a);
                     items[destination] = temp[cursor_temp];
                     presence[destination] = temp_presence[cursor_temp];
                     return;
@@ -1023,13 +1038,13 @@ fn v8MergeHighCallback(
             items[destination] = items[cursor_a];
             presence[destination] = presence[cursor_a];
             destination -= 1;
-            cursor_a -= 1;
             length_a -= 1;
             if (length_a == 0) {
                 v8CopyRange(Value, items, destination - (length_b - 1), temp, 0, length_b);
                 v8CopyRange(bool, presence, destination - (length_b - 1), temp_presence, 0, length_b);
                 return;
             }
+            cursor_a -= 1;
         }
         min_gallop += 1;
         min_gallop_state.* = min_gallop;
@@ -1838,10 +1853,12 @@ fn compareTableRows(
         const number = try runtime.valueToNumber(difference);
         return if (std.math.isNan(number)) .eq else std.math.order(number, 0);
     }
-    // The V8 sort implementation can observe comparator call order for
-    // unordered values such as NaN and undefined. Keep the existing stable
-    // sort's relational result for that unresolved boundary.
-    return (try operators.compare(runtime, left_cell.*, right_cell.*)) orelse .eq;
+    // The official table comparator is not the abstract-relational boolean
+    // used by ordinary comparison operators: after the strict-equality fast
+    // path it returns `1` whenever `ns < ms` is false.  That includes NaN and
+    // undefined cells, so preserve the non-antisymmetric result instead of
+    // collapsing an unordered comparison to equality.
+    return (try operators.compare(runtime, left_cell.*, right_cell.*)) orelse .gt;
 }
 
 fn tablePickup(runtime: *Runtime, source: Value, column: Value, needle: Value, exact: bool) !Value {
