@@ -279,6 +279,10 @@ const FunctionObject = struct {
     name: []u8,
     captures: []Value,
     promise_kind: PromiseFunctionKind = .none,
+    /// Ordinary generated functions expose one stable prototype object.  It
+    /// is created lazily by the table property resolver and points back to
+    /// the function through its own `constructor` property.
+    prototype: Value = .{},
 };
 
 const AotHttpRouteKind = enum { static, callback };
@@ -1118,6 +1122,7 @@ const Runtime = struct {
             switch (object.payload) {
                 .utf16_string, .byte_buffer, .bigint => {},
                 .function => |function| {
+                    self.markValue(function.prototype);
                     for (function.captures) |capture| self.markValue(capture);
                     switch (function.promise_kind) {
                         .none => {},
@@ -1320,6 +1325,10 @@ const Runtime = struct {
                     break :blk .{};
                 }) orelse .{};
                 break :blk rooted[2];
+            },
+            .function => tableRowProperty(self, container, key) catch |failure| {
+                self.setFailure(failure);
+                return .{};
             },
             else => .{},
         };
@@ -15483,7 +15492,12 @@ fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []
         };
     }
 
-    if (tableAsciiUnitsEqual(units, "prototype") and row_tag == .function) return @as(?Value, try runtime.createDictionary(&.{}));
+    if (tableAsciiUnitsEqual(units, "prototype") and row_tag == .function) {
+        if (row.object().?.payload.function.prototype.tag != @intFromEnum(Tag.undefined)) return @as(?Value, row.object().?.payload.function.prototype);
+        const prototype = try runtime.createDictionary(&.{ staticStringValue("constructor"), row });
+        row.object().?.payload.function.prototype = prototype;
+        return @as(?Value, prototype);
+    }
 
     const constructor_name: ?[]const u8 = switch (row_tag) {
         .dictionary => "Object",
@@ -21896,6 +21910,10 @@ test "AOT表行propertyはown値を優先して標準prototypeを解決する" {
     try expectUtf16String(&runtime, roots[11], "toUpperCase");
     roots[12] = try tableRowProperty(&runtime, roots[3], staticStringValue("prototype"));
     try expectUtf16String(&runtime, try tableRowProperty(&runtime, roots[12], staticStringValue("toString")), "function toString() { [native code] }");
+    roots[15] = try tableRowProperty(&runtime, roots[3], staticStringValue("prototype"));
+    try std.testing.expect(try strictEqual(&runtime, roots[12], roots[15]));
+    roots[16] = try tableRowProperty(&runtime, roots[12], staticStringValue("constructor"));
+    try std.testing.expect(try strictEqual(&runtime, roots[3], roots[16]));
     roots[13] = try tableRowProperty(&runtime, roots[0], staticStringValue("__proto__"));
     try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(roots[13].tag)));
     roots[14] = try tableRowProperty(&runtime, roots[1], staticStringValue("__proto__"));

@@ -299,6 +299,10 @@ pub const Function = struct {
     pure: bool = false,
     kind: FunctionKind,
     captures: []Capture,
+    /// Ordinary IR functions expose one stable prototype object.  Keep the
+    /// lazily-created object on the function itself so repeated property
+    /// reads preserve JavaScript Function.prototype identity.
+    prototype: Value = .undefined,
 
     pub fn deinit(self: *Function) void {
         if (self.kind == .external) self.kind.external.binding.deinit();
@@ -1250,6 +1254,7 @@ pub const Runtime = struct {
             },
             .function => |function| {
                 try self.markValue(.{ .string = function.name });
+                try self.markValue(function.prototype);
                 for (function.captures) |capture| {
                     try self.markValue(.{ .string = capture.name });
                     if (capture.cell) |cell|

@@ -1875,6 +1875,26 @@ pub const Interpreter = struct {
             if (try plugin_system.arrays.standardInheritedProperty(self.runtime, rooted[0], rooted[2].string.units)) |value| return value;
             return .undefined;
         }
+        if (container == .function) {
+            var rooted = [_]Value{ container, key, .undefined };
+            var roots = self.runtime.rootFrame();
+            defer roots.deinit();
+            try roots.protect(&rooted[0]);
+            try roots.protect(&rooted[1]);
+            rooted[2] = try self.runtime.valueToString(rooted[1]);
+            try roots.protect(&rooted[2]);
+            if (std.mem.eql(u16, rooted[2].string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return .{ .number = 0 };
+            if (std.mem.eql(u16, rooted[2].string.units, &.{ 'n', 'a', 'm', 'e' })) {
+                const lambda_marker = [_]u16{ '_', '_', 'l', 'a', 'm', 'b', 'd', 'a', '$' };
+                const name = if (std.mem.indexOf(u16, rooted[0].function.name.units, &lambda_marker) != null)
+                    &.{}
+                else
+                    rooted[0].function.name.units;
+                return self.runtime.stringCodeUnits(name);
+            }
+            if (try plugin_system.arrays.standardInheritedProperty(self.runtime, rooted[0], rooted[2].string.units)) |value| return value;
+            return .undefined;
+        }
         if (container == .string) {
             const unit = container.string.codeUnitAt(try valueIndex(self.runtime, key)) orelse return .undefined;
             return self.runtime.stringCodeUnits(&.{unit});

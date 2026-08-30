@@ -2527,7 +2527,21 @@ fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) 
 
     if (asciiUnitsEqual(units, "prototype") and source == .function) {
         return switch (source.function.kind) {
-            .ir => @as(?Value, try runtime.createDictionary()),
+            .ir => blk: {
+                if (source.function.prototype != .undefined) break :blk @as(?Value, source.function.prototype);
+
+                var rooted_source = source;
+                var roots = runtime.rootFrame();
+                defer roots.deinit();
+                try roots.protect(&rooted_source);
+                var prototype = try runtime.createDictionary();
+                try roots.protect(&prototype);
+                var constructor_key = try runtime.stringUtf8("constructor");
+                try roots.protect(&constructor_key);
+                try prototype.dictionary.set(constructor_key.string, rooted_source);
+                rooted_source.function.prototype = prototype;
+                break :blk @as(?Value, prototype);
+            },
             .native, .external => null,
         };
     }
@@ -2686,6 +2700,12 @@ test "表行propertyはown値を優先して標準prototypeを解決する" {
     var function_proto = try indexed(&runtime, function, prototype_key);
     try roots.protect(&function_proto);
     try std.testing.expect(function_proto == .dictionary);
+    var function_proto_again = try indexed(&runtime, function, prototype_key);
+    try roots.protect(&function_proto_again);
+    try std.testing.expect(Value.strictEqual(function_proto, function_proto_again));
+    var function_constructor = try indexed(&runtime, function_proto, constructor_key);
+    try roots.protect(&function_constructor);
+    try std.testing.expect(Value.strictEqual(function, function_constructor));
 
     var number_constructor = try indexed(&runtime, .{ .number = 1 }, constructor_key);
     try roots.protect(&number_constructor);
