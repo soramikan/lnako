@@ -325,7 +325,7 @@ function assertOfficialEquivalent(label, left, right) {
 
 function normalizeProcess(result) {
   return {
-    stdout: result.stdout.replaceAll("\r\n", "\n"),
+    stdout: normalizeLineEndings(result.stdout),
     stderrClass: result.status === 0 ? "success" : "runtime-error",
     exitCode: result.status,
     signal: result.signal,
@@ -599,7 +599,7 @@ function sha256FileSync(path) {
 }
 
 function normalizeLineEndings(value) {
-  return value.replaceAll("\r\n", "\n");
+  return value.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
 }
 
 async function readOracleIdentity(directory, expectedBaseline) {

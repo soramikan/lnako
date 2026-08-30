@@ -319,7 +319,7 @@ function buildLnako() {
 
 function normalize(result) {
   return {
-    stdout: result.stdout.replaceAll("\r\n", "\n"),
+    stdout: normalizeLineEndings(result.stdout),
     stderrClass: result.status === 0 ? "success" : "runtime-error",
     exitCode: result.status,
     signal: result.signal,
@@ -327,7 +327,11 @@ function normalize(result) {
 }
 
 function normalizeStderr(result) {
-  return result.stderr.replaceAll("\r\n", "\n");
+  return normalizeLineEndings(result.stderr);
+}
+
+function normalizeLineEndings(value) {
+  return value.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
 }
 
 function parseArtifactPath() {

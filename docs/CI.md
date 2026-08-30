@@ -232,6 +232,16 @@ Windows runnerでは公式オラクルが`D:`、`os.tmpdir()`が`C:`となり、
 Windows `aot`で両方を再確認し、失敗時は出力値を含む診断から追加修正する。CIの完了を待つ運用には変えず、
 pushごとに完了済みrunをスナップショット確認する。
 
+その後の[run 33335610101](https://github.com/soramikan/lnako/actions/runs/33335610101)（`2057d2d`）では、
+`native-caniuse-browsers`の生成JavaScript欠落は再発しなかった。一方、Windows `aot`の比較artifactには
+`native-csv-commands`、`native-system-debug-display`、`native-system-hatena-default`、
+`native-node-stdin-lines`の4件が残った。いずれも終了コード・stderr・Interpreter結果は一致し、AOT標準出力の
+一部だけがWindowsの`CRLF`になっていた。さらにdispatch coverage auditも`plugin-csv-all`で同じ出力改行差を
+報告していたため、実行結果の意味を変えない比較境界として、`compare_native_oracle.mjs`と
+`check_dispatch_coverage.mjs`の標準出力・stderrを`CRLF`および単独`CR`から`LF`へ正規化する修正を追加した。
+次回pushでは、この修正後のWindows `aot`とdispatch coverageを完了待ちせずに開始し、後続の区切りで完了済み
+runだけを確認する。
+
 ## Windows AOTのQuickJSビルド分離
 
 Windows AOTの追加短縮を判断するため、分離前の[run 32932078383](https://github.com/soramikan/lnako/actions/runs/32932078383)
