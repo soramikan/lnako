@@ -651,6 +651,9 @@ const Object = struct {
     /// Object-literal `__proto__`; the undefined value means the ordinary
     /// Object prototype and explicit null preserves a null-prototype object.
     prototype: Value = .{},
+    /// Own properties for arrays and for the other extensible object kinds.
+    /// The legacy field name is retained because array operations and their
+    /// serialized fixtures already use it.
     array_properties: std.ArrayList(DictionaryEntry) = .empty,
     array_presence: std.ArrayList(bool) = .empty,
     payload: Payload,
@@ -1120,9 +1123,19 @@ const Runtime = struct {
             self.grey = object.grey_next;
             object.grey_next = null;
             switch (object.payload) {
-                .utf16_string, .byte_buffer, .bigint => {},
+                .utf16_string, .bigint => {},
+                .byte_buffer => {
+                    for (object.array_properties.items) |property| {
+                        self.markValue(property.key);
+                        self.markValue(property.value);
+                    }
+                },
                 .function => |function| {
                     self.markValue(function.prototype);
+                    for (object.array_properties.items) |property| {
+                        self.markValue(property.key);
+                        self.markValue(property.value);
+                    }
                     for (function.captures) |capture| self.markValue(capture);
                     switch (function.promise_kind) {
                         .none => {},
@@ -1152,6 +1165,10 @@ const Runtime = struct {
                 .iterator => |iterator| self.markValue(iterator.source),
                 .promise => |promise| {
                     self.markValue(promise.result);
+                    for (object.array_properties.items) |property| {
+                        self.markValue(property.key);
+                        self.markValue(property.value);
+                    }
                     for (promise.reactions.items) |reaction| {
                         self.markValue(reaction.on_fulfilled);
                         self.markValue(reaction.on_rejected);
@@ -1244,7 +1261,10 @@ const Runtime = struct {
     fn destroyObject(self: *Runtime, object: *Object) void {
         switch (object.payload) {
             .utf16_string => |units| self.allocator.free(units),
-            .byte_buffer => |buffer| buffer.storage.release(),
+            .byte_buffer => |buffer| {
+                buffer.storage.release();
+                object.array_properties.deinit(self.allocator);
+            },
             .bigint => |*value| value.deinit(),
             .array => |*items| {
                 items.deinit(self.allocator);
@@ -1264,9 +1284,13 @@ const Runtime = struct {
                 }
                 self.allocator.free(function.name);
                 self.allocator.free(function.captures);
+                object.array_properties.deinit(self.allocator);
             },
             .iterator, .binding_cell => {},
-            .promise => |*promise| promise.reactions.deinit(self.allocator),
+            .promise => |*promise| {
+                promise.reactions.deinit(self.allocator);
+                object.array_properties.deinit(self.allocator);
+            },
         }
         self.allocator.destroy(object);
     }
@@ -1285,6 +1309,12 @@ const Runtime = struct {
                 defer self.popRoots(&frame);
                 const source = rooted[0];
                 const rooted_buffer = source.object().?.payload.byte_buffer;
+                const key_units = valueUtf16Alloc(self, rooted[1]) catch |failure| {
+                    self.setFailure(failure);
+                    return .{};
+                };
+                defer self.allocator.free(key_units);
+                if (self.aotObjectOwnPropertyGetUnits(source.object().?, key_units)) |value| return value;
                 if (sameKey(rooted[1], staticStringValue("length"))) {
                     return if (rooted_buffer.kind == .array_buffer) .{} else numberValue(@floatFromInt(rooted_buffer.bytes.len));
                 }
@@ -1295,11 +1325,6 @@ const Runtime = struct {
                     };
                 }
                 if (aotByteBufferScalarProperty(rooted_buffer, rooted[1])) |value| return value;
-                const key_units = valueUtf16Alloc(self, rooted[1]) catch |failure| {
-                    self.setFailure(failure);
-                    return .{};
-                };
-                defer self.allocator.free(key_units);
                 const inherited = tableInheritedProperty(self, source, .byte_buffer, key_units) catch |failure| {
                     self.setFailure(failure);
                     return .{};
@@ -1329,6 +1354,18 @@ const Runtime = struct {
             .function => tableRowProperty(self, container, key) catch |failure| {
                 self.setFailure(failure);
                 return .{};
+            },
+            .promise => blk: {
+                var rooted = [_]Value{ container, key };
+                var promise_frame = RootFrame{};
+                self.pushRoots(&promise_frame, &rooted, rooted.len);
+                defer self.popRoots(&promise_frame);
+                const key_units = valueUtf16Alloc(self, rooted[1]) catch |failure| {
+                    self.setFailure(failure);
+                    break :blk .{};
+                };
+                defer self.allocator.free(key_units);
+                break :blk self.aotObjectOwnPropertyGetUnits(rooted[0].object().?, key_units) orelse .{};
             },
             else => .{},
         };
@@ -1373,17 +1410,49 @@ const Runtime = struct {
                 try self.setDictionary(entries, rooted[1], rooted[2]);
             },
             .byte_buffer => |*buffer| {
-                if (buffer.kind == .array_buffer) return;
-                const index = valueIndex(key) orelse return error.InvalidIndex;
-                const number = try valueToNumberRuntime(self, value);
-                const byte: u8 = if (!std.math.isFinite(number) or number == 0)
-                    0
-                else
-                    @intFromFloat(@mod(@trunc(number), 256));
-                if (index < buffer.bytes.len) buffer.bytes[index] = byte;
+                if (buffer.kind != .array_buffer) if (valueIndex(key)) |index| {
+                    const number = try valueToNumberRuntime(self, value);
+                    const byte: u8 = if (!std.math.isFinite(number) or number == 0)
+                        0
+                    else
+                        @intFromFloat(@mod(@trunc(number), 256));
+                    if (index < buffer.bytes.len) buffer.bytes[index] = byte;
+                    return;
+                };
+                const key_units = valueUtf16Alloc(self, key) catch |failure| {
+                    self.setFailure(failure);
+                    return failure;
+                };
+                defer self.allocator.free(key_units);
+                if (aotByteBufferReadOnlyProperty(key_units)) return;
+                try self.setAotOwnProperty(container, object, key, value);
             },
-            .utf16_string, .bigint, .function, .iterator, .binding_cell, .promise => {},
+            .function => try self.setAotFunctionProperty(container, object, key, value),
+            .promise => try self.setAotOwnProperty(container, object, key, value),
+            .utf16_string, .bigint, .iterator, .binding_cell => {},
         }
+    }
+
+    fn setAotOwnProperty(self: *Runtime, container: Value, object: *Object, key: Value, value: Value) !void {
+        var rooted = [_]Value{ container, key, value, .{} };
+        var frame = RootFrame{};
+        self.pushRoots(&frame, &rooted, rooted.len);
+        defer self.popRoots(&frame);
+        rooted[3] = try self.propertyKey(rooted[1]);
+        try self.setDictionary(&object.array_properties, rooted[3], rooted[2]);
+    }
+
+    fn setAotFunctionProperty(self: *Runtime, container: Value, object: *Object, key: Value, value: Value) !void {
+        var rooted = [_]Value{ container, key, value, .{} };
+        var frame = RootFrame{};
+        self.pushRoots(&frame, &rooted, rooted.len);
+        defer self.popRoots(&frame);
+        rooted[3] = try self.propertyKey(rooted[1]);
+        // Function.prototype's length and name are non-writable own properties.
+        // Keep writes ignored in AOT just as the interpreter does, rather than
+        // allowing an own-property shadow to change the built-in value.
+        if (sameKey(rooted[3], staticStringValue("length")) or sameKey(rooted[3], staticStringValue("name"))) return;
+        try self.setDictionary(&object.array_properties, rooted[3], rooted[2]);
     }
 
     fn aotArrayPropertyGet(self: *Runtime, object: *const Object, key: Value) Value {
@@ -1479,6 +1548,13 @@ const Runtime = struct {
 
     fn aotArrayOwnPropertyGetUnits(self: *Runtime, object: *const Object, key_units: []const u16) ?Value {
         if (self.aotCanonicalArrayIndexUnits(key_units)) |index| return if (index < object.payload.array.items.len) object.payload.array.items[index] else null;
+        return self.aotObjectOwnPropertyGetUnits(object, key_units);
+    }
+
+    /// Resolve an own named property shared by all extensible AOT objects.
+    /// Array indices remain handled by `aotArrayOwnPropertyGetUnits` before
+    /// reaching this helper.
+    fn aotObjectOwnPropertyGetUnits(self: *Runtime, object: *const Object, key_units: []const u16) ?Value {
         for (object.array_properties.items) |property| {
             if (self.aotPropertyKeyMatchesUnits(property.key, key_units)) return property.value;
         }
@@ -2091,6 +2167,19 @@ fn aotByteBufferScalarProperty(buffer: ByteBuffer, key: Value) ?Value {
         }
     }
     return null;
+}
+
+fn aotByteBufferReadOnlyProperty(units: []const u16) bool {
+    return std.mem.eql(u16, units, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) or
+        std.mem.eql(u16, units, &.{ 'b', 'y', 't', 'e', 'L', 'e', 'n', 'g', 't', 'h' }) or
+        std.mem.eql(u16, units, &.{ 'b', 'y', 't', 'e', 'O', 'f', 'f', 's', 'e', 't' }) or
+        std.mem.eql(u16, units, &.{ 'B', 'Y', 'T', 'E', 'S', '_', 'P', 'E', 'R', '_', 'E', 'L', 'E', 'M', 'E', 'N', 'T' }) or
+        std.mem.eql(u16, units, &.{ 'b', 'u', 'f', 'f', 'e', 'r' }) or
+        std.mem.eql(u16, units, &.{ 'm', 'a', 'x', 'B', 'y', 't', 'e', 'L', 'e', 'n', 'g', 't', 'h' }) or
+        std.mem.eql(u16, units, &.{ 'r', 'e', 's', 'i', 'z', 'a', 'b', 'l', 'e' }) or
+        std.mem.eql(u16, units, &.{ 'd', 'e', 't', 'a', 'c', 'h', 'e', 'd' }) or
+        std.mem.eql(u16, units, &.{ 'p', 'a', 'r', 'e', 'n', 't' }) or
+        std.mem.eql(u16, units, &.{ 'o', 'f', 'f', 's', 'e', 't' });
 }
 
 fn valueToNumber(value: Value) f64 {
@@ -3354,7 +3443,6 @@ fn jsonTestDictionaryGet(value: Value, key: []const u16) Value {
 
 fn valueUtf16Alloc(runtime: *Runtime, value: Value) anyerror![]u16 {
     if (value.tag == @intFromEnum(Tag.utf16_string)) return runtime.allocator.dupe(u16, value.object().?.payload.utf16_string);
-    if (value.tag == @intFromEnum(Tag.function)) return functionStringUtf16Alloc(runtime, value.object().?.payload.function.name);
     const utf8 = switch (@as(Tag, @enumFromInt(value.tag))) {
         .undefined => try runtime.allocator.dupe(u8, "undefined"),
         .null_value => try runtime.allocator.dupe(u8, "null"),
@@ -3362,7 +3450,13 @@ fn valueUtf16Alloc(runtime: *Runtime, value: Value) anyerror![]u16 {
         .number => try numberString(runtime.allocator, @bitCast(value.payload)),
         .static_utf8_string => try runtime.allocator.dupe(u8, staticUtf8(value)),
         .utf16_string => unreachable,
-        .byte_buffer => return byteBufferUtf16Alloc(runtime, value.object().?.payload.byte_buffer),
+        .byte_buffer, .function, .promise => {
+            // All object text conversion, including host objects with an own
+            // custom `toString`/`valueOf`, goes through the same
+            // ToPrimitive path used by arithmetic and comparisons.
+            const primitive = try valueToPrimitive(runtime, value, .string);
+            return valueUtf16Alloc(runtime, primitive);
+        },
         .bigint => try value.object().?.payload.bigint.toString(runtime.allocator, 10),
         .array => {
             // `valueUtf16Alloc` is the AOT String(value) boundary. Resolve an
@@ -3378,8 +3472,6 @@ fn valueUtf16Alloc(runtime: *Runtime, value: Value) anyerror![]u16 {
             return valueUtf16Alloc(runtime, primitive);
         },
         .iterator => try runtime.allocator.dupe(u8, "[object Object]"),
-        .promise => try runtime.allocator.dupe(u8, "[object Promise]"),
-        .function => unreachable,
         .binding_cell => unreachable,
     };
     defer runtime.allocator.free(utf8);
@@ -3439,22 +3531,55 @@ fn isAotObjectValue(value: Value) bool {
 
 fn valueToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint) !Value {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
-        .byte_buffer => blk: {
-            const units = try byteBufferUtf16Alloc(runtime, value.object().?.payload.byte_buffer);
-            defer runtime.allocator.free(units);
-            break :blk try runtime.createString(units);
-        },
+        .byte_buffer, .function, .promise => try hostObjectToPrimitive(runtime, value, hint),
         .array => try arrayToPrimitive(runtime, value, hint),
         .dictionary => try dictionaryToPrimitive(runtime, value, hint),
         .iterator => staticStringValue("[object Object]"),
-        .promise => staticStringValue("[object Promise]"),
-        .function => blk: {
-            const units = try functionStringUtf16Alloc(runtime, value.object().?.payload.function.name);
-            defer runtime.allocator.free(units);
-            break :blk try runtime.createString(units);
-        },
         else => value,
     };
+}
+
+fn hostObjectToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint) !Value {
+    const to_string_name: []const u16 = &.{ 't', 'o', 'S', 't', 'r', 'i', 'n', 'g' };
+    const value_of_name: []const u16 = &.{ 'v', 'a', 'l', 'u', 'e', 'O', 'f' };
+    const first = if (hint == .string) to_string_name else value_of_name;
+    const second = if (hint == .string) value_of_name else to_string_name;
+
+    var roots = [_]Value{ value, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    const object = roots[0].object().?;
+
+    for ([_][]const u16{ first, second }) |name| {
+        if (runtime.aotObjectOwnPropertyGetUnits(object, name)) |callable| {
+            if (callable.tag == @intFromEnum(Tag.undefined) or callable.tag == @intFromEnum(Tag.null_value)) continue;
+            if (callable.tag != @intFromEnum(Tag.function)) return error.NotCallable;
+            roots[1] = try invokeAotCallback(runtime, callable, null, 0);
+            if (!isAotObjectValue(roots[1])) return roots[1];
+            continue;
+        }
+        // The host object's ordinary inherited toString is represented by
+        // the existing default conversion.  It is selected only when no own
+        // property shadows it, matching OrdinaryToPrimitive's method lookup.
+        if (std.mem.eql(u16, name, to_string_name)) {
+            return switch (@as(Tag, @enumFromInt(roots[0].tag))) {
+                .byte_buffer => blk: {
+                    const units = try byteBufferUtf16Alloc(runtime, object.payload.byte_buffer);
+                    defer runtime.allocator.free(units);
+                    break :blk try runtime.createString(units);
+                },
+                .function => blk: {
+                    const units = try functionStringUtf16Alloc(runtime, object.payload.function.name);
+                    defer runtime.allocator.free(units);
+                    break :blk try runtime.createString(units);
+                },
+                .promise => staticStringValue("[object Promise]"),
+                else => error.CannotConvertObjectToPrimitive,
+            };
+        }
+    }
+    return error.CannotConvertObjectToPrimitive;
 }
 
 fn arrayToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint) !Value {
@@ -3586,8 +3711,8 @@ fn abstractEqual(runtime: *Runtime, left: Value, right: Value) !bool {
     if (isObject(left) and isObject(right)) return false;
     if (left_tag == .boolean) return abstractEqual(runtime, numberValue(if (left.payload == 0) 0 else 1), right);
     if (right_tag == .boolean) return abstractEqual(runtime, left, numberValue(if (right.payload == 0) 0 else 1));
-    if (left_tag == .array or left_tag == .dictionary or left_tag == .iterator or left_tag == .function) return abstractEqual(runtime, try valueToPrimitive(runtime, left, .number), right);
-    if (right_tag == .array or right_tag == .dictionary or right_tag == .iterator or right_tag == .function) return abstractEqual(runtime, left, try valueToPrimitive(runtime, right, .number));
+    if (left_tag == .byte_buffer or left_tag == .array or left_tag == .dictionary or left_tag == .iterator or left_tag == .function or left_tag == .promise) return abstractEqual(runtime, try valueToPrimitive(runtime, left, .number), right);
+    if (right_tag == .byte_buffer or right_tag == .array or right_tag == .dictionary or right_tag == .iterator or right_tag == .function or right_tag == .promise) return abstractEqual(runtime, left, try valueToPrimitive(runtime, right, .number));
     if (left_tag == .number and isString(right)) return @as(f64, @bitCast(left.payload)) == try valueToNumberRuntime(runtime, right);
     if (isString(left) and right_tag == .number) return try valueToNumberRuntime(runtime, left) == @as(f64, @bitCast(right.payload));
     if (left_tag == .bigint and isString(right)) return bigIntEqualsString(runtime, left.object().?.payload.bigint, right);
@@ -14755,15 +14880,15 @@ fn dictionaryKeysBuiltin(runtime: *Runtime, source: Value) !Value {
         },
         .byte_buffer => {
             const buffer = roots[0].object().?.payload.byte_buffer;
-            if (buffer.kind == .array_buffer) return roots[1];
-            for (0..buffer.bytes.len) |index| {
+            if (buffer.kind != .array_buffer) for (0..buffer.bytes.len) |index| {
                 var text: [32]u8 = undefined;
                 const encoded = std.fmt.bufPrint(&text, "{d}", .{index}) catch return error.ArrayTooLarge;
                 var units: [32]u16 = undefined;
                 const unit_len = std.unicode.utf8ToUtf16Le(&units, encoded) catch return error.ArrayTooLarge;
                 const key = try runtime.createString(units[0..unit_len]);
                 try result.append(runtime.allocator, key);
-            }
+            };
+            for (roots[0].object().?.array_properties.items) |property| try result.append(runtime.allocator, property.key);
             if (buffer.kind == .buffer) for (table_byte_buffer_buffer_enumerable_property_names) |name| {
                 var units: [128]u16 = undefined;
                 const unit_len = std.unicode.utf8ToUtf16Le(&units, name) catch return error.InvalidUtf8;
@@ -14774,7 +14899,8 @@ fn dictionaryKeysBuiltin(runtime: *Runtime, source: Value) !Value {
                 try result.append(runtime.allocator, key);
             };
         },
-        .function => {},
+        .function => for (roots[0].object().?.array_properties.items) |property| try result.append(runtime.allocator, property.key),
+        .promise => for (roots[0].object().?.array_properties.items) |property| try result.append(runtime.allocator, property.key),
         else => return error.DictionaryKeysReceiver,
     }
     return roots[1];
@@ -14803,8 +14929,8 @@ fn dictionaryValuesBuiltin(runtime: *Runtime, source: Value) !Value {
         },
         .byte_buffer => {
             const buffer = roots[0].object().?.payload.byte_buffer;
-            if (buffer.kind == .array_buffer) return roots[1];
-            for (buffer.bytes) |byte| try result.append(runtime.allocator, numberValue(@floatFromInt(byte)));
+            if (buffer.kind != .array_buffer) for (buffer.bytes) |byte| try result.append(runtime.allocator, numberValue(@floatFromInt(byte)));
+            for (roots[0].object().?.array_properties.items) |property| try result.append(runtime.allocator, property.value);
             if (buffer.kind == .buffer) for (table_byte_buffer_buffer_enumerable_property_names) |name| {
                 var property: Value = undefined;
                 if (std.mem.eql(u8, name, "parent")) {
@@ -14823,7 +14949,8 @@ fn dictionaryValuesBuiltin(runtime: *Runtime, source: Value) !Value {
                 try result.append(runtime.allocator, property);
             };
         },
-        .function => {},
+        .function => for (roots[0].object().?.array_properties.items) |property| try result.append(runtime.allocator, property.value),
+        .promise => for (roots[0].object().?.array_properties.items) |property| try result.append(runtime.allocator, property.value),
         else => return error.DictionaryValuesReceiver,
     }
     return roots[1];
@@ -14870,9 +14997,34 @@ fn dictionaryRemoveBuiltin(runtime: *Runtime, source: Value, key: Value) !Value 
                     return error.ByteBufferIndexDelete;
                 }
             };
+            const properties = &roots[0].object().?.array_properties;
+            for (properties.items, 0..) |property, index| if (runtime.aotPropertyKeyMatchesUnits(property.key, key_units)) {
+                _ = properties.orderedRemove(index);
+                break;
+            };
             return roots[0];
         },
-        .function => return roots[0],
+        .function => {
+            const key_units = try valueUtf16Alloc(runtime, roots[1]);
+            defer runtime.allocator.free(key_units);
+            if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) or std.mem.eql(u16, key_units, &.{ 'n', 'a', 'm', 'e' })) return roots[0];
+            const properties = &roots[0].object().?.array_properties;
+            for (properties.items, 0..) |property, index| if (runtime.aotPropertyKeyMatchesUnits(property.key, key_units)) {
+                _ = properties.orderedRemove(index);
+                break;
+            };
+            return roots[0];
+        },
+        .promise => {
+            const key_units = try valueUtf16Alloc(runtime, roots[1]);
+            defer runtime.allocator.free(key_units);
+            const properties = &roots[0].object().?.array_properties;
+            for (properties.items, 0..) |property, index| if (runtime.aotPropertyKeyMatchesUnits(property.key, key_units)) {
+                _ = properties.orderedRemove(index);
+                break;
+            };
+            return roots[0];
+        },
         else => return error.DictionaryRemoveReceiver,
     }
 }
@@ -14910,6 +15062,7 @@ fn dictionaryHasBuiltin(runtime: *Runtime, source: Value, key: Value) !bool {
         .function => {
             const key_units = try valueUtf16Alloc(runtime, roots[1]);
             defer runtime.allocator.free(key_units);
+            for (roots[0].object().?.array_properties.items) |property| if (runtime.aotPropertyKeyMatchesUnits(property.key, key_units)) return true;
             if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) or std.mem.eql(u16, key_units, &.{ 'n', 'a', 'm', 'e' })) return true;
             return (try tableInheritedProperty(runtime, roots[0], .function, key_units)) != null;
         },
@@ -14918,11 +15071,18 @@ fn dictionaryHasBuiltin(runtime: *Runtime, source: Value, key: Value) !bool {
             defer runtime.allocator.free(key_units);
             const object = roots[0].object() orelse return error.InvalidByteBuffer;
             const buffer = object.payload.byte_buffer;
+            for (object.array_properties.items) |property| if (runtime.aotPropertyKeyMatchesUnits(property.key, key_units)) return true;
             if (buffer.kind != .array_buffer) {
                 if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return true;
                 if (runtime.aotCanonicalArrayIndexUnits(key_units)) |index| return index < buffer.bytes.len;
             }
             return (try tableInheritedProperty(runtime, roots[0], .byte_buffer, key_units)) != null;
+        },
+        .promise => {
+            const key_units = try valueUtf16Alloc(runtime, roots[1]);
+            defer runtime.allocator.free(key_units);
+            for (roots[0].object().?.array_properties.items) |property| if (runtime.aotPropertyKeyMatchesUnits(property.key, key_units)) return true;
+            return false;
         },
         else => {
             const key_units = try valueUtf16Alloc(runtime, roots[1]);
@@ -15709,6 +15869,7 @@ fn tableRowProperty(runtime: *Runtime, row: Value, column: Value) !Value {
     if (row_tag == .byte_buffer) {
         const object = row.object() orelse return error.InvalidByteBuffer;
         if (object.payload != .byte_buffer) return error.InvalidByteBuffer;
+        if (runtime.aotObjectOwnPropertyGetUnits(object, key_units)) |value| return value;
         if (std.mem.eql(u16, key_units, &table_length_key)) {
             return if (object.payload.byte_buffer.kind == .array_buffer)
                 .{}
@@ -15738,6 +15899,7 @@ fn tableRowProperty(runtime: *Runtime, row: Value, column: Value) !Value {
     if (row_tag == .function) {
         const object = row.object() orelse return error.InvalidFunction;
         if (object.payload != .function) return error.InvalidFunction;
+        if (runtime.aotObjectOwnPropertyGetUnits(object, key_units)) |value| return value;
         if (std.mem.eql(u16, key_units, &table_length_key)) {
             // The official compiler exposes Nadesiko functions through a
             // rest-argument wrapper, so Function.length is zero regardless of
@@ -15755,6 +15917,12 @@ fn tableRowProperty(runtime: *Runtime, row: Value, column: Value) !Value {
             defer runtime.allocator.free(units);
             return runtime.createString(units);
         }
+    }
+    if (row_tag == .promise) {
+        const object = row.object() orelse return error.InvalidContainer;
+        if (object.payload != .promise) return error.InvalidContainer;
+        if (runtime.aotObjectOwnPropertyGetUnits(object, key_units)) |value| return value;
+        return .{};
     }
     if (try tableInheritedProperty(runtime, row, row_tag, key_units)) |value| return value;
     // Number, boolean, bigint, etc. have no relevant own indexed properties

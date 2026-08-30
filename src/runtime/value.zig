@@ -43,8 +43,14 @@ pub const ByteBuffer = struct {
     bytes: []u8,
     kind: ByteKind = .buffer,
     storage: *ByteStorage,
+    /// Buffer/Uint8Array/ArrayBuffer values are ordinary extensible objects
+    /// for the property operations used by the Node-compatible host.  Keep
+    /// custom properties on the object itself so ToPrimitive can observe an
+    /// own `toString`/`valueOf` override.
+    properties: std.ArrayList(ArrayProperty) = .empty,
 
     pub fn deinit(self: *ByteBuffer) void {
+        self.properties.deinit(self.allocator);
         self.storage.release();
         self.* = undefined;
     }
@@ -303,10 +309,13 @@ pub const Function = struct {
     /// lazily-created object on the function itself so repeated property
     /// reads preserve JavaScript Function.prototype identity.
     prototype: Value = .undefined,
+    /// User-defined own properties, including custom ToPrimitive methods.
+    properties: std.ArrayList(ArrayProperty) = .empty,
 
     pub fn deinit(self: *Function) void {
         if (self.kind == .external) self.kind.external.binding.deinit();
         self.allocator.free(self.captures);
+        self.properties.deinit(self.allocator);
         self.* = undefined;
     }
 
@@ -333,9 +342,13 @@ pub const Promise = struct {
     state: PromiseState = .pending,
     result: Value = .undefined,
     reactions: std.ArrayList(PromiseReaction) = .empty,
+    /// Promise instances are extensible objects.  Retain own properties for
+    /// direct indexing and custom ToPrimitive methods.
+    properties: std.ArrayList(ArrayProperty) = .empty,
 
     pub fn deinit(self: *Promise) void {
         self.reactions.deinit(self.allocator);
+        self.properties.deinit(self.allocator);
         self.* = undefined;
     }
 };
@@ -1219,7 +1232,7 @@ pub const Runtime = struct {
         switch (value) {
             .string => |object| object.gc_marked = true,
             .bigint => |object| object.gc_marked = true,
-            .bytes => |object| object.gc_marked = true,
+            .bytes => |object| try self.markComposite(.{ .bytes = object }),
             .array => |object| try self.markComposite(.{ .array = object }),
             .dictionary => |object| try self.markComposite(.{ .dictionary = object }),
             .function => |object| try self.markComposite(.{ .function = object }),
@@ -1252,9 +1265,19 @@ pub const Runtime = struct {
                 for (dictionary.keys()) |key| try self.markValue(.{ .string = key });
                 for (dictionary.values()) |item| try self.markValue(item);
             },
+            .bytes => |bytes| {
+                for (bytes.properties.items) |property| {
+                    try self.markValue(.{ .string = property.key });
+                    try self.markValue(property.value);
+                }
+            },
             .function => |function| {
                 try self.markValue(.{ .string = function.name });
                 try self.markValue(function.prototype);
+                for (function.properties.items) |property| {
+                    try self.markValue(.{ .string = property.key });
+                    try self.markValue(property.value);
+                }
                 for (function.captures) |capture| {
                     try self.markValue(.{ .string = capture.name });
                     if (capture.cell) |cell|
@@ -1265,13 +1288,17 @@ pub const Runtime = struct {
             },
             .promise => |promise| {
                 try self.markValue(promise.result);
+                for (promise.properties.items) |property| {
+                    try self.markValue(.{ .string = property.key });
+                    try self.markValue(property.value);
+                }
                 for (promise.reactions.items) |reaction| {
                     try self.markValue(reaction.on_fulfilled);
                     try self.markValue(reaction.on_rejected);
                     try self.markValue(.{ .promise = reaction.next });
                 }
             },
-            .string, .bigint, .bytes => unreachable,
+            .string, .bigint => unreachable,
         };
     }
 

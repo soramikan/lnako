@@ -40,20 +40,25 @@ fn keys(runtime: *Runtime, source: Value) !Value {
             for (array.properties.items) |property| _ = try result.array.push(.{ .string = property.key });
         },
         .bytes => |bytes| {
-            if (bytes.kind == .array_buffer) return result;
-            for (0..bytes.bytes.len) |index| {
+            if (bytes.kind != .array_buffer) for (0..bytes.bytes.len) |index| {
                 var buffer: [32]u8 = undefined;
                 const text = std.fmt.bufPrint(&buffer, "{d}", .{index}) catch return error.ArrayTooLarge;
                 const key = try runtime.stringUtf8(text);
                 _ = try result.array.push(key);
-            }
+            };
+            for (bytes.properties.items) |property| _ = try result.array.push(.{ .string = property.key });
             if (bytes.kind == .buffer) for (arrays.byteBufferBufferEnumerablePropertyNames) |name| {
                 var key = try runtime.stringUtf8(name);
                 try roots.protect(&key);
                 _ = try result.array.push(key);
             };
         },
-        .function => {},
+        .function => |function| {
+            for (function.properties.items) |property| _ = try result.array.push(.{ .string = property.key });
+        },
+        .promise => |promise| {
+            for (promise.properties.items) |property| _ = try result.array.push(.{ .string = property.key });
+        },
         else => return error.DictionaryKeysReceiver,
     }
     return result;
@@ -79,8 +84,10 @@ fn values(runtime: *Runtime, source: Value) !Value {
             for (array.properties.items) |property| _ = try result.array.push(property.value);
         },
         .bytes => |bytes| {
-            if (bytes.kind == .array_buffer) return result;
-            for (bytes.bytes) |byte| _ = try result.array.push(.{ .number = @floatFromInt(byte) });
+            if (bytes.kind != .array_buffer) {
+                for (bytes.bytes) |byte| _ = try result.array.push(.{ .number = @floatFromInt(byte) });
+            }
+            for (bytes.properties.items) |property| _ = try result.array.push(property.value);
             if (bytes.kind == .buffer) for (arrays.byteBufferBufferEnumerablePropertyNames) |name| {
                 var property_roots = runtime.rootFrame();
                 defer property_roots.deinit();
@@ -97,7 +104,12 @@ fn values(runtime: *Runtime, source: Value) !Value {
                 _ = try result.array.push(property);
             };
         },
-        .function => {},
+        .function => |function| {
+            for (function.properties.items) |property| _ = try result.array.push(property.value);
+        },
+        .promise => |promise| {
+            for (promise.properties.items) |property| _ = try result.array.push(property.value);
+        },
         else => return error.DictionaryValuesReceiver,
     }
     return result;
@@ -120,7 +132,16 @@ fn remove(runtime: *Runtime, source: Value, key_value: Value) !Value {
         } else _ = rooted_source.array.removeProperty(key.string);
         return rooted_source;
     }
-    if (rooted_source == .function) return rooted_source;
+    if (rooted_source == .function) {
+        var key = try runtime.valueToString(rooted_key_value);
+        try roots.protect(&key);
+        if (std.mem.eql(u16, key.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) or std.mem.eql(u16, key.string.units, &.{ 'n', 'a', 'm', 'e' })) return rooted_source;
+        for (rooted_source.function.properties.items, 0..) |property, index| if (value_mod.String.eql(property.key.*, key.string.*)) {
+            _ = rooted_source.function.properties.orderedRemove(index);
+            break;
+        };
+        return rooted_source;
+    }
     if (rooted_source == .bytes) {
         var key = try runtime.valueToString(rooted_key_value);
         try roots.protect(&key);
@@ -133,6 +154,19 @@ fn remove(runtime: *Runtime, source: Value, key_value: Value) !Value {
                 try runtime.setFailureMessage(message);
                 return error.ByteBufferIndexDelete;
             }
+        };
+        for (rooted_source.bytes.properties.items, 0..) |property, index| if (value_mod.String.eql(property.key.*, key.string.*)) {
+            _ = rooted_source.bytes.properties.orderedRemove(index);
+            break;
+        };
+        return rooted_source;
+    }
+    if (rooted_source == .promise) {
+        var key = try runtime.valueToString(rooted_key_value);
+        try roots.protect(&key);
+        for (rooted_source.promise.properties.items, 0..) |property, index| if (value_mod.String.eql(property.key.*, key.string.*)) {
+            _ = rooted_source.promise.properties.orderedRemove(index);
+            break;
         };
         return rooted_source;
     }
@@ -168,17 +202,25 @@ fn has(runtime: *Runtime, source: Value, key_value: Value) !bool {
     if (rooted_source == .function) {
         var key = try runtime.valueToString(rooted_key_value);
         try roots.protect(&key);
+        for (rooted_source.function.properties.items) |property| if (value_mod.String.eql(property.key.*, key.string.*)) return true;
         if (std.mem.eql(u16, key.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) or std.mem.eql(u16, key.string.units, &.{ 'n', 'a', 'm', 'e' })) return true;
         return arrays.hasStandardInheritedProperty(runtime, rooted_source, key.string.units);
     }
     if (rooted_source == .bytes) {
         var key = try runtime.valueToString(rooted_key_value);
         try roots.protect(&key);
+        for (rooted_source.bytes.properties.items) |property| if (value_mod.String.eql(property.key.*, key.string.*)) return true;
         if (rooted_source.bytes.kind != .array_buffer) {
             if (std.mem.eql(u16, key.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return true;
             if (canonicalArrayIndex(key.string.units)) |index| return index < rooted_source.bytes.bytes.len;
         }
         return arrays.hasStandardInheritedProperty(runtime, rooted_source, key.string.units);
+    }
+    if (rooted_source == .promise) {
+        var key = try runtime.valueToString(rooted_key_value);
+        try roots.protect(&key);
+        for (rooted_source.promise.properties.items) |property| if (value_mod.String.eql(property.key.*, key.string.*)) return true;
+        return false;
     }
     var key = try runtime.valueToString(rooted_key_value);
     try roots.protect(&key);

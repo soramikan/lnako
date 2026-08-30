@@ -463,6 +463,19 @@ pub const Interpreter = struct {
         self.runtime.setPrimitiveHook(.{ .context = self, .callFn = interpreterPrimitiveHook });
     }
 
+    fn ownProperty(properties: []const value_mod.ArrayProperty, name: []const u16) ?Value {
+        for (properties) |property| if (std.mem.eql(u16, property.key.units, name)) return property.value;
+        return null;
+    }
+
+    fn setOwnProperty(properties: *std.ArrayList(value_mod.ArrayProperty), allocator: std.mem.Allocator, key: *value_mod.String, value: Value) !void {
+        for (properties.items) |*property| if (value_mod.String.eql(property.key.*, key.*)) {
+            property.value = value;
+            return;
+        };
+        try properties.append(allocator, .{ .key = key, .value = value });
+    }
+
     fn objectPrimitiveMethod(value: Value, name: []const u16) ?Value {
         return switch (value) {
             .dictionary => |dictionary| value_mod.dictionaryPropertyUnits(dictionary, name),
@@ -473,13 +486,16 @@ pub const Interpreter = struct {
                 if (value_mod.arrayPrototypePropertyUnits(array, name)) |inherited| break :blk inherited;
                 break :blk null;
             },
+            .bytes => |bytes| ownProperty(bytes.properties.items, name),
+            .function => |function| ownProperty(function.properties.items, name),
+            .promise => |promise| ownProperty(promise.properties.items, name),
             else => null,
         };
     }
 
     fn objectToPrimitive(self: *Interpreter, value: Value, hint: value_mod.PrimitiveHint) anyerror!?Value {
         switch (value) {
-            .dictionary, .array => {},
+            .bytes, .array, .dictionary, .function, .promise => {},
             else => return null,
         }
 
@@ -1842,6 +1858,7 @@ pub const Interpreter = struct {
             const container_root = rooted[0];
             var key_text = try self.runtime.valueToString(rooted[1]);
             try roots.protect(&key_text);
+            if (ownProperty(container_root.bytes.properties.items, key_text.string.units)) |value| return value;
             if (std.mem.eql(u16, key_text.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) {
                 return if (container_root.bytes.kind == .array_buffer) .undefined else .{ .number = @floatFromInt(container_root.bytes.bytes.len) };
             }
@@ -1883,6 +1900,7 @@ pub const Interpreter = struct {
             try roots.protect(&rooted[1]);
             rooted[2] = try self.runtime.valueToString(rooted[1]);
             try roots.protect(&rooted[2]);
+            if (ownProperty(rooted[0].function.properties.items, rooted[2].string.units)) |value| return value;
             if (std.mem.eql(u16, rooted[2].string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return .{ .number = 0 };
             if (std.mem.eql(u16, rooted[2].string.units, &.{ 'n', 'a', 'm', 'e' })) {
                 const lambda_marker = [_]u16{ '_', '_', 'l', 'a', 'm', 'b', 'd', 'a', '$' };
@@ -1894,6 +1912,16 @@ pub const Interpreter = struct {
             }
             if (try plugin_system.arrays.standardInheritedProperty(self.runtime, rooted[0], rooted[2].string.units)) |value| return value;
             return .undefined;
+        }
+        if (container == .promise) {
+            var rooted = [_]Value{ container, key, .undefined };
+            var roots = self.runtime.rootFrame();
+            defer roots.deinit();
+            try roots.protect(&rooted[0]);
+            try roots.protect(&rooted[1]);
+            rooted[2] = try self.runtime.valueToString(rooted[1]);
+            try roots.protect(&rooted[2]);
+            return ownProperty(rooted[0].promise.properties.items, rooted[2].string.units) orelse .undefined;
         }
         if (container == .string) {
             const unit = container.string.codeUnitAt(try valueIndex(self.runtime, key)) orelse return .undefined;
@@ -1911,12 +1939,23 @@ pub const Interpreter = struct {
         while (index + 1 < keys.len) : (index += 1) container = try self.getOne(container, frame.values[keys[index]]);
         const key = frame.values[keys[keys.len - 1]];
         if (container == .bytes) {
-            const number = try self.runtime.valueToNumber(value);
-            const byte: u8 = if (!std.math.isFinite(number) or number == 0)
-                0
-            else
-                @intFromFloat(@mod(@trunc(number), 256));
-            container.bytes.set(try valueIndex(self.runtime, key), byte);
+            var rooted = [_]Value{ container, key, value, .undefined };
+            var roots = self.runtime.rootFrame();
+            defer roots.deinit();
+            for (&rooted) |*root| try roots.protect(root);
+            rooted[3] = try self.runtime.valueToString(rooted[1]);
+            const key_units = rooted[3].string.units;
+            if (interpreterArrayIndex(key_units)) |position| {
+                const number = try self.runtime.valueToNumber(rooted[2]);
+                const byte: u8 = if (!std.math.isFinite(number) or number == 0)
+                    0
+                else
+                    @intFromFloat(@mod(@trunc(number), 256));
+                rooted[0].bytes.set(position, byte);
+                return;
+            }
+            if (interpreterByteBufferReadOnlyProperty(key_units)) return;
+            try setOwnProperty(&rooted[0].bytes.properties, self.allocator, rooted[3].string, rooted[2]);
             return;
         }
         if (container == .array) {
@@ -1941,6 +1980,26 @@ pub const Interpreter = struct {
             if (value == .null_value or isPrototypeObject(value)) container.dictionary.prototype = value;
             return;
         }
+        if (container == .function) {
+            var rooted = [_]Value{ container, key, value, .undefined };
+            var roots = self.runtime.rootFrame();
+            defer roots.deinit();
+            for (&rooted) |*root| try roots.protect(root);
+            rooted[3] = try self.runtime.valueToString(rooted[1]);
+            if (std.mem.eql(u16, rooted[3].string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) or
+                std.mem.eql(u16, rooted[3].string.units, &.{ 'n', 'a', 'm', 'e' })) return;
+            try setOwnProperty(&rooted[0].function.properties, self.allocator, rooted[3].string, rooted[2]);
+            return;
+        }
+        if (container == .promise) {
+            var rooted = [_]Value{ container, key, value, .undefined };
+            var roots = self.runtime.rootFrame();
+            defer roots.deinit();
+            for (&rooted) |*root| try roots.protect(root);
+            rooted[3] = try self.runtime.valueToString(rooted[1]);
+            try setOwnProperty(&rooted[0].promise.properties, self.allocator, rooted[3].string, rooted[2]);
+            return;
+        }
         switch (container) {
             .undefined, .null_value => {
                 const key_text = try self.runtime.valueToString(key);
@@ -1954,6 +2013,19 @@ pub const Interpreter = struct {
             },
             else => return,
         }
+    }
+
+    fn interpreterByteBufferReadOnlyProperty(units: []const u16) bool {
+        return std.mem.eql(u16, units, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) or
+            std.mem.eql(u16, units, &.{ 'b', 'y', 't', 'e', 'L', 'e', 'n', 'g', 't', 'h' }) or
+            std.mem.eql(u16, units, &.{ 'b', 'y', 't', 'e', 'O', 'f', 'f', 's', 'e', 't' }) or
+            std.mem.eql(u16, units, &.{ 'B', 'Y', 'T', 'E', 'S', '_', 'P', 'E', 'R', '_', 'E', 'L', 'E', 'M', 'E', 'N', 'T' }) or
+            std.mem.eql(u16, units, &.{ 'b', 'u', 'f', 'f', 'e', 'r' }) or
+            std.mem.eql(u16, units, &.{ 'm', 'a', 'x', 'B', 'y', 't', 'e', 'L', 'e', 'n', 'g', 't', 'h' }) or
+            std.mem.eql(u16, units, &.{ 'r', 'e', 's', 'i', 'z', 'a', 'b', 'l', 'e' }) or
+            std.mem.eql(u16, units, &.{ 'd', 'e', 't', 'a', 'c', 'h', 'e', 'd' }) or
+            std.mem.eql(u16, units, &.{ 'p', 'a', 'r', 'e', 'n', 't' }) or
+            std.mem.eql(u16, units, &.{ 'o', 'f', 'f', 's', 'e', 't' });
     }
 
     fn increment(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
