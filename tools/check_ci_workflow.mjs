@@ -164,14 +164,15 @@ if ((workflow.match(/\.\/zig-out\/bin\/lnako/g) ?? []).length !== 6) throw new E
 const setupZigBlock = workflow.match(
   /      - uses: mlugg\/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2\.2\.1[\s\S]*?(?=      - uses: actions\/setup-node@)/,
 )?.[0];
+const setupZigCacheSizeLimitMiB = 1536;
 if (setupZigBlock === undefined ||
     !setupZigBlock.includes("version: 0.16.0") ||
     !setupZigBlock.includes("use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'aot' }}") ||
     !setupZigBlock.includes("cache-key: ${{ matrix.suite }}") ||
-    !setupZigBlock.includes("cache-size-limit: 1024") ||
+    !setupZigBlock.includes(`cache-size-limit: ${setupZigCacheSizeLimitMiB}`) ||
     (workflow.match(/use-cache:/g) ?? []).length !== 1 ||
     (workflow.match(/cache-size-limit:/g) ?? []).length !== 1) {
-  throw new Error("setup-zigのcache保存対象または1 GiB上限が不正です");
+  throw new Error(`setup-zigのcache保存対象または${setupZigCacheSizeLimitMiB} MiB上限が不正です`);
 }
 
 for (const required of [
@@ -179,7 +180,7 @@ for (const required of [
   "cancel-in-progress: true",
   "use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'aot' }}",
   "cache-key: ${{ matrix.suite }}",
-  "cache-size-limit: 1024",
+  `cache-size-limit: ${setupZigCacheSizeLimitMiB}`,
   "timeout-minutes: 50",
 ]) if (!workflow.includes(required)) throw new Error(`CI安全設定がありません: ${required}`);
 

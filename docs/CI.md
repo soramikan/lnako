@@ -52,7 +52,7 @@ pushされた場合だけ、進行中の古いrunを取り消します。別ブ�
 ## キャッシュ
 
 - LLVM/LLD・QuickJSと公式なでしこ3オラクルはOS別の固定バージョン・ハッシュ付きキャッシュを全スイートで共有します。
-- Zigのglobal/local cacheは長時間の`host`・`aot`だけで保存し、OSに加えてスイート名をキーへ含めます。上限は1,024 MiBです。
+- Zigのglobal/local cacheは長時間の`host`・`aot`だけで保存し、OSに加えてスイート名をキーへ含めます。上限は1,536 MiBです。
 - キャッシュmissでもセットアップスクリプトがlockfileのSHA-256を検証します。キャッシュhitを安全性の根拠にはしません。
 - 初回またはキャッシュ失効時はダウンロード時間が加わるため、定常時と同じ所要時間にはなりません。
 
@@ -69,9 +69,15 @@ runごとに増えます。2026-08-27に確認した時点では、Actions cache
 3 OSで最大6個/runとなり、`core`・`standard`・`compat-aot`もjob内のZig cacheは通常どおり使用します。
 `use-cache: false`のjobでも、setup actionが管理する固定Zig 0.16.0配布物のcacheは別系統で維持されます。
 
-1,024 MiB上限を超えたbuild cacheはactionの仕様上、部分的なLRU整理ではなく空にして保存されます。このため上限を小さく
+1,536 MiB上限を超えたbuild cacheはactionの仕様上、部分的なLRU整理ではなく空にして保存されます。このため上限を小さく
 しすぎず、今後の実runでcache clear、固定toolchain cacheの残存、壁時計時間を合わせて確認します。固定LLVM/LLD・QuickJS・
 公式オラクルの実体hash検証は、cache hit時も従来どおり毎jobで実行します。
+
+### 1,536 MiBへの調整
+
+2026-08-30の`5a76445`までは上限1,024 MiBで運用していた。直近runではhost/aotの6件で約328.9 MBの新規Zig cacheを保存した一方、Actions cache全体は35件・約11.16 GBとなり、macOS host・Windows host・Windows aotでは上限超過後の空ディレクトリに近い184〜191 byteのcacheが残った。
+
+このため検証範囲とcache対象jobを変えず、上限だけを1,536 MiBへ引き上げる。調整後のrunでは、cold/warm双方についてcache clearの有無、固定Zig toolchain cacheの残存、各job時間、壁時計、runner合計時間、Actions cache総容量を記録する。これらを実測するまで、1,536 MiBへの変更を性能改善の証拠とは扱わない。
 
 ## 分割直後の実測
 
