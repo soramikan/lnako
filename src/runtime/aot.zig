@@ -8178,14 +8178,14 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         .node_path_basename, .node_path_dirname => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = nodePathComponentBuiltin(runtime, command, actual) catch |failure| {
-                runtime.setFailure(failure);
+                if (!runtime.has_pending_exception) runtime.setFailure(failure);
                 return;
             };
         },
         .node_path_absolute, .node_path_resolve => {
             const actual = if (arguments) |pointer| pointer[0..len] else &.{};
             out.* = nodePathBuiltin(runtime, command, actual) catch |failure| {
-                runtime.setFailure(failure);
+                if (!runtime.has_pending_exception) runtime.setFailure(failure);
                 return;
             };
         },
@@ -12489,15 +12489,16 @@ fn nodePathBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: [
     const required: usize = if (command == .node_path_resolve) 2 else 1;
     if (arguments.len < required) return error.InvalidArgumentCount;
 
+    const first_label = if (command == .node_path_absolute) "paths[0]" else "path";
+    const first = try nodePathArgument(runtime, first_label, arguments[0]);
+    defer runtime.allocator.free(first);
     const cwd = try currentDirectoryAlloc(runtime);
     defer runtime.allocator.free(cwd);
-    const first = try valueUtf8LossyAlloc(runtime, arguments[0]);
-    defer runtime.allocator.free(first);
 
     const resolved = switch (command) {
         .node_path_absolute => try std.fs.path.resolve(runtime.allocator, &.{ cwd, first }),
         .node_path_resolve => blk: {
-            const second = try valueUtf8LossyAlloc(runtime, arguments[1]);
+            const second = try nodePathArgument(runtime, "path", arguments[1]);
             defer runtime.allocator.free(second);
             const joined = try std.fs.path.join(runtime.allocator, &.{ first, second });
             defer runtime.allocator.free(joined);
@@ -12511,7 +12512,7 @@ fn nodePathBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: [
 
 fn nodePathComponentBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
-    const path = try valueUtf8LossyAlloc(runtime, arguments[0]);
+    const path = try nodePathArgument(runtime, "path", arguments[0]);
     defer runtime.allocator.free(path);
     const component = switch (command) {
         .node_path_basename => nodeBasename(path),
@@ -12519,6 +12520,52 @@ fn nodePathComponentBuiltin(runtime: *Runtime, command: aot_builtin.Command, arg
         else => return error.UnknownCommand,
     };
     return runtimeUtf8StringLossy(runtime, component);
+}
+
+fn nodePathArgument(runtime: *Runtime, label: []const u8, value: Value) ![]u8 {
+    if (!isString(value)) {
+        const received = try nodePathReceivedType(runtime, value);
+        defer runtime.allocator.free(received);
+        const message = try std.fmt.allocPrint(
+            runtime.allocator,
+            "The \"{s}\" argument must be of type string. Received {s}",
+            .{ label, received },
+        );
+        defer runtime.allocator.free(message);
+        runtime.setFailureText(message);
+        return error.InvalidPathSource;
+    }
+    return stringUtf8Alloc(runtime, value);
+}
+
+fn nodePathReceivedType(runtime: *Runtime, value: Value) ![]u8 {
+    return switch (@as(Tag, @enumFromInt(value.tag))) {
+        .undefined => runtime.allocator.dupe(u8, "undefined"),
+        .null_value => runtime.allocator.dupe(u8, "null"),
+        .boolean => runtime.allocator.dupe(u8, if (value.payload == 0) "type boolean (false)" else "type boolean (true)"),
+        .number => nodePathPrimitiveReceivedType(runtime, value, "number", false),
+        .bigint => nodePathPrimitiveReceivedType(runtime, value, "bigint", true),
+        .byte_buffer => switch (value.object().?.payload.byte_buffer.kind) {
+            .buffer => runtime.allocator.dupe(u8, "an instance of Buffer"),
+            .uint8_array => runtime.allocator.dupe(u8, "an instance of Uint8Array"),
+            .array_buffer => runtime.allocator.dupe(u8, "an instance of ArrayBuffer"),
+        },
+        .array => runtime.allocator.dupe(u8, "an instance of Array"),
+        .dictionary, .iterator, .binding_cell => runtime.allocator.dupe(u8, "an instance of Object"),
+        .function => runtime.allocator.dupe(u8, "function "),
+        .promise => runtime.allocator.dupe(u8, "an instance of Promise"),
+        .static_utf8_string, .utf16_string => unreachable,
+    };
+}
+
+fn nodePathPrimitiveReceivedType(runtime: *Runtime, value: Value, type_name: []const u8, bigint_suffix: bool) ![]u8 {
+    const text = try valueUtf8LossyAlloc(runtime, value);
+    defer runtime.allocator.free(text);
+    return std.fmt.allocPrint(
+        runtime.allocator,
+        "type {s} ({s}{s})",
+        .{ type_name, text, if (bigint_suffix) "n" else "" },
+    );
 }
 
 fn nodeBasename(path: []const u8) []const u8 {
@@ -19102,6 +19149,33 @@ test "AOT Node互換のWindowsパスはdrive-relativeとUNC rootを保持する"
     try std.testing.expectEqualStrings("\\\\server\\share\\", nodeDirnameFor("\\\\server\\share\\file", true));
     try std.testing.expectEqualStrings("share", nodeBasenameFor("\\\\server\\share\\", true));
     try std.testing.expectEqualStrings("\\\\server\\share\\", nodeDirnameFor("\\\\server\\share\\", true));
+}
+
+test "AOT Nodeパス命令は非文字列入力をNodeの型診断へ変換する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    try expectAotNodePathArgumentFailure(&runtime, "path", .{ .tag = @intFromEnum(Tag.null_value) }, "The \"path\" argument must be of type string. Received null");
+    try expectAotNodePathArgumentFailure(&runtime, "path", numberValue(123), "The \"path\" argument must be of type string. Received type number (123)");
+
+    const dictionary = try runtime.createDictionary(&.{});
+    const array = try runtime.createArray(&.{});
+    var roots = [_]Value{ dictionary, array };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    try expectAotNodePathArgumentFailure(&runtime, "path", roots[0], "The \"path\" argument must be of type string. Received an instance of Object");
+    try expectAotNodePathArgumentFailure(&runtime, "path", roots[1], "The \"path\" argument must be of type string. Received an instance of Array");
+}
+
+fn expectAotNodePathArgumentFailure(runtime: *Runtime, label: []const u8, value: Value, expected: []const u8) !void {
+    _ = nodePathArgument(runtime, label, value) catch |failure| {
+        try std.testing.expectEqual(error.InvalidPathSource, failure);
+        try std.testing.expect(runtime.has_pending_exception);
+        try expectUtf16String(runtime, runtime.pending_exception, expected);
+        _ = runtime.takeException();
+        return;
+    };
+    return error.ExpectedFailure;
 }
 
 test "AOTカレントディレクトリ変更は相対パスを受けてundefinedを返す" {

@@ -331,22 +331,22 @@ pub fn call(runtime: *Runtime, state: *State, context: Context, effects: ?Effect
         return @as(?Value, .undefined);
     }
     if (std.mem.eql(u8, name, "ファイル名抽出") or std.mem.eql(u8, name, "パス抽出")) {
-        const path = try valueUtf8(runtime, source);
+        const path = try nodePathArgument(runtime, "path", source);
         defer runtime.allocator().free(path);
         const result = if (std.mem.eql(u8, name, "ファイル名抽出")) nodeBasename(path) else nodeDirname(path);
         return @as(?Value, try runtime.stringUtf8(result));
     }
     if (std.mem.eql(u8, name, "絶対パス変換")) {
-        const path = try valueUtf8(runtime, source);
+        const path = try nodePathArgument(runtime, "paths[0]", source);
         defer runtime.allocator().free(path);
         const result = try absolutePath(runtime.allocator(), context, path);
         defer runtime.allocator().free(result);
         return @as(?Value, try runtime.stringUtf8(result));
     }
     if (std.mem.eql(u8, name, "相対パス展開")) {
-        const base = try valueUtf8(runtime, source);
+        const base = try nodePathArgument(runtime, "path", source);
         defer runtime.allocator().free(base);
-        const relative = try valueUtf8(runtime, common.argument(arguments, 1));
+        const relative = try nodePathArgument(runtime, "path", common.argument(arguments, 1));
         defer runtime.allocator().free(relative);
         const joined = try std.fs.path.join(runtime.allocator(), &.{ base, relative });
         defer runtime.allocator().free(joined);
@@ -1165,6 +1165,56 @@ fn absolutePath(allocator: std.mem.Allocator, context: Context, path: []const u8
     return std.fs.path.resolve(allocator, &.{ cwd, path });
 }
 
+fn nodePathArgument(runtime: *Runtime, label: []const u8, value: Value) ![]u8 {
+    if (value != .string) {
+        const received = try nodePathReceivedType(runtime, value);
+        defer runtime.allocator().free(received);
+        const message = try std.fmt.allocPrint(
+            runtime.allocator(),
+            "The \"{s}\" argument must be of type string. Received {s}",
+            .{ label, received },
+        );
+        defer runtime.allocator().free(message);
+        try runtime.setFailureMessage(message);
+        return error.InvalidPathSource;
+    }
+    return value.string.toUtf8Lossy(runtime.allocator());
+}
+
+fn nodePathReceivedType(runtime: *Runtime, value: Value) ![]u8 {
+    return switch (value) {
+        .undefined => runtime.allocator().dupe(u8, "undefined"),
+        .null_value => runtime.allocator().dupe(u8, "null"),
+        .boolean => |boolean| std.fmt.allocPrint(runtime.allocator(), "type boolean ({s})", .{if (boolean) "true" else "false"}),
+        .number => nodePathPrimitiveReceivedType(runtime, value, "number", false),
+        .bigint => nodePathPrimitiveReceivedType(runtime, value, "bigint", true),
+        .bytes => |bytes| switch (bytes.kind) {
+            .buffer => runtime.allocator().dupe(u8, "an instance of Buffer"),
+            .uint8_array => runtime.allocator().dupe(u8, "an instance of Uint8Array"),
+            .array_buffer => runtime.allocator().dupe(u8, "an instance of ArrayBuffer"),
+        },
+        .array => runtime.allocator().dupe(u8, "an instance of Array"),
+        .dictionary => runtime.allocator().dupe(u8, "an instance of Object"),
+        .function => runtime.allocator().dupe(u8, "function "),
+        .promise => runtime.allocator().dupe(u8, "an instance of Promise"),
+        .string => unreachable,
+    };
+}
+
+fn nodePathPrimitiveReceivedType(runtime: *Runtime, value: Value, type_name: []const u8, bigint_suffix: bool) ![]u8 {
+    var rendered = try runtime.valueToStringDefault(value);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&rendered);
+    const text = try rendered.string.toUtf8Lossy(runtime.allocator());
+    defer runtime.allocator().free(text);
+    return std.fmt.allocPrint(
+        runtime.allocator(),
+        "type {s} ({s}{s})",
+        .{ type_name, text, if (bigint_suffix) "n" else "" },
+    );
+}
+
 fn valueUtf8(runtime: *Runtime, value: Value) ![]u8 {
     const text = try runtime.valueToString(value);
     return text.string.toUtf8Lossy(runtime.allocator());
@@ -1407,6 +1457,32 @@ test "Node互換のWindowsパスはdrive-relativeとUNC rootを保持する" {
     try std.testing.expectEqualStrings("\\\\server\\share\\", nodeDirnameFor("\\\\server\\share\\file", true));
     try std.testing.expectEqualStrings("share", nodeBasenameFor("\\\\server\\share\\", true));
     try std.testing.expectEqualStrings("\\\\server\\share\\", nodeDirnameFor("\\\\server\\share\\", true));
+}
+
+test "Nodeパス命令は非文字列入力をNodeの型診断へ変換する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    try expectNodePathArgumentFailure(&runtime, "path", .null_value, "The \"path\" argument must be of type string. Received null");
+    try expectNodePathArgumentFailure(&runtime, "path", .{ .number = 123 }, "The \"path\" argument must be of type string. Received type number (123)");
+
+    var dictionary = try runtime.createDictionary();
+    var array = try runtime.createArray();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&dictionary);
+    try roots.protect(&array);
+    try expectNodePathArgumentFailure(&runtime, "path", dictionary, "The \"path\" argument must be of type string. Received an instance of Object");
+    try expectNodePathArgumentFailure(&runtime, "path", array, "The \"path\" argument must be of type string. Received an instance of Array");
+}
+
+fn expectNodePathArgumentFailure(runtime: *Runtime, label: []const u8, value: Value, expected: []const u8) !void {
+    _ = nodePathArgument(runtime, label, value) catch |failure| {
+        try std.testing.expectEqual(error.InvalidPathSource, failure);
+        try std.testing.expectEqualStrings(expected, runtime.failureMessage().?);
+        runtime.clearFailureMessage();
+        return;
+    };
+    return error.ExpectedFailure;
 }
 
 test "ブラウザとファイルマネージャーの起動をホストへ委譲する" {
