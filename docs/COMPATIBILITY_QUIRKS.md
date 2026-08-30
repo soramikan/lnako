@@ -490,7 +490,7 @@ Windowsの`path.basename` / `path.dirname`は、Windows targetでは`/`と`\\`�
 
 ## 正規表現のlegacy octal escape
 
-公式Node 24の非Unicode modeでは、class内の`[\\1]`・`[\\12]`・`[\\123]`をそれぞれU+0001・改行・`S`として扱い、class外の`\\07`をBELとして扱う。lnakoはParserの同じlegacy octal境界をInterpreter・純LLVM AOT・表のraw RegExp経路へ接続し、`native-system-regexp-legacy-octal-escapes`で公式CLI・生成JavaScript・Interpreter・LLVM AOT O0〜O3を比較する。Unicode modeのdecimal escapeおよびclass外でcapture数に依存するdecimal backreferenceは別境界として完成扱いにしない。
+公式Node 24の非Unicode modeでは、class内の`[\\1]`・`[\\12]`・`[\\123]`をそれぞれU+0001・改行・`S`として扱い、class外の`\\07`をBELとして扱う。class外のdecimal escapeは、パターン全体のcapture数以下ならbackreferenceとして解決し、該当captureがなければlegacy octalまたは`\\8`・`\\9`の数字リテラルへfallbackする。forward referenceも全capture数確定後に解決し、`\\400`や`\\777`のようにlegacy octalの桁数上限を超えた数字はoctal prefixと後続リテラルへ分割する。lnakoはParserの同じ境界をInterpreter・純LLVM AOT・表のraw RegExp経路へ接続し、`native-system-regexp-legacy-octal-escapes`で公式CLI・生成JavaScript・Interpreter・LLVM AOT O0〜O3を比較する。Unicode modeのdecimal escape、未検証のbacktracking副作用、その他のJavaScript正規表現診断文言は別TODOとして完成扱いにしない。
 
 ## 正規表現Unicode propertyの静的範囲
 

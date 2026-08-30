@@ -105,7 +105,7 @@ AOTの成功attempt/result対、公式source・生成JavaScript・lnako run・AO
 attestationがない場合は`trace-confirmed-unattested`に留めます。
 この条件を満たさないentryは、fixtureが存在しても`unverified`のままです。
 
-空幅atomの量指定を含む正規表現境界は`native-system-regexp-zero-width-quantifier`で公式CLI・生成JavaScript・Interpreter・LLVM AOT O0〜O3を比較します。非Unicode modeのlegacy octal escape（class内の`\\1`・`\\12`・`\\123`と外側の`\\07`）は`native-system-regexp-legacy-octal-escapes`で同じ7経路を比較します。
+空幅atomの量指定を含む正規表現境界は`native-system-regexp-zero-width-quantifier`で公式CLI・生成JavaScript・Interpreter・LLVM AOT O0〜O3を比較します。非Unicode modeのlegacy octal escape（class内の`\\1`・`\\12`・`\\123`と外側の`\\07`）、およびcapture数以下ならbackreference、未定義captureならlegacy octalまたは数字リテラルへfallbackするclass外decimal escapeは`native-system-regexp-legacy-octal-escapes`で同じ7経路を比較します。
 
 ## 同名命令
 
