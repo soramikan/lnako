@@ -2594,6 +2594,12 @@ test "配列生成の安全上限を命令別の診断へ変換する" {
         "配列要素作成(0,無限大)を表示\n" ++
         "エラーならば\n" ++
         "エラーメッセージを表示\n" ++
+        "ここまで\n" ++
+        "A=[0]\n" ++
+        "エラー監視\n" ++
+        "配列入替(A,0,1000000)を表示\n" ++
+        "エラーならば\n" ++
+        "エラーメッセージを表示\n" ++
         "ここまで\n";
     var fixture = try compileForTest(std.testing.allocator, source);
     defer fixture.ir_program.deinit();
@@ -2608,7 +2614,7 @@ test "配列生成の安全上限を命令別の診断へ変換する" {
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings(
-        "Array sequence exceeds safety limit\nArray fill size exceeds safety limit\n",
+        "Array sequence exceeds safety limit\nArray fill size exceeds safety limit\nSparse array length exceeds safety limit\n",
         host.written(),
     );
 }

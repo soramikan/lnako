@@ -16997,9 +16997,9 @@ fn arraySwapBuiltin(runtime: *Runtime, source: Value, first_value: Value, second
     const second = runtime.aotCanonicalArrayIndexUnits(second_units);
     const largest_index = if (first) |first_index| if (second) |second_index| @max(first_index, second_index) else first_index else second;
     if (largest_index) |index| {
-        const required_length = std.math.add(usize, index, 1) catch return error.ArraySizeLimitExceeded;
+        const required_length = std.math.add(usize, index, 1) catch return error.ArraySparseLengthLimit;
         const items = &roots[0].object().?.payload.array.items;
-        if (required_length > items.len and required_length > safe_array_element_limit) return error.ArraySizeLimitExceeded;
+        if (required_length > items.len and required_length > safe_array_element_limit) return error.ArraySparseLengthLimit;
     }
     const array = roots[0].object().?;
     const first_item = runtime.aotArrayPropertyGet(array, roots[1]);
@@ -21366,7 +21366,7 @@ test "AOT配列の集約・入替・連番・要素生成を公式境界で処�
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(swapped.items[0].tag)));
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(swapped.items[3].tag)));
     try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast(swapped.items[4].payload)));
-    try std.testing.expectError(error.ArraySizeLimitExceeded, arraySwapBuiltin(&runtime, roots[6], numberValue(0), numberValue(@floatFromInt(safe_array_element_limit))));
+    try std.testing.expectError(error.ArraySparseLengthLimit, arraySwapBuiltin(&runtime, roots[6], numberValue(0), numberValue(@floatFromInt(safe_array_element_limit))));
 
     roots[7] = try arraySequenceBuiltin(&runtime, staticStringValue("2"), numberValue(4));
     const sequence = try arrayItems(roots[7]);
@@ -21451,7 +21451,7 @@ test "AOT配列生成の安全上限を命令別の診断へ変換する" {
         runtime = active_runtime.?;
         active_runtime = null;
     }
-    var roots = [_]Value{ .{}, .{} };
+    var roots = [_]Value{ .{}, .{}, .{} };
     var frame: RootFrame = .{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
@@ -21480,6 +21480,20 @@ test "AOT配列生成の安全上限を命令別の診断へ変換する" {
     const fill_message = try pendingExceptionMessageUtf8Alloc(&active_runtime.?);
     defer active_runtime.?.allocator.free(fill_message);
     try std.testing.expectEqualStrings("Array fill size exceeds safety limit", fill_message);
+    _ = active_runtime.?.takeException();
+
+    roots[2] = try active_runtime.?.createArray(&.{numberValue(0)});
+    const swap_arguments = [_]Value{ roots[2], numberValue(0), numberValue(@floatFromInt(safe_array_element_limit)) };
+    lnako_aot_builtin_call(
+        &roots[1],
+        &swap_arguments,
+        swap_arguments.len,
+        @intFromEnum(aot_builtin.Command.array_swap),
+    );
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    const swap_message = try pendingExceptionMessageUtf8Alloc(&active_runtime.?);
+    defer active_runtime.?.allocator.free(swap_message);
+    try std.testing.expectEqualStrings("Sparse array length exceeds safety limit", swap_message);
 }
 
 test "AOT配列ソート系は安定mergeとundefined末尾と同一配列を保つ" {

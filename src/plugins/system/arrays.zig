@@ -1527,8 +1527,8 @@ fn swap(runtime: *Runtime, source: Value, first_value: Value, second_value: Valu
     const second_index = propertyIndexUnits(rooted[4].string.units);
     const largest_index = if (first_index) |first| if (second_index) |second| @max(first, second) else first else second_index;
     if (largest_index) |index| {
-        const required_length = std.math.add(usize, index, 1) catch return error.ArraySizeLimitExceeded;
-        if (required_length > rooted[0].array.len() and required_length > safe_array_element_limit) return error.ArraySizeLimitExceeded;
+        const required_length = std.math.add(usize, index, 1) catch return error.ArraySparseLengthLimit;
+        if (required_length > rooted[0].array.len() and required_length > safe_array_element_limit) return error.ArraySparseLengthLimit;
     }
     // Array length is read-only for this command's two assignment steps when
     // represented by the native dense array.  Keep the failure atomic instead
@@ -4398,7 +4398,7 @@ test "配列集約・連番・要素生成の型変換と複製境界を保つ" 
 
     var swap_source = try common.arrayFromValues(&runtime, &.{.{ .number = 0 }});
     try roots.protect(&swap_source);
-    try std.testing.expectError(error.ArraySizeLimitExceeded, swap(&runtime, swap_source, .{ .number = 0 }, .{ .number = @floatFromInt(safe_array_element_limit) }));
+    try std.testing.expectError(error.ArraySparseLengthLimit, swap(&runtime, swap_source, .{ .number = 0 }, .{ .number = @floatFromInt(safe_array_element_limit) }));
 
     var first = try runtime.stringUtf8("2");
     try roots.protect(&first);
