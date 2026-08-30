@@ -17450,8 +17450,10 @@ fn padBuiltin(runtime: *Runtime, value: Value, width_value: Value, fill: u16) !V
     // 公式はparseInt前に `for (i = 0; i < A; i++)` で埋め文字を作る。
     // したがってAが数値化不能でも、parseInt後の幅とは別に1文字が残る。
     const fill_count = if (std.math.isNan(original_number) or original_number <= 0) @as(usize, 1) else blk: {
-        // Infinityでは公式のループが終了しないため、AOTでは安全に拒否する。
-        if (!std.math.isFinite(original_number) or original_number >= @as(f64, @floatFromInt(std.math.maxInt(usize) - 1))) return error.OutOfMemory;
+        // 正のInfinityでは公式のループが終了しないため、AOTでは安全に拒否する。
+        // 実際の割当失敗とは別の境界として呼び出し側へ伝える。
+        if (!std.math.isFinite(original_number)) return error.StringPadWidthUnbounded;
+        if (original_number >= @as(f64, @floatFromInt(std.math.maxInt(usize) - 1))) return error.OutOfMemory;
         const iterations: usize = @intFromFloat(@ceil(original_number));
         break :blk iterations + 1;
     };
@@ -20644,6 +20646,32 @@ test "AOT置換命令は全置換の空検索と単置換の置換パターン�
     const undefined_first_replacement = [_]Value{ staticStringValue("x-x"), staticStringValue("x"), .{} };
     lnako_aot_builtin_call(&roots[5], &undefined_first_replacement, undefined_first_replacement.len, @intFromEnum(aot_builtin.Command.replace_first));
     try std.testing.expectEqualSlices(u16, &.{ 'u', 'n', 'd', 'e', 'f', 'i', 'n', 'e', 'd', '-', 'x' }, roots[5].object().?.payload.utf16_string);
+}
+
+test "AOT幅埋めは正のInfinity幅を非終了ではなく安全制限へ変換する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    const arguments = [_]Value{ staticStringValue("x"), numberValue(std.math.inf(f64)) };
+    lnako_aot_builtin_call(&roots[0], &arguments, arguments.len, @intFromEnum(aot_builtin.Command.zero_pad));
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    const message = try pendingExceptionMessageUtf8Alloc(&active_runtime.?);
+    defer active_runtime.?.allocator.free(message);
+    try std.testing.expectEqualStrings("String padding width is unbounded", message);
+    _ = active_runtime.?.takeException();
+
+    const negative_arguments = [_]Value{ staticStringValue("x"), numberValue(-std.math.inf(f64)) };
+    lnako_aot_builtin_call(&roots[1], &negative_arguments, negative_arguments.len, @intFromEnum(aot_builtin.Command.space_pad));
+    try std.testing.expectEqualSlices(u16, &.{ ' ', 'x' }, roots[1].object().?.payload.utf16_string);
 }
 
 test "AOT幅変換は英数記号とカナの合成順序および公式の濁点端挙動を保つ" {

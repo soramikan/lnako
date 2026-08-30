@@ -913,7 +913,10 @@ fn pad(runtime: *Runtime, value: Value, width_value: Value, fill: u16) !Value {
     };
     const width_number = try common.parseIntValue(runtime, width_value, null);
     const fill_count = if (std.math.isNan(original_number) or original_number <= 0) @as(usize, 1) else blk: {
-        if (!std.math.isFinite(original_number) or original_number >= @as(f64, @floatFromInt(std.math.maxInt(usize) - 1))) return error.OutOfMemory;
+        // A positive Infinity makes the official pre-parse loop non-terminating.
+        // Keep that safety boundary distinct from an actual allocation failure.
+        if (!std.math.isFinite(original_number)) return error.StringPadWidthUnbounded;
+        if (original_number >= @as(f64, @floatFromInt(std.math.maxInt(usize) - 1))) return error.OutOfMemory;
         break :blk @as(usize, @intFromFloat(@ceil(original_number))) + 1;
     };
     if (std.math.isNan(width_number)) {
@@ -1519,6 +1522,12 @@ test "指定形式と文字種判定の公式境界を処理する" {
     try std.testing.expectEqualSlices(u16, &.{ '0', '0', 'x' }, bigint_pad.string.units);
     const nan_pad = (try call(&runtime, "空白埋", &.{ try runtime.stringUtf8("x"), .{ .number = std.math.nan(f64) } })).?;
     try std.testing.expectEqualSlices(u16, &.{ ' ', 'x' }, nan_pad.string.units);
+    try std.testing.expectError(
+        error.StringPadWidthUnbounded,
+        call(&runtime, "ゼロ埋", &.{ try runtime.stringUtf8("x"), .{ .number = std.math.inf(f64) } }),
+    );
+    const negative_infinity_pad = (try call(&runtime, "空白埋", &.{ try runtime.stringUtf8("x"), .{ .number = -std.math.inf(f64) } })).?;
+    try std.testing.expectEqualSlices(u16, &.{ ' ', 'x' }, negative_infinity_pad.string.units);
     try std.testing.expect((try call(&runtime, "かなか判定", &.{try runtime.stringUtf8("あX")})).?.boolean);
     try std.testing.expect((try call(&runtime, "カタカナ判定", &.{try runtime.stringUtf8("アX")})).?.boolean);
     try std.testing.expect((try call(&runtime, "数字判定", &.{try runtime.stringUtf8("９X")})).?.boolean);

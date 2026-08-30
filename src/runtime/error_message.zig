@@ -49,6 +49,7 @@ pub fn forFailure(failure: anyerror) []const u8 {
         error.InvalidKansujiInput => "『漢数字』命令の中に無効な文字が含まれています。",
         error.KansujiTooLarge => "『漢数字』命令に含められる数の大きさを超えています。",
         error.InvalidArabicNumeral => "『算用数字』命令の中に無効な文字が含まれています。",
+        error.StringPadWidthUnbounded => "String padding width is unbounded",
         else => @errorName(failure),
     };
 }
@@ -99,4 +100,5 @@ test "BigInt実行時エラーを公式JavaScriptの文言へ変換する" {
     try std.testing.expectEqualStrings("『漢数字』命令の中に無効な文字が含まれています。", forFailure(error.InvalidKansujiInput));
     try std.testing.expectEqualStrings("『漢数字』命令に含められる数の大きさを超えています。", forFailure(error.KansujiTooLarge));
     try std.testing.expectEqualStrings("『算用数字』命令の中に無効な文字が含まれています。", forFailure(error.InvalidArabicNumeral));
+    try std.testing.expectEqualStrings("String padding width is unbounded", forFailure(error.StringPadWidthUnbounded));
 }
