@@ -1967,7 +1967,10 @@ fn tableRegexpPickup(runtime: *Runtime, source: Value, column: Value, pattern: V
             .array => blk: {
                 const copy = try runtime.createArray();
                 rooted[5] = copy;
-                for (row.array.items.items) |item| _ = try rooted[5].array.push(item);
+                try row.array.normalizePresence();
+                for (row.array.items.items, 0..) |item, index| {
+                    try appendArraySlot(rooted[5].array, item, row.array.isPresent(index));
+                }
                 break :blk rooted[5];
             },
             .string => row,
@@ -2813,6 +2816,16 @@ test "表正規表現系はraw RegExpと浅いコピーとGCを保つ" {
     try std.testing.expect(picked.array != table.array);
     try std.testing.expect(picked.array.get(0).array != first.array);
     try std.testing.expectEqual(marker.dictionary, picked.array.get(0).array.get(1).dictionary);
+
+    var sparse_row = try runtime.createArray();
+    try roots.protect(&sparse_row);
+    try sparse_row.array.set(0, first_text);
+    try sparse_row.array.set(2, second_text);
+    var sparse_inner_table = try common.arrayFromValues(&runtime, &.{sparse_row});
+    try roots.protect(&sparse_inner_table);
+    var sparse_inner_picked = try tableRegexpPickup(&runtime, sparse_inner_table, .{ .number = 0 }, raw_pattern);
+    try roots.protect(&sparse_inner_picked);
+    try std.testing.expectEqualSlices(bool, &.{ true, false, true }, sparse_inner_picked.array.get(0).array.presence.items);
 
     var empty_pattern_pickup = try tableRegexpPickup(&runtime, table, .{ .number = 0 }, .undefined);
     try roots.protect(&empty_pattern_pickup);

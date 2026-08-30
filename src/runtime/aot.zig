@@ -15121,9 +15121,13 @@ fn tableRegexpPickupBuiltin(runtime: *Runtime, source: Value, column: Value, pat
         if (row.tag == @intFromEnum(Tag.array)) {
             roots[5] = try runtime.createArray(&.{});
             const copy = try arrayItems(roots[5]);
+            const row_object = row.object().?;
+            try runtime.normalizeAotArrayPresence(row_object);
             const row_items = try arrayItems(row);
             try copy.ensureTotalCapacity(runtime.allocator, row_items.items.len);
-            try copy.appendSlice(runtime.allocator, row_items.items);
+            for (row_items.items, 0..) |item, index| {
+                try appendAotArraySlot(runtime, roots[5].object().?, item, runtime.aotArrayIsPresent(row_object, index));
+            }
         } else if (isString(row)) {
             roots[5] = row;
         } else if (row.tag == @intFromEnum(Tag.byte_buffer)) {
@@ -20890,6 +20894,14 @@ test "AOT表正規表現系はraw RegExpと浅いコピーを保つ" {
     try std.testing.expect(roots[4].object() != roots[2].object());
     try std.testing.expect(roots[4].object().?.payload.array.items[0].object() != roots[0].object());
     try std.testing.expectEqual(roots[0].object().?.payload.array.items[1].payload, roots[4].object().?.payload.array.items[0].object().?.payload.array.items[1].payload);
+
+    roots[11] = try runtime.createArray(&.{});
+    try runtime.indexSet(roots[11], numberValue(0), staticStringValue("alice"));
+    try runtime.indexSet(roots[11], numberValue(2), staticStringValue("tail"));
+    roots[12] = try runtime.createArray(&.{roots[11]});
+    roots[13] = try tableBuiltin(&runtime, .table_regexp_pickup, &.{ roots[12], numberValue(0), raw });
+    const sparse_inner_row = roots[13].object().?.payload.array.items[0].object().?;
+    try std.testing.expectEqualSlices(bool, &.{ true, false, true }, sparse_inner_row.array_presence.items);
 
     roots[7] = try tableBuiltin(&runtime, .table_regexp_pickup, &.{ roots[2], numberValue(0), .{} });
     try std.testing.expectEqual(@as(usize, 2), roots[7].object().?.payload.array.items.len);
