@@ -13382,62 +13382,67 @@ fn stableArrayCallbackSort(runtime: *Runtime, source: Value, callable: Value) !V
     const second_presence = try runtime.allocator.dupe(bool, first_presence);
     defer runtime.allocator.free(second_presence);
 
-    const root_count = std.math.add(usize, 3, std.math.mul(usize, original_length, 2) catch return error.ArrayTooLarge) catch return error.ArrayTooLarge;
+    const root_count = std.math.add(usize, 4, std.math.mul(usize, original_length, 2) catch return error.ArrayTooLarge) catch return error.ArrayTooLarge;
     const root_values = try runtime.allocator.alloc(Value, root_count);
     defer runtime.allocator.free(root_values);
     root_values[0] = source;
     root_values[1] = callable;
     root_values[2] = .{};
-    std.mem.copyForwards(Value, root_values[3 .. 3 + original_length], first);
-    std.mem.copyForwards(Value, root_values[3 + original_length ..], second);
+    root_values[3] = .{};
+    std.mem.copyForwards(Value, root_values[4 .. 4 + original_length], first);
+    std.mem.copyForwards(Value, root_values[4 + original_length ..], second);
     var roots = RootFrame{};
     runtime.pushRoots(&roots, root_values.ptr, root_values.len);
     defer runtime.popRoots(&roots);
 
-    var width: usize = 1;
     var from_first = true;
-    while (width < original_length) : (width = std.math.mul(usize, width, 2) catch original_length) {
-        const input = if (from_first) first else second;
-        const output = if (from_first) second else first;
-        const input_presence = if (from_first) first_presence else second_presence;
-        const output_presence = if (from_first) second_presence else first_presence;
-        var start: usize = 0;
-        while (start < original_length) {
-            const middle = @min(std.math.add(usize, start, width) catch original_length, original_length);
-            const end = @min(std.math.add(usize, middle, width) catch original_length, original_length);
-            var left = start;
-            var right = middle;
-            var destination = start;
-            while (left < middle and right < end) {
-                const order = try compareAotCallback(runtime, root_values[1], input[left], input_presence[left], input[right], input_presence[right], &root_values[2]);
-                if (order == .gt) {
-                    output[destination] = input[right];
-                    output_presence[destination] = input_presence[right];
-                    right += 1;
-                } else {
+    if (original_length < v8_small_callback_sort_limit) {
+        try v8SmallArrayCallbackSort(runtime, first, first_presence, &root_values[1], &root_values[2], &root_values[3]);
+    } else {
+        var width: usize = 1;
+        while (width < original_length) : (width = std.math.mul(usize, width, 2) catch original_length) {
+            const input = if (from_first) first else second;
+            const output = if (from_first) second else first;
+            const input_presence = if (from_first) first_presence else second_presence;
+            const output_presence = if (from_first) second_presence else first_presence;
+            var start: usize = 0;
+            while (start < original_length) {
+                const middle = @min(std.math.add(usize, start, width) catch original_length, original_length);
+                const end = @min(std.math.add(usize, middle, width) catch original_length, original_length);
+                var left = start;
+                var right = middle;
+                var destination = start;
+                while (left < middle and right < end) {
+                    const order = try compareAotCallback(runtime, root_values[1], input[left], input_presence[left], input[right], input_presence[right], &root_values[2]);
+                    if (order == .gt) {
+                        output[destination] = input[right];
+                        output_presence[destination] = input_presence[right];
+                        right += 1;
+                    } else {
+                        output[destination] = input[left];
+                        output_presence[destination] = input_presence[left];
+                        left += 1;
+                    }
+                    destination += 1;
+                }
+                while (left < middle) : ({
+                    left += 1;
+                    destination += 1;
+                }) {
                     output[destination] = input[left];
                     output_presence[destination] = input_presence[left];
-                    left += 1;
                 }
-                destination += 1;
+                while (right < end) : ({
+                    right += 1;
+                    destination += 1;
+                }) {
+                    output[destination] = input[right];
+                    output_presence[destination] = input_presence[right];
+                }
+                start = end;
             }
-            while (left < middle) : ({
-                left += 1;
-                destination += 1;
-            }) {
-                output[destination] = input[left];
-                output_presence[destination] = input_presence[left];
-            }
-            while (right < end) : ({
-                right += 1;
-                destination += 1;
-            }) {
-                output[destination] = input[right];
-                output_presence[destination] = input_presence[right];
-            }
-            start = end;
+            from_first = !from_first;
         }
-        from_first = !from_first;
     }
 
     if (items.items.len < original_length) {
@@ -13452,6 +13457,65 @@ fn stableArrayCallbackSort(runtime: *Runtime, source: Value, callable: Value) !V
     const sorted_presence = if (from_first) first_presence else second_presence;
     std.mem.copyForwards(bool, object.array_presence.items[0..original_length], sorted_presence);
     return root_values[0];
+}
+
+const v8_small_callback_sort_limit: usize = 64;
+
+fn v8SmallArrayCallbackSort(
+    runtime: *Runtime,
+    items: []Value,
+    presence: []bool,
+    callable_root: *Value,
+    result_root: *Value,
+    pivot_root: *Value,
+) !void {
+    // V8 uses CountAndMakeRun followed by BinaryInsertionSort when the
+    // receiver length is below 64. The collected AOT values stay detached
+    // from the live array until stableArrayCallbackSort commits the result.
+    if (items.len < 2) return;
+
+    var run_length: usize = 2;
+    const first_order = try compareAotCallback(runtime, callable_root.*, items[1], presence[1], items[0], presence[0], result_root);
+    if (first_order == .lt) {
+        while (run_length < items.len) : (run_length += 1) {
+            const order = try compareAotCallback(runtime, callable_root.*, items[run_length], presence[run_length], items[run_length - 1], presence[run_length - 1], result_root);
+            if (order != .lt) break;
+        }
+        var left: usize = 0;
+        var right: usize = run_length - 1;
+        while (left < right) : ({
+            left += 1;
+            right -= 1;
+        }) {
+            std.mem.swap(Value, &items[left], &items[right]);
+            std.mem.swap(bool, &presence[left], &presence[right]);
+        }
+    } else {
+        while (run_length < items.len) : (run_length += 1) {
+            const order = try compareAotCallback(runtime, callable_root.*, items[run_length], presence[run_length], items[run_length - 1], presence[run_length - 1], result_root);
+            if (order == .lt) break;
+        }
+    }
+
+    var start = run_length;
+    while (start < items.len) : (start += 1) {
+        pivot_root.* = items[start];
+        const pivot_presence = presence[start];
+        var left: usize = 0;
+        var right: usize = start;
+        while (left < right) {
+            const middle = left + (right - left) / 2;
+            const order = try compareAotCallback(runtime, callable_root.*, pivot_root.*, pivot_presence, items[middle], presence[middle], result_root);
+            if (order == .lt) right = middle else left = middle + 1;
+        }
+        var cursor = start;
+        while (cursor > left) : (cursor -= 1) {
+            items[cursor] = items[cursor - 1];
+            presence[cursor] = presence[cursor - 1];
+        }
+        items[left] = pivot_root.*;
+        presence[left] = pivot_presence;
+    }
 }
 
 fn compareAotCallback(runtime: *Runtime, callable: Value, left: Value, left_present: bool, right: Value, right_present: bool, result_root: *Value) !std.math.Order {
@@ -16665,6 +16729,18 @@ fn testAotDescending(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len
         .{}
     else
         numberValue(valueToNumber(arguments.?[1]) - valueToNumber(arguments.?[0]));
+}
+
+fn testAotSortOrder(out: *Value, context: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
+    const runtime = if (active_runtime) |*active| active else return;
+    if (arguments == null or len != 2) {
+        out.* = .{};
+        return;
+    }
+    const function: *Object = @ptrCast(@alignCast(context));
+    const log = function.payload.function.captures[0];
+    runtime.aotArrayAppend(log.object() orelse return, numberValue(valueToNumber(arguments.?[0]) * 10 + valueToNumber(arguments.?[1]))) catch |failure| runtimeFailure(failure);
+    out.* = numberValue(valueToNumber(arguments.?[0]) - valueToNumber(arguments.?[1]));
 }
 
 fn testAotDouble(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
@@ -20182,6 +20258,30 @@ test "AOT配列コールバックは関数値・名前解決と新配列規則�
     var filter_arguments = [_]Value{ staticStringValue("偶数判定関数"), roots[9] };
     roots[10] = try arrayCallbackBuiltin(active, .array_filter, &filter_arguments);
     try std.testing.expectEqualSlices(Value, &.{ numberValue(2), numberValue(4) }, (try arrayItems(roots[10])).items);
+}
+
+test "AOTカスタムソートの小配列比較順はV8のrun検出規則を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    const active = &active_runtime.?;
+    var roots = [_]Value{.{}} ** 4;
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+
+    roots[0] = try active.createArray(&.{});
+    roots[1] = try active.createFunction(testAotSortOrder, 2, &.{roots[0]});
+    roots[2] = try active.createArray(&.{ numberValue(3), numberValue(1), numberValue(2) });
+    var arguments = [_]Value{ roots[1], roots[2] };
+    roots[3] = try arrayCallbackBuiltin(active, .array_custom_sort, &arguments);
+
+    try std.testing.expectEqualSlices(Value, &.{ numberValue(13), numberValue(21), numberValue(23), numberValue(21) }, (try arrayItems(roots[0])).items);
+    try std.testing.expectEqualSlices(Value, &.{ numberValue(1), numberValue(2), numberValue(3) }, (try arrayItems(roots[2])).items);
 }
 
 test "AOT同期実行は関数値・名前解決・AWAIT引数展開を保つ" {

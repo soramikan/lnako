@@ -161,6 +161,20 @@ const TestMutatingSortContext = struct {
     }
 };
 
+const TestSortOrderContext = struct {
+    pairs: [16][2]f64 = undefined,
+    count: usize = 0,
+
+    fn invoke(raw: *anyopaque, _: Value, arguments: []const Value) anyerror!Value {
+        const self: *@This() = @ptrCast(@alignCast(raw));
+        if (arguments.len == 2 and self.count < self.pairs.len) {
+            self.pairs[self.count] = .{ arguments[0].number, arguments[1].number };
+            self.count += 1;
+        }
+        return .{ .number = arguments[0].number - arguments[1].number };
+    }
+};
+
 const ZeroRandomContext = struct {
     fn next(_: *anyopaque) anyerror!f64 {
         return 0;
@@ -244,6 +258,7 @@ fn sortCustom(runtime: *Runtime, function_value: Value, source: Value, context: 
 
 const SortMode = enum { string, number, relational, callback };
 const SortCallback = struct { context: ?Context, callable: Value };
+const v8_small_callback_sort_limit: usize = 64;
 
 fn stableSort(runtime: *Runtime, source: Value, mode: SortMode, callback: ?SortCallback) !void {
     const array = source.array;
@@ -334,50 +349,54 @@ fn stableCallbackSort(runtime: *Runtime, array: *value_mod.Array, callback: Sort
     for (first) |*item| try roots.protect(item);
     for (second) |*item| try roots.protect(item);
 
-    var width: usize = 1;
     var from_first = true;
-    while (width < original_length) : (width = std.math.mul(usize, width, 2) catch original_length) {
-        const input = if (from_first) first else second;
-        const output = if (from_first) second else first;
-        const input_presence = if (from_first) first_presence else second_presence;
-        const output_presence = if (from_first) second_presence else first_presence;
-        var start: usize = 0;
-        while (start < original_length) {
-            const middle = @min(std.math.add(usize, start, width) catch original_length, original_length);
-            const end = @min(std.math.add(usize, middle, width) catch original_length, original_length);
-            var left = start;
-            var right = middle;
-            var destination = start;
-            while (left < middle and right < end) {
-                const order = try compareForSort(runtime, input[left], input_presence[left], input[right], input_presence[right], .callback, callback);
-                if (order == .gt) {
-                    output[destination] = input[right];
-                    output_presence[destination] = input_presence[right];
-                    right += 1;
-                } else {
+    if (original_length < v8_small_callback_sort_limit) {
+        try v8SmallCallbackSort(runtime, first, first_presence, callback, &roots);
+    } else {
+        var width: usize = 1;
+        while (width < original_length) : (width = std.math.mul(usize, width, 2) catch original_length) {
+            const input = if (from_first) first else second;
+            const output = if (from_first) second else first;
+            const input_presence = if (from_first) first_presence else second_presence;
+            const output_presence = if (from_first) second_presence else first_presence;
+            var start: usize = 0;
+            while (start < original_length) {
+                const middle = @min(std.math.add(usize, start, width) catch original_length, original_length);
+                const end = @min(std.math.add(usize, middle, width) catch original_length, original_length);
+                var left = start;
+                var right = middle;
+                var destination = start;
+                while (left < middle and right < end) {
+                    const order = try compareForSort(runtime, input[left], input_presence[left], input[right], input_presence[right], .callback, callback);
+                    if (order == .gt) {
+                        output[destination] = input[right];
+                        output_presence[destination] = input_presence[right];
+                        right += 1;
+                    } else {
+                        output[destination] = input[left];
+                        output_presence[destination] = input_presence[left];
+                        left += 1;
+                    }
+                    destination += 1;
+                }
+                while (left < middle) : ({
+                    left += 1;
+                    destination += 1;
+                }) {
                     output[destination] = input[left];
                     output_presence[destination] = input_presence[left];
-                    left += 1;
                 }
-                destination += 1;
+                while (right < end) : ({
+                    right += 1;
+                    destination += 1;
+                }) {
+                    output[destination] = input[right];
+                    output_presence[destination] = input_presence[right];
+                }
+                start = end;
             }
-            while (left < middle) : ({
-                left += 1;
-                destination += 1;
-            }) {
-                output[destination] = input[left];
-                output_presence[destination] = input_presence[left];
-            }
-            while (right < end) : ({
-                right += 1;
-                destination += 1;
-            }) {
-                output[destination] = input[right];
-                output_presence[destination] = input_presence[right];
-            }
-            start = end;
+            from_first = !from_first;
         }
-        from_first = !from_first;
     }
 
     if (array.len() < original_length) {
@@ -391,6 +410,66 @@ fn stableCallbackSort(runtime: *Runtime, array: *value_mod.Array, callback: Sort
     std.mem.copyForwards(Value, array.items.items[0..original_length], sorted);
     const sorted_presence = if (from_first) first_presence else second_presence;
     std.mem.copyForwards(bool, array.presence.items[0..original_length], sorted_presence);
+}
+
+fn v8SmallCallbackSort(
+    runtime: *Runtime,
+    items: []Value,
+    presence: []bool,
+    callback: SortCallback,
+    roots: *value_mod.RootFrame,
+) !void {
+    // V8 uses CountAndMakeRun followed by BinaryInsertionSort when the
+    // receiver length is below 64. Keeping this path detached from the live
+    // array preserves the collection-before-callback and resize guarantees
+    // of stableCallbackSort while matching the observable callback order.
+    if (items.len < 2) return;
+
+    var pivot: Value = .undefined;
+    try roots.protect(&pivot);
+
+    var run_length: usize = 2;
+    const first_order = try compareForSort(runtime, items[1], presence[1], items[0], presence[0], .callback, callback);
+    if (first_order == .lt) {
+        while (run_length < items.len) : (run_length += 1) {
+            const order = try compareForSort(runtime, items[run_length], presence[run_length], items[run_length - 1], presence[run_length - 1], .callback, callback);
+            if (order != .lt) break;
+        }
+        var left: usize = 0;
+        var right: usize = run_length - 1;
+        while (left < right) : ({
+            left += 1;
+            right -= 1;
+        }) {
+            std.mem.swap(Value, &items[left], &items[right]);
+            std.mem.swap(bool, &presence[left], &presence[right]);
+        }
+    } else {
+        while (run_length < items.len) : (run_length += 1) {
+            const order = try compareForSort(runtime, items[run_length], presence[run_length], items[run_length - 1], presence[run_length - 1], .callback, callback);
+            if (order == .lt) break;
+        }
+    }
+
+    var start = run_length;
+    while (start < items.len) : (start += 1) {
+        pivot = items[start];
+        const pivot_presence = presence[start];
+        var left: usize = 0;
+        var right: usize = start;
+        while (left < right) {
+            const middle = left + (right - left) / 2;
+            const order = try compareForSort(runtime, pivot, pivot_presence, items[middle], presence[middle], .callback, callback);
+            if (order == .lt) right = middle else left = middle + 1;
+        }
+        var cursor = start;
+        while (cursor > left) : (cursor -= 1) {
+            items[cursor] = items[cursor - 1];
+            presence[cursor] = presence[cursor - 1];
+        }
+        items[left] = pivot;
+        presence[left] = pivot_presence;
+    }
 }
 
 fn compareForSort(runtime: *Runtime, left: Value, left_present: bool, right: Value, right_present: bool, mode: SortMode, callback: ?SortCallback) !std.math.Order {
@@ -2177,6 +2256,31 @@ test "カスタムソート中に元配列が短縮されても収集済み要�
     try std.testing.expect(result.array == array.array);
     try std.testing.expect(test_context.mutated);
     try std.testing.expectEqual(@as(usize, 3), array.array.len());
+    try std.testing.expectEqual(@as(f64, 1), array.array.get(0).number);
+    try std.testing.expectEqual(@as(f64, 2), array.array.get(1).number);
+    try std.testing.expectEqual(@as(f64, 3), array.array.get(2).number);
+}
+
+test "カスタムソートの小配列比較順はV8のrun検出規則を保つ" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var array = try common.arrayFromValues(&runtime, &.{ .{ .number = 3 }, .{ .number = 1 }, .{ .number = 2 } });
+    try roots.protect(&array);
+    var name = try runtime.stringUtf8("配列比較順");
+    try roots.protect(&name);
+    var function = try runtime.createNativeFunction(name.string, 2, testElementCountFunction, &.{});
+    try roots.protect(&function);
+    var context = TestSortOrderContext{};
+
+    _ = try call(&runtime, "配列カスタムソート", &.{ function, array }, .{
+        .context = &context,
+        .callFn = TestSortOrderContext.invoke,
+    });
+
+    try std.testing.expectEqual(@as(usize, 4), context.count);
+    try std.testing.expectEqualSlices([2]f64, &.{ .{ 1, 3 }, .{ 2, 1 }, .{ 2, 3 }, .{ 2, 1 } }, context.pairs[0..context.count]);
     try std.testing.expectEqual(@as(f64, 1), array.array.get(0).number);
     try std.testing.expectEqual(@as(f64, 2), array.array.get(1).number);
     try std.testing.expectEqual(@as(f64, 3), array.array.get(2).number);
