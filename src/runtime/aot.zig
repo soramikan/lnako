@@ -17011,7 +17011,7 @@ fn arraySwapBuiltin(runtime: *Runtime, source: Value, first_value: Value, second
 
 fn fillArrayLength(number: f64, maximum: usize) !usize {
     if (std.math.isNan(number) or number <= 0) return 0;
-    if (!std.math.isFinite(number) or number > @as(f64, @floatFromInt(maximum))) return error.ArraySizeLimitExceeded;
+    if (!std.math.isFinite(number) or number > @as(f64, @floatFromInt(maximum))) return error.ArrayFillSizeLimit;
     return @intFromFloat(@floor(number));
 }
 
@@ -17033,15 +17033,15 @@ fn arraySequenceBuiltin(runtime: *Runtime, first_value: Value, last_value: Value
         }
     }.check;
     while (try lessEqual(runtime, roots[0], roots[1])) {
-        if (count >= safe_array_element_limit) return error.ArraySizeLimitExceeded;
-        if (roots[1].tag != @intFromEnum(Tag.bigint) and try valueToNumberRuntime(runtime, roots[1]) == std.math.inf(f64)) return error.ArraySizeLimitExceeded;
+        if (count >= safe_array_element_limit) return error.ArraySequenceSizeLimit;
+        if (roots[1].tag != @intFromEnum(Tag.bigint) and try valueToNumberRuntime(runtime, roots[1]) == std.math.inf(f64)) return error.ArraySequenceSizeLimit;
         try result_items.append(runtime.allocator, roots[0]);
         if (roots[0].tag == @intFromEnum(Tag.bigint)) {
             roots[0] = try bigIntArithmetic(runtime, .add, roots[0], roots[3]);
         } else {
             const current_number = try valueToNumberRuntime(runtime, roots[0]);
             const next = numberValue(current_number + 1);
-            if (@as(f64, @bitCast(next.payload)) == current_number and try lessEqual(runtime, next, roots[1])) return error.ArraySizeLimitExceeded;
+            if (@as(f64, @bitCast(next.payload)) == current_number and try lessEqual(runtime, next, roots[1])) return error.ArraySequenceSizeLimit;
             roots[0] = next;
         }
         count += 1;
@@ -17064,9 +17064,9 @@ fn validateFillDimensions(runtime: *Runtime, shape: Value) !void {
     var total: usize = 0;
     for (dimensions.items) |dimension| {
         const count = try fillArrayLength(try valueToNumberRuntime(runtime, dimension), safe_array_element_limit);
-        product = std.math.mul(usize, product, count) catch return error.ArraySizeLimitExceeded;
-        total = std.math.add(usize, total, product) catch return error.ArraySizeLimitExceeded;
-        if (total > safe_array_element_limit) return error.ArraySizeLimitExceeded;
+        product = std.math.mul(usize, product, count) catch return error.ArrayFillSizeLimit;
+        total = std.math.add(usize, total, product) catch return error.ArrayFillSizeLimit;
+        if (total > safe_array_element_limit) return error.ArrayFillSizeLimit;
         if (product == 0) break;
     }
 }
@@ -21377,15 +21377,19 @@ test "AOT配列の集約・入替・連番・要素生成を公式境界で処�
     roots[9] = try runtime.createBigInt("4n");
     roots[10] = try arraySequenceBuiltin(&runtime, roots[8], roots[9]);
     try std.testing.expectEqual(@as(usize, 3), (try arrayItems(roots[10])).items.len);
-    try std.testing.expectError(error.ArraySizeLimitExceeded, arraySequenceBuiltin(&runtime, numberValue(0), numberValue(std.math.inf(f64))));
-    try std.testing.expectError(error.ArraySizeLimitExceeded, arraySequenceBuiltin(&runtime, numberValue(-std.math.inf(f64)), numberValue(-1)));
+    try std.testing.expectError(error.ArraySequenceSizeLimit, arraySequenceBuiltin(&runtime, numberValue(0), numberValue(std.math.inf(f64))));
+    try std.testing.expectError(error.ArraySequenceSizeLimit, arraySequenceBuiltin(&runtime, numberValue(-std.math.inf(f64)), numberValue(-1)));
+    try std.testing.expectError(
+        error.ArraySequenceSizeLimit,
+        arraySequenceBuiltin(&runtime, numberValue(9_007_199_254_740_992), numberValue(9_007_199_254_740_992)),
+    );
 
     roots[11] = try runtime.createArray(&.{ numberValue(@floatFromInt(safe_array_element_limit)), numberValue(2) });
-    try std.testing.expectError(error.ArraySizeLimitExceeded, arrayFillBuiltin(&runtime, numberValue(0), roots[11]));
+    try std.testing.expectError(error.ArrayFillSizeLimit, arrayFillBuiltin(&runtime, numberValue(0), roots[11]));
     roots[11] = try runtime.createArray(&.{ numberValue(1), numberValue(@floatFromInt(safe_array_element_limit - 1)) });
     try validateFillDimensions(&runtime, roots[11]);
     roots[11] = try runtime.createArray(&.{ numberValue(1), numberValue(@floatFromInt(safe_array_element_limit)) });
-    try std.testing.expectError(error.ArraySizeLimitExceeded, validateFillDimensions(&runtime, roots[11]));
+    try std.testing.expectError(error.ArrayFillSizeLimit, validateFillDimensions(&runtime, roots[11]));
     roots[11] = try runtime.createArray(&.{});
     roots[12] = try arrayFillBuiltin(&runtime, numberValue(7), roots[11]);
     try std.testing.expectEqual(@as(usize, 0), (try arrayItems(roots[12])).items.len);
@@ -21393,7 +21397,7 @@ test "AOT配列の集約・入替・連番・要素生成を公式境界で処�
     const undefined_fill = try arrayItems(roots[13]);
     try std.testing.expectEqual(@as(usize, 2), undefined_fill.items.len);
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(undefined_fill.items[0].tag)));
-    try std.testing.expectError(error.ArraySizeLimitExceeded, arrayFillBuiltin(&runtime, numberValue(0), numberValue(std.math.inf(f64))));
+    try std.testing.expectError(error.ArrayFillSizeLimit, arrayFillBuiltin(&runtime, numberValue(0), numberValue(std.math.inf(f64))));
 
     roots[11] = try runtime.createArray(&.{numberValue(1)});
     roots[12] = try arrayFillBuiltin(&runtime, roots[11], numberValue(2));
@@ -21437,6 +21441,45 @@ test "AOT配列の集約・入替・連番・要素生成を公式境界で処�
     const array_buffer_clone = (try arrayItems(roots[19])).items[0];
     try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(array_buffer_clone.tag)));
     try std.testing.expectEqual(@as(usize, 0), array_buffer_clone.object().?.payload.dictionary.items.len);
+}
+
+test "AOT配列生成の安全上限を命令別の診断へ変換する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    const sequence_arguments = [_]Value{ numberValue(0), numberValue(std.math.inf(f64)) };
+    lnako_aot_builtin_call(
+        &roots[0],
+        &sequence_arguments,
+        sequence_arguments.len,
+        @intFromEnum(aot_builtin.Command.array_sequence),
+    );
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    const sequence_message = try pendingExceptionMessageUtf8Alloc(&active_runtime.?);
+    defer active_runtime.?.allocator.free(sequence_message);
+    try std.testing.expectEqualStrings("Array sequence exceeds safety limit", sequence_message);
+    _ = active_runtime.?.takeException();
+
+    const fill_arguments = [_]Value{ numberValue(0), numberValue(std.math.inf(f64)) };
+    lnako_aot_builtin_call(
+        &roots[1],
+        &fill_arguments,
+        fill_arguments.len,
+        @intFromEnum(aot_builtin.Command.array_fill),
+    );
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_exception_pending());
+    const fill_message = try pendingExceptionMessageUtf8Alloc(&active_runtime.?);
+    defer active_runtime.?.allocator.free(fill_message);
+    try std.testing.expectEqualStrings("Array fill size exceeds safety limit", fill_message);
 }
 
 test "AOT配列ソート系は安定mergeとundefined末尾と同一配列を保つ" {

@@ -1560,8 +1560,8 @@ fn sequence(runtime: *Runtime, first_value: Value, last_value: Value) !Value {
     var count: usize = 0;
     while (try operators.compare(runtime, current, last)) |order| {
         if (order == .gt) break;
-        if (count >= safe_array_element_limit) return error.ArraySizeLimitExceeded;
-        if (std.meta.activeTag(last) != .bigint and try runtime.valueToNumber(last) == std.math.inf(f64)) return error.ArraySizeLimitExceeded;
+        if (count >= safe_array_element_limit) return error.ArraySequenceSizeLimit;
+        if (std.meta.activeTag(last) != .bigint and try runtime.valueToNumber(last) == std.math.inf(f64)) return error.ArraySequenceSizeLimit;
         _ = try result.array.push(current);
         if (std.meta.activeTag(current) == .bigint) {
             current = try operators.binary(runtime, .add, current, one);
@@ -1570,7 +1570,7 @@ fn sequence(runtime: *Runtime, first_value: Value, last_value: Value) !Value {
             const next: Value = .{ .number = current_number + @as(f64, 1) };
             if (next.number == current_number) {
                 if (try operators.compare(runtime, next, last)) |next_order| {
-                    if (next_order != .gt) return error.ArraySizeLimitExceeded;
+                    if (next_order != .gt) return error.ArraySequenceSizeLimit;
                 }
             }
             current = next;
@@ -1601,9 +1601,9 @@ fn validateFillDimensions(runtime: *Runtime, dimensions: []const Value) !void {
     var total: usize = 0;
     for (dimensions) |dimension| {
         const count = try fillLength(try runtime.valueToNumber(dimension), safe_array_element_limit);
-        product = std.math.mul(usize, product, count) catch return error.ArraySizeLimitExceeded;
-        total = std.math.add(usize, total, product) catch return error.ArraySizeLimitExceeded;
-        if (total > safe_array_element_limit) return error.ArraySizeLimitExceeded;
+        product = std.math.mul(usize, product, count) catch return error.ArrayFillSizeLimit;
+        total = std.math.add(usize, total, product) catch return error.ArrayFillSizeLimit;
+        if (total > safe_array_element_limit) return error.ArrayFillSizeLimit;
         if (product == 0) break;
     }
 }
@@ -3158,7 +3158,7 @@ fn positiveLength(number: f64, maximum: usize) usize {
 
 fn fillLength(number: f64, maximum: usize) !usize {
     if (std.math.isNan(number) or number <= 0) return 0;
-    if (!std.math.isFinite(number) or number > @as(f64, @floatFromInt(maximum))) return error.ArraySizeLimitExceeded;
+    if (!std.math.isFinite(number) or number > @as(f64, @floatFromInt(maximum))) return error.ArrayFillSizeLimit;
     return @intFromFloat(@floor(number));
 }
 
@@ -4414,8 +4414,12 @@ test "配列集約・連番・要素生成の型変換と複製境界を保つ" 
     try roots.protect(&bigint_sequence);
     try std.testing.expectEqual(@as(usize, 3), bigint_sequence.array.len());
     try std.testing.expectEqual(std.meta.Tag(Value).bigint, std.meta.activeTag(bigint_sequence.array.get(2)));
-    try std.testing.expectError(error.ArraySizeLimitExceeded, sequence(&runtime, .{ .number = 0 }, .{ .number = std.math.inf(f64) }));
-    try std.testing.expectError(error.ArraySizeLimitExceeded, sequence(&runtime, .{ .number = -std.math.inf(f64) }, .{ .number = -1 }));
+    try std.testing.expectError(error.ArraySequenceSizeLimit, sequence(&runtime, .{ .number = 0 }, .{ .number = std.math.inf(f64) }));
+    try std.testing.expectError(error.ArraySequenceSizeLimit, sequence(&runtime, .{ .number = -std.math.inf(f64) }, .{ .number = -1 }));
+    try std.testing.expectError(
+        error.ArraySequenceSizeLimit,
+        sequence(&runtime, .{ .number = 9_007_199_254_740_992 }, .{ .number = 9_007_199_254_740_992 }),
+    );
 
     var empty_shape = try runtime.createArray();
     try roots.protect(&empty_shape);
@@ -4426,17 +4430,17 @@ test "配列集約・連番・要素生成の型変換と複製境界を保つ" 
     try roots.protect(&undefined_fill);
     try std.testing.expectEqual(Value.undefined, undefined_fill.array.get(0));
     try std.testing.expectEqual(Value.undefined, undefined_fill.array.get(1));
-    try std.testing.expectError(error.ArraySizeLimitExceeded, fill(&runtime, .{ .number = 0 }, .{ .number = std.math.inf(f64) }));
+    try std.testing.expectError(error.ArrayFillSizeLimit, fill(&runtime, .{ .number = 0 }, .{ .number = std.math.inf(f64) }));
 
     var huge_shape = try common.arrayFromValues(&runtime, &.{ .{ .number = @floatFromInt(safe_array_element_limit) }, .{ .number = 2 } });
     try roots.protect(&huge_shape);
-    try std.testing.expectError(error.ArraySizeLimitExceeded, fill(&runtime, .{ .number = 0 }, huge_shape));
+    try std.testing.expectError(error.ArrayFillSizeLimit, fill(&runtime, .{ .number = 0 }, huge_shape));
     var boundary_shape = try common.arrayFromValues(&runtime, &.{ .{ .number = 1 }, .{ .number = @floatFromInt(safe_array_element_limit - 1) } });
     try roots.protect(&boundary_shape);
     try validateFillDimensions(&runtime, boundary_shape.array.items.items);
     var over_boundary_shape = try common.arrayFromValues(&runtime, &.{ .{ .number = 1 }, .{ .number = @floatFromInt(safe_array_element_limit) } });
     try roots.protect(&over_boundary_shape);
-    try std.testing.expectError(error.ArraySizeLimitExceeded, validateFillDimensions(&runtime, over_boundary_shape.array.items.items));
+    try std.testing.expectError(error.ArrayFillSizeLimit, validateFillDimensions(&runtime, over_boundary_shape.array.items.items));
     var nested_value = try common.arrayFromValues(&runtime, &.{.{ .number = 1 }});
     try roots.protect(&nested_value);
     var independent_fill = try fill(&runtime, nested_value, .{ .number = 2 });

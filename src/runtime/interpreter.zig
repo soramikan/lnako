@@ -2583,6 +2583,36 @@ test "エラー発生は公式Error.messageの値変換を行う" {
     try std.testing.expectEqualStrings("U:\nN:123\n", host.written());
 }
 
+test "配列生成の安全上限を命令別の診断へ変換する" {
+    const source =
+        "エラー監視\n" ++
+        "配列連番作成(0,無限大)を表示\n" ++
+        "エラーならば\n" ++
+        "エラーメッセージを表示\n" ++
+        "ここまで\n" ++
+        "エラー監視\n" ++
+        "配列要素作成(0,無限大)を表示\n" ++
+        "エラーならば\n" ++
+        "エラーメッセージを表示\n" ++
+        "ここまで\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings(
+        "Array sequence exceeds safety limit\nArray fill size exceeds safety limit\n",
+        host.written(),
+    );
+}
+
 test "辞書のカスタムToPrimitiveはヒント順序と失敗を保つ" {
     const source =
         "D={}\n" ++
