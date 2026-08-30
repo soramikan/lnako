@@ -97,6 +97,9 @@ jobs:
           node tools/sync_compat_evidence.mjs --check
           node tools/check_interpreter_only_classification.mjs --check
           node tools/check_builtin_catalog.mjs
+      - name: Distribution package self-test
+        if: matrix.suite == 'core'
+        run: node tools/check_distribution.mjs --self-test
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: matrix.suite != 'compat-aot'
         with:

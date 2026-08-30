@@ -22,6 +22,12 @@ pub const Options = struct {
 };
 
 pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, options: Options, diagnostics: *std.Io.Writer) !void {
+    var packaged_llvm_root: ?[]u8 = null;
+    defer if (packaged_llvm_root) |path| allocator.free(path);
+    const llvm_root: ?[]const u8 = if (options.llvm_root) |root| root else blk: {
+        packaged_llvm_root = try findPackagedLlvmRoot(allocator, io);
+        break :blk if (packaged_llvm_root) |root| root else null;
+    };
     var manifest_entry_count: ?usize = null;
     var manifest_created = false;
     var manifest_complete = false;
@@ -72,7 +78,7 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
     var generated = try module_mod.generate(allocator, selected_program, options.source_path, options.optimization != .o0);
     defer generated.deinit(allocator);
     try trace(options.trace, diagnostics, "LLVM共有ライブラリを読み込みます");
-    var api = api_mod.Api.openAt(allocator, options.llvm_root, options.llvm_library) catch |failure| {
+    var api = api_mod.Api.openAt(allocator, llvm_root, options.llvm_library) catch |failure| {
         try diagnostics.print("LLVM 22.1.8を読み込めません: {s}\n", .{@errorName(failure)});
         return failure;
     };
@@ -146,7 +152,7 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
             defer allocator.free(object_path);
             defer std.Io.Dir.cwd().deleteFile(io, object_path) catch {};
             try emitObject(allocator, &api, machine, llvm_module, object_path, diagnostics);
-            try linkExecutable(allocator, io, object_path, options.output_path, options.llvm_root, options.runtime_library, diagnostics);
+            try linkExecutable(allocator, io, object_path, options.output_path, llvm_root, options.runtime_library, diagnostics);
         },
     }
     if (manifest_entry_count) |entry_count| {
@@ -247,6 +253,49 @@ fn findRuntimeLibrary(allocator: std.mem.Allocator, io: std.Io, override: ?[]con
     errdefer allocator.free(path);
     _ = std.Io.Dir.cwd().statFile(io, path, .{}) catch return error.AotRuntimeLibraryNotFound;
     return path;
+}
+
+/// Release archives place the compiler in `bin/` and the pinned LLVM/LLD
+/// subset beside it in `llvm/`.  Keep development builds unchanged: when the
+/// sibling directory is absent, the normal environment/PATH lookup remains in
+/// effect.  The returned path is owned by the caller.
+fn findPackagedLlvmRoot(allocator: std.mem.Allocator, io: std.Io) !?[]u8 {
+    const executable = std.process.executablePathAlloc(io, allocator) catch return null;
+    defer allocator.free(executable);
+    const bin_directory = std.fs.path.dirname(executable) orelse return null;
+    const root = try std.fs.path.join(allocator, &.{ bin_directory, "..", "llvm" });
+    errdefer allocator.free(root);
+
+    const clang_name = if (builtin.os.tag == .windows) "clang.exe" else "clang";
+    const lld_name = switch (builtin.os.tag) {
+        .macos => "ld64.lld",
+        .windows => "lld-link.exe",
+        else => "ld.lld",
+    };
+    const library_path = switch (builtin.os.tag) {
+        .macos => "lib/libLLVM-C.dylib",
+        .windows => "bin/LLVM-C.dll",
+        else => "lib/libLLVM-C.so",
+    };
+    const clang_path = try std.fs.path.join(allocator, &.{ root, "bin", clang_name });
+    defer allocator.free(clang_path);
+    const lld_path = try std.fs.path.join(allocator, &.{ root, "bin", lld_name });
+    defer allocator.free(lld_path);
+    const library = try std.fs.path.join(allocator, &.{ root, library_path });
+    defer allocator.free(library);
+    _ = std.Io.Dir.cwd().statFile(io, clang_path, .{}) catch {
+        allocator.free(root);
+        return null;
+    };
+    _ = std.Io.Dir.cwd().statFile(io, lld_path, .{}) catch {
+        allocator.free(root);
+        return null;
+    };
+    _ = std.Io.Dir.cwd().statFile(io, library, .{}) catch {
+        allocator.free(root);
+        return null;
+    };
+    return root;
 }
 
 fn findMacOsSdk(allocator: std.mem.Allocator, io: std.Io) ![]u8 {

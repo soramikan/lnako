@@ -130,6 +130,7 @@ lnako benchmark
 `benchmark`は固定suiteをInterpreter、LLVM O2コンパイル、AOT実行の3経路で計測し、各sampleの期待stdoutを確認したうえで
 JSONとMarkdownへ保存します。既定の出力先は`benchmarks/results/latest.json`と`benchmarks/results/latest.md`です。
 `--iterations`、`--warmup`、`--suite`、`--output`、`--markdown`で計測条件と出力先を指定できます。
+配布アーカイブ、checksum、SPDX SBOMの生成と検証は[`docs/RELEASE.md`](docs/RELEASE.md)に記載しています。公開用配布物では固定LLVM/LLDを同梱します。
 `run --compat-js` はQuickJS 2026-06-04で
 4つのJS命令とESモジュール形式プラグインを実行します。`build --compat-js` は検証済みのなでしこ・JSソースを
 QuickJS対応ランタイムへ埋め込み、元ソース、Zig、LLVMを実行先で要求しない単一実行ファイルを生成します。

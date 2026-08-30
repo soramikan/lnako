@@ -58,6 +58,7 @@ const stepSuites = new Map([
   ["Differential QuickJS compatibility test", "host"],
   ["Native plugin ABI test", "host"],
   ["Differential Node host test", "host"],
+  ["Distribution package self-test", "core"],
   ["Differential native AOT test", "aot"],
   ["Format", "core"],
   ["Test", "core"],
