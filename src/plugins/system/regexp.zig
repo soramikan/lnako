@@ -138,7 +138,7 @@ const Parser = struct {
             '(' => try self.parseGroup(),
             '\\' => try self.parseEscape(false),
             '*', '+', '?' => error.QuantifierWithoutAtom,
-            '{' => if (self.unicode) error.QuantifierWithoutAtom else .{ .literal = unit },
+            '{' => if (self.unicode) error.LoneQuantifierBrackets else .{ .literal = unit },
             else => if (self.unicode and isHighSurrogate(unit) and self.index < self.source.len and isLowSurrogate(self.source[self.index])) blk: {
                 const code_point = surrogatePairCodePoint(unit, self.source[self.index]);
                 self.index += 1;
@@ -214,9 +214,9 @@ const Parser = struct {
         while (self.consumeSetOperator()) |kind| {
             if (left.operation == null and left.items.len == 0) return error.InvalidCharacterClass;
             if (!isSetOperand(left)) return error.UnsupportedUnicodeSetOperation;
-            if (self.index >= self.source.len or self.source[self.index] == ']' or self.atSetOperator()) return error.InvalidCharacterClass;
+            if (self.index >= self.source.len or self.source[self.index] == ']' or self.atSetOperator()) return error.InvalidCharacterInClass;
             const right = try self.parseClassOperand();
-            if (right.items.len == 0 and right.operation == null) return error.InvalidCharacterClass;
+            if (right.items.len == 0 and right.operation == null) return error.InvalidCharacterInClass;
             if (!isSetOperand(right)) return error.UnsupportedUnicodeSetOperation;
             const operation = try self.allocator.create(SetOperation);
             operation.* = .{ .kind = kind, .left = left, .right = right };
@@ -285,7 +285,10 @@ const Parser = struct {
             return .{ .literal = unit };
         }
         const escaped_unit = if (self.index < self.source.len) self.source[self.index] else 0;
-        const atom = try self.parseEscape(true);
+        const atom = self.parseEscape(true) catch |failure| switch (failure) {
+            error.InvalidUnicodeProperty => return error.InvalidUnicodePropertyInClass,
+            else => return failure,
+        };
         return switch (atom) {
             .literal => |literal| if (self.unicode and escaped_unit == 'u' and isHighSurrogate(literal)) if (consumeLowSurrogateEscape(self)) |low| .{ .code_point = surrogatePairCodePoint(literal, low) } else .{ .literal = literal } else .{ .literal = literal },
             .code_point => |code_point| .{ .code_point = code_point },
@@ -583,8 +586,10 @@ pub fn compileFailureMessageAlloc(allocator: std.mem.Allocator, specification: [
         error.UnclosedCharacterClass => "Unterminated character class",
         error.UnclosedGroup => "Unterminated group",
         error.QuantifierWithoutAtom => "Nothing to repeat",
+        error.LoneQuantifierBrackets => "Lone quantifier brackets",
         error.InvalidCharacterRange => "Range out of order in character class",
         error.InvalidCharacterClass => "Invalid character class",
+        error.InvalidCharacterInClass => "Invalid character in character class",
         error.InvalidHexEscape => "Invalid escape",
         error.IncompleteQuantifier => "Incomplete quantifier",
         error.InvalidQuantifierRange => "numbers out of order in {} quantifier",
@@ -596,6 +601,7 @@ pub fn compileFailureMessageAlloc(allocator: std.mem.Allocator, specification: [
         error.DuplicateNamedCapture => "Duplicate capture group name",
         error.UnsupportedGroupAssertion => "Invalid group",
         error.InvalidUnicodeProperty => "Invalid property name",
+        error.InvalidUnicodePropertyInClass => "Invalid property name in character class",
         error.UnsupportedUnicodeSetOperation => "Invalid set operation in character class",
         error.InvalidUnicodeEscape => "Invalid Unicode escape",
         error.InvalidEscape => "\\ at end of pattern",
@@ -1618,6 +1624,26 @@ test "正規表現構文エラーはV8互換の文言を設定する" {
     const incomplete_quantifier = try runtime.stringUtf8("/a{,/u");
     try std.testing.expectError(error.IncompleteQuantifier, call(&runtime, "正規表現マッチ", &.{ source, incomplete_quantifier }));
     try std.testing.expectEqualStrings("Invalid regular expression: /a{,/u: Incomplete quantifier", runtime.failureMessage().?);
+
+    runtime.clearFailureMessage();
+    const lone_quantifier_brackets = try runtime.stringUtf8("/{/u");
+    try std.testing.expectError(error.LoneQuantifierBrackets, call(&runtime, "正規表現マッチ", &.{ source, lone_quantifier_brackets }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /{/u: Lone quantifier brackets", runtime.failureMessage().?);
+
+    runtime.clearFailureMessage();
+    const invalid_set_character = try runtime.stringUtf8("/[a&&]/v");
+    try std.testing.expectError(error.InvalidCharacterInClass, call(&runtime, "正規表現マッチ", &.{ source, invalid_set_character }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /[a&&]/v: Invalid character in character class", runtime.failureMessage().?);
+
+    runtime.clearFailureMessage();
+    const invalid_set_operator = try runtime.stringUtf8("/[a&&&&b]/v");
+    try std.testing.expectError(error.InvalidCharacterInClass, call(&runtime, "正規表現マッチ", &.{ source, invalid_set_operator }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /[a&&&&b]/v: Invalid character in character class", runtime.failureMessage().?);
+
+    runtime.clearFailureMessage();
+    const invalid_class_property = try runtime.stringUtf8("/[\\p{Nope}]/u");
+    try std.testing.expectError(error.InvalidUnicodePropertyInClass, call(&runtime, "正規表現マッチ", &.{ source, invalid_class_property }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /[\\p{Nope}]/u: Invalid property name in character class", runtime.failureMessage().?);
 }
 
 test "名前付きキャプチャと非貪欲量指定を処理する" {

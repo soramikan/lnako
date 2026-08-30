@@ -676,6 +676,13 @@
     "source": "正規表現マッチ(\"x\",『/a{,/u』)を表示\n"
   },
   {
+    "id": "native-system-regexp-js-error-text",
+    "oracle": "official-generated",
+    "commands": ["正規表現マッチ"],
+    "stderrIncludes": "Invalid property name in character class",
+    "source": "エラー監視\n正規表現マッチ(\"x\",『/{/u』)を表示\nエラーならば\n\"LONE:\"&エラーメッセージを表示\nここまで\nエラー監視\n正規表現マッチ(\"x\",『/[a&&]/v』)を表示\nエラーならば\n\"SET:\"&エラーメッセージを表示\nここまで\nエラー監視\n正規表現マッチ(\"x\",『/[\\p{Nope}]/u』)を表示\nエラーならば\n\"CLASS-PROP:\"&エラーメッセージを表示\nここまで\nエラー監視\n正規表現マッチ(\"x\",『/[a&&&&b]/v』)を表示\nエラーならば\n\"SET2:\"&エラーメッセージを表示\nここまで\n"
+  },
+  {
     "id": "native-system-regexp-unicode-properties",
     "commands": ["正規表現マッチ", "JSON変換"],
     "source": "JSON変換(正規表現マッチ(\"A1あ😀\",『/\\p{Letter}/gu』))を表示\nJSON変換(正規表現マッチ(\"A1あ😀\",『/\\p{Decimal_Number}/gu』))を表示\nJSON変換(正規表現マッチ(\"A1あ😀\",『/\\p{Script=Hiragana}/gu』))を表示\nJSON変換(正規表現マッチ(\"A1あ😀\",『/[\\p{Letter}\\p{Decimal_Number}]/gu』))を表示\n"
