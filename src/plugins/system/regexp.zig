@@ -929,6 +929,243 @@ fn expandPieceOrdered(
     }
 }
 
+fn matchExpressionBehind(allocator: std.mem.Allocator, source: []const u16, expression: *const Expression, initial: Candidate, flags: Flags) anyerror![]Candidate {
+    var output: std.ArrayList(Candidate) = .empty;
+    for (expression.alternatives) |sequence| {
+        const matches = try matchSequenceBehind(allocator, source, sequence, initial, flags);
+        try output.appendSlice(allocator, matches);
+    }
+    return output.toOwnedSlice(allocator);
+}
+
+fn matchSequenceBehind(allocator: std.mem.Allocator, source: []const u16, sequence: Sequence, initial: Candidate, flags: Flags) anyerror![]Candidate {
+    var current: std.ArrayList(Candidate) = .empty;
+    try current.append(allocator, initial);
+    var piece_index = sequence.pieces.len;
+    while (piece_index > 0) {
+        piece_index -= 1;
+        var next: std.ArrayList(Candidate) = .empty;
+        for (current.items) |candidate| {
+            const expanded = try expandPieceBehind(allocator, source, sequence.pieces[piece_index], candidate, flags);
+            try next.appendSlice(allocator, expanded);
+        }
+        current = next;
+        if (current.items.len == 0) break;
+    }
+    return current.toOwnedSlice(allocator);
+}
+
+fn expandPieceBehind(allocator: std.mem.Allocator, source: []const u16, piece: Piece, initial: Candidate, flags: Flags) anyerror![]Candidate {
+    var output: std.ArrayList(Candidate) = .empty;
+    const limit = piece.maximum orelse @max(source.len + 1, piece.minimum);
+    try expandPieceBehindOrdered(allocator, source, piece, initial, flags, 0, limit, &output);
+    return output.toOwnedSlice(allocator);
+}
+
+fn expandPieceBehindOrdered(
+    allocator: std.mem.Allocator,
+    source: []const u16,
+    piece: Piece,
+    candidate: Candidate,
+    flags: Flags,
+    repetition: usize,
+    limit: usize,
+    output: *std.ArrayList(Candidate),
+) anyerror!void {
+    const can_repeat = repetition < limit;
+    if (!piece.lazy and can_repeat) {
+        const atom_matches = try matchAtomBehind(allocator, source, piece.atom, candidate, flags);
+        for (atom_matches) |atom_match| {
+            if (atom_match.position == candidate.position and
+                piece.maximum == null and repetition + 1 > piece.minimum) continue;
+            try expandPieceBehindOrdered(allocator, source, piece, atom_match, flags, repetition + 1, limit, output);
+        }
+    }
+    var stopped = candidate;
+    if (repetition == 0 and piece.minimum == 0) clearAtomCaptures(&stopped, piece.atom);
+    if (repetition >= piece.minimum) try output.append(allocator, stopped);
+    if (piece.lazy and can_repeat) {
+        const atom_matches = try matchAtomBehind(allocator, source, piece.atom, candidate, flags);
+        for (atom_matches) |atom_match| {
+            if (atom_match.position == candidate.position and
+                piece.maximum == null and repetition + 1 > piece.minimum) continue;
+            try expandPieceBehindOrdered(allocator, source, piece, atom_match, flags, repetition + 1, limit, output);
+        }
+    }
+}
+
+fn expressionHasBackreference(expression: *const Expression) bool {
+    for (expression.alternatives) |alternative| {
+        for (alternative.pieces) |piece| switch (piece.atom) {
+            .backreference, .named_backreference, .legacy_decimal_escape, .unicode_decimal_escape => return true,
+            .group => |group| if (expressionHasBackreference(group.expression)) return true,
+            .assertion => |assertion| if (expressionHasBackreference(assertion.expression)) return true,
+            else => {},
+        };
+    }
+    return false;
+}
+
+fn matchLookbehindCandidates(allocator: std.mem.Allocator, source: []const u16, expression: *const Expression, initial: Candidate, flags: Flags) anyerror![]Candidate {
+    if (!expressionHasBackreference(expression)) return matchExpressionBehind(allocator, source, expression, initial, flags);
+
+    // A backreference can be encountered before its capture when the
+    // expression is evaluated backwards. Preserve the existing forward
+    // candidate path for that unsupported dependency rather than treating
+    // the not-yet-participating backreference as an empty string.
+    var output: std.ArrayList(Candidate) = .empty;
+    var start: usize = 0;
+    while (start <= initial.position) {
+        const behind_initial = Candidate{ .position = start, .captures = initial.captures };
+        const candidates = try matchExpression(allocator, source, expression, behind_initial, flags);
+        for (candidates) |candidate| if (candidate.position == initial.position) try output.append(allocator, candidate);
+        if (start == initial.position) break;
+        start = advanceStringIndex(source, start, flags.unicode);
+    }
+    return output.toOwnedSlice(allocator);
+}
+
+fn matchAtomBehind(allocator: std.mem.Allocator, source: []const u16, atom: Atom, initial: Candidate, flags: Flags) anyerror![]Candidate {
+    var output: std.ArrayList(Candidate) = .empty;
+    switch (atom) {
+        .literal => |literal| {
+            if (flags.unicode) {
+                if (codePointBefore(source, initial.position)) |actual| {
+                    if (codePointsEqual(actual.value, literal, flags)) {
+                        var candidate = initial;
+                        candidate.position -= actual.width;
+                        try output.append(allocator, candidate);
+                    }
+                }
+            } else if (initial.position > 0 and unitsEqual(source[initial.position - 1], literal, flags.ignore_case)) {
+                var candidate = initial;
+                candidate.position -= 1;
+                try output.append(allocator, candidate);
+            }
+        },
+        .code_point => |code_point| {
+            if (flags.unicode) {
+                if (codePointBefore(source, initial.position)) |actual| {
+                    if (codePointsEqual(actual.value, code_point, flags)) {
+                        var candidate = initial;
+                        candidate.position -= actual.width;
+                        try output.append(allocator, candidate);
+                    }
+                }
+            } else if (code_point <= std.math.maxInt(u16) and initial.position > 0 and source[initial.position - 1] == code_point) {
+                var candidate = initial;
+                candidate.position -= 1;
+                try output.append(allocator, candidate);
+            }
+        },
+        .dot => {
+            if (codePointBefore(source, initial.position)) |actual| {
+                const start = initial.position - actual.width;
+                if (flags.dot_all or !isLineTerminator(source[start])) {
+                    var candidate = initial;
+                    candidate.position = start;
+                    try output.append(allocator, candidate);
+                }
+            }
+        },
+        .class => |class| {
+            if (codePointBefore(source, initial.position)) |actual| {
+                const start = initial.position - actual.width;
+                if (classMatches(class, source, start, flags)) {
+                    var candidate = initial;
+                    candidate.position = start;
+                    try output.append(allocator, candidate);
+                }
+            }
+        },
+        .unicode_property => |property| {
+            if (codePointBefore(source, initial.position)) |actual| {
+                if (propertyMatches(property, actual.value, flags)) {
+                    var candidate = initial;
+                    candidate.position -= actual.width;
+                    try output.append(allocator, candidate);
+                }
+            }
+        },
+        .start_anchor => if (initial.position == 0 or (flags.multiline and initial.position > 0 and isLineTerminator(source[initial.position - 1]))) try output.append(allocator, initial),
+        .end_anchor => if (initial.position == source.len or (flags.multiline and initial.position < source.len and isLineTerminator(source[initial.position]))) try output.append(allocator, initial),
+        .word_boundary => |expected| {
+            const left_word = if (flags.unicode)
+                if (codePointBefore(source, initial.position)) |point| isWordCodePoint(point.value, flags) else false
+            else
+                initial.position > 0 and isWord(source[initial.position - 1]);
+            const right_word = if (flags.unicode)
+                if (codePointAt(source, initial.position)) |point| isWordCodePoint(point.value, flags) else false
+            else
+                initial.position < source.len and isWord(source[initial.position]);
+            if ((left_word != right_word) == expected) try output.append(allocator, initial);
+        },
+        .backreference => |capture_index| {
+            if (capture_index >= max_captures) return output.toOwnedSlice(allocator);
+            if (!initial.captures[capture_index].matched) {
+                try output.append(allocator, initial);
+                return output.toOwnedSlice(allocator);
+            }
+            const span = initial.captures[capture_index];
+            const length = span.end - span.start;
+            if (length <= initial.position and slicesEqual(source[span.start..span.end], source[initial.position - length .. initial.position], flags)) {
+                var candidate = initial;
+                candidate.position -= length;
+                try output.append(allocator, candidate);
+            }
+        },
+        .legacy_octal_escape => |escape| {
+            const length = 1 + escape.trailing.len;
+            if (initial.position < length) return output.toOwnedSlice(allocator);
+            const start = initial.position - length;
+            if (!unitsEqual(source[start], escape.code_unit, flags.ignore_case)) return output.toOwnedSlice(allocator);
+            for (escape.trailing, 0..) |literal, offset| {
+                if (!unitsEqual(source[start + 1 + offset], literal, flags.ignore_case)) return output.toOwnedSlice(allocator);
+            }
+            var candidate = initial;
+            candidate.position = start;
+            try output.append(allocator, candidate);
+        },
+        .legacy_decimal_escape => return error.UnresolvedLegacyDecimalEscape,
+        .unicode_decimal_escape => return error.UnresolvedUnicodeDecimalEscape,
+        .named_backreference => return output.toOwnedSlice(allocator),
+        .group => |group| {
+            var group_initial = initial;
+            clearCaptureRange(&group_initial, group.capture_start, group.capture_end);
+            const matches = try matchExpressionBehind(allocator, source, group.expression, group_initial, flags);
+            for (matches) |match| {
+                var candidate = match;
+                if (group.capture) |capture_index| candidate.captures[capture_index] = .{ .start = match.position, .end = initial.position, .matched = true };
+                try output.append(allocator, candidate);
+            }
+        },
+        .assertion => |assertion| {
+            var assertion_initial = initial;
+            clearCaptureRange(&assertion_initial, assertion.capture_start, assertion.capture_end);
+            if (!assertion.behind) {
+                const assertion_matches = try matchExpression(allocator, source, assertion.expression, assertion_initial, flags);
+                if (assertion.positive) {
+                    for (assertion_matches) |match| {
+                        var accepted = match;
+                        accepted.position = initial.position;
+                        try output.append(allocator, accepted);
+                    }
+                } else if (assertion_matches.len == 0) try output.append(allocator, assertion_initial);
+            } else {
+                const assertion_matches = try matchLookbehindCandidates(allocator, source, assertion.expression, assertion_initial, flags);
+                if (assertion.positive) {
+                    for (assertion_matches) |match| {
+                        var accepted = match;
+                        accepted.position = initial.position;
+                        try output.append(allocator, accepted);
+                    }
+                } else if (assertion_matches.len == 0) try output.append(allocator, assertion_initial);
+            }
+        },
+    }
+    return output.toOwnedSlice(allocator);
+}
+
 fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: Atom, initial: Candidate, flags: Flags) anyerror![]Candidate {
     var output: std.ArrayList(Candidate) = .empty;
     switch (atom) {
@@ -1038,23 +1275,14 @@ fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: Atom, init
                     }
                 } else if (assertion_matches.len == 0) try output.append(allocator, assertion_initial);
             } else {
-                var matched = false;
-                var start: usize = 0;
-                while (start <= initial.position) {
-                    const behind_initial = Candidate{ .position = start, .captures = assertion_initial.captures };
-                    const candidates = try matchExpression(allocator, source, assertion.expression, behind_initial, flags);
-                    for (candidates) |candidate| if (candidate.position == initial.position) {
-                        matched = true;
-                        if (assertion.positive) {
-                            var accepted = candidate;
-                            accepted.position = initial.position;
-                            try output.append(allocator, accepted);
-                        }
-                    };
-                    if (start == initial.position) break;
-                    start = advanceStringIndex(source, start, flags.unicode);
-                }
-                if (!assertion.positive and !matched) try output.append(allocator, assertion_initial);
+                const candidates = try matchLookbehindCandidates(allocator, source, assertion.expression, assertion_initial, flags);
+                if (assertion.positive) {
+                    for (candidates) |candidate| {
+                        var accepted = candidate;
+                        accepted.position = initial.position;
+                        try output.append(allocator, accepted);
+                    }
+                } else if (candidates.len == 0) try output.append(allocator, assertion_initial);
             }
         },
     }
@@ -1952,6 +2180,40 @@ test "正規表現の反復captureは不参加branchを未定義へ戻す" {
     const second_captures = second_result.captures.?.array.items.items[0].array;
     try std.testing.expectEqualSlices(u16, &.{'a'}, second_captures.items.items[0].string.units);
     try std.testing.expect(second_captures.items.items[1] == .undefined);
+}
+
+test "後読みの量指定は右から捕捉する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    const cases = [_]struct {
+        source: []const u8,
+        pattern: []const u8,
+        first: []const u8,
+        second: []const u8,
+    }{
+        .{ .source = "abbbc", .pattern = "/(?<=([ab]+)([bc]+))c/", .first = "a", .second = "bbb" },
+        .{ .source = "abbbc", .pattern = "/(?<=([ab]+)([bc]+?))c/", .first = "abb", .second = "b" },
+        .{ .source = "abbbc", .pattern = "/(?<=([ab]+?)([bc]+?))c/", .first = "b", .second = "b" },
+    };
+    for (cases) |case| {
+        var source = try runtime.stringUtf8(case.source);
+        try roots.protect(&source);
+        var pattern = try runtime.stringUtf8(case.pattern);
+        try roots.protect(&pattern);
+        const result = (try callWithEffects(&runtime, "正規表現抽出", &.{ source, pattern })).?;
+        const rows = result.captures.?;
+        try std.testing.expectEqual(@as(usize, 1), rows.array.len());
+        const captures = rows.array.items.items[0].array;
+        const first = try captures.items.items[0].string.toUtf8Lossy(std.testing.allocator);
+        defer std.testing.allocator.free(first);
+        const second = try captures.items.items[1].string.toUtf8Lossy(std.testing.allocator);
+        defer std.testing.allocator.free(second);
+        try std.testing.expectEqualStrings(case.first, first);
+        try std.testing.expectEqualStrings(case.second, second);
+    }
 }
 
 test "Unicode正規表現の探索はサロゲート対内部へ進まない" {

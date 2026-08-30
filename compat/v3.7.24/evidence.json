@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 380,
-    "nativeAot": 286,
+    "total": 381,
+    "nativeAot": 287,
     "interpreter": 99,
     "compatJs": 9
   },
@@ -10415,6 +10415,7 @@
         "native-system-json-encode",
         "native-system-regexp-backtracking-boundaries",
         "native-system-regexp-legacy-octal-escapes",
+        "native-system-regexp-lookbehind-capture-order",
         "native-system-regexp-unicode-all-scripts",
         "native-system-regexp-unicode-code-point-range",
         "native-system-regexp-unicode-decimal-backreferences",
@@ -10481,6 +10482,9 @@
             "fixture.commands"
           ],
           "native-system-regexp-legacy-octal-escapes": [
+            "fixture.commands"
+          ],
+          "native-system-regexp-lookbehind-capture-order": [
             "fixture.commands"
           ],
           "native-system-regexp-unicode-all-scripts": [
@@ -11031,6 +11035,7 @@
       "aotFixtureIds": [
         "native-system-regexp-backtracking-boundaries",
         "native-system-regexp-commands",
+        "native-system-regexp-lookbehind-capture-order",
         "native-system-regexp-unicode-sticky"
       ],
       "compatJsFixtureIds": [],
@@ -11048,6 +11053,9 @@
           "native-system-regexp-commands": [
             "implemented.tests"
           ],
+          "native-system-regexp-lookbehind-capture-order": [
+            "fixture.commands"
+          ],
           "native-system-regexp-unicode-sticky": [
             "fixture.commands"
           ]
@@ -11058,7 +11066,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 4件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "共有Zig正規表現エンジンと名前付き抽出をAOTへ実装し、公式7経路差分テストに成功"
     },
     {

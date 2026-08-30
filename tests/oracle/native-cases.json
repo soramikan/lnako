@@ -816,6 +816,11 @@
     "source": "JSON変換(正規表現マッチ(\"😀\",『/\\uDE00/u』))を表示\nJSON変換(正規表現マッチ(\"😀\",『/\\uD83D/u』))を表示\nJSON変換(正規表現マッチ(\"😀\",『/[\\uDE00]/u』))を表示\nJSON変換(正規表現マッチ(\"😀\",『/\\uDE00/』))を表示\n"
   },
   {
+    "id": "native-system-regexp-lookbehind-capture-order",
+    "commands": ["正規表現抽出", "JSON変換"],
+    "source": "JSON変換(正規表現抽出(\"abbbc\",『/(?<=([ab]+)([bc]+))c/』))を表示\nJSON変換(正規表現抽出(\"abbbc\",『/(?<=([ab]+)([bc]+?))c/』))を表示\nJSON変換(正規表現抽出(\"abbbc\",『/(?<=([ab]+?)([bc]+))c/』))を表示\nJSON変換(正規表現抽出(\"abbbc\",『/(?<=([ab]+?)([bc]+?))c/』))を表示\nJSON変換(正規表現抽出(\"abcc\",『/(?<=([ab]+)([bc]+))c/』))を表示\nJSON変換(正規表現抽出(\"aabbc\",『/(?<=([ab]+)([bc]+))c/』))を表示\n"
+  },
+  {
     "id": "native-system-regexp-unicode-lookbehind-boundary",
     "commands": ["正規表現マッチ", "JSON変換"],
     "source": "JSON変換(正規表現マッチ(\"😀x\",『/(?<=\\uDE00)x/u』))を表示\nJSON変換(正規表現マッチ(\"😀x\",『/(?<=\\uD83D)x/u』))を表示\nJSON変換(正規表現マッチ(\"😀x\",『/(?<=😀)x/u』))を表示\nJSON変換(正規表現マッチ(\"😀x\",『/(?<=\\uDE00)x/』))を表示\n"
