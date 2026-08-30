@@ -1036,6 +1036,11 @@
     "source": "ZZZ=\"\"\nA={}\nA[\"valueOf\"]=関数()ZZZ=ZZZ&\"A\";それは1;ここまで\nB={}\nB[\"valueOf\"]=関数()ZZZ=ZZZ&\"B\";それは2;ここまで\nC={}\nC[\"valueOf\"]=関数()ZZZ=ZZZ&\"C\";それは3;ここまで\nT=[[C],[A],[B]]\n表ソート(T,0)\nZZZを表示\nJSON変換(T)を表示\nZZZ=\"\"\nU=[[C],[A],[B]]\n表数値ソート(U,0)\nZZZを表示\nJSON変換(U)を表示\n"
   },
   {
+    "id": "native-system-table-sort-callback-order-large",
+    "commands": ["表ソート", "表数値ソート", "表示"],
+    "source": "ZZZ=\"\"\nA={}\nA[\"valueOf\"]=関数()ZZZ=ZZZ&\"A\";それは1;ここまで\nB={}\nB[\"valueOf\"]=関数()ZZZ=ZZZ&\"B\";それは2;ここまで\nC={}\nC[\"valueOf\"]=関数()ZZZ=ZZZ&\"C\";それは3;ここまで\nT=[[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[C],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B]]\n表ソート(T,0)\nZZZを表示\nZZZ=\"\"\nU=[[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[A],[C],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B],[B]]\n表数値ソート(U,0)\nZZZを表示\n"
+  },
+  {
     "id": "native-system-table-sparse-foreach-slice",
     "commands": ["空配列", "表列挿入", "表列削除", "表列合計", "辞書キー列挙", "ハッシュ内容列挙", "辞書キー存在", "JSON変換"],
     "source": "S=空配列()\nS[0]=空配列()\nS[0][0]=1\nS[0][2]=3\nS[2]=[4,5]\nI=表列挿入(S,1,[9,8,7])\nJSON変換(辞書キー列挙(I[0]))を表示\nJSON変換(ハッシュ内容列挙(I[0]))を表示\n辞書キー存在(I[0],2)を表示\nJSON変換(I)を表示\nD=表列削除(S,1)\nJSON変換(D)を表示\n表列合計(S,0)を表示\n"

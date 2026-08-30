@@ -13394,11 +13394,15 @@ fn stableArrayCallbackSort(runtime: *Runtime, source: Value, callable: Value) !V
     var roots = RootFrame{};
     runtime.pushRoots(&roots, root_values.ptr, root_values.len);
     defer runtime.popRoots(&roots);
+    var sort_context = V8SortContext{ .callback = .{
+        .callable_root = &root_values[1],
+        .result_root = &root_values[2],
+    } };
 
     if (original_length < v8_small_callback_sort_limit) {
         try v8SmallArrayCallbackSort(runtime, first, first_presence, &root_values[1], &root_values[2], &root_values[3]);
     } else {
-        try v8TimSortArrayCallback(runtime, first, first_presence, second, second_presence, &root_values[1], &root_values[2], &root_values[3]);
+        try v8TimSortArrayCallback(runtime, first, first_presence, second, second_presence, &sort_context, &root_values[3]);
     }
 
     if (items.items.len < original_length) {
@@ -13421,6 +13425,53 @@ const V8ArraySortRun = struct {
     base: usize,
     length: usize,
 };
+
+const V8TableSortContext = struct {
+    column_root: *Value,
+    numeric: bool,
+    left_cell_root: *Value,
+    right_cell_root: *Value,
+};
+
+const V8SortContext = union(enum) {
+    callback: struct {
+        callable_root: *Value,
+        result_root: *Value,
+    },
+    table: V8TableSortContext,
+};
+
+fn compareV8Sort(
+    runtime: *Runtime,
+    left: Value,
+    left_present: bool,
+    right: Value,
+    right_present: bool,
+    context: *V8SortContext,
+) !std.math.Order {
+    return switch (context.*) {
+        .callback => |callback| compareAotCallback(
+            runtime,
+            callback.callable_root.*,
+            left,
+            left_present,
+            right,
+            right_present,
+            callback.result_root,
+        ),
+        .table => |table| compareTableRowsBuiltin(
+            runtime,
+            left,
+            left_present,
+            right,
+            right_present,
+            table.column_root.*,
+            table.numeric,
+            table.left_cell_root,
+            table.right_cell_root,
+        ),
+    };
+}
 
 fn v8SmallArrayCallbackSort(
     runtime: *Runtime,
@@ -13508,23 +13559,21 @@ fn v8CountAndMakeRunArrayCallback(
     presence: []bool,
     low: usize,
     high: usize,
-    callable_root: *Value,
-    result_root: *Value,
+    context: *V8SortContext,
 ) !usize {
     if (low + 1 == high) return 1;
 
     var run_length: usize = 2;
-    const first_order = try compareAotCallback(runtime, callable_root.*, items[low + 1], presence[low + 1], items[low], presence[low], result_root);
+    const first_order = try compareV8Sort(runtime, items[low + 1], presence[low + 1], items[low], presence[low], context);
     const descending = first_order == .lt;
     while (low + run_length < high) : (run_length += 1) {
-        const order = try compareAotCallback(
+        const order = try compareV8Sort(
             runtime,
-            callable_root.*,
             items[low + run_length],
             presence[low + run_length],
             items[low + run_length - 1],
             presence[low + run_length - 1],
-            result_root,
+            context,
         );
         if (descending) {
             if (order != .lt) break;
@@ -13554,8 +13603,7 @@ fn v8BinaryInsertionSortArrayCallback(
     low: usize,
     start_argument: usize,
     high: usize,
-    callable_root: *Value,
-    result_root: *Value,
+    context: *V8SortContext,
     pivot_root: *Value,
 ) !void {
     var start = if (low == start_argument) start_argument + 1 else start_argument;
@@ -13566,7 +13614,7 @@ fn v8BinaryInsertionSortArrayCallback(
         var right = start;
         while (left < right) {
             const middle = left + (right - left) / 2;
-            const order = try compareAotCallback(runtime, callable_root.*, pivot_root.*, pivot_present, items[middle], presence[middle], result_root);
+            const order = try compareV8Sort(runtime, pivot_root.*, pivot_present, items[middle], presence[middle], context);
             if (order == .lt) right = middle else left = middle + 1;
         }
         var cursor = start;
@@ -13588,8 +13636,7 @@ fn v8GallopLeftArrayCallback(
     base: usize,
     length: usize,
     hint: usize,
-    callable_root: *Value,
-    result_root: *Value,
+    context: *V8SortContext,
 ) !usize {
     var key_root = key.*;
     var key_frame = RootFrame{};
@@ -13598,12 +13645,12 @@ fn v8GallopLeftArrayCallback(
 
     var last_offset: isize = 0;
     var offset: isize = 1;
-    const initial_order = try compareAotCallback(runtime, callable_root.*, items[base + hint], presence[base + hint], key_root, key_present, result_root);
+    const initial_order = try compareV8Sort(runtime, items[base + hint], presence[base + hint], key_root, key_present, context);
     if (initial_order == .lt) {
         const max_offset: isize = @intCast(length - hint);
         while (offset < max_offset) {
             const index: usize = base + hint + @as(usize, @intCast(offset));
-            const order = try compareAotCallback(runtime, callable_root.*, items[index], presence[index], key_root, key_present, result_root);
+            const order = try compareV8Sort(runtime, items[index], presence[index], key_root, key_present, context);
             if (order != .lt) break;
             last_offset = offset;
             offset = (offset << 1) + 1;
@@ -13615,7 +13662,7 @@ fn v8GallopLeftArrayCallback(
         const max_offset: isize = @intCast(hint + 1);
         while (offset < max_offset) {
             const index: usize = base + hint - @as(usize, @intCast(offset));
-            const order = try compareAotCallback(runtime, callable_root.*, items[index], presence[index], key_root, key_present, result_root);
+            const order = try compareV8Sort(runtime, items[index], presence[index], key_root, key_present, context);
             if (order == .lt) break;
             last_offset = offset;
             offset = (offset << 1) + 1;
@@ -13630,7 +13677,7 @@ fn v8GallopLeftArrayCallback(
     while (last_offset < offset) {
         const middle: usize = @intCast(last_offset + @divTrunc(offset - last_offset, 2));
         const index = base + middle;
-        const order = try compareAotCallback(runtime, callable_root.*, items[index], presence[index], key_root, key_present, result_root);
+        const order = try compareV8Sort(runtime, items[index], presence[index], key_root, key_present, context);
         if (order == .lt) last_offset = @intCast(middle + 1) else offset = @intCast(middle);
     }
     return @intCast(offset);
@@ -13645,8 +13692,7 @@ fn v8GallopRightArrayCallback(
     base: usize,
     length: usize,
     hint: usize,
-    callable_root: *Value,
-    result_root: *Value,
+    context: *V8SortContext,
 ) !usize {
     var key_root = key.*;
     var key_frame = RootFrame{};
@@ -13655,12 +13701,12 @@ fn v8GallopRightArrayCallback(
 
     var last_offset: isize = 0;
     var offset: isize = 1;
-    const initial_order = try compareAotCallback(runtime, callable_root.*, key_root, key_present, items[base + hint], presence[base + hint], result_root);
+    const initial_order = try compareV8Sort(runtime, key_root, key_present, items[base + hint], presence[base + hint], context);
     if (initial_order == .lt) {
         const max_offset: isize = @intCast(hint + 1);
         while (offset < max_offset) {
             const index: usize = base + hint - @as(usize, @intCast(offset));
-            const order = try compareAotCallback(runtime, callable_root.*, key_root, key_present, items[index], presence[index], result_root);
+            const order = try compareV8Sort(runtime, key_root, key_present, items[index], presence[index], context);
             if (order != .lt) break;
             last_offset = offset;
             offset = (offset << 1) + 1;
@@ -13673,7 +13719,7 @@ fn v8GallopRightArrayCallback(
         const max_offset: isize = @intCast(length - hint);
         while (offset < max_offset) {
             const index: usize = base + hint + @as(usize, @intCast(offset));
-            const order = try compareAotCallback(runtime, callable_root.*, key_root, key_present, items[index], presence[index], result_root);
+            const order = try compareV8Sort(runtime, key_root, key_present, items[index], presence[index], context);
             if (order == .lt) break;
             last_offset = offset;
             offset = (offset << 1) + 1;
@@ -13687,7 +13733,7 @@ fn v8GallopRightArrayCallback(
     while (last_offset < offset) {
         const middle: usize = @intCast(last_offset + @divTrunc(offset - last_offset, 2));
         const index = base + middle;
-        const order = try compareAotCallback(runtime, callable_root.*, key_root, key_present, items[index], presence[index], result_root);
+        const order = try compareV8Sort(runtime, key_root, key_present, items[index], presence[index], context);
         if (order == .lt) offset = @intCast(middle) else last_offset = @intCast(middle + 1);
     }
     return @intCast(offset);
@@ -13703,8 +13749,7 @@ fn v8MergeLowArrayCallback(
     length_a_argument: usize,
     base_b: usize,
     length_b_argument: usize,
-    callable_root: *Value,
-    result_root: *Value,
+    context: *V8SortContext,
     min_gallop_state: *usize,
 ) !void {
     var length_a = length_a_argument;
@@ -13738,7 +13783,7 @@ fn v8MergeLowArrayCallback(
         var wins_a: usize = 0;
         var wins_b: usize = 0;
         while (true) {
-            const order = try compareAotCallback(runtime, callable_root.*, items[cursor_b], presence[cursor_b], temp[cursor_temp], temp_presence[cursor_temp], result_root);
+            const order = try compareV8Sort(runtime, items[cursor_b], presence[cursor_b], temp[cursor_temp], temp_presence[cursor_temp], context);
             if (order == .lt) {
                 items[destination] = items[cursor_b];
                 presence[destination] = presence[cursor_b];
@@ -13789,8 +13834,7 @@ fn v8MergeLowArrayCallback(
                 cursor_temp,
                 length_a,
                 0,
-                callable_root,
-                result_root,
+                context,
             );
             if (wins_a > 0) {
                 v8CopyArrayRange(Value, items, destination, temp, cursor_temp, wins_a);
@@ -13827,8 +13871,7 @@ fn v8MergeLowArrayCallback(
                 cursor_b,
                 length_b,
                 0,
-                callable_root,
-                result_root,
+                context,
             );
             if (wins_b > 0) {
                 v8CopyArrayRange(Value, items, destination, items, cursor_b, wins_b);
@@ -13870,8 +13913,7 @@ fn v8MergeHighArrayCallback(
     length_a_argument: usize,
     base_b: usize,
     length_b_argument: usize,
-    callable_root: *Value,
-    result_root: *Value,
+    context: *V8SortContext,
     min_gallop_state: *usize,
 ) !void {
     var length_a = length_a_argument;
@@ -13907,7 +13949,7 @@ fn v8MergeHighArrayCallback(
         var wins_a: usize = 0;
         var wins_b: usize = 0;
         while (true) {
-            const order = try compareAotCallback(runtime, callable_root.*, temp[cursor_temp], temp_presence[cursor_temp], items[cursor_a], presence[cursor_a], result_root);
+            const order = try compareV8Sort(runtime, temp[cursor_temp], temp_presence[cursor_temp], items[cursor_a], presence[cursor_a], context);
             if (order == .lt) {
                 items[destination] = items[cursor_a];
                 presence[destination] = presence[cursor_a];
@@ -13960,8 +14002,7 @@ fn v8MergeHighArrayCallback(
                 base_a,
                 length_a,
                 length_a - 1,
-                callable_root,
-                result_root,
+                context,
             );
             wins_a = length_a - gallop_index;
             if (wins_a > 0) {
@@ -14000,8 +14041,7 @@ fn v8MergeHighArrayCallback(
                 0,
                 length_b,
                 length_b - 1,
-                callable_root,
-                result_root,
+                context,
             );
             wins_b = length_b - gallop_left;
             if (wins_b > 0) {
@@ -14048,8 +14088,7 @@ fn v8MergeAtArrayCallback(
     runs: []V8ArraySortRun,
     run_count: *usize,
     index: usize,
-    callable_root: *Value,
-    result_root: *Value,
+    context: *V8SortContext,
     min_gallop_state: *usize,
 ) !void {
     const stack_size = run_count.*;
@@ -14070,8 +14109,7 @@ fn v8MergeAtArrayCallback(
         base_a,
         length_a,
         0,
-        callable_root,
-        result_root,
+        context,
     );
     base_a += key_right;
     length_a -= key_right;
@@ -14085,14 +14123,13 @@ fn v8MergeAtArrayCallback(
         base_b,
         length_b,
         length_b - 1,
-        callable_root,
-        result_root,
+        context,
     );
     if (length_b == 0) return;
     if (length_a <= length_b) {
-        try v8MergeLowArrayCallback(runtime, items, presence, temp, temp_presence, base_a, length_a, base_b, length_b, callable_root, result_root, min_gallop_state);
+        try v8MergeLowArrayCallback(runtime, items, presence, temp, temp_presence, base_a, length_a, base_b, length_b, context, min_gallop_state);
     } else {
-        try v8MergeHighArrayCallback(runtime, items, presence, temp, temp_presence, base_a, length_a, base_b, length_b, callable_root, result_root, min_gallop_state);
+        try v8MergeHighArrayCallback(runtime, items, presence, temp, temp_presence, base_a, length_a, base_b, length_b, context, min_gallop_state);
     }
 }
 
@@ -14110,17 +14147,16 @@ fn v8MergeCollapseArrayCallback(
     temp_presence: []bool,
     runs: []V8ArraySortRun,
     run_count: *usize,
-    callable_root: *Value,
-    result_root: *Value,
+    context: *V8SortContext,
     min_gallop_state: *usize,
 ) !void {
     while (run_count.* > 1) {
         var index = run_count.* - 2;
         if (!v8RunInvariantEstablishedArray(runs, index + 1) or !v8RunInvariantEstablishedArray(runs, index)) {
             if (index > 0 and runs[index - 1].length < runs[index + 1].length) index -= 1;
-            try v8MergeAtArrayCallback(runtime, items, presence, temp, temp_presence, runs, run_count, index, callable_root, result_root, min_gallop_state);
+            try v8MergeAtArrayCallback(runtime, items, presence, temp, temp_presence, runs, run_count, index, context, min_gallop_state);
         } else if (runs[index].length <= runs[index + 1].length) {
-            try v8MergeAtArrayCallback(runtime, items, presence, temp, temp_presence, runs, run_count, index, callable_root, result_root, min_gallop_state);
+            try v8MergeAtArrayCallback(runtime, items, presence, temp, temp_presence, runs, run_count, index, context, min_gallop_state);
         } else {
             break;
         }
@@ -14135,14 +14171,13 @@ fn v8MergeForceCollapseArrayCallback(
     temp_presence: []bool,
     runs: []V8ArraySortRun,
     run_count: *usize,
-    callable_root: *Value,
-    result_root: *Value,
+    context: *V8SortContext,
     min_gallop_state: *usize,
 ) !void {
     while (run_count.* > 1) {
         var index = run_count.* - 2;
         if (index > 0 and runs[index - 1].length < runs[index + 1].length) index -= 1;
-        try v8MergeAtArrayCallback(runtime, items, presence, temp, temp_presence, runs, run_count, index, callable_root, result_root, min_gallop_state);
+        try v8MergeAtArrayCallback(runtime, items, presence, temp, temp_presence, runs, run_count, index, context, min_gallop_state);
     }
 }
 
@@ -14152,8 +14187,7 @@ fn v8TimSortArrayCallback(
     presence: []bool,
     temp: []Value,
     temp_presence: []bool,
-    callable_root: *Value,
-    result_root: *Value,
+    context: *V8SortContext,
     pivot_root: *Value,
 ) !void {
     if (items.len < 2) return;
@@ -14164,20 +14198,20 @@ fn v8TimSortArrayCallback(
     var remaining = items.len;
     var min_gallop = v8_timsort_min_gallop;
     while (remaining != 0) {
-        var current_run_length = try v8CountAndMakeRunArrayCallback(runtime, items, presence, low, low + remaining, callable_root, result_root);
+        var current_run_length = try v8CountAndMakeRunArrayCallback(runtime, items, presence, low, low + remaining, context);
         if (current_run_length < min_run_length) {
             const forced_run_length = @min(min_run_length, remaining);
-            try v8BinaryInsertionSortArrayCallback(runtime, items, presence, low, low + current_run_length, low + forced_run_length, callable_root, result_root, pivot_root);
+            try v8BinaryInsertionSortArrayCallback(runtime, items, presence, low, low + current_run_length, low + forced_run_length, context, pivot_root);
             current_run_length = forced_run_length;
         }
         if (run_count == runs.len) return error.ArrayTooLarge;
         runs[run_count] = .{ .base = low, .length = current_run_length };
         run_count += 1;
-        try v8MergeCollapseArrayCallback(runtime, items, presence, temp, temp_presence, &runs, &run_count, callable_root, result_root, &min_gallop);
+        try v8MergeCollapseArrayCallback(runtime, items, presence, temp, temp_presence, &runs, &run_count, context, &min_gallop);
         low += current_run_length;
         remaining -= current_run_length;
     }
-    try v8MergeForceCollapseArrayCallback(runtime, items, presence, temp, temp_presence, &runs, &run_count, callable_root, result_root, &min_gallop);
+    try v8MergeForceCollapseArrayCallback(runtime, items, presence, temp, temp_presence, &runs, &run_count, context, &min_gallop);
 }
 
 fn compareAotCallback(runtime: *Runtime, callable: Value, left: Value, left_present: bool, right: Value, right_present: bool, result_root: *Value) !std.math.Order {
@@ -15835,6 +15869,10 @@ fn compareTableRowsBuiltin(
     if (right.tag == @intFromEnum(Tag.undefined)) return .lt;
     left_cell.* = try tableRowProperty(runtime, left, column);
     right_cell.* = try tableRowProperty(runtime, right, column);
+    // The official comparator returns before relational conversion when the
+    // two selected cells are JavaScript-strictly equal. This is observable
+    // for repeated object cells with a custom valueOf/toString method.
+    if (!numeric and try strictEqual(runtime, left_cell.*, right_cell.*)) return .eq;
     if (numeric) {
         // Match the official `ns - ms` comparator.  Arithmetic performs
         // ToNumeric first, so mixed BigInt/Number cells reject with the
@@ -15905,32 +15943,55 @@ fn tableSortBuiltin(runtime: *Runtime, source: Value, column: Value, numeric: bo
         std.mem.copyForwards(bool, object.array_presence.items[0..original_length], temporary_presence);
         return root_values[0];
     }
-    var index: usize = 1;
-    while (index < rows.items.len) : (index += 1) {
-        roots[2] = rows.items[index];
-        const row_present = runtime.aotArrayIsPresent(object, index);
-        var cursor = index;
-        while (cursor > 0) {
-            const order = try compareTableRowsBuiltin(
-                runtime,
-                rows.items[cursor - 1],
-                runtime.aotArrayIsPresent(object, cursor - 1),
-                roots[2],
-                row_present,
-                roots[1],
-                numeric,
-                &roots[3],
-                &roots[4],
-            );
-            if (order != .gt) break;
-            rows.items[cursor] = rows.items[cursor - 1];
-            object.array_presence.items[cursor] = object.array_presence.items[cursor - 1];
-            cursor -= 1;
-        }
-        rows.items[cursor] = roots[2];
-        object.array_presence.items[cursor] = row_present;
+    // The large path uses the same V8 TimSort as Array.prototype.sort. Keep
+    // the collected rows and both merge buffers detached from the live table
+    // while property lookup and numeric conversion can allocate or mutate it.
+    const temporary = try runtime.allocator.dupe(Value, rows.items);
+    defer runtime.allocator.free(temporary);
+    const temporary_second = try runtime.allocator.dupe(Value, temporary);
+    defer runtime.allocator.free(temporary_second);
+    const temporary_presence = try runtime.allocator.dupe(bool, object.array_presence.items);
+    defer runtime.allocator.free(temporary_presence);
+    const temporary_second_presence = try runtime.allocator.dupe(bool, temporary_presence);
+    defer runtime.allocator.free(temporary_second_presence);
+    const root_count = std.math.add(usize, 5, std.math.mul(usize, original_length, 2) catch return error.ArrayTooLarge) catch return error.ArrayTooLarge;
+    const root_values = try runtime.allocator.alloc(Value, root_count);
+    defer runtime.allocator.free(root_values);
+    root_values[0] = source;
+    root_values[1] = column;
+    root_values[2] = .{};
+    root_values[3] = .{};
+    root_values[4] = .{};
+    std.mem.copyForwards(Value, root_values[5 .. 5 + original_length], temporary);
+    std.mem.copyForwards(Value, root_values[5 + original_length ..], temporary_second);
+    var detached_roots = RootFrame{};
+    runtime.pushRoots(&detached_roots, root_values.ptr, root_values.len);
+    defer runtime.popRoots(&detached_roots);
+    var sort_context = V8SortContext{ .table = .{
+        .column_root = &root_values[1],
+        .numeric = numeric,
+        .left_cell_root = &root_values[3],
+        .right_cell_root = &root_values[4],
+    } };
+    try v8TimSortArrayCallback(
+        runtime,
+        temporary,
+        temporary_presence,
+        temporary_second,
+        temporary_second_presence,
+        &sort_context,
+        &root_values[2],
+    );
+    if (rows.items.len < original_length) {
+        const old_length = rows.items.len;
+        try rows.resize(runtime.allocator, original_length);
+        @memset(rows.items[old_length..], .{});
+        try object.array_presence.resize(runtime.allocator, original_length);
+        @memset(object.array_presence.items[old_length..], false);
     }
-    return roots[0];
+    std.mem.copyForwards(Value, rows.items[0..original_length], temporary);
+    std.mem.copyForwards(bool, object.array_presence.items[0..original_length], temporary_presence);
+    return root_values[0];
 }
 
 fn v8SmallTableSortBuiltin(

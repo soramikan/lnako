@@ -287,6 +287,42 @@ const V8SortRun = struct {
     length: usize,
 };
 
+const V8TableSortContext = struct {
+    column: *Value,
+    numeric: bool,
+    left_cell: *Value,
+    right_cell: *Value,
+};
+
+const V8SortContext = union(enum) {
+    callback: SortCallback,
+    table: V8TableSortContext,
+};
+
+fn compareV8Sort(
+    runtime: *Runtime,
+    left: Value,
+    left_present: bool,
+    right: Value,
+    right_present: bool,
+    context: *V8SortContext,
+) !std.math.Order {
+    return switch (context.*) {
+        .callback => |callback| compareForSort(runtime, left, left_present, right, right_present, .callback, callback),
+        .table => |table| compareTableRows(
+            runtime,
+            left,
+            left_present,
+            right,
+            right_present,
+            table.column.*,
+            table.numeric,
+            table.left_cell,
+            table.right_cell,
+        ),
+    };
+}
+
 fn stableSort(runtime: *Runtime, source: Value, mode: SortMode, callback: ?SortCallback) !void {
     const array = source.array;
     if (array.items.items.len < 2) return;
@@ -375,11 +411,12 @@ fn stableCallbackSort(runtime: *Runtime, array: *value_mod.Array, callback: Sort
     defer roots.deinit();
     for (first) |*item| try roots.protect(item);
     for (second) |*item| try roots.protect(item);
+    var sort_context = V8SortContext{ .callback = callback };
 
     if (original_length < v8_small_callback_sort_limit) {
         try v8SmallCallbackSort(runtime, first, first_presence, callback, &roots);
     } else {
-        try v8TimSortCallback(runtime, first, first_presence, second, second_presence, callback);
+        try v8TimSortCallback(runtime, first, first_presence, second, second_presence, &sort_context);
     }
 
     if (array.len() < original_length) {
@@ -484,22 +521,21 @@ fn v8CountAndMakeRunCallback(
     presence: []bool,
     low: usize,
     high: usize,
-    callback: SortCallback,
+    context: *V8SortContext,
 ) !usize {
     if (low + 1 == high) return 1;
 
     var run_length: usize = 2;
-    const first_order = try compareForSort(runtime, items[low + 1], presence[low + 1], items[low], presence[low], .callback, callback);
+    const first_order = try compareV8Sort(runtime, items[low + 1], presence[low + 1], items[low], presence[low], context);
     const descending = first_order == .lt;
     while (low + run_length < high) : (run_length += 1) {
-        const order = try compareForSort(
+        const order = try compareV8Sort(
             runtime,
             items[low + run_length],
             presence[low + run_length],
             items[low + run_length - 1],
             presence[low + run_length - 1],
-            .callback,
-            callback,
+            context,
         );
         if (descending) {
             if (order != .lt) break;
@@ -529,7 +565,7 @@ fn v8BinaryInsertionSortCallback(
     low: usize,
     start_argument: usize,
     high: usize,
-    callback: SortCallback,
+    context: *V8SortContext,
 ) !void {
     var start = if (low == start_argument) start_argument + 1 else start_argument;
     var pivot: Value = .undefined;
@@ -543,7 +579,7 @@ fn v8BinaryInsertionSortCallback(
         var right = start;
         while (left < right) {
             const middle = left + (right - left) / 2;
-            const order = try compareForSort(runtime, pivot, pivot_present, items[middle], presence[middle], .callback, callback);
+            const order = try compareV8Sort(runtime, pivot, pivot_present, items[middle], presence[middle], context);
             if (order == .lt) right = middle else left = middle + 1;
         }
         var cursor = start;
@@ -565,16 +601,16 @@ fn v8GallopLeftCallback(
     base: usize,
     length: usize,
     hint: usize,
-    callback: SortCallback,
+    context: *V8SortContext,
 ) !usize {
     var last_offset: isize = 0;
     var offset: isize = 1;
-    const initial_order = try compareForSort(runtime, items[base + hint], presence[base + hint], key.*, key_present, .callback, callback);
+    const initial_order = try compareV8Sort(runtime, items[base + hint], presence[base + hint], key.*, key_present, context);
     if (initial_order == .lt) {
         const max_offset: isize = @intCast(length - hint);
         while (offset < max_offset) {
             const index: usize = base + hint + @as(usize, @intCast(offset));
-            const order = try compareForSort(runtime, items[index], presence[index], key.*, key_present, .callback, callback);
+            const order = try compareV8Sort(runtime, items[index], presence[index], key.*, key_present, context);
             if (order != .lt) break;
             last_offset = offset;
             offset = (offset << 1) + 1;
@@ -586,7 +622,7 @@ fn v8GallopLeftCallback(
         const max_offset: isize = @intCast(hint + 1);
         while (offset < max_offset) {
             const index: usize = base + hint - @as(usize, @intCast(offset));
-            const order = try compareForSort(runtime, items[index], presence[index], key.*, key_present, .callback, callback);
+            const order = try compareV8Sort(runtime, items[index], presence[index], key.*, key_present, context);
             if (order == .lt) break;
             last_offset = offset;
             offset = (offset << 1) + 1;
@@ -601,7 +637,7 @@ fn v8GallopLeftCallback(
     while (last_offset < offset) {
         const middle: usize = @intCast(last_offset + @divTrunc(offset - last_offset, 2));
         const index = base + middle;
-        const order = try compareForSort(runtime, items[index], presence[index], key.*, key_present, .callback, callback);
+        const order = try compareV8Sort(runtime, items[index], presence[index], key.*, key_present, context);
         if (order == .lt) last_offset = @intCast(middle + 1) else offset = @intCast(middle);
     }
     return @intCast(offset);
@@ -616,16 +652,16 @@ fn v8GallopRightCallback(
     base: usize,
     length: usize,
     hint: usize,
-    callback: SortCallback,
+    context: *V8SortContext,
 ) !usize {
     var last_offset: isize = 0;
     var offset: isize = 1;
-    const initial_order = try compareForSort(runtime, key.*, key_present, items[base + hint], presence[base + hint], .callback, callback);
+    const initial_order = try compareV8Sort(runtime, key.*, key_present, items[base + hint], presence[base + hint], context);
     if (initial_order == .lt) {
         const max_offset: isize = @intCast(hint + 1);
         while (offset < max_offset) {
             const index: usize = base + hint - @as(usize, @intCast(offset));
-            const order = try compareForSort(runtime, key.*, key_present, items[index], presence[index], .callback, callback);
+            const order = try compareV8Sort(runtime, key.*, key_present, items[index], presence[index], context);
             if (order != .lt) break;
             last_offset = offset;
             offset = (offset << 1) + 1;
@@ -638,7 +674,7 @@ fn v8GallopRightCallback(
         const max_offset: isize = @intCast(length - hint);
         while (offset < max_offset) {
             const index: usize = base + hint + @as(usize, @intCast(offset));
-            const order = try compareForSort(runtime, key.*, key_present, items[index], presence[index], .callback, callback);
+            const order = try compareV8Sort(runtime, key.*, key_present, items[index], presence[index], context);
             if (order == .lt) break;
             last_offset = offset;
             offset = (offset << 1) + 1;
@@ -652,7 +688,7 @@ fn v8GallopRightCallback(
     while (last_offset < offset) {
         const middle: usize = @intCast(last_offset + @divTrunc(offset - last_offset, 2));
         const index = base + middle;
-        const order = try compareForSort(runtime, key.*, key_present, items[index], presence[index], .callback, callback);
+        const order = try compareV8Sort(runtime, key.*, key_present, items[index], presence[index], context);
         if (order == .lt) offset = @intCast(middle) else last_offset = @intCast(middle + 1);
     }
     return @intCast(offset);
@@ -668,7 +704,7 @@ fn v8MergeLowCallback(
     length_a_argument: usize,
     base_b: usize,
     length_b_argument: usize,
-    callback: SortCallback,
+    context: *V8SortContext,
     min_gallop_state: *usize,
 ) !void {
     var length_a = length_a_argument;
@@ -702,7 +738,7 @@ fn v8MergeLowCallback(
         var wins_a: usize = 0;
         var wins_b: usize = 0;
         while (true) {
-            const order = try compareForSort(runtime, items[cursor_b], presence[cursor_b], temp[cursor_temp], temp_presence[cursor_temp], .callback, callback);
+            const order = try compareV8Sort(runtime, items[cursor_b], presence[cursor_b], temp[cursor_temp], temp_presence[cursor_temp], context);
             if (order == .lt) {
                 items[destination] = items[cursor_b];
                 presence[destination] = presence[cursor_b];
@@ -754,7 +790,7 @@ fn v8MergeLowCallback(
                 cursor_temp,
                 length_a,
                 0,
-                callback,
+                context,
             );
             if (wins_a > 0) {
                 v8CopyRange(Value, items, destination, temp, cursor_temp, wins_a);
@@ -791,7 +827,7 @@ fn v8MergeLowCallback(
                 cursor_b,
                 length_b,
                 0,
-                callback,
+                context,
             );
             if (wins_b > 0) {
                 v8CopyRange(Value, items, destination, items, cursor_b, wins_b);
@@ -833,7 +869,7 @@ fn v8MergeHighCallback(
     length_a_argument: usize,
     base_b: usize,
     length_b_argument: usize,
-    callback: SortCallback,
+    context: *V8SortContext,
     min_gallop_state: *usize,
 ) !void {
     var length_a = length_a_argument;
@@ -869,7 +905,7 @@ fn v8MergeHighCallback(
         var wins_a: usize = 0;
         var wins_b: usize = 0;
         while (true) {
-            const order = try compareForSort(runtime, temp[cursor_temp], temp_presence[cursor_temp], items[cursor_a], presence[cursor_a], .callback, callback);
+            const order = try compareV8Sort(runtime, temp[cursor_temp], temp_presence[cursor_temp], items[cursor_a], presence[cursor_a], context);
             if (order == .lt) {
                 items[destination] = items[cursor_a];
                 presence[destination] = presence[cursor_a];
@@ -923,7 +959,7 @@ fn v8MergeHighCallback(
                 base_a,
                 length_a,
                 length_a - 1,
-                callback,
+                context,
             );
             wins_a = length_a - gallop_index;
             if (wins_a > 0) {
@@ -962,7 +998,7 @@ fn v8MergeHighCallback(
                 0,
                 length_b,
                 length_b - 1,
-                callback,
+                context,
             );
             wins_b = length_b - gallop_left;
             if (wins_b > 0) {
@@ -1009,7 +1045,7 @@ fn v8MergeAtCallback(
     runs: []V8SortRun,
     run_count: *usize,
     index: usize,
-    callback: SortCallback,
+    context: *V8SortContext,
     min_gallop_state: *usize,
 ) !void {
     const stack_size = run_count.*;
@@ -1030,7 +1066,7 @@ fn v8MergeAtCallback(
         base_a,
         length_a,
         0,
-        callback,
+        context,
     );
     base_a += key_right;
     length_a -= key_right;
@@ -1044,13 +1080,13 @@ fn v8MergeAtCallback(
         base_b,
         length_b,
         length_b - 1,
-        callback,
+        context,
     );
     if (length_b == 0) return;
     if (length_a <= length_b) {
-        try v8MergeLowCallback(runtime, items, presence, temp, temp_presence, base_a, length_a, base_b, length_b, callback, min_gallop_state);
+        try v8MergeLowCallback(runtime, items, presence, temp, temp_presence, base_a, length_a, base_b, length_b, context, min_gallop_state);
     } else {
-        try v8MergeHighCallback(runtime, items, presence, temp, temp_presence, base_a, length_a, base_b, length_b, callback, min_gallop_state);
+        try v8MergeHighCallback(runtime, items, presence, temp, temp_presence, base_a, length_a, base_b, length_b, context, min_gallop_state);
     }
 }
 
@@ -1068,16 +1104,16 @@ fn v8MergeCollapseCallback(
     temp_presence: []bool,
     runs: []V8SortRun,
     run_count: *usize,
-    callback: SortCallback,
+    context: *V8SortContext,
     min_gallop_state: *usize,
 ) !void {
     while (run_count.* > 1) {
         var index = run_count.* - 2;
         if (!v8RunInvariantEstablished(runs, index + 1) or !v8RunInvariantEstablished(runs, index)) {
             if (index > 0 and runs[index - 1].length < runs[index + 1].length) index -= 1;
-            try v8MergeAtCallback(runtime, items, presence, temp, temp_presence, runs, run_count, index, callback, min_gallop_state);
+            try v8MergeAtCallback(runtime, items, presence, temp, temp_presence, runs, run_count, index, context, min_gallop_state);
         } else if (runs[index].length <= runs[index + 1].length) {
-            try v8MergeAtCallback(runtime, items, presence, temp, temp_presence, runs, run_count, index, callback, min_gallop_state);
+            try v8MergeAtCallback(runtime, items, presence, temp, temp_presence, runs, run_count, index, context, min_gallop_state);
         } else {
             break;
         }
@@ -1092,13 +1128,13 @@ fn v8MergeForceCollapseCallback(
     temp_presence: []bool,
     runs: []V8SortRun,
     run_count: *usize,
-    callback: SortCallback,
+    context: *V8SortContext,
     min_gallop_state: *usize,
 ) !void {
     while (run_count.* > 1) {
         var index = run_count.* - 2;
         if (index > 0 and runs[index - 1].length < runs[index + 1].length) index -= 1;
-        try v8MergeAtCallback(runtime, items, presence, temp, temp_presence, runs, run_count, index, callback, min_gallop_state);
+        try v8MergeAtCallback(runtime, items, presence, temp, temp_presence, runs, run_count, index, context, min_gallop_state);
     }
 }
 
@@ -1108,7 +1144,7 @@ fn v8TimSortCallback(
     presence: []bool,
     temp: []Value,
     temp_presence: []bool,
-    callback: SortCallback,
+    context: *V8SortContext,
 ) !void {
     if (items.len < 2) return;
     const min_run_length = v8ComputeMinRunLength(items.len);
@@ -1118,20 +1154,20 @@ fn v8TimSortCallback(
     var remaining = items.len;
     var min_gallop = v8_timsort_min_gallop;
     while (remaining != 0) {
-        var current_run_length = try v8CountAndMakeRunCallback(runtime, items, presence, low, low + remaining, callback);
+        var current_run_length = try v8CountAndMakeRunCallback(runtime, items, presence, low, low + remaining, context);
         if (current_run_length < min_run_length) {
             const forced_run_length = @min(min_run_length, remaining);
-            try v8BinaryInsertionSortCallback(runtime, items, presence, low, low + current_run_length, low + forced_run_length, callback);
+            try v8BinaryInsertionSortCallback(runtime, items, presence, low, low + current_run_length, low + forced_run_length, context);
             current_run_length = forced_run_length;
         }
         if (run_count == runs.len) return error.ArrayTooLarge;
         runs[run_count] = .{ .base = low, .length = current_run_length };
         run_count += 1;
-        try v8MergeCollapseCallback(runtime, items, presence, temp, temp_presence, &runs, &run_count, callback, &min_gallop);
+        try v8MergeCollapseCallback(runtime, items, presence, temp, temp_presence, &runs, &run_count, context, &min_gallop);
         low += current_run_length;
         remaining -= current_run_length;
     }
-    try v8MergeForceCollapseCallback(runtime, items, presence, temp, temp_presence, &runs, &run_count, callback, &min_gallop);
+    try v8MergeForceCollapseCallback(runtime, items, presence, temp, temp_presence, &runs, &run_count, context, &min_gallop);
 }
 
 fn compareForSort(runtime: *Runtime, left: Value, left_present: bool, right: Value, right_present: bool, mode: SortMode, callback: ?SortCallback) !std.math.Order {
@@ -1626,16 +1662,27 @@ fn tableSort(runtime: *Runtime, source: Value, column: Value, numeric: bool) !Va
     try roots.protect(&right_cell);
     try rooted_source.array.normalizePresence();
     const original_length = rooted_source.array.len();
+    // Array.prototype.sort collects the indexed rows before it invokes the
+    // comparator. Keep both merge buffers detached so a cell's
+    // valueOf/toString side effect cannot invalidate the values that the
+    // official sort already collected.
+    const temporary = try runtime.allocator().dupe(Value, rooted_source.array.items.items);
+    defer runtime.allocator().free(temporary);
+    const temporary_second = try runtime.allocator().dupe(Value, temporary);
+    defer runtime.allocator().free(temporary_second);
+    const temporary_presence = try runtime.allocator().dupe(bool, rooted_source.array.presence.items);
+    defer runtime.allocator().free(temporary_presence);
+    const temporary_second_presence = try runtime.allocator().dupe(bool, temporary_presence);
+    defer runtime.allocator().free(temporary_second_presence);
+    for (temporary) |*item| try roots.protect(item);
+    for (temporary_second) |*item| try roots.protect(item);
+    var context = V8SortContext{ .table = .{
+        .column = &rooted_column,
+        .numeric = numeric,
+        .left_cell = &left_cell,
+        .right_cell = &right_cell,
+    } };
     if (original_length < v8_small_callback_sort_limit) {
-        // Array.prototype.sort collects the indexed rows before it invokes
-        // the comparator. Keep the small-table path detached so a cell's
-        // valueOf/toString side effect cannot invalidate the values that the
-        // official sort already collected.
-        const temporary = try runtime.allocator().dupe(Value, rooted_source.array.items.items);
-        defer runtime.allocator().free(temporary);
-        const temporary_presence = try runtime.allocator().dupe(bool, rooted_source.array.presence.items);
-        defer runtime.allocator().free(temporary_presence);
-        for (temporary) |*item| try roots.protect(item);
         try v8SmallTableSort(
             runtime,
             temporary,
@@ -1646,42 +1693,19 @@ fn tableSort(runtime: *Runtime, source: Value, column: Value, numeric: bool) !Va
             &left_cell,
             &right_cell,
         );
-        if (rooted_source.array.len() < original_length) {
-            const old_length = rooted_source.array.len();
-            try rooted_source.array.items.resize(runtime.allocator(), original_length);
-            @memset(rooted_source.array.items.items[old_length..], .undefined);
-            try rooted_source.array.presence.resize(runtime.allocator(), original_length);
-            @memset(rooted_source.array.presence.items[old_length..], false);
-        }
-        std.mem.copyForwards(Value, rooted_source.array.items.items[0..original_length], temporary);
-        std.mem.copyForwards(bool, rooted_source.array.presence.items[0..original_length], temporary_presence);
-        return rooted_source;
+    } else {
+        try v8TimSortCallback(runtime, temporary, temporary_presence, temporary_second, temporary_second_presence, &context);
     }
-    var index: usize = 1;
-    while (index < rooted_source.array.len()) : (index += 1) {
-        row = rooted_source.array.items.items[index];
-        const row_present = rooted_source.array.isPresent(index);
-        var cursor = index;
-        while (cursor > 0) {
-            const order = try compareTableRows(
-                runtime,
-                rooted_source.array.items.items[cursor - 1],
-                rooted_source.array.isPresent(cursor - 1),
-                row,
-                row_present,
-                rooted_column,
-                numeric,
-                &left_cell,
-                &right_cell,
-            );
-            if (order != .gt) break;
-            rooted_source.array.items.items[cursor] = rooted_source.array.items.items[cursor - 1];
-            rooted_source.array.presence.items[cursor] = rooted_source.array.presence.items[cursor - 1];
-            cursor -= 1;
-        }
-        rooted_source.array.items.items[cursor] = row;
-        rooted_source.array.presence.items[cursor] = row_present;
+
+    if (rooted_source.array.len() < original_length) {
+        const old_length = rooted_source.array.len();
+        try rooted_source.array.items.resize(runtime.allocator(), original_length);
+        @memset(rooted_source.array.items.items[old_length..], .undefined);
+        try rooted_source.array.presence.resize(runtime.allocator(), original_length);
+        @memset(rooted_source.array.presence.items[old_length..], false);
     }
+    std.mem.copyForwards(Value, rooted_source.array.items.items[0..original_length], temporary);
+    std.mem.copyForwards(bool, rooted_source.array.presence.items[0..original_length], temporary_presence);
     return rooted_source;
 }
 
@@ -1801,6 +1825,10 @@ fn compareTableRows(
     if (right == .undefined) return .lt;
     left_cell.* = try indexed(runtime, left, column);
     right_cell.* = try indexed(runtime, right, column);
+    // The official comparator returns before relational conversion when the
+    // two selected cells are JavaScript-strictly equal. This is observable
+    // for repeated object cells with a custom valueOf/toString method.
+    if (!numeric and Value.strictEqual(left_cell.*, right_cell.*)) return .eq;
     if (numeric) {
         // The official comparator is `ns - ms`, not two independent
         // Number conversions.  Keeping the subtraction as a JavaScript-like
