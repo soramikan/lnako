@@ -22716,6 +22716,14 @@ test "AOT表変換系は欠損列・負位置・JS加算を公式どおり処理
     const sum_text = try valueUtf16Alloc(&runtime, roots[16]);
     defer runtime.allocator.free(sum_text);
     try std.testing.expectEqualSlices(u16, &.{ '0', 'x', 'y' }, sum_text);
+
+    roots[2] = try runtime.createArray(&.{ roots[13], .{}, roots[14] });
+    _ = try runtime.aotArrayDeleteIndex(roots[2].object().?, 1);
+    try std.testing.expectError(error.TableRowMissing, tableBuiltin(&runtime, .table_unique, &.{ roots[2], numberValue(0) }));
+    const sparse_unique_message = try pendingExceptionMessageUtf8Alloc(&runtime);
+    defer runtime.allocator.free(sparse_unique_message);
+    try std.testing.expectEqualStrings("Cannot read properties of undefined (reading '0')", sparse_unique_message);
+    _ = runtime.takeException();
 }
 
 test "AOT一般正規表現命令は共有エンジンと抽出副作用を保つ" {

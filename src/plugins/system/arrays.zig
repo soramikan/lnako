@@ -4024,6 +4024,16 @@ test "表変換系はGCストレス下で文字列行とJSキー規則を保持�
     try roots.protect(&column_sum);
     try std.testing.expectEqualSlices(u16, &.{ '0', 'x', 'y' }, column_sum.string.units);
 
+    var sparse_table = try runtime.createArray();
+    try roots.protect(&sparse_table);
+    _ = try sparse_table.array.push(x_row);
+    _ = try sparse_table.array.push(.undefined);
+    _ = try sparse_table.array.deleteIndex(1);
+    _ = try sparse_table.array.push(y_row);
+    try std.testing.expectError(error.TableRowMissing, tableUnique(&runtime, sparse_table, .{ .number = 0 }));
+    try std.testing.expectEqualStrings("Cannot read properties of undefined (reading '0')", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
+
     var empty = try runtime.createArray();
     try roots.protect(&empty);
     var bigint_index = try runtime.bigIntLiteral("1n");

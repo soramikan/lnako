@@ -1064,6 +1064,13 @@
     "source": "S=空配列()\nS[0]=[2,20]\nS[2]=[1]\nC=表列取得(S,1)\nJSON変換(辞書キー列挙(C))を表示\nJSON変換(ハッシュ内容列挙(C))を表示\n辞書キー存在(C,1)を表示\nJSON変換(C)を表示\nP=表ピックアップ(S,0,1)\nJSON変換(P)を表示\nQ=表完全一致ピックアップ(S,0,2)\nJSON変換(Q)を表示\n"
   },
   {
+    "id": "native-system-table-sparse-unique",
+    "oracle": "official-generated",
+    "stderrIncludes": "Cannot read properties of undefined (reading '0')",
+    "commands": ["空配列", "表重複削除"],
+    "source": "S=空配列()\nS[0]=[\"a\",1]\nS[2]=[\"a\",2]\nS[3]=[\"b\",3]\n表重複削除(S,0)を表示\n"
+  },
+  {
     "id": "native-system-table-sparse-length-errors",
     "commands": ["表列数", "表行列交換", "表右回転"],
     "source": "A=[]\nA[2]=[1]\nエラー監視\n表列数(A)を表示\nエラーならば\n(\"COLS:E:\"&エラーメッセージ)を表示\nここまで\nエラー監視\n表行列交換(A)を表示\nエラーならば\n(\"TRANS:E:\"&エラーメッセージ)を表示\nここまで\nエラー監視\n表右回転(A)を表示\nエラーならば\n(\"ROT:E:\"&エラーメッセージ)を表示\nここまで\nN=[NULL]\nエラー監視\n表列数(N)を表示\nエラーならば\n(\"NULL-COLS:E:\"&エラーメッセージ)を表示\nここまで\n"

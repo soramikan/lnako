@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 385,
-    "nativeAot": 291,
+    "total": 386,
+    "nativeAot": 292,
     "interpreter": 99,
     "compatJs": 9
   },
@@ -1330,7 +1330,8 @@
         "native-system-table-regexp-sparse-hole",
         "native-system-table-sparse-foreach-slice",
         "native-system-table-sparse-map-filter",
-        "native-system-table-sparse-sort"
+        "native-system-table-sparse-sort",
+        "native-system-table-sparse-unique"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -1367,6 +1368,9 @@
           ],
           "native-system-table-sparse-sort": [
             "fixture.commands"
+          ],
+          "native-system-table-sparse-unique": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
@@ -1375,7 +1379,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 9件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 10件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -7971,6 +7975,7 @@
         "plugin-system-table"
       ],
       "aotFixtureIds": [
+        "native-system-table-sparse-unique",
         "native-system-table-transform-commands"
       ],
       "compatJsFixtureIds": [],
@@ -7982,6 +7987,9 @@
           ]
         },
         "aot": {
+          "native-system-table-sparse-unique": [
+            "fixture.commands"
+          ],
           "native-system-table-transform-commands": [
             "implemented.tests"
           ]
@@ -7992,7 +8000,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "挿入順を保持して実装し、公式差分テストに成功"
     },
     {
