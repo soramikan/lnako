@@ -17,8 +17,40 @@ if (catalog.commandCount !== 527 || !Array.isArray(catalog.commands) || catalog.
   throw new Error("標準cnakoカタログが527 entryではありません");
 }
 const catalogByName = Map.groupBy(catalog.commands, (command) => command.name);
+const nativeDispatchCoverageExclusions = new Map([
+  ["native-cases.json/native-uncaught-exception", "公式生成JavaScriptが意図的な未捕捉例外で終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-width-half-uncaught-error", "公式生成JavaScriptが意図的な未捕捉例外で終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-node-line-message-discontinued", "公式生成JavaScriptが意図的な廃止命令エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-node-line-image-discontinued", "公式生成JavaScriptが意図的な廃止命令エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-dictionary-byte-buffer-enumeration", "公式生成JavaScriptがTypedArrayへの辞書キー削除で意図的なTypeErrorを返すため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-node-exit-alias", "プロセス終了命令が意図的にtrace終端前に実行を終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-node-exit-japanese-alias", "プロセス終了命令が意図的にtrace終端前に実行を終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-node-exit-code", "プロセス終了命令が意図的にtrace終端前に実行を終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-invalid-pattern-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-unicode-invalid-escape-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-invalid-hex-escape-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-incomplete-quantifier-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-js-error-text", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-unicode-property-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-unicode-v-invalid-flags-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-unicode-control-escape-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-unicode-backreference-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-unicode-decimal-backreference-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-unicode-class-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-unicode-decimal-escape-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-unicode-zero-escape-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-unicode-named-backreference-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-invalid-capture-name-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-regexp-duplicate-capture-name-error", "公式CLI・生成JavaScriptが意図的な正規表現構文エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-byte-buffer-method-calls", "公式CLI・生成JavaScriptが意図的なreceiver未束縛エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-table-numeric-sort-bigint-error", "公式CLI・生成JavaScriptが意図的なBigInt変換エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-table-numeric-sort-mixed-bigint-error", "公式CLI・生成JavaScriptが意図的なBigInt型混在エラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-table-sparse-unique", "公式CLI・生成JavaScriptが意図的な疎配列holeエラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-system-table-regexp-sparse-hole", "公式CLI・生成JavaScriptが意図的な疎配列holeエラーで終了するため、成功経路のdispatch監査から除外する"],
+]);
 const excludedFixtures = new Map([
   ["system-runtime-cases.json/system-runtime-execution-and-debug", "公式sourceとAOT O0の実行結果が一致せず、動的実行・非同期host境界は別の未実装証拠として扱う"],
+  ...nativeDispatchCoverageExclusions,
 ]);
 const generatedRouteUnavailableFixtures = new Map([
   ["standard-plugin-cases.json/plugin-toml-all", "公式生成JavaScriptのstandalone plugin host登録が不足する"],
@@ -26,6 +58,14 @@ const generatedRouteUnavailableFixtures = new Map([
   ["supplemental-plugin-cases.json/plugin-kansuji-all", "公式生成JavaScriptのstandalone plugin host登録が不足する"],
   ["supplemental-plugin-cases.json/plugin-caniuse-all", "公式生成JavaScriptのstandalone plugin host登録が不足する"],
   ["system-runtime-cases.json/system-runtime-execution-and-debug", "公式生成JavaScriptのstandalone system async host登録が不足する"],
+  ["native-cases.json/native-caniuse-browsers", "公式生成JavaScriptのstandalone caniuse plugin host登録が不足する"],
+  ["native-cases.json/native-caniuse-agents", "公式生成JavaScriptのstandalone caniuse plugin host登録が不足する"],
+  ["native-cases.json/native-kansuji-commands", "公式生成JavaScriptのstandalone kansuji plugin host登録が不足する"],
+  ["native-cases.json/native-kansuji-aot-generated-boundaries", "公式生成JavaScriptのstandalone kansuji plugin host登録が不足する"],
+  ["native-cases.json/native-csv-commands", "公式生成JavaScriptのstandalone CSV plugin host登録が不足する"],
+  ["native-cases.json/native-toml-commands", "公式生成JavaScriptのstandalone TOML plugin host登録が不足する"],
+  ["native-cases.json/native-markup-commands", "公式生成JavaScriptのstandalone markup plugin host登録が不足する"],
+  ["native-cases.json/native-system-dynamic-execution", "公式生成JavaScriptのstandalone system async host登録が不足する"],
 ]);
 const selectedFixtures = await loadSelectedFixtures();
 const compiler = resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
@@ -63,6 +103,7 @@ try {
 
 function parseArguments() {
   let noBuild = false;
+  let includeNative = false;
   let output = null;
   let oracle = null;
   for (let index = 0; index < process.argv.length - 2; index += 1) {
@@ -70,6 +111,9 @@ function parseArguments() {
     if (argument === "--no-build") {
       if (noBuild) throw new Error("--no-buildは1回だけ指定してください");
       noBuild = true;
+    } else if (argument === "--include-native") {
+      if (includeNative) throw new Error("--include-nativeは1回だけ指定してください");
+      includeNative = true;
     } else if (argument === "--output") {
       if (output !== null) throw new Error("--outputは1回だけ指定してください");
       output = process.argv[++index + 2] ?? null;
@@ -79,10 +123,10 @@ function parseArguments() {
       oracle = process.argv[++index + 2] ?? null;
       if (oracle === null || !isAbsolute(oracle)) throw new Error("--oracleには絶対パスを指定してください");
     } else {
-      throw new Error("usage: node tools/check_dispatch_coverage.mjs [--no-build] [--output /absolute/path] [--oracle /absolute/path]");
+      throw new Error("usage: node tools/check_dispatch_coverage.mjs [--no-build] [--include-native] [--output /absolute/path] [--oracle /absolute/path]");
     }
   }
-  return { noBuild, output, oracle };
+  return { noBuild, includeNative, output, oracle };
 }
 
 async function loadSelectedFixtures() {
@@ -93,6 +137,12 @@ async function loadSelectedFixtures() {
     { file: "supplemental-plugin-cases.json", selection: (testCase) => testCase.commands?.length > 0 && testCase.expectedFailure !== true },
     { file: "native-cases.json", selection: (testCase) => testCase.id === "native-cut-commands" },
   ];
+  if (arguments_.includeNative) {
+    specifications.push({
+      file: "native-cases.json",
+      selection: (testCase) => testCase.commands?.length > 0 && testCase.expectedFailure !== true && testCase.id !== "native-cut-commands",
+    });
+  }
   const fixtures = [];
   for (const specification of specifications) {
     const path = resolve(root, "tests/oracle", specification.file);
@@ -104,7 +154,8 @@ async function loadSelectedFixtures() {
       fixtures.push({ file: specification.file, ...testCase });
     }
   }
-  if (fixtures.length !== 26) throw new Error(`dispatch coverageのfixture数が想定外です: ${fixtures.length}`);
+  const expectedFixtureCount = arguments_.includeNative ? 196 : 26;
+  if (fixtures.length !== expectedFixtureCount) throw new Error(`dispatch coverageのfixture数が想定外です: ${fixtures.length}`);
   return fixtures;
 }
 
@@ -544,7 +595,9 @@ function createReport({ fixtureReports, sites, unresolvedSites, oracle }) {
       catalogEntries: catalog.commands.length,
       nativeEntries: nativeCommands.length,
       nativeUniqueNames: nativeNames.size,
-      fixtureSelection: "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus native-cut-commands, excluding explicit AOT gaps",
+      fixtureSelection: arguments_.includeNative
+        ? "the default command-bearing selection plus all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps"
+        : "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus native-cut-commands, excluding explicit AOT gaps",
       fixtureCount: fixtureReports.length,
       excludedFixtures: [...excludedFixtures].map(([key, reason]) => ({ key, reason })),
       commandAssociationIsNotExecutionEvidence: true,
