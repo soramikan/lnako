@@ -22,6 +22,11 @@ pub const ByteStorage = struct {
     allocator: std.mem.Allocator,
     bytes: []u8,
     ref_count: usize = 1,
+    /// `Buffer.prototype.buffer` and `Uint8Array.prototype.buffer` return the
+    /// same ArrayBuffer object for every view of one backing storage.  Keep a
+    /// single GC-visible value here instead of allocating a fresh wrapper on
+    /// every property read.
+    backing: Value = .undefined,
 
     pub fn retain(self: *ByteStorage) void {
         std.debug.assert(self.ref_count > 0);
@@ -832,6 +837,7 @@ pub const Runtime = struct {
     /// narrowed byte slice.
     pub fn createByteBufferBackingBuffer(self: *Runtime, buffer: *ByteBuffer) !Value {
         const storage = buffer.storage;
+        if (storage.backing != .undefined) return storage.backing;
         storage.retain();
         errdefer storage.release();
         try self.beforeAllocation();
@@ -844,7 +850,8 @@ pub const Runtime = struct {
             .storage = storage,
         };
         try self.objects.append(self.allocator(), .{ .bytes = result });
-        return .{ .bytes = result };
+        storage.backing = .{ .bytes = result };
+        return storage.backing;
     }
 
     pub fn bigIntLiteral(self: *Runtime, source: []const u8) !Value {
@@ -1272,6 +1279,7 @@ pub const Runtime = struct {
             },
             .bytes => |bytes| {
                 try self.markValue(bytes.prototype);
+                try self.markValue(bytes.storage.backing);
                 for (bytes.properties.items) |property| {
                     try self.markValue(.{ .string = property.key });
                     try self.markValue(property.value);

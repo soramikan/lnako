@@ -3642,6 +3642,18 @@ test "表行propertyはbyte bufferのprototype属性を解決する" {
     try std.testing.expectEqual(ByteKind.array_buffer, buffer_backing.bytes.kind);
     try std.testing.expectEqual(@as(usize, 2), buffer_backing.bytes.bytes.len);
     try std.testing.expectEqual(@as(f64, 2), (try indexed(&runtime, buffer_backing, byte_length_key)).number);
+    var same_buffer_backing = try indexed(&runtime, buffer, buffer_key);
+    try roots.protect(&same_buffer_backing);
+    try std.testing.expect(same_buffer_backing.bytes == buffer_backing.bytes);
+    var buffer_view = try runtime.createByteBufferView(buffer.bytes, 0, buffer.bytes.bytes.len);
+    try roots.protect(&buffer_view);
+    var view_backing = try indexed(&runtime, buffer_view, buffer_key);
+    try roots.protect(&view_backing);
+    try std.testing.expect(view_backing.bytes == buffer_backing.bytes);
+    buffer_view.bytes.set(0, 9);
+    try std.testing.expectEqual(@as(f64, 9), buffer.bytes.get(0).number);
+    buffer.bytes.set(0, 8);
+    try std.testing.expectEqual(@as(f64, 8), buffer_view.bytes.get(0).number);
     var slice = try indexed(&runtime, buffer, slice_key);
     try roots.protect(&slice);
     var slice_name = try indexed(&runtime, slice, name_key);
@@ -3665,6 +3677,9 @@ test "表行propertyはbyte bufferのprototype属性を解決する" {
     try std.testing.expect(uint8_backing == .bytes);
     try std.testing.expectEqual(ByteKind.array_buffer, uint8_backing.bytes.kind);
     try std.testing.expectEqual(@as(usize, 2), uint8_backing.bytes.bytes.len);
+    var same_uint8_backing = try indexed(&runtime, uint8, buffer_key);
+    try roots.protect(&same_uint8_backing);
+    try std.testing.expect(same_uint8_backing.bytes == uint8_backing.bytes);
     var subarray = try indexed(&runtime, uint8, subarray_key);
     try roots.protect(&subarray);
     var subarray_name = try indexed(&runtime, subarray, name_key);
