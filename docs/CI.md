@@ -242,6 +242,18 @@ pushごとに完了済みrunをスナップショット確認する。
 次回pushでは、この修正後のWindows `aot`とdispatch coverageを完了待ちせずに開始し、後続の区切りで完了済み
 runだけを確認する。
 
+その後の[run 33336662774](https://github.com/soramikan/lnako/actions/runs/33336662774)（`525e33c`）では、改行正規化後も
+Windows `aot`が同じ4 fixtureで失敗した。`native-csv-commands`と`native-node-stdin-lines`では、AOTがNako文字列内の
+`CRLF`をWindows CRTの`putchar`へ1バイトずつ渡していたため、テキストモードの`LF`変換が重なり`CRCRLF`となっていた。
+`native-system-debug-display`と`native-system-hatena-default`では、公式処理系とInterpreterがWindowsドライブ文字の
+コロン前（`D`）を表示する一方、AOTだけが一時fixtureのフルパスを表示していた。いずれもAOT標準出力の実装差であり、
+比較側の改行正規化を広げて隠すべき差ではない。
+
+AOT runtime初期化時にWindows stdoutをbinary mode（`_setmode(1, 0x8000)`）へ切り替え、埋め込み`CRLF`をそのまま
+出力するようにした。またAOTのデバッグ表示でもInterpreterと同じドライブ文字境界を適用した。macOSの767単体テストと
+`x86_64-windows-msvc` cross compileは通過している。次回pushのWindows `aot`とdispatch coverageで実行結果を再確認するが、
+CIの完了は待たずに次の実装を進める。
+
 ## Windows AOTのQuickJSビルド分離
 
 Windows AOTの追加短縮を判断するため、分離前の[run 32932078383](https://github.com/soramikan/lnako/actions/runs/32932078383)

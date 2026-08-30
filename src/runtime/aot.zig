@@ -23,6 +23,22 @@ const dynamic_value = @import("value.zig");
 extern "c" fn fflush(stream: ?*std.c.FILE) c_int;
 extern "c" fn time(timer: ?*i64) i64;
 
+const AotWindowsStdout = if (builtin.os.tag == .windows) struct {
+    extern "c" fn _setmode(file_descriptor: c_int, mode: c_int) c_int;
+
+    const stdout_file_descriptor: c_int = 1;
+    const binary_mode: c_int = 0x8000;
+
+    fn configure() void {
+        // AOT output can contain CRLF bytes originating in a Nako string.
+        // The Windows CRT text mode would translate the LF again and emit
+        // CRCRLF, so keep stdout byte-oriented like Node's stream output.
+        _ = _setmode(stdout_file_descriptor, binary_mode);
+    }
+} else struct {
+    fn configure() void {}
+};
+
 pub const Tag = aot_abi.Tag;
 const AotPrimitiveHint = enum { string, number };
 
@@ -5499,6 +5515,12 @@ test "AOTデバッグ表示はオブジェクトをJSON化して位置付き表�
     try expectUtf16String(&active_runtime.?, roots[1], "main.nako3(4): {\"a\":1}\n");
 }
 
+test "AOTデバッグ表示はWindowsのドライブ付きソースpathをドライブ名へ正規化する" {
+    try std.testing.expectEqualStrings("D", normalizeDebugSourcePath("D:\\tmp\\fixture.nako3", true));
+    try std.testing.expectEqualStrings("/tmp/fixture.nako3", normalizeDebugSourcePath("/tmp/fixture.nako3", false));
+    try std.testing.expectEqualStrings("relative.nako3", normalizeDebugSourcePath("relative.nako3", true));
+}
+
 test "AOTハテナ関数実行は既定のデバッグ表示として位置と値を保持する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -6359,6 +6381,7 @@ fn pollAotInterrupt(runtime: *Runtime) !void {
 
 pub export fn lnako_aot_runtime_init() callconv(.c) c_int {
     aot_interrupt_requested.store(false, .release);
+    AotWindowsStdout.configure();
     if (active_runtime == null) {
         var runtime: Runtime = .{ .allocator = std.heap.c_allocator, .random_state = initialRandomState() };
         runtime.process_io = std.Io.Threaded.init(std.heap.c_allocator, .{ .environ = aotProcessEnvironment() });
@@ -6802,10 +6825,18 @@ fn debugDisplayBuiltin(runtime: *Runtime, value: Value, line: u64, source_path: 
     }
     const text = try valueUtf8LossyAlloc(runtime, printable);
     defer runtime.allocator.free(text);
-    const message = try std.fmt.allocPrint(runtime.allocator, "{s}({d}): {s}", .{ source_path, line, text });
+    const normalized_source_path = normalizeDebugSourcePath(source_path, builtin.os.tag == .windows);
+    const message = try std.fmt.allocPrint(runtime.allocator, "{s}({d}): {s}", .{ normalized_source_path, line, text });
     defer runtime.allocator.free(message);
     roots[2] = try runtimeUtf8String(runtime, message);
     try displayValue(runtime, roots[2], true, display_log);
+}
+
+fn normalizeDebugSourcePath(source_path: []const u8, windows: bool) []const u8 {
+    if (windows) {
+        if (std.mem.indexOfScalar(u8, source_path, ':')) |separator| return source_path[0..separator];
+    }
+    return source_path;
 }
 
 /// AOT版`デバッグ表示`は、LLVMが保持しているソース位置をABIで受け取り、
