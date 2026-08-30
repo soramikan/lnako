@@ -178,7 +178,7 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
   Nodeの`AJAXオプション`初期空文字と、HTTPサーバープラグイン未取り込み時の`HTTPメソッド`・`GETデータ`・
   `POSTデータ`・`FILESデータ`の`null`も同じ表で初期化する。CLI Interpreterは`plugin_httpserver`の明示取り込み時だけ
   その4値をサーバー状態へ登録し、通常の`lnako run`では公式CLIと同じ未登録境界を保つ。
-  `抽出文字列`と`__DEBUGブレイクポイント一覧`も、同じ境界で独立した空配列として生成する。`元号データ`は公式と同じ元号名・改元日を持つ5件の配列・辞書として生成し、同一Runtime内のグローバル値をGCルートとして保持する。caniuseの`ブラウザ名変換表`は、公式生成データをUTF-16キー・値の挿入順辞書として構築し、同一Runtime内のグローバル値をGCルートとして保持する。argv由来のNode定数は生成`main`の`argc`/`argv`を専用ABIへ渡し、参照されたグローバルをroot登録後に配列・文字列として初期化する。`デスクトップ`、`マイドキュメント`、`テンポラリフォルダ`の暗黙グローバルもOS環境値から専用ABIで初期化する。`母艦パス`と`母艦パス取得`は生成mainがソースパスを専用ABIへ渡し、実行時CWD基準で絶対化した親ディレクトリを共有する。WindowsのWTF-8 argv変換は`TODO: aot-node-windows-wtf8-argv`として別境界に残す。
+  `抽出文字列`と`__DEBUGブレイクポイント一覧`も、同じ境界で独立した空配列として生成する。`元号データ`は公式と同じ元号名・改元日を持つ5件の配列・辞書として生成し、同一Runtime内のグローバル値をGCルートとして保持する。caniuseの`ブラウザ名変換表`は、公式生成データをUTF-16キー・値の挿入順辞書として構築し、同一Runtime内のグローバル値をGCルートとして保持する。argv由来のNode定数はPOSIXでは生成`main`、Windowsでは生成`wmain`の`argc`/`argv`を専用ABIへ渡し、参照されたグローバルをroot登録後に配列・文字列として初期化する。Windowsのwide argvはUTF-16 code unitを直接ランタイム文字列へ保持し、WTF-16のunpaired surrogateも失わない。`デスクトップ`、`マイドキュメント`、`テンポラリフォルダ`の暗黙グローバルもOS環境値から専用ABIで初期化する。`母艦パス`と`母艦パス取得`は生成mainがソースパスを専用ABIへ渡し、実行時CWD基準で絶対化した親ディレクトリを共有する。Windowsの公式Nodeとの非ASCII argv差分は`TODO: aot-node-windows-wtf8-argv`として外部実行証拠の境界に残す。
 - `backend/llvm/compiler.zig` はIR解析、最適化前後のモジュール検証、PassBuilder、TargetMachineを順に
   実行する。`--emit llvm-ir|obj|exe` は同一の検証済みモジュールを入力とする。
 - 実行ファイル生成では一時オブジェクトを厳密なパスへ出力し、Clang 22.1.8へLLD 22.1.8の絶対パスを

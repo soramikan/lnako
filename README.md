@@ -44,7 +44,7 @@ mark-and-sweep GCも値層へ統合しています。Node 24との差分テス�
 Promiseは明示的な状態機械とFIFOマイクロタスクキューで実装し、Interpreterと純LLVM AOTで`動時`、成功・失敗・処理・終了時の連鎖、
 `束`、`AWAIT実行`による完了待機を扱います。Interpreterのタイマーはホスト抽象化された時計を使い、CLIでは実時間、テストでは待たずに進む決定的時計で
 `秒待`、単発・周期タイマー、個別・一括停止を検証します。純LLVM AOTでも`秒待`・`秒待機`・`秒逐次待機`の同期待機に加え、
-コールバックを伴う単発・周期タイマー、個別停止・一括停止を実行し、生成main終了前に保留イベントをドレインします。現在の標準命令の実装状況は
+コールバックを伴う単発・周期タイマー、個別停止・一括停止を実行し、生成main（Windowsではwmain）終了前に保留イベントをドレインします。Windows AOTのwmainはwide argvをUTF-16 code unitのままNode定数へ渡し、WTF-16のunpaired surrogateも保持します。現在の標準命令の実装状況は
 `compat/v3.7.24/summary.json` と `implemented.json` に記録しています。
 
 `plugin_system` のシステム定数、四則・論理・ビット演算、型変換、文字列・文字種・幅・かな変換、JSON、

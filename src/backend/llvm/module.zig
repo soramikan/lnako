@@ -1,4 +1,5 @@
 const std = @import("std");
+const target_builtin = @import("builtin");
 const ir = @import("../../ir/nako_ir.zig");
 const ast = @import("../../frontend/ast.zig");
 const aot_abi = @import("../../runtime/aot_abi.zig");
@@ -338,6 +339,7 @@ const Emitter = struct {
                 "%lnako.RootFrame = type { ptr, ptr, i64 }\n\n" ++
                 "declare i32 @lnako_aot_runtime_init()\n" ++
                 "declare void @lnako_aot_node_constants_init(ptr, ptr, ptr, i32, ptr)\n" ++
+                "declare void @lnako_aot_node_constants_init_wide(ptr, ptr, ptr, i32, ptr)\n" ++
                 "declare void @lnako_aot_node_directory_constants_init(ptr, ptr, ptr)\n" ++
                 "declare void @lnako_aot_node_mother_path_init(ptr, ptr, i64)\n" ++
                 "declare void @lnako_aot_runtime_deinit()\n" ++
@@ -1832,7 +1834,8 @@ const Emitter = struct {
 
     fn writeMain(self: *Emitter) !void {
         const scope = 4 + self.program.functions.len;
-        try self.output.writer.print("define i32 @main(i32 %argc, ptr %argv) !dbg !{d} {{\nentry:\n", .{scope});
+        const entry_name = if (target_builtin.os.tag == .windows) "wmain" else "main";
+        try self.output.writer.print("define i32 @{s}(i32 %argc, ptr %argv) !dbg !{d} {{\nentry:\n", .{ entry_name, scope });
         try self.output.writer.writeAll("  %runtime.status = call i32 @lnako_aot_runtime_init()\n");
         for (self.program.native_plugin_paths, 0..) |path, index| {
             try self.output.writer.print("  call void @lnako_aot_native_plugin_register(ptr @lnako.native.plugin.path.{d}, i64 {d})\n", .{ index, path.len });
@@ -1861,7 +1864,11 @@ const Emitter = struct {
             try self.output.writer.print("  call void @lnako_aot_era_data_new(ptr @lnako.global.{d})\n", .{global_index});
         }
         if (self.globalIndex("コマンドライン") != null or self.globalIndex("ナデシコランタイム") != null or self.globalIndex("ナデシコランタイムパス") != null) {
-            try self.output.writer.writeAll("  call void @lnako_aot_node_constants_init(ptr ");
+            const constants_initializer = if (target_builtin.os.tag == .windows)
+                "lnako_aot_node_constants_init_wide"
+            else
+                "lnako_aot_node_constants_init";
+            try self.output.writer.print("  call void @{s}(ptr ", .{constants_initializer});
             if (self.globalIndex("コマンドライン")) |global_index| try self.output.writer.print("@lnako.global.{d}", .{global_index}) else try self.output.writer.writeAll("null");
             try self.output.writer.writeAll(", ptr ");
             if (self.globalIndex("ナデシコランタイム")) |global_index| try self.output.writer.print("@lnako.global.{d}", .{global_index}) else try self.output.writer.writeAll("null");
@@ -2436,6 +2443,7 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_http_call(ptr, ptr, ptr, ptr, ptr, i64, i16, i64)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_node_http_call(ptr ") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_constants_init(ptr, ptr, ptr, i32, ptr)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_constants_init_wide(ptr, ptr, ptr, i32, ptr)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_node_constants_init(ptr ") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_directory_constants_init(ptr, ptr, ptr)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_mother_path_init(ptr, ptr, i64)\n") != null);

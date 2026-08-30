@@ -222,8 +222,8 @@ zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSafe native-plugin-fixtu
 使います。正式対象のMSVC ABIはWindows CIランナー上でビルドと実ロードの両方を検証します。
 
 fixtureの実ロード検査は`lnako run`に加えてLLVM AOT `-O0` / `-O1` / `-O2` / `-O3`を生成・実行します。
-AOTは生成mainから解決済みのplugin pathを登録し、通常モードのJavaScript runtimeを使わず、埋め込みZig
-Interpreterをhost callbackのadapterとして利用します。
+AOTは生成main（Windowsではwmain）から解決済みのplugin pathを登録し、通常モードのJavaScript runtimeを使わず、埋め込みZig
+Interpreterをhost callbackのadapterとして利用します。Windowsのwmainはwide argvをUTF-16のままランタイムへ渡します。
 
 所有権、スレッド制約、非同期完了、セキュリティ境界は
 [`docs/NATIVE_PLUGIN_ABI.md`](NATIVE_PLUGIN_ABI.md)を参照してください。

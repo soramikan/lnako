@@ -6454,6 +6454,25 @@ fn aotProcessArgument(argv: ?*const anyopaque, index: usize) []const u8 {
     return std.mem.span(value);
 }
 
+fn aotProcessWideArgument(argv: ?*const anyopaque, index: usize) []const u16 {
+    const raw = argv orelse return &.{};
+    const values: [*:null]const ?[*:0]const u16 = @ptrCast(@alignCast(raw));
+    const value = values[index] orelse return &.{};
+    return std.mem.span(value);
+}
+
+fn nodeBasenameWideFor(path: []const u16, windows: bool) []const u16 {
+    var end = path.len;
+    while (end > 0 and nodePathSeparatorWide(path[end - 1], windows)) end -= 1;
+    if (end == 0) return &.{};
+    const drive_path = windows and path.len >= 2 and isWindowsDriveLetterWide(path[0]) and path[1] == ':';
+    if (drive_path and end == 2 and path.len > end and nodePathSeparatorWide(path[2], true)) return &.{};
+    var start = end;
+    while (start > 0 and !nodePathSeparatorWide(path[start - 1], windows)) start -= 1;
+    if (drive_path and start < 2) start = 2;
+    return path[start..end];
+}
+
 /// Initializes Node-host constants whose values depend on the generated
 /// executable's process arguments.  The generated main has already rooted
 /// every referenced global before this function is called, so newly allocated
@@ -6484,6 +6503,36 @@ pub export fn lnako_aot_node_constants_init(
     const first = aotProcessArgument(argv, 0);
     if (runtime_path) |out| out.* = runtimeUtf8StringLossy(runtime, first) catch |failure| runtimeFailure(failure);
     if (runtime_name) |out| out.* = runtimeUtf8StringLossy(runtime, nodeBasename(first)) catch |failure| runtimeFailure(failure);
+}
+
+/// Windows' `wmain` receives UTF-16 command-line arguments.  Keep those code
+/// units intact so WTF-16 input, including unpaired surrogates, follows the
+/// same value representation as the rest of the runtime.
+pub export fn lnako_aot_node_constants_init_wide(
+    command_line: ?*Value,
+    runtime_name: ?*Value,
+    runtime_path: ?*Value,
+    argc: i32,
+    argv: ?*const anyopaque,
+) callconv(.c) void {
+    const runtime = if (active_runtime) |*active| active else return;
+    const count: usize = if (argc > 0) @intCast(argc) else 0;
+
+    if (command_line) |out| {
+        out.* = runtime.createArray(&.{}) catch |failure| runtimeFailure(failure);
+        var frame = RootFrame{};
+        runtime.pushRoots(&frame, @ptrCast(out), 1);
+        defer runtime.popRoots(&frame);
+        var index: usize = 0;
+        while (index < count) : (index += 1) {
+            const value = runtime.createString(aotProcessWideArgument(argv, index)) catch |failure| runtimeFailure(failure);
+            out.object().?.payload.array.append(runtime.allocator, value) catch |failure| runtimeFailure(failure);
+        }
+    }
+
+    const first = aotProcessWideArgument(argv, 0);
+    if (runtime_path) |out| out.* = runtime.createString(first) catch |failure| runtimeFailure(failure);
+    if (runtime_name) |out| out.* = runtime.createString(nodeBasenameWideFor(first, true)) catch |failure| runtimeFailure(failure);
 }
 
 /// Initializes Node directory values that are exposed as globals when a
@@ -12864,6 +12913,14 @@ fn nodePathSeparator(byte: u8, windows: bool) bool {
     return byte == std.fs.path.sep or (windows and (byte == '/' or byte == '\\'));
 }
 
+fn nodePathSeparatorWide(unit: u16, windows: bool) bool {
+    return unit == @as(u16, std.fs.path.sep) or (windows and (unit == '/' or unit == '\\'));
+}
+
+fn isWindowsDriveLetterWide(unit: u16) bool {
+    return unit >= 'A' and unit <= 'Z' or unit >= 'a' and unit <= 'z';
+}
+
 fn aotOsName() []const u8 {
     return switch (builtin.os.tag) {
         .macos => "darwin",
@@ -17945,6 +18002,7 @@ test "LLVM側の値ABIと同じ16バイト配置を保つ" {
 
 test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (?*Value, ?*Value, ?*Value, i32, ?*const anyopaque) callconv(.c) void, @TypeOf(&lnako_aot_node_constants_init));
+    try std.testing.expectEqual(*const fn (?*Value, ?*Value, ?*Value, i32, ?*const anyopaque) callconv(.c) void, @TypeOf(&lnako_aot_node_constants_init_wide));
     try std.testing.expectEqual(*const fn (?*Value, ?*Value, ?*Value) callconv(.c) void, @TypeOf(&lnako_aot_node_directory_constants_init));
     try std.testing.expectEqual(*const fn (?*Value, ?[*]const u8, u64) callconv(.c) void, @TypeOf(&lnako_aot_node_mother_path_init));
     try std.testing.expectEqual(*const fn (*Value, *anyopaque, ?[*]const Value, usize) callconv(.c) void, FunctionCallback);
@@ -18017,6 +18075,42 @@ test "AOTコマンドライン定数は生成mainのargvから構築する" {
     try expectUtf16String(&active_runtime.?, arguments[2], second_argument);
     try expectUtf16String(&active_runtime.?, roots[1], "sample");
     try expectUtf16String(&active_runtime.?, roots[2], executable);
+}
+
+test "AOT Windows wide argvはUTF-16引数とWTF-16実行ファイル名を保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    var executable = [_:0]u16{ 'C', ':', '\\', 0x65e5, 0x672c, '\\', 0xd800 };
+    var first_argument = [_:0]u16{ 0xd83d, 0xde00 };
+    var argv = [_]?[*:0]const u16{ &executable, &first_argument, null };
+    lnako_aot_node_constants_init_wide(&roots[0], &roots[1], &roots[2], 2, @ptrCast(&argv));
+
+    try std.testing.expectEqual(Tag.array, @as(Tag, @enumFromInt(roots[0].tag)));
+    const arguments = roots[0].object().?.payload.array.items;
+    try std.testing.expectEqual(@as(usize, 2), arguments.len);
+    const executable_units = try valueUtf16Alloc(&active_runtime.?, arguments[0]);
+    defer active_runtime.?.allocator.free(executable_units);
+    try std.testing.expectEqualSlices(u16, executable[0..], executable_units);
+    const first_units = try valueUtf16Alloc(&active_runtime.?, arguments[1]);
+    defer active_runtime.?.allocator.free(first_units);
+    try std.testing.expectEqualSlices(u16, first_argument[0..], first_units);
+    const name_units = try valueUtf16Alloc(&active_runtime.?, roots[1]);
+    defer active_runtime.?.allocator.free(name_units);
+    try std.testing.expectEqualSlices(u16, &.{0xd800}, name_units);
+    const path_units = try valueUtf16Alloc(&active_runtime.?, roots[2]);
+    defer active_runtime.?.allocator.free(path_units);
+    try std.testing.expectEqualSlices(u16, executable[0..], path_units);
 }
 
 test "AOT dispatchのfailure epochは過去のpending exceptionを再利用しない" {
@@ -19452,6 +19546,13 @@ test "AOT Node互換のWindowsパスはdrive-relativeとUNC rootを保持する"
     try std.testing.expectEqualStrings("\\\\server\\share\\", nodeDirnameFor("\\\\server\\share\\file", true));
     try std.testing.expectEqualStrings("share", nodeBasenameFor("\\\\server\\share\\", true));
     try std.testing.expectEqualStrings("\\\\server\\share\\", nodeDirnameFor("\\\\server\\share\\", true));
+}
+
+test "AOT Windows wide argv basenameはUTF-16 code unitを保持する" {
+    const path = &.{ 'C', ':', '\\', 0xd83d, 0xde00, '\\', 0xd800 };
+    try std.testing.expectEqualSlices(u16, &.{0xd800}, nodeBasenameWideFor(path, true));
+    try std.testing.expectEqualSlices(u16, &.{}, nodeBasenameWideFor(&.{ 'C', ':', '\\' }, true));
+    try std.testing.expectEqualSlices(u16, &.{ 'f', 'o', 'o' }, nodeBasenameWideFor(&.{ 'C', ':', 'f', 'o', 'o' }, true));
 }
 
 test "AOT Nodeパス命令は非文字列入力をNodeの型診断へ変換する" {
