@@ -784,7 +784,7 @@
   {
     "id": "native-system-regexp-backtracking-boundaries",
     "commands": ["正規表現マッチ", "正規表現抽出", "JSON変換"],
-    "source": "JSON変換(正規表現マッチ(\"ab\",『/(a|ab)*/』))を表示\nJSON変換(正規表現マッチ(\"ab\",『/(ab|a)*/』))を表示\nJSON変換(正規表現マッチ(\"ab\",『/(a|ab)*b/』))を表示\nJSON変換(正規表現マッチ(\"abc\",『/(a|ab)c/』))を表示\nJSON変換(正規表現抽出(\"aaab\",『/(a+)+b/』))を表示\nJSON変換(正規表現抽出(\"abc\",『/(?<=([ab]+))c/』))を表示\n"
+    "source": "JSON変換(正規表現マッチ(\"ab\",『/(a|ab)*/』))を表示\nJSON変換(正規表現マッチ(\"ab\",『/(ab|a)*/』))を表示\nJSON変換(正規表現マッチ(\"ab\",『/(a|ab)*b/』))を表示\nJSON変換(正規表現マッチ(\"abc\",『/(a|ab)c/』))を表示\nJSON変換(正規表現抽出(\"aaab\",『/(a+)+b/』))を表示\nJSON変換(正規表現抽出(\"abc\",『/(?<=([ab]+))c/』))を表示\nJSON変換(正規表現抽出(\"aba\",『/(a(b)?)+/』))を表示\nJSON変換(正規表現抽出(\"abac\",『/(a(b)?)+c/』))を表示\nJSON変換(正規表現抽出(\"abac\",『/(a(b)*)+c/』))を表示\n"
   },
   {
     "id": "native-system-regexp-unicode-search-boundary",

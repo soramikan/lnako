@@ -49,8 +49,20 @@ const CharacterClass = struct {
     items: []const ClassItem,
     operation: ?*SetOperation = null,
 };
-const Group = struct { expression: *Expression, capture: ?usize, name: ?[]const u16 };
-const Assertion = struct { expression: *Expression, positive: bool, behind: bool };
+const Group = struct {
+    expression: *Expression,
+    capture: ?usize,
+    name: ?[]const u16,
+    capture_start: usize,
+    capture_end: usize,
+};
+const Assertion = struct {
+    expression: *Expression,
+    positive: bool,
+    behind: bool,
+    capture_start: usize,
+    capture_end: usize,
+};
 const Atom = union(enum) {
     literal: u16,
     code_point: u21,
@@ -169,6 +181,7 @@ const Parser = struct {
                 }
             } else return error.UnsupportedGroupAssertion;
         }
+        const capture_start = self.capture_count;
         var capture_index: ?usize = null;
         if (capture) {
             if (self.capture_count >= max_captures) return error.TooManyCaptures;
@@ -178,8 +191,21 @@ const Parser = struct {
         }
         const expression = try self.parseExpression();
         if (!consume(self, ')')) return error.UnclosedGroup;
-        if (assertion) |details| return .{ .assertion = .{ .expression = expression, .positive = details.positive, .behind = details.behind } };
-        return .{ .group = .{ .expression = expression, .capture = capture_index, .name = name } };
+        const capture_end = self.capture_count;
+        if (assertion) |details| return .{ .assertion = .{
+            .expression = expression,
+            .positive = details.positive,
+            .behind = details.behind,
+            .capture_start = capture_start,
+            .capture_end = capture_end,
+        } };
+        return .{ .group = .{
+            .expression = expression,
+            .capture = capture_index,
+            .name = name,
+            .capture_start = capture_start,
+            .capture_end = capture_end,
+        } };
     }
 
     fn parseClass(self: *Parser) anyerror!*CharacterClass {
@@ -741,6 +767,20 @@ fn matchSequence(allocator: std.mem.Allocator, source: []const u16, sequence: Se
     return current.toOwnedSlice(allocator);
 }
 
+fn clearCaptureRange(candidate: *Candidate, start: usize, end: usize) void {
+    const bounded_start = @min(start, max_captures);
+    const bounded_end = @min(end, max_captures);
+    if (bounded_start < bounded_end) @memset(candidate.captures[bounded_start..bounded_end], .{});
+}
+
+fn clearAtomCaptures(candidate: *Candidate, atom: Atom) void {
+    switch (atom) {
+        .group => |group| clearCaptureRange(candidate, group.capture_start, group.capture_end),
+        .assertion => |assertion| clearCaptureRange(candidate, assertion.capture_start, assertion.capture_end),
+        else => {},
+    }
+}
+
 fn expandPiece(allocator: std.mem.Allocator, source: []const u16, piece: Piece, initial: Candidate, flags: Flags) anyerror![]Candidate {
     var output: std.ArrayList(Candidate) = .empty;
     // A zero-width atom still counts as a repetition.  The previous
@@ -782,7 +822,12 @@ fn expandPieceOrdered(
             try expandPieceOrdered(allocator, source, piece, atom_match, flags, repetition + 1, limit, output);
         }
     }
-    if (repetition >= piece.minimum) try output.append(allocator, candidate);
+    var stopped = candidate;
+    // A zero-occurrence optional group does not participate in the match. If
+    // the same candidate came from an earlier repetition of an enclosing
+    // group, its old captures must not leak into this non-participating path.
+    if (repetition == 0 and piece.minimum == 0) clearAtomCaptures(&stopped, piece.atom);
+    if (repetition >= piece.minimum) try output.append(allocator, stopped);
     if (piece.lazy and can_repeat) {
         const atom_matches = try matchAtom(allocator, source, piece.atom, candidate, flags);
         for (atom_matches) |atom_match| {
@@ -866,7 +911,9 @@ fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: Atom, init
         },
         .named_backreference => return output.toOwnedSlice(allocator),
         .group => |group| {
-            const matches = try matchExpression(allocator, source, group.expression, initial, flags);
+            var group_initial = initial;
+            clearCaptureRange(&group_initial, group.capture_start, group.capture_end);
+            const matches = try matchExpression(allocator, source, group.expression, group_initial, flags);
             for (matches) |match| {
                 var candidate = match;
                 if (group.capture) |capture_index| candidate.captures[capture_index] = .{ .start = initial.position, .end = match.position, .matched = true };
@@ -874,20 +921,22 @@ fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: Atom, init
             }
         },
         .assertion => |assertion| {
+            var assertion_initial = initial;
+            clearCaptureRange(&assertion_initial, assertion.capture_start, assertion.capture_end);
             if (!assertion.behind) {
-                const assertion_matches = try matchExpression(allocator, source, assertion.expression, initial, flags);
+                const assertion_matches = try matchExpression(allocator, source, assertion.expression, assertion_initial, flags);
                 if (assertion.positive) {
                     for (assertion_matches) |match| {
                         var accepted = match;
                         accepted.position = initial.position;
                         try output.append(allocator, accepted);
                     }
-                } else if (assertion_matches.len == 0) try output.append(allocator, initial);
+                } else if (assertion_matches.len == 0) try output.append(allocator, assertion_initial);
             } else {
                 var matched = false;
                 var start: usize = 0;
                 while (start <= initial.position) {
-                    const behind_initial = Candidate{ .position = start, .captures = initial.captures };
+                    const behind_initial = Candidate{ .position = start, .captures = assertion_initial.captures };
                     const candidates = try matchExpression(allocator, source, assertion.expression, behind_initial, flags);
                     for (candidates) |candidate| if (candidate.position == initial.position) {
                         matched = true;
@@ -900,7 +949,7 @@ fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: Atom, init
                     if (start == initial.position) break;
                     start = advanceStringIndex(source, start, flags.unicode);
                 }
-                if (!assertion.positive and !matched) try output.append(allocator, initial);
+                if (!assertion.positive and !matched) try output.append(allocator, assertion_initial);
             }
         },
     }
@@ -1651,6 +1700,35 @@ test "正規表現の入れ子貪欲量指定は内側の選択を先に試す" 
     const result = (try callWithEffects(&runtime, "正規表現マッチ", &.{ source, pattern })).?;
     try std.testing.expectEqualSlices(u16, source.string.units, result.value.string.units);
     try std.testing.expectEqualSlices(u16, &.{ 'a', 'a', 'a' }, result.captures.?.array.items.items[0].string.units);
+}
+
+test "正規表現の反復captureは不参加branchを未定義へ戻す" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var source = try runtime.stringUtf8("aba");
+    try roots.protect(&source);
+    var pattern = try runtime.stringUtf8("/(a(b)?)+/");
+    try roots.protect(&pattern);
+    const result = (try callWithEffects(&runtime, "正規表現抽出", &.{ source, pattern })).?;
+    const rows = result.captures.?;
+    try std.testing.expect(rows == .array);
+    try std.testing.expectEqual(@as(usize, 1), rows.array.len());
+    const captures = rows.array.items.items[0];
+    try std.testing.expect(captures == .array);
+    try std.testing.expectEqualSlices(u16, &.{'a'}, captures.array.items.items[0].string.units);
+    try std.testing.expect(captures.array.items.items[1] == .undefined);
+
+    var second_source = try runtime.stringUtf8("abac");
+    try roots.protect(&second_source);
+    var second_pattern = try runtime.stringUtf8("/(a(b)?)+c/");
+    try roots.protect(&second_pattern);
+    const second_result = (try callWithEffects(&runtime, "正規表現抽出", &.{ second_source, second_pattern })).?;
+    const second_captures = second_result.captures.?.array.items.items[0].array;
+    try std.testing.expectEqualSlices(u16, &.{'a'}, second_captures.items.items[0].string.units);
+    try std.testing.expect(second_captures.items.items[1] == .undefined);
 }
 
 test "Unicode正規表現の探索はサロゲート対内部へ進まない" {
