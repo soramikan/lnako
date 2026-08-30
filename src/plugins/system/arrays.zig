@@ -2105,6 +2105,18 @@ fn isObjectPrototypeKey(units: []const u16) bool {
     return false;
 }
 
+const standard_property_cache_object: u8 = 1;
+const standard_property_cache_function: u8 = 2;
+const standard_property_cache_array: u8 = 3;
+const standard_property_cache_string: u8 = 4;
+const standard_property_cache_constructor: u8 = 5;
+const standard_property_cache_buffer: u8 = 6;
+const standard_property_cache_uint8_array: u8 = 7;
+const standard_property_cache_array_buffer: u8 = 8;
+const standard_property_cache_number: u8 = 9;
+const standard_property_cache_boolean: u8 = 10;
+const standard_property_cache_bigint: u8 = 11;
+
 const objectPrototypeMethodNames = [_][]const u8{
     "__defineGetter__",
     "__defineSetter__",
@@ -2118,7 +2130,7 @@ const objectPrototypeMethodNames = [_][]const u8{
     "valueOf",
 };
 
-const functionPrototypeMethodNames = [_][]const u8{ "apply", "bind", "call" };
+const functionPrototypeMethodNames = [_][]const u8{ "apply", "bind", "call", "toString" };
 
 const arrayPrototypeMethodNames = [_][]const u8{
     "at",
@@ -2151,6 +2163,8 @@ const arrayPrototypeMethodNames = [_][]const u8{
     "some",
     "sort",
     "splice",
+    "toLocaleString",
+    "toString",
     "unshift",
     "values",
     "with",
@@ -2199,12 +2213,27 @@ const stringPrototypeMethodNames = [_][]const u8{
     "toLowerCase",
     "toUpperCase",
     "toWellFormed",
+    "toString",
+    "valueOf",
     "trim",
     "trimEnd",
     "trimLeft",
     "trimRight",
     "trimStart",
 };
+
+const numberPrototypeMethodNames = [_][]const u8{
+    "toExponential",
+    "toFixed",
+    "toLocaleString",
+    "toPrecision",
+    "toString",
+    "valueOf",
+};
+
+const booleanPrototypeMethodNames = [_][]const u8{ "toString", "valueOf" };
+
+const bigintPrototypeMethodNames = [_][]const u8{ "toLocaleString", "toString", "valueOf" };
 
 const byteBufferTypedArrayMethodNames = [_][]const u8{
     "at",
@@ -2417,12 +2446,25 @@ fn bufferEnumerableFunctionName(name: []const u8) []const u8 {
     return name;
 }
 
-fn tableInheritedFunction(runtime: *Runtime, name: []const u8) !Value {
+fn tableInheritedFunctionWithCallback(
+    runtime: *Runtime,
+    cache_kind: u8,
+    cache_name: []const u8,
+    function_name: []const u8,
+    callback: value_mod.NativeCallback,
+) !Value {
+    if (runtime.cachedStandardProperty(cache_kind, cache_name)) |value| return value;
     var roots = runtime.rootFrame();
     defer roots.deinit();
-    var function_name = try runtime.stringUtf8(name);
-    try roots.protect(&function_name);
-    return runtime.createNativeFunction(function_name.string, 0, tableInheritedFunctionSentinel, &.{});
+    var name_value = try runtime.stringUtf8(function_name);
+    try roots.protect(&name_value);
+    const result = try runtime.createNativeFunction(name_value.string, 0, callback, &.{});
+    try runtime.cacheStandardProperty(cache_kind, cache_name, result);
+    return result;
+}
+
+fn tableInheritedFunction(runtime: *Runtime, cache_kind: u8, name: []const u8) !Value {
+    return tableInheritedFunctionWithCallback(runtime, cache_kind, name, name, tableInheritedFunctionSentinel);
 }
 
 fn tableInheritedFunctionSentinel(_: *Runtime, _: []const Value) !Value {
@@ -2435,14 +2477,15 @@ fn byteBufferUnboundSlice(runtime: *Runtime, _: []const Value) !Value {
 }
 
 fn tableInheritedByteBufferMethod(runtime: *Runtime, receiver: Value, name: []const u8) !Value {
+    const cache_kind: u8 = switch (receiver.bytes.kind) {
+        .buffer => standard_property_cache_buffer,
+        .uint8_array => standard_property_cache_uint8_array,
+        .array_buffer => standard_property_cache_array_buffer,
+    };
     if (receiver == .bytes and receiver.bytes.kind == .buffer and std.mem.eql(u8, name, "slice")) {
-        var roots = runtime.rootFrame();
-        defer roots.deinit();
-        var function_name = try runtime.stringUtf8(name);
-        try roots.protect(&function_name);
-        return runtime.createNativeFunction(function_name.string, 0, byteBufferUnboundSlice, &.{});
+        return tableInheritedFunctionWithCallback(runtime, cache_kind, name, name, byteBufferUnboundSlice);
     }
-    return tableInheritedFunction(runtime, name);
+    return tableInheritedFunction(runtime, cache_kind, name);
 }
 
 fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) !?Value {
@@ -2454,10 +2497,25 @@ fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) 
 
     if (asciiUnitsEqual(units, "__proto__")) {
         return switch (source) {
-            .dictionary => @as(?Value, try runtime.createDictionary()),
-            .array => @as(?Value, try runtime.createArray()),
-            .string => @as(?Value, try runtime.stringCodeUnits(&.{})),
-            .function => @as(?Value, try tableInheritedFunction(runtime, "")),
+            .dictionary => blk: {
+                if (runtime.cachedStandardProperty(standard_property_cache_object, "__proto__")) |value| break :blk @as(?Value, value);
+                const value = try runtime.createDictionary();
+                try runtime.cacheStandardProperty(standard_property_cache_object, "__proto__", value);
+                break :blk @as(?Value, value);
+            },
+            .array => blk: {
+                if (runtime.cachedStandardProperty(standard_property_cache_array, "__proto__")) |value| break :blk @as(?Value, value);
+                const value = try runtime.createArray();
+                try runtime.cacheStandardProperty(standard_property_cache_array, "__proto__", value);
+                break :blk @as(?Value, value);
+            },
+            .string => blk: {
+                if (runtime.cachedStandardProperty(standard_property_cache_string, "__proto__")) |value| break :blk @as(?Value, value);
+                const value = try runtime.stringCodeUnits(&.{});
+                try runtime.cacheStandardProperty(standard_property_cache_string, "__proto__", value);
+                break :blk @as(?Value, value);
+            },
+            .function => @as(?Value, try tableInheritedFunctionWithCallback(runtime, standard_property_cache_function, "__proto__", "", tableInheritedFunctionSentinel)),
             else => null,
         };
     }
@@ -2484,7 +2542,7 @@ fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) 
         },
         else => null,
     };
-    if (constructor_name) |name| if (asciiUnitsEqual(units, "constructor")) return @as(?Value, try tableInheritedFunction(runtime, name));
+    if (constructor_name) |name| if (asciiUnitsEqual(units, "constructor")) return @as(?Value, try tableInheritedFunction(runtime, standard_property_cache_constructor, name));
 
     if (source == .bytes) {
         const buffer = source.bytes;
@@ -2515,7 +2573,7 @@ fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) 
                 return @as(?Value, .{ .number = @floatFromInt(offset) });
             }
             if (buffer.kind == .buffer and asciiUnitsEqual(units, "toLocaleString")) {
-                return @as(?Value, try tableInheritedFunction(runtime, "toString"));
+                return @as(?Value, try tableInheritedByteBufferMethod(runtime, source, "toString"));
             }
             if (inheritedMethodName(units, &byteBufferTypedArrayMethodNames)) |name| return @as(?Value, try tableInheritedByteBufferMethod(runtime, source, name));
             if (buffer.kind == .buffer) {
@@ -2528,18 +2586,27 @@ fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) 
         }
     }
 
-    if (inheritedMethodName(units, &objectPrototypeMethodNames)) |name| {
-        if (source == .dictionary or source == .array or source == .string or source == .function or
-            source == .number or source == .boolean or source == .bigint or source == .bytes) return @as(?Value, try tableInheritedFunction(runtime, name));
-    }
-    if (source == .function) {
-        if (inheritedMethodName(units, &functionPrototypeMethodNames)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
-    }
     if (source == .array) {
-        if (inheritedMethodName(units, &arrayPrototypeMethodNames)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
+        if (inheritedMethodName(units, &arrayPrototypeMethodNames)) |name| return @as(?Value, try tableInheritedFunction(runtime, standard_property_cache_array, name));
     }
     if (source == .string) {
-        if (inheritedMethodName(units, &stringPrototypeMethodNames)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
+        if (inheritedMethodName(units, &stringPrototypeMethodNames)) |name| return @as(?Value, try tableInheritedFunction(runtime, standard_property_cache_string, name));
+    }
+    if (source == .function) {
+        if (inheritedMethodName(units, &functionPrototypeMethodNames)) |name| return @as(?Value, try tableInheritedFunction(runtime, standard_property_cache_function, name));
+    }
+    if (source == .number) {
+        if (inheritedMethodName(units, &numberPrototypeMethodNames)) |name| return @as(?Value, try tableInheritedFunction(runtime, standard_property_cache_number, name));
+    }
+    if (source == .boolean) {
+        if (inheritedMethodName(units, &booleanPrototypeMethodNames)) |name| return @as(?Value, try tableInheritedFunction(runtime, standard_property_cache_boolean, name));
+    }
+    if (source == .bigint) {
+        if (inheritedMethodName(units, &bigintPrototypeMethodNames)) |name| return @as(?Value, try tableInheritedFunction(runtime, standard_property_cache_bigint, name));
+    }
+    if (inheritedMethodName(units, &objectPrototypeMethodNames)) |name| {
+        if (source == .dictionary or source == .array or source == .string or source == .function or
+            source == .number or source == .boolean or source == .bigint or source == .bytes) return @as(?Value, try tableInheritedFunction(runtime, standard_property_cache_object, name));
     }
     return null;
 }
@@ -2663,6 +2730,36 @@ test "参照は辞書と配列の標準prototype propertyを解決する" {
     var alias_method = (try call(&runtime, "配列参照", &.{ array, to_string_key }, null)).?;
     try roots.protect(&alias_method);
     try std.testing.expect(alias_method == .function);
+
+    const dictionary_method_again = try reference(&runtime, dictionary, to_string_key);
+    try std.testing.expect(dictionary_method_again == .function);
+    try std.testing.expect(dictionary_method_again.function == dictionary_method.function);
+    const array_method_again = try reference(&runtime, array, map_key);
+    try std.testing.expect(array_method_again == .function);
+    try std.testing.expect(array_method_again.function == array_method.function);
+    const array_to_string = try reference(&runtime, array, to_string_key);
+    try std.testing.expect(array_to_string == .function);
+    try std.testing.expect(array_to_string.function != dictionary_method.function);
+
+    var has_own_key = try runtime.stringUtf8("hasOwnProperty");
+    try roots.protect(&has_own_key);
+    const dictionary_has_own = try reference(&runtime, dictionary, has_own_key);
+    const array_has_own = try reference(&runtime, array, has_own_key);
+    try std.testing.expect(dictionary_has_own == .function);
+    try std.testing.expect(array_has_own == .function);
+    try std.testing.expect(dictionary_has_own.function == array_has_own.function);
+
+    const dictionary_constructor_again = try reference(&runtime, dictionary, constructor_key);
+    const array_constructor = try reference(&runtime, array, constructor_key);
+    try std.testing.expect(dictionary_constructor_again.function == dictionary_constructor.function);
+    try std.testing.expect(array_constructor.function != dictionary_constructor.function);
+
+    const dictionary_proto_again = try reference(&runtime, dictionary, proto_key);
+    const array_proto = try reference(&runtime, array, proto_key);
+    try std.testing.expect(dictionary_proto_again.dictionary == dictionary_proto.dictionary);
+    try std.testing.expect(!Value.strictEqual(array_proto, dictionary_proto));
+    const array_proto_again = try reference(&runtime, array, proto_key);
+    try std.testing.expect(array_proto_again.array == array_proto.array);
 
     try dictionary.dictionary.set(to_string_key.string, .{ .number = 7 });
     var own_value = try reference(&runtime, dictionary, to_string_key);

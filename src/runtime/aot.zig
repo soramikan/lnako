@@ -680,6 +680,15 @@ const NamespaceFrame = struct {
     plugin_name: Value,
 };
 
+/// Standard prototype values are singletons within one generated runtime.
+/// Keep lazily synthesized property values alive and reuse them on subsequent
+/// reads so AOT identity comparisons match the JavaScript prototype chain.
+const StandardPropertyCacheEntry = struct {
+    kind: u8,
+    name: []u8,
+    value: Value,
+};
+
 const Runtime = struct {
     allocator: std.mem.Allocator,
     objects: ?*Object = null,
@@ -742,6 +751,7 @@ const Runtime = struct {
     dynamic_state: ?*DynamicInterpreterState = null,
     dynamic_promise_bridges: std.ArrayList(*DynamicPromiseBridge) = .empty,
     dynamic_function_bridges: std.ArrayList(*AotFunctionBridge) = .empty,
+    standard_property_cache: std.ArrayList(StandardPropertyCacheEntry) = .empty,
 
     fn deinit(self: *Runtime) void {
         self.dispatch_trace.deinit();
@@ -771,6 +781,8 @@ const Runtime = struct {
         self.dynamic_promise_bridges.deinit(self.allocator);
         for (self.dynamic_function_bridges.items) |bridge| self.allocator.destroy(bridge);
         self.dynamic_function_bridges.deinit(self.allocator);
+        for (self.standard_property_cache.items) |entry| self.allocator.free(entry.name);
+        self.standard_property_cache.deinit(self.allocator);
         for (self.native_plugin_paths.items) |path| self.allocator.free(path);
         self.native_plugin_paths.deinit(self.allocator);
         for (self.dynamic_globals.items) |entry| self.allocator.free(entry.name);
@@ -794,6 +806,20 @@ const Runtime = struct {
         self.named_functions.deinit(self.allocator);
         self.stringifying_arrays.deinit(self.allocator);
         self.* = undefined;
+    }
+
+    fn cachedStandardProperty(self: *Runtime, kind: u8, name: []const u8) ?Value {
+        for (self.standard_property_cache.items) |entry| {
+            if (entry.kind == kind and std.mem.eql(u8, entry.name, name)) return entry.value;
+        }
+        return null;
+    }
+
+    fn cacheStandardProperty(self: *Runtime, kind: u8, name: []const u8, value: Value) !void {
+        if (self.cachedStandardProperty(kind, name) != null) return;
+        const owned_name = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(owned_name);
+        try self.standard_property_cache.append(self.allocator, .{ .kind = kind, .name = owned_name, .value = value });
     }
 
     fn createString(self: *Runtime, units: []const u16) !Value {
@@ -1085,6 +1111,7 @@ const Runtime = struct {
         self.markValue(self.file_process_callback);
         for (self.file_tasks.items) |task| self.markValue(task.callback);
         for (self.process_tasks.items) |task| self.markValue(task.callback);
+        for (self.standard_property_cache.items) |entry| self.markValue(entry.value);
         while (self.grey) |object| {
             self.grey = object.grey_next;
             object.grey_next = null;
@@ -14984,6 +15011,18 @@ fn arrayMutationBuiltin(runtime: *Runtime, command: aot_builtin.Command, argumen
 
 const table_length_key = [_]u16{ 'l', 'e', 'n', 'g', 't', 'h' };
 
+const table_standard_property_cache_object: u8 = 1;
+const table_standard_property_cache_function: u8 = 2;
+const table_standard_property_cache_array: u8 = 3;
+const table_standard_property_cache_string: u8 = 4;
+const table_standard_property_cache_constructor: u8 = 5;
+const table_standard_property_cache_buffer: u8 = 6;
+const table_standard_property_cache_uint8_array: u8 = 7;
+const table_standard_property_cache_array_buffer: u8 = 8;
+const table_standard_property_cache_number: u8 = 9;
+const table_standard_property_cache_boolean: u8 = 10;
+const table_standard_property_cache_bigint: u8 = 11;
+
 const table_object_prototype_method_names = [_][]const u8{
     "__defineGetter__",
     "__defineSetter__",
@@ -14997,7 +15036,7 @@ const table_object_prototype_method_names = [_][]const u8{
     "valueOf",
 };
 
-const table_function_prototype_method_names = [_][]const u8{ "apply", "bind", "call" };
+const table_function_prototype_method_names = [_][]const u8{ "apply", "bind", "call", "toString" };
 
 const table_array_prototype_method_names = [_][]const u8{
     "at",
@@ -15030,6 +15069,8 @@ const table_array_prototype_method_names = [_][]const u8{
     "some",
     "sort",
     "splice",
+    "toLocaleString",
+    "toString",
     "unshift",
     "values",
     "with",
@@ -15078,12 +15119,27 @@ const table_string_prototype_method_names = [_][]const u8{
     "toLowerCase",
     "toUpperCase",
     "toWellFormed",
+    "toString",
+    "valueOf",
     "trim",
     "trimEnd",
     "trimLeft",
     "trimRight",
     "trimStart",
 };
+
+const table_number_prototype_method_names = [_][]const u8{
+    "toExponential",
+    "toFixed",
+    "toLocaleString",
+    "toPrecision",
+    "toString",
+    "valueOf",
+};
+
+const table_boolean_prototype_method_names = [_][]const u8{ "toString", "valueOf" };
+
+const table_bigint_prototype_method_names = [_][]const u8{ "toLocaleString", "toString", "valueOf" };
 
 const table_byte_buffer_typed_array_method_names = [_][]const u8{
     "at",
@@ -15296,15 +15352,33 @@ fn tableBufferEnumerableFunctionName(name: []const u8) []const u8 {
     return name;
 }
 
-fn tableInheritedFunction(runtime: *Runtime, name: []const u8) !Value {
-    return runtime.createMethodFunction(promiseSentinel, 0, name, &.{});
+fn tableInheritedFunctionWithCallback(
+    runtime: *Runtime,
+    cache_kind: u8,
+    cache_name: []const u8,
+    function_name: []const u8,
+    callback: FunctionCallback,
+) !Value {
+    if (runtime.cachedStandardProperty(cache_kind, cache_name)) |value| return value;
+    const result = try runtime.createMethodFunction(callback, 0, function_name, &.{});
+    try runtime.cacheStandardProperty(cache_kind, cache_name, result);
+    return result;
+}
+
+fn tableInheritedFunction(runtime: *Runtime, cache_kind: u8, name: []const u8) !Value {
+    return tableInheritedFunctionWithCallback(runtime, cache_kind, name, name, promiseSentinel);
 }
 
 fn tableInheritedByteBufferMethod(runtime: *Runtime, receiver: Value, name: []const u8) !Value {
+    const cache_kind: u8 = switch (receiver.object().?.payload.byte_buffer.kind) {
+        .buffer => table_standard_property_cache_buffer,
+        .uint8_array => table_standard_property_cache_uint8_array,
+        .array_buffer => table_standard_property_cache_array_buffer,
+    };
     if (@as(Tag, @enumFromInt(receiver.tag)) == .byte_buffer and receiver.object().?.payload.byte_buffer.kind == .buffer and std.mem.eql(u8, name, "slice")) {
-        return runtime.createMethodFunction(byteBufferUnboundSliceCallback, 0, name, &.{});
+        return tableInheritedFunctionWithCallback(runtime, cache_kind, name, name, byteBufferUnboundSliceCallback);
     }
-    return tableInheritedFunction(runtime, name);
+    return tableInheritedFunction(runtime, cache_kind, name);
 }
 
 fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []const u16) !?Value {
@@ -15316,10 +15390,25 @@ fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []
 
     if (tableAsciiUnitsEqual(units, "__proto__")) {
         return switch (row_tag) {
-            .dictionary => @as(?Value, try runtime.createDictionary(&.{})),
-            .array => @as(?Value, try runtime.createArray(&.{})),
-            .static_utf8_string, .utf16_string => @as(?Value, try runtime.createString(&.{})),
-            .function => @as(?Value, try tableInheritedFunction(runtime, "")),
+            .dictionary => blk: {
+                if (runtime.cachedStandardProperty(table_standard_property_cache_object, "__proto__")) |value| break :blk @as(?Value, value);
+                const value = try runtime.createDictionary(&.{});
+                try runtime.cacheStandardProperty(table_standard_property_cache_object, "__proto__", value);
+                break :blk @as(?Value, value);
+            },
+            .array => blk: {
+                if (runtime.cachedStandardProperty(table_standard_property_cache_array, "__proto__")) |value| break :blk @as(?Value, value);
+                const value = try runtime.createArray(&.{});
+                try runtime.cacheStandardProperty(table_standard_property_cache_array, "__proto__", value);
+                break :blk @as(?Value, value);
+            },
+            .static_utf8_string, .utf16_string => blk: {
+                if (runtime.cachedStandardProperty(table_standard_property_cache_string, "__proto__")) |value| break :blk @as(?Value, value);
+                const value = try runtime.createString(&.{});
+                try runtime.cacheStandardProperty(table_standard_property_cache_string, "__proto__", value);
+                break :blk @as(?Value, value);
+            },
+            .function => @as(?Value, try tableInheritedFunctionWithCallback(runtime, table_standard_property_cache_function, "__proto__", "", promiseSentinel)),
             else => null,
         };
     }
@@ -15341,7 +15430,7 @@ fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []
         },
         else => null,
     };
-    if (constructor_name) |name| if (tableAsciiUnitsEqual(units, "constructor")) return @as(?Value, try tableInheritedFunction(runtime, name));
+    if (constructor_name) |name| if (tableAsciiUnitsEqual(units, "constructor")) return @as(?Value, try tableInheritedFunction(runtime, table_standard_property_cache_constructor, name));
 
     if (row_tag == .byte_buffer) {
         const buffer = row.object().?.payload.byte_buffer;
@@ -15374,7 +15463,7 @@ fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []
                 return @as(?Value, numberValue(@floatFromInt(offset)));
             }
             if (buffer.kind == .buffer and tableAsciiUnitsEqual(units, "toLocaleString")) {
-                return @as(?Value, try tableInheritedFunction(runtime, "toString"));
+                return @as(?Value, try tableInheritedByteBufferMethod(runtime, row, "toString"));
             }
             if (tableInheritedMethodName(units, &table_byte_buffer_typed_array_method_names)) |name| return @as(?Value, try tableInheritedByteBufferMethod(runtime, row, name));
             if (buffer.kind == .buffer) {
@@ -15389,17 +15478,26 @@ fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []
 
     const supports_object_prototype = row_tag == .dictionary or row_tag == .array or row_tag == .static_utf8_string or
         row_tag == .utf16_string or row_tag == .function or row_tag == .number or row_tag == .boolean or row_tag == .bigint or row_tag == .byte_buffer;
-    if (supports_object_prototype) {
-        if (tableInheritedMethodName(units, &table_object_prototype_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
-    }
-    if (row_tag == .function) {
-        if (tableInheritedMethodName(units, &table_function_prototype_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
-    }
     if (row_tag == .array) {
-        if (tableInheritedMethodName(units, &table_array_prototype_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
+        if (tableInheritedMethodName(units, &table_array_prototype_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, table_standard_property_cache_array, name));
     }
     if (row_tag == .static_utf8_string or row_tag == .utf16_string) {
-        if (tableInheritedMethodName(units, &table_string_prototype_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, name));
+        if (tableInheritedMethodName(units, &table_string_prototype_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, table_standard_property_cache_string, name));
+    }
+    if (row_tag == .function) {
+        if (tableInheritedMethodName(units, &table_function_prototype_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, table_standard_property_cache_function, name));
+    }
+    if (row_tag == .number) {
+        if (tableInheritedMethodName(units, &table_number_prototype_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, table_standard_property_cache_number, name));
+    }
+    if (row_tag == .boolean) {
+        if (tableInheritedMethodName(units, &table_boolean_prototype_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, table_standard_property_cache_boolean, name));
+    }
+    if (row_tag == .bigint) {
+        if (tableInheritedMethodName(units, &table_bigint_prototype_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, table_standard_property_cache_bigint, name));
+    }
+    if (supports_object_prototype) {
+        if (tableInheritedMethodName(units, &table_object_prototype_method_names)) |name| return @as(?Value, try tableInheritedFunction(runtime, table_standard_property_cache_object, name));
     }
     return null;
 }
@@ -19809,7 +19907,7 @@ test "AOT参照の配列文字列添字はGC後も配列とキーを保持する
 test "AOT参照は辞書と配列の標準prototype propertyを解決する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 10;
+    var roots = [_]Value{.{}} ** 20;
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -19832,6 +19930,26 @@ test "AOT参照は辞書と配列の標準prototype propertyを解決する" {
     roots[8] = try runtime.createDictionary(&.{ staticStringValue("toString"), numberValue(7) });
     roots[9] = try referenceBuiltin(&runtime, roots[8], staticStringValue("toString"));
     try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[9]));
+
+    roots[10] = try referenceBuiltin(&runtime, roots[0], staticStringValue("toString"));
+    try std.testing.expectEqual(roots[2].payload, roots[10].payload);
+    roots[11] = try referenceBuiltin(&runtime, roots[0], staticStringValue("hasOwnProperty"));
+    roots[12] = try referenceBuiltin(&runtime, roots[1], staticStringValue("hasOwnProperty"));
+    try std.testing.expectEqual(roots[11].payload, roots[12].payload);
+    roots[13] = try referenceBuiltin(&runtime, roots[1], staticStringValue("toString"));
+    try std.testing.expect(roots[2].payload != roots[13].payload);
+    roots[14] = try referenceBuiltin(&runtime, roots[0], staticStringValue("constructor"));
+    roots[15] = try referenceBuiltin(&runtime, roots[1], staticStringValue("constructor"));
+    try std.testing.expectEqual(roots[3].payload, roots[14].payload);
+    try std.testing.expect(roots[3].payload != roots[15].payload);
+    roots[16] = try referenceBuiltin(&runtime, roots[0], staticStringValue("__proto__"));
+    roots[17] = try referenceBuiltin(&runtime, roots[1], staticStringValue("__proto__"));
+    try std.testing.expectEqual(roots[5].payload, roots[16].payload);
+    try std.testing.expect(roots[5].payload != roots[17].payload);
+    roots[18] = try referenceBuiltin(&runtime, roots[1], staticStringValue("map"));
+    try std.testing.expectEqual(roots[6].payload, roots[18].payload);
+    roots[19] = try referenceBuiltin(&runtime, roots[1], staticStringValue("map"));
+    try std.testing.expectEqual(roots[18].payload, roots[19].payload);
 }
 
 test "AOT配列切取は辞書のownと継承propertyを分ける" {

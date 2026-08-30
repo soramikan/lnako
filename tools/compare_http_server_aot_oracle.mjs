@@ -1,7 +1,6 @@
 import http from "node:http";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 
 const root = resolve(import.meta.dirname, "..");
@@ -10,7 +9,11 @@ const oracleRoot = resolve(oracleArg >= 0 ? process.argv[oracleArg + 1] : proces
 const officialCli = resolve(oracleRoot, "src/cnako3.mjs");
 const executable = resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
 const fixture = JSON.parse(await readFile(resolve(root, "tests/oracle/http-server-cases.json"), "utf8"));
-const temporary = await mkdtemp(join(tmpdir(), "lnako-httpserver-aot-"));
+// cnako3 v3.7.24 treats a Windows drive-letter path in `取り込む` as a
+// relative module specifier.  Keep the temporary fixture on the repository
+// drive and pass a genuinely relative path to the official runtime.
+const temporary = await mkdtemp(join(root, ".tmp-lnako-httpserver-aot-"));
+const pluginPath = relative(temporary, resolve(oracleRoot, "src/plugin_httpserver.mjs")).replaceAll("\\", "/");
 const staticDirectory = resolve(temporary, "static");
 await mkdir(staticDirectory);
 await writeFile(resolve(staticDirectory, "hello.txt"), "STATIC", "utf8");
@@ -36,7 +39,7 @@ async function runSuite(label, optimization) {
   const source = fixture.source
     .replaceAll("${PORT}", String(port))
     .replaceAll("${STATIC}", staticDirectory.replaceAll("\\", "/"))
-    .replaceAll("${PLUGIN}", resolve(oracleRoot, "src/plugin_httpserver.mjs").replaceAll("\\", "/"));
+    .replaceAll("${PLUGIN}", pluginPath);
   await writeFile(sourcePath, source, "utf8");
 
   let command = [process.execPath, officialCli, sourcePath];

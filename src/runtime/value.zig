@@ -526,6 +526,17 @@ pub const PrimitiveHook = struct {
     callFn: *const fn (context: *anyopaque, runtime: *Runtime, value: Value, hint: PrimitiveHint) anyerror!?Value,
 };
 
+/// Standard prototype values are singletons within one JavaScript realm.
+/// The interpreter synthesizes those values lazily, so keep the cache on the
+/// runtime rather than allocating a fresh function or prototype object for
+/// every property read.  The kind is supplied by the property resolver and
+/// separates Object/Array/String/Function (and other host) prototype chains.
+pub const StandardPropertyCacheEntry = struct {
+    kind: u8,
+    name: []u8,
+    value: Value,
+};
+
 /// 生成コードはValueを格納したスタック領域のアドレスをこのフレームへ登録する。
 pub const RootFrame = struct {
     runtime: *Runtime,
@@ -550,6 +561,7 @@ pub const Runtime = struct {
     root_providers: std.ArrayList(RootProvider) = .empty,
     promise_tasks: std.ArrayList(PromiseTask) = .empty,
     stringifying_arrays: std.ArrayList(*Array) = .empty,
+    standard_property_cache: std.ArrayList(StandardPropertyCacheEntry) = .empty,
     primitive_hook: ?PrimitiveHook = null,
     custom_failure_message: std.ArrayList(u8) = .empty,
     custom_failure_message_units: std.ArrayList(u16) = .empty,
@@ -568,6 +580,8 @@ pub const Runtime = struct {
         self.root_providers.deinit(self.backing_allocator);
         self.promise_tasks.deinit(self.backing_allocator);
         self.stringifying_arrays.deinit(self.backing_allocator);
+        for (self.standard_property_cache.items) |entry| self.backing_allocator.free(entry.name);
+        self.standard_property_cache.deinit(self.backing_allocator);
         self.custom_failure_message.deinit(self.backing_allocator);
         self.custom_failure_message_units.deinit(self.backing_allocator);
         self.* = undefined;
@@ -575,6 +589,20 @@ pub const Runtime = struct {
 
     pub fn allocator(self: *Runtime) std.mem.Allocator {
         return self.backing_allocator;
+    }
+
+    pub fn cachedStandardProperty(self: *Runtime, kind: u8, name: []const u8) ?Value {
+        for (self.standard_property_cache.items) |entry| {
+            if (entry.kind == kind and std.mem.eql(u8, entry.name, name)) return entry.value;
+        }
+        return null;
+    }
+
+    pub fn cacheStandardProperty(self: *Runtime, kind: u8, name: []const u8, value: Value) !void {
+        if (self.cachedStandardProperty(kind, name) != null) return;
+        const owned_name = try self.allocator().dupe(u8, name);
+        errdefer self.allocator().free(owned_name);
+        try self.standard_property_cache.append(self.allocator(), .{ .kind = kind, .name = owned_name, .value = value });
     }
 
     pub fn setPrimitiveHook(self: *Runtime, hook: PrimitiveHook) void {
@@ -1124,6 +1152,7 @@ pub const Runtime = struct {
             try self.markValue(task.settled_value);
             try self.markValue(.{ .promise = task.next });
         }
+        for (self.standard_property_cache.items) |entry| try self.markValue(entry.value);
         try self.traceGreyObjects();
         var index: usize = 0;
         while (index < self.objects.items.len) {

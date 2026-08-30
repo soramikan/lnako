@@ -334,7 +334,7 @@
   {
     "id": "native-system-reference-inherited-properties",
     "commands": ["参照", "配列参照", "TYPEOF"],
-    "source": "D={\"own\":7}\nA=[1]\nTYPEOF(参照(D,\"toString\"))を表示\nTYPEOF(参照(D,\"constructor\"))を表示\nTYPEOF(参照(D,\"__proto__\"))を表示\nTYPEOF(参照(A,\"map\"))を表示\nTYPEOF(配列参照(A,\"toString\"))を表示\nD[\"toString\"]=9\n参照(D,\"toString\")を表示\n"
+    "source": "D={\"own\":7}\nA=[1]\nTYPEOF(参照(D,\"toString\"))を表示\nTYPEOF(参照(D,\"constructor\"))を表示\nTYPEOF(参照(D,\"__proto__\"))を表示\nTYPEOF(参照(A,\"map\"))を表示\nTYPEOF(配列参照(A,\"toString\"))を表示\nD1=参照(D,\"toString\")\nD2=参照(D,\"toString\")\nD1===D2を表示\nA1=参照(A,\"map\")\nA2=参照(A,\"map\")\nA1===A2を表示\nD1===A1を表示\nDC1=参照(D,\"constructor\")\nAC1=参照(A,\"constructor\")\nDC1===AC1を表示\nDP1=参照(D,\"__proto__\")\nDP2=参照(D,\"__proto__\")\nAP1=参照(A,\"__proto__\")\nDP1===DP2を表示\nDP1===AP1を表示\nDH=参照(D,\"hasOwnProperty\")\nAH=参照(A,\"hasOwnProperty\")\nDH===AHを表示\nD[\"toString\"]=9\n参照(D,\"toString\")を表示\n"
   },
   {
     "id": "native-system-array-own-properties",
@@ -1058,7 +1058,7 @@
   {
     "id": "native-system-table-inherited-properties",
     "commands": ["表列取得", "文字列変換", "表示"],
-    "source": "D={}\nA=[]\nS=\"x\"\nF=関数(X)それはX;ここまで\nO={\"toString\":\"own\"}\nX=表列取得([D],\"constructor\")\n文字列変換(X[0])を表示\nX=表列取得([D],\"toString\")\n文字列変換(X[0])を表示\nX=表列取得([D],\"hasOwnProperty\")\n文字列変換(X[0])を表示\nX=表列取得([O],\"toString\")\n文字列変換(X[0])を表示\nX=表列取得([D],\"__proto__\")\n文字列変換(X[0])を表示\nX=表列取得([A],\"constructor\")\n文字列変換(X[0])を表示\nX=表列取得([A],\"map\")\n文字列変換(X[0])を表示\nX=表列取得([A],\"__proto__\")\n文字列変換(X[0])を表示\nX=表列取得([S],\"constructor\")\n文字列変換(X[0])を表示\nX=表列取得([S],\"toUpperCase\")\n文字列変換(X[0])を表示\nX=表列取得([F],\"constructor\")\n文字列変換(X[0])を表示\nX=表列取得([F],\"prototype\")\n文字列変換(X[0])を表示\nX=表列取得([F],\"toString\")\n文字列変換(X[0])を表示\nX=表列取得([F],\"__proto__\")\n文字列変換(X[0])を表示\nX=表列取得([D],\"missing\")\n文字列変換(X[0])を表示\n"
+    "source": "D={}\nA=[]\nS=\"x\"\nF=関数(X)それはX;ここまで\nO={\"toString\":\"own\"}\nX=表列取得([D],\"constructor\")\n文字列変換(X[0])を表示\nX=表列取得([D],\"toString\")\n文字列変換(X[0])を表示\nX=表列取得([D],\"hasOwnProperty\")\n文字列変換(X[0])を表示\nX=表列取得([O],\"toString\")\n文字列変換(X[0])を表示\nX=表列取得([D],\"__proto__\")\n文字列変換(X[0])を表示\nX=表列取得([A],\"constructor\")\n文字列変換(X[0])を表示\nX=表列取得([A],\"map\")\n文字列変換(X[0])を表示\nX=表列取得([A],\"__proto__\")\n文字列変換(X[0])を表示\nX=表列取得([S],\"constructor\")\n文字列変換(X[0])を表示\nX=表列取得([S],\"toUpperCase\")\n文字列変換(X[0])を表示\nX=表列取得([F],\"constructor\")\n文字列変換(X[0])を表示\nX=表列取得([F],\"prototype\")\n文字列変換(X[0])を表示\nX=表列取得([F],\"toString\")\n文字列変換(X[0])を表示\nX=表列取得([F],\"__proto__\")\n文字列変換(X[0])を表示\nD1=表列取得([D],\"toString\")\nD2=表列取得([D],\"toString\")\nD1[0]===D2[0]を表示\nA1=表列取得([A],\"map\")\nA2=表列取得([A],\"map\")\nA1[0]===A2[0]を表示\nD1[0]===A1[0]を表示\nDH=表列取得([D],\"hasOwnProperty\")\nAH=表列取得([A],\"hasOwnProperty\")\nDH[0]===AH[0]を表示\nDP1=表列取得([D],\"__proto__\")\nDP2=表列取得([D],\"__proto__\")\nAP1=表列取得([A],\"__proto__\")\nDP1[0]===DP2[0]を表示\nDP1[0]===AP1[0]を表示\nX=表列取得([D],\"missing\")\n文字列変換(X[0])を表示\n"
   },
   {
     "id": "native-system-courtesy",
