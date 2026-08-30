@@ -1102,8 +1102,18 @@
   },
   {
     "id": "native-system-table-inherited-properties",
-    "commands": ["表列取得", "文字列変換", "表示"],
+    "commands": ["表列数", "表列取得", "文字列変換", "表示"],
     "source": "D={}\nA=[]\nS=\"x\"\nF=関数(X)それはX;ここまで\nO={\"toString\":\"own\"}\nX=表列取得([D],\"constructor\")\n文字列変換(X[0])を表示\nX=表列取得([D],\"toString\")\n文字列変換(X[0])を表示\nX=表列取得([D],\"hasOwnProperty\")\n文字列変換(X[0])を表示\nX=表列取得([O],\"toString\")\n文字列変換(X[0])を表示\nX=表列取得([D],\"__proto__\")\n文字列変換(X[0])を表示\nX=表列取得([A],\"constructor\")\n文字列変換(X[0])を表示\nX=表列取得([A],\"map\")\n文字列変換(X[0])を表示\nX=表列取得([A],\"__proto__\")\n文字列変換(X[0])を表示\nX=表列取得([S],\"constructor\")\n文字列変換(X[0])を表示\nX=表列取得([S],\"toUpperCase\")\n文字列変換(X[0])を表示\nX=表列取得([F],\"constructor\")\n文字列変換(X[0])を表示\nX=表列取得([F],\"prototype\")\n文字列変換(X[0])を表示\nP1=表列取得([F],\"prototype\")\nP2=表列取得([F],\"prototype\")\nP1[0]===P2[0]を表示\nP1[0][\"constructor\"]===Fを表示\nF[\"prototype\"]===P1[0]を表示\nG=関数(X)それはX;ここまで\nP3=表列取得([G],\"prototype\")\nP1[0]===P3[0]を表示\nX=表列取得([F],\"toString\")\n文字列変換(X[0])を表示\nX=表列取得([F],\"__proto__\")\n文字列変換(X[0])を表示\nD1=表列取得([D],\"toString\")\nD2=表列取得([D],\"toString\")\nD1[0]===D2[0]を表示\nA1=表列取得([A],\"map\")\nA2=表列取得([A],\"map\")\nA1[0]===A2[0]を表示\nD1[0]===A1[0]を表示\nDH=表列取得([D],\"hasOwnProperty\")\nAH=表列取得([A],\"hasOwnProperty\")\nDH[0]===AH[0]を表示\nDP1=表列取得([D],\"__proto__\")\nDP2=表列取得([D],\"__proto__\")\nAP1=表列取得([A],\"__proto__\")\nDP1[0]===DP2[0]を表示\nDP1[0]===AP1[0]を表示\nX=表列取得([D],\"missing\")\n文字列変換(X[0])を表示\n"
+  },
+  {
+    "id": "native-system-table-inherited-length",
+    "commands": ["表列数", "表示"],
+    "source": "P={\"length\":7}\nD={}\nD[\"__proto__\"]=P\n表列数([D])を表示\n"
+  },
+  {
+    "id": "native-system-table-byte-buffer-inherited-length",
+    "commands": ["表列数", "表列取得", "ハッシュ値計算", "表示"],
+    "source": "B=ハッシュ値計算(\"A\",\"sha256\",undefined)\nP={\"length\":7}\nB[\"__proto__\"]=P\nB[\"length\"]を表示\n表列数([B])を表示\nC=表列取得([B],\"length\")\nC[0]を表示\n"
   },
   {
     "id": "native-system-courtesy",

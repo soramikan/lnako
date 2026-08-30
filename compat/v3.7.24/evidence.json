@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 382,
-    "nativeAot": 288,
+    "total": 384,
+    "nativeAot": 290,
     "interpreter": 99,
     "compatJs": 9
   },
@@ -7796,7 +7796,10 @@
         "plugin-system-table"
       ],
       "aotFixtureIds": [
+        "native-system-table-byte-buffer-inherited-length",
         "native-system-table-byte-row-properties",
+        "native-system-table-inherited-length",
+        "native-system-table-inherited-properties",
         "native-system-table-query-commands",
         "native-system-table-sparse-length-errors"
       ],
@@ -7809,9 +7812,18 @@
           ]
         },
         "aot": {
+          "native-system-table-byte-buffer-inherited-length": [
+            "fixture.commands"
+          ],
           "native-system-table-byte-row-properties": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-system-table-inherited-length": [
+            "fixture.commands"
+          ],
+          "native-system-table-inherited-properties": [
+            "fixture.commands"
           ],
           "native-system-table-query-commands": [
             "implemented.tests"
@@ -7826,7 +7838,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 6件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "空表で1を返す公式挙動とBuffer・Uint8Arrayのlengthを含めて実装し、公式差分テストに成功"
     },
     {
@@ -7997,6 +8009,7 @@
         "native-system-byte-buffer-backing",
         "native-system-byte-buffer-direct-properties",
         "native-system-byte-buffer-property",
+        "native-system-table-byte-buffer-inherited-length",
         "native-system-table-byte-row-properties",
         "native-system-table-column-null-row-error",
         "native-system-table-function-properties",
@@ -8032,6 +8045,9 @@
             "fixture.commands",
             "implemented.tests"
           ],
+          "native-system-table-byte-buffer-inherited-length": [
+            "fixture.commands"
+          ],
           "native-system-table-byte-row-properties": [
             "fixture.commands",
             "implemented.tests"
@@ -8061,7 +8077,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 11件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 12件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムでBuffer・Uint8Array・ArrayBufferのlengthと数値添字、byteLength・byteOffset・BYTES_PER_ELEMENT・bufferなどのproperty、表列取得の疎配列map挙動、および匿名関数のname/length propertyを実装し、公式差分テストに成功"
     },
     {
@@ -11712,7 +11728,9 @@
         "native-system-array-to-primitive",
         "native-system-dictionary-to-primitive",
         "native-system-object-to-primitive-host-properties",
+        "native-system-table-byte-buffer-inherited-length",
         "native-system-table-function-properties",
+        "native-system-table-inherited-length",
         "native-system-table-inherited-properties",
         "native-system-table-sort-callback-order",
         "native-system-table-sort-callback-order-large",
@@ -11745,7 +11763,13 @@
           "native-system-object-to-primitive-host-properties": [
             "fixture.commands"
           ],
+          "native-system-table-byte-buffer-inherited-length": [
+            "fixture.commands"
+          ],
           "native-system-table-function-properties": [
+            "fixture.commands"
+          ],
+          "native-system-table-inherited-length": [
             "fixture.commands"
           ],
           "native-system-table-inherited-properties": [
@@ -17825,6 +17849,7 @@
         "native-system-dictionary-byte-buffer-enumeration",
         "native-system-dictionary-byte-buffer-properties",
         "native-system-object-to-primitive-host-properties",
+        "native-system-table-byte-buffer-inherited-length",
         "native-system-table-byte-row-properties",
         "native-system-table-byte-row-slice",
         "native-system-table-byte-row-slice-alias",
@@ -17880,6 +17905,9 @@
           "native-system-object-to-primitive-host-properties": [
             "fixture.commands"
           ],
+          "native-system-table-byte-buffer-inherited-length": [
+            "fixture.commands"
+          ],
           "native-system-table-byte-row-properties": [
             "fixture.commands",
             "implemented.tests"
@@ -17908,7 +17936,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 17件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 18件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式7経路のSHA-256・Buffer境界とエンコード形式の差分テストに成功"
     },
     {

@@ -48,6 +48,11 @@ pub const ByteBuffer = struct {
     /// custom properties on the object itself so ToPrimitive can observe an
     /// own `toString`/`valueOf` override.
     properties: std.ArrayList(ArrayProperty) = .empty,
+    /// Buffer/TypedArray/ArrayBuffer objects also expose the legacy
+    /// `__proto__` setter.  Keep a custom object prototype separate from own
+    /// properties so named reads such as `length` can follow JavaScript's
+    /// prototype lookup order.
+    prototype: Value = .undefined,
 
     pub fn deinit(self: *ByteBuffer) void {
         self.properties.deinit(self.allocator);
@@ -1266,6 +1271,7 @@ pub const Runtime = struct {
                 for (dictionary.values()) |item| try self.markValue(item);
             },
             .bytes => |bytes| {
+                try self.markValue(bytes.prototype);
                 for (bytes.properties.items) |property| {
                     try self.markValue(.{ .string = property.key });
                     try self.markValue(property.value);

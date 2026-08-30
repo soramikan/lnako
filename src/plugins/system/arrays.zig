@@ -1925,7 +1925,15 @@ fn rowLengthValue(runtime: *Runtime, row: Value) !Value {
     return switch (row) {
         .array => |array| .{ .number = @floatFromInt(array.len()) },
         .string => |string| .{ .number = @floatFromInt(string.len()) },
-        .bytes => |buffer| if (buffer.kind == .array_buffer) .undefined else .{ .number = @floatFromInt(buffer.bytes.len) },
+        .bytes => |buffer| blk: {
+            // Buffer/TypedArray length is supplied by the built-in exotic
+            // object, but a custom __proto__ can shadow that named lookup.
+            // ArrayBuffer has no ordinary length fallback, so retain its
+            // undefined result when the custom chain has no value.
+            var units = [_]u16{ 'l', 'e', 'n', 'g', 't', 'h' };
+            if (try tableInheritedProperty(runtime, row, &units)) |value| break :blk value;
+            break :blk if (buffer.kind == .array_buffer) .undefined else .{ .number = @floatFromInt(buffer.bytes.len) };
+        },
         .null_value, .undefined => {
             const receiver = if (row == .null_value) "null" else "undefined";
             const message = try std.fmt.allocPrint(runtime.allocator(), "Cannot read properties of {s} (reading 'length')", .{receiver});
@@ -1936,7 +1944,13 @@ fn rowLengthValue(runtime: *Runtime, row: Value) !Value {
         .dictionary => |dictionary| blk: {
             var units = [_]u16{ 'l', 'e', 'n', 'g', 't', 'h' };
             var key = value_mod.String{ .allocator = dictionary.allocator, .units = &units };
-            break :blk dictionary.get(&key) orelse .undefined;
+            // `表列数` reads `row.length` directly.  A dictionary's own
+            // property wins, but JavaScript then continues through its
+            // custom `__proto__` chain before falling back to the ordinary
+            // Object prototype.  Keep this path aligned with `indexed` and
+            // the AOT row-property implementation instead of limiting it to
+            // own keys.
+            break :blk dictionary.get(&key) orelse (try tableInheritedProperty(runtime, row, &units)) orelse .undefined;
         },
         // The official compiler wraps Nadesiko functions in a rest-argument
         // closure, whose JavaScript Function.length is always zero.
@@ -2505,6 +2519,14 @@ fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) 
         if (value_mod.arrayPrototypePropertyUnits(source.array, units)) |value| return value;
         if (value_mod.arrayPrototypeBlocksStandard(source.array)) return null;
     }
+    if (source == .bytes and source.bytes.prototype != .undefined) {
+        if (asciiUnitsEqual(units, "__proto__")) return if (source.bytes.prototype == .null_value) .undefined else source.bytes.prototype;
+        if (source.bytes.prototype == .dictionary) {
+            if (value_mod.dictionaryOwnPropertyUnits(source.bytes.prototype.dictionary, units)) |value| return value;
+            if (value_mod.dictionaryPrototypePropertyUnits(source.bytes.prototype.dictionary, units)) |value| return value;
+            if (value_mod.dictionaryPrototypeBlocksStandard(source.bytes.prototype.dictionary)) return null;
+        }
+    }
 
     if (asciiUnitsEqual(units, "__proto__")) {
         return switch (source) {
@@ -3003,6 +3025,9 @@ fn indexed(runtime: *Runtime, source: Value, key: Value) !Value {
         return try runtime.stringCodeUnits(&.{rooted[0].string.units[index]});
     }
     if (rooted[0] == .bytes) {
+        if (propertyIndexUnits(rooted[2].string.units) == null) {
+            if (try tableInheritedProperty(runtime, rooted[0], rooted[2].string.units)) |value| return value;
+        }
         if (rooted[0].bytes.kind != .array_buffer and std.mem.eql(u16, rooted[2].string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return .{ .number = @floatFromInt(rooted[0].bytes.bytes.len) };
         if (rooted[0].bytes.kind != .array_buffer) if (propertyIndexUnits(rooted[2].string.units)) |index| return rooted[0].bytes.get(index);
         if (try tableInheritedProperty(runtime, rooted[0], rooted[2].string.units)) |value| return value;
@@ -3477,6 +3502,26 @@ test "表検索系はlengthとraw開始値の型を保持する" {
     var dictionary_table = try common.arrayFromValues(&runtime, &.{dictionary});
     try roots.protect(&dictionary_table);
     try std.testing.expectEqual(text_length.string, (try tableColumnCount(&runtime, dictionary_table)).string);
+    var inherited_length = try runtime.createDictionary();
+    try roots.protect(&inherited_length);
+    try inherited_length.dictionary.set(length_key.string, .{ .number = 7 });
+    var inherited_dictionary = try runtime.createDictionary();
+    try roots.protect(&inherited_dictionary);
+    inherited_dictionary.dictionary.prototype = inherited_length;
+    var inherited_table = try common.arrayFromValues(&runtime, &.{inherited_dictionary});
+    try roots.protect(&inherited_table);
+    try std.testing.expectEqual(@as(f64, 7), (try tableColumnCount(&runtime, inherited_table)).number);
+
+    var byte_buffer = try runtime.createBytes(&.{ 65, 66 });
+    try roots.protect(&byte_buffer);
+    var byte_prototype = try runtime.createDictionary();
+    try roots.protect(&byte_prototype);
+    try byte_prototype.dictionary.set(length_key.string, .{ .number = 7 });
+    byte_buffer.bytes.prototype = byte_prototype;
+    var byte_table = try common.arrayFromValues(&runtime, &.{byte_buffer});
+    try roots.protect(&byte_table);
+    try std.testing.expectEqual(@as(f64, 7), (try indexed(&runtime, byte_buffer, length_key)).number);
+    try std.testing.expectEqual(@as(f64, 7), (try tableColumnCount(&runtime, byte_table)).number);
 
     var function_name = try runtime.stringUtf8("二引数");
     try roots.protect(&function_name);

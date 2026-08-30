@@ -1859,6 +1859,9 @@ pub const Interpreter = struct {
             var key_text = try self.runtime.valueToString(rooted[1]);
             try roots.protect(&key_text);
             if (ownProperty(container_root.bytes.properties.items, key_text.string.units)) |value| return value;
+            if (interpreterArrayIndex(key_text.string.units) == null) {
+                if (try plugin_system.arrays.standardInheritedProperty(self.runtime, container_root, key_text.string.units)) |value| return value;
+            }
             if (std.mem.eql(u16, key_text.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) {
                 return if (container_root.bytes.kind == .array_buffer) .undefined else .{ .number = @floatFromInt(container_root.bytes.bytes.len) };
             }
@@ -1875,9 +1878,9 @@ pub const Interpreter = struct {
             if (std.mem.eql(u16, key_text.string.units, &.{ 'B', 'Y', 'T', 'E', 'S', '_', 'P', 'E', 'R', '_', 'E', 'L', 'E', 'M', 'E', 'N', 'T' })) {
                 return if (container_root.bytes.kind == .array_buffer) .undefined else .{ .number = 1 };
             }
-            if (try plugin_system.arrays.standardInheritedProperty(self.runtime, container_root, key_text.string.units)) |value| return value;
             if (container_root.bytes.kind == .array_buffer) return .undefined;
-            return container_root.bytes.get(try valueIndex(self.runtime, rooted[1]));
+            const position = interpreterArrayIndex(key_text.string.units) orelse return .undefined;
+            return container_root.bytes.get(position);
         }
         if (container == .array) return try getArrayProperty(self.runtime, container.array, key);
         if (container == .dictionary) {
@@ -1952,6 +1955,12 @@ pub const Interpreter = struct {
                 else
                     @intFromFloat(@mod(@trunc(number), 256));
                 rooted[0].bytes.set(position, byte);
+                return;
+            }
+            if (std.mem.eql(u16, key_units, &.{ '_', '_', 'p', 'r', 'o', 't', 'o', '_', '_' }) and
+                ownProperty(rooted[0].bytes.properties.items, key_units) == null)
+            {
+                if (rooted[2] == .null_value or isPrototypeObject(rooted[2])) rooted[0].bytes.prototype = rooted[2];
                 return;
             }
             if (interpreterByteBufferReadOnlyProperty(key_units)) return;

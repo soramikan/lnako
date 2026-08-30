@@ -1125,6 +1125,7 @@ const Runtime = struct {
             switch (object.payload) {
                 .utf16_string, .bigint => {},
                 .byte_buffer => {
+                    self.markValue(object.prototype);
                     for (object.array_properties.items) |property| {
                         self.markValue(property.key);
                         self.markValue(property.value);
@@ -1315,6 +1316,13 @@ const Runtime = struct {
                 };
                 defer self.allocator.free(key_units);
                 if (self.aotObjectOwnPropertyGetUnits(source.object().?, key_units)) |value| return value;
+                if (tablePropertyIndex(key_units) == null) {
+                    const inherited = tableInheritedProperty(self, source, .byte_buffer, key_units) catch |failure| {
+                        self.setFailure(failure);
+                        return .{};
+                    };
+                    if (inherited) |value| return value;
+                }
                 if (sameKey(rooted[1], staticStringValue("length"))) {
                     return if (rooted_buffer.kind == .array_buffer) .{} else numberValue(@floatFromInt(rooted_buffer.bytes.len));
                 }
@@ -1325,12 +1333,7 @@ const Runtime = struct {
                     };
                 }
                 if (aotByteBufferScalarProperty(rooted_buffer, rooted[1])) |value| return value;
-                const inherited = tableInheritedProperty(self, source, .byte_buffer, key_units) catch |failure| {
-                    self.setFailure(failure);
-                    return .{};
-                };
-                if (inherited) |value| return value;
-                const index = valueIndex(rooted[1]) orelse return .{};
+                const index = tablePropertyIndex(key_units) orelse return .{};
                 return if (rooted_buffer.kind == .array_buffer or index >= rooted_buffer.bytes.len) .{} else numberValue(@floatFromInt(rooted_buffer.bytes[index]));
             },
             .array => aotArrayPropertyGet(self, object, key),
@@ -1424,6 +1427,12 @@ const Runtime = struct {
                     return failure;
                 };
                 defer self.allocator.free(key_units);
+                if (std.mem.eql(u16, key_units, &.{ '_', '_', 'p', 'r', 'o', 't', 'o', '_', '_' }) and
+                    self.aotObjectOwnPropertyGetUnits(object, key_units) == null)
+                {
+                    if (value.tag == @intFromEnum(Tag.null_value) or value.object() != null) object.prototype = value;
+                    return;
+                }
                 if (aotByteBufferReadOnlyProperty(key_units)) return;
                 try self.setAotOwnProperty(container, object, key, value);
             },
@@ -15715,6 +15724,14 @@ fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []
         if (arrayPrototypeProperty(row, units)) |value| return value;
         if (arrayPrototypeBlocksStandard(row)) return null;
     }
+    if (row_tag == .byte_buffer and row.object().?.prototype.tag != @intFromEnum(Tag.undefined)) {
+        if (tableAsciiUnitsEqual(units, "__proto__")) return if (row.object().?.prototype.tag == @intFromEnum(Tag.null_value)) .{} else row.object().?.prototype;
+        if (row.object().?.prototype.tag == @intFromEnum(Tag.dictionary)) {
+            if (dictionaryOwnProperty(row.object().?.prototype, units)) |value| return value;
+            if (dictionaryPrototypeProperty(row.object().?.prototype, units)) |value| return value;
+            if (dictionaryPrototypeBlocksStandard(row.object().?.prototype)) return null;
+        }
+    }
 
     if (tableAsciiUnitsEqual(units, "__proto__")) {
         return switch (row_tag) {
@@ -15870,6 +15887,9 @@ fn tableRowProperty(runtime: *Runtime, row: Value, column: Value) !Value {
         const object = row.object() orelse return error.InvalidByteBuffer;
         if (object.payload != .byte_buffer) return error.InvalidByteBuffer;
         if (runtime.aotObjectOwnPropertyGetUnits(object, key_units)) |value| return value;
+        if (tablePropertyIndex(key_units) == null) {
+            if (try tableInheritedProperty(runtime, row, row_tag, key_units)) |value| return value;
+        }
         if (std.mem.eql(u16, key_units, &table_length_key)) {
             return if (object.payload.byte_buffer.kind == .array_buffer)
                 .{}
@@ -15882,7 +15902,6 @@ fn tableRowProperty(runtime: *Runtime, row: Value, column: Value) !Value {
             else
                 .{};
         };
-        if (try tableInheritedProperty(runtime, row, row_tag, key_units)) |value| return value;
         return .{};
     }
     if (isString(row)) {
@@ -22206,7 +22225,7 @@ test "AOT敬語命令は未定義初期値と礼節レベルを公式どおり�
 test "AOT表検索系は行プロパティとraw開始値を公式どおり処理する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
-    var roots = [_]Value{.{}} ** 20;
+    var roots = [_]Value{.{}} ** 24;
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
@@ -22258,6 +22277,21 @@ test "AOT表検索系は行プロパティとraw開始値を公式どおり処�
     const bigint_columns = try tableBuiltin(&runtime, .table_column_count, roots[16..17]);
     try std.testing.expectEqual(Tag.bigint, @as(Tag, @enumFromInt(bigint_columns.tag)));
     try std.testing.expectEqual(@as(i64, 2), bigint_columns.object().?.payload.bigint.toI64());
+    roots[12] = try runtime.createDictionary(&.{ staticStringValue("length"), numberValue(7) });
+    roots[13] = try runtime.createDictionary(&.{});
+    roots[13].object().?.prototype = roots[12];
+    roots[14] = try runtime.createArray(&.{roots[13]});
+    roots[15] = try tableBuiltin(&runtime, .table_column_count, roots[14..16]);
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[15]));
+    roots[18] = try runtime.createBytes(&.{ 65, 66 });
+    roots[19] = try runtime.createDictionary(&.{ staticStringValue("length"), numberValue(7) });
+    try runtime.indexSet(roots[18], staticStringValue("__proto__"), roots[19]);
+    try std.testing.expectEqual(roots[19].tag, roots[18].object().?.prototype.tag);
+    try std.testing.expectEqual(roots[19].payload, roots[18].object().?.prototype.payload);
+    roots[20] = try runtime.createArray(&.{roots[18]});
+    roots[21] = try tableBuiltin(&runtime, .table_column_count, roots[20..22]);
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(runtime.indexGet(roots[18], staticStringValue("length"))));
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[21]));
     roots[17] = try runtime.createFunction(testAotFunction, 2, &.{});
     try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast((try tableRowProperty(&runtime, roots[17], staticStringValue("length"))).payload)));
     const function_name = try tableRowProperty(&runtime, roots[17], staticStringValue("name"));
