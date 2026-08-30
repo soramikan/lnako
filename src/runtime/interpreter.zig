@@ -1948,7 +1948,7 @@ pub const Interpreter = struct {
             for (&rooted) |*root| try roots.protect(root);
             rooted[3] = try self.runtime.valueToString(rooted[1]);
             const key_units = rooted[3].string.units;
-            if (interpreterArrayIndex(key_units)) |position| {
+            if (rooted[0].bytes.kind != .array_buffer) if (interpreterArrayIndex(key_units)) |position| {
                 const number = try self.runtime.valueToNumber(rooted[2]);
                 const byte: u8 = if (!std.math.isFinite(number) or number == 0)
                     0
@@ -1956,14 +1956,14 @@ pub const Interpreter = struct {
                     @intFromFloat(@mod(@trunc(number), 256));
                 rooted[0].bytes.set(position, byte);
                 return;
-            }
+            };
             if (std.mem.eql(u16, key_units, &.{ '_', '_', 'p', 'r', 'o', 't', 'o', '_', '_' }) and
                 ownProperty(rooted[0].bytes.properties.items, key_units) == null)
             {
                 if (rooted[2] == .null_value or isPrototypeObject(rooted[2])) rooted[0].bytes.prototype = rooted[2];
                 return;
             }
-            if (interpreterByteBufferReadOnlyProperty(key_units)) return;
+            if (interpreterByteBufferReadOnlyProperty(rooted[0].bytes.kind, key_units)) return;
             try setOwnProperty(&rooted[0].bytes.properties, self.allocator, rooted[3].string, rooted[2]);
             return;
         }
@@ -2024,8 +2024,8 @@ pub const Interpreter = struct {
         }
     }
 
-    fn interpreterByteBufferReadOnlyProperty(units: []const u16) bool {
-        return std.mem.eql(u16, units, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) or
+    fn interpreterByteBufferReadOnlyProperty(kind: value_mod.ByteKind, units: []const u16) bool {
+        return (kind != .array_buffer and std.mem.eql(u16, units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) or
             std.mem.eql(u16, units, &.{ 'b', 'y', 't', 'e', 'L', 'e', 'n', 'g', 't', 'h' }) or
             std.mem.eql(u16, units, &.{ 'b', 'y', 't', 'e', 'O', 'f', 'f', 's', 'e', 't' }) or
             std.mem.eql(u16, units, &.{ 'B', 'Y', 'T', 'E', 'S', '_', 'P', 'E', 'R', '_', 'E', 'L', 'E', 'M', 'E', 'N', 'T' }) or
@@ -2522,7 +2522,7 @@ test "バイト列の添字・更新・反復をUint8Array互換で実行する"
             for (output, 0..) |*byte, index| byte.* = @intCast(index);
         }
     };
-    const source = "B=3のランダム配列生成\nB[0]を表示\nB[1]=258\n要素数(B)を表示\nBを反復\n対象を表示\nここまで\n";
+    const source = "B=3のランダム配列生成\nB[0]を表示\nB[1]=258\n要素数(B)を表示\nBを反復\n対象を表示\nここまで\nAB=B[\"buffer\"]\nAB[\"length\"]=2\nAB[\"0\"]=\"x\"\nAB[\"1\"]=\"y\"\n何文字目(AB,\"xy\")を表示\n";
     var fixture = try compileForTest(std.testing.allocator, source);
     defer fixture.ir_program.deinit();
     defer fixture.hir_program.deinit();
@@ -2537,7 +2537,7 @@ test "バイト列の添字・更新・反復をUint8Array互換で実行する"
     var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, runtime_host);
     defer interpreter.deinit();
     _ = try interpreter.run();
-    try std.testing.expectEqualStrings("0\n3\n0\n2\n2\n", host.written());
+    try std.testing.expectEqualStrings("0\n3\n0\n2\n2\n1\n", host.written());
 }
 
 test "連続表示は公式処理系と同じく改行する" {

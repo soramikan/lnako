@@ -217,6 +217,21 @@ macOS sandboxでは`ps`および`sysctl`による最大RSS
 同ジョブ内の`Differential native AOT test`は102 fixtureで3分43秒だった旧runに対し、103 fixtureへ増えた状態でも
 3分14秒で完了しました。fixture数・7経路・O0〜O3・3環境を維持した実CIで、競合や失敗がないことを確認しています。
 
+## Windows AOTの一時ディレクトリと公式取込path
+
+2026-08-30の[run 33331298915](https://github.com/soramikan/lnako/actions/runs/33331298915)と
+[run 33333195998](https://github.com/soramikan/lnako/actions/runs/33333195998)では、Windows `aot`の
+`compare_native_oracle.mjs`で`native-caniuse-browsers`の公式生成JavaScriptが見つからない事象が発生した。
+Windows runnerでは公式オラクルが`D:`、`os.tmpdir()`が`C:`となり、`path.relative()`がドライブ跨ぎの
+`D:/...`を返す。なでしこ3 v3.7.24の`取り込む`判定は`D:\...`を絶対pathとして扱うため、公式compileが
+エラーを握って終了コード0を返し、生成ファイルだけが作られなかった。
+
+`tools/compare_native_oracle.mjs`の一時ディレクトリをリポジトリ側へ移し、オラクルと同じドライブで
+相対plugin pathを生成するよう修正した。後者のrunでは新たに追加したdispatch coverage auditが
+`plugin-csv-all`のWindows結果差も報告したが、macOSの同じ26 fixture監査では再現していない。次回pushの
+Windows `aot`で両方を再確認し、失敗時は出力値を含む診断から追加修正する。CIの完了を待つ運用には変えず、
+pushごとに完了済みrunをスナップショット確認する。
+
 ## Windows AOTのQuickJSビルド分離
 
 Windows AOTの追加短縮を判断するため、分離前の[run 32932078383](https://github.com/soramikan/lnako/actions/runs/32932078383)

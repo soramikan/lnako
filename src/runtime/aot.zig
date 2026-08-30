@@ -1440,7 +1440,7 @@ const Runtime = struct {
                     if (value.tag == @intFromEnum(Tag.null_value) or value.object() != null) object.prototype = value;
                     return;
                 }
-                if (aotByteBufferReadOnlyProperty(key_units)) return;
+                if (aotByteBufferReadOnlyProperty(buffer.kind, key_units)) return;
                 try self.setAotOwnProperty(container, object, key, value);
             },
             .function => try self.setAotFunctionProperty(container, object, key, value),
@@ -2185,8 +2185,8 @@ fn aotByteBufferScalarProperty(buffer: ByteBuffer, key: Value) ?Value {
     return null;
 }
 
-fn aotByteBufferReadOnlyProperty(units: []const u16) bool {
-    return std.mem.eql(u16, units, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) or
+fn aotByteBufferReadOnlyProperty(kind: ByteKind, units: []const u16) bool {
+    return (kind != .array_buffer and std.mem.eql(u16, units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) or
         std.mem.eql(u16, units, &.{ 'b', 'y', 't', 'e', 'L', 'e', 'n', 'g', 't', 'h' }) or
         std.mem.eql(u16, units, &.{ 'b', 'y', 't', 'e', 'O', 'f', 'f', 's', 'e', 't' }) or
         std.mem.eql(u16, units, &.{ 'B', 'Y', 'T', 'E', 'S', '_', 'P', 'E', 'R', '_', 'E', 'L', 'E', 'M', 'E', 'N', 'T' }) or
@@ -13030,6 +13030,8 @@ const SearchElements = struct {
     items: std.ArrayList([]u16) = .empty,
     dictionary: ?Value = null,
     dictionary_length: usize = 0,
+    array_buffer: ?Value = null,
+    array_buffer_length: usize = 0,
 
     fn deinit(self: *SearchElements) void {
         for (self.items.items) |units| if (units.len != 0) self.runtime.allocator.free(units);
@@ -13038,7 +13040,9 @@ const SearchElements = struct {
     }
 
     fn len(self: SearchElements) usize {
-        return if (self.dictionary != null) self.dictionary_length else self.items.items.len;
+        if (self.dictionary != null) return self.dictionary_length;
+        if (self.array_buffer != null) return self.array_buffer_length;
+        return self.items.items.len;
     }
 
     fn element(self: *const SearchElements, index: usize) !SearchElement {
@@ -13046,6 +13050,11 @@ const SearchElements = struct {
             var key_buffer: [32]u16 = undefined;
             const key = searchIndexKey(&key_buffer, index);
             return SearchElement.fromValue(self.runtime, dictionaryProperty(dictionary, key));
+        }
+        if (self.array_buffer) |array_buffer| {
+            var key_buffer: [32]u16 = undefined;
+            const key = searchIndexKey(&key_buffer, index);
+            return SearchElement.fromValue(self.runtime, try byteBufferArrayLikeProperty(self.runtime, array_buffer, key));
         }
         return .{ .units = self.items.items[index] };
     }
@@ -13114,6 +13123,18 @@ fn appendDictionarySearchElements(elements: *SearchElements, value: Value) !void
     elements.dictionary_length = length;
 }
 
+fn byteBufferArrayLikeProperty(runtime: *Runtime, value: Value, key_units: []const u16) !Value {
+    const object = value.object() orelse return .{};
+    if (runtime.aotObjectOwnPropertyGetUnits(object, key_units)) |property| return property;
+    return (try tableInheritedProperty(runtime, value, .byte_buffer, key_units)) orelse .{};
+}
+
+fn appendArrayBufferSearchElements(elements: *SearchElements, value: Value) !void {
+    const length = searchArrayFromLength(elements.runtime, elements.runtime.indexGet(value, staticStringValue("length"))) catch |failure| return failure;
+    elements.array_buffer = value;
+    elements.array_buffer_length = length;
+}
+
 fn searchIndexKey(buffer: *[32]u16, index: usize) []const u16 {
     var utf8: [32]u8 = undefined;
     const text = std.fmt.bufPrint(&utf8, "{d}", .{index}) catch unreachable;
@@ -13139,6 +13160,7 @@ fn appendSearchElements(runtime: *Runtime, value: Value) !SearchElements {
         .byte_buffer => {
             const buffer = value.object().?.payload.byte_buffer;
             if (buffer.kind != .array_buffer) for (buffer.bytes) |byte| try elements.appendValue(numberValue(@floatFromInt(byte)));
+            if (buffer.kind == .array_buffer) try appendArrayBufferSearchElements(&elements, value);
         },
         .array => for (value.object().?.payload.array.items) |item| try elements.appendValue(item),
         .dictionary => try appendDictionarySearchElements(&elements, value),
@@ -19834,6 +19856,15 @@ test "AOT何文字目はArray.from要素境界と辞書ToLengthを再現する" 
     defer runtime.allocator.free(expected_undefined);
     try std.testing.expectEqualSlices(u16, expected_undefined, undefined_message);
     try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, staticStringValue("abc"), staticStringValue("a")));
+
+    roots[21] = try runtime.createArrayBuffer(&.{ 1, 2 });
+    try runtime.indexSet(roots[21], staticStringValue("length"), numberValue(2));
+    try runtime.indexSet(roots[21], staticStringValue("0"), staticStringValue("x"));
+    try runtime.indexSet(roots[21], staticStringValue("1"), staticStringValue("y"));
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(runtime.indexGet(roots[21], staticStringValue("length"))));
+    try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, roots[21], staticStringValue("xy")));
+    try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, roots[21], staticStringValue("x")));
+    try std.testing.expectEqual(@as(usize, 0), try codePointFindBuiltin(&runtime, roots[21], staticStringValue("xz")));
 
     roots[18] = try runtime.createDictionary(&.{ staticStringValue("length"), numberValue(@floatFromInt(search_element_limit)), staticStringValue("0"), staticStringValue("hit") });
     try std.testing.expectEqual(@as(usize, 1), try codePointFindBuiltin(&runtime, roots[18], staticStringValue("hit")));

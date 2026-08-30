@@ -4,6 +4,7 @@ const string_mod = @import("../../runtime/string.zig");
 const common = @import("common.zig");
 const operators = @import("../../runtime/operators.zig");
 const unicode_case = @import("unicode_case");
+const arrays_plugin = @import("arrays.zig");
 
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
@@ -1021,6 +1022,24 @@ fn findStringArrayWindow(haystack: []const u16, needle: []const u16) ?usize {
 // while temporary join strings are created under GC stress.
 const raw_array_element_limit: usize = 1_000_000;
 
+fn byteBufferOwnProperty(buffer: *value_mod.ByteBuffer, units: []const u16) ?Value {
+    for (buffer.properties.items) |property| {
+        if (std.mem.eql(u16, property.key.units, units)) return property.value;
+    }
+    return null;
+}
+
+fn byteBufferArrayLikeProperty(runtime: *Runtime, source: Value, units: []const u16) !Value {
+    if (source == .bytes) {
+        if (byteBufferOwnProperty(source.bytes, units)) |value| return value;
+        if (try arrays_plugin.standardInheritedProperty(runtime, source, units)) |value| return value;
+        if (std.mem.eql(u16, units, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) and source.bytes.kind != .array_buffer) {
+            return .{ .number = @floatFromInt(source.bytes.bytes.len) };
+        }
+    }
+    return .undefined;
+}
+
 fn findRawArrayIndex(runtime: *Runtime, source: Value, needle: Value) !usize {
     const source_length = try rawArrayLength(runtime, source);
     const needle_length = try rawArrayLength(runtime, needle);
@@ -1043,7 +1062,15 @@ fn rawArrayLength(runtime: *Runtime, value: Value) !usize {
         .null_value => return error.RawArrayNullNotIterable,
         .string => |string| codePointCount(string.units),
         .array => |array| array.items.items.len,
-        .bytes => |buffer| if (buffer.kind == .array_buffer) 0 else buffer.bytes.len,
+        .bytes => |buffer| if (buffer.kind == .array_buffer) blk: {
+            const length_value = try byteBufferArrayLikeProperty(runtime, value, &.{ 'l', 'e', 'n', 'g', 't', 'h' });
+            const number = try runtime.valueToNumber(length_value);
+            if (std.math.isNan(number) or number <= 0) break :blk 0;
+            if (!std.math.isFinite(number)) return error.ArraySizeLimitExceeded;
+            const floored = @floor(number);
+            if (floored > @as(f64, @floatFromInt(raw_array_element_limit))) return error.ArraySizeLimitExceeded;
+            break :blk @as(usize, @intFromFloat(floored));
+        } else buffer.bytes.len,
         .dictionary => |dictionary| blk: {
             const length_value = value_mod.dictionaryPropertyUnits(dictionary, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) orelse .undefined;
             const number = try runtime.valueToNumber(length_value);
@@ -1083,7 +1110,13 @@ fn rawArraySliceJoin(runtime: *Runtime, source: Value, start: usize, requested_c
 fn appendRawArrayElement(runtime: *Runtime, source: Value, index: usize, output: *std.ArrayList(u16)) !void {
     const element: Value = switch (source) {
         .array => |array| array.get(index),
-        .bytes => |buffer| buffer.get(index),
+        .bytes => |buffer| if (buffer.kind == .array_buffer) blk: {
+            var key_buffer: [32]u8 = undefined;
+            const key_text = std.fmt.bufPrint(&key_buffer, "{}", .{index}) catch return error.OutOfMemory;
+            var key_units: [32]u16 = undefined;
+            const key_len = std.unicode.utf8ToUtf16Le(&key_units, key_text) catch return error.OutOfMemory;
+            break :blk try byteBufferArrayLikeProperty(runtime, source, key_units[0..key_len]);
+        } else buffer.get(index),
         .dictionary => |dictionary| blk: {
             var key_buffer: [32]u8 = undefined;
             const key_text = std.fmt.bufPrint(&key_buffer, "{}", .{index}) catch return error.OutOfMemory;
@@ -1317,6 +1350,23 @@ test "何文字目は公式のArray.fromとslice.joinを型別に再現する" {
     try std.testing.expectEqual(@as(f64, 1), (try call(&runtime, "何文字目", &.{ bytes, numeric_text })).?.number);
     try std.testing.expectEqual(@as(f64, 1), (try call(&runtime, "何文字目", &.{ uint8, numeric_text })).?.number);
     try std.testing.expectEqual(@as(f64, 0), (try call(&runtime, "何文字目", &.{ array_buffer, numeric_text })).?.number);
+
+    var array_buffer_like_length = try runtime.stringUtf8("length");
+    var array_buffer_like_zero = try runtime.stringUtf8("0");
+    var array_buffer_like_one = try runtime.stringUtf8("1");
+    var array_buffer_like_x = try runtime.stringUtf8("x");
+    var array_buffer_like_y = try runtime.stringUtf8("y");
+    try roots.protect(&array_buffer_like_length);
+    try roots.protect(&array_buffer_like_zero);
+    try roots.protect(&array_buffer_like_one);
+    try roots.protect(&array_buffer_like_x);
+    try roots.protect(&array_buffer_like_y);
+    try array_buffer.bytes.properties.append(runtime.allocator(), .{ .key = array_buffer_like_length.string, .value = .{ .number = 2 } });
+    try array_buffer.bytes.properties.append(runtime.allocator(), .{ .key = array_buffer_like_zero.string, .value = array_buffer_like_x });
+    try array_buffer.bytes.properties.append(runtime.allocator(), .{ .key = array_buffer_like_one.string, .value = array_buffer_like_y });
+    try std.testing.expectEqual(@as(f64, 1), (try call(&runtime, "何文字目", &.{ array_buffer, try runtime.stringUtf8("xy") })).?.number);
+    try std.testing.expectEqual(@as(f64, 1), (try call(&runtime, "何文字目", &.{ array_buffer, try runtime.stringUtf8("x") })).?.number);
+    try std.testing.expectEqual(@as(f64, 0), (try call(&runtime, "何文字目", &.{ array_buffer, try runtime.stringUtf8("xz") })).?.number);
 
     var object = try runtime.createDictionary();
     try roots.protect(&object);

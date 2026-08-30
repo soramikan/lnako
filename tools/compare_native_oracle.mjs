@@ -1,7 +1,6 @@
 import { constants as fsConstants } from "node:fs";
 import { access, link, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { execFile, spawn, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
@@ -28,7 +27,11 @@ const artifactCompareScriptSha256 = artifactPath === null ? null : sha256(await 
 const oracleBaseline = JSON.parse(await readFile(resolve(root, "compat/upstream.lock.json"), "utf8")).nadesiko3;
 const oracleIdentity = await readOracleIdentity(oracleRoot, officialCli, oracleBaseline);
 const artifactOracleIdentity = artifactPath === null ? null : oracleIdentity;
-const temporary = await mkdtemp(join(tmpdir(), "lnako-native-"));
+// cnako3 v3.7.24 treats a Windows drive-letter path in `取り込む` as a
+// relative module specifier.  Keep the temporary fixture on the repository
+// drive so relative plugin paths remain valid even when runner.temp is on a
+// different drive.
+const temporary = await mkdtemp(join(root, ".tmp-lnako-native-"));
 const maxBuffer = 16 * 1024 * 1024;
 const knownCaseFields = new Set(["id", "source", "sourceFileName", "oracle", "stderrIncludes", "normalizeDebugDump", "commands", "stdin"]);
 const routeNames = ["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0", "lnakoNativeO1", "lnakoNativeO2", "lnakoNativeO3"];
@@ -195,6 +198,17 @@ async function runCase(testCase, index, temporary, executable, officialCli, coll
   const oracleHostArgument = ["--import", pathToFileURL(oracleHost).href];
   const officialSource = await runProcess(process.execPath, [...oracleHostArgument, officialCli, sourcePath], runOptions);
   const officialCompile = await runProcess(process.execPath, [...oracleHostArgument, officialCli, "--compile", "--silent", "--output", generatedJavaScript, sourcePath], options);
+  if (officialCompile.status === 0) {
+    try {
+      await access(generatedJavaScript);
+    } catch (error) {
+      throw new Error(
+        `公式JavaScript生成は成功終了コードを返しましたが出力がありません: ${testCase.id} ` +
+          `path=${generatedJavaScript} stdout=${JSON.stringify(officialCompile.stdout)} stderr=${JSON.stringify(officialCompile.stderr)} ` +
+          `cause=${error?.code ?? error?.message ?? "unknown"}`,
+      );
+    }
+  }
   const officialGenerated = officialCompile.status === 0 ? await runProcess(process.execPath, [...oracleHostArgument, generatedJavaScript], runOptions) : officialCompile;
   const generatedJavaScriptSha256 = collectManifest && officialCompile.status === 0 ? sha256(await readFile(generatedJavaScript)) : null;
   const interpreted = await runProcess(executable, ["run", sourcePath], runOptions);

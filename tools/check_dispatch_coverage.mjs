@@ -317,7 +317,9 @@ function assertOfficialEquivalent(label, left, right) {
   const leftNormalized = normalizeProcess(left);
   const rightNormalized = normalizeProcess(right);
   if (JSON.stringify(leftNormalized) !== JSON.stringify(rightNormalized)) {
-    throw new Error(`${label}で公式・lnakoの結果が一致しません`);
+    throw new Error(
+      `${label}で公式・lnakoの結果が一致しません: official=${JSON.stringify(leftNormalized)} lnako=${JSON.stringify(rightNormalized)}`,
+    );
   }
 }
 
