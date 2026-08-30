@@ -12598,13 +12598,13 @@ fn nodeCurrentDirectoryBuiltin(runtime: *Runtime) !Value {
 }
 
 fn currentDirectoryAlloc(runtime: *Runtime) ![]u8 {
-    var size: usize = 256;
-    while (size <= 1024 * 1024) : (size *= 2) {
-        const buffer = try runtime.allocator.alloc(u8, size);
-        defer runtime.allocator.free(buffer);
-        if (std.c.getcwd(buffer.ptr, buffer.len)) |path| return runtime.allocator.dupe(u8, std.mem.sliceTo(path, 0));
-    }
-    return error.CurrentDirectoryUnavailable;
+    // Keep AOT's cwd semantics aligned with the CLI host.  In particular,
+    // Node reports the canonical path after entering a directory through a
+    // symlink; a raw getcwd buffer is a separate platform-specific path.
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const canonical = try std.Io.Dir.cwd().realPathFileAlloc(io, ".", runtime.allocator);
+    defer runtime.allocator.free(canonical.ptr[0 .. canonical.len + 1]);
+    return runtime.allocator.dupe(u8, canonical);
 }
 
 fn aotProcessEnvironment() std.process.Environ {
@@ -19304,12 +19304,13 @@ test "AOTカレントディレクトリ取得は現在の作業フォルダを�
     runtime.pushRoots(&frame, &roots, roots.len);
     defer runtime.popRoots(&frame);
 
-    var expected_buffer: [4096]u8 = undefined;
-    const expected = std.c.getcwd(&expected_buffer, expected_buffer.len) orelse return error.CurrentDirectoryUnavailable;
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const expected = try std.Io.Dir.cwd().realPathFileAlloc(io, ".", runtime.allocator);
+    defer runtime.allocator.free(expected.ptr[0 .. expected.len + 1]);
     roots[0] = try nodeCurrentDirectoryBuiltin(&runtime);
-    try expectUtf16String(&runtime, roots[0], std.mem.sliceTo(expected, 0));
+    try expectUtf16String(&runtime, roots[0], expected);
     roots[1] = try nodeCurrentDirectoryBuiltin(&runtime);
-    try expectUtf16String(&runtime, roots[1], std.mem.sliceTo(expected, 0));
+    try expectUtf16String(&runtime, roots[1], expected);
 }
 
 test "AOT Nodeパス解決はpath.resolveとpath.joinの規則を保つ" {
