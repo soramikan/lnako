@@ -13395,54 +13395,10 @@ fn stableArrayCallbackSort(runtime: *Runtime, source: Value, callable: Value) !V
     runtime.pushRoots(&roots, root_values.ptr, root_values.len);
     defer runtime.popRoots(&roots);
 
-    var from_first = true;
     if (original_length < v8_small_callback_sort_limit) {
         try v8SmallArrayCallbackSort(runtime, first, first_presence, &root_values[1], &root_values[2], &root_values[3]);
     } else {
-        var width: usize = 1;
-        while (width < original_length) : (width = std.math.mul(usize, width, 2) catch original_length) {
-            const input = if (from_first) first else second;
-            const output = if (from_first) second else first;
-            const input_presence = if (from_first) first_presence else second_presence;
-            const output_presence = if (from_first) second_presence else first_presence;
-            var start: usize = 0;
-            while (start < original_length) {
-                const middle = @min(std.math.add(usize, start, width) catch original_length, original_length);
-                const end = @min(std.math.add(usize, middle, width) catch original_length, original_length);
-                var left = start;
-                var right = middle;
-                var destination = start;
-                while (left < middle and right < end) {
-                    const order = try compareAotCallback(runtime, root_values[1], input[left], input_presence[left], input[right], input_presence[right], &root_values[2]);
-                    if (order == .gt) {
-                        output[destination] = input[right];
-                        output_presence[destination] = input_presence[right];
-                        right += 1;
-                    } else {
-                        output[destination] = input[left];
-                        output_presence[destination] = input_presence[left];
-                        left += 1;
-                    }
-                    destination += 1;
-                }
-                while (left < middle) : ({
-                    left += 1;
-                    destination += 1;
-                }) {
-                    output[destination] = input[left];
-                    output_presence[destination] = input_presence[left];
-                }
-                while (right < end) : ({
-                    right += 1;
-                    destination += 1;
-                }) {
-                    output[destination] = input[right];
-                    output_presence[destination] = input_presence[right];
-                }
-                start = end;
-            }
-            from_first = !from_first;
-        }
+        try v8TimSortArrayCallback(runtime, first, first_presence, second, second_presence, &root_values[1], &root_values[2], &root_values[3]);
     }
 
     if (items.items.len < original_length) {
@@ -13452,14 +13408,19 @@ fn stableArrayCallbackSort(runtime: *Runtime, source: Value, callable: Value) !V
         try object.array_presence.resize(runtime.allocator, original_length);
         @memset(object.array_presence.items[old_length..], false);
     }
-    const sorted = if (from_first) first else second;
-    std.mem.copyForwards(Value, items.items[0..original_length], sorted);
-    const sorted_presence = if (from_first) first_presence else second_presence;
-    std.mem.copyForwards(bool, object.array_presence.items[0..original_length], sorted_presence);
+    std.mem.copyForwards(Value, items.items[0..original_length], first);
+    std.mem.copyForwards(bool, object.array_presence.items[0..original_length], first_presence);
     return root_values[0];
 }
 
 const v8_small_callback_sort_limit: usize = 64;
+const v8_timsort_max_pending_runs: usize = 85;
+const v8_timsort_min_gallop: usize = 7;
+
+const V8ArraySortRun = struct {
+    base: usize,
+    length: usize,
+};
 
 fn v8SmallArrayCallbackSort(
     runtime: *Runtime,
@@ -13518,12 +13479,717 @@ fn v8SmallArrayCallbackSort(
     }
 }
 
+fn v8CopyArrayRange(comptime T: type, destination: []T, destination_index: usize, source: []const T, source_index: usize, length: usize) void {
+    if (length == 0) return;
+    if (@intFromPtr(destination.ptr) == @intFromPtr(source.ptr) and destination_index > source_index) {
+        var offset = length;
+        while (offset > 0) {
+            offset -= 1;
+            destination[destination_index + offset] = source[source_index + offset];
+        }
+    } else {
+        std.mem.copyForwards(T, destination[destination_index .. destination_index + length], source[source_index .. source_index + length]);
+    }
+}
+
+fn v8ComputeMinRunLengthArray(length: usize) usize {
+    var n = length;
+    var remainder: usize = 0;
+    while (n >= 64) {
+        remainder |= n & 1;
+        n >>= 1;
+    }
+    return n + remainder;
+}
+
+fn v8CountAndMakeRunArrayCallback(
+    runtime: *Runtime,
+    items: []Value,
+    presence: []bool,
+    low: usize,
+    high: usize,
+    callable_root: *Value,
+    result_root: *Value,
+) !usize {
+    if (low + 1 == high) return 1;
+
+    var run_length: usize = 2;
+    const first_order = try compareAotCallback(runtime, callable_root.*, items[low + 1], presence[low + 1], items[low], presence[low], result_root);
+    const descending = first_order == .lt;
+    while (low + run_length < high) : (run_length += 1) {
+        const order = try compareAotCallback(
+            runtime,
+            callable_root.*,
+            items[low + run_length],
+            presence[low + run_length],
+            items[low + run_length - 1],
+            presence[low + run_length - 1],
+            result_root,
+        );
+        if (descending) {
+            if (order != .lt) break;
+        } else if (order == .lt) {
+            break;
+        }
+    }
+
+    if (descending) {
+        var left = low;
+        var right = low + run_length - 1;
+        while (left < right) : ({
+            left += 1;
+            right -= 1;
+        }) {
+            std.mem.swap(Value, &items[left], &items[right]);
+            std.mem.swap(bool, &presence[left], &presence[right]);
+        }
+    }
+    return run_length;
+}
+
+fn v8BinaryInsertionSortArrayCallback(
+    runtime: *Runtime,
+    items: []Value,
+    presence: []bool,
+    low: usize,
+    start_argument: usize,
+    high: usize,
+    callable_root: *Value,
+    result_root: *Value,
+    pivot_root: *Value,
+) !void {
+    var start = if (low == start_argument) start_argument + 1 else start_argument;
+    while (start < high) : (start += 1) {
+        pivot_root.* = items[start];
+        const pivot_present = presence[start];
+        var left = low;
+        var right = start;
+        while (left < right) {
+            const middle = left + (right - left) / 2;
+            const order = try compareAotCallback(runtime, callable_root.*, pivot_root.*, pivot_present, items[middle], presence[middle], result_root);
+            if (order == .lt) right = middle else left = middle + 1;
+        }
+        var cursor = start;
+        while (cursor > left) : (cursor -= 1) {
+            items[cursor] = items[cursor - 1];
+            presence[cursor] = presence[cursor - 1];
+        }
+        items[left] = pivot_root.*;
+        presence[left] = pivot_present;
+    }
+}
+
+fn v8GallopLeftArrayCallback(
+    runtime: *Runtime,
+    items: []Value,
+    presence: []bool,
+    key: *Value,
+    key_present: bool,
+    base: usize,
+    length: usize,
+    hint: usize,
+    callable_root: *Value,
+    result_root: *Value,
+) !usize {
+    var key_root = key.*;
+    var key_frame = RootFrame{};
+    runtime.pushRoots(&key_frame, @ptrCast(&key_root), 1);
+    defer runtime.popRoots(&key_frame);
+
+    var last_offset: isize = 0;
+    var offset: isize = 1;
+    const initial_order = try compareAotCallback(runtime, callable_root.*, items[base + hint], presence[base + hint], key_root, key_present, result_root);
+    if (initial_order == .lt) {
+        const max_offset: isize = @intCast(length - hint);
+        while (offset < max_offset) {
+            const index: usize = base + hint + @as(usize, @intCast(offset));
+            const order = try compareAotCallback(runtime, callable_root.*, items[index], presence[index], key_root, key_present, result_root);
+            if (order != .lt) break;
+            last_offset = offset;
+            offset = (offset << 1) + 1;
+        }
+        if (offset > max_offset) offset = max_offset;
+        last_offset += @intCast(hint);
+        offset += @intCast(hint);
+    } else {
+        const max_offset: isize = @intCast(hint + 1);
+        while (offset < max_offset) {
+            const index: usize = base + hint - @as(usize, @intCast(offset));
+            const order = try compareAotCallback(runtime, callable_root.*, items[index], presence[index], key_root, key_present, result_root);
+            if (order == .lt) break;
+            last_offset = offset;
+            offset = (offset << 1) + 1;
+        }
+        if (offset > max_offset) offset = max_offset;
+        const previous = last_offset;
+        last_offset = @as(isize, @intCast(hint)) - offset;
+        offset = @as(isize, @intCast(hint)) - previous;
+    }
+
+    last_offset += 1;
+    while (last_offset < offset) {
+        const middle: usize = @intCast(last_offset + @divTrunc(offset - last_offset, 2));
+        const index = base + middle;
+        const order = try compareAotCallback(runtime, callable_root.*, items[index], presence[index], key_root, key_present, result_root);
+        if (order == .lt) last_offset = @intCast(middle + 1) else offset = @intCast(middle);
+    }
+    return @intCast(offset);
+}
+
+fn v8GallopRightArrayCallback(
+    runtime: *Runtime,
+    items: []Value,
+    presence: []bool,
+    key: *Value,
+    key_present: bool,
+    base: usize,
+    length: usize,
+    hint: usize,
+    callable_root: *Value,
+    result_root: *Value,
+) !usize {
+    var key_root = key.*;
+    var key_frame = RootFrame{};
+    runtime.pushRoots(&key_frame, @ptrCast(&key_root), 1);
+    defer runtime.popRoots(&key_frame);
+
+    var last_offset: isize = 0;
+    var offset: isize = 1;
+    const initial_order = try compareAotCallback(runtime, callable_root.*, key_root, key_present, items[base + hint], presence[base + hint], result_root);
+    if (initial_order == .lt) {
+        const max_offset: isize = @intCast(hint + 1);
+        while (offset < max_offset) {
+            const index: usize = base + hint - @as(usize, @intCast(offset));
+            const order = try compareAotCallback(runtime, callable_root.*, key_root, key_present, items[index], presence[index], result_root);
+            if (order != .lt) break;
+            last_offset = offset;
+            offset = (offset << 1) + 1;
+        }
+        if (offset > max_offset) offset = max_offset;
+        const previous = last_offset;
+        last_offset = @as(isize, @intCast(hint)) - offset;
+        offset = @as(isize, @intCast(hint)) - previous;
+    } else {
+        const max_offset: isize = @intCast(length - hint);
+        while (offset < max_offset) {
+            const index: usize = base + hint + @as(usize, @intCast(offset));
+            const order = try compareAotCallback(runtime, callable_root.*, key_root, key_present, items[index], presence[index], result_root);
+            if (order == .lt) break;
+            last_offset = offset;
+            offset = (offset << 1) + 1;
+        }
+        if (offset > max_offset) offset = max_offset;
+        last_offset += @intCast(hint);
+        offset += @intCast(hint);
+    }
+
+    last_offset += 1;
+    while (last_offset < offset) {
+        const middle: usize = @intCast(last_offset + @divTrunc(offset - last_offset, 2));
+        const index = base + middle;
+        const order = try compareAotCallback(runtime, callable_root.*, key_root, key_present, items[index], presence[index], result_root);
+        if (order == .lt) offset = @intCast(middle) else last_offset = @intCast(middle + 1);
+    }
+    return @intCast(offset);
+}
+
+fn v8MergeLowArrayCallback(
+    runtime: *Runtime,
+    items: []Value,
+    presence: []bool,
+    temp: []Value,
+    temp_presence: []bool,
+    base_a: usize,
+    length_a_argument: usize,
+    base_b: usize,
+    length_b_argument: usize,
+    callable_root: *Value,
+    result_root: *Value,
+    min_gallop_state: *usize,
+) !void {
+    var length_a = length_a_argument;
+    var length_b = length_b_argument;
+    v8CopyArrayRange(Value, temp, 0, items, base_a, length_a);
+    v8CopyArrayRange(bool, temp_presence, 0, presence, base_a, length_a);
+
+    var destination = base_a;
+    var cursor_temp: usize = 0;
+    var cursor_b = base_b;
+    items[destination] = items[cursor_b];
+    presence[destination] = presence[cursor_b];
+    destination += 1;
+    cursor_b += 1;
+    length_b -= 1;
+    if (length_b == 0) {
+        v8CopyArrayRange(Value, items, destination, temp, cursor_temp, length_a);
+        v8CopyArrayRange(bool, presence, destination, temp_presence, cursor_temp, length_a);
+        return;
+    }
+    if (length_a == 1) {
+        v8CopyArrayRange(Value, items, destination, items, cursor_b, length_b);
+        v8CopyArrayRange(bool, presence, destination, presence, cursor_b, length_b);
+        items[destination + length_b] = temp[cursor_temp];
+        presence[destination + length_b] = temp_presence[cursor_temp];
+        return;
+    }
+
+    var min_gallop = min_gallop_state.*;
+    while (true) {
+        var wins_a: usize = 0;
+        var wins_b: usize = 0;
+        while (true) {
+            const order = try compareAotCallback(runtime, callable_root.*, items[cursor_b], presence[cursor_b], temp[cursor_temp], temp_presence[cursor_temp], result_root);
+            if (order == .lt) {
+                items[destination] = items[cursor_b];
+                presence[destination] = presence[cursor_b];
+                destination += 1;
+                cursor_b += 1;
+                length_b -= 1;
+                wins_b += 1;
+                wins_a = 0;
+                if (length_b == 0) {
+                    v8CopyArrayRange(Value, items, destination, temp, cursor_temp, length_a);
+                    v8CopyArrayRange(bool, presence, destination, temp_presence, cursor_temp, length_a);
+                    min_gallop_state.* = min_gallop;
+                    return;
+                }
+                if (wins_b >= min_gallop) break;
+            } else {
+                items[destination] = temp[cursor_temp];
+                presence[destination] = temp_presence[cursor_temp];
+                destination += 1;
+                cursor_temp += 1;
+                length_a -= 1;
+                wins_a += 1;
+                wins_b = 0;
+                if (length_a == 1) {
+                    v8CopyArrayRange(Value, items, destination, items, cursor_b, length_b);
+                    v8CopyArrayRange(bool, presence, destination, presence, cursor_b, length_b);
+                    items[destination + length_b] = temp[cursor_temp];
+                    presence[destination + length_b] = temp_presence[cursor_temp];
+                    min_gallop_state.* = min_gallop;
+                    return;
+                }
+                if (wins_a >= min_gallop) break;
+            }
+        }
+
+        min_gallop += 1;
+        var first_iteration = true;
+        while (wins_a >= v8_timsort_min_gallop or wins_b >= v8_timsort_min_gallop or first_iteration) {
+            first_iteration = false;
+            min_gallop = @max(@as(usize, 1), min_gallop -| 1);
+            min_gallop_state.* = min_gallop;
+            wins_a = try v8GallopRightArrayCallback(
+                runtime,
+                temp,
+                temp_presence,
+                &items[cursor_b],
+                presence[cursor_b],
+                cursor_temp,
+                length_a,
+                0,
+                callable_root,
+                result_root,
+            );
+            if (wins_a > 0) {
+                v8CopyArrayRange(Value, items, destination, temp, cursor_temp, wins_a);
+                v8CopyArrayRange(bool, presence, destination, temp_presence, cursor_temp, wins_a);
+                destination += wins_a;
+                cursor_temp += wins_a;
+                length_a -= wins_a;
+                if (length_a == 1) {
+                    v8CopyArrayRange(Value, items, destination, items, cursor_b, length_b);
+                    v8CopyArrayRange(bool, presence, destination, presence, cursor_b, length_b);
+                    items[destination + length_b] = temp[cursor_temp];
+                    presence[destination + length_b] = temp_presence[cursor_temp];
+                    return;
+                }
+                if (length_a == 0) return;
+            }
+            items[destination] = items[cursor_b];
+            presence[destination] = presence[cursor_b];
+            destination += 1;
+            cursor_b += 1;
+            length_b -= 1;
+            if (length_b == 0) {
+                v8CopyArrayRange(Value, items, destination, temp, cursor_temp, length_a);
+                v8CopyArrayRange(bool, presence, destination, temp_presence, cursor_temp, length_a);
+                return;
+            }
+
+            wins_b = try v8GallopLeftArrayCallback(
+                runtime,
+                items,
+                presence,
+                &temp[cursor_temp],
+                temp_presence[cursor_temp],
+                cursor_b,
+                length_b,
+                0,
+                callable_root,
+                result_root,
+            );
+            if (wins_b > 0) {
+                v8CopyArrayRange(Value, items, destination, items, cursor_b, wins_b);
+                v8CopyArrayRange(bool, presence, destination, presence, cursor_b, wins_b);
+                destination += wins_b;
+                cursor_b += wins_b;
+                length_b -= wins_b;
+                if (length_b == 0) {
+                    v8CopyArrayRange(Value, items, destination, temp, cursor_temp, length_a);
+                    v8CopyArrayRange(bool, presence, destination, temp_presence, cursor_temp, length_a);
+                    return;
+                }
+            }
+            items[destination] = temp[cursor_temp];
+            presence[destination] = temp_presence[cursor_temp];
+            destination += 1;
+            cursor_temp += 1;
+            length_a -= 1;
+            if (length_a == 1) {
+                v8CopyArrayRange(Value, items, destination, items, cursor_b, length_b);
+                v8CopyArrayRange(bool, presence, destination, presence, cursor_b, length_b);
+                items[destination + length_b] = temp[cursor_temp];
+                presence[destination + length_b] = temp_presence[cursor_temp];
+                return;
+            }
+        }
+        min_gallop += 1;
+        min_gallop_state.* = min_gallop;
+    }
+}
+
+fn v8MergeHighArrayCallback(
+    runtime: *Runtime,
+    items: []Value,
+    presence: []bool,
+    temp: []Value,
+    temp_presence: []bool,
+    base_a: usize,
+    length_a_argument: usize,
+    base_b: usize,
+    length_b_argument: usize,
+    callable_root: *Value,
+    result_root: *Value,
+    min_gallop_state: *usize,
+) !void {
+    var length_a = length_a_argument;
+    var length_b = length_b_argument;
+    v8CopyArrayRange(Value, temp, 0, items, base_b, length_b);
+    v8CopyArrayRange(bool, temp_presence, 0, presence, base_b, length_b);
+
+    var destination = base_b + length_b - 1;
+    var cursor_temp = length_b - 1;
+    var cursor_a = base_a + length_a - 1;
+    items[destination] = items[cursor_a];
+    presence[destination] = presence[cursor_a];
+    destination -= 1;
+    cursor_a -= 1;
+    length_a -= 1;
+    if (length_a == 0) {
+        v8CopyArrayRange(Value, items, destination - (length_b - 1), temp, 0, length_b);
+        v8CopyArrayRange(bool, presence, destination - (length_b - 1), temp_presence, 0, length_b);
+        return;
+    }
+    if (length_b == 1) {
+        destination -= length_a;
+        cursor_a -= length_a;
+        v8CopyArrayRange(Value, items, destination + 1, items, cursor_a + 1, length_a);
+        v8CopyArrayRange(bool, presence, destination + 1, presence, cursor_a + 1, length_a);
+        items[destination] = temp[cursor_temp];
+        presence[destination] = temp_presence[cursor_temp];
+        return;
+    }
+
+    var min_gallop = min_gallop_state.*;
+    while (true) {
+        var wins_a: usize = 0;
+        var wins_b: usize = 0;
+        while (true) {
+            const order = try compareAotCallback(runtime, callable_root.*, temp[cursor_temp], temp_presence[cursor_temp], items[cursor_a], presence[cursor_a], result_root);
+            if (order == .lt) {
+                items[destination] = items[cursor_a];
+                presence[destination] = presence[cursor_a];
+                destination -= 1;
+                cursor_a -= 1;
+                length_a -= 1;
+                wins_a += 1;
+                wins_b = 0;
+                if (length_a == 0) {
+                    v8CopyArrayRange(Value, items, destination - (length_b - 1), temp, 0, length_b);
+                    v8CopyArrayRange(bool, presence, destination - (length_b - 1), temp_presence, 0, length_b);
+                    min_gallop_state.* = min_gallop;
+                    return;
+                }
+                if (wins_a >= min_gallop) break;
+            } else {
+                items[destination] = temp[cursor_temp];
+                presence[destination] = temp_presence[cursor_temp];
+                destination -= 1;
+                cursor_temp -= 1;
+                length_b -= 1;
+                wins_b += 1;
+                wins_a = 0;
+                if (length_b == 1) {
+                    destination -= length_a;
+                    cursor_a -= length_a;
+                    v8CopyArrayRange(Value, items, destination + 1, items, cursor_a + 1, length_a);
+                    v8CopyArrayRange(bool, presence, destination + 1, presence, cursor_a + 1, length_a);
+                    items[destination] = temp[cursor_temp];
+                    presence[destination] = temp_presence[cursor_temp];
+                    min_gallop_state.* = min_gallop;
+                    return;
+                }
+                if (wins_b >= min_gallop) break;
+            }
+        }
+
+        min_gallop += 1;
+        var first_iteration = true;
+        while (wins_a >= v8_timsort_min_gallop or wins_b >= v8_timsort_min_gallop or first_iteration) {
+            first_iteration = false;
+            min_gallop = @max(@as(usize, 1), min_gallop -| 1);
+            min_gallop_state.* = min_gallop;
+            const gallop_index = try v8GallopRightArrayCallback(
+                runtime,
+                items,
+                presence,
+                &temp[cursor_temp],
+                temp_presence[cursor_temp],
+                base_a,
+                length_a,
+                length_a - 1,
+                callable_root,
+                result_root,
+            );
+            wins_a = length_a - gallop_index;
+            if (wins_a > 0) {
+                destination -= wins_a;
+                cursor_a -= wins_a;
+                v8CopyArrayRange(Value, items, destination + 1, items, cursor_a + 1, wins_a);
+                v8CopyArrayRange(bool, presence, destination + 1, presence, cursor_a + 1, wins_a);
+                length_a -= wins_a;
+                if (length_a == 0) {
+                    v8CopyArrayRange(Value, items, destination - (length_b - 1), temp, 0, length_b);
+                    v8CopyArrayRange(bool, presence, destination - (length_b - 1), temp_presence, 0, length_b);
+                    return;
+                }
+            }
+            items[destination] = temp[cursor_temp];
+            presence[destination] = temp_presence[cursor_temp];
+            destination -= 1;
+            cursor_temp -= 1;
+            length_b -= 1;
+            if (length_b == 1) {
+                destination -= length_a;
+                cursor_a -= length_a;
+                v8CopyArrayRange(Value, items, destination + 1, items, cursor_a + 1, length_a);
+                v8CopyArrayRange(bool, presence, destination + 1, presence, cursor_a + 1, length_a);
+                items[destination] = temp[cursor_temp];
+                presence[destination] = temp_presence[cursor_temp];
+                return;
+            }
+
+            const gallop_left = try v8GallopLeftArrayCallback(
+                runtime,
+                temp,
+                temp_presence,
+                &items[cursor_a],
+                presence[cursor_a],
+                0,
+                length_b,
+                length_b - 1,
+                callable_root,
+                result_root,
+            );
+            wins_b = length_b - gallop_left;
+            if (wins_b > 0) {
+                destination -= wins_b;
+                cursor_temp -= wins_b;
+                v8CopyArrayRange(Value, items, destination + 1, temp, cursor_temp + 1, wins_b);
+                v8CopyArrayRange(bool, presence, destination + 1, temp_presence, cursor_temp + 1, wins_b);
+                length_b -= wins_b;
+                if (length_b == 1) {
+                    destination -= length_a;
+                    cursor_a -= length_a;
+                    v8CopyArrayRange(Value, items, destination + 1, items, cursor_a + 1, length_a);
+                    v8CopyArrayRange(bool, presence, destination + 1, presence, cursor_a + 1, length_a);
+                    items[destination] = temp[cursor_temp];
+                    presence[destination] = temp_presence[cursor_temp];
+                    return;
+                }
+                if (length_b == 0) {
+                    return;
+                }
+            }
+            items[destination] = items[cursor_a];
+            presence[destination] = presence[cursor_a];
+            destination -= 1;
+            cursor_a -= 1;
+            length_a -= 1;
+            if (length_a == 0) {
+                v8CopyArrayRange(Value, items, destination - (length_b - 1), temp, 0, length_b);
+                v8CopyArrayRange(bool, presence, destination - (length_b - 1), temp_presence, 0, length_b);
+                return;
+            }
+        }
+        min_gallop += 1;
+        min_gallop_state.* = min_gallop;
+    }
+}
+
+fn v8MergeAtArrayCallback(
+    runtime: *Runtime,
+    items: []Value,
+    presence: []bool,
+    temp: []Value,
+    temp_presence: []bool,
+    runs: []V8ArraySortRun,
+    run_count: *usize,
+    index: usize,
+    callable_root: *Value,
+    result_root: *Value,
+    min_gallop_state: *usize,
+) !void {
+    const stack_size = run_count.*;
+    var base_a = runs[index].base;
+    var length_a = runs[index].length;
+    const base_b = runs[index + 1].base;
+    var length_b = runs[index + 1].length;
+    runs[index].length = length_a + length_b;
+    if (stack_size >= 3 and index == stack_size - 3) runs[index + 1] = runs[index + 2];
+    run_count.* = stack_size - 1;
+
+    const key_right = try v8GallopRightArrayCallback(
+        runtime,
+        items,
+        presence,
+        &items[base_b],
+        presence[base_b],
+        base_a,
+        length_a,
+        0,
+        callable_root,
+        result_root,
+    );
+    base_a += key_right;
+    length_a -= key_right;
+    if (length_a == 0) return;
+    length_b = try v8GallopLeftArrayCallback(
+        runtime,
+        items,
+        presence,
+        &items[base_a + length_a - 1],
+        presence[base_a + length_a - 1],
+        base_b,
+        length_b,
+        length_b - 1,
+        callable_root,
+        result_root,
+    );
+    if (length_b == 0) return;
+    if (length_a <= length_b) {
+        try v8MergeLowArrayCallback(runtime, items, presence, temp, temp_presence, base_a, length_a, base_b, length_b, callable_root, result_root, min_gallop_state);
+    } else {
+        try v8MergeHighArrayCallback(runtime, items, presence, temp, temp_presence, base_a, length_a, base_b, length_b, callable_root, result_root, min_gallop_state);
+    }
+}
+
+fn v8RunInvariantEstablishedArray(runs: []const V8ArraySortRun, index: usize) bool {
+    if (index < 2) return true;
+    if (runs[index - 2].length <= runs[index - 1].length) return false;
+    return runs[index - 2].length - runs[index - 1].length > runs[index].length;
+}
+
+fn v8MergeCollapseArrayCallback(
+    runtime: *Runtime,
+    items: []Value,
+    presence: []bool,
+    temp: []Value,
+    temp_presence: []bool,
+    runs: []V8ArraySortRun,
+    run_count: *usize,
+    callable_root: *Value,
+    result_root: *Value,
+    min_gallop_state: *usize,
+) !void {
+    while (run_count.* > 1) {
+        var index = run_count.* - 2;
+        if (!v8RunInvariantEstablishedArray(runs, index + 1) or !v8RunInvariantEstablishedArray(runs, index)) {
+            if (index > 0 and runs[index - 1].length < runs[index + 1].length) index -= 1;
+            try v8MergeAtArrayCallback(runtime, items, presence, temp, temp_presence, runs, run_count, index, callable_root, result_root, min_gallop_state);
+        } else if (runs[index].length <= runs[index + 1].length) {
+            try v8MergeAtArrayCallback(runtime, items, presence, temp, temp_presence, runs, run_count, index, callable_root, result_root, min_gallop_state);
+        } else {
+            break;
+        }
+    }
+}
+
+fn v8MergeForceCollapseArrayCallback(
+    runtime: *Runtime,
+    items: []Value,
+    presence: []bool,
+    temp: []Value,
+    temp_presence: []bool,
+    runs: []V8ArraySortRun,
+    run_count: *usize,
+    callable_root: *Value,
+    result_root: *Value,
+    min_gallop_state: *usize,
+) !void {
+    while (run_count.* > 1) {
+        var index = run_count.* - 2;
+        if (index > 0 and runs[index - 1].length < runs[index + 1].length) index -= 1;
+        try v8MergeAtArrayCallback(runtime, items, presence, temp, temp_presence, runs, run_count, index, callable_root, result_root, min_gallop_state);
+    }
+}
+
+fn v8TimSortArrayCallback(
+    runtime: *Runtime,
+    items: []Value,
+    presence: []bool,
+    temp: []Value,
+    temp_presence: []bool,
+    callable_root: *Value,
+    result_root: *Value,
+    pivot_root: *Value,
+) !void {
+    if (items.len < 2) return;
+    const min_run_length = v8ComputeMinRunLengthArray(items.len);
+    var runs: [v8_timsort_max_pending_runs]V8ArraySortRun = undefined;
+    var run_count: usize = 0;
+    var low: usize = 0;
+    var remaining = items.len;
+    var min_gallop = v8_timsort_min_gallop;
+    while (remaining != 0) {
+        var current_run_length = try v8CountAndMakeRunArrayCallback(runtime, items, presence, low, low + remaining, callable_root, result_root);
+        if (current_run_length < min_run_length) {
+            const forced_run_length = @min(min_run_length, remaining);
+            try v8BinaryInsertionSortArrayCallback(runtime, items, presence, low, low + current_run_length, low + forced_run_length, callable_root, result_root, pivot_root);
+            current_run_length = forced_run_length;
+        }
+        if (run_count == runs.len) return error.ArrayTooLarge;
+        runs[run_count] = .{ .base = low, .length = current_run_length };
+        run_count += 1;
+        try v8MergeCollapseArrayCallback(runtime, items, presence, temp, temp_presence, &runs, &run_count, callable_root, result_root, &min_gallop);
+        low += current_run_length;
+        remaining -= current_run_length;
+    }
+    try v8MergeForceCollapseArrayCallback(runtime, items, presence, temp, temp_presence, &runs, &run_count, callable_root, result_root, &min_gallop);
+}
+
 fn compareAotCallback(runtime: *Runtime, callable: Value, left: Value, left_present: bool, right: Value, right_present: bool, result_root: *Value) !std.math.Order {
     if (!left_present) return if (!right_present) .eq else .gt;
     if (!right_present) return .lt;
     if (left.tag == @intFromEnum(Tag.undefined)) return if (right.tag == @intFromEnum(Tag.undefined)) .eq else .gt;
     if (right.tag == @intFromEnum(Tag.undefined)) return .lt;
-    result_root.* = try invokeAotCallback(runtime, callable, @ptrCast(&[_]Value{ left, right }), 2);
+    var callback_values = [_]Value{ callable, left, right };
+    var callback_frame = RootFrame{};
+    runtime.pushRoots(&callback_frame, callback_values[0..].ptr, callback_values.len);
+    defer runtime.popRoots(&callback_frame);
+    result_root.* = try invokeAotCallback(runtime, callback_values[0], @ptrCast(&callback_values[1]), 2);
     const number = try valueToNumberRuntime(runtime, result_root.*);
     if (std.math.isNan(number) or number == 0) return .eq;
     return if (number < 0) .lt else .gt;
