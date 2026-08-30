@@ -12876,6 +12876,17 @@ fn nodeDirnameFor(path: []const u8, windows: bool) []const u8 {
         return path[0..2];
     }
 
+    // Win32 namespace paths use the first component after the `\\?\\` or
+    // `\\.\\` prefix as their root.  For example, Node treats
+    // `\\?\\C:\\foo` as having the root `\\?\\C:\\`, while
+    // `\\?\\UNC\\server\\share` has the root `\\?\\UNC\\`.
+    // Handling this before the ordinary UNC rule also preserves the root
+    // separator for device paths such as `\\.\\pipe\\name`.
+    const namespace_root_end = if (windows) windowsNamespaceRootEnd(path) else null;
+    if (namespace_root_end) |root_end| if (end == root_end) {
+        return if (path.len > end and nodePathSeparator(path[end], true)) path[0 .. end + 1] else path[0..end];
+    };
+
     const unc_root_end = if (windows) windowsUncRootEnd(path) else null;
     if (unc_root_end) |root_end| if (end == root_end) {
         return if (path.len > end) path[0 .. root_end + 1] else path[0..root_end];
@@ -12885,6 +12896,9 @@ fn nodeDirnameFor(path: []const u8, windows: bool) []const u8 {
     while (start > 0 and !nodePathSeparator(path[start - 1], windows)) start -= 1;
     if (start == 0) return if (drive_path) path[0..2] else ".";
     if (start == 1 and nodePathSeparator(path[0], windows)) return path[0..1];
+    if (namespace_root_end) |root_end| if (start == root_end) {
+        return if (path.len > start and nodePathSeparator(path[start], true)) path[0 .. start + 1] else path[0..start];
+    };
     if (unc_root_end) |root_end| if (start == root_end + 1) return path[0..start];
     if (drive_path and start == 3 and nodePathSeparator(path[2], true)) return path[0..3];
     if (start == 2 and nodePathSeparator(path[0], windows) and nodePathSeparator(path[1], windows) and !windows) return path[0..2];
@@ -12906,6 +12920,15 @@ fn windowsUncRootEnd(path: []const u8) ?usize {
     const share_start = index;
     while (index < path.len and !nodePathSeparator(path[index], true)) index += 1;
     if (index == share_start) return null;
+    return index;
+}
+
+fn windowsNamespaceRootEnd(path: []const u8) ?usize {
+    if (path.len < 4 or !nodePathSeparator(path[0], true) or !nodePathSeparator(path[1], true) or
+        (path[2] != '?' and path[2] != '.') or !nodePathSeparator(path[3], true)) return null;
+    var index: usize = 4;
+    while (index < path.len and !nodePathSeparator(path[index], true)) index += 1;
+    if (index == 4) return null;
     return index;
 }
 
@@ -19546,6 +19569,16 @@ test "AOT Node互換のWindowsパスはdrive-relativeとUNC rootを保持する"
     try std.testing.expectEqualStrings("\\\\server\\share\\", nodeDirnameFor("\\\\server\\share\\file", true));
     try std.testing.expectEqualStrings("share", nodeBasenameFor("\\\\server\\share\\", true));
     try std.testing.expectEqualStrings("\\\\server\\share\\", nodeDirnameFor("\\\\server\\share\\", true));
+    try std.testing.expectEqualStrings("bar", nodeBasenameFor("\\\\?\\C:\\foo\\bar", true));
+    try std.testing.expectEqualStrings("\\\\?\\C:\\foo", nodeDirnameFor("\\\\?\\C:\\foo\\bar", true));
+    try std.testing.expectEqualStrings("foo", nodeBasenameFor("\\\\?\\C:\\foo\\", true));
+    try std.testing.expectEqualStrings("\\\\?\\C:\\", nodeDirnameFor("\\\\?\\C:\\foo\\", true));
+    try std.testing.expectEqualStrings("share", nodeBasenameFor("\\\\?\\UNC\\server\\share\\", true));
+    try std.testing.expectEqualStrings("\\\\?\\UNC\\server", nodeDirnameFor("\\\\?\\UNC\\server\\share\\", true));
+    try std.testing.expectEqualStrings("name", nodeBasenameFor("\\\\.\\pipe\\name\\", true));
+    try std.testing.expectEqualStrings("\\\\.\\pipe\\", nodeDirnameFor("\\\\.\\pipe\\name\\", true));
+    try std.testing.expectEqualStrings("foo", nodeBasenameFor("\\\\.\\C:\\foo\\", true));
+    try std.testing.expectEqualStrings("\\\\.\\C:\\", nodeDirnameFor("\\\\.\\C:\\foo\\", true));
 }
 
 test "AOT Windows wide argv basenameはUTF-16 code unitを保持する" {

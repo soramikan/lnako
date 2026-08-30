@@ -2426,7 +2426,11 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     defer program.deinit();
     var module = try generate(std.testing.allocator, program, "main.nako3", false);
     defer module.deinit(std.testing.allocator);
-    try std.testing.expect(std.mem.indexOf(u8, module.text, "define i32 @main(i32 %argc, ptr %argv)") != null);
+    const expected_entry = if (target_builtin.os.tag == .windows)
+        "define i32 @wmain(i32 %argc, ptr %argv)"
+    else
+        "define i32 @main(i32 %argc, ptr %argv)";
+    try std.testing.expect(std.mem.indexOf(u8, module.text, expected_entry) != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call i32 @lnako_aot_runtime_init()") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_runtime_drain_events()\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_runtime_drain_events()\n") != null);
@@ -2444,7 +2448,11 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_node_http_call(ptr ") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_constants_init(ptr, ptr, ptr, i32, ptr)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_constants_init_wide(ptr, ptr, ptr, i32, ptr)\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_node_constants_init(ptr ") != null);
+    const expected_constants_initializer = if (target_builtin.os.tag == .windows)
+        "call void @lnako_aot_node_constants_init_wide(ptr "
+    else
+        "call void @lnako_aot_node_constants_init(ptr ";
+    try std.testing.expect(std.mem.indexOf(u8, module.text, expected_constants_initializer) != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_directory_constants_init(ptr, ptr, ptr)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_node_mother_path_init(ptr, ptr, i64)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "@lnako.node.source.path") != null);

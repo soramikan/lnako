@@ -250,9 +250,14 @@ Windows `aot`が同じ4 fixtureで失敗した。`native-csv-commands`と`native
 比較側の改行正規化を広げて隠すべき差ではない。
 
 AOT runtime初期化時にWindows stdoutをbinary mode（`_setmode(1, 0x8000)`）へ切り替え、埋め込み`CRLF`をそのまま
-出力するようにした。またAOTのデバッグ表示でもInterpreterと同じドライブ文字境界を適用した。macOSの767単体テストと
+出力するようにした。またAOTのデバッグ表示でもInterpreterと同じドライブ文字境界を適用した。macOSの769単体テストと
 `x86_64-windows-msvc` cross compileは通過している。次回pushのWindows `aot`とdispatch coverageで実行結果を再確認するが、
 CIの完了は待たずに次の実装を進める。
+
+その後の[run 33340403645](https://github.com/soramikan/lnako/actions/runs/33340403645)（`a630b56`）では、Windowsの
+`core`と`compat-aot`が同じLLVM IR単体テストで失敗した。Windows生成入口を`main`から`wmain`へ切り替えた実装に対し、
+テストが`main`とbyte argv初期化の呼出しを固定期待していたためで、Windows AOT差分自体は成功していた。テストの入口名と
+argv初期化呼出しをtarget-awareな期待値へ修正し、次のpushで通常AOT・QuickJS build・全15テストjobを再確認する。
 
 ## Windows AOTのQuickJSビルド分離
 
