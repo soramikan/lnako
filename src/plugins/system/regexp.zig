@@ -75,6 +75,12 @@ const Atom = union(enum) {
     word_boundary: bool,
     backreference: usize,
     named_backreference: []const u16,
+    // Non-Unicode decimal escapes are resolved after the parser knows the
+    // complete capture count.  This is required for forward references such
+    // as `\\1(a)`, while still allowing Annex B octal fallback when the
+    // referenced capture does not exist.
+    legacy_decimal_escape: []const u16,
+    legacy_octal_escape: struct { code_unit: u16, trailing: []const u16 },
     unicode_property: UnicodeProperty,
 };
 const Piece = struct { atom: Atom, minimum: usize = 1, maximum: ?usize = 1, lazy: bool = false };
@@ -347,6 +353,7 @@ const Parser = struct {
                 }
                 if (in_class and self.unicode) return error.InvalidDecimalEscape;
                 if (in_class) break :blk .{ .literal = escaped };
+                if (!self.unicode) break :blk .{ .legacy_decimal_escape = self.parseLegacyDecimalEscape() };
                 const capture_index = escaped - '1';
                 if (self.unicode) {
                     if (self.max_backreference) |current| {
@@ -377,7 +384,8 @@ const Parser = struct {
     fn parseLegacyOctalEscape(self: *Parser, first: u16) u16 {
         var value: u16 = first - '0';
         var digits: usize = 1;
-        while (digits < 3 and self.index < self.source.len) {
+        const maximum = if (first <= '3') @as(usize, 3) else @as(usize, 2);
+        while (digits < maximum and self.index < self.source.len) {
             const unit = self.source[self.index];
             if (unit < '0' or unit > '7') break;
             value = value * 8 + (unit - '0');
@@ -385,6 +393,15 @@ const Parser = struct {
             digits += 1;
         }
         return value;
+    }
+
+    fn parseLegacyDecimalEscape(self: *Parser) []const u16 {
+        const start = self.index - 1;
+        var digits: usize = 1;
+        while (digits < 3 and self.index < self.source.len and self.source[self.index] >= '0' and self.source[self.index] <= '9') : (digits += 1) {
+            self.index += 1;
+        }
+        return self.source[start..self.index];
     }
 
     fn parseUnicodeProperty(self: *Parser, negated: bool) !Atom {
@@ -547,6 +564,7 @@ pub const RawPattern = struct {
         var parser = Parser{ .allocator = arena.allocator(), .source = owned_pattern, .unicode = false };
         const expression = try parser.parseExpression();
         if (parser.index != owned_pattern.len) return error.UnexpectedPatternToken;
+        try resolveLegacyDecimalEscapes(expression, parser.capture_count);
         if (parser.max_backreference) |capture_index| if (capture_index >= parser.capture_count) return error.InvalidBackreference;
         return .{
             .allocator = allocator,
@@ -705,9 +723,47 @@ fn compile(allocator: std.mem.Allocator, specification: []const u16, default_glo
     };
     const expression = try parser.parseExpression();
     if (parser.index != owned_pattern.len) return error.UnexpectedPatternToken;
+    try resolveLegacyDecimalEscapes(expression, parser.capture_count);
     try resolveNamedBackreferences(expression, parser.capture_names[0..parser.capture_count]);
     if (parser.max_backreference) |capture_index| if (capture_index >= parser.capture_count) return error.InvalidBackreference;
     return .{ .arena = arena, .expression = expression, .flags = flags, .capture_count = parser.capture_count, .capture_names = parser.capture_names };
+}
+
+fn resolveLegacyDecimalEscapes(expression: *Expression, capture_count: usize) anyerror!void {
+    for (@constCast(expression.alternatives)) |*alternative| {
+        for (@constCast(alternative.pieces)) |*piece| try resolveLegacyDecimalEscapesInAtom(&piece.atom, capture_count);
+    }
+}
+
+fn resolveLegacyDecimalEscapesInAtom(atom: *Atom, capture_count: usize) anyerror!void {
+    switch (atom.*) {
+        .group => |group| try resolveLegacyDecimalEscapes(group.expression, capture_count),
+        .assertion => |assertion| try resolveLegacyDecimalEscapes(assertion.expression, capture_count),
+        .legacy_decimal_escape => |digits| {
+            var decimal_value: usize = 0;
+            for (digits) |digit| decimal_value = decimal_value * 10 + (digit - '0');
+            if (decimal_value > 0 and decimal_value <= capture_count) {
+                atom.* = .{ .backreference = decimal_value - 1 };
+                return;
+            }
+
+            const octal_length = legacyOctalLength(digits);
+            const code_unit = if (digits[0] > '7') digits[0] else blk: {
+                var value: u16 = 0;
+                for (digits[0..octal_length]) |digit| value = value * 8 + (digit - '0');
+                break :blk value;
+            };
+            atom.* = .{ .legacy_octal_escape = .{ .code_unit = code_unit, .trailing = digits[octal_length..] } };
+        },
+        else => {},
+    }
+}
+
+fn legacyOctalLength(digits: []const u16) usize {
+    const maximum = if (digits[0] <= '3') @min(digits.len, 3) else @min(digits.len, 2);
+    var length: usize = 1;
+    while (length < maximum and digits[length] >= '0' and digits[length] <= '7') : (length += 1) {}
+    return length;
 }
 
 fn resolveNamedBackreferences(expression: *Expression, names: []const ?[]const u16) anyerror!void {
@@ -946,6 +1002,19 @@ fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: Atom, init
                 try output.append(allocator, candidate);
             }
         },
+        .legacy_octal_escape => |escape| {
+            var position = initial.position;
+            if (position >= source.len or !unitsEqual(source[position], escape.code_unit, flags.ignore_case)) return output.toOwnedSlice(allocator);
+            position += 1;
+            for (escape.trailing) |literal| {
+                if (position >= source.len or !unitsEqual(source[position], literal, flags.ignore_case)) return output.toOwnedSlice(allocator);
+                position += 1;
+            }
+            var candidate = initial;
+            candidate.position = position;
+            try output.append(allocator, candidate);
+        },
+        .legacy_decimal_escape => return error.UnresolvedLegacyDecimalEscape,
         .named_backreference => return output.toOwnedSlice(allocator),
         .group => |group| {
             var group_initial = initial;
@@ -1582,6 +1651,46 @@ test "正規表現のlegacy octal escapeは非Unicode classのcode unitになる
     try std.testing.expect(try testRaw(std.testing.allocator, line_feed.string.units, &.{10}, false));
     try std.testing.expect(try testRaw(std.testing.allocator, letter_s.string.units, &.{'S'}, false));
     try std.testing.expect(try testRaw(std.testing.allocator, bell.string.units, &.{7}, false));
+
+    var no_capture_one = try runtime.stringUtf8("\\1");
+    try roots.protect(&no_capture_one);
+    var no_capture_eight = try runtime.stringUtf8("\\8");
+    try roots.protect(&no_capture_eight);
+    var two_digit_octal = try runtime.stringUtf8("\\64");
+    try roots.protect(&two_digit_octal);
+    var three_digit_octal = try runtime.stringUtf8("\\400");
+    try roots.protect(&three_digit_octal);
+    var high_two_digit_octal = try runtime.stringUtf8("\\777");
+    try roots.protect(&high_two_digit_octal);
+    var mixed_octal = try runtime.stringUtf8("\\378");
+    try roots.protect(&mixed_octal);
+    try std.testing.expect(try testRaw(std.testing.allocator, no_capture_one.string.units, &.{1}, false));
+    try std.testing.expect(try testRaw(std.testing.allocator, no_capture_eight.string.units, &.{'8'}, false));
+    try std.testing.expect(try testRaw(std.testing.allocator, two_digit_octal.string.units, &.{'4'}, false));
+    try std.testing.expect(try testRaw(std.testing.allocator, three_digit_octal.string.units, &.{ 32, '0' }, false));
+    try std.testing.expect(try testRaw(std.testing.allocator, high_two_digit_octal.string.units, &.{ 63, '7' }, false));
+    try std.testing.expect(try testRaw(std.testing.allocator, mixed_octal.string.units, &.{ 31, '8' }, false));
+
+    var captured = try runtime.stringUtf8("(a)\\1");
+    try roots.protect(&captured);
+    var forward_capture = try runtime.stringUtf8("\\1(a)");
+    try roots.protect(&forward_capture);
+    var missing_capture = try runtime.stringUtf8("(a)\\2");
+    try roots.protect(&missing_capture);
+    var second_capture = try runtime.stringUtf8("(a)(b)\\2");
+    try roots.protect(&second_capture);
+    var capture_then_octal = try runtime.stringUtf8("(a)\\12");
+    try roots.protect(&capture_then_octal);
+    try std.testing.expect(try testRaw(std.testing.allocator, captured.string.units, &.{ 'a', 'a' }, false));
+    try std.testing.expect(try testRaw(std.testing.allocator, forward_capture.string.units, &.{'a'}, false));
+    try std.testing.expect(try testRaw(std.testing.allocator, missing_capture.string.units, &.{ 'a', 2 }, false));
+    try std.testing.expect(try testRaw(std.testing.allocator, second_capture.string.units, &.{ 'a', 'b', 'b' }, false));
+    try std.testing.expect(try testRaw(std.testing.allocator, capture_then_octal.string.units, &.{ 'a', 10 }, false));
+
+    var class_high_octal = try runtime.stringUtf8("[\\777]");
+    try roots.protect(&class_high_octal);
+    try std.testing.expect(try testRaw(std.testing.allocator, class_high_octal.string.units, &.{'?'}, false));
+    try std.testing.expect(try testRaw(std.testing.allocator, class_high_octal.string.units, &.{'7'}, false));
 }
 
 test "正規表現構文エラーはV8互換の文言を設定する" {
