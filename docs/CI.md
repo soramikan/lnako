@@ -31,11 +31,13 @@ Linuxログでは通常のmath・CSV・TOML・Promise差分は約0.8秒で完了
 | `core` | 互換台帳、字句・構文変換・構文・文法生成fuzz・意味・動的値・インタープリタ・plugin_system差分、format、全Zig単体テスト |
 | `standard` | math・CSV・TOML・Promise、markup・caniuse・kansujiの公式差分と全生成コーパス |
 | `host` | QuickJS互換差分、ネイティブプラグインABI、ファイル・プロセス・HTTP・暗号・文字コード・圧縮などNodeホスト差分。symlink経由のカレントディレクトリ実パスと失敗時のchdir診断も公式CLI・Interpreter・AOT O0〜O3で確認 |
-| `aot` | 公式CLI・公式生成JavaScript・インタープリタ・LLVM AOT O0〜O3差分、通常/QuickJSビルドとスモークテスト |
+| `aot` | 公式CLI・公式生成JavaScript・インタープリタ・LLVM AOT O0〜O3差分、命令dispatch coverage audit、通常/QuickJSビルドとスモークテスト |
 | `compat-aot` | QuickJS Debug単体テスト、QuickJS ReleaseSafe compiler build、compat-js smoke |
 
 `aot` suiteのHTTP server検証は、`plugin-httpserver-all`を使った公式処理系対AOT O0〜O3のlocalhost実通信比較です。
 通常の193件AOT artifact／dispatch証拠とは別fixtureですが、HTTP serverの10命令・14リクエストを検証範囲から除外しません。
+`tools/check_dispatch_coverage.mjs`は、命令関連付けだけではAOT実行証拠にならない境界を保持したまま、成功したInterpreter/AOT siteの到達範囲を
+3 OS別`lnako-dispatch-coverage-*` artifactへ保存します。attestation jobのcanonical dispatch evidenceとは別のunattested監査です。
 
 元のコマンドは削除せず、各OSでいずれか1スイートが一度だけ実行します。OSごとの互換検証をLinuxだけへ
 縮小する最適化は行いません。ジョブ上限は50分とし、停止しないホスト・ネットワークテストを検出します。

@@ -84,6 +84,9 @@ if (!nativeAotBlock[0].includes("LNAKO_NATIVE_ORACLE_ARTIFACT: ${{ runner.temp }
 if (!nativeAotBlock[0].includes("node tools/check_dispatch_trace.mjs --no-build --evidence-output")) {
   throw new Error("AOT dispatch evidenceの生成がありません");
 }
+if (!nativeAotBlock[0].includes("node tools/check_dispatch_coverage.mjs --no-build --output")) {
+  throw new Error("AOT dispatch coverage auditの生成がありません");
+}
 if ((nativeAotBlock[0].match(/node tools\/compare_native_oracle\.mjs/g) ?? []).length !== 1) {
   throw new Error("AOT差分比較は同一suite内で1回だけ実行してください");
 }
@@ -110,7 +113,7 @@ for (const required of [
 ]) if (!upload.includes(required)) throw new Error(`AOT差分artifact uploadの設定がありません: ${required}`);
 if (upload.includes("run:")) throw new Error("AOT差分artifact uploadで追加の検証コマンドを実行しないでください");
 const uploadActions = workflow.match(/^        uses: actions\/upload-artifact@/gm) ?? [];
-if (uploadActions.length !== 3) throw new Error(`actions/upload-artifactは3ステップ必要です: actual=${uploadActions.length}`);
+if (uploadActions.length !== 4) throw new Error(`actions/upload-artifactは4ステップ必要です: actual=${uploadActions.length}`);
 if ((workflow.match(/name: lnako-native-oracle-\$\{\{ matrix\.os \}\}/g) ?? []).length !== 1) {
   throw new Error("AOT差分artifactのOS別保存名が一意に定義されていません");
 }
@@ -120,6 +123,16 @@ if (!dispatchUploadBlock || !dispatchUploadBlock[0].includes("matrix.suite == 'a
     !dispatchUploadBlock[0].includes("dispatch-evidence-${{ matrix.os }}.json") ||
     !dispatchUploadBlock[0].includes("if-no-files-found: ignore")) {
   throw new Error("OS別dispatch evidence artifactの設定が不正です");
+}
+const coverageUploadBlock = workflow.match(/      - name: Upload native dispatch coverage audit[\s\S]*?(?=      - name:|$)/);
+if (!coverageUploadBlock || !coverageUploadBlock[0].includes("matrix.suite == 'aot' && always()") ||
+    !coverageUploadBlock[0].includes("name: lnako-dispatch-coverage-${{ matrix.os }}") ||
+    !coverageUploadBlock[0].includes("dispatch-coverage-${{ matrix.os }}.json") ||
+    !coverageUploadBlock[0].includes("if-no-files-found: ignore")) {
+  throw new Error("OS別dispatch coverage audit artifactの設定が不正です");
+}
+if ((workflow.match(/name: lnako-dispatch-coverage-\$\{\{ matrix\.os \}\}/g) ?? []).length !== 1) {
+  throw new Error("dispatch coverage audit artifactのOS別保存名が一意に定義されていません");
 }
 const attestJob = workflow.match(/  attest-dispatch-evidence:[\s\S]*$/)?.[0];
 if (!attestJob || !attestJob.includes("github.event_name == 'push'") || !attestJob.includes("github.ref == 'refs/heads/main'") ||

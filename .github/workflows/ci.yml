@@ -181,6 +181,7 @@ jobs:
           node tools/compare_native_oracle.mjs
           node tools/compare_http_server_aot_oracle.mjs
           node tools/check_dispatch_trace.mjs --no-build --evidence-output "${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json"
+          node tools/check_dispatch_coverage.mjs --no-build --output "${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}.json"
       - name: Upload native AOT oracle artifact
         if: matrix.suite == 'aot' && always()
         continue-on-error: true
@@ -197,6 +198,15 @@ jobs:
         with:
           name: lnako-dispatch-evidence-${{ matrix.os }}
           path: ${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Upload native dispatch coverage audit
+        if: matrix.suite == 'aot' && always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-dispatch-coverage-${{ matrix.os }}
+          path: ${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}.json
           if-no-files-found: ignore
           retention-days: 30
       - name: Format

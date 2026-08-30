@@ -160,6 +160,24 @@ sync検証時はgit取得失敗を拒否し、dirty=falseの証拠だけは記�
 dirty=trueの場合は未コミット差分の内容までは証明しないため、
 これは単一環境のunattested証拠であり、3環境の互換性や署名済みverified証拠を意味しません。
 
+`tools/check_dispatch_coverage.mjs`は、既存のcanonical dispatch証拠を変更せずに、命令系統別の到達範囲を監査します。
+plugin-system・system-runtime・standard-plugin・supplemental-pluginの命令関連fixtureと`native-cut-commands`を対象に、
+公式source、実行可能な公式生成JavaScript、Interpreter、AOT O0を比較し、traceの成功siteとcompile manifestの対応を確認します。
+この監査が命令関連付けとして数えるのは、AOT成功result、Interpreter成功result、site ID、opcode、route、catalog IDが揃う一意なsiteだけです。
+`fixture.commands`に名前があるだけ、定数を読み出しただけ、同名異pluginをrouteだけで推定しただけのentryは実行証拠へ数えず、
+レポートの`associationWithoutDispatch`、`unresolvedObservedSites`、`unobservedNativeEntryIds`へ分離します。
+公式生成JavaScriptがstandalone host／plugin登録を持たないfixture、また公式sourceとAOT O0が一致しない
+`system-runtime-execution-and-debug`は、明示したroute制限・AOT gapとしてレポートし、成功coverageへ混入させません。
+出力schemaは`lnako.dispatch-coverage.v1`で、`kind`は`sampled-unattested-dispatch-audit`です。これは`verified`やattestation済みcatalog evidenceではありません。
+
+```sh
+# 既存出力を上書きしない絶対パスへ監査レポートを生成
+node tools/check_dispatch_coverage.mjs --no-build --output /absolute/path/dispatch-coverage.json
+```
+
+CIのAOT suiteは3正式OSごとにこのレポートを`lnako-dispatch-coverage-*` artifactへ保存します。artifactの保存は到達範囲の追跡用であり、
+現行のdispatch evidence attestationや`verified`昇格の入力ではありません。
+
 ## AOT compile manifest
 
 `LNAKO_COMPILE_MANIFEST`へ絶対JSONLパスを指定すると、AOT buildは
