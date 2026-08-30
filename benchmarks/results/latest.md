@@ -1,8 +1,8 @@
 # lnako benchmark
 
 - schema: `1`
-- generated_at_unix_ms: `1788096159203`
-- git_commit: `8ba07e387f2b584a33a0c455b651f21b2c6fb76`
+- generated_at_unix_ms: `1788097675182`
+- git_commit: `dd36680b82fee8d47f589aecc716499d7f29081b`
 - target: `macos/aarch64`
 - toolchain: Zig `0.16.0`, LLVM/LLD `22.1.8`
 - suite_name: `lnako-core-v1`
@@ -13,14 +13,14 @@
 
 | case | mode | samples | min (ns) | median (ns) | max (ns) |
 |---|---|---:|---:|---:|---:|
-| `arithmetic-loop` | `interpreter` | 5 | 29617000 | 29899250 | 30058625 |
-| `arithmetic-loop` | `aot_compile` | 5 | 202270750 | 203449625 | 206773083 |
-| `arithmetic-loop` | `aot_run` | 5 | 4064125 | 4496959 | 4936333 |
-| `array-mutation` | `interpreter` | 5 | 24094667 | 24431750 | 29151583 |
-| `array-mutation` | `aot_compile` | 5 | 202253209 | 203269042 | 203511166 |
-| `array-mutation` | `aot_run` | 5 | 3967042 | 4412833 | 6081917 |
-| `closure-loop` | `interpreter` | 5 | 75921000 | 76194208 | 76548250 |
-| `closure-loop` | `aot_compile` | 5 | 207369167 | 207895458 | 209371042 |
-| `closure-loop` | `aot_run` | 5 | 4144125 | 4859875 | 5586625 |
+| `arithmetic-loop` | `interpreter` | 5 | 32297542 | 33098333 | 34738333 |
+| `arithmetic-loop` | `aot_compile` | 5 | 217100709 | 222585667 | 223973417 |
+| `arithmetic-loop` | `aot_run` | 5 | 4488834 | 5729916 | 8865375 |
+| `array-mutation` | `interpreter` | 5 | 32021209 | 46574000 | 149448542 |
+| `array-mutation` | `aot_compile` | 5 | 274645458 | 372029417 | 730518583 |
+| `array-mutation` | `aot_run` | 5 | 7985541 | 11676041 | 41314625 |
+| `closure-loop` | `interpreter` | 5 | 90102542 | 108675458 | 129357959 |
+| `closure-loop` | `aot_compile` | 5 | 229671417 | 269623584 | 454842209 |
+| `closure-loop` | `aot_run` | 5 | 4761625 | 4956917 | 5602667 |
 
 測定値は各sampleの子プロセス完了までのwall-clock nanosecondsです。`interpreter`は`lnako run`、`aot_compile`はLLVM O2生成、`aot_run`は生成実行ファイルを測定します。suiteの期待stdoutとの一致を各sampleで確認しています。
