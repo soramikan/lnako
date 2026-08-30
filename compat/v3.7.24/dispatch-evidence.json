@@ -8,7 +8,7 @@
   "fixture": {
     "id": "native-cut-commands",
     "file": "native-cases.json",
-    "sourceSha256": "a7c75e5b2d43aa8f84388f71642d21d64b26e58c8a172936a2882606aefcd727"
+    "sourceSha256": "871eb6ff71d6e5074a419862ee270db554c712319a56eafb65d1c8be60ece954"
   },
   "officialComparison": {
     "oracle": "official-source",
@@ -23,25 +23,25 @@
       "officialSource": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "682751deb3da808a29adc08c245df5f3208ff27e2b9254b5622979530c52b35d",
+        "stdoutSha256": "3687c8ce20d3799dd0467c12266c4ac92b02055b4b74de6188a19e03ac2324d5",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "officialGenerated": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "682751deb3da808a29adc08c245df5f3208ff27e2b9254b5622979530c52b35d",
+        "stdoutSha256": "3687c8ce20d3799dd0467c12266c4ac92b02055b4b74de6188a19e03ac2324d5",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoRun": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "682751deb3da808a29adc08c245df5f3208ff27e2b9254b5622979530c52b35d",
+        "stdoutSha256": "3687c8ce20d3799dd0467c12266c4ac92b02055b4b74de6188a19e03ac2324d5",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoNativeO0": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "682751deb3da808a29adc08c245df5f3208ff27e2b9254b5622979530c52b35d",
+        "stdoutSha256": "3687c8ce20d3799dd0467c12266c4ac92b02055b4b74de6188a19e03ac2324d5",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       }
     }
@@ -62,24 +62,24 @@
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
     "lnako": {
-      "binarySha256": "3b6adf88e558744b1bc1d80e1d6d5db267c0767cfc45406c0d96af5904fda7b9",
-      "commit": "5d89daaf5b92bf18a4d7c118bb87e9336018bd4d",
-      "dirty": true
+      "binarySha256": "ee28b6d4b54e38bf03b2ee2492d76d7cf7578ed719a8640ac204a53367b040f1",
+      "commit": "84b525970db4e623bb53eaae92aefd1a7bb53e72",
+      "dirty": false
     },
     "raw": {
-      "interpreterTraceSha256": "37c08888119c6e5850f59657ae7318f20fdba11102dda843222aff5353c64f8e",
-      "aotTraceSha256": "b817b921e561afec4c1590e5eb5e7fd88d8ce5449da405c708e77735f718da9f",
-      "compileManifestSha256": "10a8ec33c441027c0714fc68b1d1aa3a0945d762d47b57049cc1202f3f5d0cfc"
+      "interpreterTraceSha256": "c21387192fe2fbe5cc7bdf6837263c201a192144a1cebb7ad5e9c1b91bf6b3fc",
+      "aotTraceSha256": "9151d521007e9e335c6e38a0c201c6dd5db073f2099e4f0664c661f33e5ed2a6",
+      "compileManifestSha256": "c1e13f2190d413cb05d7cca57e4e30115822d903039b9207fa087fb0eab0009b"
     }
   },
   "trace": {
     "interpreter": {
       "schema": 2,
-      "eventCount": 51
+      "eventCount": 59
     },
     "aot": {
       "schema": 2,
-      "eventCount": 102
+      "eventCount": 118
     }
   },
   "sites": [
@@ -1205,6 +1205,190 @@
         "aot": {
           "success": true,
           "callId": 50,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0295",
+      "name": "正規表現マッチ",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000036",
+      "sourceName": "正規表現マッチ",
+      "canonicalOpcode": "regexp_match",
+      "opcode": 139,
+      "route": "regexp",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 51,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000037",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 52,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0296",
+      "name": "正規表現抽出",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000038",
+      "sourceName": "正規表現抽出",
+      "canonicalOpcode": "regexp_extract",
+      "opcode": 140,
+      "route": "regexp",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 53,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000039",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 54,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0298",
+      "name": "正規表現置換",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000003a",
+      "sourceName": "正規表現置換",
+      "canonicalOpcode": "regexp_replace",
+      "opcode": 141,
+      "route": "regexp",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 55,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000003b",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 56,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0299",
+      "name": "正規表現区切",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000003c",
+      "sourceName": "正規表現区切",
+      "canonicalOpcode": "regexp_split",
+      "opcode": 142,
+      "route": "regexp",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 57,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000003d",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 58,
           "count": 1
         }
       },
