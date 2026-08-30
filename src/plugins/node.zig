@@ -1457,6 +1457,12 @@ test "Node互換のWindowsパスはdrive-relativeとUNC rootを保持する" {
     try std.testing.expectEqualStrings("\\\\server\\share\\", nodeDirnameFor("\\\\server\\share\\file", true));
     try std.testing.expectEqualStrings("share", nodeBasenameFor("\\\\server\\share\\", true));
     try std.testing.expectEqualStrings("\\\\server\\share\\", nodeDirnameFor("\\\\server\\share\\", true));
+    try std.testing.expectEqualStrings("bar", nodeBasenameFor("\\\\?\\C:\\foo\\bar", true));
+    try std.testing.expectEqualStrings("\\\\?\\C:\\foo", nodeDirnameFor("\\\\?\\C:\\foo\\bar", true));
+    try std.testing.expectEqualStrings("share", nodeBasenameFor("\\\\?\\UNC\\server\\share\\", true));
+    try std.testing.expectEqualStrings("\\\\?\\UNC\\server", nodeDirnameFor("\\\\?\\UNC\\server\\share\\", true));
+    try std.testing.expectEqualStrings("name", nodeBasenameFor("\\\\.\\pipe\\name\\", true));
+    try std.testing.expectEqualStrings("\\\\.\\pipe\\", nodeDirnameFor("\\\\.\\pipe\\name\\", true));
 }
 
 test "Nodeパス命令は非文字列入力をNodeの型診断へ変換する" {

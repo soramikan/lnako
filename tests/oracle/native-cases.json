@@ -1107,7 +1107,7 @@
   {
     "id": "native-node-path-components",
     "commands": ["ファイル名抽出", "パス抽出"],
-    "source": "ファイル名抽出(\"a/b.txt\")を表示\nパス抽出(\"a/b.txt\")を表示\nファイル名抽出(\"/\")を表示\nパス抽出(\"/\")を表示\nファイル名抽出(\"a//b//\")を表示\nパス抽出(\"a//b//\")を表示\nファイル名抽出(『C:foo』)を表示\nパス抽出(『C:foo』)を表示\nファイル名抽出(『C:foo\\bar』)を表示\nパス抽出(『C:foo\\bar』)を表示\nファイル名抽出(『C:\\』)を表示\nパス抽出(『C:\\』)を表示\nファイル名抽出(『\\\\server\\share\\file』)を表示\nパス抽出(『\\\\server\\share\\file』)を表示\nファイル名抽出(『\\\\server\\share\\』)を表示\nパス抽出(『\\\\server\\share\\』)を表示\n"
+    "source": "ファイル名抽出(\"a/b.txt\")を表示\nパス抽出(\"a/b.txt\")を表示\nファイル名抽出(\"/\")を表示\nパス抽出(\"/\")を表示\nファイル名抽出(\"a//b//\")を表示\nパス抽出(\"a//b//\")を表示\nファイル名抽出(『C:foo』)を表示\nパス抽出(『C:foo』)を表示\nファイル名抽出(『C:foo\\bar』)を表示\nパス抽出(『C:foo\\bar』)を表示\nファイル名抽出(『C:\\』)を表示\nパス抽出(『C:\\』)を表示\nファイル名抽出(『\\\\server\\share\\file』)を表示\nパス抽出(『\\\\server\\share\\file』)を表示\nファイル名抽出(『\\\\server\\share\\』)を表示\nパス抽出(『\\\\server\\share\\』)を表示\nファイル名抽出(『\\\\?\\C:\\foo\\bar』)を表示\nパス抽出(『\\\\?\\C:\\foo\\bar』)を表示\nファイル名抽出(『\\\\?\\UNC\\server\\share\\』)を表示\nパス抽出(『\\\\?\\UNC\\server\\share\\』)を表示\nファイル名抽出(『\\\\.\\pipe\\name\\』)を表示\nパス抽出(『\\\\.\\pipe\\name\\』)を表示\n"
   },
   {
     "id": "native-node-path-type-errors",
