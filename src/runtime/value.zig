@@ -48,6 +48,10 @@ pub const ByteBuffer = struct {
     bytes: []u8,
     kind: ByteKind = .buffer,
     storage: *ByteStorage,
+    /// Offset of this view from the beginning of the shared backing storage.
+    /// Keep it separately from the slice pointer so an empty view created at
+    /// a non-zero position still exposes Node's byteOffset value.
+    byte_offset: usize = 0,
     /// Buffer/Uint8Array/ArrayBuffer values are ordinary extensible objects
     /// for the property operations used by the Node-compatible host.  Keep
     /// custom properties on the object itself so ToPrimitive can observe an
@@ -825,6 +829,7 @@ pub const Runtime = struct {
             .bytes = bytes,
             .kind = kind,
             .storage = storage,
+            .byte_offset = std.math.add(usize, buffer.byte_offset, start) catch return error.InvalidByteBufferSlice,
         };
         try self.objects.append(self.allocator(), .{ .bytes = result });
         return .{ .bytes = result };

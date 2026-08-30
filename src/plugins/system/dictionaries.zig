@@ -94,7 +94,7 @@ fn values(runtime: *Runtime, source: Value) !Value {
                 var property: Value = if (std.mem.eql(u8, name, "parent"))
                     try runtime.createByteBufferBackingBuffer(bytes)
                 else if (std.mem.eql(u8, name, "offset"))
-                    .{ .number = @floatFromInt(if (bytes.bytes.len == 0) 0 else @intFromPtr(bytes.bytes.ptr) - @intFromPtr(bytes.storage.bytes.ptr)) }
+                    .{ .number = @floatFromInt(bytes.byte_offset) }
                 else blk: {
                     var units: [128]u16 = undefined;
                     const unit_len = std.unicode.utf8ToUtf16Le(&units, name) catch return error.InvalidUtf8;

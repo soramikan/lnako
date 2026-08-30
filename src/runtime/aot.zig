@@ -199,6 +199,10 @@ const ByteBuffer = struct {
     bytes: []u8,
     kind: ByteKind,
     storage: *ByteStorage,
+    /// Offset of this view from the beginning of the shared backing storage.
+    /// This remains meaningful for zero-length views, where pointer arithmetic
+    /// alone cannot recover the original subarray position.
+    byte_offset: usize = 0,
 };
 const AotTimer = struct {
     id: u64,
@@ -870,12 +874,13 @@ const Runtime = struct {
         const storage = buffer.storage;
         const bytes = buffer.bytes[start..end];
         const kind = buffer.kind;
+        const byte_offset = std.math.add(usize, buffer.byte_offset, start) catch return error.InvalidByteBufferSlice;
         // Retain before a possible collection so the source object may be
         // reclaimed without invalidating the view's backing allocation.
         storage.retain();
         errdefer storage.release();
         try self.beforeAllocation();
-        return self.createObject(.{ .byte_buffer = .{ .bytes = bytes, .kind = kind, .storage = storage } }, .byte_buffer);
+        return self.createObject(.{ .byte_buffer = .{ .bytes = bytes, .kind = kind, .storage = storage, .byte_offset = byte_offset } }, .byte_buffer);
     }
 
     /// Return the complete backing allocation as an ArrayBuffer view.  Keep
@@ -2169,8 +2174,7 @@ fn aotByteBufferScalarProperty(buffer: ByteBuffer, key: Value) ?Value {
     if (sameKey(key, staticStringValue("byteLength"))) return numberValue(@floatFromInt(buffer.bytes.len));
     if (sameKey(key, staticStringValue("byteOffset"))) {
         if (buffer.kind == .array_buffer) return null;
-        const offset = if (buffer.bytes.len == 0) 0 else @intFromPtr(buffer.bytes.ptr) - @intFromPtr(buffer.storage.bytes.ptr);
-        return numberValue(@floatFromInt(offset));
+        return numberValue(@floatFromInt(buffer.byte_offset));
     }
     if (sameKey(key, staticStringValue("BYTES_PER_ELEMENT"))) {
         if (buffer.kind == .array_buffer) return null;
@@ -15025,8 +15029,7 @@ fn dictionaryValuesBuiltin(runtime: *Runtime, source: Value) !Value {
                 if (std.mem.eql(u8, name, "parent")) {
                     property = try runtime.createByteBufferBackingBuffer(buffer);
                 } else if (std.mem.eql(u8, name, "offset")) {
-                    const offset = if (buffer.bytes.len == 0) 0 else @intFromPtr(buffer.bytes.ptr) - @intFromPtr(buffer.storage.bytes.ptr);
-                    property = numberValue(@floatFromInt(offset));
+                    property = numberValue(@floatFromInt(buffer.byte_offset));
                 } else {
                     var units: [128]u16 = undefined;
                     const unit_len = std.unicode.utf8ToUtf16Le(&units, name) catch return error.InvalidUtf8;
@@ -15867,8 +15870,7 @@ fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []
         if (tableAsciiUnitsEqual(units, "byteLength")) return @as(?Value, numberValue(@floatFromInt(buffer.bytes.len)));
         if (tableAsciiUnitsEqual(units, "byteOffset")) {
             if (buffer.kind == .array_buffer) return null;
-            const offset = if (buffer.bytes.len == 0) 0 else @intFromPtr(buffer.bytes.ptr) - @intFromPtr(buffer.storage.bytes.ptr);
-            return @as(?Value, numberValue(@floatFromInt(offset)));
+            return @as(?Value, numberValue(@floatFromInt(buffer.byte_offset)));
         }
         if (tableAsciiUnitsEqual(units, "BYTES_PER_ELEMENT")) {
             if (buffer.kind == .array_buffer) return null;
@@ -15889,8 +15891,7 @@ fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []
                 return @as(?Value, try runtime.createByteBufferBackingBuffer(buffer));
             }
             if (buffer.kind == .buffer and tableAsciiUnitsEqual(units, "offset")) {
-                const offset = if (buffer.bytes.len == 0) 0 else @intFromPtr(buffer.bytes.ptr) - @intFromPtr(buffer.storage.bytes.ptr);
-                return @as(?Value, numberValue(@floatFromInt(offset)));
+                return @as(?Value, numberValue(@floatFromInt(buffer.byte_offset)));
             }
             if (buffer.kind == .buffer and tableAsciiUnitsEqual(units, "toLocaleString")) {
                 return @as(?Value, try tableInheritedByteBufferMethod(runtime, row, "toString"));
@@ -22788,6 +22789,24 @@ test "AOT byte bufferのprototype属性とscalar propertyを解決する" {
     try std.testing.expectEqualStrings("slice", roots[25].object().?.payload.function.name);
     roots[26] = runtime.indexGet(roots[0], staticStringValue("missing"));
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[26].tag)));
+}
+
+test "AOT Bufferの空viewもbacking storageからのbyteOffsetを保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 5;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createBytes(&.{ 1, 2, 3, 4 });
+    roots[1] = try aotByteBufferSlice(&runtime, roots[0].object().?.payload.byte_buffer, 1, 3);
+    roots[2] = try aotByteBufferSlice(&runtime, roots[1].object().?.payload.byte_buffer, 2, 2);
+    roots[3] = runtime.indexGet(roots[2], staticStringValue("byteOffset"));
+    roots[4] = try tableRowProperty(&runtime, roots[2], staticStringValue("offset"));
+    try std.testing.expectEqual(@as(f64, 0), valueToNumber(runtime.indexGet(roots[2], staticStringValue("byteLength"))));
+    try std.testing.expectEqual(@as(f64, 3), valueToNumber(roots[3]));
+    try std.testing.expectEqual(@as(f64, 3), valueToNumber(roots[4]));
 }
 
 test "AOT byte bufferから抽出したslice関数は未束縛エラーを再現する" {

@@ -906,6 +906,11 @@
     "source": "B=ハッシュ値計算(\"A\",\"sha256\",undefined)\nT=表列挿入([B],1,[9])\nB[0]=7\nB[1]=8\nT[0][0][0]を表示\nT[0][2][0]を表示\n"
   },
   {
+    "id": "native-system-table-byte-row-view-offset",
+    "commands": ["表列挿入", "表列取得", "ハッシュ値計算", "表示"],
+    "source": "B=ハッシュ値計算(\"A\",\"sha256\",undefined)\nT=表列挿入([B],1,[9])\nV=T[0][2]\nU=表列挿入([V],0.5,[9])\nP=U[0][0]\nQ=U[0][2]\nP[\"byteLength\"]を表示\nP[\"byteOffset\"]を表示\nP[\"offset\"]を表示\nC=表列取得([P],\"byteOffset\")\nC[0]を表示\nQ[\"byteLength\"]を表示\nQ[\"byteOffset\"]を表示\nQ[\"offset\"]を表示\nP[\"buffer\"]===B[\"buffer\"]を表示\nQ[\"buffer\"]===B[\"buffer\"]を表示\n"
+  },
+  {
     "id": "native-system-table-regexp-buffer-slice-alias",
     "commands": ["表正規表現ピックアップ", "ハッシュ値計算"],
     "source": "B=ハッシュ値計算(\"A\",\"sha256\",undefined)\nT=表正規表現ピックアップ([B],0,\"^85\")\nB[0]=7\nT[0][0]を表示\n"

@@ -1872,8 +1872,7 @@ pub const Interpreter = struct {
             if (std.mem.eql(u16, key_text.string.units, &.{ 'b', 'y', 't', 'e', 'L', 'e', 'n', 'g', 't', 'h' })) return .{ .number = @floatFromInt(container_root.bytes.bytes.len) };
             if (std.mem.eql(u16, key_text.string.units, &.{ 'b', 'y', 't', 'e', 'O', 'f', 'f', 's', 'e', 't' })) {
                 if (container_root.bytes.kind == .array_buffer) return .undefined;
-                const offset = if (container_root.bytes.bytes.len == 0) 0 else @intFromPtr(container_root.bytes.bytes.ptr) - @intFromPtr(container_root.bytes.storage.bytes.ptr);
-                return .{ .number = @floatFromInt(offset) };
+                return .{ .number = @floatFromInt(container_root.bytes.byte_offset) };
             }
             if (std.mem.eql(u16, key_text.string.units, &.{ 'B', 'Y', 'T', 'E', 'S', '_', 'P', 'E', 'R', '_', 'E', 'L', 'E', 'M', 'E', 'N', 'T' })) {
                 return if (container_root.bytes.kind == .array_buffer) .undefined else .{ .number = 1 };

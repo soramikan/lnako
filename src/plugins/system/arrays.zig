@@ -2597,8 +2597,7 @@ fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) 
         if (asciiUnitsEqual(units, "byteLength")) return @as(?Value, .{ .number = @floatFromInt(buffer.bytes.len) });
         if (asciiUnitsEqual(units, "byteOffset")) {
             if (buffer.kind == .array_buffer) return null;
-            const offset = if (buffer.bytes.len == 0) 0 else @intFromPtr(buffer.bytes.ptr) - @intFromPtr(buffer.storage.bytes.ptr);
-            return @as(?Value, .{ .number = @floatFromInt(offset) });
+            return @as(?Value, .{ .number = @floatFromInt(buffer.byte_offset) });
         }
         if (asciiUnitsEqual(units, "BYTES_PER_ELEMENT")) {
             if (buffer.kind == .array_buffer) return null;
@@ -2617,8 +2616,7 @@ fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) 
                 return @as(?Value, try runtime.createByteBufferBackingBuffer(buffer));
             }
             if (buffer.kind == .buffer and asciiUnitsEqual(units, "offset")) {
-                const offset = if (buffer.bytes.len == 0) 0 else @intFromPtr(buffer.bytes.ptr) - @intFromPtr(buffer.storage.bytes.ptr);
-                return @as(?Value, .{ .number = @floatFromInt(offset) });
+                return @as(?Value, .{ .number = @floatFromInt(buffer.byte_offset) });
             }
             if (buffer.kind == .buffer and asciiUnitsEqual(units, "toLocaleString")) {
                 return @as(?Value, try tableInheritedByteBufferMethod(runtime, source, "toString"));
@@ -3715,6 +3713,31 @@ test "byte bufferから抽出したslice関数は未束縛エラーを再現す�
     try roots.protect(&buffer_slice_function);
     try std.testing.expectError(error.NotCallable, runtime.call(buffer_slice_function, &.{ .{ .number = 0 }, .{ .number = 2 } }));
     try std.testing.expectEqualStrings("Cannot read properties of undefined (reading 'subarray')", runtime.failureMessage().?);
+}
+
+test "Bufferの空viewもbacking storageからのbyteOffsetを保持する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var buffer = try runtime.createBytes(&.{ 1, 2, 3, 4 });
+    try roots.protect(&buffer);
+    var view = try byteBufferSlice(&runtime, buffer.bytes, 1, 3);
+    try roots.protect(&view);
+    var empty = try byteBufferSlice(&runtime, view.bytes, 2, 2);
+    try roots.protect(&empty);
+
+    var byte_length = try runtime.stringUtf8("byteLength");
+    try roots.protect(&byte_length);
+    var byte_offset = try runtime.stringUtf8("byteOffset");
+    try roots.protect(&byte_offset);
+    var offset = try runtime.stringUtf8("offset");
+    try roots.protect(&offset);
+    try std.testing.expectEqual(@as(f64, 0), (try indexed(&runtime, empty, byte_length)).number);
+    try std.testing.expectEqual(@as(f64, 3), (try indexed(&runtime, empty, byte_offset)).number);
+    try std.testing.expectEqual(@as(f64, 3), (try indexed(&runtime, empty, offset)).number);
 }
 
 test "表ソートは最上位配列のholeと明示的undefinedをpresence順に保持する" {
