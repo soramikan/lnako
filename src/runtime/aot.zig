@@ -12522,30 +12522,72 @@ fn nodePathComponentBuiltin(runtime: *Runtime, command: aot_builtin.Command, arg
 }
 
 fn nodeBasename(path: []const u8) []const u8 {
+    return nodeBasenameFor(path, builtin.os.tag == .windows);
+}
+
+fn nodeBasenameFor(path: []const u8, windows: bool) []const u8 {
     var end = path.len;
-    while (end > 0 and nodePathSeparator(path[end - 1])) end -= 1;
+    while (end > 0 and nodePathSeparator(path[end - 1], windows)) end -= 1;
     if (end == 0) return "";
+    const drive_path = windows and path.len >= 2 and isWindowsDriveLetter(path[0]) and path[1] == ':';
+    if (drive_path and end == 2 and path.len > end and nodePathSeparator(path[2], true)) return "";
     var start = end;
-    while (start > 0 and !nodePathSeparator(path[start - 1])) start -= 1;
+    while (start > 0 and !nodePathSeparator(path[start - 1], windows)) start -= 1;
+    if (drive_path and start < 2) start = 2;
     return path[start..end];
 }
 
 fn nodeDirname(path: []const u8) []const u8 {
+    return nodeDirnameFor(path, builtin.os.tag == .windows);
+}
+
+fn nodeDirnameFor(path: []const u8, windows: bool) []const u8 {
     if (path.len == 0) return ".";
     var end = path.len;
-    while (end > 0 and nodePathSeparator(path[end - 1])) end -= 1;
+    while (end > 0 and nodePathSeparator(path[end - 1], windows)) end -= 1;
     if (end == 0) return path[0..1];
 
+    const drive_path = windows and path.len >= 2 and isWindowsDriveLetter(path[0]) and path[1] == ':';
+    if (drive_path and end == 2) {
+        if (path.len > end and nodePathSeparator(path[2], true)) return path[0..3];
+        return path[0..2];
+    }
+
+    const unc_root_end = if (windows) windowsUncRootEnd(path) else null;
+    if (unc_root_end) |root_end| if (end == root_end) {
+        return if (path.len > end) path[0 .. root_end + 1] else path[0..root_end];
+    };
+
     var start = end;
-    while (start > 0 and !nodePathSeparator(path[start - 1])) start -= 1;
-    if (start == 0) return ".";
-    if (start == 1 and nodePathSeparator(path[0])) return path[0..1];
-    if (start == 2 and nodePathSeparator(path[0]) and nodePathSeparator(path[1]) and builtin.os.tag != .windows) return path[0..2];
+    while (start > 0 and !nodePathSeparator(path[start - 1], windows)) start -= 1;
+    if (start == 0) return if (drive_path) path[0..2] else ".";
+    if (start == 1 and nodePathSeparator(path[0], windows)) return path[0..1];
+    if (unc_root_end) |root_end| if (start == root_end + 1) return path[0..start];
+    if (drive_path and start == 3 and nodePathSeparator(path[2], true)) return path[0..3];
+    if (start == 2 and nodePathSeparator(path[0], windows) and nodePathSeparator(path[1], windows) and !windows) return path[0..2];
     return path[0 .. start - 1];
 }
 
-fn nodePathSeparator(byte: u8) bool {
-    return byte == std.fs.path.sep or (builtin.os.tag == .windows and (byte == '/' or byte == '\\'));
+fn isWindowsDriveLetter(byte: u8) bool {
+    return byte >= 'A' and byte <= 'Z' or byte >= 'a' and byte <= 'z';
+}
+
+fn windowsUncRootEnd(path: []const u8) ?usize {
+    if (path.len < 2 or !nodePathSeparator(path[0], true) or !nodePathSeparator(path[1], true)) return null;
+    var index: usize = 2;
+    while (index < path.len and nodePathSeparator(path[index], true)) index += 1;
+    const server_start = index;
+    while (index < path.len and !nodePathSeparator(path[index], true)) index += 1;
+    if (index == server_start or index == path.len) return null;
+    while (index < path.len and nodePathSeparator(path[index], true)) index += 1;
+    const share_start = index;
+    while (index < path.len and !nodePathSeparator(path[index], true)) index += 1;
+    if (index == share_start) return null;
+    return index;
+}
+
+fn nodePathSeparator(byte: u8, windows: bool) bool {
+    return byte == std.fs.path.sep or (windows and (byte == '/' or byte == '\\'));
 }
 
 fn aotOsName() []const u8 {
@@ -19047,6 +19089,19 @@ test "AOT Nodeパス解決はpath.resolveとpath.joinの規則を保つ" {
     const relative_expected = try std.fs.path.resolve(runtime.allocator, &.{ cwd, "a/b/../c.txt" });
     defer runtime.allocator.free(relative_expected);
     try expectUtf16String(&runtime, roots[1], relative_expected);
+}
+
+test "AOT Node互換のWindowsパスはdrive-relativeとUNC rootを保持する" {
+    try std.testing.expectEqualStrings("foo", nodeBasenameFor("C:foo", true));
+    try std.testing.expectEqualStrings("C:", nodeDirnameFor("C:foo", true));
+    try std.testing.expectEqualStrings("bar", nodeBasenameFor("C:foo\\bar", true));
+    try std.testing.expectEqualStrings("C:foo", nodeDirnameFor("C:foo\\bar", true));
+    try std.testing.expectEqualStrings("", nodeBasenameFor("C:\\", true));
+    try std.testing.expectEqualStrings("C:\\", nodeDirnameFor("C:\\", true));
+    try std.testing.expectEqualStrings("file", nodeBasenameFor("\\\\server\\share\\file", true));
+    try std.testing.expectEqualStrings("\\\\server\\share\\", nodeDirnameFor("\\\\server\\share\\file", true));
+    try std.testing.expectEqualStrings("share", nodeBasenameFor("\\\\server\\share\\", true));
+    try std.testing.expectEqualStrings("\\\\server\\share\\", nodeDirnameFor("\\\\server\\share\\", true));
 }
 
 test "AOTカレントディレクトリ変更は相対パスを受けてundefinedを返す" {

@@ -1266,29 +1266,72 @@ fn setDictionary(runtime: *Runtime, dictionary: *value_mod.Dictionary, key: []co
 }
 
 fn nodeBasename(path: []const u8) []const u8 {
+    return nodeBasenameFor(path, builtin.os.tag == .windows);
+}
+
+fn nodeBasenameFor(path: []const u8, windows: bool) []const u8 {
     var end = path.len;
-    while (end > 0 and isSeparator(path[end - 1])) end -= 1;
+    while (end > 0 and isSeparator(path[end - 1], windows)) end -= 1;
     if (end == 0) return "";
+    const drive_path = windows and path.len >= 2 and isWindowsDriveLetter(path[0]) and path[1] == ':';
+    if (drive_path and end == 2 and path.len > end and isSeparator(path[2], true)) return "";
     var start = end;
-    while (start > 0 and !isSeparator(path[start - 1])) start -= 1;
+    while (start > 0 and !isSeparator(path[start - 1], windows)) start -= 1;
+    if (drive_path and start < 2) start = 2;
     return path[start..end];
 }
 
 fn nodeDirname(path: []const u8) []const u8 {
+    return nodeDirnameFor(path, builtin.os.tag == .windows);
+}
+
+fn nodeDirnameFor(path: []const u8, windows: bool) []const u8 {
     if (path.len == 0) return ".";
     var end = path.len;
-    while (end > 0 and isSeparator(path[end - 1])) end -= 1;
+    while (end > 0 and isSeparator(path[end - 1], windows)) end -= 1;
     if (end == 0) return path[0..1];
+
+    const drive_path = windows and path.len >= 2 and isWindowsDriveLetter(path[0]) and path[1] == ':';
+    if (drive_path and end == 2) {
+        if (path.len > end and isSeparator(path[2], true)) return path[0..3];
+        return path[0..2];
+    }
+
+    const unc_root_end = if (windows) windowsUncRootEnd(path) else null;
+    if (unc_root_end) |root_end| if (end == root_end) {
+        return if (path.len > end) path[0 .. root_end + 1] else path[0..root_end];
+    };
+
     var start = end;
-    while (start > 0 and !isSeparator(path[start - 1])) start -= 1;
-    if (start == 0) return ".";
-    if (start == 1 and isSeparator(path[0])) return path[0..1];
-    if (start == 2 and isSeparator(path[0]) and isSeparator(path[1]) and builtin.os.tag != .windows) return path[0..2];
+    while (start > 0 and !isSeparator(path[start - 1], windows)) start -= 1;
+    if (start == 0) return if (drive_path) path[0..2] else ".";
+    if (start == 1 and isSeparator(path[0], windows)) return path[0..1];
+    if (unc_root_end) |root_end| if (start == root_end + 1) return path[0..start];
+    if (drive_path and start == 3 and isSeparator(path[2], true)) return path[0..3];
+    if (start == 2 and isSeparator(path[0], windows) and isSeparator(path[1], windows) and !windows) return path[0..2];
     return path[0 .. start - 1];
 }
 
-fn isSeparator(byte: u8) bool {
-    return byte == std.fs.path.sep or (builtin.os.tag == .windows and (byte == '/' or byte == '\\'));
+fn isWindowsDriveLetter(byte: u8) bool {
+    return byte >= 'A' and byte <= 'Z' or byte >= 'a' and byte <= 'z';
+}
+
+fn windowsUncRootEnd(path: []const u8) ?usize {
+    if (path.len < 2 or !isSeparator(path[0], true) or !isSeparator(path[1], true)) return null;
+    var index: usize = 2;
+    while (index < path.len and isSeparator(path[index], true)) index += 1;
+    const server_start = index;
+    while (index < path.len and !isSeparator(path[index], true)) index += 1;
+    if (index == server_start or index == path.len) return null;
+    while (index < path.len and isSeparator(path[index], true)) index += 1;
+    const share_start = index;
+    while (index < path.len and !isSeparator(path[index], true)) index += 1;
+    if (index == share_start) return null;
+    return index;
+}
+
+fn isSeparator(byte: u8, windows: bool) bool {
+    return byte == std.fs.path.sep or (windows and (byte == '/' or byte == '\\'));
 }
 
 fn osName() []const u8 {
@@ -1351,6 +1394,19 @@ test "Node互換のbasenameとdirnameはルートと連続区切りを処理す�
     try std.testing.expectEqualStrings("/", nodeDirname("/"));
     try std.testing.expectEqualStrings("b", nodeBasename("a//b//"));
     try std.testing.expectEqualStrings("a/", nodeDirname("a//b//"));
+}
+
+test "Node互換のWindowsパスはdrive-relativeとUNC rootを保持する" {
+    try std.testing.expectEqualStrings("foo", nodeBasenameFor("C:foo", true));
+    try std.testing.expectEqualStrings("C:", nodeDirnameFor("C:foo", true));
+    try std.testing.expectEqualStrings("bar", nodeBasenameFor("C:foo\\bar", true));
+    try std.testing.expectEqualStrings("C:foo", nodeDirnameFor("C:foo\\bar", true));
+    try std.testing.expectEqualStrings("", nodeBasenameFor("C:\\", true));
+    try std.testing.expectEqualStrings("C:\\", nodeDirnameFor("C:\\", true));
+    try std.testing.expectEqualStrings("file", nodeBasenameFor("\\\\server\\share\\file", true));
+    try std.testing.expectEqualStrings("\\\\server\\share\\", nodeDirnameFor("\\\\server\\share\\file", true));
+    try std.testing.expectEqualStrings("share", nodeBasenameFor("\\\\server\\share\\", true));
+    try std.testing.expectEqualStrings("\\\\server\\share\\", nodeDirnameFor("\\\\server\\share\\", true));
 }
 
 test "ブラウザとファイルマネージャーの起動をホストへ委譲する" {
