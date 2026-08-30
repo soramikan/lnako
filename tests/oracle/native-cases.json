@@ -744,11 +744,23 @@
     "source": "正規表現マッチ(\"x\",『/\\c1/u』)を表示\n"
   },
   {
+    "id": "native-system-regexp-unicode-decimal-backreferences",
+    "commands": ["正規表現マッチ", "JSON変換"],
+    "source": "JSON変換(正規表現マッチ(\"abcdefghijkll\",『/(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)\\12/u』))を表示\nJSON変換(正規表現マッチ(\"abcdefghijkl\",『/\\12(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)/u』))を表示\n"
+  },
+  {
     "id": "native-system-regexp-unicode-backreference-error",
     "oracle": "official-generated",
     "commands": ["正規表現マッチ"],
     "stderrIncludes": "Invalid regular expression: /\\1/u: Invalid escape",
     "source": "正規表現マッチ(\"x\",『/\\1/u』)を表示\n"
+  },
+  {
+    "id": "native-system-regexp-unicode-decimal-backreference-error",
+    "oracle": "official-generated",
+    "commands": ["正規表現マッチ"],
+    "stderrIncludes": "Invalid regular expression: /(a)\\12/u: Invalid escape",
+    "source": "正規表現マッチ(\"x\",『/(a)\\12/u』)を表示\n"
   },
   {
     "id": "native-system-regexp-unicode-class-error",

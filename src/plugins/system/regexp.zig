@@ -80,6 +80,7 @@ const Atom = union(enum) {
     // as `\\1(a)`, while still allowing Annex B octal fallback when the
     // referenced capture does not exist.
     legacy_decimal_escape: []const u16,
+    unicode_decimal_escape: []const u16,
     legacy_octal_escape: struct { code_unit: u16, trailing: []const u16 },
     unicode_property: UnicodeProperty,
 };
@@ -107,7 +108,6 @@ const Parser = struct {
     unicode_sets: bool = false,
     index: usize = 0,
     capture_count: usize = 0,
-    max_backreference: ?usize = null,
     capture_names: [max_captures]?[]const u16 = [_]?[]const u16{null} ** max_captures,
 
     fn parseExpression(self: *Parser) anyerror!*Expression {
@@ -353,14 +353,8 @@ const Parser = struct {
                 }
                 if (in_class and self.unicode) return error.InvalidDecimalEscape;
                 if (in_class) break :blk .{ .literal = escaped };
-                if (!self.unicode) break :blk .{ .legacy_decimal_escape = self.parseLegacyDecimalEscape() };
-                const capture_index = escaped - '1';
-                if (self.unicode) {
-                    if (self.max_backreference) |current| {
-                        if (capture_index > current) self.max_backreference = capture_index;
-                    } else self.max_backreference = capture_index;
-                }
-                break :blk .{ .backreference = capture_index };
+                if (!self.unicode) break :blk .{ .legacy_decimal_escape = self.parseDecimalEscape() };
+                break :blk .{ .unicode_decimal_escape = self.parseDecimalEscape() };
             },
             'p', 'P' => try self.parseUnicodeProperty(escaped == 'P'),
             else => if (self.unicode and !isUnicodeIdentityEscape(escaped, in_class))
@@ -395,7 +389,7 @@ const Parser = struct {
         return value;
     }
 
-    fn parseLegacyDecimalEscape(self: *Parser) []const u16 {
+    fn parseDecimalEscape(self: *Parser) []const u16 {
         const start = self.index - 1;
         var digits: usize = 1;
         while (digits < 3 and self.index < self.source.len and self.source[self.index] >= '0' and self.source[self.index] <= '9') : (digits += 1) {
@@ -564,8 +558,7 @@ pub const RawPattern = struct {
         var parser = Parser{ .allocator = arena.allocator(), .source = owned_pattern, .unicode = false };
         const expression = try parser.parseExpression();
         if (parser.index != owned_pattern.len) return error.UnexpectedPatternToken;
-        try resolveLegacyDecimalEscapes(expression, parser.capture_count);
-        if (parser.max_backreference) |capture_index| if (capture_index >= parser.capture_count) return error.InvalidBackreference;
+        try resolveDecimalEscapes(expression, parser.capture_count);
         return .{
             .allocator = allocator,
             .compiled = .{
@@ -723,22 +716,21 @@ fn compile(allocator: std.mem.Allocator, specification: []const u16, default_glo
     };
     const expression = try parser.parseExpression();
     if (parser.index != owned_pattern.len) return error.UnexpectedPatternToken;
-    try resolveLegacyDecimalEscapes(expression, parser.capture_count);
+    try resolveDecimalEscapes(expression, parser.capture_count);
     try resolveNamedBackreferences(expression, parser.capture_names[0..parser.capture_count]);
-    if (parser.max_backreference) |capture_index| if (capture_index >= parser.capture_count) return error.InvalidBackreference;
     return .{ .arena = arena, .expression = expression, .flags = flags, .capture_count = parser.capture_count, .capture_names = parser.capture_names };
 }
 
-fn resolveLegacyDecimalEscapes(expression: *Expression, capture_count: usize) anyerror!void {
+fn resolveDecimalEscapes(expression: *Expression, capture_count: usize) anyerror!void {
     for (@constCast(expression.alternatives)) |*alternative| {
-        for (@constCast(alternative.pieces)) |*piece| try resolveLegacyDecimalEscapesInAtom(&piece.atom, capture_count);
+        for (@constCast(alternative.pieces)) |*piece| try resolveDecimalEscapesInAtom(&piece.atom, capture_count);
     }
 }
 
-fn resolveLegacyDecimalEscapesInAtom(atom: *Atom, capture_count: usize) anyerror!void {
+fn resolveDecimalEscapesInAtom(atom: *Atom, capture_count: usize) anyerror!void {
     switch (atom.*) {
-        .group => |group| try resolveLegacyDecimalEscapes(group.expression, capture_count),
-        .assertion => |assertion| try resolveLegacyDecimalEscapes(assertion.expression, capture_count),
+        .group => |group| try resolveDecimalEscapes(group.expression, capture_count),
+        .assertion => |assertion| try resolveDecimalEscapes(assertion.expression, capture_count),
         .legacy_decimal_escape => |digits| {
             var decimal_value: usize = 0;
             for (digits) |digit| decimal_value = decimal_value * 10 + (digit - '0');
@@ -754,6 +746,12 @@ fn resolveLegacyDecimalEscapesInAtom(atom: *Atom, capture_count: usize) anyerror
                 break :blk value;
             };
             atom.* = .{ .legacy_octal_escape = .{ .code_unit = code_unit, .trailing = digits[octal_length..] } };
+        },
+        .unicode_decimal_escape => |digits| {
+            var decimal_value: usize = 0;
+            for (digits) |digit| decimal_value = decimal_value * 10 + (digit - '0');
+            if (decimal_value == 0 or decimal_value > capture_count) return error.InvalidBackreference;
+            atom.* = .{ .backreference = decimal_value - 1 };
         },
         else => {},
     }
@@ -1015,6 +1013,7 @@ fn matchAtom(allocator: std.mem.Allocator, source: []const u16, atom: Atom, init
             try output.append(allocator, candidate);
         },
         .legacy_decimal_escape => return error.UnresolvedLegacyDecimalEscape,
+        .unicode_decimal_escape => return error.UnresolvedUnicodeDecimalEscape,
         .named_backreference => return output.toOwnedSlice(allocator),
         .group => |group| {
             var group_initial = initial;
@@ -1738,6 +1737,11 @@ test "正規表現構文エラーはV8互換の文言を設定する" {
     try std.testing.expectEqualStrings("Invalid regular expression: /\\1/u: Invalid escape", runtime.failureMessage().?);
     runtime.clearFailureMessage();
 
+    const invalid_multi_digit_backreference = try runtime.stringUtf8("/(a)\\12/u");
+    try std.testing.expectError(error.InvalidBackreference, call(&runtime, "正規表現マッチ", &.{ source, invalid_multi_digit_backreference }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /(a)\\12/u: Invalid escape", runtime.failureMessage().?);
+    runtime.clearFailureMessage();
+
     const invalid_named_reference = try runtime.stringUtf8("/(?<a>a)\\k<b>/u");
     try std.testing.expectError(error.InvalidNamedBackreference, call(&runtime, "正規表現マッチ", &.{ source, invalid_named_reference }));
     try std.testing.expectEqualStrings("Invalid regular expression: /(?<a>a)\\k<b>/u: Invalid named capture referenced", runtime.failureMessage().?);
@@ -1816,6 +1820,27 @@ test "正規表現構文エラーはV8互換の文言を設定する" {
     const invalid_class_named_backreference = try runtime.stringUtf8("/[\\k<a>]/u");
     try std.testing.expectError(error.InvalidClassEscape, call(&runtime, "正規表現マッチ", &.{ source, invalid_class_named_backreference }));
     try std.testing.expectEqualStrings("Invalid regular expression: /[\\k<a>]/u: Invalid escape", runtime.failureMessage().?);
+}
+
+test "Unicode正規表現の10進後方参照は全桁で解決する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var source = try runtime.stringUtf8("abcdefghijkll");
+    try roots.protect(&source);
+    var pattern = try runtime.stringUtf8("/(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)\\12/u");
+    try roots.protect(&pattern);
+    const matched = (try call(&runtime, "正規表現マッチ", &.{ source, pattern })).?;
+    try std.testing.expectEqualSlices(u16, source.string.units, matched.string.units);
+
+    var forward_source = try runtime.stringUtf8("abcdefghijkl");
+    try roots.protect(&forward_source);
+    var forward_pattern = try runtime.stringUtf8("/\\12(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)/u");
+    try roots.protect(&forward_pattern);
+    const forward_matched = (try call(&runtime, "正規表現マッチ", &.{ forward_source, forward_pattern })).?;
+    try std.testing.expectEqualSlices(u16, forward_source.string.units, forward_matched.string.units);
 }
 
 test "名前付きキャプチャと非貪欲量指定を処理する" {
