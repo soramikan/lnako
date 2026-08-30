@@ -175,6 +175,26 @@ const TestSortOrderContext = struct {
     }
 };
 
+const TableSortPrimitiveContext = struct {
+    values: [3]Value = undefined,
+    log: [32]u8 = undefined,
+    count: usize = 0,
+
+    fn invoke(raw: *anyopaque, _: *Runtime, value: Value, hint: value_mod.PrimitiveHint) anyerror!?Value {
+        const self: *@This() = @ptrCast(@alignCast(raw));
+        if (hint != .number) return null;
+        for (self.values, 0..) |known, index| {
+            if (!Value.strictEqual(value, known)) continue;
+            if (self.count < self.log.len) {
+                self.log[self.count] = @intCast('A' + index);
+                self.count += 1;
+            }
+            return .{ .number = @floatFromInt(index + 1) };
+        }
+        return null;
+    }
+};
+
 const ZeroRandomContext = struct {
     fn next(_: *anyopaque) anyerror!f64 {
         return 0;
@@ -956,6 +976,38 @@ fn tableSort(runtime: *Runtime, source: Value, column: Value, numeric: bool) !Va
     try roots.protect(&left_cell);
     try roots.protect(&right_cell);
     try rooted_source.array.normalizePresence();
+    const original_length = rooted_source.array.len();
+    if (original_length < v8_small_callback_sort_limit) {
+        // Array.prototype.sort collects the indexed rows before it invokes
+        // the comparator. Keep the small-table path detached so a cell's
+        // valueOf/toString side effect cannot invalidate the values that the
+        // official sort already collected.
+        const temporary = try runtime.allocator().dupe(Value, rooted_source.array.items.items);
+        defer runtime.allocator().free(temporary);
+        const temporary_presence = try runtime.allocator().dupe(bool, rooted_source.array.presence.items);
+        defer runtime.allocator().free(temporary_presence);
+        for (temporary) |*item| try roots.protect(item);
+        try v8SmallTableSort(
+            runtime,
+            temporary,
+            temporary_presence,
+            rooted_column,
+            numeric,
+            &row,
+            &left_cell,
+            &right_cell,
+        );
+        if (rooted_source.array.len() < original_length) {
+            const old_length = rooted_source.array.len();
+            try rooted_source.array.items.resize(runtime.allocator(), original_length);
+            @memset(rooted_source.array.items.items[old_length..], .undefined);
+            try rooted_source.array.presence.resize(runtime.allocator(), original_length);
+            @memset(rooted_source.array.presence.items[old_length..], false);
+        }
+        std.mem.copyForwards(Value, rooted_source.array.items.items[0..original_length], temporary);
+        std.mem.copyForwards(bool, rooted_source.array.presence.items[0..original_length], temporary_presence);
+        return rooted_source;
+    }
     var index: usize = 1;
     while (index < rooted_source.array.len()) : (index += 1) {
         row = rooted_source.array.items.items[index];
@@ -982,6 +1034,105 @@ fn tableSort(runtime: *Runtime, source: Value, column: Value, numeric: bool) !Va
         rooted_source.array.presence.items[cursor] = row_present;
     }
     return rooted_source;
+}
+
+fn v8SmallTableSort(
+    runtime: *Runtime,
+    items: []Value,
+    presence: []bool,
+    column: Value,
+    numeric: bool,
+    pivot: *Value,
+    left_cell: *Value,
+    right_cell: *Value,
+) !void {
+    // V8 uses CountAndMakeRun followed by BinaryInsertionSort for arrays
+    // shorter than 64 elements. Table sort delegates to Array.sort too, so
+    // the observable property conversion order follows the same path.
+    if (items.len < 2) return;
+
+    var run_length: usize = 2;
+    const first_order = try compareTableRows(
+        runtime,
+        items[1],
+        presence[1],
+        items[0],
+        presence[0],
+        column,
+        numeric,
+        left_cell,
+        right_cell,
+    );
+    if (first_order == .lt) {
+        while (run_length < items.len) : (run_length += 1) {
+            const order = try compareTableRows(
+                runtime,
+                items[run_length],
+                presence[run_length],
+                items[run_length - 1],
+                presence[run_length - 1],
+                column,
+                numeric,
+                left_cell,
+                right_cell,
+            );
+            if (order != .lt) break;
+        }
+        var left: usize = 0;
+        var right: usize = run_length - 1;
+        while (left < right) : ({
+            left += 1;
+            right -= 1;
+        }) {
+            std.mem.swap(Value, &items[left], &items[right]);
+            std.mem.swap(bool, &presence[left], &presence[right]);
+        }
+    } else {
+        while (run_length < items.len) : (run_length += 1) {
+            const order = try compareTableRows(
+                runtime,
+                items[run_length],
+                presence[run_length],
+                items[run_length - 1],
+                presence[run_length - 1],
+                column,
+                numeric,
+                left_cell,
+                right_cell,
+            );
+            if (order == .lt) break;
+        }
+    }
+
+    var start = run_length;
+    while (start < items.len) : (start += 1) {
+        pivot.* = items[start];
+        const pivot_presence = presence[start];
+        var left: usize = 0;
+        var right: usize = start;
+        while (left < right) {
+            const middle = left + (right - left) / 2;
+            const order = try compareTableRows(
+                runtime,
+                pivot.*,
+                pivot_presence,
+                items[middle],
+                presence[middle],
+                column,
+                numeric,
+                left_cell,
+                right_cell,
+            );
+            if (order == .lt) right = middle else left = middle + 1;
+        }
+        var cursor = start;
+        while (cursor > left) : (cursor -= 1) {
+            items[cursor] = items[cursor - 1];
+            presence[cursor] = presence[cursor - 1];
+        }
+        items[left] = pivot.*;
+        presence[left] = pivot_presence;
+    }
 }
 
 fn compareTableRows(
@@ -2287,6 +2438,48 @@ test "カスタムソートの小配列比較順はV8のrun検出規則を保つ
     try std.testing.expectEqual(@as(f64, 1), array.array.get(0).number);
     try std.testing.expectEqual(@as(f64, 2), array.array.get(1).number);
     try std.testing.expectEqual(@as(f64, 3), array.array.get(2).number);
+}
+
+test "表ソートの小配列比較順はV8のrun検出規則を保つ" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var a = try runtime.createDictionary();
+    try roots.protect(&a);
+    var b = try runtime.createDictionary();
+    try roots.protect(&b);
+    var c = try runtime.createDictionary();
+    try roots.protect(&c);
+    var context = TableSortPrimitiveContext{ .values = .{ a, b, c } };
+    runtime.setPrimitiveHook(.{ .context = &context, .callFn = TableSortPrimitiveContext.invoke });
+    defer runtime.clearPrimitiveHook(&context);
+
+    var row_a = try common.arrayFromValues(&runtime, &.{a});
+    try roots.protect(&row_a);
+    var row_b = try common.arrayFromValues(&runtime, &.{b});
+    try roots.protect(&row_b);
+    var row_c = try common.arrayFromValues(&runtime, &.{c});
+    try roots.protect(&row_c);
+    var table = try common.arrayFromValues(&runtime, &.{ row_c, row_a, row_b });
+    try roots.protect(&table);
+
+    _ = try tableSort(&runtime, table, .{ .number = 0 }, false);
+    try std.testing.expectEqualStrings("ACBABCBA", context.log[0..context.count]);
+    try std.testing.expectEqual(row_a.array, table.array.get(0).array);
+    try std.testing.expectEqual(row_b.array, table.array.get(1).array);
+    try std.testing.expectEqual(row_c.array, table.array.get(2).array);
+
+    context.count = 0;
+    var numeric_table = try common.arrayFromValues(&runtime, &.{ row_c, row_a, row_b });
+    try roots.protect(&numeric_table);
+    _ = try tableSort(&runtime, numeric_table, .{ .number = 0 }, true);
+    try std.testing.expectEqualStrings("ACBABCBA", context.log[0..context.count]);
+    try std.testing.expectEqual(row_a.array, numeric_table.array.get(0).array);
+    try std.testing.expectEqual(row_b.array, numeric_table.array.get(1).array);
+    try std.testing.expectEqual(row_c.array, numeric_table.array.get(2).array);
 }
 
 test "配列ソート系は安定な破壊的操作とundefined末尾を保つ" {

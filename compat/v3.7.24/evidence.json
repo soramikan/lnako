@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 368,
-    "nativeAot": 274,
+    "total": 369,
+    "nativeAot": 275,
     "interpreter": 99,
     "compatJs": 9
   },
@@ -7503,6 +7503,7 @@
       "aotFixtureIds": [
         "native-cut-commands",
         "native-system-table-sort",
+        "native-system-table-sort-callback-order",
         "native-system-table-sparse-sort"
       ],
       "compatJsFixtureIds": [],
@@ -7520,6 +7521,9 @@
           "native-system-table-sort": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-system-table-sort-callback-order": [
+            "fixture.commands"
           ],
           "native-system-table-sparse-sort": [
             "fixture.commands",
@@ -7561,6 +7565,7 @@
         "native-system-table-numeric-sort-bigint-error",
         "native-system-table-numeric-sort-mixed-bigint-error",
         "native-system-table-sort",
+        "native-system-table-sort-callback-order",
         "native-system-table-sparse-sort"
       ],
       "compatJsFixtureIds": [],
@@ -7584,6 +7589,9 @@
           "native-system-table-sort": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-system-table-sort-callback-order": [
+            "fixture.commands"
           ],
           "native-system-table-sparse-sort": [
             "fixture.commands",
@@ -10368,6 +10376,7 @@
         "native-system-string-array-from-inherited-properties",
         "native-system-table-byte-row-slice",
         "native-system-table-regexp-inner-sparse-slice",
+        "native-system-table-sort-callback-order",
         "native-system-table-sparse-foreach-slice",
         "native-system-table-sparse-map-filter",
         "native-system-table-sparse-sort"
@@ -10465,6 +10474,9 @@
             "fixture.commands"
           ],
           "native-system-table-regexp-inner-sparse-slice": [
+            "fixture.commands"
+          ],
+          "native-system-table-sort-callback-order": [
             "fixture.commands"
           ],
           "native-system-table-sparse-foreach-slice": [
@@ -11519,7 +11531,8 @@
         "native-system-array-to-primitive",
         "native-system-dictionary-to-primitive",
         "native-system-table-function-properties",
-        "native-system-table-inherited-properties"
+        "native-system-table-inherited-properties",
+        "native-system-table-sort-callback-order"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -11548,6 +11561,9 @@
           "native-system-table-inherited-properties": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-system-table-sort-callback-order": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}

@@ -15196,6 +15196,49 @@ fn tableSortBuiltin(runtime: *Runtime, source: Value, column: Value, numeric: bo
     const object = roots[0].object().?;
     try runtime.normalizeAotArrayPresence(object);
     const rows = &object.payload.array;
+    const original_length = rows.items.len;
+    if (original_length < v8_small_callback_sort_limit) {
+        // Array.prototype.sort collects the indexed rows before it invokes
+        // the comparator. Keep the small-table path detached so a cell's
+        // valueOf/toString side effect cannot invalidate the values that the
+        // official sort already collected.
+        const temporary = try runtime.allocator.dupe(Value, rows.items);
+        defer runtime.allocator.free(temporary);
+        const temporary_presence = try runtime.allocator.dupe(bool, object.array_presence.items);
+        defer runtime.allocator.free(temporary_presence);
+        const root_count = std.math.add(usize, 5, original_length) catch return error.ArrayTooLarge;
+        const root_values = try runtime.allocator.alloc(Value, root_count);
+        defer runtime.allocator.free(root_values);
+        root_values[0] = source;
+        root_values[1] = column;
+        root_values[2] = .{};
+        root_values[3] = .{};
+        root_values[4] = .{};
+        std.mem.copyForwards(Value, root_values[5..], temporary);
+        var detached_roots = RootFrame{};
+        runtime.pushRoots(&detached_roots, root_values.ptr, root_values.len);
+        defer runtime.popRoots(&detached_roots);
+        try v8SmallTableSortBuiltin(
+            runtime,
+            temporary,
+            temporary_presence,
+            &root_values[1],
+            numeric,
+            &root_values[2],
+            &root_values[3],
+            &root_values[4],
+        );
+        if (rows.items.len < original_length) {
+            const old_length = rows.items.len;
+            try rows.resize(runtime.allocator, original_length);
+            @memset(rows.items[old_length..], .{});
+            try object.array_presence.resize(runtime.allocator, original_length);
+            @memset(object.array_presence.items[old_length..], false);
+        }
+        std.mem.copyForwards(Value, rows.items[0..original_length], temporary);
+        std.mem.copyForwards(bool, object.array_presence.items[0..original_length], temporary_presence);
+        return root_values[0];
+    }
     var index: usize = 1;
     while (index < rows.items.len) : (index += 1) {
         roots[2] = rows.items[index];
@@ -15222,6 +15265,105 @@ fn tableSortBuiltin(runtime: *Runtime, source: Value, column: Value, numeric: bo
         object.array_presence.items[cursor] = row_present;
     }
     return roots[0];
+}
+
+fn v8SmallTableSortBuiltin(
+    runtime: *Runtime,
+    items: []Value,
+    presence: []bool,
+    column_root: *Value,
+    numeric: bool,
+    pivot_root: *Value,
+    left_cell_root: *Value,
+    right_cell_root: *Value,
+) !void {
+    // V8 uses CountAndMakeRun followed by BinaryInsertionSort for arrays
+    // shorter than 64 elements. Table sort delegates to Array.sort too, so
+    // the observable property conversion order follows the same path.
+    if (items.len < 2) return;
+
+    var run_length: usize = 2;
+    const first_order = try compareTableRowsBuiltin(
+        runtime,
+        items[1],
+        presence[1],
+        items[0],
+        presence[0],
+        column_root.*,
+        numeric,
+        left_cell_root,
+        right_cell_root,
+    );
+    if (first_order == .lt) {
+        while (run_length < items.len) : (run_length += 1) {
+            const order = try compareTableRowsBuiltin(
+                runtime,
+                items[run_length],
+                presence[run_length],
+                items[run_length - 1],
+                presence[run_length - 1],
+                column_root.*,
+                numeric,
+                left_cell_root,
+                right_cell_root,
+            );
+            if (order != .lt) break;
+        }
+        var left: usize = 0;
+        var right: usize = run_length - 1;
+        while (left < right) : ({
+            left += 1;
+            right -= 1;
+        }) {
+            std.mem.swap(Value, &items[left], &items[right]);
+            std.mem.swap(bool, &presence[left], &presence[right]);
+        }
+    } else {
+        while (run_length < items.len) : (run_length += 1) {
+            const order = try compareTableRowsBuiltin(
+                runtime,
+                items[run_length],
+                presence[run_length],
+                items[run_length - 1],
+                presence[run_length - 1],
+                column_root.*,
+                numeric,
+                left_cell_root,
+                right_cell_root,
+            );
+            if (order == .lt) break;
+        }
+    }
+
+    var start = run_length;
+    while (start < items.len) : (start += 1) {
+        pivot_root.* = items[start];
+        const pivot_presence = presence[start];
+        var left: usize = 0;
+        var right: usize = start;
+        while (left < right) {
+            const middle = left + (right - left) / 2;
+            const order = try compareTableRowsBuiltin(
+                runtime,
+                pivot_root.*,
+                pivot_presence,
+                items[middle],
+                presence[middle],
+                column_root.*,
+                numeric,
+                left_cell_root,
+                right_cell_root,
+            );
+            if (order == .lt) right = middle else left = middle + 1;
+        }
+        var cursor = start;
+        while (cursor > left) : (cursor -= 1) {
+            items[cursor] = items[cursor - 1];
+            presence[cursor] = presence[cursor - 1];
+        }
+        items[left] = pivot_root.*;
+        presence[left] = pivot_presence;
+    }
 }
 
 fn tableBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
