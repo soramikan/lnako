@@ -16964,6 +16964,7 @@ fn referenceBuiltin(runtime: *Runtime, source: Value, index: Value) !Value {
         }
         return rooted[2];
     }
+    if (rooted[0].tag == @intFromEnum(Tag.byte_buffer)) return tableRowProperty(runtime, rooted[0], rooted[1]);
     if (rooted[0].tag == @intFromEnum(Tag.dictionary)) {
         const key = try valueUtf16Alloc(runtime, rooted[1]);
         defer runtime.allocator.free(key);
@@ -20512,6 +20513,35 @@ test "AOT配列切取は辞書のownと継承propertyを分ける" {
     try std.testing.expectEqual(@as(f64, 2), valueToNumber(roots[9]));
     const own_after = try referenceBuiltin(&runtime, roots[1], staticStringValue("own"));
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(own_after.tag)));
+}
+
+test "AOT参照はbyte bufferの添字とpropertyを解決する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 10;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    runtime.next_collection = 1;
+
+    roots[0] = try runtime.createBytes(&.{ 85, 154 });
+    roots[1] = try referenceBuiltin(&runtime, roots[0], numberValue(0));
+    try std.testing.expectEqual(@as(f64, 85), valueToNumber(roots[1]));
+    roots[2] = try referenceBuiltin(&runtime, roots[0], staticStringValue("1"));
+    try std.testing.expectEqual(@as(f64, 154), valueToNumber(roots[2]));
+    roots[3] = try referenceBuiltin(&runtime, roots[0], staticStringValue("length"));
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(roots[3]));
+    roots[4] = try referenceBuiltin(&runtime, roots[0], staticStringValue("buffer"));
+    try std.testing.expectEqual(ByteKind.array_buffer, roots[4].object().?.payload.byte_buffer.kind);
+    roots[5] = try referenceBuiltin(&runtime, roots[4], staticStringValue("byteLength"));
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(roots[5]));
+    roots[6] = try referenceBuiltin(&runtime, roots[4], numberValue(0));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[6].tag)));
+    roots[7] = try referenceBuiltin(&runtime, roots[4], staticStringValue("buffer"));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[7].tag)));
+    roots[8] = try runtime.createUint8Array(&.{ 7, 8 });
+    roots[9] = try referenceBuiltin(&runtime, roots[8], numberValue(0));
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[9]));
 }
 
 fn referenceAotArrayStringKeyAllocationTest(allocator: std.mem.Allocator) !void {

@@ -455,6 +455,7 @@ Windowsの`path.basename` / `path.dirname`は、Windows targetでは`/`と`\\`�
 
 ## 疎配列のコピー・連結境界
 
+`参照` / `配列参照`のbyte buffer境界では、公式のproperty lookupに合わせてBuffer/Uint8Arrayの数値添字・`length`・`buffer`を返し、`buffer`で得たArrayBufferは`byteLength`を返す一方、数値添字と`buffer`は`undefined`になる。Interpreterと純LLVM AOTは既存のbyte buffer標準property resolverへこの参照経路を接続した。view identity・custom prototype・receiver付きmethodは`TODO: aot-byte-buffer-value`として完成扱いにしない。差分テストは`native-system-reference-byte-buffer-properties`。
 | 命令 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID / TODO |
 |---|---|---|---|
 | `参照` / `配列参照` / `配列足` / `配列範囲コピー` | 配列の`slice`（`参照`・`配列参照`）と、配列オペランドを展開する`concat`（`配列足`）は、配列長とown indexの欠損を保つ。穴を読み出した値は`undefined`だが、`slice`/`concat`結果の同じ位置はown propertyにならない。一方、`配列範囲コピー`は`slice`結果をJSON.stringify/parseするため、穴と明示的`undefined`のどちらも`null`のown要素になる。非配列の第2引数を`配列足`へ渡した場合は1要素として追加する。標準Object/Array prototypeの同じpropertyは各prototype内で同一identity、異なるprototype間では別identityになる | Interpreterと純LLVM AOTは値配列とpresence bitmapを同時に範囲コピー・連結し、`参照`/`配列参照`/配列同士の`配列足`では穴を維持する。`配列範囲コピー`は既存のJSON境界で穴を`null`へmaterializeする。標準prototypeの`__proto__`・constructor・共通method・Array methodはprototype familyごとのruntime cacheでidentityを共有し、own値を優先して参照する。これは意図的制限ではなく実装済みの公式互換で、QuickJS互換モードは標準命令の証拠経路に含めない。関数prototype objectのidentityと`constructor` back-referenceは同一関数単位で保持し、descriptor・receiver付き呼出しと表命令内の疎配列は別TODOに残す | `native-system-array-sparse-copy-reference-concat`、`native-system-array-copy-reference-commands`、`native-system-reference-inherited-properties`、`TODO: reference-inherited-properties`、`TODO: sparse-array-presence` |

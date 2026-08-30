@@ -1410,6 +1410,7 @@ fn reference(runtime: *Runtime, source: Value, index_value: Value) !Value {
         }
         return result;
     }
+    if (source_value == .bytes) return try indexed(runtime, source_value, index);
     if (source_value == .dictionary) {
         var key = try runtime.valueToString(index);
         try roots.protect(&key);
@@ -4291,6 +4292,38 @@ test "疎配列の参照と配列足は穴のpresenceを保ち範囲コピーだ
     var sparse_concatenated = try arrayAdd(&runtime, sparse, sparse_extra);
     try roots.protect(&sparse_concatenated);
     try std.testing.expectEqualSlices(bool, &.{ true, false, true, true, false, true }, sparse_concatenated.array.presence.items);
+}
+
+test "参照はbyte bufferの添字とpropertyを解決する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var buffer = try runtime.createBytes(&.{ 85, 154 });
+    try roots.protect(&buffer);
+    var index = try runtime.stringUtf8("1");
+    try roots.protect(&index);
+    var length = try runtime.stringUtf8("length");
+    try roots.protect(&length);
+    var backing_key = try runtime.stringUtf8("buffer");
+    try roots.protect(&backing_key);
+    var byte_length = try runtime.stringUtf8("byteLength");
+    try roots.protect(&byte_length);
+
+    try std.testing.expectEqual(@as(f64, 85), (try reference(&runtime, buffer, .{ .number = 0 })).number);
+    try std.testing.expectEqual(@as(f64, 154), (try reference(&runtime, buffer, index)).number);
+    try std.testing.expectEqual(@as(f64, 2), (try reference(&runtime, buffer, length)).number);
+    var backing = try reference(&runtime, buffer, backing_key);
+    try roots.protect(&backing);
+    try std.testing.expectEqual(value_mod.ByteKind.array_buffer, backing.bytes.kind);
+    try std.testing.expectEqual(@as(f64, 2), (try reference(&runtime, backing, byte_length)).number);
+    try std.testing.expectEqual(Value.undefined, try reference(&runtime, backing, .{ .number = 0 }));
+
+    var uint8 = try runtime.createUint8Array(&.{ 7, 8 });
+    try roots.protect(&uint8);
+    try std.testing.expectEqual(@as(f64, 7), (try reference(&runtime, uint8, .{ .number = 0 })).number);
+    try std.testing.expectEqual(@as(f64, 2), (try reference(&runtime, uint8, length)).number);
 }
 
 fn bigintRangeAllocationCase(allocator: std.mem.Allocator) !void {
