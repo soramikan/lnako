@@ -3,7 +3,7 @@
 `compat/v3.7.24/evidence.json`は、標準cnako 527 entryをカタログID単位で
 既存fixtureへ関連付ける台帳です。通常のfixture関連付けは実行結果やdispatch接続を証明しません。
 追跡中の証拠は、macOS arm64の単一実行環境で、明示fixture `native-cut-commands`についてcompile manifest、Interpreter/AOT trace、公式差分を
-同一fixture・siteで突き合わせられた一意名10 entryが`trace-confirmed-unattested`です。追跡中のJSONにはattestationを記録しないため、ローカルの`verified`は0件で、残り517 entryが`unverified`です。
+同一fixture・siteで突き合わせられた一意名14 entryが`trace-confirmed-unattested`です（切取系10命令に正規表現4命令を加えた範囲）。追跡中のJSONにはattestationを記録しないため、ローカルの`verified`は0件で、残り513 entryが`unverified`です。
 
 AOT差分artifactとdispatch証拠は入力・実行物・結果のSHA-256を内包します。CIのmain push/workflow_dispatchでは、3正式OSのdispatch JSONを
 公式`actions/attest`のmulti-subject artifact attestationへ結び付け、公式`gh attestation verify`で署名、SLSA predicate、workflow identity、

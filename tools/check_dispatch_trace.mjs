@@ -79,6 +79,10 @@ try {
   assertCommand(interpreterEvents, "JSON変換", "plugin_system", "success");
   assertCommand(interpreterEvents, "表ソート", "plugin_system", "success");
   assertCommand(interpreterEvents, "表数値ソート", "plugin_system", "success");
+  assertCommand(interpreterEvents, "正規表現マッチ", "plugin_system", "success");
+  assertCommand(interpreterEvents, "正規表現抽出", "plugin_system", "success");
+  assertCommand(interpreterEvents, "正規表現置換", "plugin_system", "success");
+  assertCommand(interpreterEvents, "正規表現区切", "plugin_system", "success");
   assertCommand(interpreterEvents, "表示", "interpreter-core", "success");
   assertCatalogResolution("切取", "plugin_system", "command-0141", "unique-name");
   assertCatalogResolution("範囲切取", "plugin_system", "command-0142", "unique-name");
@@ -88,9 +92,13 @@ try {
   assertCatalogResolution("JSON変換", "plugin_system", "command-0287", "unique-name");
   assertCatalogResolution("表ソート", "plugin_system", "command-0211", "unique-name");
   assertCatalogResolution("表数値ソート", "plugin_system", "command-0212", "unique-name");
+  assertCatalogResolution("正規表現マッチ", "plugin_system", "command-0295", "unique-name");
+  assertCatalogResolution("正規表現抽出", "plugin_system", "command-0296", "unique-name");
+  assertCatalogResolution("正規表現置換", "plugin_system", "command-0298", "unique-name");
+  assertCatalogResolution("正規表現区切", "plugin_system", "command-0299", "unique-name");
   assertCatalogResolution("表示", "interpreter-core", "command-0307", "unique-name");
-  assertOnlyCommands(interpreterEvents, new Set(["切取", "範囲切取", "表示", "CHR", "配列結合", "LEN", "文字列変換", "JSON変換", "表ソート", "表数値ソート"]));
-  assertStaticCommandsHaveSites(interpreterEvents, new Set(["切取", "範囲切取", "表示", "CHR", "配列結合", "LEN", "文字列変換", "JSON変換", "表ソート", "表数値ソート"]));
+  assertOnlyCommands(interpreterEvents, new Set(["切取", "範囲切取", "表示", "CHR", "配列結合", "LEN", "文字列変換", "JSON変換", "表ソート", "表数値ソート", "正規表現マッチ", "正規表現抽出", "正規表現置換", "正規表現区切"]));
+  assertStaticCommandsHaveSites(interpreterEvents, new Set(["切取", "範囲切取", "表示", "CHR", "配列結合", "LEN", "文字列変換", "JSON変換", "表ソート", "表数値ソート", "正規表現マッチ", "正規表現抽出", "正規表現置換", "正規表現区切"]));
   await assertExistingTracePreserved("Interpreter", compiler, ["run", source], interpretedWithoutTrace, resolve(temporary, "interpreter-existing.jsonl"), baseEnvironment, temporary);
 
   const nodeEnvironment = { ...baseEnvironment, LNAKO_NODE_TEST: "dispatch-trace" };
@@ -125,7 +133,11 @@ try {
   assertManifestCommand(manifestEntries, "JSON変換", "json_encode", "builtin", "command-0287");
   assertManifestCommand(manifestEntries, "表ソート", "table_sort", "builtin", "command-0211");
   assertManifestCommand(manifestEntries, "表数値ソート", "table_numeric_sort", "builtin", "command-0212");
-  assertOnlyManifestCommands(manifestEntries, new Set(["切取", "範囲切取", "CHR", "表示", "配列結合", "LEN", "文字列変換", "JSON変換", "表ソート", "表数値ソート"]));
+  assertManifestCommand(manifestEntries, "正規表現マッチ", "regexp_match", "regexp", "command-0295");
+  assertManifestCommand(manifestEntries, "正規表現抽出", "regexp_extract", "regexp", "command-0296");
+  assertManifestCommand(manifestEntries, "正規表現置換", "regexp_replace", "regexp", "command-0298");
+  assertManifestCommand(manifestEntries, "正規表現区切", "regexp_split", "regexp", "command-0299");
+  assertOnlyManifestCommands(manifestEntries, new Set(["切取", "範囲切取", "CHR", "表示", "配列結合", "LEN", "文字列変換", "JSON変換", "表ソート", "表数値ソート", "正規表現マッチ", "正規表現抽出", "正規表現置換", "正規表現区切"]));
   await assertExistingManifestPreserved(compiler, source, baseEnvironment, temporary);
   await assertFailedManifestRemoved(compiler, source, baseEnvironment, temporary);
   const aotWithoutTrace = run(native, [], baseEnvironment, temporary);
@@ -145,8 +157,12 @@ try {
   assertCanonicalCommand(aotEvents, "json_encode", "builtin");
   assertCanonicalCommand(aotEvents, "table_sort", "builtin");
   assertCanonicalCommand(aotEvents, "table_numeric_sort", "builtin");
+  assertCanonicalCommand(aotEvents, "regexp_match", "regexp");
+  assertCanonicalCommand(aotEvents, "regexp_extract", "regexp");
+  assertCanonicalCommand(aotEvents, "regexp_replace", "regexp");
+  assertCanonicalCommand(aotEvents, "regexp_split", "regexp");
   assertCanonicalCommand(aotEvents, "display", "direct-display");
-  assertOnlyCommands(aotEvents, new Set(["cut", "cut_range", "chr", "display", "array_join", "element_count", "to_string", "json_encode", "table_sort", "table_numeric_sort"]));
+  assertOnlyCommands(aotEvents, new Set(["cut", "cut_range", "chr", "display", "array_join", "element_count", "to_string", "json_encode", "table_sort", "table_numeric_sort", "regexp_match", "regexp_extract", "regexp_replace", "regexp_split"]));
   assertTraceSitesContained(aotEvents, manifestEntries);
   assertTraceSitesContained(interpreterEvents, manifestEntries);
   assertSameStaticSiteSet(interpreterEvents, aotEvents);
