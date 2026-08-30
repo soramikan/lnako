@@ -680,7 +680,7 @@
     "oracle": "official-generated",
     "commands": ["正規表現マッチ"],
     "stderrIncludes": "Invalid property name in character class",
-    "source": "エラー監視\n正規表現マッチ(\"x\",『/{/u』)を表示\nエラーならば\n\"LONE:\"&エラーメッセージを表示\nここまで\nエラー監視\n正規表現マッチ(\"x\",『/[a&&]/v』)を表示\nエラーならば\n\"SET:\"&エラーメッセージを表示\nここまで\nエラー監視\n正規表現マッチ(\"x\",『/[\\p{Nope}]/u』)を表示\nエラーならば\n\"CLASS-PROP:\"&エラーメッセージを表示\nここまで\nエラー監視\n正規表現マッチ(\"x\",『/[a&&&&b]/v』)を表示\nエラーならば\n\"SET2:\"&エラーメッセージを表示\nここまで\n"
+    "source": "エラー監視\n正規表現マッチ(\"x\",『/{/u』)を表示\nエラーならば\n\"LONE:\"&エラーメッセージを表示\nここまで\nエラー監視\n正規表現マッチ(\"x\",『/[a&&]/v』)を表示\nエラーならば\n\"SET:\"&エラーメッセージを表示\nここまで\nエラー監視\n正規表現マッチ(\"x\",『/[\\p{Nope}]/u』)を表示\nエラーならば\n\"CLASS-PROP:\"&エラーメッセージを表示\nここまで\nエラー監視\n正規表現マッチ(\"x\",『/[a&&&&b]/v』)を表示\nエラーならば\n\"SET2:\"&エラーメッセージを表示\nここまで\nエラー監視\n正規表現マッチ(\"x\",『/[\\k]/u』)を表示\nエラーならば\n\"CLASS-K:\"&エラーメッセージを表示\nここまで\nエラー監視\n正規表現マッチ(\"x\",『/[\\k<a>]/u』)を表示\nエラーならば\n\"CLASS-K-NAMED:\"&エラーメッセージを表示\nここまで\n"
   },
   {
     "id": "native-system-regexp-unicode-properties",
@@ -730,6 +730,11 @@
     "id": "native-system-regexp-unicode-escape-boundaries",
     "commands": ["正規表現マッチ", "JSON変換", "CHR"],
     "source": "JSON変換(正規表現マッチ(CHR(1),『/\\cA/u』))を表示\nJSON変換(正規表現マッチ(CHR(55296),『/\\u{D800}/u』))を表示\n"
+  },
+  {
+    "id": "native-system-regexp-legacy-octal-escapes",
+    "commands": ["正規表現マッチ", "JSON変換", "CHR"],
+    "source": "JSON変換(正規表現マッチ(CHR(1),『/[\\1]/』))を表示\nJSON変換(正規表現マッチ(CHR(10),『/[\\12]/』))を表示\nJSON変換(正規表現マッチ(\"S\",『/[\\123]/』))を表示\nJSON変換(正規表現マッチ(CHR(7),『/\\07/』))を表示\n"
   },
   {
     "id": "native-system-regexp-unicode-control-escape-error",

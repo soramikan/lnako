@@ -486,7 +486,11 @@ Windowsの`path.basename` / `path.dirname`は、Windows targetでは`/`と`\\`�
 
 ## 正規表現のJavaScript互換エラー文言
 
-公式Node 24は、Unicodeモードで単独の量指定括弧`/{/u`に`Lone quantifier brackets`、vフラグで右辺がない集合演算子`/[a&&]/v`と連続演算子`/[a&&&&b]/v`に`Invalid character in character class`、クラス内の未知property`/[\\p{Nope}]/u`に`Invalid property name in character class`を返す。lnakoはParserでこれらを文脈付きの型付きエラーとして検出し、Interpreter・純LLVM AOT・表の正規表現経路で同じV8形式の本文へ変換する。`native-system-regexp-js-error-text`で公式CLI・生成JavaScript・Interpreter・LLVM AOT O0〜O3を比較する。別の構文エラー文言と未対応の集合構文は`TODO: regexp-js-error-text`として完成扱いにしない。
+公式Node 24は、Unicodeモードで単独の量指定括弧`/{/u`に`Lone quantifier brackets`、vフラグで右辺がない集合演算子`/[a&&]/v`と連続演算子`/[a&&&&b]/v`に`Invalid character in character class`、クラス内の未知property`/[\\p{Nope}]/u`に`Invalid property name in character class`、クラス内のnamed escape`/[\\k]/u`と`/[\\k<a>]/u`に`Invalid escape`を返す。lnakoはParserでこれらを文脈付きの型付きエラーとして検出し、Interpreter・純LLVM AOT・表の正規表現経路で同じV8形式の本文へ変換する。`native-system-regexp-js-error-text`で公式CLI・生成JavaScript・Interpreter・LLVM AOT O0〜O3を比較する。別の構文エラー文言と未対応の集合構文は`TODO: regexp-js-error-text`として完成扱いにしない。
+
+## 正規表現のlegacy octal escape
+
+公式Node 24の非Unicode modeでは、class内の`[\\1]`・`[\\12]`・`[\\123]`をそれぞれU+0001・改行・`S`として扱い、class外の`\\07`をBELとして扱う。lnakoはParserの同じlegacy octal境界をInterpreter・純LLVM AOT・表のraw RegExp経路へ接続し、`native-system-regexp-legacy-octal-escapes`で公式CLI・生成JavaScript・Interpreter・LLVM AOT O0〜O3を比較する。Unicode modeのdecimal escapeおよびclass外でcapture数に依存するdecimal backreferenceは別境界として完成扱いにしない。
 
 ## 正規表現Unicode propertyの静的範囲
 

@@ -287,6 +287,12 @@ const Parser = struct {
         const escaped_unit = if (self.index < self.source.len) self.source[self.index] else 0;
         const atom = self.parseEscape(true) catch |failure| switch (failure) {
             error.InvalidUnicodeProperty => return error.InvalidUnicodePropertyInClass,
+            // In a character class, V8 reports both a malformed named
+            // backreference introducer (`\\k`) and a named backreference
+            // (`\\k<name>`) as a generic invalid escape.  Keep the parser
+            // error contextual so the shared message formatter can match
+            // that distinction without changing the outside-class error.
+            error.InvalidNamedReference => return error.InvalidClassEscape,
             else => return failure,
         };
         return switch (atom) {
@@ -318,8 +324,10 @@ const Parser = struct {
             'v' => .{ .literal = 0x0b },
             '0' => if (self.unicode and self.index < self.source.len and self.source[self.index] >= '0' and self.source[self.index] <= '9')
                 error.InvalidDecimalEscape
+            else if (self.unicode)
+                .{ .literal = 0 }
             else
-                .{ .literal = 0 },
+                .{ .literal = self.parseLegacyOctalEscape(escaped) },
             'c' => try self.parseControlEscape(),
             'k' => if (self.unicode) try self.parseNamedBackreference() else .{ .literal = 'k' },
             'x' => .{ .literal = try self.parseHex(2) },
@@ -328,6 +336,15 @@ const Parser = struct {
             else
                 .{ .literal = try self.parseHex(4) },
             '1'...'9' => blk: {
+                // Annex B permits legacy octal escapes inside a non-Unicode
+                // character class.  They are code units, not backreferences:
+                // `[\\1]`, `[\\12]`, and `[\\123]` denote U+0001, LF, and
+                // U+0053 respectively.  `\\8` and `\\9` remain identity
+                // escapes in this legacy mode.
+                if (in_class and !self.unicode) {
+                    if (escaped <= '7') break :blk .{ .literal = self.parseLegacyOctalEscape(escaped) };
+                    break :blk .{ .literal = escaped };
+                }
                 if (in_class and self.unicode) return error.InvalidDecimalEscape;
                 if (in_class) break :blk .{ .literal = escaped };
                 const capture_index = escaped - '1';
@@ -355,6 +372,19 @@ const Parser = struct {
         }
         self.index += count;
         return result;
+    }
+
+    fn parseLegacyOctalEscape(self: *Parser, first: u16) u16 {
+        var value: u16 = first - '0';
+        var digits: usize = 1;
+        while (digits < 3 and self.index < self.source.len) {
+            const unit = self.source[self.index];
+            if (unit < '0' or unit > '7') break;
+            value = value * 8 + (unit - '0');
+            self.index += 1;
+            digits += 1;
+        }
+        return value;
     }
 
     fn parseUnicodeProperty(self: *Parser, negated: bool) !Atom {
@@ -602,6 +632,7 @@ pub fn compileFailureMessageAlloc(allocator: std.mem.Allocator, specification: [
         error.UnsupportedGroupAssertion => "Invalid group",
         error.InvalidUnicodeProperty => "Invalid property name",
         error.InvalidUnicodePropertyInClass => "Invalid property name in character class",
+        error.InvalidClassEscape => "Invalid escape",
         error.UnsupportedUnicodeSetOperation => "Invalid set operation in character class",
         error.InvalidUnicodeEscape => "Invalid Unicode escape",
         error.InvalidEscape => "\\ at end of pattern",
@@ -1531,6 +1562,28 @@ test "正規表現の量指定・キャプチャ・置換・区切を処理す�
     try std.testing.expectEqual(@as(usize, 3), split.array.len());
 }
 
+test "正規表現のlegacy octal escapeは非Unicode classのcode unitになる" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var unit_one = try runtime.stringUtf8("[\\1]");
+    try roots.protect(&unit_one);
+    var line_feed = try runtime.stringUtf8("[\\12]");
+    try roots.protect(&line_feed);
+    var letter_s = try runtime.stringUtf8("[\\123]");
+    try roots.protect(&letter_s);
+    var bell = try runtime.stringUtf8("\\07");
+    try roots.protect(&bell);
+
+    try std.testing.expect(try testRaw(std.testing.allocator, unit_one.string.units, &.{1}, false));
+    try std.testing.expect(!try testRaw(std.testing.allocator, unit_one.string.units, &.{'1'}, false));
+    try std.testing.expect(try testRaw(std.testing.allocator, line_feed.string.units, &.{10}, false));
+    try std.testing.expect(try testRaw(std.testing.allocator, letter_s.string.units, &.{'S'}, false));
+    try std.testing.expect(try testRaw(std.testing.allocator, bell.string.units, &.{7}, false));
+}
+
 test "正規表現構文エラーはV8互換の文言を設定する" {
     var runtime = Runtime.init(std.testing.allocator);
     defer runtime.deinit();
@@ -1644,6 +1697,16 @@ test "正規表現構文エラーはV8互換の文言を設定する" {
     const invalid_class_property = try runtime.stringUtf8("/[\\p{Nope}]/u");
     try std.testing.expectError(error.InvalidUnicodePropertyInClass, call(&runtime, "正規表現マッチ", &.{ source, invalid_class_property }));
     try std.testing.expectEqualStrings("Invalid regular expression: /[\\p{Nope}]/u: Invalid property name in character class", runtime.failureMessage().?);
+
+    runtime.clearFailureMessage();
+    const invalid_class_named_reference = try runtime.stringUtf8("/[\\k]/u");
+    try std.testing.expectError(error.InvalidClassEscape, call(&runtime, "正規表現マッチ", &.{ source, invalid_class_named_reference }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /[\\k]/u: Invalid escape", runtime.failureMessage().?);
+
+    runtime.clearFailureMessage();
+    const invalid_class_named_backreference = try runtime.stringUtf8("/[\\k<a>]/u");
+    try std.testing.expectError(error.InvalidClassEscape, call(&runtime, "正規表現マッチ", &.{ source, invalid_class_named_backreference }));
+    try std.testing.expectEqualStrings("Invalid regular expression: /[\\k<a>]/u: Invalid escape", runtime.failureMessage().?);
 }
 
 test "名前付きキャプチャと非貪欲量指定を処理する" {
