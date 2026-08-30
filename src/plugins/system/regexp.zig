@@ -994,35 +994,8 @@ fn expandPieceBehindOrdered(
     }
 }
 
-fn expressionHasBackreference(expression: *const Expression) bool {
-    for (expression.alternatives) |alternative| {
-        for (alternative.pieces) |piece| switch (piece.atom) {
-            .backreference, .named_backreference, .legacy_decimal_escape, .unicode_decimal_escape => return true,
-            .group => |group| if (expressionHasBackreference(group.expression)) return true,
-            .assertion => |assertion| if (expressionHasBackreference(assertion.expression)) return true,
-            else => {},
-        };
-    }
-    return false;
-}
-
 fn matchLookbehindCandidates(allocator: std.mem.Allocator, source: []const u16, expression: *const Expression, initial: Candidate, flags: Flags) anyerror![]Candidate {
-    if (!expressionHasBackreference(expression)) return matchExpressionBehind(allocator, source, expression, initial, flags);
-
-    // A backreference can be encountered before its capture when the
-    // expression is evaluated backwards. Preserve the existing forward
-    // candidate path for that unsupported dependency rather than treating
-    // the not-yet-participating backreference as an empty string.
-    var output: std.ArrayList(Candidate) = .empty;
-    var start: usize = 0;
-    while (start <= initial.position) {
-        const behind_initial = Candidate{ .position = start, .captures = initial.captures };
-        const candidates = try matchExpression(allocator, source, expression, behind_initial, flags);
-        for (candidates) |candidate| if (candidate.position == initial.position) try output.append(allocator, candidate);
-        if (start == initial.position) break;
-        start = advanceStringIndex(source, start, flags.unicode);
-    }
-    return output.toOwnedSlice(allocator);
+    return matchExpressionBehind(allocator, source, expression, initial, flags);
 }
 
 fn matchAtomBehind(allocator: std.mem.Allocator, source: []const u16, atom: Atom, initial: Candidate, flags: Flags) anyerror![]Candidate {
@@ -2197,6 +2170,8 @@ test "後読みの量指定は右から捕捉する" {
         .{ .source = "abbbc", .pattern = "/(?<=([ab]+)([bc]+))c/", .first = "a", .second = "bbb" },
         .{ .source = "abbbc", .pattern = "/(?<=([ab]+)([bc]+?))c/", .first = "abb", .second = "b" },
         .{ .source = "abbbc", .pattern = "/(?<=([ab]+?)([bc]+?))c/", .first = "b", .second = "b" },
+        .{ .source = "aab", .pattern = "/(?<=((a)\\2)\\1)b/", .first = "a", .second = "a" },
+        .{ .source = "aaab", .pattern = "/(?<=((a+)\\2)\\1)b/", .first = "aaa", .second = "aaa" },
     };
     for (cases) |case| {
         var source = try runtime.stringUtf8(case.source);

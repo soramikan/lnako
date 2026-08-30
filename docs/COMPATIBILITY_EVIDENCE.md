@@ -107,7 +107,7 @@ attestationがない場合は`trace-confirmed-unattested`に留めます。
 
 空幅atomの量指定を含む正規表現境界は`native-system-regexp-zero-width-quantifier`で公式CLI・生成JavaScript・Interpreter・LLVM AOT O0〜O3を比較します。非Unicode modeのlegacy octal escape（class内の`\\1`・`\\12`・`\\123`と外側の`\\07`）、およびcapture数以下ならbackreference、未定義captureならlegacy octalまたは数字リテラルへfallbackするclass外decimal escapeは`native-system-regexp-legacy-octal-escapes`で同じ7経路を比較します。
 
-可変長lookbehindの貪欲・非貪欲量指定は後ろ側のatomから逆向きに評価され、captureの結果と複数一致時の探索順へ影響します。`native-system-regexp-lookbehind-capture-order`で公式CLI・生成JavaScript・Interpreter・LLVM AOT O0〜O3を比較し、lookbehind内部のbackreference依存は`TODO: regexp-backtracking-edge`として未検証のまま分離します。
+可変長lookbehindの貪欲・非貪欲量指定は後ろ側のatomから逆向きに評価され、captureの結果と複数一致時の探索順へ影響します。`native-system-regexp-lookbehind-capture-order`で公式CLI・生成JavaScript・Interpreter・LLVM AOT O0〜O3を比較し、lookbehind内部のbackreferenceでは、逆向き評価時点で未確定のcaptureを空文字として扱う規則も含めて比較します。さらに複雑なcapture副作用順序は`TODO: regexp-backtracking-edge`として未検証のまま分離します。
 
 ## 同名命令
 

@@ -100,7 +100,7 @@ Unicode文字クラスでは、4桁Unicode escapeで表した高・低surrogate 
 
 正規表現の反復captureでは、同じ外側groupの次の反復で内側のoptional groupが不参加になった場合、前の反復のcaptureを引き継がず`undefined`へ戻す。`/(a(b)?)+/`と`/(a(b)*)+/`の境界を`native-system-regexp-backtracking-boundaries`へ追加し、Interpreter・AOTの7経路で比較する。より複雑な選択・capture副作用順序は`TODO: regexp-backtracking-edge`として残す。
 
-可変長lookbehindの評価は、公式Node 24が後ろ側のatomから逆向きに量指定を評価するため、捕捉値の優先順も通常の左から右のmatcherとは異なる。例えば`/(?<=([ab]+)([bc]+))c/`の`"abbbc"`では`["a","bbb"]`、両方をlazyにした`/(?<=([ab]+?)([bc]+?))c/`では`["b","b"]`となる。lnakoはlookbehind専用の逆向きcandidate matcherをInterpreter・純LLVM AOT・表の共有正規表現経路へ接続し、貪欲・非貪欲量指定、選択、Unicode code point境界とcaptureの探索順を再現する。`native-system-regexp-lookbehind-capture-order`で7経路を比較する。lookbehind内部のbackreferenceは、captureが逆向き評価より先に確定しない依存を避けるため従来経路へ留め、`TODO: regexp-backtracking-edge`として未完成扱いにする。
+可変長lookbehindの評価は、公式Node 24が後ろ側のatomから逆向きに量指定を評価するため、捕捉値の優先順も通常の左から右のmatcherとは異なる。例えば`/(?<=([ab]+)([bc]+))c/`の`"abbbc"`では`["a","bbb"]`、両方をlazyにした`/(?<=([ab]+?)([bc]+?))c/`では`["b","b"]`となる。lnakoはlookbehind専用の逆向きcandidate matcherをInterpreter・純LLVM AOT・表の共有正規表現経路へ接続し、貪欲・非貪欲量指定、選択、Unicode code point境界とcaptureの探索順を再現する。`native-system-regexp-lookbehind-capture-order`で7経路を比較する。lookbehind内部のbackreferenceも、逆向き評価時点で未確定のcaptureを空文字として扱う規則を含めて処理する。さらに複雑なcapture副作用順序は`TODO: regexp-backtracking-edge`として未完成扱いにする。
 
 Unicode正規表現の非sticky探索は、UTF-16のlow surrogate位置から再試行しない。例えば`/\\uDE00/u`と`/\\uD83D/u`は`"😀"`内の対内部を単独コード単位として一致させず、非Unicodeの`/\\uDE00/`だけがlow surrogateへ一致する。共有エンジンはUnicode時の探索開始位置を`AdvanceStringIndex`相当で進め、`native-system-regexp-unicode-search-boundary`でInterpreter・AOTの7経路を比較する。
 

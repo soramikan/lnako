@@ -818,7 +818,7 @@
   {
     "id": "native-system-regexp-lookbehind-capture-order",
     "commands": ["正規表現抽出", "JSON変換"],
-    "source": "JSON変換(正規表現抽出(\"abbbc\",『/(?<=([ab]+)([bc]+))c/』))を表示\nJSON変換(正規表現抽出(\"abbbc\",『/(?<=([ab]+)([bc]+?))c/』))を表示\nJSON変換(正規表現抽出(\"abbbc\",『/(?<=([ab]+?)([bc]+))c/』))を表示\nJSON変換(正規表現抽出(\"abbbc\",『/(?<=([ab]+?)([bc]+?))c/』))を表示\nJSON変換(正規表現抽出(\"abcc\",『/(?<=([ab]+)([bc]+))c/』))を表示\nJSON変換(正規表現抽出(\"aabbc\",『/(?<=([ab]+)([bc]+))c/』))を表示\n"
+    "source": "JSON変換(正規表現抽出(\"abbbc\",『/(?<=([ab]+)([bc]+))c/』))を表示\nJSON変換(正規表現抽出(\"abbbc\",『/(?<=([ab]+)([bc]+?))c/』))を表示\nJSON変換(正規表現抽出(\"abbbc\",『/(?<=([ab]+?)([bc]+))c/』))を表示\nJSON変換(正規表現抽出(\"abbbc\",『/(?<=([ab]+?)([bc]+?))c/』))を表示\nJSON変換(正規表現抽出(\"abcc\",『/(?<=([ab]+)([bc]+))c/』))を表示\nJSON変換(正規表現抽出(\"aabbc\",『/(?<=([ab]+)([bc]+))c/』))を表示\nJSON変換(正規表現抽出(\"ab\",『/(?<=(a)\\1)b/』))を表示\nJSON変換(正規表現抽出(\"aab\",『/(?<=(a+)\\1)b/』))を表示\nJSON変換(正規表現抽出(\"ab\",『/(?<=\\1(a))b/』))を表示\nJSON変換(正規表現抽出(\"aab\",『/(?<=((a)\\2)\\1)b/』))を表示\nJSON変換(正規表現抽出(\"aaab\",『/(?<=((a+)\\2)\\1)b/』))を表示\n"
   },
   {
     "id": "native-system-regexp-unicode-lookbehind-boundary",
