@@ -514,7 +514,13 @@ dispatch evidenceとcoverageは`tools/check_dispatch_audits_parallel.mjs`で独�
 20分35秒、Windows shard 1は16分42秒、macOS shard 1は13分34秒を要した。fixture shardを6へ増やしても重いfixtureが含まれるjobは
 クリティカルパスに残ったため、これはroute分割前の基準値である。
 
-この作業ツリーではLinux／Windowsを3 fixture shard × 4 optimization routeの12 native job、macOSをO0+O1／O2／O3の3 native jobへ変更した。
-run 33440557705は変更前のrunとして既に完了しているため、次回pushで発生する新runのwall-clock、runner合計、各native route job／
-support step時間、cache hit/miss、全OSartifactを改めて記録する。macOSの同時実行数が5を超えたり、artifact・attestation・いずれかの公式差分が
-欠けたりした場合は、速度より検証の完全性を優先して原因を修正する。
+この作業ツリーでLinux／Windowsを3 fixture shard × 4 optimization routeの12 native job、macOSをO0+O1／O2／O3の3 native jobへ変更した結果、
+[run 33443631136](https://github.com/soramikan/lnako/actions/runs/33443631136)（`3c44949`）は40 job（test 39＋attestation 1）を成功させた。
+作成21:53:58Zから更新22:07:37Zまでのwall-clockは13分39秒で、旧構成run 33440557705の21分17秒から7分38秒（約35.9%）短縮した。
+runner合計は4時間36分26秒で、旧構成の3時間21分21秒より1時間15分05秒増えた。これはLinux／Windowsのnative route分割によるsetupと公式3経路の
+再実行コストであり、壁時計短縮とのトレードオフとして記録する。
+
+macOSは`mac-bundle`、native route 3 job、supportの5 jobが21:54:02〜21:54:03Zにすべて開始し、6件目以降のqueueは発生しなかった。macOSの
+native routeはO0+O1が11分44秒、O2が9分12秒、O3が9分13秒、supportが10分06秒で、Linux／Windowsを含む最長test jobはWindows supportの12分56秒だった。
+全OSのnative artifact、support artifact、attestationを含めて成功しているため、現行の5 job制約内route分割と検証完全性を確認できた。次回push時はこのrunを
+前回完了runとして先に確認し、新runの完了は待たず、失敗があれば`gh run view --log-failed`で原因を調査・修正する。
