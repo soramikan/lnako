@@ -28,6 +28,20 @@ const runtimeFixtureFiles = new Set([
   "supplemental-plugin-cases.json",
   "system-runtime-cases.json",
 ]);
+// A clean dispatch evidence file is generated against the fixture/source
+// commit before it is copied into the tracked catalog. The follow-up commit
+// must be restricted to evidence/documentation and this verifier itself; any
+// product or fixture change requires a fresh dispatch run.
+const dispatchEvidenceFollowUpPaths = new Set([
+  "README.md",
+  "compat/v3.7.24/dispatch-evidence.json",
+  "compat/v3.7.24/evidence.json",
+  "compat/v3.7.24/interpreter-only-classification.json",
+  "docs/COMPATIBILITY_EVIDENCE.md",
+  "docs/COMPATIBILITY_QUIRKS.md",
+  "docs/DEVELOPMENT.md",
+  "tools/sync_compat_evidence.mjs",
+]);
 const arguments_ = process.argv.slice(2);
 const mode = arguments_[0] ?? "--check";
 const optionValue = (name) => {
@@ -362,6 +376,16 @@ function readGitState() {
   return { commit, dirty: statusResult.stdout.length > 0 };
 }
 
+function isAllowedDispatchEvidenceFollowUp(evidenceCommit, currentCommit) {
+  if (evidenceCommit === currentCommit) return true;
+  const parentResult = spawnSync("git", ["rev-parse", `${currentCommit}^`], { cwd: root, encoding: "utf8" });
+  if (parentResult.status !== 0 || parentResult.stdout.trim() !== evidenceCommit) return false;
+  const diffResult = spawnSync("git", ["diff", "--name-only", evidenceCommit, currentCommit], { cwd: root, encoding: "utf8" });
+  if (diffResult.status !== 0) return false;
+  const changedPaths = diffResult.stdout.split(/\r?\n/).filter((path) => path.length > 0);
+  return changedPaths.length > 0 && changedPaths.every((path) => dispatchEvidenceFollowUpPaths.has(path));
+}
+
 function validateDispatchEvidence(evidence, lock, standard, records, inputSha256, inputPath, bundlePath, bundleBytes, historicalCommit = null) {
   rejectForbiddenEvidenceFields(evidence);
   assertKnownObjectKeys(evidence, ["schema", "generator", "baseline", "fixture", "officialComparison", "attestation", "provenance", "trace", "sites"], "dispatch-evidence");
@@ -425,7 +449,8 @@ function validateDispatchEvidence(evidence, lock, standard, records, inputSha256
     throw new Error("dispatch証拠のprovenanceが不正です");
   }
   const currentGit = readGitState();
-  if (evidence.provenance.lnako.commit !== currentGit.commit && evidence.provenance.lnako.dirty !== true && historicalCommit !== evidence.provenance.lnako.commit) {
+  if (evidence.provenance.lnako.commit !== currentGit.commit && evidence.provenance.lnako.dirty !== true && historicalCommit !== evidence.provenance.lnako.commit &&
+      !isAllowedDispatchEvidenceFollowUp(evidence.provenance.lnako.commit, currentGit.commit)) {
     throw new Error("cleanなdispatch証拠のlnako commitが現行HEADと一致しません");
   }
   const standardById = new Map(standard.commands.map((command) => [command.id, command]));

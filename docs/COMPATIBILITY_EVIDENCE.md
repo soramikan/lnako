@@ -3,7 +3,7 @@
 `compat/v3.7.24/evidence.json`は、標準cnako 527 entryをカタログID単位で
 既存fixtureへ関連付ける台帳です。通常のfixture関連付けは実行結果やdispatch接続を証明しません。
 追跡中の証拠は、macOS arm64の単一実行環境で、明示fixture `native-cut-commands`についてcompile manifest、Interpreter/AOT trace、公式差分を
-同一fixture・siteで突き合わせられた一意名266 entryが`trace-confirmed-unattested`です（既存14命令に型変換系16命令、算術・比較系15命令、配列系12命令、文字列系21命令、論理・ビット・集約系20命令、表系14命令、数学系36命令、文字変換系4命令、置換系2命令、出現1命令、形式・文字種判定系7命令、値・状態系12命令、文字列合成・URL系12命令、JSON・要素数系9命令、幅変換系8命令、配列callback系4命令、配列構造系7命令、辞書・hash key系7命令、配列スタック・複製・連番系5命令、パス系5命令、礼節系6命令、動的実行系2命令、標準出力系6命令、デバッグ待機系1命令、デバッグ表示・配列シャッフル系2命令、システム関数存在系1命令、実行時間計測系1命令、ハテナ関数設定系1命令、CSV系7命令、秒待系8命令を加えた範囲）。追跡中のJSONにはattestationを記録しないため、ローカルの`verified`は0件で、残り261 entryが`unverified`です。
+同一fixture・siteで突き合わせられた一意名269 entryが`trace-confirmed-unattested`です（既存14命令に型変換系16命令、算術・比較系15命令、配列系12命令、文字列系21命令、論理・ビット・集約系20命令、表系14命令、数学系36命令、文字変換系4命令、置換系2命令、出現1命令、形式・文字種判定系7命令、値・状態系12命令、文字列合成・URL系12命令、JSON・要素数系9命令、幅変換系8命令、配列callback系4命令、配列構造系7命令、辞書・hash key系7命令、配列スタック・複製・連番系5命令、パス系5命令、礼節系6命令、動的実行系2命令、標準出力系6命令、デバッグ待機系1命令、デバッグ表示・配列シャッフル系2命令、システム関数存在系1命令、実行時間計測系1命令、ハテナ関数設定系1命令、CSV系7命令、秒待系8命令、Promise成功系3命令を加えた範囲）。追跡中のJSONにはattestationを記録しないため、ローカルの`verified`は0件で、残り258 entryが`unverified`です。
 
 AOT差分artifactとdispatch証拠は入力・実行物・結果のSHA-256を内包します。各OS内では公式source・生成JavaScript・lnako run・AOT O0の
 stdout/stderr hashを一致させますが、OS間のdispatch意味比較では、パス区切りなどOS依存の出力hashを含めず、fixture・route結果状態・catalog/site構造を比較します。
@@ -19,7 +19,11 @@ historical catalogのdigestとworkflow identityを固定し、`node tools/check_
 in-toto subject、SLSA predicate、GitHub Actions workflow identityを検査する。bundleの署名を暗号学的に再検証する場合は、保存したbundleを
 公式`gh attestation verify`へ同じ厳格なidentity引数で渡す。固定されたhistorical catalogの`verified: 4`は現在commitの台帳へ自動反映せず、
 追跡中の`compat/v3.7.24/evidence.json`は`verified: 0`、`trace-confirmed-unattested: 148`を維持する。catalog再生成時の`--historical-commit`は
-この明示的な履歴検査でだけ対象commitとの差異を許可し、明示的な非canonical outputを必須にする（通常のsync検査の現行HEAD一致制約とcanonical output保護は緩めない）。target commitとこの履歴固定を追加する後続commitを混同しない。
+この明示的な履歴検査でだけ対象commitとの差異を許可し、明示的な非canonical outputを必須にする（通常のsync検査は、証拠生成元のfixture/source commitとの一致、または証拠・台帳・文書と検証器だけを記録した直後の一段のfollow-up commitを要求し、canonical output保護は緩めない）。target commitとこの履歴固定を追加する後続commitを混同しない。
+
+### 証拠記録commitの追従
+
+dispatch checkerは実行前のcleanなcommitを証拠の出所として記録します。生成したJSONをtracked台帳へ記録する署名commitは、その直前commitを親に持ち、変更pathを証拠・派生台帳・互換文書・検証器のallowlistへ限定する場合に限り、証拠の出所を維持したfollow-upとして受理します。製品ソース、fixture、catalog、workflowなどが同じcommitで変わる場合や、2段以上離れた証拠は受理せず、同じfixtureでdispatch証拠を再生成します。
 
 ## 生成と検証
 
@@ -95,7 +99,7 @@ Node Bufferのenumerable prototype property 95件の順序・`parent`・`offset`
 疎な最上位表のhole・nullish行に対する`length` property read診断は`native-system-table-sparse-length-errors`で`表列数`・`表行列交換`・`表右回転`を比較します。
 同一ユーザー関数の`prototype` object identityと、そのown `constructor` back-referenceは`native-system-table-inherited-properties`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較します。
 `interpreter-only` 0 entryです。execution evidenceは`verified` 0、
-`trace-confirmed-unattested` 266、`unverified` 261です。
+`trace-confirmed-unattested` 269、`unverified` 258です。
 fixtureの関連付けを変更した場合は、次で派生台帳の生成と検査を行います。
 
 ```sh
@@ -161,7 +165,7 @@ SHA-256を記録します。trace・compile manifestのraw hashは正規化し�
 dispatch証拠schema v2のprovenanceには
 OS、Node、公式oracle marker／CLI／archiveのhash、実行前lnako binaryのhash、git commit／dirty、
 一時raw trace／manifestのhashだけを保存し、source本文・ローカルパス・raw本文は保存しません。
-sync検証時はgit取得失敗を拒否し、dirty=falseの証拠だけは記録commitが現行HEADと一致することも確認します。
+sync検証時はgit取得失敗を拒否し、dirty=falseの証拠は記録commitが現行HEADと一致するか、上記の一段のmetadata follow-upであることも確認します。
 dirty=trueの場合は未コミット差分の内容までは証明しないため、
 これは単一環境のunattested証拠であり、3環境の互換性や署名済みverified証拠を意味しません。
 

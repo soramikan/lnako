@@ -22,8 +22,8 @@
   },
   "executionEvidenceStates": {
     "verified": 0,
-    "trace-confirmed-unattested": 266,
-    "unverified": 261
+    "trace-confirmed-unattested": 269,
+    "unverified": 258
   },
   "entries": [
     {
@@ -1386,8 +1386,8 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000001f3",
-          "0x00000009000001f4"
+          "0x0000000c000001f3",
+          "0x0000000c000001f4"
         ],
         "officialComparison": [
           "officialSource",
@@ -1437,7 +1437,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000001f6"
+          "0x0000000c000001f6"
         ],
         "officialComparison": [
           "officialSource",
@@ -1487,7 +1487,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000001f7"
+          "0x0000000c000001f7"
         ],
         "officialComparison": [
           "officialSource",
@@ -1537,7 +1537,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000001f9"
+          "0x0000000c000001f9"
         ],
         "officialComparison": [
           "officialSource",
@@ -1587,11 +1587,11 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000001fb",
-          "0x00000009000001fd",
-          "0x00000009000001ff",
-          "0x0000000900000201",
-          "0x0000000900000203"
+          "0x0000000c000001fb",
+          "0x0000000c000001fd",
+          "0x0000000c000001ff",
+          "0x0000000c00000201",
+          "0x0000000c00000203"
         ],
         "officialComparison": [
           "officialSource",
@@ -1642,7 +1642,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002ba"
+          "0x0000000c000002ba"
         ],
         "officialComparison": [
           "officialSource",
@@ -1693,7 +1693,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002bc"
+          "0x0000000c000002bc"
         ],
         "officialComparison": [
           "officialSource",
@@ -1744,7 +1744,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002bb"
+          "0x0000000c000002bb"
         ],
         "officialComparison": [
           "officialSource",
@@ -1795,7 +1795,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002bf"
+          "0x0000000c000002bf"
         ],
         "officialComparison": [
           "officialSource",
@@ -1846,9 +1846,9 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002b4",
-          "0x00000009000002b7",
-          "0x00000009000002c0"
+          "0x0000000c000002b4",
+          "0x0000000c000002b7",
+          "0x0000000c000002c0"
         ],
         "officialComparison": [
           "officialSource",
@@ -1899,10 +1899,10 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002b5",
-          "0x00000009000002b8",
-          "0x00000009000002bd",
-          "0x00000009000002c1"
+          "0x0000000c000002b5",
+          "0x0000000c000002b8",
+          "0x0000000c000002bd",
+          "0x0000000c000002c1"
         ],
         "officialComparison": [
           "officialSource",
@@ -2054,7 +2054,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000020a"
+          "0x0000000c0000020a"
         ],
         "officialComparison": [
           "officialSource",
@@ -2109,8 +2109,8 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002c7",
-          "0x00000009000002c9"
+          "0x0000000c000002c7",
+          "0x0000000c000002c9"
         ],
         "officialComparison": [
           "officialSource",
@@ -2264,8 +2264,8 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002c3",
-          "0x00000009000002c5"
+          "0x0000000c000002c3",
+          "0x0000000c000002c5"
         ],
         "officialComparison": [
           "officialSource",
@@ -2315,7 +2315,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002df"
+          "0x0000000c000002df"
         ],
         "officialComparison": [
           "officialSource",
@@ -2400,10 +2400,10 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002d7",
-          "0x00000009000002d8",
-          "0x00000009000002d9",
-          "0x00000009000002da"
+          "0x0000000c000002d7",
+          "0x0000000c000002d8",
+          "0x0000000c000002d9",
+          "0x0000000c000002da"
         ],
         "officialComparison": [
           "officialSource",
@@ -2460,7 +2460,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002e0"
+          "0x0000000c000002e0"
         ],
         "officialComparison": [
           "officialSource",
@@ -2727,7 +2727,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002d5"
+          "0x0000000c000002d5"
         ],
         "officialComparison": [
           "officialSource",
@@ -2846,7 +2846,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002dd"
+          "0x0000000c000002dd"
         ],
         "officialComparison": [
           "officialSource",
@@ -3066,8 +3066,8 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000205",
-          "0x0000000900000207"
+          "0x0000000c00000205",
+          "0x0000000c00000207"
         ],
         "officialComparison": [
           "officialSource",
@@ -3151,7 +3151,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000206"
+          "0x0000000c00000206"
         ],
         "officialComparison": [
           "officialSource",
@@ -3202,8 +3202,8 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000208",
-          "0x0000000900000209"
+          "0x0000000c00000208",
+          "0x0000000c00000209"
         ],
         "officialComparison": [
           "officialSource",
@@ -3253,7 +3253,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000e4"
+          "0x0000000c000000e4"
         ],
         "officialComparison": [
           "officialSource",
@@ -3303,7 +3303,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000e6"
+          "0x0000000c000000e6"
         ],
         "officialComparison": [
           "officialSource",
@@ -3353,8 +3353,8 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000005d",
-          "0x000000090000005f"
+          "0x0000000c0000005d",
+          "0x0000000c0000005f"
         ],
         "officialComparison": [
           "officialSource",
@@ -3404,7 +3404,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000ea"
+          "0x0000000c000000ea"
         ],
         "officialComparison": [
           "officialSource",
@@ -3454,7 +3454,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000061"
+          "0x0000000c00000061"
         ],
         "officialComparison": [
           "officialSource",
@@ -3504,7 +3504,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000063"
+          "0x0000000c00000063"
         ],
         "officialComparison": [
           "officialSource",
@@ -3554,7 +3554,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000065"
+          "0x0000000c00000065"
         ],
         "officialComparison": [
           "officialSource",
@@ -3605,7 +3605,7 @@
         "fixtureId": "native-cut-commands",
         "siteIds": [
           "0x0000000200000001",
-          "0x0000000900000067"
+          "0x0000000c00000067"
         ],
         "officialComparison": [
           "officialSource",
@@ -3655,8 +3655,8 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000069",
-          "0x000000090000006b"
+          "0x0000000c00000069",
+          "0x0000000c0000006b"
         ],
         "officialComparison": [
           "officialSource",
@@ -3706,7 +3706,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000006d"
+          "0x0000000c0000006d"
         ],
         "officialComparison": [
           "officialSource",
@@ -3756,7 +3756,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000006f"
+          "0x0000000c0000006f"
         ],
         "officialComparison": [
           "officialSource",
@@ -3806,7 +3806,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000071"
+          "0x0000000c00000071"
         ],
         "officialComparison": [
           "officialSource",
@@ -3856,7 +3856,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000073"
+          "0x0000000c00000073"
         ],
         "officialComparison": [
           "officialSource",
@@ -3906,7 +3906,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000075"
+          "0x0000000c00000075"
         ],
         "officialComparison": [
           "officialSource",
@@ -3956,7 +3956,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000077"
+          "0x0000000c00000077"
         ],
         "officialComparison": [
           "officialSource",
@@ -4006,7 +4006,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000079"
+          "0x0000000c00000079"
         ],
         "officialComparison": [
           "officialSource",
@@ -4056,7 +4056,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000007b"
+          "0x0000000c0000007b"
         ],
         "officialComparison": [
           "officialSource",
@@ -4107,12 +4107,12 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000001df",
-          "0x00000009000001e3",
-          "0x00000009000001e7",
-          "0x00000009000001e9",
-          "0x00000009000001ed",
-          "0x00000009000001f1"
+          "0x0000000c000001df",
+          "0x0000000c000001e3",
+          "0x0000000c000001e7",
+          "0x0000000c000001e9",
+          "0x0000000c000001ed",
+          "0x0000000c000001f1"
         ],
         "officialComparison": [
           "officialSource",
@@ -4163,10 +4163,10 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000001e1",
-          "0x00000009000001e5",
-          "0x00000009000001eb",
-          "0x00000009000001ef"
+          "0x0000000c000001e1",
+          "0x0000000c000001e5",
+          "0x0000000c000001eb",
+          "0x0000000c000001ef"
         ],
         "officialComparison": [
           "officialSource",
@@ -4216,7 +4216,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000007d"
+          "0x0000000c0000007d"
         ],
         "officialComparison": [
           "officialSource",
@@ -4266,7 +4266,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000e2"
+          "0x0000000c000000e2"
         ],
         "officialComparison": [
           "officialSource",
@@ -4316,7 +4316,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000e8"
+          "0x0000000c000000e8"
         ],
         "officialComparison": [
           "officialSource",
@@ -4366,7 +4366,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000d2"
+          "0x0000000c000000d2"
         ],
         "officialComparison": [
           "officialSource",
@@ -4416,7 +4416,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000d4"
+          "0x0000000c000000d4"
         ],
         "officialComparison": [
           "officialSource",
@@ -4466,7 +4466,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000d6"
+          "0x0000000c000000d6"
         ],
         "officialComparison": [
           "officialSource",
@@ -4516,7 +4516,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000d8"
+          "0x0000000c000000d8"
         ],
         "officialComparison": [
           "officialSource",
@@ -4566,7 +4566,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000da"
+          "0x0000000c000000da"
         ],
         "officialComparison": [
           "officialSource",
@@ -4616,7 +4616,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000dc"
+          "0x0000000c000000dc"
         ],
         "officialComparison": [
           "officialSource",
@@ -4666,7 +4666,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000de"
+          "0x0000000c000000de"
         ],
         "officialComparison": [
           "officialSource",
@@ -4716,7 +4716,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000e0"
+          "0x0000000c000000e0"
         ],
         "officialComparison": [
           "officialSource",
@@ -4766,7 +4766,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000c4"
+          "0x0000000c000000c4"
         ],
         "officialComparison": [
           "officialSource",
@@ -4816,7 +4816,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000c6"
+          "0x0000000c000000c6"
         ],
         "officialComparison": [
           "officialSource",
@@ -4866,7 +4866,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000c8"
+          "0x0000000c000000c8"
         ],
         "officialComparison": [
           "officialSource",
@@ -4916,7 +4916,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000ca"
+          "0x0000000c000000ca"
         ],
         "officialComparison": [
           "officialSource",
@@ -4966,7 +4966,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000cc"
+          "0x0000000c000000cc"
         ],
         "officialComparison": [
           "officialSource",
@@ -5016,7 +5016,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000ce"
+          "0x0000000c000000ce"
         ],
         "officialComparison": [
           "officialSource",
@@ -5066,7 +5066,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000d0"
+          "0x0000000c000000d0"
         ],
         "officialComparison": [
           "officialSource",
@@ -5116,7 +5116,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000009a"
+          "0x0000000c0000009a"
         ],
         "officialComparison": [
           "officialSource",
@@ -5192,7 +5192,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000009c"
+          "0x0000000c0000009c"
         ],
         "officialComparison": [
           "officialSource",
@@ -5254,19 +5254,19 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000013",
-          "0x0000000900000014",
-          "0x0000000900000015",
-          "0x0000000900000016",
-          "0x0000000900000154",
-          "0x0000000900000157",
-          "0x0000000900000175",
-          "0x0000000900000176",
-          "0x0000000900000179",
-          "0x000000090000017a",
-          "0x00000009000001a1",
-          "0x00000009000001a2",
-          "0x000000090000020e"
+          "0x0000000c00000013",
+          "0x0000000c00000014",
+          "0x0000000c00000015",
+          "0x0000000c00000016",
+          "0x0000000c00000154",
+          "0x0000000c00000157",
+          "0x0000000c00000175",
+          "0x0000000c00000176",
+          "0x0000000c00000179",
+          "0x0000000c0000017a",
+          "0x0000000c000001a1",
+          "0x0000000c000001a2",
+          "0x0000000c0000020e"
         ],
         "officialComparison": [
           "officialSource",
@@ -5316,9 +5316,9 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000a2",
-          "0x0000000900000156",
-          "0x0000000900000159"
+          "0x0000000c000000a2",
+          "0x0000000c00000156",
+          "0x0000000c00000159"
         ],
         "officialComparison": [
           "officialSource",
@@ -5368,7 +5368,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000a4"
+          "0x0000000c000000a4"
         ],
         "officialComparison": [
           "officialSource",
@@ -5418,7 +5418,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000a6"
+          "0x0000000c000000a6"
         ],
         "officialComparison": [
           "officialSource",
@@ -5468,7 +5468,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000210"
+          "0x0000000c00000210"
         ],
         "officialComparison": [
           "officialSource",
@@ -5518,8 +5518,8 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000215",
-          "0x0000000900000218"
+          "0x0000000c00000215",
+          "0x0000000c00000218"
         ],
         "officialComparison": [
           "officialSource",
@@ -5569,8 +5569,8 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000021a",
-          "0x000000090000021c"
+          "0x0000000c0000021a",
+          "0x0000000c0000021c"
         ],
         "officialComparison": [
           "officialSource",
@@ -5620,7 +5620,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000021e"
+          "0x0000000c0000021e"
         ],
         "officialComparison": [
           "officialSource",
@@ -5670,7 +5670,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000220"
+          "0x0000000c00000220"
         ],
         "officialComparison": [
           "officialSource",
@@ -5720,9 +5720,9 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000222",
-          "0x0000000900000224",
-          "0x0000000900000226"
+          "0x0000000c00000222",
+          "0x0000000c00000224",
+          "0x0000000c00000226"
         ],
         "officialComparison": [
           "officialSource",
@@ -5772,11 +5772,11 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000228",
-          "0x000000090000022a",
-          "0x000000090000022c",
-          "0x000000090000022e",
-          "0x0000000900000230"
+          "0x0000000c00000228",
+          "0x0000000c0000022a",
+          "0x0000000c0000022c",
+          "0x0000000c0000022e",
+          "0x0000000c00000230"
         ],
         "officialComparison": [
           "officialSource",
@@ -5826,7 +5826,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000a8"
+          "0x0000000c000000a8"
         ],
         "officialComparison": [
           "officialSource",
@@ -5876,7 +5876,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000aa"
+          "0x0000000c000000aa"
         ],
         "officialComparison": [
           "officialSource",
@@ -5926,7 +5926,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000ac"
+          "0x0000000c000000ac"
         ],
         "officialComparison": [
           "officialSource",
@@ -5976,7 +5976,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000ae"
+          "0x0000000c000000ae"
         ],
         "officialComparison": [
           "officialSource",
@@ -6026,7 +6026,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000b0"
+          "0x0000000c000000b0"
         ],
         "officialComparison": [
           "officialSource",
@@ -6076,7 +6076,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000b2"
+          "0x0000000c000000b2"
         ],
         "officialComparison": [
           "officialSource",
@@ -6126,7 +6126,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000b4"
+          "0x0000000c000000b4"
         ],
         "officialComparison": [
           "officialSource",
@@ -6176,7 +6176,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000b6"
+          "0x0000000c000000b6"
         ],
         "officialComparison": [
           "officialSource",
@@ -6235,13 +6235,13 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000001",
-          "0x0000000900000007",
-          "0x000000090000000a",
-          "0x000000090000000d",
-          "0x0000000900000010",
-          "0x0000000900000017",
-          "0x000000090000001d"
+          "0x0000000c00000001",
+          "0x0000000c00000007",
+          "0x0000000c0000000a",
+          "0x0000000c0000000d",
+          "0x0000000c00000010",
+          "0x0000000c00000017",
+          "0x0000000c0000001d"
         ],
         "officialComparison": [
           "officialSource",
@@ -6292,8 +6292,8 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000004",
-          "0x000000090000001a"
+          "0x0000000c00000004",
+          "0x0000000c0000001a"
         ],
         "officialComparison": [
           "officialSource",
@@ -6343,7 +6343,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000b8"
+          "0x0000000c000000b8"
         ],
         "officialComparison": [
           "officialSource",
@@ -6393,7 +6393,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000009e"
+          "0x0000000c0000009e"
         ],
         "officialComparison": [
           "officialSource",
@@ -6443,7 +6443,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000a0"
+          "0x0000000c000000a0"
         ],
         "officialComparison": [
           "officialSource",
@@ -6493,20 +6493,20 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000018b",
-          "0x000000090000018d",
-          "0x000000090000018f",
-          "0x0000000900000191",
-          "0x0000000900000193",
-          "0x0000000900000195",
-          "0x0000000900000197",
-          "0x0000000900000199",
-          "0x000000090000019b",
-          "0x000000090000019d",
-          "0x000000090000019f",
-          "0x00000009000001a3",
-          "0x00000009000001a5",
-          "0x00000009000001a7"
+          "0x0000000c0000018b",
+          "0x0000000c0000018d",
+          "0x0000000c0000018f",
+          "0x0000000c00000191",
+          "0x0000000c00000193",
+          "0x0000000c00000195",
+          "0x0000000c00000197",
+          "0x0000000c00000199",
+          "0x0000000c0000019b",
+          "0x0000000c0000019d",
+          "0x0000000c0000019f",
+          "0x0000000c000001a3",
+          "0x0000000c000001a5",
+          "0x0000000c000001a7"
         ],
         "officialComparison": [
           "officialSource",
@@ -6556,19 +6556,19 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000015f",
-          "0x0000000900000161",
-          "0x0000000900000163",
-          "0x0000000900000165",
-          "0x0000000900000167",
-          "0x0000000900000169",
-          "0x000000090000016b",
-          "0x000000090000016d",
-          "0x000000090000016f",
-          "0x0000000900000171",
-          "0x0000000900000173",
-          "0x0000000900000177",
-          "0x000000090000017b"
+          "0x0000000c0000015f",
+          "0x0000000c00000161",
+          "0x0000000c00000163",
+          "0x0000000c00000165",
+          "0x0000000c00000167",
+          "0x0000000c00000169",
+          "0x0000000c0000016b",
+          "0x0000000c0000016d",
+          "0x0000000c0000016f",
+          "0x0000000c00000171",
+          "0x0000000c00000173",
+          "0x0000000c00000177",
+          "0x0000000c0000017b"
         ],
         "officialComparison": [
           "officialSource",
@@ -6618,13 +6618,13 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000017d",
-          "0x000000090000017f",
-          "0x0000000900000181",
-          "0x0000000900000183",
-          "0x0000000900000185",
-          "0x0000000900000187",
-          "0x0000000900000189"
+          "0x0000000c0000017d",
+          "0x0000000c0000017f",
+          "0x0000000c00000181",
+          "0x0000000c00000183",
+          "0x0000000c00000185",
+          "0x0000000c00000187",
+          "0x0000000c00000189"
         ],
         "officialComparison": [
           "officialSource",
@@ -6674,7 +6674,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000ba"
+          "0x0000000c000000ba"
         ],
         "officialComparison": [
           "officialSource",
@@ -6724,7 +6724,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000bc"
+          "0x0000000c000000bc"
         ],
         "officialComparison": [
           "officialSource",
@@ -6774,7 +6774,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000be"
+          "0x0000000c000000be"
         ],
         "officialComparison": [
           "officialSource",
@@ -6824,7 +6824,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000c2"
+          "0x0000000c000000c2"
         ],
         "officialComparison": [
           "officialSource",
@@ -6874,7 +6874,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000c0"
+          "0x0000000c000000c0"
         ],
         "officialComparison": [
           "officialSource",
@@ -6924,8 +6924,8 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000150",
-          "0x0000000900000155"
+          "0x0000000c00000150",
+          "0x0000000c00000155"
         ],
         "officialComparison": [
           "officialSource",
@@ -6975,8 +6975,8 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000152",
-          "0x0000000900000158"
+          "0x0000000c00000152",
+          "0x0000000c00000158"
         ],
         "officialComparison": [
           "officialSource",
@@ -7026,7 +7026,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000015b"
+          "0x0000000c0000015b"
         ],
         "officialComparison": [
           "officialSource",
@@ -7076,7 +7076,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000015d"
+          "0x0000000c0000015d"
         ],
         "officialComparison": [
           "officialSource",
@@ -7131,7 +7131,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000251"
+          "0x0000000c00000251"
         ],
         "officialComparison": [
           "officialSource",
@@ -7186,7 +7186,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000253"
+          "0x0000000c00000253"
         ],
         "officialComparison": [
           "officialSource",
@@ -7241,7 +7241,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000255"
+          "0x0000000c00000255"
         ],
         "officialComparison": [
           "officialSource",
@@ -7296,7 +7296,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000257"
+          "0x0000000c00000257"
         ],
         "officialComparison": [
           "officialSource",
@@ -7366,8 +7366,8 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000259",
-          "0x000000090000025d"
+          "0x0000000c00000259",
+          "0x0000000c0000025d"
         ],
         "officialComparison": [
           "officialSource",
@@ -7437,7 +7437,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000025b"
+          "0x0000000c0000025b"
         ],
         "officialComparison": [
           "officialSource",
@@ -7507,7 +7507,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000025f"
+          "0x0000000c0000025f"
         ],
         "officialComparison": [
           "officialSource",
@@ -7582,7 +7582,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000261"
+          "0x0000000c00000261"
         ],
         "officialComparison": [
           "officialSource",
@@ -7764,12 +7764,12 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000001a9",
-          "0x00000009000001ab",
-          "0x00000009000001ad",
-          "0x00000009000001af",
-          "0x00000009000001b1",
-          "0x00000009000001b3"
+          "0x0000000c000001a9",
+          "0x0000000c000001ab",
+          "0x0000000c000001ad",
+          "0x0000000c000001af",
+          "0x0000000c000001b1",
+          "0x0000000c000001b3"
         ],
         "officialComparison": [
           "officialSource",
@@ -7819,12 +7819,12 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000001b5",
-          "0x00000009000001b7",
-          "0x00000009000001b9",
-          "0x00000009000001bb",
-          "0x00000009000001bd",
-          "0x00000009000001bf"
+          "0x0000000c000001b5",
+          "0x0000000c000001b7",
+          "0x0000000c000001b9",
+          "0x0000000c000001bb",
+          "0x0000000c000001bd",
+          "0x0000000c000001bf"
         ],
         "officialComparison": [
           "officialSource",
@@ -7874,9 +7874,9 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000001c1",
-          "0x00000009000001c3",
-          "0x00000009000001c5"
+          "0x0000000c000001c1",
+          "0x0000000c000001c3",
+          "0x0000000c000001c5"
         ],
         "officialComparison": [
           "officialSource",
@@ -7926,7 +7926,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000001c7"
+          "0x0000000c000001c7"
         ],
         "officialComparison": [
           "officialSource",
@@ -7976,7 +7976,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000001c9"
+          "0x0000000c000001c9"
         ],
         "officialComparison": [
           "officialSource",
@@ -8026,8 +8026,8 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000001cb",
-          "0x00000009000001cd"
+          "0x0000000c000001cb",
+          "0x0000000c000001cd"
         ],
         "officialComparison": [
           "officialSource",
@@ -8077,14 +8077,14 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000001cf",
-          "0x00000009000001d1",
-          "0x00000009000001d3",
-          "0x00000009000001d5",
-          "0x00000009000001d7",
-          "0x00000009000001d9",
-          "0x00000009000001db",
-          "0x00000009000001dd"
+          "0x0000000c000001cf",
+          "0x0000000c000001d1",
+          "0x0000000c000001d3",
+          "0x0000000c000001d5",
+          "0x0000000c000001d7",
+          "0x0000000c000001d9",
+          "0x0000000c000001db",
+          "0x0000000c000001dd"
         ],
         "officialComparison": [
           "officialSource",
@@ -8138,7 +8138,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000026"
+          "0x0000000c00000026"
         ],
         "officialComparison": [
           "officialSource",
@@ -8188,7 +8188,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000024b"
+          "0x0000000c0000024b"
         ],
         "officialComparison": [
           "officialSource",
@@ -8247,7 +8247,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000098"
+          "0x0000000c00000098"
         ],
         "officialComparison": [
           "officialSource",
@@ -8297,7 +8297,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000024d"
+          "0x0000000c0000024d"
         ],
         "officialComparison": [
           "officialSource",
@@ -8347,7 +8347,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000024f"
+          "0x0000000c0000024f"
         ],
         "officialComparison": [
           "officialSource",
@@ -8397,7 +8397,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000002a"
+          "0x0000000c0000002a"
         ],
         "officialComparison": [
           "officialSource",
@@ -8452,7 +8452,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000272"
+          "0x0000000c00000272"
         ],
         "officialComparison": [
           "officialSource",
@@ -8507,7 +8507,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000275"
+          "0x0000000c00000275"
         ],
         "officialComparison": [
           "officialSource",
@@ -8562,7 +8562,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000081"
+          "0x0000000c00000081"
         ],
         "officialComparison": [
           "officialSource",
@@ -8617,7 +8617,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000086"
+          "0x0000000c00000086"
         ],
         "officialComparison": [
           "officialSource",
@@ -8672,7 +8672,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000084"
+          "0x0000000c00000084"
         ],
         "officialComparison": [
           "officialSource",
@@ -8731,7 +8731,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000263"
+          "0x0000000c00000263"
         ],
         "officialComparison": [
           "officialSource",
@@ -8786,7 +8786,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000088"
+          "0x0000000c00000088"
         ],
         "officialComparison": [
           "officialSource",
@@ -8842,7 +8842,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002db"
+          "0x0000000c000002db"
         ],
         "officialComparison": [
           "officialSource",
@@ -8897,7 +8897,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000278"
+          "0x0000000c00000278"
         ],
         "officialComparison": [
           "officialSource",
@@ -8957,7 +8957,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000027b"
+          "0x0000000c0000027b"
         ],
         "officialComparison": [
           "officialSource",
@@ -9012,7 +9012,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000027f"
+          "0x0000000c0000027f"
         ],
         "officialComparison": [
           "officialSource",
@@ -9062,7 +9062,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000296"
+          "0x0000000c00000296"
         ],
         "officialComparison": [
           "officialSource",
@@ -9112,7 +9112,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000029a"
+          "0x0000000c0000029a"
         ],
         "officialComparison": [
           "officialSource",
@@ -9162,7 +9162,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000029e"
+          "0x0000000c0000029e"
         ],
         "officialComparison": [
           "officialSource",
@@ -9224,7 +9224,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002a2"
+          "0x0000000c000002a2"
         ],
         "officialComparison": [
           "officialSource",
@@ -9291,7 +9291,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000090"
+          "0x0000000c00000090"
         ],
         "officialComparison": [
           "officialSource",
@@ -9385,7 +9385,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000094"
+          "0x0000000c00000094"
         ],
         "officialComparison": [
           "officialSource",
@@ -9474,7 +9474,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000096"
+          "0x0000000c00000096"
         ],
         "officialComparison": [
           "officialSource",
@@ -9529,7 +9529,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000092"
+          "0x0000000c00000092"
         ],
         "officialComparison": [
           "officialSource",
@@ -9584,7 +9584,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000008a"
+          "0x0000000c0000008a"
         ],
         "officialComparison": [
           "officialSource",
@@ -9639,7 +9639,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000008c"
+          "0x0000000c0000008c"
         ],
         "officialComparison": [
           "officialSource",
@@ -9689,7 +9689,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000008e"
+          "0x0000000c0000008e"
         ],
         "officialComparison": [
           "officialSource",
@@ -9744,7 +9744,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000026f"
+          "0x0000000c0000026f"
         ],
         "officialComparison": [
           "officialSource",
@@ -9794,7 +9794,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002a7"
+          "0x0000000c000002a7"
         ],
         "officialComparison": [
           "officialSource",
@@ -9854,7 +9854,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000282"
+          "0x0000000c00000282"
         ],
         "officialComparison": [
           "officialSource",
@@ -9905,7 +9905,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000266"
+          "0x0000000c00000266"
         ],
         "officialComparison": [
           "officialSource",
@@ -9956,7 +9956,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000269"
+          "0x0000000c00000269"
         ],
         "officialComparison": [
           "officialSource",
@@ -10007,7 +10007,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000026c"
+          "0x0000000c0000026c"
         ],
         "officialComparison": [
           "officialSource",
@@ -10075,7 +10075,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000030"
+          "0x0000000c00000030"
         ],
         "officialComparison": [
           "officialSource",
@@ -10147,7 +10147,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000033"
+          "0x0000000c00000033"
         ],
         "officialComparison": [
           "officialSource",
@@ -10212,7 +10212,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000ec"
+          "0x0000000c000000ec"
         ],
         "officialComparison": [
           "officialSource",
@@ -10277,7 +10277,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000ee"
+          "0x0000000c000000ee"
         ],
         "officialComparison": [
           "officialSource",
@@ -10341,7 +10341,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000f0"
+          "0x0000000c000000f0"
         ],
         "officialComparison": [
           "officialSource",
@@ -10416,7 +10416,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000f2"
+          "0x0000000c000000f2"
         ],
         "officialComparison": [
           "officialSource",
@@ -10466,7 +10466,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000f4"
+          "0x0000000c000000f4"
         ],
         "officialComparison": [
           "officialSource",
@@ -10529,7 +10529,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000f6"
+          "0x0000000c000000f6"
         ],
         "officialComparison": [
           "officialSource",
@@ -10588,7 +10588,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000f8"
+          "0x0000000c000000f8"
         ],
         "officialComparison": [
           "officialSource",
@@ -10642,7 +10642,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000fa"
+          "0x0000000c000000fa"
         ],
         "officialComparison": [
           "officialSource",
@@ -10752,7 +10752,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000fc"
+          "0x0000000c000000fc"
         ],
         "officialComparison": [
           "officialSource",
@@ -10829,7 +10829,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000000fe"
+          "0x0000000c000000fe"
         ],
         "officialComparison": [
           "officialSource",
@@ -10888,7 +10888,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000100"
+          "0x0000000c00000100"
         ],
         "officialComparison": [
           "officialSource",
@@ -10952,7 +10952,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000102"
+          "0x0000000c00000102"
         ],
         "officialComparison": [
           "officialSource",
@@ -11006,7 +11006,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000104"
+          "0x0000000c00000104"
         ],
         "officialComparison": [
           "officialSource",
@@ -11074,7 +11074,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000106"
+          "0x0000000c00000106"
         ],
         "officialComparison": [
           "officialSource",
@@ -12179,7 +12179,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000232"
+          "0x0000000c00000232"
         ],
         "officialComparison": [
           "officialSource",
@@ -12230,7 +12230,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000234"
+          "0x0000000c00000234"
         ],
         "officialComparison": [
           "officialSource",
@@ -12281,7 +12281,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000236"
+          "0x0000000c00000236"
         ],
         "officialComparison": [
           "officialSource",
@@ -12332,8 +12332,8 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000239",
-          "0x000000090000023d"
+          "0x0000000c00000239",
+          "0x0000000c0000023d"
         ],
         "officialComparison": [
           "officialSource",
@@ -12384,7 +12384,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000023b"
+          "0x0000000c0000023b"
         ],
         "officialComparison": [
           "officialSource",
@@ -12435,7 +12435,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002aa"
+          "0x0000000c000002aa"
         ],
         "officialComparison": [
           "officialSource",
@@ -12486,7 +12486,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002ac"
+          "0x0000000c000002ac"
         ],
         "officialComparison": [
           "officialSource",
@@ -12537,7 +12537,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002ae"
+          "0x0000000c000002ae"
         ],
         "officialComparison": [
           "officialSource",
@@ -12588,7 +12588,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002b0"
+          "0x0000000c000002b0"
         ],
         "officialComparison": [
           "officialSource",
@@ -12639,7 +12639,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002b2"
+          "0x0000000c000002b2"
         ],
         "officialComparison": [
           "officialSource",
@@ -12768,7 +12768,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000003e"
+          "0x0000000c0000003e"
         ],
         "officialComparison": [
           "officialSource",
@@ -12852,7 +12852,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000040"
+          "0x0000000c00000040"
         ],
         "officialComparison": [
           "officialSource",
@@ -12927,7 +12927,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000002c"
+          "0x0000000c0000002c"
         ],
         "officialComparison": [
           "officialSource",
@@ -12977,7 +12977,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000042"
+          "0x0000000c00000042"
         ],
         "officialComparison": [
           "officialSource",
@@ -13027,7 +13027,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000044"
+          "0x0000000c00000044"
         ],
         "officialComparison": [
           "officialSource",
@@ -13077,7 +13077,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000046"
+          "0x0000000c00000046"
         ],
         "officialComparison": [
           "officialSource",
@@ -13131,7 +13131,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000048"
+          "0x0000000c00000048"
         ],
         "officialComparison": [
           "officialSource",
@@ -13181,7 +13181,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000004a"
+          "0x0000000c0000004a"
         ],
         "officialComparison": [
           "officialSource",
@@ -13231,7 +13231,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000004c"
+          "0x0000000c0000004c"
         ],
         "officialComparison": [
           "officialSource",
@@ -13281,7 +13281,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000004e"
+          "0x0000000c0000004e"
         ],
         "officialComparison": [
           "officialSource",
@@ -13331,7 +13331,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000050"
+          "0x0000000c00000050"
         ],
         "officialComparison": [
           "officialSource",
@@ -13381,7 +13381,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000052"
+          "0x0000000c00000052"
         ],
         "officialComparison": [
           "officialSource",
@@ -13431,7 +13431,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000054"
+          "0x0000000c00000054"
         ],
         "officialComparison": [
           "officialSource",
@@ -13481,7 +13481,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000056"
+          "0x0000000c00000056"
         ],
         "officialComparison": [
           "officialSource",
@@ -13531,7 +13531,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000058"
+          "0x0000000c00000058"
         ],
         "officialComparison": [
           "officialSource",
@@ -13581,7 +13581,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000005a"
+          "0x0000000c0000005a"
         ],
         "officialComparison": [
           "officialSource",
@@ -13631,7 +13631,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000005b"
+          "0x0000000c0000005b"
         ],
         "officialComparison": [
           "officialSource",
@@ -13823,36 +13823,36 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000002e",
-          "0x0000000900000031",
-          "0x0000000900000034",
-          "0x0000000900000237",
-          "0x0000000900000264",
-          "0x0000000900000267",
-          "0x000000090000026a",
-          "0x000000090000026d",
-          "0x0000000900000270",
-          "0x0000000900000273",
-          "0x0000000900000276",
-          "0x0000000900000279",
-          "0x000000090000027d",
-          "0x0000000900000280",
-          "0x0000000900000283",
-          "0x0000000900000286",
-          "0x0000000900000289",
-          "0x000000090000028c",
-          "0x0000000900000294",
-          "0x0000000900000298",
-          "0x000000090000029c",
-          "0x00000009000002a0",
-          "0x00000009000002a3",
-          "0x00000009000002a5",
-          "0x00000009000002a8",
-          "0x00000009000002d1",
-          "0x00000009000002e9",
-          "0x00000009000002ec",
-          "0x00000009000002f0",
-          "0x00000009000002fa"
+          "0x0000000c0000002e",
+          "0x0000000c00000031",
+          "0x0000000c00000034",
+          "0x0000000c00000237",
+          "0x0000000c00000264",
+          "0x0000000c00000267",
+          "0x0000000c0000026a",
+          "0x0000000c0000026d",
+          "0x0000000c00000270",
+          "0x0000000c00000273",
+          "0x0000000c00000276",
+          "0x0000000c00000279",
+          "0x0000000c0000027d",
+          "0x0000000c00000280",
+          "0x0000000c00000283",
+          "0x0000000c00000286",
+          "0x0000000c00000289",
+          "0x0000000c0000028c",
+          "0x0000000c00000294",
+          "0x0000000c00000298",
+          "0x0000000c0000029c",
+          "0x0000000c000002a0",
+          "0x0000000c000002a3",
+          "0x0000000c000002a5",
+          "0x0000000c000002a8",
+          "0x0000000c000002d1",
+          "0x0000000c000002e9",
+          "0x0000000c000002ec",
+          "0x0000000c000002f0",
+          "0x0000000c000002fa"
         ],
         "officialComparison": [
           "officialSource",
@@ -13914,7 +13914,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000020c"
+          "0x0000000c0000020c"
         ],
         "officialComparison": [
           "officialSource",
@@ -13968,7 +13968,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000023f"
+          "0x0000000c0000023f"
         ],
         "officialComparison": [
           "officialSource",
@@ -14022,7 +14022,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000241"
+          "0x0000000c00000241"
         ],
         "officialComparison": [
           "officialSource",
@@ -14072,7 +14072,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000247"
+          "0x0000000c00000247"
         ],
         "officialComparison": [
           "officialSource",
@@ -14126,7 +14126,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000243"
+          "0x0000000c00000243"
         ],
         "officialComparison": [
           "officialSource",
@@ -14180,7 +14180,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000245"
+          "0x0000000c00000245"
         ],
         "officialComparison": [
           "officialSource",
@@ -14230,7 +14230,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000249"
+          "0x0000000c00000249"
         ],
         "officialComparison": [
           "officialSource",
@@ -14431,7 +14431,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000036"
+          "0x0000000c00000036"
         ],
         "officialComparison": [
           "officialSource",
@@ -14493,7 +14493,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000038"
+          "0x0000000c00000038"
         ],
         "officialComparison": [
           "officialSource",
@@ -14584,7 +14584,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000003a"
+          "0x0000000c0000003a"
         ],
         "officialComparison": [
           "officialSource",
@@ -14642,7 +14642,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000003c"
+          "0x0000000c0000003c"
         ],
         "officialComparison": [
           "officialSource",
@@ -14757,7 +14757,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000285"
+          "0x0000000c00000285"
         ],
         "officialComparison": [
           "officialSource",
@@ -14821,7 +14821,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000290"
+          "0x0000000c00000290"
         ],
         "officialComparison": [
           "officialSource",
@@ -14944,7 +14944,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000028e"
+          "0x0000000c0000028e"
         ],
         "officialComparison": [
           "officialSource",
@@ -15004,7 +15004,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000288"
+          "0x0000000c00000288"
         ],
         "officialComparison": [
           "officialSource",
@@ -15111,7 +15111,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000028b"
+          "0x0000000c0000028b"
         ],
         "officialComparison": [
           "officialSource",
@@ -15161,7 +15161,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000293"
+          "0x0000000c00000293"
         ],
         "officialComparison": [
           "officialSource",
@@ -15225,7 +15225,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000291"
+          "0x0000000c00000291"
         ],
         "officialComparison": [
           "officialSource",
@@ -15328,357 +15328,358 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000002",
-          "0x0000000900000003",
-          "0x0000000900000005",
-          "0x0000000900000006",
-          "0x0000000900000008",
-          "0x0000000900000009",
-          "0x000000090000000b",
-          "0x000000090000000c",
-          "0x000000090000000e",
-          "0x000000090000000f",
-          "0x0000000900000011",
-          "0x0000000900000012",
-          "0x0000000900000018",
-          "0x0000000900000019",
-          "0x000000090000001b",
-          "0x000000090000001c",
-          "0x000000090000001e",
-          "0x000000090000001f",
-          "0x0000000900000021",
-          "0x0000000900000024",
-          "0x0000000900000025",
-          "0x0000000900000028",
-          "0x0000000900000029",
-          "0x000000090000002b",
-          "0x000000090000002d",
-          "0x000000090000002f",
-          "0x0000000900000032",
-          "0x0000000900000035",
-          "0x0000000900000037",
-          "0x0000000900000039",
-          "0x000000090000003b",
-          "0x000000090000003d",
-          "0x000000090000003f",
-          "0x0000000900000041",
-          "0x0000000900000043",
-          "0x0000000900000045",
-          "0x0000000900000047",
-          "0x0000000900000049",
-          "0x000000090000004b",
-          "0x000000090000004d",
-          "0x000000090000004f",
-          "0x0000000900000051",
-          "0x0000000900000053",
-          "0x0000000900000055",
-          "0x0000000900000057",
-          "0x0000000900000059",
-          "0x000000090000005c",
-          "0x000000090000005e",
-          "0x0000000900000060",
-          "0x0000000900000062",
-          "0x0000000900000064",
-          "0x0000000900000066",
-          "0x0000000900000068",
-          "0x000000090000006a",
-          "0x000000090000006c",
-          "0x000000090000006e",
-          "0x0000000900000070",
-          "0x0000000900000072",
-          "0x0000000900000074",
-          "0x0000000900000076",
-          "0x0000000900000078",
-          "0x000000090000007a",
-          "0x000000090000007c",
-          "0x000000090000007e",
-          "0x0000000900000080",
-          "0x0000000900000083",
-          "0x0000000900000085",
-          "0x0000000900000087",
-          "0x0000000900000089",
-          "0x000000090000008b",
-          "0x000000090000008d",
-          "0x000000090000008f",
-          "0x0000000900000091",
-          "0x0000000900000093",
-          "0x0000000900000095",
-          "0x0000000900000097",
-          "0x0000000900000099",
-          "0x000000090000009b",
-          "0x000000090000009d",
-          "0x000000090000009f",
-          "0x00000009000000a1",
-          "0x00000009000000a3",
-          "0x00000009000000a5",
-          "0x00000009000000a7",
-          "0x00000009000000a9",
-          "0x00000009000000ab",
-          "0x00000009000000ad",
-          "0x00000009000000af",
-          "0x00000009000000b1",
-          "0x00000009000000b3",
-          "0x00000009000000b5",
-          "0x00000009000000b7",
-          "0x00000009000000b9",
-          "0x00000009000000bb",
-          "0x00000009000000bd",
-          "0x00000009000000bf",
-          "0x00000009000000c1",
-          "0x00000009000000c3",
-          "0x00000009000000c5",
-          "0x00000009000000c7",
-          "0x00000009000000c9",
-          "0x00000009000000cb",
-          "0x00000009000000cd",
-          "0x00000009000000cf",
-          "0x00000009000000d1",
-          "0x00000009000000d3",
-          "0x00000009000000d5",
-          "0x00000009000000d7",
-          "0x00000009000000d9",
-          "0x00000009000000db",
-          "0x00000009000000dd",
-          "0x00000009000000df",
-          "0x00000009000000e1",
-          "0x00000009000000e3",
-          "0x00000009000000e5",
-          "0x00000009000000e7",
-          "0x00000009000000e9",
-          "0x00000009000000eb",
-          "0x00000009000000ed",
-          "0x00000009000000ef",
-          "0x00000009000000f1",
-          "0x00000009000000f3",
-          "0x00000009000000f5",
-          "0x00000009000000f7",
-          "0x00000009000000f9",
-          "0x00000009000000fb",
-          "0x00000009000000fd",
-          "0x00000009000000ff",
-          "0x0000000900000101",
-          "0x0000000900000103",
-          "0x0000000900000105",
-          "0x0000000900000107",
-          "0x0000000900000109",
-          "0x000000090000010b",
-          "0x000000090000010d",
-          "0x000000090000010f",
-          "0x0000000900000111",
-          "0x0000000900000113",
-          "0x0000000900000115",
-          "0x0000000900000117",
-          "0x0000000900000119",
-          "0x000000090000011b",
-          "0x000000090000011d",
-          "0x000000090000011f",
-          "0x0000000900000121",
-          "0x0000000900000123",
-          "0x0000000900000125",
-          "0x0000000900000127",
-          "0x0000000900000129",
-          "0x000000090000012b",
-          "0x000000090000012d",
-          "0x000000090000012f",
-          "0x0000000900000131",
-          "0x0000000900000133",
-          "0x0000000900000135",
-          "0x0000000900000137",
-          "0x0000000900000139",
-          "0x000000090000013b",
-          "0x000000090000013d",
-          "0x000000090000013f",
-          "0x0000000900000141",
-          "0x0000000900000143",
-          "0x0000000900000145",
-          "0x0000000900000147",
-          "0x0000000900000149",
-          "0x000000090000014b",
-          "0x000000090000014d",
-          "0x000000090000014f",
-          "0x0000000900000151",
-          "0x0000000900000153",
-          "0x000000090000015a",
-          "0x000000090000015c",
-          "0x000000090000015e",
-          "0x0000000900000160",
-          "0x0000000900000162",
-          "0x0000000900000164",
-          "0x0000000900000166",
-          "0x0000000900000168",
-          "0x000000090000016a",
-          "0x000000090000016c",
-          "0x000000090000016e",
-          "0x0000000900000170",
-          "0x0000000900000172",
-          "0x0000000900000174",
-          "0x0000000900000178",
-          "0x000000090000017c",
-          "0x000000090000017e",
-          "0x0000000900000180",
-          "0x0000000900000182",
-          "0x0000000900000184",
-          "0x0000000900000186",
-          "0x0000000900000188",
-          "0x000000090000018a",
-          "0x000000090000018c",
-          "0x000000090000018e",
-          "0x0000000900000190",
-          "0x0000000900000192",
-          "0x0000000900000194",
-          "0x0000000900000196",
-          "0x0000000900000198",
-          "0x000000090000019a",
-          "0x000000090000019c",
-          "0x000000090000019e",
-          "0x00000009000001a0",
-          "0x00000009000001a4",
-          "0x00000009000001a6",
-          "0x00000009000001a8",
-          "0x00000009000001aa",
-          "0x00000009000001ac",
-          "0x00000009000001ae",
-          "0x00000009000001b0",
-          "0x00000009000001b2",
-          "0x00000009000001b4",
-          "0x00000009000001b6",
-          "0x00000009000001b8",
-          "0x00000009000001ba",
-          "0x00000009000001bc",
-          "0x00000009000001be",
-          "0x00000009000001c0",
-          "0x00000009000001c2",
-          "0x00000009000001c4",
-          "0x00000009000001c6",
-          "0x00000009000001c8",
-          "0x00000009000001ca",
-          "0x00000009000001cc",
-          "0x00000009000001ce",
-          "0x00000009000001d0",
-          "0x00000009000001d2",
-          "0x00000009000001d4",
-          "0x00000009000001d6",
-          "0x00000009000001d8",
-          "0x00000009000001da",
-          "0x00000009000001dc",
-          "0x00000009000001de",
-          "0x00000009000001e0",
-          "0x00000009000001e2",
-          "0x00000009000001e4",
-          "0x00000009000001e6",
-          "0x00000009000001e8",
-          "0x00000009000001ea",
-          "0x00000009000001ec",
-          "0x00000009000001ee",
-          "0x00000009000001f0",
-          "0x00000009000001f2",
-          "0x00000009000001f5",
-          "0x00000009000001f8",
-          "0x00000009000001fa",
-          "0x00000009000001fc",
-          "0x00000009000001fe",
-          "0x0000000900000200",
-          "0x0000000900000202",
-          "0x0000000900000204",
-          "0x000000090000020b",
-          "0x000000090000020d",
-          "0x000000090000020f",
-          "0x0000000900000213",
-          "0x0000000900000214",
-          "0x0000000900000216",
-          "0x0000000900000217",
-          "0x0000000900000219",
-          "0x000000090000021b",
-          "0x000000090000021d",
-          "0x000000090000021f",
-          "0x0000000900000221",
-          "0x0000000900000223",
-          "0x0000000900000225",
-          "0x0000000900000227",
-          "0x0000000900000229",
-          "0x000000090000022b",
-          "0x000000090000022d",
-          "0x000000090000022f",
-          "0x0000000900000231",
-          "0x0000000900000233",
-          "0x0000000900000235",
-          "0x0000000900000238",
-          "0x000000090000023a",
-          "0x000000090000023c",
-          "0x000000090000023e",
-          "0x0000000900000240",
-          "0x0000000900000242",
-          "0x0000000900000244",
-          "0x0000000900000246",
-          "0x0000000900000248",
-          "0x000000090000024a",
-          "0x000000090000024c",
-          "0x000000090000024e",
-          "0x0000000900000250",
-          "0x0000000900000252",
-          "0x0000000900000254",
-          "0x0000000900000256",
-          "0x0000000900000258",
-          "0x000000090000025a",
-          "0x000000090000025c",
-          "0x000000090000025e",
-          "0x0000000900000260",
-          "0x0000000900000262",
-          "0x0000000900000265",
-          "0x0000000900000268",
-          "0x000000090000026b",
-          "0x000000090000026e",
-          "0x0000000900000271",
-          "0x0000000900000274",
-          "0x0000000900000277",
-          "0x000000090000027a",
-          "0x000000090000027c",
-          "0x000000090000027e",
-          "0x0000000900000281",
-          "0x0000000900000284",
-          "0x0000000900000287",
-          "0x000000090000028a",
-          "0x000000090000028d",
-          "0x000000090000028f",
-          "0x0000000900000292",
-          "0x0000000900000295",
-          "0x0000000900000297",
-          "0x0000000900000299",
-          "0x000000090000029b",
-          "0x000000090000029d",
-          "0x000000090000029f",
-          "0x00000009000002a1",
-          "0x00000009000002a4",
-          "0x00000009000002a6",
-          "0x00000009000002a9",
-          "0x00000009000002ab",
-          "0x00000009000002ad",
-          "0x00000009000002af",
-          "0x00000009000002b1",
-          "0x00000009000002b3",
-          "0x00000009000002b6",
-          "0x00000009000002b9",
-          "0x00000009000002be",
-          "0x00000009000002c2",
-          "0x00000009000002c4",
-          "0x00000009000002c6",
-          "0x00000009000002c8",
-          "0x00000009000002ca",
-          "0x00000009000002ce",
-          "0x00000009000002d0",
-          "0x00000009000002d2",
-          "0x00000009000002d6",
-          "0x00000009000002dc",
-          "0x00000009000002de",
-          "0x00000009000002ea",
-          "0x00000009000002ed",
-          "0x00000009000002ef",
-          "0x00000009000002f1",
-          "0x00000009000002f3",
-          "0x00000009000002f5",
-          "0x00000009000002f7",
-          "0x00000009000002fb",
-          "0x00000009000002fd"
+          "0x0000000a00000001",
+          "0x0000000c00000002",
+          "0x0000000c00000003",
+          "0x0000000c00000005",
+          "0x0000000c00000006",
+          "0x0000000c00000008",
+          "0x0000000c00000009",
+          "0x0000000c0000000b",
+          "0x0000000c0000000c",
+          "0x0000000c0000000e",
+          "0x0000000c0000000f",
+          "0x0000000c00000011",
+          "0x0000000c00000012",
+          "0x0000000c00000018",
+          "0x0000000c00000019",
+          "0x0000000c0000001b",
+          "0x0000000c0000001c",
+          "0x0000000c0000001e",
+          "0x0000000c0000001f",
+          "0x0000000c00000021",
+          "0x0000000c00000024",
+          "0x0000000c00000025",
+          "0x0000000c00000028",
+          "0x0000000c00000029",
+          "0x0000000c0000002b",
+          "0x0000000c0000002d",
+          "0x0000000c0000002f",
+          "0x0000000c00000032",
+          "0x0000000c00000035",
+          "0x0000000c00000037",
+          "0x0000000c00000039",
+          "0x0000000c0000003b",
+          "0x0000000c0000003d",
+          "0x0000000c0000003f",
+          "0x0000000c00000041",
+          "0x0000000c00000043",
+          "0x0000000c00000045",
+          "0x0000000c00000047",
+          "0x0000000c00000049",
+          "0x0000000c0000004b",
+          "0x0000000c0000004d",
+          "0x0000000c0000004f",
+          "0x0000000c00000051",
+          "0x0000000c00000053",
+          "0x0000000c00000055",
+          "0x0000000c00000057",
+          "0x0000000c00000059",
+          "0x0000000c0000005c",
+          "0x0000000c0000005e",
+          "0x0000000c00000060",
+          "0x0000000c00000062",
+          "0x0000000c00000064",
+          "0x0000000c00000066",
+          "0x0000000c00000068",
+          "0x0000000c0000006a",
+          "0x0000000c0000006c",
+          "0x0000000c0000006e",
+          "0x0000000c00000070",
+          "0x0000000c00000072",
+          "0x0000000c00000074",
+          "0x0000000c00000076",
+          "0x0000000c00000078",
+          "0x0000000c0000007a",
+          "0x0000000c0000007c",
+          "0x0000000c0000007e",
+          "0x0000000c00000080",
+          "0x0000000c00000083",
+          "0x0000000c00000085",
+          "0x0000000c00000087",
+          "0x0000000c00000089",
+          "0x0000000c0000008b",
+          "0x0000000c0000008d",
+          "0x0000000c0000008f",
+          "0x0000000c00000091",
+          "0x0000000c00000093",
+          "0x0000000c00000095",
+          "0x0000000c00000097",
+          "0x0000000c00000099",
+          "0x0000000c0000009b",
+          "0x0000000c0000009d",
+          "0x0000000c0000009f",
+          "0x0000000c000000a1",
+          "0x0000000c000000a3",
+          "0x0000000c000000a5",
+          "0x0000000c000000a7",
+          "0x0000000c000000a9",
+          "0x0000000c000000ab",
+          "0x0000000c000000ad",
+          "0x0000000c000000af",
+          "0x0000000c000000b1",
+          "0x0000000c000000b3",
+          "0x0000000c000000b5",
+          "0x0000000c000000b7",
+          "0x0000000c000000b9",
+          "0x0000000c000000bb",
+          "0x0000000c000000bd",
+          "0x0000000c000000bf",
+          "0x0000000c000000c1",
+          "0x0000000c000000c3",
+          "0x0000000c000000c5",
+          "0x0000000c000000c7",
+          "0x0000000c000000c9",
+          "0x0000000c000000cb",
+          "0x0000000c000000cd",
+          "0x0000000c000000cf",
+          "0x0000000c000000d1",
+          "0x0000000c000000d3",
+          "0x0000000c000000d5",
+          "0x0000000c000000d7",
+          "0x0000000c000000d9",
+          "0x0000000c000000db",
+          "0x0000000c000000dd",
+          "0x0000000c000000df",
+          "0x0000000c000000e1",
+          "0x0000000c000000e3",
+          "0x0000000c000000e5",
+          "0x0000000c000000e7",
+          "0x0000000c000000e9",
+          "0x0000000c000000eb",
+          "0x0000000c000000ed",
+          "0x0000000c000000ef",
+          "0x0000000c000000f1",
+          "0x0000000c000000f3",
+          "0x0000000c000000f5",
+          "0x0000000c000000f7",
+          "0x0000000c000000f9",
+          "0x0000000c000000fb",
+          "0x0000000c000000fd",
+          "0x0000000c000000ff",
+          "0x0000000c00000101",
+          "0x0000000c00000103",
+          "0x0000000c00000105",
+          "0x0000000c00000107",
+          "0x0000000c00000109",
+          "0x0000000c0000010b",
+          "0x0000000c0000010d",
+          "0x0000000c0000010f",
+          "0x0000000c00000111",
+          "0x0000000c00000113",
+          "0x0000000c00000115",
+          "0x0000000c00000117",
+          "0x0000000c00000119",
+          "0x0000000c0000011b",
+          "0x0000000c0000011d",
+          "0x0000000c0000011f",
+          "0x0000000c00000121",
+          "0x0000000c00000123",
+          "0x0000000c00000125",
+          "0x0000000c00000127",
+          "0x0000000c00000129",
+          "0x0000000c0000012b",
+          "0x0000000c0000012d",
+          "0x0000000c0000012f",
+          "0x0000000c00000131",
+          "0x0000000c00000133",
+          "0x0000000c00000135",
+          "0x0000000c00000137",
+          "0x0000000c00000139",
+          "0x0000000c0000013b",
+          "0x0000000c0000013d",
+          "0x0000000c0000013f",
+          "0x0000000c00000141",
+          "0x0000000c00000143",
+          "0x0000000c00000145",
+          "0x0000000c00000147",
+          "0x0000000c00000149",
+          "0x0000000c0000014b",
+          "0x0000000c0000014d",
+          "0x0000000c0000014f",
+          "0x0000000c00000151",
+          "0x0000000c00000153",
+          "0x0000000c0000015a",
+          "0x0000000c0000015c",
+          "0x0000000c0000015e",
+          "0x0000000c00000160",
+          "0x0000000c00000162",
+          "0x0000000c00000164",
+          "0x0000000c00000166",
+          "0x0000000c00000168",
+          "0x0000000c0000016a",
+          "0x0000000c0000016c",
+          "0x0000000c0000016e",
+          "0x0000000c00000170",
+          "0x0000000c00000172",
+          "0x0000000c00000174",
+          "0x0000000c00000178",
+          "0x0000000c0000017c",
+          "0x0000000c0000017e",
+          "0x0000000c00000180",
+          "0x0000000c00000182",
+          "0x0000000c00000184",
+          "0x0000000c00000186",
+          "0x0000000c00000188",
+          "0x0000000c0000018a",
+          "0x0000000c0000018c",
+          "0x0000000c0000018e",
+          "0x0000000c00000190",
+          "0x0000000c00000192",
+          "0x0000000c00000194",
+          "0x0000000c00000196",
+          "0x0000000c00000198",
+          "0x0000000c0000019a",
+          "0x0000000c0000019c",
+          "0x0000000c0000019e",
+          "0x0000000c000001a0",
+          "0x0000000c000001a4",
+          "0x0000000c000001a6",
+          "0x0000000c000001a8",
+          "0x0000000c000001aa",
+          "0x0000000c000001ac",
+          "0x0000000c000001ae",
+          "0x0000000c000001b0",
+          "0x0000000c000001b2",
+          "0x0000000c000001b4",
+          "0x0000000c000001b6",
+          "0x0000000c000001b8",
+          "0x0000000c000001ba",
+          "0x0000000c000001bc",
+          "0x0000000c000001be",
+          "0x0000000c000001c0",
+          "0x0000000c000001c2",
+          "0x0000000c000001c4",
+          "0x0000000c000001c6",
+          "0x0000000c000001c8",
+          "0x0000000c000001ca",
+          "0x0000000c000001cc",
+          "0x0000000c000001ce",
+          "0x0000000c000001d0",
+          "0x0000000c000001d2",
+          "0x0000000c000001d4",
+          "0x0000000c000001d6",
+          "0x0000000c000001d8",
+          "0x0000000c000001da",
+          "0x0000000c000001dc",
+          "0x0000000c000001de",
+          "0x0000000c000001e0",
+          "0x0000000c000001e2",
+          "0x0000000c000001e4",
+          "0x0000000c000001e6",
+          "0x0000000c000001e8",
+          "0x0000000c000001ea",
+          "0x0000000c000001ec",
+          "0x0000000c000001ee",
+          "0x0000000c000001f0",
+          "0x0000000c000001f2",
+          "0x0000000c000001f5",
+          "0x0000000c000001f8",
+          "0x0000000c000001fa",
+          "0x0000000c000001fc",
+          "0x0000000c000001fe",
+          "0x0000000c00000200",
+          "0x0000000c00000202",
+          "0x0000000c00000204",
+          "0x0000000c0000020b",
+          "0x0000000c0000020d",
+          "0x0000000c0000020f",
+          "0x0000000c00000213",
+          "0x0000000c00000214",
+          "0x0000000c00000216",
+          "0x0000000c00000217",
+          "0x0000000c00000219",
+          "0x0000000c0000021b",
+          "0x0000000c0000021d",
+          "0x0000000c0000021f",
+          "0x0000000c00000221",
+          "0x0000000c00000223",
+          "0x0000000c00000225",
+          "0x0000000c00000227",
+          "0x0000000c00000229",
+          "0x0000000c0000022b",
+          "0x0000000c0000022d",
+          "0x0000000c0000022f",
+          "0x0000000c00000231",
+          "0x0000000c00000233",
+          "0x0000000c00000235",
+          "0x0000000c00000238",
+          "0x0000000c0000023a",
+          "0x0000000c0000023c",
+          "0x0000000c0000023e",
+          "0x0000000c00000240",
+          "0x0000000c00000242",
+          "0x0000000c00000244",
+          "0x0000000c00000246",
+          "0x0000000c00000248",
+          "0x0000000c0000024a",
+          "0x0000000c0000024c",
+          "0x0000000c0000024e",
+          "0x0000000c00000250",
+          "0x0000000c00000252",
+          "0x0000000c00000254",
+          "0x0000000c00000256",
+          "0x0000000c00000258",
+          "0x0000000c0000025a",
+          "0x0000000c0000025c",
+          "0x0000000c0000025e",
+          "0x0000000c00000260",
+          "0x0000000c00000262",
+          "0x0000000c00000265",
+          "0x0000000c00000268",
+          "0x0000000c0000026b",
+          "0x0000000c0000026e",
+          "0x0000000c00000271",
+          "0x0000000c00000274",
+          "0x0000000c00000277",
+          "0x0000000c0000027a",
+          "0x0000000c0000027c",
+          "0x0000000c0000027e",
+          "0x0000000c00000281",
+          "0x0000000c00000284",
+          "0x0000000c00000287",
+          "0x0000000c0000028a",
+          "0x0000000c0000028d",
+          "0x0000000c0000028f",
+          "0x0000000c00000292",
+          "0x0000000c00000295",
+          "0x0000000c00000297",
+          "0x0000000c00000299",
+          "0x0000000c0000029b",
+          "0x0000000c0000029d",
+          "0x0000000c0000029f",
+          "0x0000000c000002a1",
+          "0x0000000c000002a4",
+          "0x0000000c000002a6",
+          "0x0000000c000002a9",
+          "0x0000000c000002ab",
+          "0x0000000c000002ad",
+          "0x0000000c000002af",
+          "0x0000000c000002b1",
+          "0x0000000c000002b3",
+          "0x0000000c000002b6",
+          "0x0000000c000002b9",
+          "0x0000000c000002be",
+          "0x0000000c000002c2",
+          "0x0000000c000002c4",
+          "0x0000000c000002c6",
+          "0x0000000c000002c8",
+          "0x0000000c000002ca",
+          "0x0000000c000002ce",
+          "0x0000000c000002d0",
+          "0x0000000c000002d2",
+          "0x0000000c000002d6",
+          "0x0000000c000002dc",
+          "0x0000000c000002de",
+          "0x0000000c000002ea",
+          "0x0000000c000002ed",
+          "0x0000000c000002ef",
+          "0x0000000c000002f1",
+          "0x0000000c000002f3",
+          "0x0000000c000002f5",
+          "0x0000000c000002f7",
+          "0x0000000c000002fb",
+          "0x0000000c000002fd"
         ],
         "officialComparison": [
           "officialSource",
@@ -15688,7 +15689,7 @@
         ],
         "state": "trace-confirmed-unattested"
       },
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（351 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（352 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "継続表示プールと表示ログを含めて実装し、公式差分テストに成功"
     },
     {
@@ -15729,7 +15730,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002cb"
+          "0x0000000c000002cb"
         ],
         "officialComparison": [
           "officialSource",
@@ -15780,7 +15781,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002cd"
+          "0x0000000c000002cd"
         ],
         "officialComparison": [
           "officialSource",
@@ -15831,7 +15832,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002cc"
+          "0x0000000c000002cc"
         ],
         "officialComparison": [
           "officialSource",
@@ -15915,7 +15916,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002cf"
+          "0x0000000c000002cf"
         ],
         "officialComparison": [
           "officialSource",
@@ -15966,7 +15967,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002d3"
+          "0x0000000c000002d3"
         ],
         "officialComparison": [
           "officialSource",
@@ -16017,7 +16018,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002d4"
+          "0x0000000c000002d4"
         ],
         "officialComparison": [
           "officialSource",
@@ -16071,7 +16072,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002e1"
+          "0x0000000c000002e1"
         ],
         "officialComparison": [
           "officialSource",
@@ -16121,7 +16122,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002e2"
+          "0x0000000c000002e2"
         ],
         "officialComparison": [
           "officialSource",
@@ -16171,7 +16172,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002e3"
+          "0x0000000c000002e3"
         ],
         "officialComparison": [
           "officialSource",
@@ -16237,7 +16238,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002e5"
+          "0x0000000c000002e5"
         ],
         "officialComparison": [
           "officialSource",
@@ -16287,7 +16288,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002e6"
+          "0x0000000c000002e6"
         ],
         "officialComparison": [
           "officialSource",
@@ -16337,7 +16338,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002e7"
+          "0x0000000c000002e7"
         ],
         "officialComparison": [
           "officialSource",
@@ -16442,7 +16443,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002e4"
+          "0x0000000c000002e4"
         ],
         "officialComparison": [
           "officialSource",
@@ -16493,8 +16494,8 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002e8",
-          "0x00000009000002f9"
+          "0x0000000c000002e8",
+          "0x0000000c000002f9"
         ],
         "officialComparison": [
           "officialSource",
@@ -16545,7 +16546,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002eb"
+          "0x0000000c000002eb"
         ],
         "officialComparison": [
           "officialSource",
@@ -16596,7 +16597,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002ee"
+          "0x0000000c000002ee"
         ],
         "officialComparison": [
           "officialSource",
@@ -16647,8 +16648,8 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002f2",
-          "0x00000009000002fc"
+          "0x0000000c000002f2",
+          "0x0000000c000002fc"
         ],
         "officialComparison": [
           "officialSource",
@@ -16699,7 +16700,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002f4"
+          "0x0000000c000002f4"
         ],
         "officialComparison": [
           "officialSource",
@@ -16750,7 +16751,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002f6"
+          "0x0000000c000002f6"
         ],
         "officialComparison": [
           "officialSource",
@@ -16801,7 +16802,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x00000009000002f8"
+          "0x0000000c000002f8"
         ],
         "officialComparison": [
           "officialSource",
@@ -16919,7 +16920,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000108"
+          "0x0000000c00000108"
         ],
         "officialComparison": [
           "officialSource",
@@ -16969,7 +16970,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000010a"
+          "0x0000000c0000010a"
         ],
         "officialComparison": [
           "officialSource",
@@ -17019,7 +17020,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000010c"
+          "0x0000000c0000010c"
         ],
         "officialComparison": [
           "officialSource",
@@ -17069,7 +17070,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000010e"
+          "0x0000000c0000010e"
         ],
         "officialComparison": [
           "officialSource",
@@ -17119,7 +17120,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000110"
+          "0x0000000c00000110"
         ],
         "officialComparison": [
           "officialSource",
@@ -17169,7 +17170,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000112"
+          "0x0000000c00000112"
         ],
         "officialComparison": [
           "officialSource",
@@ -17219,7 +17220,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000114"
+          "0x0000000c00000114"
         ],
         "officialComparison": [
           "officialSource",
@@ -17269,7 +17270,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000116"
+          "0x0000000c00000116"
         ],
         "officialComparison": [
           "officialSource",
@@ -17319,7 +17320,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000118"
+          "0x0000000c00000118"
         ],
         "officialComparison": [
           "officialSource",
@@ -17369,7 +17370,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000011a"
+          "0x0000000c0000011a"
         ],
         "officialComparison": [
           "officialSource",
@@ -17419,7 +17420,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000011c"
+          "0x0000000c0000011c"
         ],
         "officialComparison": [
           "officialSource",
@@ -17469,7 +17470,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000011e"
+          "0x0000000c0000011e"
         ],
         "officialComparison": [
           "officialSource",
@@ -17519,7 +17520,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000120"
+          "0x0000000c00000120"
         ],
         "officialComparison": [
           "officialSource",
@@ -17569,7 +17570,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000122"
+          "0x0000000c00000122"
         ],
         "officialComparison": [
           "officialSource",
@@ -17619,7 +17620,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000124"
+          "0x0000000c00000124"
         ],
         "officialComparison": [
           "officialSource",
@@ -17669,7 +17670,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000126"
+          "0x0000000c00000126"
         ],
         "officialComparison": [
           "officialSource",
@@ -17719,7 +17720,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000128"
+          "0x0000000c00000128"
         ],
         "officialComparison": [
           "officialSource",
@@ -17769,7 +17770,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000012a"
+          "0x0000000c0000012a"
         ],
         "officialComparison": [
           "officialSource",
@@ -17819,7 +17820,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000012c"
+          "0x0000000c0000012c"
         ],
         "officialComparison": [
           "officialSource",
@@ -17869,7 +17870,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000012e"
+          "0x0000000c0000012e"
         ],
         "officialComparison": [
           "officialSource",
@@ -17919,7 +17920,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000130"
+          "0x0000000c00000130"
         ],
         "officialComparison": [
           "officialSource",
@@ -17969,7 +17970,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000132"
+          "0x0000000c00000132"
         ],
         "officialComparison": [
           "officialSource",
@@ -18019,7 +18020,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000134"
+          "0x0000000c00000134"
         ],
         "officialComparison": [
           "officialSource",
@@ -18069,7 +18070,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000136"
+          "0x0000000c00000136"
         ],
         "officialComparison": [
           "officialSource",
@@ -18119,7 +18120,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000138"
+          "0x0000000c00000138"
         ],
         "officialComparison": [
           "officialSource",
@@ -18237,7 +18238,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000013a"
+          "0x0000000c0000013a"
         ],
         "officialComparison": [
           "officialSource",
@@ -18287,7 +18288,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000013c"
+          "0x0000000c0000013c"
         ],
         "officialComparison": [
           "officialSource",
@@ -18337,7 +18338,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000013e"
+          "0x0000000c0000013e"
         ],
         "officialComparison": [
           "officialSource",
@@ -18387,7 +18388,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000140"
+          "0x0000000c00000140"
         ],
         "officialComparison": [
           "officialSource",
@@ -18437,7 +18438,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000142"
+          "0x0000000c00000142"
         ],
         "officialComparison": [
           "officialSource",
@@ -18487,7 +18488,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000144"
+          "0x0000000c00000144"
         ],
         "officialComparison": [
           "officialSource",
@@ -18537,7 +18538,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000146"
+          "0x0000000c00000146"
         ],
         "officialComparison": [
           "officialSource",
@@ -18587,7 +18588,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x0000000900000148"
+          "0x0000000c00000148"
         ],
         "officialComparison": [
           "officialSource",
@@ -18637,7 +18638,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000014a"
+          "0x0000000c0000014a"
         ],
         "officialComparison": [
           "officialSource",
@@ -18687,7 +18688,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000014c"
+          "0x0000000c0000014c"
         ],
         "officialComparison": [
           "officialSource",
@@ -18737,7 +18738,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-cut-commands",
         "siteIds": [
-          "0x000000090000014e"
+          "0x0000000c0000014e"
         ],
         "officialComparison": [
           "officialSource",
@@ -18794,6 +18795,7 @@
         "promise-success"
       ],
       "aotFixtureIds": [
+        "native-cut-commands",
         "native-system-object-to-primitive-host-properties",
         "native-system-promise-success",
         "native-system-promise-timer-await"
@@ -18812,6 +18814,9 @@
           ]
         },
         "aot": {
+          "native-cut-commands": [
+            "fixture.commands"
+          ],
           "native-system-object-to-primitive-host-properties": [
             "fixture.commands"
           ],
@@ -18827,9 +18832,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 3件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x0000000c000002fe"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式7経路のPromise生成と解決差分テストに成功"
     },
     {
@@ -18842,6 +18860,7 @@
         "promise-success"
       ],
       "aotFixtureIds": [
+        "native-cut-commands",
         "native-system-object-to-primitive-host-properties",
         "native-system-promise-success"
       ],
@@ -18856,6 +18875,9 @@
           ]
         },
         "aot": {
+          "native-cut-commands": [
+            "fixture.commands"
+          ],
           "native-system-object-to-primitive-host-properties": [
             "fixture.commands"
           ],
@@ -18868,9 +18890,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 2件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x0000000c000002ff"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式7経路の成功連鎖差分テストに成功"
     },
     {
@@ -18915,6 +18950,7 @@
         "promise-reject"
       ],
       "aotFixtureIds": [
+        "native-cut-commands",
         "native-system-promise-reject"
       ],
       "compatJsFixtureIds": [],
@@ -18925,6 +18961,9 @@
           ]
         },
         "aot": {
+          "native-cut-commands": [
+            "fixture.commands"
+          ],
           "native-system-promise-reject": [
             "fixture.commands",
             "implemented.tests"
@@ -18934,9 +18973,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x0000000c00000300"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式7経路の失敗連鎖差分テストに成功"
     },
     {
