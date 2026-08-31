@@ -2,6 +2,7 @@ import { link, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promise
 import { createHash, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
 
@@ -68,7 +69,13 @@ try {
   await writeFile(source, expandPluginImports(fixture.source, temporary), "utf8");
   await writeFile(nodeSource, nodeFixture.source, "utf8");
 
-  const baseEnvironment = { ...process.env, TZ: "Asia/Tokyo" };
+  const baseEnvironment = {
+    ...process.env,
+    TZ: "Asia/Tokyo",
+    LNAKO_TEST_NOW_MS: "1735689845678",
+    LNAKO_TEST_MONOTONIC_MS: "123.5",
+    LNAKO_TEST_RANDOM_SEED: "5573589319906701683",
+  };
   const interpretedWithoutTrace = run(compiler, ["run", source], baseEnvironment, temporary);
   assertSuccess("trace無効Interpreter", interpretedWithoutTrace);
   assertNoJsonl(await readdir(temporary));
@@ -122,9 +129,11 @@ try {
 
   if (evidenceOutput !== null) {
     const oracle = await readOracleIdentity();
+    const oracleHost = resolve(root, "tools/oracle/fixed_host.mjs");
+    const oracleHostArgument = ["--import", pathToFileURL(oracleHost).href];
     const officialSource = run(
       process.execPath,
-      [oracle.cliPath, source],
+      [...oracleHostArgument, oracle.cliPath, source],
       baseEnvironment,
       temporary,
     );
@@ -132,12 +141,12 @@ try {
     const officialGeneratedPath = resolve(temporary, "official-generated.mjs");
     const officialCompile = run(
       process.execPath,
-      [oracle.cliPath, "--compile", "--silent", "--output", officialGeneratedPath, source],
+      [...oracleHostArgument, oracle.cliPath, "--compile", "--silent", "--output", officialGeneratedPath, source],
       baseEnvironment,
       temporary,
     );
     assertSuccess("公式cnako3 JavaScript生成", officialCompile);
-    const officialGenerated = run(process.execPath, [officialGeneratedPath], baseEnvironment, temporary);
+    const officialGenerated = run(process.execPath, [...oracleHostArgument, officialGeneratedPath], baseEnvironment, temporary);
     assertSuccess("公式生成JavaScript", officialGenerated);
     for (const [label, result] of [
       ["公式生成JavaScript", officialGenerated],
