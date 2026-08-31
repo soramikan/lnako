@@ -190,14 +190,12 @@ jobs:
       - name: Differential native AOT dispatch security test
         if: matrix.suite == 'aot'
         run: node tools/check_dispatch_trace_security.mjs --no-build
-      - name: Differential native AOT dispatch evidence
+      - name: Differential native AOT dispatch audits
         if: matrix.suite == 'aot'
-        run: |
-          node tools/check_dispatch_trace.mjs --no-build --evidence-output "${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json"
-      - name: Differential native AOT dispatch coverage
-        if: matrix.suite == 'aot'
-        run: |
-          node tools/check_dispatch_coverage.mjs --no-build --output "${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}.json"
+        run: >
+          node tools/check_dispatch_audits_parallel.mjs
+          --evidence-output "${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json"
+          --coverage-output "${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}.json"
       - name: Upload native AOT oracle artifact
         if: matrix.suite == 'aot' && always()
         continue-on-error: true

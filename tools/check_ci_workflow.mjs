@@ -12,6 +12,7 @@ if (!workflow.includes("node tools/check_tracked_dispatch_attestation.mjs --offl
 const setupOracle = await readFile(resolve(root, "tools/setup_oracle.mjs"), "utf8");
 const httpAotScript = await readFile(resolve(root, "tools/compare_http_server_aot_oracle.mjs"), "utf8");
 const dispatchSecurityScript = await readFile(resolve(root, "tools/check_dispatch_trace_security.mjs"), "utf8");
+const dispatchAuditsScript = await readFile(resolve(root, "tools/check_dispatch_audits_parallel.mjs"), "utf8");
 const trackedAttestationChecker = await readFile(resolve(root, "tools/check_tracked_dispatch_attestation.mjs"), "utf8");
 const syncEvidence = await readFile(resolve(root, "tools/sync_compat_evidence.mjs"), "utf8");
 if (!trackedAttestationChecker.includes("gh") || !trackedAttestationChecker.includes("--cert-oidc-issuer") || !trackedAttestationChecker.includes("--deny-self-hosted-runners") || !syncEvidence.includes("--historical-commit") || !syncEvidence.includes("canonical --output")) {
@@ -64,8 +65,7 @@ const stepSuites = new Map([
   ["Differential native AOT oracle test", "aot"],
   ["Differential native AOT HTTP server test", "aot"],
   ["Differential native AOT dispatch security test", "aot"],
-  ["Differential native AOT dispatch evidence", "aot"],
-  ["Differential native AOT dispatch coverage", "aot"],
+  ["Differential native AOT dispatch audits", "aot"],
   ["Format", "core"],
   ["Test", "core"],
   ["Test QuickJS build", "compat-aot"],
@@ -84,8 +84,7 @@ const nativeAotStepNames = [
   "Differential native AOT oracle test",
   "Differential native AOT HTTP server test",
   "Differential native AOT dispatch security test",
-  "Differential native AOT dispatch evidence",
-  "Differential native AOT dispatch coverage",
+  "Differential native AOT dispatch audits",
 ];
 const nativeAotBlocks = new Map();
 let previousNativeAotBlockEnd = -1;
@@ -120,15 +119,17 @@ if (!dispatchSecurityScript.includes("tests/fixtures/dispatch-security.nako3") |
     !dispatchSecurityScript.includes("assertFailedManifestRemoved") || !dispatchSecurityScript.includes("assertRepeatedSite")) {
   throw new Error("AOT dispatch securityのtiny fixture実装または不変条件検査が不完全です");
 }
-const nativeAotEvidenceBlock = nativeAotBlocks.get("Differential native AOT dispatch evidence");
-if (!nativeAotEvidenceBlock.includes("node tools/check_dispatch_trace.mjs --no-build --evidence-output")) {
-  throw new Error("AOT dispatch evidenceの生成stepがありません");
+const nativeAotAuditsBlock = nativeAotBlocks.get("Differential native AOT dispatch audits");
+if (!nativeAotAuditsBlock.includes("node tools/check_dispatch_audits_parallel.mjs") ||
+    !nativeAotAuditsBlock.includes("--evidence-output") || !nativeAotAuditsBlock.includes("--coverage-output")) {
+  throw new Error("AOT dispatch evidence/coverage並列監査の生成stepがありません");
 }
-const nativeAotCoverageBlock = nativeAotBlocks.get("Differential native AOT dispatch coverage");
-if (!nativeAotCoverageBlock.includes("node tools/check_dispatch_coverage.mjs --no-build --output")) {
-  throw new Error("AOT dispatch coverage auditの生成stepがありません");
+if (!dispatchAuditsScript.includes('"check_dispatch_trace.mjs"') || !dispatchAuditsScript.includes('"check_dispatch_coverage.mjs"') ||
+    !dispatchAuditsScript.includes('"--no-build"') || !dispatchAuditsScript.includes("Promise.all") ||
+    !dispatchAuditsScript.includes("values.evidenceOutput === values.coverageOutput")) {
+  throw new Error("AOT dispatch evidence/coverageの並列監査実装または出力分離検査が不完全です");
 }
-const nativeAotBlockEnd = workflow.indexOf(nativeAotCoverageBlock) + nativeAotCoverageBlock.length;
+const nativeAotBlockEnd = workflow.indexOf(nativeAotAuditsBlock) + nativeAotAuditsBlock.length;
 const uploadName = "Upload native AOT oracle artifact";
 const uploadStart = workflow.indexOf(`      - name: ${uploadName}`);
 if (uploadStart !== nativeAotBlockEnd) throw new Error("AOT artifact uploadは差分比較の直後に配置してください");

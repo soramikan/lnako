@@ -41,7 +41,7 @@ canonical dispatch evidence artifactとは別fixtureですが、HTTP serverの10
 
 ## AOT検証stepの安全な分割
 
-`aot` suiteの重い検証は、次の5 stepへ分けています。実行順序と各stepのsuite条件は
+`aot` suiteの重い検証は、次の4つの順序付きstepへ分けています。実行順序と各stepのsuite条件は
 `tools/check_ci_workflow.mjs`で固定し、3正式OS・O0〜O3・7経路・artifact保存・attestationの範囲は変えません。
 
 | step | 内容 | 共有するもの |
@@ -49,8 +49,7 @@ canonical dispatch evidence artifactとは別fixtureですが、HTTP serverの10
 | `Differential native AOT oracle test` | 公式CLI・生成JavaScript・`lnako run`・AOT O0〜O3の全native fixture差分 | `compare_native_oracle.mjs`が作るcompilerとnative oracle artifact |
 | `Differential native AOT HTTP server test` | HTTP serverの公式処理系対AOT O0〜O3実通信差分 | 先行stepのcompilerを`--no-build`で再利用 |
 | `Differential native AOT dispatch security test` | tiny fixtureによるtrace無効、既存trace／manifest保持、失敗manifest cleanup、attempt/result整合、loop同一site反復 | `tests/fixtures/dispatch-security.nako3`だけを使用し、catalog evidenceへ混入しない |
-| `Differential native AOT dispatch evidence` | canonical fixtureのInterpreter trace、AOT compile manifest／runtime trace、公式source／生成JavaScriptとの差分、OS別dispatch evidence生成 | canonical fixtureの結果のみをattestation対象へ渡す |
-| `Differential native AOT dispatch coverage` | 全選択fixtureの成功site到達範囲とOS別coverage audit | dispatch evidenceとは別のunattested監査artifact |
+| `Differential native AOT dispatch audits` | canonical fixtureのdispatch evidenceと全選択fixtureのcoverage auditを、独立した子プロセスで並列実行 | evidenceはattestation対象、coverageは別のunattested監査artifact |
 
 HTTP server stepは、先行するnative oracle stepが同じcheckout上でcompilerを構築済みであることを前提に
 `--no-build`を指定します。単独実行時は従来どおり引数なしでcompilerをbuildし、`--no-build`時はcompilerの存在を確認してから進みます。
@@ -60,9 +59,11 @@ canonical dispatch検査からsecurity専用の追加buildを切り離しまし�
 trace／公式差分を維持し、security側では小さな固定fixtureでmanifest・traceの原子的な出力、既存ファイル非上書き、失敗時cleanup、
 trace無効時の無出力、loopの同一site反復を検査します。検査項目を減らしたり、canonical evidenceをtiny fixtureへ置き換えたりはしません。
 
-step分割により、比較失敗時はnative oracle、HTTP、security、canonical evidence、coverageのどの境界で止まったかをGitHub Actions上で
-個別に確認できます。step自体は直列なので、wall-clock短縮は重複compiler buildの除去と早期診断によるものだけです。分割後の実CI時間、壁時計、
-runner合計時間、cache hit/missは次回pushの完了済みrunで記録し、実測前に性能改善とは扱いません。
+step分割により、比較失敗時はnative oracle、HTTP、security、dispatch監査のどの境界で止まったかをGitHub Actions上で
+確認できます。dispatch evidenceとcoverageは、AOT compilerを先行stepで構築済みであること、互いに一時ディレクトリと出力先を
+分離できることを検査したうえで並列実行します。各子検査の全fixture・公式差分・trace／manifest・site到達判定は維持し、どちらかが
+失敗しても他方の完了を待って両方のログを出力します。分割後の実CI時間、壁時計、runner合計時間、cache hit/missは次回pushの
+完了済みrunで記録し、実測前に性能改善とは扱いません。
 
 元のコマンドは削除せず、各OSでいずれか1スイートが一度だけ実行します。OSごとの互換検証をLinuxだけへ
 縮小する最適化は行いません。ジョブ上限は50分とし、停止しないホスト・ネットワークテストを検出します。
