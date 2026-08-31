@@ -286,11 +286,16 @@ native差分と通常buildも含めて複数工程がクリティカルパスを
 `compat-js-basic.nako3 --compat-js`を実行する。`tools/check_ci_workflow.mjs`がmatrixを15ジョブとして検査し、両smokeの
 コマンド集合が従来の7件と一致することを検証する。
 
-`compat-aot`は公式オラクルを使わないため、オラクルcacheと`tools/setup_oracle.mjs`だけを条件付きで省略する。LLVM/LLDと
-QuickJSの固定版・SHA-256検証、Node、Zigのsetupは省略しない。Zig cacheは`cache-key: matrix.suite`のため、`aot`と
+`compat-aot`は公式オラクルもNodeスクリプトも使わないため、オラクルcache、`tools/setup_oracle.mjs`、Nodeのsetupを条件付きで省略する。
+LLVM/LLDとQuickJSの固定版・SHA-256検証、Zigのsetupは省略しない。Zig cacheは`cache-key: matrix.suite`のため、`aot`と
 `compat-aot`は別cache名前空間になる。これは並列jobのcache保存競合を避ける一方、初回の`compat-aot`ではコンパイルcacheが
 冷えて追加時間になる分かりにくい挙動である。ツールチェーンcacheは従来どおりOS・arch・固定版キーを共有し、setup scriptの
 ハッシュ検証を必ず通す。
+
+直前の[run 33349400116](https://github.com/soramikan/lnako/actions/runs/33349400116)では、macOS arm64の`compat-aot`が
+`actions/setup-node`でNode 24.15.0を取得する際、`api.github.com`と`nodejs.org`のDNS解決に失敗した。QuickJS単体テストや
+コンパイラbuildは実行前だったため、これは製品のテスト失敗ではなく、不要な外部取得経路の失敗である。以後はこのsuiteでNode
+setupを行わず、同suiteのQuickJS Debug単体テスト、ReleaseSafe build、compat-js smokeは維持する。
 
 分離後は、通常AOTとQuickJS AOTが並列に走るため、Windowsの壁時計時間は分離前9分50秒から、各jobのセットアップとsmokeを
 含む長い方（予測6〜8分台）へ近づく見込みである。3つの追加jobによりrunner使用時間とcache保存処理は増える。初回runでは

@@ -189,6 +189,14 @@ if (setupZigBlock === undefined ||
   throw new Error(`setup-zigのcache保存対象または${setupZigCacheSizeLimitMiB} MiB上限が不正です`);
 }
 
+const setupNodeBlock = workflow.match(
+  /      - uses: actions\/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5\.0\.0[\s\S]*?(?=      - uses: actions\/cache@)/,
+)?.[0];
+if (setupNodeBlock === undefined || !setupNodeBlock.includes("if: matrix.suite != 'compat-aot'") ||
+    !setupNodeBlock.includes("node-version: 24.15.0")) {
+  throw new Error("compat-aotが不要なNode取得を行わないsetup-node条件またはNode固定版が不正です");
+}
+
 for (const required of [
   "group: ci-${{ github.workflow }}-${{ github.ref }}",
   "cancel-in-progress: true",
@@ -199,8 +207,8 @@ for (const required of [
 ]) if (!workflow.includes(required)) throw new Error(`CI安全設定がありません: ${required}`);
 
 const oracleSkipConditions = workflow.match(/^        if: matrix\.suite != 'compat-aot'$/gm) ?? [];
-if (oracleSkipConditions.length !== 2) {
-  throw new Error(`compat-aotのオラクル省略条件はcacheとsetupの2件必要です: actual=${oracleSkipConditions.length}`);
+if (oracleSkipConditions.length !== 3) {
+  throw new Error(`compat-aotのオラクル／Node省略条件はcache・setup・Nodeの3件必要です: actual=${oracleSkipConditions.length}`);
 }
 
 const cacheActions = [...workflow.matchAll(/^      - uses: actions\/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6\.1\.0$/gm)];

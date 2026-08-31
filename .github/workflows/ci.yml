@@ -76,6 +76,7 @@ jobs:
           cache-key: ${{ matrix.suite }}
           cache-size-limit: 1536
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        if: matrix.suite != 'compat-aot'
         with:
           node-version: 24.15.0
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
