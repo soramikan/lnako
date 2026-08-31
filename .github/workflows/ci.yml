@@ -188,7 +188,7 @@ jobs:
       - name: Differential native AOT verification
         if: matrix.suite == 'aot'
         env:
-          LNAKO_NATIVE_ORACLE_JOBS: "4"
+          LNAKO_NATIVE_ORACLE_JOBS: "2"
         run: >
           node tools/check_aot_suite_parallel.mjs
           --artifact "${{ runner.temp }}/lnako-native-oracle.json"

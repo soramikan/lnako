@@ -101,7 +101,7 @@ if (!nativeAotBuildBlock.includes("run: zig build")) {
   throw new Error("AOT検証用compilerの先行buildがありません");
 }
 const nativeAotVerificationBlock = nativeAotBlocks.get("Differential native AOT verification");
-if (!nativeAotVerificationBlock.includes('LNAKO_NATIVE_ORACLE_JOBS: "4"') ||
+if (!nativeAotVerificationBlock.includes('LNAKO_NATIVE_ORACLE_JOBS: "2"') ||
     (nativeAotVerificationBlock.match(/node tools\/check_aot_suite_parallel\.mjs/g) ?? []).length !== 1 ||
     !nativeAotVerificationBlock.includes("--artifact \"${{ runner.temp }}/lnako-native-oracle.json\"") ||
     !nativeAotVerificationBlock.includes("--evidence-output \"${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json\"") ||

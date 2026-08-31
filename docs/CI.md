@@ -246,7 +246,8 @@ x86_64の`aot`が約10分42秒のクリティカルパスでした。以下のAO
 公式CLI、公式JavaScript生成・実行、`lnako run`、AOTのO0・O1・O2・O3生成・実行は従来どおり直列です。そのため、
 検証経路（公式CLI、公式生成JavaScript、インタープリタ、AOT 4段階）の7経路、全ケース、全最適化レベルは削減していません。
 `LNAKO_NATIVE_ORACLE_JOBS=1` を指定すると従来相当の直列実行へ戻せます。値は1〜4を受け付け、未指定時は2です。
-CIのAOT oracle stepだけは`LNAKO_NATIVE_ORACLE_JOBS=4`を明示し、ローカルの既定値は2のままにします。
+CIのAOT oracle stepも`LNAKO_NATIVE_ORACLE_JOBS=2`を明示し、ローカルの既定値と揃えます。native oracleとdispatch監査を同時に
+実行するため、過密なrunnerでworkerを増やしてもwall-clockが短くならず、時間依存の外部プロセスfixtureを不安定にする場合があります。
 
 worker間の競合を防ぐため、各fixtureには順序番号とIDからなる一意なディレクトリを割り当て、ソース、生成JavaScript、AOT
 実行ファイル、相対パスで作成される将来のfixtureファイルをその配下へ置きます。fixtureの結果は元の配列位置へ保存し、
@@ -430,3 +431,25 @@ AOT差分artifact保存を追加した後の[run 32963653947](https://github.com
 各115 fixtureが公式処理系と等価であることを含んでいた。初回分離runより1分09秒長いが、run全体の所要時間にはGitHub側の
 runner割当待ちも含まれるため、この1回の差だけをテスト実行時間の回帰とは判定しない。短縮の安全性は全15ジョブの成功、
 3環境artifact、元の7経路とO0〜O3の維持を合わせて判断する。
+
+## AOT並列化後のWindows失敗とworker再調整
+
+`37cefbde` の[run 33393547459](https://github.com/soramikan/lnako/actions/runs/33393547459)は、14/15のmatrix jobが成功したが、
+Windows x86_64のAOTだけが失敗し、壁時計は20分43秒だった。AOT jobはLinux 20分37秒、macOS 17分29秒、Windows 20分37秒で、
+Linux/macOSのAOT差分は成功した。Windowsではnative oracle 18分27秒、HTTP 32秒、security 3秒、dispatch evidence/coverage 9分07秒だった。
+native oracle（284 fixture・7経路・O0〜O3）とHTTP・security・dispatch evidence自体は成功したが、coverage監査の
+`node-file-cases.json/plugin-node-process-completion-order`で、AOT trace有無の結果が変化した。失敗時はattestation jobがskipされた。
+
+これはfixture・最適化レベル・OS検証を削った結果ではない。4 workerのnative oracleとdispatch監査を同一runnerで同時に実行したことで、
+Windowsの外部Nodeプロセス起動と350msの待機窓がrunner負荷の影響を受けた可能性が高い。直前の2 worker・直列AOT検査だった
+[run 33381540990](https://github.com/soramikan/lnako/actions/runs/33381540990)では、Windows native oracleは9分34秒、dispatch evidenceは2分03秒、
+coverageは2分27秒で完了しており、4 workerがこの並列構成でwall-clockを改善したとは扱えない。
+
+次のpushでは、AOT runnerの`LNAKO_NATIVE_ORACLE_JOBS`を2へ戻す。native oracleの各fixture内の7経路・O0〜O3と、dispatch監査の全fixture・
+全siteは維持し、worker数だけをrunner負荷に合わせる。また、完了順を検証するfixtureの待機を0.35秒から1秒へ広げる。fast側5ms・slow側200msの
+相対的な完了順は変えず、外部プロセス起動の揺らぎだけに余裕を持たせるためである。次回以降、3 OSのAOT子検査、15 matrix job、artifact、
+attestation、壁時計、runner合計時間、cache hit/missを完了済みrunで記録し、worker=2の短縮効果と再現性を確定する。
+
+ローカルmacOS arm64で同じ2 worker設定を使ったAOT runnerでは、native oracleが796.92秒、dispatch evidence/coverageが283.75秒、
+securityが1.02秒で成功した。通常sandboxではHTTPのloopback bindだけが`EPERM`になったため、loopback権限付きの単独検査でHTTPの
+10命令・O0〜O3・各14リクエスト成功を確認した。この測定は実CIの壁時計やrunner合計時間とは分け、正式な短縮値は次回pushの完了済みrunで判定する。
