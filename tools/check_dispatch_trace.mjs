@@ -71,34 +71,7 @@ try {
   );
   assertEquivalent("Interpreter", interpretedWithoutTrace, interpretedWithTrace);
   const interpreterEvents = await readTrace(interpreterTrace, "interpreter", "dispatch-result");
-  assertCommand(interpreterEvents, "切取", "plugin_system", "success");
-  assertCommand(interpreterEvents, "範囲切取", "plugin_system", "success");
-  assertCommand(interpreterEvents, "配列結合", "plugin_system", "success");
-  assertCommand(interpreterEvents, "LEN", "plugin_system", "success");
-  assertCommand(interpreterEvents, "文字列変換", "plugin_system", "success");
-  assertCommand(interpreterEvents, "JSON変換", "plugin_system", "success");
-  assertCommand(interpreterEvents, "表ソート", "plugin_system", "success");
-  assertCommand(interpreterEvents, "表数値ソート", "plugin_system", "success");
-  assertCommand(interpreterEvents, "正規表現マッチ", "plugin_system", "success");
-  assertCommand(interpreterEvents, "正規表現抽出", "plugin_system", "success");
-  assertCommand(interpreterEvents, "正規表現置換", "plugin_system", "success");
-  assertCommand(interpreterEvents, "正規表現区切", "plugin_system", "success");
-  assertCommand(interpreterEvents, "表示", "interpreter-core", "success");
-  assertCatalogResolution("切取", "plugin_system", "command-0141", "unique-name");
-  assertCatalogResolution("範囲切取", "plugin_system", "command-0142", "unique-name");
-  assertCatalogResolution("配列結合", "plugin_system", "command-0177", "unique-name");
-  assertCatalogResolution("LEN", "plugin_system", "command-0182", "unique-name");
-  assertCatalogResolution("文字列変換", "plugin_system", "command-0272", "unique-name");
-  assertCatalogResolution("JSON変換", "plugin_system", "command-0287", "unique-name");
-  assertCatalogResolution("表ソート", "plugin_system", "command-0211", "unique-name");
-  assertCatalogResolution("表数値ソート", "plugin_system", "command-0212", "unique-name");
-  assertCatalogResolution("正規表現マッチ", "plugin_system", "command-0295", "unique-name");
-  assertCatalogResolution("正規表現抽出", "plugin_system", "command-0296", "unique-name");
-  assertCatalogResolution("正規表現置換", "plugin_system", "command-0298", "unique-name");
-  assertCatalogResolution("正規表現区切", "plugin_system", "command-0299", "unique-name");
-  assertCatalogResolution("表示", "interpreter-core", "command-0307", "unique-name");
-  assertOnlyCommands(interpreterEvents, new Set(["切取", "範囲切取", "表示", "CHR", "配列結合", "LEN", "文字列変換", "JSON変換", "表ソート", "表数値ソート", "正規表現マッチ", "正規表現抽出", "正規表現置換", "正規表現区切"]));
-  assertStaticCommandsHaveSites(interpreterEvents, new Set(["切取", "範囲切取", "表示", "CHR", "配列結合", "LEN", "文字列変換", "JSON変換", "表ソート", "表数値ソート", "正規表現マッチ", "正規表現抽出", "正規表現置換", "正規表現区切"]));
+  assertFixtureInterpreterCoverage(interpreterEvents, fixture.commands);
   await assertExistingTracePreserved("Interpreter", compiler, ["run", source], interpretedWithoutTrace, resolve(temporary, "interpreter-existing.jsonl"), baseEnvironment, temporary);
 
   const nodeEnvironment = { ...baseEnvironment, LNAKO_NODE_TEST: "dispatch-trace" };
@@ -123,21 +96,7 @@ try {
   );
   assertSuccess("AOTコンパイル", compiled);
   const manifestEntries = await readCompileManifest(compileManifest, source);
-  assertManifestCommand(manifestEntries, "切取", "cut", "cut", "command-0141");
-  assertManifestCommand(manifestEntries, "範囲切取", "cut_range", "cut", "command-0142");
-  assertManifestCommand(manifestEntries, "CHR", "chr", "builtin", "command-0122");
-  assertManifestCommand(manifestEntries, "表示", "display", "direct-display", "command-0307");
-  assertManifestCommand(manifestEntries, "配列結合", "array_join", "builtin", "command-0177");
-  assertManifestCommand(manifestEntries, "LEN", "element_count", "builtin", "command-0182");
-  assertManifestCommand(manifestEntries, "文字列変換", "to_string", "builtin", "command-0272");
-  assertManifestCommand(manifestEntries, "JSON変換", "json_encode", "builtin", "command-0287");
-  assertManifestCommand(manifestEntries, "表ソート", "table_sort", "builtin", "command-0211");
-  assertManifestCommand(manifestEntries, "表数値ソート", "table_numeric_sort", "builtin", "command-0212");
-  assertManifestCommand(manifestEntries, "正規表現マッチ", "regexp_match", "regexp", "command-0295");
-  assertManifestCommand(manifestEntries, "正規表現抽出", "regexp_extract", "regexp", "command-0296");
-  assertManifestCommand(manifestEntries, "正規表現置換", "regexp_replace", "regexp", "command-0298");
-  assertManifestCommand(manifestEntries, "正規表現区切", "regexp_split", "regexp", "command-0299");
-  assertOnlyManifestCommands(manifestEntries, new Set(["切取", "範囲切取", "CHR", "表示", "配列結合", "LEN", "文字列変換", "JSON変換", "表ソート", "表数値ソート", "正規表現マッチ", "正規表現抽出", "正規表現置換", "正規表現区切"]));
+  assertFixtureManifestCoverage(manifestEntries, fixture.commands);
   await assertExistingManifestPreserved(compiler, source, baseEnvironment, temporary);
   await assertFailedManifestRemoved(compiler, source, baseEnvironment, temporary);
   const aotWithoutTrace = run(native, [], baseEnvironment, temporary);
@@ -149,20 +108,7 @@ try {
   const aotEvents = await readTrace(aotTrace, "aot");
   assertAotTrace(aotEvents, manifestEntries);
   if (!aotEvents.some((event) => event.phase === "dispatch-result" && event.success === false)) throw new Error("AOT traceにfailure resultがありません");
-  assertCanonicalCommand(aotEvents, "cut", "cut");
-  assertCanonicalCommand(aotEvents, "cut_range", "cut");
-  assertCanonicalCommand(aotEvents, "array_join", "builtin");
-  assertCanonicalCommand(aotEvents, "element_count", "builtin");
-  assertCanonicalCommand(aotEvents, "to_string", "builtin");
-  assertCanonicalCommand(aotEvents, "json_encode", "builtin");
-  assertCanonicalCommand(aotEvents, "table_sort", "builtin");
-  assertCanonicalCommand(aotEvents, "table_numeric_sort", "builtin");
-  assertCanonicalCommand(aotEvents, "regexp_match", "regexp");
-  assertCanonicalCommand(aotEvents, "regexp_extract", "regexp");
-  assertCanonicalCommand(aotEvents, "regexp_replace", "regexp");
-  assertCanonicalCommand(aotEvents, "regexp_split", "regexp");
-  assertCanonicalCommand(aotEvents, "display", "direct-display");
-  assertOnlyCommands(aotEvents, new Set(["cut", "cut_range", "chr", "display", "array_join", "element_count", "to_string", "json_encode", "table_sort", "table_numeric_sort", "regexp_match", "regexp_extract", "regexp_replace", "regexp_split"]));
+  assertFixtureAotCoverage(aotEvents, manifestEntries, fixture.commands);
   assertTraceSitesContained(aotEvents, manifestEntries);
   assertTraceSitesContained(interpreterEvents, manifestEntries);
   assertSameStaticSiteSet(interpreterEvents, aotEvents);
@@ -408,19 +354,61 @@ function assertStaticCommandsHaveSites(events, commands) {
   }
 }
 
+function assertFixtureInterpreterCoverage(events, commands) {
+  const expected = new Set(commands);
+  if (expected.size !== commands.length) throw new Error("dispatch証拠fixtureのcommandsに重複があります");
+  assertOnlyCommands(events, expected);
+  assertStaticCommandsHaveSites(events, expected);
+  for (const name of expected) {
+    const event = events.find((candidate) => candidate.command === name && candidate.result === "success");
+    if (event === undefined) throw new Error(`dispatch証拠fixtureの${name}に成功したInterpreter eventがありません`);
+    const catalogRoute = event.route === "plugin_node" ? "plugin_node" : "plugin_system";
+    const resolution = resolveCatalogCommand(name, catalogRoute);
+    if (resolution === null || resolution.reason !== "unique-name") {
+      throw new Error(`dispatch証拠fixtureの${name}を一意なcatalog IDへ解決できません: ${JSON.stringify({ event, resolution })}`);
+    }
+  }
+}
+
+function assertFixtureManifestCoverage(entries, commands) {
+  const expected = new Set(commands);
+  assertOnlyManifestCommands(entries, expected);
+  for (const name of expected) {
+    const entry = entries.find((candidate) => candidate.sourceName === name);
+    if (entry === undefined) throw new Error(`AOT compile manifestにdispatch証拠fixtureの${name}がありません`);
+    const resolution = resolveCatalogCommand(name, "plugin_system");
+    if (resolution === null || resolution.reason !== "unique-name") {
+      throw new Error(`AOT compile manifestの${name}を一意なcatalog IDへ解決できません: ${JSON.stringify({ entry, resolution })}`);
+    }
+  }
+}
+
+function assertFixtureAotCoverage(events, entries, commands) {
+  const expected = new Set(commands);
+  assertOnlyCommands(events, new Set(entries.map((entry) => entry.canonicalOpcode)));
+  for (const entry of entries) {
+    if (!expected.has(entry.sourceName)) continue;
+    assertCanonicalCommand(events, entry.canonicalOpcode, entry.route);
+  }
+  for (const name of expected) {
+    const entriesForName = entries.filter((entry) => entry.sourceName === name);
+    if (entriesForName.length === 0 || !entriesForName.some((entry) => hasSuccessfulAotSite(events, entry.siteId))) {
+      throw new Error(`dispatch証拠fixtureの${name}に成功したAOT siteがありません`);
+    }
+  }
+}
+
+function hasSuccessfulAotSite(events, siteId) {
+  const attempts = new Map(events.filter((event) => event.phase === "dispatch-attempt").map((event) => [event.callId, event]));
+  return events.some((event) => event.phase === "dispatch-result" && event.siteId === siteId && event.success === true && attempts.has(event.callId));
+}
+
 function assertSameStaticSiteSet(left, right) {
   const leftSites = new Set(left.filter((event) => event.siteId !== null).map((event) => event.siteId));
   const rightSites = new Set(right.filter((event) => event.siteId !== null).map((event) => event.siteId));
   if (leftSites.size !== rightSites.size || [...leftSites].some((site) => !rightSites.has(site))) {
     throw new Error(`Interpreter/AOTの静的dispatch site集合が一致しません: ${JSON.stringify({ interpreter: [...leftSites], aot: [...rightSites] })}`);
   }
-}
-
-function assertManifestCommand(entries, sourceName, canonicalOpcode, route, catalogId) {
-  if (!entries.some((entry) => entry.sourceName === sourceName && entry.canonicalOpcode === canonicalOpcode && entry.route === route)) {
-    throw new Error(`AOT compile manifestに${sourceName}/${canonicalOpcode}/${route}がありません`);
-  }
-  assertCatalogResolution(sourceName, route, catalogId, "unique-name");
 }
 
 function assertOnlyManifestCommands(entries, allowed) {
