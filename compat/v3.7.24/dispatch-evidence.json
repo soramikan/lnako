@@ -8,7 +8,7 @@
   "fixture": {
     "id": "native-cut-commands",
     "file": "native-cases.json",
-    "sourceSha256": "83edb4c52f9669353b23c5e315fe06b28298e59ce9f0fa1b1db93f28e26edaa1"
+    "sourceSha256": "ddb3545d323fce600c4ba7ca4da2f2b3fe3a45eeb6d8f703a4f81fbc9bce5394"
   },
   "officialComparison": {
     "oracle": "official-source",
@@ -23,25 +23,25 @@
       "officialSource": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "64e238e737bce07656cddba9519df0e6d3bcf219c9c9eaa9489b81adc788e55c",
+        "stdoutSha256": "c57da822e21e0777abca029d8f2f143805c2e4604945d9bf36383b42b294a8c2",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "officialGenerated": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "64e238e737bce07656cddba9519df0e6d3bcf219c9c9eaa9489b81adc788e55c",
+        "stdoutSha256": "c57da822e21e0777abca029d8f2f143805c2e4604945d9bf36383b42b294a8c2",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoRun": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "64e238e737bce07656cddba9519df0e6d3bcf219c9c9eaa9489b81adc788e55c",
+        "stdoutSha256": "c57da822e21e0777abca029d8f2f143805c2e4604945d9bf36383b42b294a8c2",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoNativeO0": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "64e238e737bce07656cddba9519df0e6d3bcf219c9c9eaa9489b81adc788e55c",
+        "stdoutSha256": "c57da822e21e0777abca029d8f2f143805c2e4604945d9bf36383b42b294a8c2",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       }
     }
@@ -63,23 +63,23 @@
     },
     "lnako": {
       "binarySha256": "497adbe25fb4c6720e3e81c2431ef8c02060918e05fa3f1e05dff03e35693c87",
-      "commit": "58ace75dea5fbc703bb5fd230837fdae71cf7522",
+      "commit": "bc67839e704ca1f9f73074d52876e434a0dbaeee",
       "dirty": true
     },
     "raw": {
-      "interpreterTraceSha256": "adb3be80e275347560172ac10dbf8561ab74a75faa54b73ac014a09193d63d13",
-      "aotTraceSha256": "794faaa643a450c2fd59b29a4ba9ffcabee5346ccceb4d8f7258203295bc4806",
-      "compileManifestSha256": "f50202502fb2562167e8de410dfce8b6c3b619d1161de5bb17f29c5b73254d65"
+      "interpreterTraceSha256": "0ffb3acdd414725365ab789acc223a2a087dac0101eff6a362df7bd3406a9901",
+      "aotTraceSha256": "a296b45d24a9372c14316464cfdeb4536a393fac654691eb562643f4a8a22950",
+      "compileManifestSha256": "6102cb1c14fd9d955bf3c90f2a896ac9e44ce3a992f1e80ba290ba4999a2aa6e"
     }
   },
   "trace": {
     "interpreter": {
       "schema": 2,
-      "eventCount": 588
+      "eventCount": 606
     },
     "aot": {
       "schema": 2,
-      "eventCount": 1176
+      "eventCount": 1212
     }
   },
   "sites": [
@@ -13510,6 +13510,420 @@
         "aot": {
           "success": true,
           "callId": 587,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0158",
+      "name": "英数全角変換",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000251",
+      "sourceName": "英数全角変換",
+      "canonicalOpcode": "ascii_full_width",
+      "opcode": 124,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 588,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000252",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 589,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0159",
+      "name": "英数半角変換",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000253",
+      "sourceName": "英数半角変換",
+      "canonicalOpcode": "ascii_half_width",
+      "opcode": 125,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 590,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000254",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 591,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0160",
+      "name": "英数記号全角変換",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000255",
+      "sourceName": "英数記号全角変換",
+      "canonicalOpcode": "ascii_symbol_full_width",
+      "opcode": 126,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 592,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000256",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 593,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0161",
+      "name": "英数記号半角変換",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000257",
+      "sourceName": "英数記号半角変換",
+      "canonicalOpcode": "ascii_symbol_half_width",
+      "opcode": 127,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 594,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000258",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 595,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0162",
+      "name": "カタカナ全角変換",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000259",
+      "sourceName": "カタカナ全角変換",
+      "canonicalOpcode": "katakana_full_width",
+      "opcode": 128,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 596,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000025a",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 597,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0163",
+      "name": "カタカナ半角変換",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000025b",
+      "sourceName": "カタカナ半角変換",
+      "canonicalOpcode": "katakana_half_width",
+      "opcode": 129,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 598,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000025c",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 599,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0162",
+      "name": "カタカナ全角変換",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000025d",
+      "sourceName": "カタカナ全角変換",
+      "canonicalOpcode": "katakana_full_width",
+      "opcode": 128,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 600,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000025e",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 601,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0164",
+      "name": "全角変換",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000025f",
+      "sourceName": "全角変換",
+      "canonicalOpcode": "full_width",
+      "opcode": 130,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 602,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000260",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 603,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0165",
+      "name": "半角変換",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000261",
+      "sourceName": "半角変換",
+      "canonicalOpcode": "half_width",
+      "opcode": 131,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 604,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000262",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 605,
           "count": 1
         }
       },

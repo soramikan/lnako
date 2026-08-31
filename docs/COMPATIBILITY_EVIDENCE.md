@@ -3,7 +3,7 @@
 `compat/v3.7.24/evidence.json`は、標準cnako 527 entryをカタログID単位で
 既存fixtureへ関連付ける台帳です。通常のfixture関連付けは実行結果やdispatch接続を証明しません。
 追跡中の証拠は、macOS arm64の単一実行環境で、明示fixture `native-cut-commands`についてcompile manifest、Interpreter/AOT trace、公式差分を
-同一fixture・siteで突き合わせられた一意名195 entryが`trace-confirmed-unattested`です（既存14命令に型変換系16命令、算術・比較系15命令、配列系12命令、文字列系21命令、論理・ビット・集約系20命令、表系14命令、数学系36命令、文字変換系4命令、置換系2命令、出現1命令、形式・文字種判定系7命令、値・状態系12命令、文字列合成・URL系12命令、JSON・要素数系9命令を加えた範囲）。追跡中のJSONにはattestationを記録しないため、ローカルの`verified`は0件で、残り332 entryが`unverified`です。
+同一fixture・siteで突き合わせられた一意名203 entryが`trace-confirmed-unattested`です（既存14命令に型変換系16命令、算術・比較系15命令、配列系12命令、文字列系21命令、論理・ビット・集約系20命令、表系14命令、数学系36命令、文字変換系4命令、置換系2命令、出現1命令、形式・文字種判定系7命令、値・状態系12命令、文字列合成・URL系12命令、JSON・要素数系9命令、幅変換系8命令を加えた範囲）。追跡中のJSONにはattestationを記録しないため、ローカルの`verified`は0件で、残り324 entryが`unverified`です。
 
 AOT差分artifactとdispatch証拠は入力・実行物・結果のSHA-256を内包します。CIのmain push/workflow_dispatchでは、3正式OSのdispatch JSONを
 公式`actions/attest`のmulti-subject artifact attestationへ結び付け、公式`gh attestation verify`で署名、SLSA predicate、workflow identity、
@@ -94,7 +94,7 @@ Node Bufferのenumerable prototype property 95件の順序・`parent`・`offset`
 疎な最上位表のhole・nullish行に対する`length` property read診断は`native-system-table-sparse-length-errors`で`表列数`・`表行列交換`・`表右回転`を比較します。
 同一ユーザー関数の`prototype` object identityと、そのown `constructor` back-referenceは`native-system-table-inherited-properties`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較します。
 `interpreter-only` 0 entryです。execution evidenceは`verified` 0、
-`trace-confirmed-unattested` 195、`unverified` 332のままです。
+`trace-confirmed-unattested` 203、`unverified` 324のままです。
 fixtureの関連付けを変更した場合は、次で派生台帳の生成と検査を行います。
 
 ```sh

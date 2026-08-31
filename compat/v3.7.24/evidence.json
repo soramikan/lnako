@@ -22,8 +22,8 @@
   },
   "executionEvidenceStates": {
     "verified": 0,
-    "trace-confirmed-unattested": 195,
-    "unverified": 332
+    "trace-confirmed-unattested": 203,
+    "unverified": 324
   },
   "entries": [
     {
@@ -6866,6 +6866,7 @@
         "plugin-system-string-conversion"
       ],
       "aotFixtureIds": [
+        "native-cut-commands",
         "native-system-width-ascii-non-string-coercion",
         "native-system-width-conversion-commands"
       ],
@@ -6878,6 +6879,9 @@
           ]
         },
         "aot": {
+          "native-cut-commands": [
+            "fixture.commands"
+          ],
           "native-system-width-ascii-non-string-coercion": [
             "fixture.commands",
             "implemented.tests"
@@ -6890,9 +6894,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x0000000000000251"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式のString変換をInterpreter/AOTで実装し、ASCII非文字列差分テストに成功。AOTバイト列値はTODO: aot-byte-buffer-value"
     },
     {
@@ -6904,6 +6921,7 @@
         "plugin-system-string-conversion"
       ],
       "aotFixtureIds": [
+        "native-cut-commands",
         "native-system-width-ascii-non-string-coercion",
         "native-system-width-conversion-commands"
       ],
@@ -6916,6 +6934,9 @@
           ]
         },
         "aot": {
+          "native-cut-commands": [
+            "fixture.commands"
+          ],
           "native-system-width-ascii-non-string-coercion": [
             "fixture.commands",
             "implemented.tests"
@@ -6928,9 +6949,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x0000000000000253"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式のString変換をInterpreter/AOTで実装し、ASCII非文字列差分テストに成功。AOTバイト列値はTODO: aot-byte-buffer-value"
     },
     {
@@ -6942,6 +6976,7 @@
         "plugin-system-string-conversion"
       ],
       "aotFixtureIds": [
+        "native-cut-commands",
         "native-system-width-ascii-non-string-coercion",
         "native-system-width-conversion-commands"
       ],
@@ -6954,6 +6989,9 @@
           ]
         },
         "aot": {
+          "native-cut-commands": [
+            "fixture.commands"
+          ],
           "native-system-width-ascii-non-string-coercion": [
             "fixture.commands",
             "implemented.tests"
@@ -6966,9 +7004,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x0000000000000255"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式のString変換をInterpreter/AOTで実装し、ASCII非文字列差分テストに成功。AOTバイト列値はTODO: aot-byte-buffer-value"
     },
     {
@@ -6980,6 +7031,7 @@
         "plugin-system-string-conversion"
       ],
       "aotFixtureIds": [
+        "native-cut-commands",
         "native-system-width-ascii-non-string-coercion",
         "native-system-width-conversion-commands"
       ],
@@ -6992,6 +7044,9 @@
           ]
         },
         "aot": {
+          "native-cut-commands": [
+            "fixture.commands"
+          ],
           "native-system-width-ascii-non-string-coercion": [
             "fixture.commands",
             "implemented.tests"
@@ -7004,9 +7059,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x0000000000000257"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式のString変換をInterpreter/AOTで実装し、ASCII非文字列差分テストに成功。AOTバイト列値はTODO: aot-byte-buffer-value"
     },
     {
@@ -7018,6 +7086,7 @@
         "plugin-system-string-conversion"
       ],
       "aotFixtureIds": [
+        "native-cut-commands",
         "native-system-width-byte-buffer-receiver",
         "native-system-width-conversion-commands",
         "native-system-width-custom-string-methods",
@@ -7033,6 +7102,9 @@
           ]
         },
         "aot": {
+          "native-cut-commands": [
+            "fixture.commands"
+          ],
           "native-system-width-byte-buffer-receiver": [
             "fixture.commands",
             "implemented.tests"
@@ -7057,9 +7129,23 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 5件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x0000000000000259",
+          "0x000000000000025d"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（2 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "raw length/substring分岐と公式エラー文言をInterpreter/AOTで実装し、辞書・prototypeのsubstring/charAt関数呼出しと非空Buffer/Uint8Arrayのreceiver境界を公式差分テストで検証。byte bufferの成功するmethod呼出しはTODO: aot-byte-buffer-value"
     },
     {
@@ -7071,6 +7157,7 @@
         "plugin-system-string-conversion"
       ],
       "aotFixtureIds": [
+        "native-cut-commands",
         "native-system-width-byte-buffer-receiver",
         "native-system-width-conversion-commands",
         "native-system-width-custom-string-methods",
@@ -7086,6 +7173,9 @@
           ]
         },
         "aot": {
+          "native-cut-commands": [
+            "fixture.commands"
+          ],
           "native-system-width-byte-buffer-receiver": [
             "fixture.commands",
             "implemented.tests"
@@ -7110,9 +7200,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 5件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x000000000000025b"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "raw split分岐と公式エラー文言をInterpreter/AOTで実装し、辞書・prototypeのsplit関数呼出しと非空Buffer/Uint8Arrayのreceiver境界を公式差分テストで検証。byte bufferの成功するmethod呼出しはTODO: aot-byte-buffer-value"
     },
     {
@@ -7124,6 +7227,7 @@
         "plugin-system-string-conversion"
       ],
       "aotFixtureIds": [
+        "native-cut-commands",
         "native-system-width-byte-buffer-receiver",
         "native-system-width-conversion-commands",
         "native-system-width-custom-string-methods",
@@ -7139,6 +7243,9 @@
           ]
         },
         "aot": {
+          "native-cut-commands": [
+            "fixture.commands"
+          ],
           "native-system-width-byte-buffer-receiver": [
             "fixture.commands",
             "implemented.tests"
@@ -7163,9 +7270,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 5件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x000000000000025f"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "カナraw length/substring分岐からASCII String変換へ合成する公式順序をInterpreter/AOTで実装し、辞書・prototypeのsubstring/charAt関数呼出しと非空Buffer/Uint8Arrayのreceiver境界を含む公式差分テストで検証。byte bufferの成功するmethod呼出しはTODO: aot-byte-buffer-value"
     },
     {
@@ -7177,6 +7297,7 @@
         "plugin-system-string-conversion"
       ],
       "aotFixtureIds": [
+        "native-cut-commands",
         "native-system-width-byte-buffer-receiver",
         "native-system-width-conversion-commands",
         "native-system-width-custom-string-methods",
@@ -7193,6 +7314,9 @@
           ]
         },
         "aot": {
+          "native-cut-commands": [
+            "fixture.commands"
+          ],
           "native-system-width-byte-buffer-receiver": [
             "fixture.commands",
             "implemented.tests"
@@ -7221,9 +7345,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 6件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x0000000000000261"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "カナraw split分岐からASCII String変換へ合成する公式順序と未捕捉エラーをInterpreter/AOTで実装し、辞書・prototypeのsplit関数呼出しと非空Buffer/Uint8Arrayのreceiver境界を含む公式差分テストで検証。byte bufferの成功するmethod呼出しはTODO: aot-byte-buffer-value"
     },
     {
@@ -14726,7 +14863,16 @@
           "0x000000000000024a",
           "0x000000000000024c",
           "0x000000000000024e",
-          "0x0000000000000250"
+          "0x0000000000000250",
+          "0x0000000000000252",
+          "0x0000000000000254",
+          "0x0000000000000256",
+          "0x0000000000000258",
+          "0x000000000000025a",
+          "0x000000000000025c",
+          "0x000000000000025e",
+          "0x0000000000000260",
+          "0x0000000000000262"
         ],
         "officialComparison": [
           "officialSource",
@@ -14736,7 +14882,7 @@
         ],
         "state": "trace-confirmed-unattested"
       },
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（287 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（296 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "継続表示プールと表示ログを含めて実装し、公式差分テストに成功"
     },
     {
