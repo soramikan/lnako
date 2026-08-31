@@ -8,7 +8,7 @@
   "fixture": {
     "id": "native-cut-commands",
     "file": "native-cases.json",
-    "sourceSha256": "06e3cd8e720bd776b74d627ea3ddbe593b1cd3b6fa66acef41fb184dcaeabc5e"
+    "sourceSha256": "194128e7e04e9624f4420bc4deed0bb4800cb11cabaef8ce755a4464819c68a6"
   },
   "officialComparison": {
     "oracle": "official-source",
@@ -23,25 +23,25 @@
       "officialSource": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "610abc37144fecde3fb4d2769667f8039adbf839e5c24be3b4b663132166ec69",
+        "stdoutSha256": "5b59462550d49a3eb379c8ff616df0077cb7ff3eea51f7c40d70760deb2b0f7e",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "officialGenerated": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "610abc37144fecde3fb4d2769667f8039adbf839e5c24be3b4b663132166ec69",
+        "stdoutSha256": "5b59462550d49a3eb379c8ff616df0077cb7ff3eea51f7c40d70760deb2b0f7e",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoRun": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "610abc37144fecde3fb4d2769667f8039adbf839e5c24be3b4b663132166ec69",
+        "stdoutSha256": "5b59462550d49a3eb379c8ff616df0077cb7ff3eea51f7c40d70760deb2b0f7e",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoNativeO0": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "610abc37144fecde3fb4d2769667f8039adbf839e5c24be3b4b663132166ec69",
+        "stdoutSha256": "5b59462550d49a3eb379c8ff616df0077cb7ff3eea51f7c40d70760deb2b0f7e",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       }
     }
@@ -63,23 +63,23 @@
     },
     "lnako": {
       "binarySha256": "497adbe25fb4c6720e3e81c2431ef8c02060918e05fa3f1e05dff03e35693c87",
-      "commit": "1fa32f59d66f8682b9b0eceb163c7d62154ab240",
+      "commit": "2d5b88570ed459b35191082ba4cffa13a0f9a813",
       "dirty": true
     },
     "raw": {
-      "interpreterTraceSha256": "891384d13909673df585a224661a430b2e4bbd28acca50460b70759958ccce51",
-      "aotTraceSha256": "61da28341184d09b8e662f3ebb07940cdab7bfdb3134d65f26c22c3a30545648",
-      "compileManifestSha256": "fb0c016a78aa81dc8b782d583648dbbdd741acadd11c1f8913f4a24b1087c8ae"
+      "interpreterTraceSha256": "eb81e6a9df38160f9275ea5c535e17f10d62ad52bfa21ba79b2b7fa49127ae58",
+      "aotTraceSha256": "783abfaea6e94326b5085fff7a1f98e373f5f5e3ec59920af3ec6f55e4f536d3",
+      "compileManifestSha256": "48525c9f972c09690dc51b79a11e142beb96434449911b2a6be3fd4d9bdc7ff0"
     }
   },
   "trace": {
     "interpreter": {
       "schema": 2,
-      "eventCount": 724
+      "eventCount": 726
     },
     "aot": {
       "schema": 2,
-      "eventCount": 1448
+      "eventCount": 1452
     }
   },
   "sites": [
@@ -16569,6 +16569,52 @@
         "aot": {
           "success": true,
           "callId": 723,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0070",
+      "name": "__DEBUG_BP_WAIT",
+      "plugin": "plugin_system",
+      "siteId": "0x00000006000002d5",
+      "sourceName": "__DEBUG_BP_WAIT",
+      "canonicalOpcode": "system_debug_breakpoint_wait",
+      "opcode": 327,
+      "route": "debug-breakpoint-wait",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 724,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x00000006000002d6",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 725,
           "count": 1
         }
       },
