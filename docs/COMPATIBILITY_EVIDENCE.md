@@ -5,9 +5,10 @@
 追跡中の証拠は、macOS arm64の単一実行環境で、明示fixture `native-cut-commands`についてcompile manifest、Interpreter/AOT trace、公式差分を
 同一fixture・siteで突き合わせられた一意名248 entryが`trace-confirmed-unattested`です（既存14命令に型変換系16命令、算術・比較系15命令、配列系12命令、文字列系21命令、論理・ビット・集約系20命令、表系14命令、数学系36命令、文字変換系4命令、置換系2命令、出現1命令、形式・文字種判定系7命令、値・状態系12命令、文字列合成・URL系12命令、JSON・要素数系9命令、幅変換系8命令、配列callback系4命令、配列構造系7命令、辞書・hash key系7命令、配列スタック・複製・連番系5命令、パス系5命令、礼節系6命令、動的実行系2命令、標準出力系6命令、デバッグ待機系1命令、デバッグ表示・配列シャッフル系2命令を加えた範囲）。追跡中のJSONにはattestationを記録しないため、ローカルの`verified`は0件で、残り279 entryが`unverified`です。
 
-AOT差分artifactとdispatch証拠は入力・実行物・結果のSHA-256を内包します。CIのmain push/workflow_dispatchでは、3正式OSのdispatch JSONを
-公式`actions/attest`のmulti-subject artifact attestationへ結び付け、公式`gh attestation verify`で署名、SLSA predicate、workflow identity、
-OIDC issuer、対象commit、3 OSのdigestを検証します。検証成功時だけCI一時出力のcatalog evidenceを`verified`として生成し、追跡中のmacOS単体JSONは変更しません。
+AOT差分artifactとdispatch証拠は入力・実行物・結果のSHA-256を内包します。各OS内では公式source・生成JavaScript・lnako run・AOT O0の
+stdout/stderr hashを一致させますが、OS間のdispatch意味比較では、パス区切りなどOS依存の出力hashを含めず、fixture・route結果状態・catalog/site構造を比較します。
+CIのmain push/workflow_dispatchでは、3正式OSのdispatch JSONを公式`actions/attest`のmulti-subject artifact attestationへ結び付け、公式`gh attestation verify`で
+署名、SLSA predicate、workflow identity、OIDC issuer、対象commit、3 OSのdigestを検証します。検証成功時だけCI一時出力のcatalog evidenceを`verified`として生成し、追跡中のmacOS単体JSONは変更しません。
 未attest、fork PR、権限不足、対象commit・workflow・digest不一致では`trace-confirmed-unattested`のまま昇格しません。
 
 ### 外部成果物の履歴固定

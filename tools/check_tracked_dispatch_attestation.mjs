@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { platformIndependentOfficialComparison } from "./dispatch_evidence_semantics.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const defaultDirectory = resolve(root, "compat/v3.7.24/attestations/32983175945");
@@ -246,7 +247,7 @@ function dispatchSiteSummary(subjects) {
   let semantic = null;
   for (const subject of subjects.values()) {
     const evidence = subject.evidence;
-    const currentSemantic = JSON.stringify({ baseline: evidence.baseline, fixture: evidence.fixture, officialComparison: evidence.officialComparison, sites: evidence.sites, trace: evidence.trace });
+    const currentSemantic = JSON.stringify({ baseline: evidence.baseline, fixture: evidence.fixture, officialComparison: platformIndependentOfficialComparison(evidence.officialComparison), sites: evidence.sites, trace: evidence.trace });
     if (semantic === null) semantic = currentSemantic;
     else if (semantic !== currentSemantic) throw new Error("3 OSのdispatch evidence意味内容が一致しません");
     for (const site of evidence.sites) {

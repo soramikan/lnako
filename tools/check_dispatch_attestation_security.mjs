@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { platformIndependentOfficialComparison } from "./dispatch_evidence_semantics.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const temporary = await mkdtemp(join(tmpdir(), "lnako-attestation-security-"));
@@ -22,6 +23,11 @@ try {
   await writeFile(bundlePath, bundleBytes, { flag: "wx" });
 
   const evidenceSha256 = sha256(evidenceBytes);
+  const platformVariant = structuredClone(evidence);
+  for (const result of Object.values(platformVariant.officialComparison.results)) result.stdoutSha256 = result.stdoutSha256 === "0".repeat(64) ? "1".repeat(64) : "0".repeat(64);
+  if (JSON.stringify(platformIndependentOfficialComparison(evidence.officialComparison)) !== JSON.stringify(platformIndependentOfficialComparison(platformVariant.officialComparison))) {
+    throw new Error("OS依存の公式出力hashをcross-OS dispatch意味比較へ混入させています");
+  }
   const currentPlatform = `${evidence.provenance.environment.platform}-${evidence.provenance.environment.arch}`;
   const subjects = [
     { platform: "darwin", arch: "arm64", evidenceSha256: currentPlatform === "darwin-arm64" ? evidenceSha256 : "0".repeat(64) },
@@ -52,7 +58,7 @@ try {
   assertRejected(forged, "公式gh attestation verifyに失敗しました", "偽造bundle");
   await assertAbsent(forgedOutput);
 
-  console.log("dispatch attestation安全性検査: metadata単体と偽造bundleを拒否");
+  console.log("dispatch attestation安全性検査: metadata単体・偽造bundle・OS依存出力hashのcross-OS除外を検査");
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }

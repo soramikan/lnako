@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { access, readdir, readFile, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { isAbsolute, resolve } from "node:path";
+import { platformIndependentOfficialComparison } from "./dispatch_evidence_semantics.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const args = process.argv.slice(2);
@@ -50,7 +51,7 @@ for (const file of files) {
   const semantic = JSON.stringify({
     baseline: evidence.baseline,
     fixture: evidence.fixture,
-    officialComparison: evidence.officialComparison,
+    officialComparison: platformIndependentOfficialComparison(evidence.officialComparison),
     sites: evidence.sites.map((site) => ({
       catalogId: site.catalogId,
       name: site.name,
