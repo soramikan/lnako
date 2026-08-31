@@ -1,7 +1,7 @@
 import { link, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
 
@@ -34,8 +34,23 @@ const catalog = JSON.parse(await readFile(resolve(root, "compat/v3.7.24/standard
 if (catalog.commandCount !== 527 || catalog.commands.length !== 527) throw new Error("標準cnakoカタログが527 entryではありません");
 const catalogByName = Map.groupBy(catalog.commands, (command) => command.name);
 const cases = JSON.parse(await readFile(resolve(root, "tests/oracle/native-cases.json"), "utf8"));
-const fixture = cases.find((candidate) => candidate.id === "native-cut-commands");
-if (fixture === undefined) throw new Error("dispatch trace用fixtureがありません: native-cut-commands");
+const fixtureBase = cases.find((candidate) => candidate.id === "native-cut-commands");
+if (fixtureBase === undefined) throw new Error("dispatch trace用fixtureがありません: native-cut-commands");
+const dispatchFixtureIds = fixtureBase.dispatchFixtureIds ?? [fixtureBase.id];
+if (!Array.isArray(dispatchFixtureIds) || dispatchFixtureIds.length === 0 || dispatchFixtureIds[0] !== fixtureBase.id || new Set(dispatchFixtureIds).size !== dispatchFixtureIds.length || dispatchFixtureIds.some((id) => typeof id !== "string" || id.length === 0)) {
+  throw new Error("dispatch trace用fixtureのdispatchFixtureIdsが不正です");
+}
+const dispatchFixtures = dispatchFixtureIds.map((id) => {
+  const candidate = cases.find((fixture) => fixture.id === id);
+  if (candidate === undefined || typeof candidate.source !== "string") throw new Error(`dispatch trace用fixtureがありません: ${id}`);
+  if (id !== fixtureBase.id && !Array.isArray(candidate.commands)) throw new Error(`dispatch trace用fixtureにcommandsがありません: ${id}`);
+  return candidate;
+});
+const fixture = {
+  ...fixtureBase,
+  commands: [...new Set(dispatchFixtures.flatMap((candidate) => candidate.commands ?? []))],
+  source: dispatchFixtures.map((candidate) => candidate.source).join("\n"),
+};
 const nodeCases = JSON.parse(await readFile(resolve(root, "tests/oracle/node-file-cases.json"), "utf8"));
 const nodeFixture = nodeCases.find((candidate) => candidate.id === "plugin-node-path-host");
 if (nodeFixture === undefined) throw new Error("Node route trace用fixtureがありません: plugin-node-path-host");
@@ -50,7 +65,7 @@ try {
   const compileManifest = resolve(temporary, "compile-manifest.jsonl");
   const nodeSource = resolve(temporary, "node-route.nako3");
   const nodeTrace = resolve(temporary, "node-route.jsonl");
-  await writeFile(source, fixture.source, "utf8");
+  await writeFile(source, expandPluginImports(fixture.source, temporary), "utf8");
   await writeFile(nodeSource, nodeFixture.source, "utf8");
 
   const baseEnvironment = { ...process.env, TZ: "Asia/Tokyo" };
@@ -156,6 +171,18 @@ function buildCompiler() {
 
 function run(command, arguments_, env, cwd) {
   return spawnSync(command, arguments_, { cwd, env, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+}
+
+function expandPluginImports(source, fixtureDirectory) {
+  const oracleRoot = resolve(process.env.NADESIKO3_ORACLE ?? resolve(root, ".cache/oracle/nadesiko3-3.7.24"));
+  const replacements = {
+    "${PLUGIN_CANIUSE}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_caniuse.mjs")).replaceAll("\\", "/"),
+    "${PLUGIN_KANSUJI}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_kansuji.mjs")).replaceAll("\\", "/"),
+    "${PLUGIN_MARKUP}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_markup.mjs")).replaceAll("\\", "/"),
+    "${PLUGIN_CSV}": relative(fixtureDirectory, resolve(oracleRoot, "core/src/plugin_csv.mjs")).replaceAll("\\", "/"),
+    "${PLUGIN_TOML}": relative(fixtureDirectory, resolve(oracleRoot, "core/src/plugin_toml.mjs")).replaceAll("\\", "/"),
+  };
+  return Object.entries(replacements).reduce((expanded, [placeholder, path]) => expanded.replaceAll(placeholder, path), source);
 }
 
 function assertSuccess(label, result) {
