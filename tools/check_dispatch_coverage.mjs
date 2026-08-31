@@ -373,7 +373,15 @@ function fixedEnvironment() {
   };
   const nodeDirectory = dirname(process.execPath);
   const pathSeparator = process.platform === "win32" ? ";" : ":";
-  environment.PATH = `${nodeDirectory}${pathSeparator}${environment.PATH ?? ""}`;
+  if (process.platform === "win32") {
+    // Windows runners commonly expose the search path as `Path`, not `PATH`.
+    // Preserve that key so System32 remains available for cmd.exe and other
+    // host commands used by the Node process fixtures.
+    environment.Path = `${nodeDirectory}${pathSeparator}${environment.Path ?? environment.PATH ?? ""}`;
+    delete environment.PATH;
+  } else {
+    environment.PATH = `${nodeDirectory}${pathSeparator}${environment.PATH ?? ""}`;
+  }
   delete environment.LNAKO_DISPATCH_TRACE;
   delete environment.LNAKO_COMPILE_MANIFEST;
   return environment;
