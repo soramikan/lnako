@@ -90,10 +90,13 @@ TargetMachineによるオブジェクト生成、LLD 22.1.8によるリンクを
 
 AOTのbyte bufferは、Buffer・Uint8Array・ArrayBufferの直接property参照、Bufferの`parent`・`offset`、
 標準prototype methodの関数値を解決します。標準prototypeの代表的な`__proto__`・constructor・method値は
-prototype familyごとにidentityを共有します。Bufferから取り出した`slice`関数を後から呼ぶと、公式生成JavaScriptと同じく
+prototype familyごとにidentityを共有し、Buffer・Uint8Array・ArrayBufferの`__proto__ = NULL`では標準propertyを
+遮断しながら数値添字とown propertyを維持します。custom prototypeの直接property、継承`length`、標準prototypeを
+遮断する境界も実装済みです。Bufferから取り出した`slice`関数を後から呼ぶと、公式生成JavaScriptと同じく
 receiver未束縛の実行時エラーになります。receiverを保持した成功呼出し、残るprototype methodの実装、property descriptor、
-custom prototypeは`TODO: aot-byte-buffer-value`に記録し、
-`native-system-byte-buffer-direct-properties`と`native-system-byte-buffer-method-calls`で境界を比較します。
+完全なview identityとcustom prototype semanticsは`TODO: aot-byte-buffer-value`に記録し、
+`native-system-byte-buffer-direct-properties`、`native-system-byte-buffer-null-prototype`、
+`native-system-byte-buffer-method-calls`で境界を比較します。
 Nodeの`ファイル名抽出`・`パス抽出`・`絶対パス変換`・`相対パス展開`は、非文字列入力を暗黙に文字列化せず、Node 24の引数ラベルと`TypeError`の`Received`文面へ変換します。nullish・number・boolean・BigInt・Array・Object・function・Buffer・Uint8Array・ArrayBufferを`native-node-path-type-errors`で公式CLI・生成JavaScript・Interpreter・LLVM AOT O0〜O3と比較します。Windows namespace path、特殊なUNC形式、非UTF-8 path値など残る境界は`COMPATIBILITY_QUIRKS.md`のTODOへ分離します。
 
 現段階のAOT対応は、数値・真偽値・null・NULを含むUTF-16文字列・配列と辞書を含む`&`文字列連結、辞書のown/prototypeおよび配列のownカスタム`toString` / `valueOf`を使う文字列・数値hintのToPrimitive、配列カスタムソートの64要素未満のrun判定・binary insertionと64要素以上のV8 TimSort（run stack・gallop・stable merge）の比較順へ接続、幅変換命令の辞書・prototypeカスタム`substring` / `charAt` / `split`呼出し、BigInt定数・加減乗除・剰余・冪乗・シフト・動的値の抽象等価・厳密等価・関係比較・真偽判定、変数・増減文、数値演算・比較、条件・while・後判定・条件分岐、直接関数呼び出しと関数値呼び出し、捕捉ありクロージャ、エラー監視と例外伝播、
