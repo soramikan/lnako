@@ -162,7 +162,8 @@ dirty=trueの場合は未コミット差分の内容までは証明しないた�
 これは単一環境のunattested証拠であり、3環境の互換性や署名済みverified証拠を意味しません。
 
 `tools/check_dispatch_coverage.mjs`は、既存のcanonical dispatch証拠を変更せずに、命令系統別の到達範囲を監査します。
-plugin-system・system-runtime・standard-plugin・supplemental-pluginの命令関連fixtureと`native-cut-commands`を対象に、
+plugin-system・system-runtime・standard-plugin・supplemental-pluginの命令関連fixture、Nodeプロセス／ファイルcallbackのAOT成功fixture、
+および`native-cut-commands`を対象に、
 公式source、実行可能な公式生成JavaScript、Interpreter、AOT O0を比較し、traceの成功siteとcompile manifestの対応を確認します。
 この監査が命令関連付けとして数えるのは、AOT成功result、Interpreter成功result、site ID、opcode、route、catalog IDが揃う一意なsiteだけです。
 `fixture.commands`に名前があるだけ、定数を読み出しただけ、同名異pluginをrouteだけで推定しただけのentryは実行証拠へ数えず、
@@ -176,9 +177,11 @@ plugin-system・system-runtime・standard-plugin・supplemental-pluginの命令�
 node tools/check_dispatch_coverage.mjs --no-build --output /absolute/path/dispatch-coverage.json
 ```
 
-既定の監査はCI時間を抑えるため26 fixtureを対象にします。標準命令の実行siteを広げて監査する場合は、
-`--include-native`を追加すると、`native-cases.json`のcommand-bearing全200件（既定の`native-cut-commands`を除く199件）を候補に加えます。
-意図的なエラー・プロセス終了・standalone host境界の29件は成功経路の監査から除外し、合計196 fixtureを検査します。
+既定の監査はCI時間を抑えるため30 fixtureを対象にします（Nodeプロセス／ファイルcallbackのAOT成功fixtureを含みます）。標準命令の実行siteを広げて監査する場合は、
+`--include-native`を追加すると、`native-cases.json`のcommand-bearing全200件（既定の`native-cut-commands`を除く追加候補199件）を候補に加えます。
+このうちnative側の意図的なエラー・プロセス終了29件と、Nodeの外部host／圧縮toolを使うfixtureは`excludedFixtures`へ理由付きで残したまま成功経路から除外します。
+`native-cut-commands`は既定範囲に含まれるため、追加されるnative成功fixtureは170件となり、合計200 fixtureを検査します。
+ファイルを生成・変更するfixtureだけrouteごとの作業ディレクトリを分離し、カレントディレクトリや母艦パスを観測するfixtureは全routeで同じ作業ディレクトリとsource pathを使います。
 この拡張監査もcanonical evidenceや`verified`昇格の代わりではなく、出力JSONの`fixtureSelection`と`excludedFixtures`へ対象範囲を記録します。
 
 CIのAOT suiteは3正式OSごとにこのレポートを`lnako-dispatch-coverage-*` artifactへ保存します。artifactの保存は到達範囲の追跡用であり、

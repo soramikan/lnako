@@ -18,6 +18,8 @@ if (catalog.commandCount !== 527 || !Array.isArray(catalog.commands) || catalog.
 }
 const catalogByName = Map.groupBy(catalog.commands, (command) => command.name);
 const nativeDispatchCoverageExclusions = new Map([
+  ["node-file-cases.json/plugin-node-host-open-external", "外部アプリケーション起動を伴うため、dispatch監査では実行せずNodeホスト差分テストへ分離する"],
+  ["node-native-cases.json/plugin-node-native-archive", "公式生成JavaScriptが外部7z実行ファイルを必要とするため、既存のNodeネイティブZIPスモークテストへ分離する"],
   ["native-cases.json/native-uncaught-exception", "公式生成JavaScriptが意図的な未捕捉例外で終了するため、成功経路のdispatch監査から除外する"],
   ["native-cases.json/native-system-width-half-uncaught-error", "公式生成JavaScriptが意図的な未捕捉例外で終了するため、成功経路のdispatch監査から除外する"],
   ["native-cases.json/native-node-line-message-discontinued", "公式生成JavaScriptが意図的な廃止命令エラーで終了するため、成功経路のdispatch監査から除外する"],
@@ -72,6 +74,22 @@ const compiler = resolve(root, "zig-out/bin", process.platform === "win32" ? "ln
 const fixedHost = resolve(root, "tools/oracle/fixed_host.mjs");
 const normalizedDebugHost = resolve(root, "tools/oracle/normalize_debug_host.mjs");
 const maxBuffer = 32 * 1024 * 1024;
+const fixtureStateMutationCommands = new Set([
+  "保存",
+  "SJISファイル保存",
+  "EUCファイル保存",
+  "ファイルコピー",
+  "ファイル上書コピー",
+  "ファイル移動",
+  "ファイル上書移動",
+  "ファイル削除",
+  "フォルダ作成",
+  "一時フォルダ作成",
+  "圧縮",
+  "解凍",
+  "ファイル処理時",
+  "ファイル処理強制停止",
+]);
 
 if (arguments_.output !== null) await assertOutputDoesNotExist(arguments_.output);
 if (!arguments_.noBuild) buildCompiler();
@@ -135,6 +153,8 @@ async function loadSelectedFixtures() {
     { file: "system-runtime-cases.json", selection: (testCase) => testCase.commands?.length > 0 && testCase.expectedFailure !== true },
     { file: "standard-plugin-cases.json", selection: (testCase) => testCase.commands?.length > 0 && testCase.expectedFailure !== true },
     { file: "supplemental-plugin-cases.json", selection: (testCase) => testCase.commands?.length > 0 && testCase.expectedFailure !== true },
+    { file: "node-file-cases.json", selection: (testCase) => testCase.aot === true && testCase.commands?.length > 0 && testCase.expectError !== true },
+    { file: "node-native-cases.json", selection: (testCase) => testCase.aot === true && testCase.commands?.length > 0 && testCase.expectError !== true },
     { file: "native-cases.json", selection: (testCase) => testCase.id === "native-cut-commands" },
   ];
   if (arguments_.includeNative) {
@@ -154,7 +174,7 @@ async function loadSelectedFixtures() {
       fixtures.push({ file: specification.file, ...testCase });
     }
   }
-  const expectedFixtureCount = arguments_.includeNative ? 196 : 26;
+  const expectedFixtureCount = arguments_.includeNative ? 200 : 30;
   if (fixtures.length !== expectedFixtureCount) throw new Error(`dispatch coverageのfixture数が想定外です: ${fixtures.length}`);
   return fixtures;
 }
@@ -174,60 +194,96 @@ function validateFixture(testCase, file) {
     throw new Error(`fixtureのsourceFileNameが不正です: ${file}/${testCase.id}`);
   }
   if (testCase.stdin !== undefined && typeof testCase.stdin !== "string") throw new Error(`fixtureのstdinが不正です: ${file}/${testCase.id}`);
+  if (testCase.files !== undefined) {
+    if (testCase.files === null || typeof testCase.files !== "object" || Array.isArray(testCase.files)) {
+      throw new Error(`fixtureのfilesが不正です: ${file}/${testCase.id}`);
+    }
+    for (const [name, contents] of Object.entries(testCase.files)) {
+      if (name.length === 0 || name === "." || name === ".." || name.includes("/") || name.includes("\\") ||
+          typeof contents !== "string") {
+        throw new Error(`fixtureのfilesが不正です: ${file}/${testCase.id}/${name}`);
+      }
+    }
+  }
 }
 
 async function runFixture(fixture, index, temporary) {
   const fixtureDirectory = resolve(temporary, `${String(index).padStart(2, "0")}-${fixture.id}`);
   await mkdir(fixtureDirectory);
   const stem = `${String(index).padStart(2, "0")}-${fixture.id}`;
-  const sourcePath = resolve(fixtureDirectory, fixture.sourceFileName ?? `${stem}.nako3`);
-  const generatedPath = resolve(fixtureDirectory, `${stem}.mjs`);
-  const nativePath = resolve(fixtureDirectory, `${stem}${process.platform === "win32" ? ".exe" : ""}`);
-  const interpreterTracePath = resolve(fixtureDirectory, "interpreter.jsonl");
-  const aotTracePath = resolve(fixtureDirectory, "aot.jsonl");
-  const manifestPath = resolve(fixtureDirectory, "compile-manifest.jsonl");
+  const isolated = requiresIsolatedFixtureState(fixture);
+  const routeDirectory = (name) => isolated ? resolve(fixtureDirectory, name) : fixtureDirectory;
+  const officialSourceDirectory = routeDirectory("official-source");
+  const officialGeneratedDirectory = routeDirectory("official-generated");
+  const interpreterTraceDirectory = routeDirectory("interpreter-trace");
+  const interpreterNoTraceDirectory = routeDirectory("interpreter-no-trace");
+  const aotTraceDirectory = routeDirectory("aot-trace");
+  const aotNoTraceDirectory = routeDirectory("aot-no-trace");
+  const routeDirectories = [
+    officialSourceDirectory,
+    officialGeneratedDirectory,
+    interpreterTraceDirectory,
+    interpreterNoTraceDirectory,
+    aotTraceDirectory,
+    aotNoTraceDirectory,
+  ];
+  await Promise.all([...new Set(routeDirectories)].map((directory) => mkdir(directory, { recursive: true })));
+  const sourceName = fixture.sourceFileName ?? `${stem}.nako3`;
+  const officialSourcePath = resolve(officialSourceDirectory, sourceName);
+  const officialGeneratedSourcePath = resolve(officialGeneratedDirectory, sourceName);
+  const interpreterTraceSourcePath = resolve(interpreterTraceDirectory, sourceName);
+  const interpreterNoTraceSourcePath = resolve(interpreterNoTraceDirectory, sourceName);
+  const aotSourcePath = resolve(aotTraceDirectory, sourceName);
+  const generatedPath = resolve(officialGeneratedDirectory, `${stem}.mjs`);
+  const nativePath = resolve(aotTraceDirectory, `${stem}${process.platform === "win32" ? ".exe" : ""}`);
+  const interpreterTracePath = resolve(interpreterTraceDirectory, "interpreter.jsonl");
+  const aotTracePath = resolve(aotTraceDirectory, "aot.jsonl");
+  const manifestPath = resolve(aotTraceDirectory, "compile-manifest.jsonl");
   const sourceSha256 = sha256(fixture.source);
-  const source = replacePluginPlaceholders(fixture.source, fixtureDirectory);
-  await writeFile(sourcePath, source, "utf8");
+  await Promise.all([...new Set(routeDirectories)].map(async (directory) => {
+    const source = replacePluginPlaceholders(fixture.source, directory);
+    for (const [name, contents] of Object.entries(fixture.files ?? {})) await writeFile(resolve(directory, name), contents, "utf8");
+    await writeFile(resolve(directory, sourceName), source, "utf8");
+  }));
 
   const baseEnvironment = fixedEnvironment();
   const runOptions = fixture.stdin === undefined ? {} : { input: fixture.stdin };
   const oracleHost = fixture.normalizeDebugDump === true ? normalizedDebugHost : fixedHost;
   const oracleHostArguments = ["--import", pathToFileURL(oracleHost).href];
-  const officialSource = run(process.execPath, [...oracleHostArguments, resolve(oracleRoot, "src/cnako3.mjs"), sourcePath], baseEnvironment, fixtureDirectory, runOptions);
+  const officialSource = run(process.execPath, [...oracleHostArguments, resolve(oracleRoot, "src/cnako3.mjs"), officialSourcePath], baseEnvironment, officialSourceDirectory, runOptions);
   assertSuccess(`${fixture.file}/${fixture.id} 公式source`, officialSource);
   const officialCompile = run(
     process.execPath,
-    [...oracleHostArguments, resolve(oracleRoot, "src/cnako3.mjs"), "--compile", "--silent", "--output", generatedPath, sourcePath],
+    [...oracleHostArguments, resolve(oracleRoot, "src/cnako3.mjs"), "--compile", "--silent", "--output", generatedPath, officialGeneratedSourcePath],
     baseEnvironment,
-    fixtureDirectory,
+    officialGeneratedDirectory,
   );
   assertSuccess(`${fixture.file}/${fixture.id} 公式JavaScript生成`, officialCompile);
-  const officialGenerated = run(process.execPath, [...oracleHostArguments, generatedPath], baseEnvironment, fixtureDirectory, runOptions);
+  const officialGenerated = run(process.execPath, [...oracleHostArguments, generatedPath], baseEnvironment, officialGeneratedDirectory, runOptions);
   const generatedRouteUnavailable = isKnownGeneratedRouteUnavailable(fixture);
   if (generatedRouteUnavailable && officialGenerated.status !== 0 && officialGenerated.status !== 1) {
     throw new Error(`${fixture.file}/${fixture.id} 公式生成JavaScriptの既知gapと異なる終了状態です: ${officialGenerated.status}`);
   }
   if (!generatedRouteUnavailable) assertSuccess(`${fixture.file}/${fixture.id} 公式生成JavaScript`, officialGenerated);
 
-  const interpreter = run(compiler, ["run", sourcePath], { ...baseEnvironment, LNAKO_DISPATCH_TRACE: interpreterTracePath }, fixtureDirectory, runOptions);
+  const interpreter = run(compiler, ["run", interpreterTraceSourcePath], { ...baseEnvironment, LNAKO_DISPATCH_TRACE: interpreterTracePath }, interpreterTraceDirectory, runOptions);
   assertSuccess(`${fixture.file}/${fixture.id} Interpreter`, interpreter);
-  const interpreterWithoutTrace = run(compiler, ["run", sourcePath], baseEnvironment, fixtureDirectory, runOptions);
+  const interpreterWithoutTrace = run(compiler, ["run", interpreterNoTraceSourcePath], baseEnvironment, interpreterNoTraceDirectory, runOptions);
   assertSuccess(`${fixture.file}/${fixture.id} Interpreter trace無効`, interpreterWithoutTrace);
   assertEquivalent(`${fixture.file}/${fixture.id} Interpreter trace`, interpreterWithoutTrace, interpreter);
   const interpreterTrace = await readInterpreterTrace(interpreterTracePath, fixture);
 
   const compile = run(
     compiler,
-    ["build", sourcePath, "-o", nativePath, "-O0"],
+    ["build", aotSourcePath, "-o", nativePath, "-O0"],
     { ...baseEnvironment, LNAKO_COMPILE_MANIFEST: manifestPath },
-    fixtureDirectory,
+    aotTraceDirectory,
   );
   assertSuccess(`${fixture.file}/${fixture.id} AOT O0コンパイル`, compile);
-  const manifest = await readCompileManifest(manifestPath, sourcePath, fixture);
-  const aot = run(nativePath, [], { ...baseEnvironment, LNAKO_DISPATCH_TRACE: aotTracePath }, fixtureDirectory, runOptions);
+  const manifest = await readCompileManifest(manifestPath, aotSourcePath, fixture);
+  const aot = run(nativePath, [], { ...baseEnvironment, LNAKO_DISPATCH_TRACE: aotTracePath }, aotTraceDirectory, runOptions);
   assertSuccess(`${fixture.file}/${fixture.id} AOT O0`, aot);
-  const aotWithoutTrace = run(nativePath, [], baseEnvironment, fixtureDirectory, runOptions);
+  const aotWithoutTrace = run(nativePath, [], baseEnvironment, aotNoTraceDirectory, runOptions);
   assertSuccess(`${fixture.file}/${fixture.id} AOT O0 trace無効`, aotWithoutTrace);
   assertEquivalent(`${fixture.file}/${fixture.id} AOT trace`, aotWithoutTrace, aot);
   const aotTrace = await readAotTrace(aotTracePath, fixture, manifest.entries);
@@ -288,6 +344,14 @@ async function runFixture(fixture, index, temporary) {
   };
 }
 
+function requiresIsolatedFixtureState(fixture) {
+  // Path-observing fixtures must see the same cwd and source path on every
+  // route. Only fixtures that create or mutate shared files need per-route
+  // directories; each process already has isolated process-local state.
+  if (Object.keys(fixture.files ?? {}).length > 0) return true;
+  return fixture.commands.some((name) => fixtureStateMutationCommands.has(name));
+}
+
 function isKnownGeneratedRouteUnavailable(fixture) {
   // Some fixtures use official plugin modules or the system async host. The
   // standalone generated file does not always carry the CLI's host/plugin
@@ -304,8 +368,12 @@ function fixedEnvironment() {
     LNAKO_TEST_NOW_MS: "1735689845678",
     LNAKO_TEST_MONOTONIC_MS: "123.5",
     LNAKO_TEST_RANDOM_SEED: "5573589319906701683",
+    LNAKO_NODE_TEST: "fixed-value",
     NAKO3_DISABLE_NEW_CONSOLE: "1",
   };
+  const nodeDirectory = dirname(process.execPath);
+  const pathSeparator = process.platform === "win32" ? ";" : ":";
+  environment.PATH = `${nodeDirectory}${pathSeparator}${environment.PATH ?? ""}`;
   delete environment.LNAKO_DISPATCH_TRACE;
   delete environment.LNAKO_COMPILE_MANIFEST;
   return environment;
