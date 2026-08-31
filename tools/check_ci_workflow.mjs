@@ -59,18 +59,26 @@ if (macosMatrixEntries.length !== 5 || macosMatrixEntries.filter((entry) => entr
 }
 const nativeAotMatrixEntries = matrixEntries.filter((entry) => entry.suite === "aot-native");
 const supportAotMatrixEntries = matrixEntries.filter((entry) => entry.suite === "aot-support");
-if (nativeAotMatrixEntries.length !== 9 || supportAotMatrixEntries.length !== 3) {
+const nativeShardCounts = new Map([
+  ["Linux x86_64", 6],
+  ["macOS arm64", 3],
+  ["Windows x86_64", 6],
+]);
+if (nativeAotMatrixEntries.length !== 15 || supportAotMatrixEntries.length !== 3) {
   throw new Error(`AOT job分割数が不正です: native=${nativeAotMatrixEntries.length} support=${supportAotMatrixEntries.length}`);
 }
-if (matrixEntries.length !== 21) throw new Error(`CI matrixの実job数が不正です: actual=${matrixEntries.length}`);
+if (matrixEntries.length !== 27) throw new Error(`CI matrixの実job数が不正です: actual=${matrixEntries.length}`);
 const nativeAotJob = workflow.match(/  aot:[\s\S]*?(?=\n  attest-dispatch-evidence:)/)?.[0];
 if (!nativeAotJob) throw new Error("分割AOT jobがありません");
 const nativeShardRows = [...nativeAotJob.matchAll(/^          - name: (.+)\n            os: (.+)\n            suite: aot-native\n            task: native\n            shardIndex: (\d+)\n            shardCount: (\d+)\n            jobName: (.+)$/gm)]
   .map((match) => ({ name: match[1], os: match[2], index: Number(match[3]), count: Number(match[4]), jobName: match[5] }));
 const supportRows = [...nativeAotJob.matchAll(/^          - name: (.+)\n            os: (.+)\n            suite: aot-support\n            task: support\n            jobName: (.+)$/gm)]
   .map((match) => ({ name: match[1], os: match[2], jobName: match[3] }));
-if (nativeShardRows.length !== 9 || supportRows.length !== 3 || nativeShardRows.some((row) => row.count !== 3 || ![0, 1, 2].includes(row.index)) ||
-    new Set(nativeShardRows.map((row) => `${row.name}\0${row.os}\0${row.index}`)).size !== 9 ||
+if (nativeShardRows.length !== 15 || supportRows.length !== 3 || nativeShardRows.some((row) => {
+  const expectedCount = nativeShardCounts.get(row.name);
+  return expectedCount === undefined || row.count !== expectedCount || row.index < 0 || row.index >= expectedCount || row.jobName !== `AOT native shard ${row.index + 1}/${expectedCount}`;
+}) ||
+    new Set(nativeShardRows.map((row) => `${row.name}\0${row.os}\0${row.index}`)).size !== 15 ||
     new Set(supportRows.map((row) => `${row.name}\0${row.os}`)).size !== 3) {
   throw new Error("AOT native/support jobのOS別shard matrixが不正です");
 }
@@ -141,8 +149,7 @@ if (!nativeOracleScript.includes("const shard = parseShard();") || !nativeOracle
 }
 const supportStepNames = [
   "Differential HTTP server AOT oracle",
-  "Dispatch evidence audit",
-  "Dispatch coverage audit",
+  "Dispatch evidence/coverage audit",
   "Dispatch trace security audit",
   "Build ReleaseSafe compiler",
   "Normal smoke test",
@@ -153,13 +160,12 @@ for (const name of supportStepNames) {
 }
 const httpAotBlock = aotStep("Differential HTTP server AOT oracle");
 if (!httpAotBlock.includes("node tools/compare_http_server_aot_oracle.mjs --no-build")) throw new Error("AOT HTTP server比較のno-build実装がありません");
-const dispatchEvidenceBlock = aotStep("Dispatch evidence audit");
-const dispatchCoverageBlock = aotStep("Dispatch coverage audit");
+const dispatchAuditsBlock = aotStep("Dispatch evidence/coverage audit");
 const dispatchSecurityBlock = aotStep("Dispatch trace security audit");
-if (!dispatchEvidenceBlock.includes("node tools/check_dispatch_trace.mjs") || !dispatchEvidenceBlock.includes("--evidence-output") ||
-    !dispatchCoverageBlock.includes("node tools/check_dispatch_coverage.mjs") || !dispatchCoverageBlock.includes("--output") ||
+if (!dispatchAuditsBlock.includes("node tools/check_dispatch_audits_parallel.mjs") || !dispatchAuditsBlock.includes("--evidence-output") ||
+    !dispatchAuditsBlock.includes("--coverage-output") ||
     !dispatchSecurityBlock.includes("node tools/check_dispatch_trace_security.mjs --no-build")) {
-  throw new Error("dispatch evidence、coverage、securityの分割AOT検査が不完全です");
+  throw new Error("dispatch evidence/coverageの並列監査またはsecurity検査が不完全です");
 }
 if (!httpAotScript.includes("if (!noBuild) buildLnako();") || !httpAotScript.includes("else await access(executable);")) {
   throw new Error("AOT HTTPサーバー比較のno-build実装がありません");
@@ -189,7 +195,7 @@ if (!nativeUpload || !nativeUpload.includes("if: matrix.task == 'native' && alwa
 }
 if (nativeUpload.includes("run:")) throw new Error("AOT shard artifact uploadで追加の検証コマンドを実行しないでください");
 const uploadActions = workflow.match(/^        uses: actions\/upload-artifact@/gm) ?? [];
-if (uploadActions.length !== 4 || (nativeAotJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 3) throw new Error(`actions/upload-artifactはAOT 3＋attestation 1ステップ必要です: actual=${uploadActions.length}`);
+if (uploadActions.length !== 4 || (nativeAotJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 3) throw new Error(`actions/upload-artifactはAOT artifact 3＋attestation 1ステップ必要です: actual=${uploadActions.length}`);
 const dispatchUploadBlock = aotStep("Upload native dispatch evidence");
 if (!dispatchUploadBlock || !dispatchUploadBlock.includes("if: matrix.task == 'support' && always()") ||
     !dispatchUploadBlock.includes("name: lnako-dispatch-evidence-") || !dispatchUploadBlock.includes("dispatch-evidence-") ||

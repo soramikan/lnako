@@ -195,22 +195,43 @@ jobs:
             suite: aot-native
             task: native
             shardIndex: 0
-            shardCount: 3
-            jobName: AOT native shard 1/3
+            shardCount: 6
+            jobName: AOT native shard 1/6
           - name: Linux x86_64
             os: ubuntu-24.04
             suite: aot-native
             task: native
             shardIndex: 1
-            shardCount: 3
-            jobName: AOT native shard 2/3
+            shardCount: 6
+            jobName: AOT native shard 2/6
           - name: Linux x86_64
             os: ubuntu-24.04
             suite: aot-native
             task: native
             shardIndex: 2
-            shardCount: 3
-            jobName: AOT native shard 3/3
+            shardCount: 6
+            jobName: AOT native shard 3/6
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-native
+            task: native
+            shardIndex: 3
+            shardCount: 6
+            jobName: AOT native shard 4/6
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-native
+            task: native
+            shardIndex: 4
+            shardCount: 6
+            jobName: AOT native shard 5/6
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-native
+            task: native
+            shardIndex: 5
+            shardCount: 6
+            jobName: AOT native shard 6/6
           - name: macOS arm64
             os: macos-15
             suite: aot-native
@@ -237,22 +258,43 @@ jobs:
             suite: aot-native
             task: native
             shardIndex: 0
-            shardCount: 3
-            jobName: AOT native shard 1/3
+            shardCount: 6
+            jobName: AOT native shard 1/6
           - name: Windows x86_64
             os: windows-2025
             suite: aot-native
             task: native
             shardIndex: 1
-            shardCount: 3
-            jobName: AOT native shard 2/3
+            shardCount: 6
+            jobName: AOT native shard 2/6
           - name: Windows x86_64
             os: windows-2025
             suite: aot-native
             task: native
             shardIndex: 2
-            shardCount: 3
-            jobName: AOT native shard 3/3
+            shardCount: 6
+            jobName: AOT native shard 3/6
+          - name: Windows x86_64
+            os: windows-2025
+            suite: aot-native
+            task: native
+            shardIndex: 3
+            shardCount: 6
+            jobName: AOT native shard 4/6
+          - name: Windows x86_64
+            os: windows-2025
+            suite: aot-native
+            task: native
+            shardIndex: 4
+            shardCount: 6
+            jobName: AOT native shard 5/6
+          - name: Windows x86_64
+            os: windows-2025
+            suite: aot-native
+            task: native
+            shardIndex: 5
+            shardCount: 6
+            jobName: AOT native shard 6/6
           - name: Linux x86_64
             os: ubuntu-24.04
             suite: aot-support
@@ -319,18 +361,12 @@ jobs:
       - name: Differential HTTP server AOT oracle
         if: matrix.task == 'support'
         run: node tools/compare_http_server_aot_oracle.mjs --no-build
-      - name: Dispatch evidence audit
+      - name: Dispatch evidence/coverage audit
         if: matrix.task == 'support'
         run: >
-          node tools/check_dispatch_trace.mjs
-          --no-build
+          node tools/check_dispatch_audits_parallel.mjs
           --evidence-output "${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json"
-      - name: Dispatch coverage audit
-        if: matrix.task == 'support'
-        run: >
-          node tools/check_dispatch_coverage.mjs
-          --no-build
-          --output "${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}.json"
+          --coverage-output "${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}.json"
       - name: Dispatch trace security audit
         if: matrix.task == 'support'
         run: node tools/check_dispatch_trace_security.mjs --no-build
