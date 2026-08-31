@@ -303,8 +303,8 @@ function runProcess(command, arguments_, options) {
 function nativeOracleConcurrency() {
   const configured = process.env.LNAKO_NATIVE_ORACLE_JOBS;
   if (configured === undefined || configured === "2") return 2;
-  if (configured === "1") return 1;
-  throw new Error("LNAKO_NATIVE_ORACLE_JOBSは1または2を指定してください");
+  if (["1", "3", "4"].includes(configured)) return Number(configured);
+  throw new Error("LNAKO_NATIVE_ORACLE_JOBSは1〜4の整数を指定してください");
 }
 
 function buildLnako() {

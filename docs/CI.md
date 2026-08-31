@@ -214,10 +214,11 @@ x86_64の`aot`が約10分42秒のクリティカルパスでした。以下のAO
 
 ## AOTオラクルfixtureの安全な並列化
 
-`tools/compare_native_oracle.mjs` は、検証対象fixtureをfixture単位で最大2 workerに割り当てます。各fixture内の
+`tools/compare_native_oracle.mjs` は、検証対象fixtureをfixture単位で最大4 workerに割り当てます。各fixture内の
 公式CLI、公式JavaScript生成・実行、`lnako run`、AOTのO0・O1・O2・O3生成・実行は従来どおり直列です。そのため、
 検証経路（公式CLI、公式生成JavaScript、インタープリタ、AOT 4段階）の7経路、全ケース、全最適化レベルは削減していません。
-`LNAKO_NATIVE_ORACLE_JOBS=1` を指定すると従来相当の直列実行へ戻せます。値は1または2だけを受け付け、未指定時は2です。
+`LNAKO_NATIVE_ORACLE_JOBS=1` を指定すると従来相当の直列実行へ戻せます。値は1〜4を受け付け、未指定時は2です。
+CIのAOT oracle stepだけは`LNAKO_NATIVE_ORACLE_JOBS=4`を明示し、ローカルの既定値は2のままにします。
 
 worker間の競合を防ぐため、各fixtureには順序番号とIDからなる一意なディレクトリを割り当て、ソース、生成JavaScript、AOT
 実行ファイル、相対パスで作成される将来のfixtureファイルをその配下へ置きます。fixtureの結果は元の配列位置へ保存し、
@@ -241,6 +242,17 @@ macOS sandboxでは`ps`および`sysctl`による最大RSS
 クリティカルパスのWindows x86_64 `aot`ジョブは10分42秒から9分33秒へ1分09秒（約10.7%）短縮し、
 同ジョブ内の`Differential native AOT test`は102 fixtureで3分43秒だった旧runに対し、103 fixtureへ増えた状態でも
 3分14秒で完了しました。fixture数・7経路・O0〜O3・3環境を維持した実CIで、競合や失敗がないことを確認しています。
+
+## AOT oracle 4 workerの再測定
+
+前回の[run 33381540990](https://github.com/soramikan/lnako/actions/runs/33381540990)では、同じ284 fixtureを既定の2 workerで実行し、
+native oracle stepはLinux 19分06秒、macOS 13分14秒、Windows 9分34秒だった。dispatch evidenceとcoverageを含むAOT jobは、
+それぞれ34分30秒、23分27秒、18分01秒である。coreの2件は証拠commit検証の不具合で失敗したが、AOT 3環境の比較結果自体は成功した。
+
+同じ284 fixture・7経路・O0〜O3をmacOS arm64で`LNAKO_NATIVE_ORACLE_JOBS=4`にしてローカル実測した結果は、11分52.93秒、
+全284件成功（user 15分20.75秒、sys 1分36.37秒）だった。実行環境がCI runnerと異なるため、この1回だけで性能改善とは判定せず、
+次回pushで3環境の各step時間、壁時計、runner合計、cache hit/miss、失敗有無を記録する。4 workerでメモリ・競合・差分が発生した場合は2 workerへ戻し、
+fixture・7経路・O0〜O3の検証範囲は変更しない。
 
 ## Windows AOTの一時ディレクトリと公式取込path
 

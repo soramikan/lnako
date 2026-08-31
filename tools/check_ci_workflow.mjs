@@ -101,8 +101,9 @@ for (const name of nativeAotStepNames) {
 }
 const nativeAotOracleBlock = nativeAotBlocks.get("Differential native AOT oracle test");
 if (!nativeAotOracleBlock.includes("LNAKO_NATIVE_ORACLE_ARTIFACT: ${{ runner.temp }}/lnako-native-oracle.json") ||
+    !nativeAotOracleBlock.includes('LNAKO_NATIVE_ORACLE_JOBS: "4"') ||
     (nativeAotOracleBlock.match(/node tools\/compare_native_oracle\.mjs/g) ?? []).length !== 1) {
-  throw new Error("AOT差分artifactまたはnative oracle比較stepが不正です");
+  throw new Error("AOT差分artifact、native oracle worker数、または比較stepが不正です");
 }
 const nativeAotHttpBlock = nativeAotBlocks.get("Differential native AOT HTTP server test");
 if ((nativeAotHttpBlock.match(/node tools\/compare_http_server_aot_oracle\.mjs --no-build/g) ?? []).length !== 1) {

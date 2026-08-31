@@ -29,17 +29,22 @@ const runtimeFixtureFiles = new Set([
   "system-runtime-cases.json",
 ]);
 // A clean dispatch evidence file is generated against the fixture/source
-// commit before it is copied into the tracked catalog. The follow-up commit
-// must be restricted to evidence/documentation and this verifier itself; any
-// product or fixture change requires a fresh dispatch run.
+// commit before it is copied into the tracked catalog. Later commits may
+// update only CI, documentation, catalog derivatives, or verification tools
+// that do not generate the dispatch trace; any product, fixture, catalog, or
+// dispatch-generator change requires a fresh dispatch run.
 const dispatchEvidenceFollowUpPaths = new Set([
+  ".github/workflows/ci.yml",
   "README.md",
   "compat/v3.7.24/dispatch-evidence.json",
   "compat/v3.7.24/evidence.json",
   "compat/v3.7.24/interpreter-only-classification.json",
   "docs/COMPATIBILITY_EVIDENCE.md",
   "docs/COMPATIBILITY_QUIRKS.md",
+  "docs/CI.md",
   "docs/DEVELOPMENT.md",
+  "tools/check_ci_workflow.mjs",
+  "tools/compare_native_oracle.mjs",
   "tools/sync_compat_evidence.mjs",
 ]);
 const arguments_ = process.argv.slice(2);
@@ -378,9 +383,9 @@ function readGitState() {
 
 function isAllowedDispatchEvidenceFollowUp(evidenceCommit, currentCommit) {
   if (evidenceCommit === currentCommit) return true;
-  const parentResult = spawnSync("git", ["rev-parse", `${currentCommit}^`], { cwd: root, encoding: "utf8" });
-  if (parentResult.status !== 0 || parentResult.stdout.trim() !== evidenceCommit) return false;
-  const diffResult = spawnSync("git", ["diff", "--name-only", evidenceCommit, currentCommit], { cwd: root, encoding: "utf8" });
+  const ancestryResult = spawnSync("git", ["merge-base", "--is-ancestor", evidenceCommit, currentCommit], { cwd: root, encoding: "utf8" });
+  if (ancestryResult.status !== 0) return false;
+  const diffResult = spawnSync("git", ["diff", "--name-only", `${evidenceCommit}..${currentCommit}`], { cwd: root, encoding: "utf8" });
   if (diffResult.status !== 0) return false;
   const changedPaths = diffResult.stdout.split(/\r?\n/).filter((path) => path.length > 0);
   return changedPaths.length > 0 && changedPaths.every((path) => dispatchEvidenceFollowUpPaths.has(path));

@@ -68,7 +68,7 @@ node tools/verify_dispatch_attestation.mjs --directory /absolute/path/dispatch-e
 
 Actions artifactの期限に依存しない履歴成果物は`compat/v3.7.24/attestations/32983175945/`に置く。対象commit、3 OS、digest、bundleのSLSA identity、
 禁止field、historical catalogと現在台帳の分離を確認するには次を実行する。署名の再検証は保存bundleを公式`gh attestation verify`へ渡す。
-通常syncで過去証拠を明示検査する場合だけ`--historical-commit`と非canonical outputを使い、canonical output上書きを許可することはない。cleanなdispatch証拠は、生成対象のfixture/source commitと一致するか、その直後に証拠・台帳・文書とこの検証器だけを記録した一段のfollow-up commitであることを検査する。製品ソースやfixtureを含む後続commitは証拠の出所を無効にするため拒否し、再生成を要求する。
+通常syncで過去証拠を明示検査する場合だけ`--historical-commit`と非canonical outputを使い、canonical output上書きを許可することはない。cleanなdispatch証拠は、生成対象のfixture/source commitと一致するか、その祖先から証拠・台帳・文書・CIとdispatch生成器以外の検証器だけを記録した後続commitであることを検査する。製品ソース、fixture、catalog、dispatch生成器を含む後続commitは証拠の出所を無効にするため拒否し、再生成を要求する。
 
 ```sh
 node tools/check_tracked_dispatch_attestation.mjs

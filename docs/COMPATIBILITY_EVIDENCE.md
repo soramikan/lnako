@@ -19,11 +19,11 @@ historical catalogのdigestとworkflow identityを固定し、`node tools/check_
 in-toto subject、SLSA predicate、GitHub Actions workflow identityを検査する。bundleの署名を暗号学的に再検証する場合は、保存したbundleを
 公式`gh attestation verify`へ同じ厳格なidentity引数で渡す。固定されたhistorical catalogの`verified: 4`は現在commitの台帳へ自動反映せず、
 追跡中の`compat/v3.7.24/evidence.json`は`verified: 0`、`trace-confirmed-unattested: 148`を維持する。catalog再生成時の`--historical-commit`は
-この明示的な履歴検査でだけ対象commitとの差異を許可し、明示的な非canonical outputを必須にする（通常のsync検査は、証拠生成元のfixture/source commitとの一致、または証拠・台帳・文書と検証器だけを記録した直後の一段のfollow-up commitを要求し、canonical output保護は緩めない）。target commitとこの履歴固定を追加する後続commitを混同しない。
+この明示的な履歴検査でだけ対象commitとの差異を許可し、明示的な非canonical outputを必須にする（通常のsync検査は、証拠生成元のfixture/source commitとの一致、またはその祖先から証拠・台帳・文書・CIとdispatch生成器以外の検証器だけを記録した後続commitを要求し、canonical output保護は緩めない）。target commitとこの履歴固定を追加する後続commitを混同しない。
 
 ### 証拠記録commitの追従
 
-dispatch checkerは実行前のcleanなcommitを証拠の出所として記録します。生成したJSONをtracked台帳へ記録する署名commitは、その直前commitを親に持ち、変更pathを証拠・派生台帳・互換文書・検証器のallowlistへ限定する場合に限り、証拠の出所を維持したfollow-upとして受理します。製品ソース、fixture、catalog、workflowなどが同じcommitで変わる場合や、2段以上離れた証拠は受理せず、同じfixtureでdispatch証拠を再生成します。
+dispatch checkerは実行前のcleanなcommitを証拠の出所として記録します。生成したJSONをtracked台帳へ記録する署名commit以降も、証拠生成元が現行HEADの祖先で、差分pathが証拠・派生台帳・互換文書・CI・dispatch生成器以外の検証器のallowlistに限定される場合に限り、証拠の出所を維持したfollow-upとして受理します。製品ソース、fixture、catalog、dispatch生成器が後続commitで変わる場合は受理せず、同じfixtureでdispatch証拠を再生成します。
 
 ## 生成と検証
 
