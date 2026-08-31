@@ -22,8 +22,8 @@
   },
   "executionEvidenceStates": {
     "verified": 0,
-    "trace-confirmed-unattested": 207,
-    "unverified": 320
+    "trace-confirmed-unattested": 214,
+    "unverified": 313
   },
   "entries": [
     {
@@ -8188,6 +8188,7 @@
         "plugin-system-array-mutation-quirks"
       ],
       "aotFixtureIds": [
+        "native-cut-commands",
         "native-system-array-mutation-commands",
         "native-system-array-sparse-splice"
       ],
@@ -8200,6 +8201,9 @@
           ]
         },
         "aot": {
+          "native-cut-commands": [
+            "fixture.commands"
+          ],
           "native-system-array-mutation-commands": [
             "implemented.tests"
           ],
@@ -8212,9 +8216,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x0000000300000272"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "元配列を更新し空配列を返す公式挙動を実装し、公式差分テストに成功"
     },
     {
@@ -8226,6 +8243,7 @@
         "plugin-system-array-mutation-quirks"
       ],
       "aotFixtureIds": [
+        "native-cut-commands",
         "native-system-array-mutation-commands",
         "native-system-array-sparse-splice"
       ],
@@ -8238,6 +8256,9 @@
           ]
         },
         "aot": {
+          "native-cut-commands": [
+            "fixture.commands"
+          ],
           "native-system-array-mutation-commands": [
             "implemented.tests"
           ],
@@ -8250,9 +8271,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x0000000300000275"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "元配列を更新して元配列を返す公式挙動を実装し、自己一括挿入の安全差をTODOとして分離して公式差分テストに成功"
     },
     {
@@ -8582,6 +8616,7 @@
         "plugin-system-array-mutation-quirks"
       ],
       "aotFixtureIds": [
+        "native-cut-commands",
         "native-system-array-mutation-commands",
         "native-system-array-sparse-splice"
       ],
@@ -8594,6 +8629,9 @@
           ]
         },
         "aot": {
+          "native-cut-commands": [
+            "fixture.commands"
+          ],
           "native-system-array-mutation-commands": [
             "implemented.tests"
           ],
@@ -8606,9 +8644,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x0000000300000278"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "配列切取の別名として実装し、公式差分テストに成功"
     },
     {
@@ -8620,6 +8671,7 @@
         "plugin-system-array-mutation-quirks"
       ],
       "aotFixtureIds": [
+        "native-cut-commands",
         "native-system-array-cut-inherited-dictionary-properties",
         "native-system-array-mutation-commands",
         "native-system-array-sparse-splice"
@@ -8633,6 +8685,9 @@
           ]
         },
         "aot": {
+          "native-cut-commands": [
+            "fixture.commands"
+          ],
           "native-system-array-cut-inherited-dictionary-properties": [
             "fixture.commands",
             "implemented.tests"
@@ -8649,9 +8704,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x000000030000027b"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "辞書のownおよびprototype継承propertyをtruthy規則と削除副作用を分けて実装し、公式差分テストに成功"
     },
     {
@@ -8663,6 +8731,7 @@
         "plugin-system-array-mutation-quirks"
       ],
       "aotFixtureIds": [
+        "native-cut-commands",
         "native-system-array-mutation-commands",
         "native-system-array-sparse-splice"
       ],
@@ -8675,6 +8744,9 @@
           ]
         },
         "aot": {
+          "native-cut-commands": [
+            "fixture.commands"
+          ],
           "native-system-array-mutation-commands": [
             "implemented.tests"
           ],
@@ -8687,9 +8759,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x000000030000027f"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "破壊的な範囲取り出しを実装し、公式差分テストに成功"
     },
     {
@@ -9310,6 +9395,7 @@
         "plugin-system-array-core"
       ],
       "aotFixtureIds": [
+        "native-cut-commands",
         "native-system-array-aggregate-create-commands",
         "native-system-array-own-properties"
       ],
@@ -9322,6 +9408,9 @@
           ]
         },
         "aot": {
+          "native-cut-commands": [
+            "fixture.commands"
+          ],
           "native-system-array-aggregate-create-commands": [
             "implemented.tests"
           ],
@@ -9334,9 +9423,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x000000030000026f"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "非負整数添字、範囲外伸長、ToPropertyKeyによる非index own propertyをZig製ランタイムで実装。疎配列の巨大伸長はTODO: array-swap-dense-length-limit"
     },
     {
@@ -9381,6 +9483,7 @@
         "plugin-system-array-core"
       ],
       "aotFixtureIds": [
+        "native-cut-commands",
         "native-system-array-aggregate-create-commands",
         "native-system-array-fill-byte-buffer-json-clone",
         "native-system-array-fill-sparse-clone"
@@ -9394,6 +9497,9 @@
           ]
         },
         "aot": {
+          "native-cut-commands": [
+            "fixture.commands"
+          ],
           "native-system-array-aggregate-create-commands": [
             "implemented.tests"
           ],
@@ -9410,9 +9516,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x0000000300000282"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "多次元配列、空shape、要素複製、疎配列のpresence保持、Buffer/Uint8Array/ArrayBufferのJSON複製、総量事前検査を実装。100万要素上限はTODO: array-fill-total-size-limit"
     },
     {
@@ -13293,7 +13412,14 @@
           "0x0000000300000264",
           "0x0000000300000267",
           "0x000000030000026a",
-          "0x000000030000026d"
+          "0x000000030000026d",
+          "0x0000000300000270",
+          "0x0000000300000273",
+          "0x0000000300000276",
+          "0x0000000300000279",
+          "0x000000030000027d",
+          "0x0000000300000280",
+          "0x0000000300000283"
         ],
         "officialComparison": [
           "officialSource",
@@ -13303,7 +13429,7 @@
         ],
         "state": "trace-confirmed-unattested"
       },
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（8 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（15 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "純LLVM AOTのJSON.stringify互換エンコーダと公式CLI・生成JavaScriptとの差分テストに成功"
     },
     {
@@ -14949,7 +15075,15 @@
           "0x0000000300000265",
           "0x0000000300000268",
           "0x000000030000026b",
-          "0x000000030000026e"
+          "0x000000030000026e",
+          "0x0000000300000271",
+          "0x0000000300000274",
+          "0x0000000300000277",
+          "0x000000030000027a",
+          "0x000000030000027c",
+          "0x000000030000027e",
+          "0x0000000300000281",
+          "0x0000000300000284"
         ],
         "officialComparison": [
           "officialSource",
@@ -14959,7 +15093,7 @@
         ],
         "state": "trace-confirmed-unattested"
       },
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（300 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（308 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "継続表示プールと表示ログを含めて実装し、公式差分テストに成功"
     },
     {
