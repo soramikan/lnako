@@ -329,7 +329,7 @@ function assertTraceSitesContained(events, manifestEntries) {
 function assertStaticCommandsHaveSites(events, commands) {
   for (const command of commands) {
     const matches = events.filter((event) => event.command === command);
-    if (matches.length === 0 || matches.some((event) => event.siteId === null)) throw new Error(`静的命令${command}のsiteIdがnullです`);
+    if (matches.length === 0 || !matches.some((event) => event.siteId !== null)) throw new Error(`静的命令${command}のsiteIdがありません`);
   }
 }
 

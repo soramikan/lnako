@@ -319,6 +319,10 @@ pub const Function = struct {
     pure: bool = false,
     kind: FunctionKind,
     captures: []Capture,
+    /// IR closures can outlive a dynamic-execution program switch.  Keep the
+    /// owning program opaque here so the interpreter can resolve callbacks
+    /// against the program that created them instead of the current program.
+    ir_program: ?*const anyopaque = null,
     /// Ordinary IR functions expose one stable prototype object.  Keep the
     /// lazily-created object on the function itself so repeated property
     /// reads preserve JavaScript Function.prototype identity.

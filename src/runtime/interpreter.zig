@@ -268,6 +268,7 @@ const HatenaCallback = union(enum) {
 const Frame = struct {
     parent: ?*Frame,
     function: *const ir.Function,
+    owner_program: *const ir.Program,
     values: []Value,
     locals: std.StringHashMapUnmanaged(*value_mod.BindingCell) = .empty,
     owned_names: std.ArrayList([]u8) = .empty,
@@ -294,6 +295,10 @@ pub const Interpreter = struct {
     allocator: std.mem.Allocator,
     runtime: *Runtime,
     program: ir.Program,
+    /// Keep the initial program at a stable address while `program` is
+    /// temporarily replaced by a dynamically compiled program.  IR function
+    /// values use this owner to survive callbacks during that replacement.
+    root_program: ir.Program,
     host: Host,
     globals: std.StringHashMapUnmanaged(Value) = .empty,
     global_names: std.ArrayList([]u8) = .empty,
@@ -333,9 +338,11 @@ pub const Interpreter = struct {
     dispatch_route_stack: [64][]const u8 = undefined,
     dispatch_route_depth: usize = 0,
     dispatch_route_overflow: usize = 0,
+    dynamic_programs: std.ArrayList(*ir.Program) = .empty,
+    active_program_owner: ?*const ir.Program = null,
 
     pub fn init(allocator: std.mem.Allocator, runtime: *Runtime, program: ir.Program, host: Host) Interpreter {
-        return .{ .allocator = allocator, .runtime = runtime, .program = program, .host = host, .dispatch_trace = .{ .path = host.dispatch_trace_path, .context = host.context, .writeFn = host.dispatch_trace_writeFn }, .csv_state = plugin_csv.State.init(allocator), .quickjs_state = quickjs.State.init(program.compat_js), .native_plugin_state = plugin_native.State.init() };
+        return .{ .allocator = allocator, .runtime = runtime, .program = program, .root_program = program, .host = host, .dispatch_trace = .{ .path = host.dispatch_trace_path, .context = host.context, .writeFn = host.dispatch_trace_writeFn }, .csv_state = plugin_csv.State.init(allocator), .quickjs_state = quickjs.State.init(program.compat_js), .native_plugin_state = plugin_native.State.init() };
     }
 
     pub fn deinit(self: *Interpreter) void {
@@ -366,6 +373,11 @@ pub const Interpreter = struct {
         self.promise_all_states.deinit(self.allocator);
         self.namespace_stack.deinit(self.allocator);
         self.hatena_callbacks.deinit(self.allocator);
+        for (self.dynamic_programs.items) |program| {
+            program.deinit();
+            self.allocator.destroy(program);
+        }
+        self.dynamic_programs.deinit(self.allocator);
         self.* = undefined;
     }
 
@@ -386,7 +398,7 @@ pub const Interpreter = struct {
         try self.initializeSystem();
         for (self.program.functions) |*function| {
             if (!function.is_test) continue;
-            const result = self.executeFunction(function, &.{}, null);
+            const result = self.executeFunction(function, &.{}, null, self.currentProgramOwner());
             if (result) |_| {
                 try self.drainEventLoop();
                 try self.test_results.append(self.allocator, .{ .name = try self.allocator.dupe(u8, function.name), .passed = true });
@@ -551,24 +563,24 @@ pub const Interpreter = struct {
         var index = self.program.module_entries.len;
         while (index > 0) {
             index -= 1;
-            result = try self.executeFunction(&self.program.functions[self.program.module_entries[index]], &.{}, null);
+            result = try self.executeFunction(&self.program.functions[self.program.module_entries[index]], &.{}, null, self.currentProgramOwner());
         }
         return result;
     }
 
-    fn executeFunction(self: *Interpreter, function: *const ir.Function, arguments: []const Value, closure: ?*value_mod.Function) anyerror!Value {
+    fn executeFunction(self: *Interpreter, function: *const ir.Function, arguments: []const Value, closure: ?*value_mod.Function, owner_program: *const ir.Program) anyerror!Value {
         if (self.call_depth >= self.max_call_depth) return error.CallStackLimitExceeded;
         self.call_depth += 1;
         defer self.call_depth -= 1;
         const value_count = maxValueId(function.*) + 1;
         const values = try self.allocator.alloc(Value, value_count);
         @memset(values, .undefined);
-        var frame = Frame{ .parent = self.active_frame, .function = function, .values = values };
+        var frame = Frame{ .parent = self.active_frame, .function = function, .owner_program = owner_program, .values = values };
         defer frame.deinit(self.allocator);
         self.active_frame = &frame;
         defer self.active_frame = frame.parent;
         const previous_source_path = self.current_source_path;
-        self.current_source_path = self.sourcePathForFunction(function.name);
+        self.current_source_path = self.sourcePathForFunction(owner_program, function.name);
         defer self.current_source_path = previous_source_path;
 
         if (closure) |function_value| for (function_value.captures) |capture| {
@@ -777,12 +789,12 @@ pub const Interpreter = struct {
         for (instruction.operands, 0..) |operand_id, index| arguments[index] = frame.values[operand_id];
         var writes_result = false;
         const result = if (instruction.direct_callee) |callee_id| blk: {
-            if (callee_id >= self.program.functions.len) return error.InvalidDirectCallee;
+            if (callee_id >= frame.owner_program.functions.len) return error.InvalidDirectCallee;
             writes_result = true;
-            break :blk try self.executeFunction(&self.program.functions[callee_id], arguments, null);
-        } else if (self.findFunction(instruction.name)) |function| blk: {
+            break :blk try self.executeFunction(&frame.owner_program.functions[callee_id], arguments, null, frame.owner_program);
+        } else if (self.findFunction(frame.owner_program, instruction.name)) |function| blk: {
             writes_result = true;
-            break :blk try self.executeFunction(function, arguments, null);
+            break :blk try self.executeFunction(function, arguments, null, frame.owner_program);
         } else if (localValue(frame, instruction.name)) |callable| blk: {
             if (callable != .function) return error.NotCallable;
             writes_result = callable.function.kind == .ir;
@@ -793,7 +805,8 @@ pub const Interpreter = struct {
             break :blk try self.callFunctionValue(callable.function, arguments);
         } else blk: {
             writes_result = !preservesResultVariable(instruction.name);
-            break :blk try self.callBuiltin(instruction.name, arguments, instruction.site_id);
+            const site_id = if (frame.owner_program == &self.root_program) instruction.site_id else null;
+            break :blk try self.callBuiltin(instruction.name, arguments, site_id);
         };
         if (writes_result) try self.setGlobal("それ", result);
         return result;
@@ -826,15 +839,17 @@ pub const Interpreter = struct {
     }
 
     fn callIrFunctionValue(self: *Interpreter, function_id: ir.FunctionId, function: *value_mod.Function, arguments: []const Value) !Value {
-        const target = &self.program.functions[function_id];
+        const owner_program: *const ir.Program = if (function.ir_program) |pointer| @ptrCast(@alignCast(pointer)) else &self.program;
+        if (function_id >= owner_program.functions.len) return error.InvalidIrFunction;
+        const target = &owner_program.functions[function_id];
         const arity = target.parameters.len;
-        if (arguments.len >= arity) return self.executeFunction(target, arguments, function);
+        if (arguments.len >= arity) return self.executeFunction(target, arguments, function, owner_program);
         const padded = try self.allocator.alloc(Value, arity);
         defer self.allocator.free(padded);
         @memcpy(padded[0..arguments.len], arguments);
         padded[arguments.len] = try self.systemContext();
         @memset(padded[arguments.len + 1 ..], .undefined);
-        return self.executeFunction(target, padded, function);
+        return self.executeFunction(target, padded, function, owner_program);
     }
 
     fn systemContext(self: *Interpreter) !Value {
@@ -1093,7 +1108,7 @@ pub const Interpreter = struct {
         var roots = self.runtime.rootFrame();
         defer roots.deinit();
         try roots.protect(&result);
-        for (self.program.functions) |function| {
+        for (self.currentProgramOwner().functions) |function| {
             if (std.mem.endsWith(u8, function.name, "__$entry") or std.mem.indexOf(u8, function.name, "__lambda$") != null) continue;
             const name = try self.runtime.stringUtf8(function.name);
             _ = try result.array.push(name);
@@ -1111,23 +1126,29 @@ pub const Interpreter = struct {
     }
 
     fn primaryModuleName(self: Interpreter) []const u8 {
-        if (self.program.module_entries.len == 0) return "";
-        const id = self.program.module_entries[0];
-        if (id >= self.program.functions.len) return "";
-        const entry_name = self.program.functions[id].name;
+        const owner_program = self.currentProgramOwner();
+        if (owner_program.module_entries.len == 0) return "";
+        const id = owner_program.module_entries[0];
+        if (id >= owner_program.functions.len) return "";
+        const entry_name = owner_program.functions[id].name;
         const suffix = "__$entry";
         if (!std.mem.endsWith(u8, entry_name, suffix)) return "";
         return entry_name[0 .. entry_name.len - suffix.len];
     }
 
-    fn sourcePathForFunction(self: Interpreter, function_name: []const u8) []const u8 {
+    fn currentProgramOwner(self: *const Interpreter) *const ir.Program {
+        if (self.active_frame) |frame| return frame.owner_program;
+        return self.active_program_owner orelse &self.root_program;
+    }
+
+    fn sourcePathForFunction(self: Interpreter, owner_program: *const ir.Program, function_name: []const u8) []const u8 {
         var best: ?usize = null;
-        for (self.program.module_names, 0..) |module_name, index| {
-            if (index >= self.program.module_paths.len or !std.mem.startsWith(u8, function_name, module_name)) continue;
+        for (owner_program.module_names, 0..) |module_name, index| {
+            if (index >= owner_program.module_paths.len or !std.mem.startsWith(u8, function_name, module_name)) continue;
             if (function_name.len <= module_name.len + 1 or !std.mem.eql(u8, function_name[module_name.len .. module_name.len + 2], "__")) continue;
-            if (best == null or module_name.len > self.program.module_names[best.?].len) best = index;
+            if (best == null or module_name.len > owner_program.module_names[best.?].len) best = index;
         }
-        return if (best) |index| self.program.module_paths[index] else self.current_source_path;
+        return if (best) |index| owner_program.module_paths[index] else self.current_source_path;
     }
 
     fn awaitExecute(self: *Interpreter, arguments: []const Value) !Value {
@@ -1542,12 +1563,14 @@ pub const Interpreter = struct {
         if (self.globals.get(name)) |candidate| {
             if (candidate == .function) return candidate;
         }
-        const function = self.findFunction(name) orelse return error.UnknownFunction;
+        const function = self.findFunction(self.currentProgramOwner(), name) orelse return error.UnknownFunction;
         var name_value = try self.runtime.stringUtf8(function.name);
         var root = self.runtime.rootFrame();
         defer root.deinit();
         try root.protect(&name_value);
-        return self.runtime.createIrFunction(name_value.string, function.parameters.len, function.id, &.{});
+        const result = try self.runtime.createIrFunction(name_value.string, function.parameters.len, function.id, &.{});
+        result.function.ir_program = @ptrCast(self.currentProgramOwner());
+        return result;
     }
 
     fn stopTimer(self: *Interpreter, timer_id: u64) bool {
@@ -2050,7 +2073,7 @@ pub const Interpreter = struct {
     }
 
     fn makeClosure(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
-        const function = self.findFunction(instruction.name) orelse return error.UnknownFunction;
+        const function = self.findFunction(frame.owner_program, instruction.name) orelse return error.UnknownFunction;
         const name = try self.runtime.stringUtf8(instruction.name);
         var name_root = name;
         var root = self.runtime.rootFrame();
@@ -2067,7 +2090,9 @@ pub const Interpreter = struct {
             try root.protect(&capture_roots[index]);
             captures[index] = .{ .name = capture_roots[index].string, .cell = cell };
         }
-        return self.runtime.createIrFunction(name.string, function.parameters.len, function.id, captures);
+        const result = try self.runtime.createIrFunction(name.string, function.parameters.len, function.id, captures);
+        result.function.ir_program = @ptrCast(self.currentProgramOwner());
+        return result;
     }
 
     fn iteratorBegin(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
@@ -2180,14 +2205,25 @@ pub const Interpreter = struct {
         if (!analyzed.succeeded()) return error.DynamicSemanticFailed;
         var hir_program = try hir.lowerSingle(self.allocator, parsed.root.?, module_name, "<dynamic>.nako3", analyzed);
         defer hir_program.deinit();
-        var dynamic_program = try lower_ssa.lower(self.allocator, hir_program);
-        defer dynamic_program.deinit();
+        const dynamic_program = try lower_ssa.lower(self.allocator, hir_program);
         var report = try verifier.verify(self.allocator, dynamic_program);
         defer report.deinit();
         if (!report.succeeded()) return error.DynamicIrFailed;
+        const owned_program = try self.allocator.create(ir.Program);
+        owned_program.* = dynamic_program;
+        errdefer {
+            owned_program.deinit();
+            self.allocator.destroy(owned_program);
+        }
+        try self.dynamic_programs.append(self.allocator, owned_program);
         const saved_program = self.program;
-        self.program = dynamic_program;
-        defer self.program = saved_program;
+        const saved_program_owner = self.active_program_owner;
+        self.program = owned_program.*;
+        self.active_program_owner = owned_program;
+        defer {
+            self.program = saved_program;
+            self.active_program_owner = saved_program_owner;
+        }
         var capture: std.ArrayList(u8) = .empty;
         defer capture.deinit(self.allocator);
         try self.output_captures.append(self.allocator, &capture);
@@ -2214,15 +2250,15 @@ pub const Interpreter = struct {
         try self.global_names.append(self.allocator, owned_name);
     }
 
-    fn findFunction(self: Interpreter, name: []const u8) ?*const ir.Function {
-        for (self.program.functions) |*function| if (std.mem.eql(u8, function.name, name)) return function;
+    fn findFunction(_: Interpreter, owner_program: *const ir.Program, name: []const u8) ?*const ir.Function {
+        for (owner_program.functions) |*function| if (std.mem.eql(u8, function.name, name)) return function;
 
         // The semantic analyzer qualifies module-level declarations as
         // `module__name`, while Nadesiko callback-taking commands receive the
         // source spelling as a string (for example, `"二倍"`).  Accept an
         // unqualified spelling only when it identifies exactly one function.
         var match: ?*const ir.Function = null;
-        for (self.program.functions) |*function| {
+        for (owner_program.functions) |*function| {
             const separator = std.mem.lastIndexOf(u8, function.name, "__") orelse continue;
             if (!std.mem.eql(u8, function.name[separator + 2 ..], name)) continue;
             if (match != null) return null;
@@ -2575,6 +2611,34 @@ test "例外監視と動的ななでしこ実行を処理する" {
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("失敗\n3\n", host.written());
+}
+
+test "動的実行中も保留Promiseのcallbackが生成元IRを参照する" {
+    const source =
+        "●(Aを)補正とは\n" ++
+        "A+1で戻る\n" ++
+        "ここまで\n" ++
+        "動いた時には(成功,失敗)\n" ++
+        "成功(9)\n" ++
+        "ここまで\n" ++
+        "F=それ\n" ++
+        "Fの成功した時には\n" ++
+        "補正(対象)を表示\n" ++
+        "ここまで\n" ++
+        "ナデシコ(\"1を表示\")\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("1\n10\n", host.written());
 }
 
 test "エラー発生は公式Error.messageの値変換を行う" {
