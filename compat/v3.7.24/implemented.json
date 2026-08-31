@@ -1862,9 +1862,10 @@
       "native-system-array-sparse-presence",
       "native-system-dictionary-byte-buffer-enumeration",
       "native-system-dictionary-buffer-enumerable-properties",
-      "native-system-byte-buffer-direct-properties"
+      "native-system-byte-buffer-direct-properties",
+      "native-system-dictionary-inherited-enumeration"
     ],
-    "reason": "ECMAScriptのproperty key順、配列・関数・byte buffer境界、疎配列holeの除外をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
+    "reason": "ECMAScriptのproperty key順、辞書prototype chainの列挙とshadowing、配列・関数・byte buffer境界、疎配列holeの除外をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
   },
   "辞書キー削除": {
     "status": "native",
@@ -1895,9 +1896,10 @@
     "tests": [
       "plugin-system-dictionary-hash",
       "native-system-dictionary-hash-commands",
-      "native-system-dictionary-byte-buffer-enumeration"
+      "native-system-dictionary-byte-buffer-enumeration",
+      "native-system-dictionary-inherited-enumeration"
     ],
-    "reason": "ECMAScriptのproperty key順と配列・関数・byte buffer境界をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
+    "reason": "ECMAScriptのproperty key順、辞書prototype chainの列挙とshadowing、配列・関数・byte buffer境界をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
   },
   "ハッシュ内容列挙": {
     "status": "native",
@@ -1907,9 +1909,10 @@
       "native-system-array-own-properties",
       "native-system-array-sparse-presence",
       "native-system-dictionary-byte-buffer-enumeration",
-      "native-system-dictionary-buffer-enumerable-properties"
+      "native-system-dictionary-buffer-enumerable-properties",
+      "native-system-dictionary-inherited-enumeration"
     ],
-    "reason": "辞書のproperty key順、配列・関数・byte bufferの内容列挙、疎配列holeの除外をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
+    "reason": "辞書のproperty key順、custom prototype chainの内容列挙とshadowing、配列・関数・byte bufferの内容列挙、疎配列holeの除外をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
   },
   "ハッシュキー削除": {
     "status": "native",

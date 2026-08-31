@@ -15060,6 +15060,52 @@ fn aotDictionaryOrderBefore(entries: []const DictionaryEntry, left_index: usize,
     return if (left) |left_number| if (right) |right_number| left_number < right_number else true else if (right != null) false else left_index < right_index;
 }
 
+const AotEnumerableDictionaryEntry = struct {
+    key: Value,
+    value: Value,
+};
+
+fn aotPropertyKeysEqual(runtime: *Runtime, left: Value, right: Value) !bool {
+    const left_units = try valueUtf16Alloc(runtime, left);
+    defer runtime.allocator.free(left_units);
+    const right_units = try valueUtf16Alloc(runtime, right);
+    defer runtime.allocator.free(right_units);
+    return std.mem.eql(u16, left_units, right_units);
+}
+
+fn aotEnumerableKeyWasYielded(runtime: *Runtime, yielded: []const Value, key: Value) !bool {
+    for (yielded) |candidate| if (try aotPropertyKeysEqual(runtime, candidate, key)) return true;
+    return false;
+}
+
+/// Collect a dictionary's enumerable own keys and custom prototype keys in
+/// ECMAScript `for...in` order.  Standard prototype methods are non-enumerable
+/// and are synthesized only by property lookup, not by this command.
+fn aotEnumerableDictionaryEntries(runtime: *Runtime, source: Value) ![]AotEnumerableDictionaryEntry {
+    var entries: std.ArrayList(AotEnumerableDictionaryEntry) = .empty;
+    errdefer entries.deinit(runtime.allocator);
+    var yielded: std.ArrayList(Value) = .empty;
+    defer yielded.deinit(runtime.allocator);
+
+    var current = source;
+    var depth: usize = 0;
+    while (depth < 256) : (depth += 1) {
+        const object = current.object() orelse break;
+        if (object.payload != .dictionary) break;
+        const dictionary = object.payload.dictionary.items;
+        const order = try aotDictionaryOrder(runtime, dictionary);
+        defer runtime.allocator.free(order);
+        for (order) |index| {
+            const entry = dictionary[index];
+            if (try aotEnumerableKeyWasYielded(runtime, yielded.items, entry.key)) continue;
+            try yielded.append(runtime.allocator, entry.key);
+            try entries.append(runtime.allocator, .{ .key = entry.key, .value = entry.value });
+        }
+        current = object.prototype;
+    }
+    return entries.toOwnedSlice(runtime.allocator);
+}
+
 fn aotPropertyKeyEqual(runtime: *Runtime, key: Value, units: []const u16) !bool {
     const key_units = try valueUtf16Alloc(runtime, key);
     defer runtime.allocator.free(key_units);
@@ -15075,13 +15121,15 @@ fn dictionaryKeysBuiltin(runtime: *Runtime, source: Value) !Value {
     const result = &roots[1].object().?.payload.array;
     switch (@as(Tag, @enumFromInt(roots[0].tag))) {
         .dictionary => {
-            const entries = roots[0].object().?.payload.dictionary.items;
-            const order = try aotDictionaryOrder(runtime, entries);
-            defer runtime.allocator.free(order);
-            for (order) |index| {
-                const units = try valueUtf16Alloc(runtime, entries[index].key);
+            const entries = try aotEnumerableDictionaryEntries(runtime, roots[0]);
+            defer runtime.allocator.free(entries);
+            for (entries) |entry| {
+                const units = try valueUtf16Alloc(runtime, entry.key);
                 defer runtime.allocator.free(units);
-                const key = try runtime.createString(units);
+                var key = try runtime.createString(units);
+                var key_frame = RootFrame{};
+                runtime.pushRoots(&key_frame, @ptrCast(&key), 1);
+                defer runtime.popRoots(&key_frame);
                 try result.append(runtime.allocator, key);
             }
         },
@@ -15136,10 +15184,9 @@ fn dictionaryValuesBuiltin(runtime: *Runtime, source: Value) !Value {
     const result = &roots[1].object().?.payload.array;
     switch (@as(Tag, @enumFromInt(roots[0].tag))) {
         .dictionary => {
-            const entries = roots[0].object().?.payload.dictionary.items;
-            const order = try aotDictionaryOrder(runtime, entries);
-            defer runtime.allocator.free(order);
-            for (order) |index| try result.append(runtime.allocator, entries[index].value);
+            const entries = try aotEnumerableDictionaryEntries(runtime, roots[0]);
+            defer runtime.allocator.free(entries);
+            for (entries) |entry| try result.append(runtime.allocator, entry.value);
         },
         .array => {
             const object = roots[0].object().?;
@@ -23304,6 +23351,44 @@ test "AOT辞書・配列のキー命令は順序とBigIntキーを保つ" {
     try runtime.indexSet(roots[0], roots[2], numberValue(9));
     roots[3] = try dictionaryKeysBuiltin(&runtime, roots[0]);
     try std.testing.expectEqual(@as(usize, 3), roots[3].object().?.payload.array.items.len);
+}
+
+test "AOT辞書キー命令はcustom prototype chainの順序とshadowingを保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 5;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createDictionary(&.{
+        staticStringValue("2"),      numberValue(20),
+        staticStringValue("base"),   numberValue(21),
+        staticStringValue("shadow"), numberValue(22),
+    });
+    roots[1] = try runtime.createDictionary(&.{
+        staticStringValue("1"),      numberValue(10),
+        staticStringValue("middle"), numberValue(11),
+        staticStringValue("shadow"), numberValue(12),
+    });
+    roots[2] = try runtime.createDictionary(&.{
+        staticStringValue("3"),      numberValue(30),
+        staticStringValue("own"),    numberValue(31),
+        staticStringValue("shadow"), numberValue(32),
+    });
+    roots[1].object().?.prototype = roots[0];
+    roots[2].object().?.prototype = roots[1];
+
+    roots[3] = try dictionaryKeysBuiltin(&runtime, roots[2]);
+    roots[4] = try dictionaryValuesBuiltin(&runtime, roots[2]);
+    const expected_keys = [_][]const u8{ "3", "own", "shadow", "1", "middle", "2", "base" };
+    const expected_values = [_]f64{ 30, 31, 32, 10, 11, 20, 21 };
+    try std.testing.expectEqual(expected_keys.len, roots[3].object().?.payload.array.items.len);
+    try std.testing.expectEqual(expected_values.len, roots[4].object().?.payload.array.items.len);
+    for (expected_keys, 0..) |expected, index| {
+        try expectUtf16String(&runtime, roots[3].object().?.payload.array.items[index], expected);
+        try std.testing.expectEqual(expected_values[index], valueToNumber(roots[4].object().?.payload.array.items[index]));
+    }
 }
 
 fn aotDictionaryPropertyKeyAllocationTest(allocator: std.mem.Allocator) !void {

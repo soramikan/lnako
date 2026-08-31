@@ -110,6 +110,12 @@ vフラグの文字クラスは、基本的なcode point集合のintersection（
 
 Unicode lookbehindの候補開始位置も`AdvanceStringIndex`相当で進め、paired surrogate内部をlookbehindの起点にしない。`/(?<=\\uDE00)x/u`は`"😀x"`で不一致、正しい`(?<=😀)`と非Unicodeのlow surrogate参照は一致する公式差を、`native-system-regexp-unicode-lookbehind-boundary`でInterpreter・AOTの7経路比較へ固定する。
 
+### 辞書custom prototype chainの列挙
+
+公式処理系の`辞書キー列挙`／`ハッシュキー列挙`／`ハッシュ内容列挙`は、辞書自身のenumerable own propertyをJavaScriptのproperty order（canonical array indexの数値昇順、その他の文字列は挿入順）で返した後、custom `__proto__` の辞書prototype chainを同じ順序でたどる。既にownまたは先行prototypeで返したキーはshadowingとして後続prototypeから返さない。標準Object.prototypeの非enumerable propertyは列挙しない。
+
+lnakoはInterpreterと純LLVM AOTでこのown→custom prototype chainの順序、各辞書内のnumeric key順、既出キーの抑制、`ハッシュ内容列挙`の対応値を共有する。標準prototypeの合成propertyは従来どおり名前付きproperty lookupだけで扱い、receiver付きmethod呼出しやdescriptorの完全互換はこの実装単位の対象外である。QuickJSは標準命令の証拠経路に含めない。公式CLI・生成JavaScript・`lnako run`・AOT O0〜O3の差分を`native-system-dictionary-inherited-enumeration`で確認し、未実装TODOはない。
+
 根拠は固定オラクルの
 [`core/src/plugin_system_array.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_array.mts) と
 [`core/src/plugin_system_dict.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/plugin_system_dict.mts) です。

@@ -988,6 +988,11 @@
     "source": "D={}\nA=[]\nF=関数(X)それはX;ここまで\n辞書キー存在(D,\"toString\")を表示\n辞書キー存在(D,\"constructor\")を表示\n辞書キー存在(D,\"__proto__\")を表示\n辞書キー存在(A,\"map\")を表示\n辞書キー存在(A,\"toString\")を表示\nハッシュキー存在(F,\"toString\")を表示\nハッシュキー存在(F,\"prototype\")を表示\n辞書キー存在(D,\"missing\")を表示\n"
   },
   {
+    "id": "native-system-dictionary-inherited-enumeration",
+    "commands": ["辞書キー列挙", "ハッシュキー列挙", "ハッシュ内容列挙", "辞書キー存在", "JSON変換"],
+    "source": "P={\"2\":20,\"base\":21,\"shadow\":22}\nQ={\"1\":10,\"middle\":11,\"shadow\":12}\nQ[\"__proto__\"]=P\nD={\"3\":30,\"own\":31,\"shadow\":32}\nD[\"__proto__\"]=Q\nJSON変換(辞書キー列挙(D))を表示\nJSON変換(ハッシュキー列挙(D))を表示\nJSON変換(ハッシュ内容列挙(D))を表示\n辞書キー存在(D,\"base\")を表示\n辞書キー存在(D,\"missing\")を表示\n"
+  },
+  {
     "id": "native-system-table-delete-bigint-index-error",
     "oracle": "official-generated",
     "source": "表列削除([[1]],1n)を表示\n"

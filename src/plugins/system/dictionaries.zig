@@ -25,9 +25,9 @@ fn keys(runtime: *Runtime, source: Value) !Value {
     try roots.protect(&result);
     switch (rooted_source) {
         .dictionary => |dictionary| {
-            const order = try dictionaryOrder(runtime, dictionary);
-            defer runtime.allocator().free(order);
-            for (order) |index| _ = try result.array.push(.{ .string = dictionary.keys()[index] });
+            const entries = try enumerableDictionaryEntries(runtime, dictionary);
+            defer runtime.allocator().free(entries);
+            for (entries) |entry| _ = try result.array.push(.{ .string = entry.key });
         },
         .array => |array| {
             for (0..array.len()) |index| {
@@ -73,9 +73,9 @@ fn values(runtime: *Runtime, source: Value) !Value {
     try roots.protect(&result);
     switch (rooted_source) {
         .dictionary => |dictionary| {
-            const order = try dictionaryOrder(runtime, dictionary);
-            defer runtime.allocator().free(order);
-            for (order) |index| _ = try result.array.push(dictionary.values()[index]);
+            const entries = try enumerableDictionaryEntries(runtime, dictionary);
+            defer runtime.allocator().free(entries);
+            for (entries) |entry| _ = try result.array.push(entry.value);
         },
         .array => |array| {
             for (0..array.len()) |index| {
@@ -267,6 +267,44 @@ fn dictionaryOrderBefore(dictionary: *value_mod.Dictionary, left_index: usize, r
     return if (left) |left_number| if (right) |right_number| left_number < right_number else true else if (right != null) false else left_index < right_index;
 }
 
+const EnumerableDictionaryEntry = struct {
+    key: *value_mod.String,
+    value: Value,
+};
+
+fn enumerableKeyWasYielded(yielded: []const []const u16, key: []const u16) bool {
+    for (yielded) |candidate| if (std.mem.eql(u16, candidate, key)) return true;
+    return false;
+}
+
+/// Collect a dictionary's enumerable `for...in` entries.  Custom dictionary
+/// prototypes are enumerable in this value model; standard prototype methods
+/// are represented separately and are non-enumerable in JavaScript.
+fn enumerableDictionaryEntries(runtime: *Runtime, dictionary: *value_mod.Dictionary) ![]EnumerableDictionaryEntry {
+    var entries: std.ArrayList(EnumerableDictionaryEntry) = .empty;
+    errdefer entries.deinit(runtime.allocator());
+    var yielded: std.ArrayList([]const u16) = .empty;
+    defer yielded.deinit(runtime.allocator());
+
+    var current = dictionary;
+    var depth: usize = 0;
+    while (depth < 256) : (depth += 1) {
+        const order = try dictionaryOrder(runtime, current);
+        defer runtime.allocator().free(order);
+        for (order) |index| {
+            const key = current.keys()[index];
+            if (enumerableKeyWasYielded(yielded.items, key.units)) continue;
+            try yielded.append(runtime.allocator(), key.units);
+            try entries.append(runtime.allocator(), .{ .key = key, .value = current.values()[index] });
+        }
+        current = switch (current.prototype) {
+            .dictionary => |prototype| prototype,
+            else => break,
+        };
+    }
+    return entries.toOwnedSlice(runtime.allocator());
+}
+
 fn isAny(name: []const u8, options: []const []const u8) bool {
     for (options) |option| if (eql(name, option)) return true;
     return false;
@@ -289,6 +327,55 @@ test "辞書の挿入順キーと値を列挙しキーを削除する" {
     try std.testing.expectEqual(@as(usize, 2), listed.array.len());
     _ = (try call(&runtime, "辞書キー削除", &.{ dictionary, try runtime.stringUtf8("b") })).?;
     try std.testing.expectEqual(@as(usize, 1), dictionary.dictionary.len());
+}
+
+test "辞書キー列挙はcustom prototype chainの順序とshadowingを保つ" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var base = try runtime.createDictionary();
+    try roots.protect(&base);
+    var middle = try runtime.createDictionary();
+    try roots.protect(&middle);
+    var source = try runtime.createDictionary();
+    try roots.protect(&source);
+
+    try common.dictionarySetUtf8(&runtime, base.dictionary, "2", .{ .number = 20 });
+    try common.dictionarySetUtf8(&runtime, base.dictionary, "base", .{ .number = 21 });
+    try common.dictionarySetUtf8(&runtime, base.dictionary, "shadow", .{ .number = 22 });
+    try common.dictionarySetUtf8(&runtime, middle.dictionary, "1", .{ .number = 10 });
+    try common.dictionarySetUtf8(&runtime, middle.dictionary, "middle", .{ .number = 11 });
+    try common.dictionarySetUtf8(&runtime, middle.dictionary, "shadow", .{ .number = 12 });
+    try common.dictionarySetUtf8(&runtime, source.dictionary, "3", .{ .number = 30 });
+    try common.dictionarySetUtf8(&runtime, source.dictionary, "own", .{ .number = 31 });
+    try common.dictionarySetUtf8(&runtime, source.dictionary, "shadow", .{ .number = 32 });
+    source.dictionary.prototype = middle;
+    middle.dictionary.prototype = base;
+
+    var keys_result = (try call(&runtime, "辞書キー列挙", &.{source})).?;
+    try roots.protect(&keys_result);
+    var values_result = (try call(&runtime, "ハッシュ内容列挙", &.{source})).?;
+    try roots.protect(&values_result);
+
+    const expected_keys = [_][]const u16{
+        &.{'3'},
+        &.{ 'o', 'w', 'n' },
+        &.{ 's', 'h', 'a', 'd', 'o', 'w' },
+        &.{'1'},
+        &.{ 'm', 'i', 'd', 'd', 'l', 'e' },
+        &.{'2'},
+        &.{ 'b', 'a', 's', 'e' },
+    };
+    const expected_values = [_]f64{ 30, 31, 32, 10, 11, 20, 21 };
+    try std.testing.expectEqual(expected_keys.len, keys_result.array.len());
+    try std.testing.expectEqual(expected_values.len, values_result.array.len());
+    for (expected_keys, 0..) |expected, index| {
+        try std.testing.expectEqualSlices(u16, expected, keys_result.array.get(index).string.units);
+        try std.testing.expectEqual(expected_values[index], values_result.array.get(index).number);
+    }
 }
 
 test "辞書・配列のプロパティ順と型変換を公式規則で扱う" {
