@@ -8,7 +8,7 @@
   "fixture": {
     "id": "native-cut-commands",
     "file": "native-cases.json",
-    "sourceSha256": "2b19c1caed0ab09c0c62be45a3457c95be291b469e7d03d71a996f006e7081ef"
+    "sourceSha256": "bbeef0d9f1b71c2c35581aa87b372a5668c277b23c65febd111cc8469c13763d"
   },
   "officialComparison": {
     "oracle": "official-source",
@@ -23,25 +23,25 @@
       "officialSource": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "1e3d31447a04d1efaf2f8638afdf58054cf17bdd79c895ef200e47fcf05f86c3",
+        "stdoutSha256": "15dd722421b4fc351900b4e875a01fcdd22fc259d332f9435bb250ed6c97b76a",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "officialGenerated": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "1e3d31447a04d1efaf2f8638afdf58054cf17bdd79c895ef200e47fcf05f86c3",
+        "stdoutSha256": "15dd722421b4fc351900b4e875a01fcdd22fc259d332f9435bb250ed6c97b76a",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoRun": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "1e3d31447a04d1efaf2f8638afdf58054cf17bdd79c895ef200e47fcf05f86c3",
+        "stdoutSha256": "15dd722421b4fc351900b4e875a01fcdd22fc259d332f9435bb250ed6c97b76a",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoNativeO0": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "1e3d31447a04d1efaf2f8638afdf58054cf17bdd79c895ef200e47fcf05f86c3",
+        "stdoutSha256": "15dd722421b4fc351900b4e875a01fcdd22fc259d332f9435bb250ed6c97b76a",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       }
     }
@@ -63,23 +63,23 @@
     },
     "lnako": {
       "binarySha256": "497adbe25fb4c6720e3e81c2431ef8c02060918e05fa3f1e05dff03e35693c87",
-      "commit": "951e7184313f6ec0c7a1276701a7b14044a30144",
+      "commit": "3b75e71b3da409a9debb36818074f66aade360aa",
       "dirty": true
     },
     "raw": {
-      "interpreterTraceSha256": "531fe38cf75f47d2d34168d106c72607f1ab3e72ca1c92e2e2859d75b5f433be",
-      "aotTraceSha256": "1ef755a0e60e622037fdcf6c1c9d63363572327498326bc523deef93ce0795b9",
-      "compileManifestSha256": "8683aeedecb9cbef929d6e31f11468245e204bfbb3521a3f9ef91efbf110dad7"
+      "interpreterTraceSha256": "8bc1271baa71398da19c986eefab889c055c67cc8c26e504d3574624903122d0",
+      "aotTraceSha256": "c3d0a3de325287ca960ae0344f902cd80b1fcbb573e26bb27cfea9fd360c4422",
+      "compileManifestSha256": "6709b88d1f677c3a0e8c2bbbc0f296825d6fe9ec0e52493f6aee57ef18f5d481"
     }
   },
   "trace": {
     "interpreter": {
       "schema": 2,
-      "eventCount": 644
+      "eventCount": 661
     },
     "aot": {
       "schema": 2,
-      "eventCount": 1288
+      "eventCount": 1322
     }
   },
   "sites": [
@@ -14729,6 +14729,397 @@
         "aot": {
           "success": true,
           "callId": 643,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0300",
+      "name": "辞書キー列挙",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000300000285",
+      "sourceName": "辞書キー列挙",
+      "canonicalOpcode": "dictionary_keys",
+      "opcode": 42,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 644,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0287",
+      "name": "JSON変換",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000300000286",
+      "sourceName": "JSON変換",
+      "canonicalOpcode": "json_encode",
+      "opcode": 143,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 645,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000300000287",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 646,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0303",
+      "name": "ハッシュキー列挙",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000300000288",
+      "sourceName": "ハッシュキー列挙",
+      "canonicalOpcode": "hash_keys",
+      "opcode": 45,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 647,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0287",
+      "name": "JSON変換",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000300000289",
+      "sourceName": "JSON変換",
+      "canonicalOpcode": "json_encode",
+      "opcode": 143,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 648,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x000000030000028a",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 649,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0304",
+      "name": "ハッシュ内容列挙",
+      "plugin": "plugin_system",
+      "siteId": "0x000000030000028b",
+      "sourceName": "ハッシュ内容列挙",
+      "canonicalOpcode": "hash_values",
+      "opcode": 46,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 650,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0287",
+      "name": "JSON変換",
+      "plugin": "plugin_system",
+      "siteId": "0x000000030000028c",
+      "sourceName": "JSON変換",
+      "canonicalOpcode": "json_encode",
+      "opcode": 143,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 651,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x000000030000028d",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 652,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0302",
+      "name": "辞書キー存在",
+      "plugin": "plugin_system",
+      "siteId": "0x000000030000028e",
+      "sourceName": "辞書キー存在",
+      "canonicalOpcode": "dictionary_has",
+      "opcode": 44,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 653,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x000000030000028f",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 654,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0301",
+      "name": "辞書キー削除",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000300000290",
+      "sourceName": "辞書キー削除",
+      "canonicalOpcode": "dictionary_remove",
+      "opcode": 43,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 655,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0306",
+      "name": "ハッシュキー存在",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000300000291",
+      "sourceName": "ハッシュキー存在",
+      "canonicalOpcode": "hash_has",
+      "opcode": 48,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 656,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000300000292",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 657,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0305",
+      "name": "ハッシュキー削除",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000300000293",
+      "sourceName": "ハッシュキー削除",
+      "canonicalOpcode": "hash_remove",
+      "opcode": 47,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 658,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0287",
+      "name": "JSON変換",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000300000294",
+      "sourceName": "JSON変換",
+      "canonicalOpcode": "json_encode",
+      "opcode": 143,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 659,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000300000295",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 660,
           "count": 1
         }
       },
