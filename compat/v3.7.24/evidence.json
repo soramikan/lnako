@@ -22,8 +22,8 @@
   },
   "executionEvidenceStates": {
     "verified": 0,
-    "trace-confirmed-unattested": 259,
-    "unverified": 268
+    "trace-confirmed-unattested": 266,
+    "unverified": 261
   },
   "entries": [
     {
@@ -13848,7 +13848,11 @@
           "0x00000009000002a3",
           "0x00000009000002a5",
           "0x00000009000002a8",
-          "0x00000009000002d1"
+          "0x00000009000002d1",
+          "0x00000009000002e9",
+          "0x00000009000002ec",
+          "0x00000009000002f0",
+          "0x00000009000002fa"
         ],
         "officialComparison": [
           "officialSource",
@@ -13858,7 +13862,7 @@
         ],
         "state": "trace-confirmed-unattested"
       },
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（26 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（30 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "純LLVM AOTのJSON.stringify互換エンコーダと公式CLI・生成JavaScriptとの差分テストに成功"
     },
     {
@@ -15665,7 +15669,16 @@
           "0x00000009000002d2",
           "0x00000009000002d6",
           "0x00000009000002dc",
-          "0x00000009000002de"
+          "0x00000009000002de",
+          "0x00000009000002ea",
+          "0x00000009000002ed",
+          "0x00000009000002ef",
+          "0x00000009000002f1",
+          "0x00000009000002f3",
+          "0x00000009000002f5",
+          "0x00000009000002f7",
+          "0x00000009000002fb",
+          "0x00000009000002fd"
         ],
         "officialComparison": [
           "officialSource",
@@ -15675,7 +15688,7 @@
         ],
         "state": "trace-confirmed-unattested"
       },
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（342 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（351 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "継続表示プールと表示ログを含めて実装し、公式差分テストに成功"
     },
     {
@@ -16451,7 +16464,8 @@
         "plugin-csv-all"
       ],
       "aotFixtureIds": [
-        "native-csv-commands"
+        "native-csv-commands",
+        "native-cut-commands"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -16465,15 +16479,32 @@
           "native-csv-commands": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-cut-commands": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x00000009000002e8",
+          "0x00000009000002f9"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（2 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Zig製CSVプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
@@ -16485,7 +16516,8 @@
         "plugin-csv-all"
       ],
       "aotFixtureIds": [
-        "native-csv-commands"
+        "native-csv-commands",
+        "native-cut-commands"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -16499,15 +16531,31 @@
           "native-csv-commands": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-cut-commands": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x00000009000002eb"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Zig製CSVプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
@@ -16519,7 +16567,8 @@
         "plugin-csv-all"
       ],
       "aotFixtureIds": [
-        "native-csv-commands"
+        "native-csv-commands",
+        "native-cut-commands"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -16533,15 +16582,31 @@
           "native-csv-commands": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-cut-commands": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x00000009000002ee"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Zig製CSVプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
@@ -16553,7 +16618,8 @@
         "plugin-csv-all"
       ],
       "aotFixtureIds": [
-        "native-csv-commands"
+        "native-csv-commands",
+        "native-cut-commands"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -16567,15 +16633,32 @@
           "native-csv-commands": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-cut-commands": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x00000009000002f2",
+          "0x00000009000002fc"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（2 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Zig製CSVプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
@@ -16587,7 +16670,8 @@
         "plugin-csv-all"
       ],
       "aotFixtureIds": [
-        "native-csv-commands"
+        "native-csv-commands",
+        "native-cut-commands"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -16601,15 +16685,31 @@
           "native-csv-commands": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-cut-commands": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x00000009000002f4"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Zig製CSVプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
@@ -16621,7 +16721,8 @@
         "plugin-csv-all"
       ],
       "aotFixtureIds": [
-        "native-csv-commands"
+        "native-csv-commands",
+        "native-cut-commands"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -16635,15 +16736,31 @@
           "native-csv-commands": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-cut-commands": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x00000009000002f6"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Zig製CSVプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
@@ -16655,7 +16772,8 @@
         "plugin-csv-all"
       ],
       "aotFixtureIds": [
-        "native-csv-commands"
+        "native-csv-commands",
+        "native-cut-commands"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -16669,15 +16787,31 @@
           "native-csv-commands": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-cut-commands": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x00000009000002f8"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Zig製CSVプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
