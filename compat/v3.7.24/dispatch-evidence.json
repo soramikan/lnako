@@ -8,7 +8,7 @@
   "fixture": {
     "id": "native-cut-commands",
     "file": "native-cases.json",
-    "sourceSha256": "9b670be0c3fffc0f08903e3d5d4726d930db9f7a4b035622e2908f2b5841ff52"
+    "sourceSha256": "32cc7332104fabebb83173d5b9f5f94fbaa45009d07a1061b004eca00dcbd051"
   },
   "officialComparison": {
     "oracle": "official-source",
@@ -23,25 +23,25 @@
       "officialSource": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "dce8a232f862d79d0369ea227e37174a353e321fcf50e6f499691894c81fe114",
+        "stdoutSha256": "feb5a35184fd1d1ddcef8d2fda3de687ada05183396633bc06723e0066b9ebbb",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "officialGenerated": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "dce8a232f862d79d0369ea227e37174a353e321fcf50e6f499691894c81fe114",
+        "stdoutSha256": "feb5a35184fd1d1ddcef8d2fda3de687ada05183396633bc06723e0066b9ebbb",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoRun": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "dce8a232f862d79d0369ea227e37174a353e321fcf50e6f499691894c81fe114",
+        "stdoutSha256": "feb5a35184fd1d1ddcef8d2fda3de687ada05183396633bc06723e0066b9ebbb",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoNativeO0": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "dce8a232f862d79d0369ea227e37174a353e321fcf50e6f499691894c81fe114",
+        "stdoutSha256": "feb5a35184fd1d1ddcef8d2fda3de687ada05183396633bc06723e0066b9ebbb",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       }
     }
@@ -63,23 +63,23 @@
     },
     "lnako": {
       "binarySha256": "497adbe25fb4c6720e3e81c2431ef8c02060918e05fa3f1e05dff03e35693c87",
-      "commit": "05d527dcff0764b170e64756104230c3c2caf2b4",
+      "commit": "16c9c63a09eb2743644b09dee8143c880fc5d774",
       "dirty": true
     },
     "raw": {
-      "interpreterTraceSha256": "096743692f60ce0ab1a1fb0104fff0330305997eb04658b1603b3a71eacf0340",
-      "aotTraceSha256": "cedd5d4a2d716b3b47bddab00be06a7826c54063821791f8ed09b3f95860d331",
-      "compileManifestSha256": "9cee2038713316222a024a484a71339d7b7143378361979305646c99cf6f04b1"
+      "interpreterTraceSha256": "6cae1599ae34c45c255f161907592a3cb507378f66f78a82a3298fe2779541d0",
+      "aotTraceSha256": "2ed6b110e1748f06954d1bb4579fb21f84fffd2d5950121157353298f2411589",
+      "compileManifestSha256": "6dde5ecfd721328d509cadd86fb14381b4e27ba6acf88d77ea12fae4c1bea61b"
     }
   },
   "trace": {
     "interpreter": {
       "schema": 2,
-      "eventCount": 691
+      "eventCount": 706
     },
     "aot": {
       "schema": 2,
-      "eventCount": 1382
+      "eventCount": 1412
     }
   },
   "sites": [
@@ -15810,6 +15810,351 @@
         "aot": {
           "success": true,
           "callId": 690,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0049",
+      "name": "敬具",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002b4",
+      "sourceName": "敬具",
+      "canonicalOpcode": "courtesy_end",
+      "opcode": 242,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 691,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0050",
+      "name": "礼節レベル取得",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002b5",
+      "sourceName": "礼節レベル取得",
+      "canonicalOpcode": "courtesy_level",
+      "opcode": 243,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 692,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002b6",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 693,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0049",
+      "name": "敬具",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002b7",
+      "sourceName": "敬具",
+      "canonicalOpcode": "courtesy_end",
+      "opcode": 242,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 694,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0050",
+      "name": "礼節レベル取得",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002b8",
+      "sourceName": "礼節レベル取得",
+      "canonicalOpcode": "courtesy_level",
+      "opcode": 243,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 695,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002b9",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 696,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0045",
+      "name": "ください",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002ba",
+      "sourceName": "ください",
+      "canonicalOpcode": "courtesy_increment",
+      "opcode": 240,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 697,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0047",
+      "name": "です",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002bb",
+      "sourceName": "です",
+      "canonicalOpcode": "courtesy_increment",
+      "opcode": 240,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 698,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0046",
+      "name": "お願",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002bc",
+      "sourceName": "お願",
+      "canonicalOpcode": "courtesy_increment",
+      "opcode": 240,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 699,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0050",
+      "name": "礼節レベル取得",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002bd",
+      "sourceName": "礼節レベル取得",
+      "canonicalOpcode": "courtesy_level",
+      "opcode": 243,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 700,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002be",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 701,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0048",
+      "name": "拝啓",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002bf",
+      "sourceName": "拝啓",
+      "canonicalOpcode": "courtesy_begin",
+      "opcode": 241,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 702,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0049",
+      "name": "敬具",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002c0",
+      "sourceName": "敬具",
+      "canonicalOpcode": "courtesy_end",
+      "opcode": 242,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 703,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0050",
+      "name": "礼節レベル取得",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002c1",
+      "sourceName": "礼節レベル取得",
+      "canonicalOpcode": "courtesy_level",
+      "opcode": 243,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 704,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002c2",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 705,
           "count": 1
         }
       },
