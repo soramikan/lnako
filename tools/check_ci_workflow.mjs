@@ -17,8 +17,12 @@ const aotSuiteScript = await readFile(resolve(root, "tools/check_aot_suite_paral
 const nativeOracleScript = await readFile(resolve(root, "tools/compare_native_oracle.mjs"), "utf8");
 const trackedAttestationChecker = await readFile(resolve(root, "tools/check_tracked_dispatch_attestation.mjs"), "utf8");
 const syncEvidence = await readFile(resolve(root, "tools/sync_compat_evidence.mjs"), "utf8");
+const verifyAttestation = await readFile(resolve(root, "tools/verify_dispatch_attestation.mjs"), "utf8");
 if (!trackedAttestationChecker.includes("gh") || !trackedAttestationChecker.includes("--cert-oidc-issuer") || !trackedAttestationChecker.includes("--deny-self-hosted-runners") || !syncEvidence.includes("--historical-commit") || !syncEvidence.includes("canonical --output")) {
   throw new Error("tracked dispatch attestation checkerのhistorical commit／公式gh厳格検証が不完全です");
+}
+if (!verifyAttestation.includes('evidence.fixture?.id !== "native-dispatch-commands"') || verifyAttestation.includes('evidence.fixture?.id !== "native-cut-commands"')) {
+  throw new Error("dispatch attestation verifierが現行dispatch fixtureを検証していません");
 }
 const upstreamLock = JSON.parse(await readFile(resolve(root, "compat/upstream.lock.json"), "utf8"));
 const oracleIdentity = upstreamLock.nadesiko3?.oracleIdentity;

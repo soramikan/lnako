@@ -110,7 +110,7 @@ function absoluteOption(name) {
 
 function validateEvidence(evidence, expectedCommit) {
   if (evidence?.schema !== "lnako.dispatch-evidence.v2" || evidence.generator !== "tools/check_dispatch_trace.mjs" ||
-      evidence.attestation !== null || evidence.fixture?.id !== "native-cut-commands" || evidence.fixture?.file !== "native-cases.json" ||
+      evidence.attestation !== null || evidence.fixture?.id !== "native-dispatch-commands" || evidence.fixture?.file !== "native-cases.json" ||
       evidence.officialComparison?.equivalent !== true || evidence.provenance?.lnako?.commit !== expectedCommit || evidence.provenance?.lnako?.dirty !== false ||
       !Array.isArray(evidence.sites) || evidence.sites.length === 0) {
     throw new Error("dispatch証拠の安全なschemaまたは対象commitが不正です");
