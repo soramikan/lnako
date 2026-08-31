@@ -8,7 +8,7 @@
   "fixture": {
     "id": "native-cut-commands",
     "file": "native-cases.json",
-    "sourceSha256": "4762cbaa5d25416761aaf4957dbe06daa6c547eaaf462b73a54bcdaaf14a0656"
+    "sourceSha256": "9b670be0c3fffc0f08903e3d5d4726d930db9f7a4b035622e2908f2b5841ff52"
   },
   "officialComparison": {
     "oracle": "official-source",
@@ -23,25 +23,25 @@
       "officialSource": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "9b883d445fc9a2db1745579b429365e31943d6863a8a1ff2d675e19a3549bebe",
+        "stdoutSha256": "dce8a232f862d79d0369ea227e37174a353e321fcf50e6f499691894c81fe114",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "officialGenerated": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "9b883d445fc9a2db1745579b429365e31943d6863a8a1ff2d675e19a3549bebe",
+        "stdoutSha256": "dce8a232f862d79d0369ea227e37174a353e321fcf50e6f499691894c81fe114",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoRun": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "9b883d445fc9a2db1745579b429365e31943d6863a8a1ff2d675e19a3549bebe",
+        "stdoutSha256": "dce8a232f862d79d0369ea227e37174a353e321fcf50e6f499691894c81fe114",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoNativeO0": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "9b883d445fc9a2db1745579b429365e31943d6863a8a1ff2d675e19a3549bebe",
+        "stdoutSha256": "dce8a232f862d79d0369ea227e37174a353e321fcf50e6f499691894c81fe114",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       }
     }
@@ -63,23 +63,23 @@
     },
     "lnako": {
       "binarySha256": "497adbe25fb4c6720e3e81c2431ef8c02060918e05fa3f1e05dff03e35693c87",
-      "commit": "90de2856482afa51bc2f782def121101ceaa12df",
+      "commit": "05d527dcff0764b170e64756104230c3c2caf2b4",
       "dirty": true
     },
     "raw": {
-      "interpreterTraceSha256": "1cafcc1b3e743d6133a3e378d289949659d205975df79379798b51f928de57f8",
-      "aotTraceSha256": "a4de30f7156289be3907c4ed7ccde19b792498d94d17ee1a96bd712e63b802f9",
-      "compileManifestSha256": "0032c3447fb5ca507cf6f264446241daf75fa0f7359bcf5e67e4fe7be1eb2f17"
+      "interpreterTraceSha256": "096743692f60ce0ab1a1fb0104fff0330305997eb04658b1603b3a71eacf0340",
+      "aotTraceSha256": "cedd5d4a2d716b3b47bddab00be06a7826c54063821791f8ed09b3f95860d331",
+      "compileManifestSha256": "9cee2038713316222a024a484a71339d7b7143378361979305646c99cf6f04b1"
     }
   },
   "trace": {
     "interpreter": {
       "schema": 2,
-      "eventCount": 681
+      "eventCount": 691
     },
     "aot": {
       "schema": 2,
-      "eventCount": 1362
+      "eventCount": 1382
     }
   },
   "sites": [
@@ -15580,6 +15580,236 @@
         "aot": {
           "success": true,
           "callId": 680,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0263",
+      "name": "拡張子抽出",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002aa",
+      "sourceName": "拡張子抽出",
+      "canonicalOpcode": "path_extract_extension",
+      "opcode": 218,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 681,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002ab",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 682,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0264",
+      "name": "拡張子変更",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002ac",
+      "sourceName": "拡張子変更",
+      "canonicalOpcode": "path_change_extension",
+      "opcode": 219,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 683,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002ad",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 684,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0265",
+      "name": "終端パス追加",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002ae",
+      "sourceName": "終端パス追加",
+      "canonicalOpcode": "path_add_trailing_separator",
+      "opcode": 220,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 685,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002af",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 686,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0266",
+      "name": "終端パス除去",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002b0",
+      "sourceName": "終端パス除去",
+      "canonicalOpcode": "path_remove_trailing_separator",
+      "opcode": 221,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 687,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002b1",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 688,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0267",
+      "name": "終端パス削除",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002b2",
+      "sourceName": "終端パス削除",
+      "canonicalOpcode": "path_delete_trailing_separator",
+      "opcode": 222,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 689,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x00000003000002b3",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 690,
           "count": 1
         }
       },
