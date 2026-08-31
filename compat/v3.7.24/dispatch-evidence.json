@@ -6,9 +6,9 @@
     "commit": "aa18c7e640523938c680958fe731418cc6f7a58f"
   },
   "fixture": {
-    "id": "native-cut-commands",
+    "id": "native-dispatch-commands",
     "file": "native-cases.json",
-    "sourceSha256": "7593dccc9184066878458ff08427f25b52e906f9fc60366dd291d0d5b6300ab9"
+    "sourceSha256": "7b9bad9331a4e36c01fea6b159b838a2ea4505bd92359fbbfc931d919e34380c"
   },
   "officialComparison": {
     "oracle": "official-source",
@@ -23,25 +23,25 @@
       "officialSource": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "b31ae0b117403405c1d7354e612f1cb51cc64cbb988157528a0de38eef118844",
+        "stdoutSha256": "0a9ed1325d7b1d87cab0491649c3abaafae868ba6c76d904c9f6b860c2d76329",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "officialGenerated": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "b31ae0b117403405c1d7354e612f1cb51cc64cbb988157528a0de38eef118844",
+        "stdoutSha256": "0a9ed1325d7b1d87cab0491649c3abaafae868ba6c76d904c9f6b860c2d76329",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoRun": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "b31ae0b117403405c1d7354e612f1cb51cc64cbb988157528a0de38eef118844",
+        "stdoutSha256": "0a9ed1325d7b1d87cab0491649c3abaafae868ba6c76d904c9f6b860c2d76329",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoNativeO0": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "b31ae0b117403405c1d7354e612f1cb51cc64cbb988157528a0de38eef118844",
+        "stdoutSha256": "0a9ed1325d7b1d87cab0491649c3abaafae868ba6c76d904c9f6b860c2d76329",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       }
     }
@@ -63,23 +63,23 @@
     },
     "lnako": {
       "binarySha256": "497adbe25fb4c6720e3e81c2431ef8c02060918e05fa3f1e05dff03e35693c87",
-      "commit": "2a9c00ad8b2d530c093ae3190e0c76bf31f5976c",
+      "commit": "a1fc0553fc4c3f58b583823dd77247af777d4a26",
       "dirty": false
     },
     "raw": {
-      "interpreterTraceSha256": "dcd968e8bacae7541f5db4f65c045a9f9d97ac50383f5a1a8dd80e1874bf5375",
-      "aotTraceSha256": "45cc99f18b8242ebde48ee527669333329b378007ad95681bf445939cfccfd07",
-      "compileManifestSha256": "0d7f85de184573fda4139add3a4db41debdb56b0c3aa7e665e3a48aa3025f501"
+      "interpreterTraceSha256": "0b67365c6ef2d6d5fcc2b2ec9a58fef0cc43cf9d16b1baae9afc361405e40e56",
+      "aotTraceSha256": "52e3d46a1f2e36543c0e5f08fc7eda88d7e703dffdc55ca8d078a8de58f3a4df",
+      "compileManifestSha256": "9b4a609b475b8af9636e3e749c6f53c0d2cd6432bccd5286506a36c72a0d73ac"
     }
   },
   "trace": {
     "interpreter": {
       "schema": 2,
-      "eventCount": 777
+      "eventCount": 779
     },
     "aot": {
       "schema": 2,
-      "eventCount": 1554
+      "eventCount": 1558
     }
   },
   "sites": [
@@ -123,7 +123,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 775,
+          "callId": 777,
           "count": 1
         }
       },
@@ -146,7 +146,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 776,
+          "callId": 778,
           "count": 1
         }
       },
@@ -169,7 +169,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 771,
+          "callId": 773,
           "count": 1
         }
       },
@@ -192,7 +192,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 772,
+          "callId": 774,
           "count": 1
         }
       },
@@ -215,7 +215,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 773,
+          "callId": 775,
           "count": 1
         }
       },
@@ -238,7 +238,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 774,
+          "callId": 776,
           "count": 1
         }
       },
@@ -17788,6 +17788,52 @@
         "aot": {
           "success": true,
           "callId": 770,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0245",
+      "name": "日時書式変換",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000f00000304",
+      "sourceName": "日時書式変換",
+      "canonicalOpcode": "datetime_format",
+      "opcode": 205,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 771,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000f00000305",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 772,
           "count": 1
         }
       },

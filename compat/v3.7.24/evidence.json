@@ -8,7 +8,7 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 392,
+    "total": 393,
     "nativeAot": 298,
     "interpreter": 99,
     "compatJs": 9
@@ -22,8 +22,8 @@
   },
   "executionEvidenceStates": {
     "verified": 0,
-    "trace-confirmed-unattested": 271,
-    "unverified": 256
+    "trace-confirmed-unattested": 272,
+    "unverified": 255
   },
   "entries": [
     {
@@ -1384,7 +1384,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000001f3",
           "0x0000000f000001f4"
@@ -1435,7 +1435,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000001f6"
         ],
@@ -1485,7 +1485,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000001f7"
         ],
@@ -1535,7 +1535,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000001f9"
         ],
@@ -1585,7 +1585,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000001fb",
           "0x0000000f000001fd",
@@ -1640,7 +1640,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002ba"
         ],
@@ -1691,7 +1691,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002bc"
         ],
@@ -1742,7 +1742,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002bb"
         ],
@@ -1793,7 +1793,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002bf"
         ],
@@ -1844,7 +1844,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002b4",
           "0x0000000f000002b7",
@@ -1897,7 +1897,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002b5",
           "0x0000000f000002b8",
@@ -2052,7 +2052,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000020a"
         ],
@@ -2107,7 +2107,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002c7",
           "0x0000000f000002c9"
@@ -2262,7 +2262,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002c3",
           "0x0000000f000002c5"
@@ -2313,7 +2313,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002df"
         ],
@@ -2398,7 +2398,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002d7",
           "0x0000000f000002d8",
@@ -2458,7 +2458,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002e0"
         ],
@@ -2725,7 +2725,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002d5"
         ],
@@ -2844,7 +2844,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002dd"
         ],
@@ -3064,7 +3064,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000205",
           "0x0000000f00000207"
@@ -3149,7 +3149,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000206"
         ],
@@ -3200,7 +3200,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000208",
           "0x0000000f00000209"
@@ -3251,7 +3251,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000e4"
         ],
@@ -3301,7 +3301,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000e6"
         ],
@@ -3351,7 +3351,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000005d",
           "0x0000000f0000005f"
@@ -3402,7 +3402,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000ea"
         ],
@@ -3452,7 +3452,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000061"
         ],
@@ -3502,7 +3502,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000063"
         ],
@@ -3552,7 +3552,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000065"
         ],
@@ -3602,7 +3602,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000200000001",
           "0x0000000f00000067"
@@ -3653,7 +3653,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000069",
           "0x0000000f0000006b"
@@ -3704,7 +3704,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000006d"
         ],
@@ -3754,7 +3754,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000006f"
         ],
@@ -3804,7 +3804,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000071"
         ],
@@ -3854,7 +3854,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000073"
         ],
@@ -3904,7 +3904,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000075"
         ],
@@ -3954,7 +3954,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000077"
         ],
@@ -4004,7 +4004,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000079"
         ],
@@ -4054,7 +4054,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000007b"
         ],
@@ -4105,7 +4105,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000001df",
           "0x0000000f000001e3",
@@ -4161,7 +4161,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000001e1",
           "0x0000000f000001e5",
@@ -4214,7 +4214,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000007d"
         ],
@@ -4264,7 +4264,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000e2"
         ],
@@ -4314,7 +4314,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000e8"
         ],
@@ -4364,7 +4364,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000d2"
         ],
@@ -4414,7 +4414,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000d4"
         ],
@@ -4464,7 +4464,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000d6"
         ],
@@ -4514,7 +4514,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000d8"
         ],
@@ -4564,7 +4564,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000da"
         ],
@@ -4614,7 +4614,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000dc"
         ],
@@ -4664,7 +4664,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000de"
         ],
@@ -4714,7 +4714,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000e0"
         ],
@@ -4764,7 +4764,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000c4"
         ],
@@ -4814,7 +4814,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000c6"
         ],
@@ -4864,7 +4864,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000c8"
         ],
@@ -4914,7 +4914,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000ca"
         ],
@@ -4964,7 +4964,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000cc"
         ],
@@ -5014,7 +5014,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000ce"
         ],
@@ -5064,7 +5064,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000d0"
         ],
@@ -5114,7 +5114,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000009a"
         ],
@@ -5190,7 +5190,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000009c"
         ],
@@ -5252,7 +5252,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000013",
           "0x0000000f00000014",
@@ -5314,7 +5314,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000a2",
           "0x0000000f00000156",
@@ -5366,7 +5366,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000a4"
         ],
@@ -5416,7 +5416,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000a6"
         ],
@@ -5466,7 +5466,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000210"
         ],
@@ -5516,7 +5516,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000215",
           "0x0000000f00000218"
@@ -5567,7 +5567,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000021a",
           "0x0000000f0000021c"
@@ -5618,7 +5618,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000021e"
         ],
@@ -5668,7 +5668,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000220"
         ],
@@ -5718,7 +5718,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000222",
           "0x0000000f00000224",
@@ -5770,7 +5770,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000228",
           "0x0000000f0000022a",
@@ -5824,7 +5824,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000a8"
         ],
@@ -5874,7 +5874,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000aa"
         ],
@@ -5924,7 +5924,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000ac"
         ],
@@ -5974,7 +5974,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000ae"
         ],
@@ -6024,7 +6024,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000b0"
         ],
@@ -6074,7 +6074,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000b2"
         ],
@@ -6124,7 +6124,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000b4"
         ],
@@ -6174,7 +6174,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000b6"
         ],
@@ -6233,7 +6233,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000001",
           "0x0000000f00000007",
@@ -6290,7 +6290,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000004",
           "0x0000000f0000001a"
@@ -6341,7 +6341,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000b8"
         ],
@@ -6391,7 +6391,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000009e"
         ],
@@ -6441,7 +6441,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000a0"
         ],
@@ -6491,7 +6491,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000018b",
           "0x0000000f0000018d",
@@ -6554,7 +6554,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000015f",
           "0x0000000f00000161",
@@ -6616,7 +6616,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000017d",
           "0x0000000f0000017f",
@@ -6672,7 +6672,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000ba"
         ],
@@ -6722,7 +6722,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000bc"
         ],
@@ -6772,7 +6772,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000be"
         ],
@@ -6822,7 +6822,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000c2"
         ],
@@ -6872,7 +6872,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000c0"
         ],
@@ -6922,7 +6922,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000150",
           "0x0000000f00000155"
@@ -6973,7 +6973,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000152",
           "0x0000000f00000158"
@@ -7024,7 +7024,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000015b"
         ],
@@ -7074,7 +7074,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000015d"
         ],
@@ -7129,7 +7129,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000251"
         ],
@@ -7184,7 +7184,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000253"
         ],
@@ -7239,7 +7239,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000255"
         ],
@@ -7294,7 +7294,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000257"
         ],
@@ -7364,7 +7364,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000259",
           "0x0000000f0000025d"
@@ -7435,7 +7435,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000025b"
         ],
@@ -7505,7 +7505,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000025f"
         ],
@@ -7580,7 +7580,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000261"
         ],
@@ -7762,7 +7762,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000001a9",
           "0x0000000f000001ab",
@@ -7817,7 +7817,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000001b5",
           "0x0000000f000001b7",
@@ -7872,7 +7872,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000001c1",
           "0x0000000f000001c3",
@@ -7924,7 +7924,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000001c7"
         ],
@@ -7974,7 +7974,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000001c9"
         ],
@@ -8024,7 +8024,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000001cb",
           "0x0000000f000001cd"
@@ -8075,7 +8075,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000001cf",
           "0x0000000f000001d1",
@@ -8136,7 +8136,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000026"
         ],
@@ -8186,7 +8186,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000024b"
         ],
@@ -8245,7 +8245,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000098"
         ],
@@ -8295,7 +8295,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000024d"
         ],
@@ -8345,7 +8345,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000024f"
         ],
@@ -8395,7 +8395,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000002a"
         ],
@@ -8450,7 +8450,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000272"
         ],
@@ -8505,7 +8505,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000275"
         ],
@@ -8560,7 +8560,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000081"
         ],
@@ -8615,7 +8615,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000086"
         ],
@@ -8670,7 +8670,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000084"
         ],
@@ -8729,7 +8729,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000263"
         ],
@@ -8784,7 +8784,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000088"
         ],
@@ -8840,7 +8840,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002db"
         ],
@@ -8895,7 +8895,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000278"
         ],
@@ -8955,7 +8955,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000027b"
         ],
@@ -9010,7 +9010,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000027f"
         ],
@@ -9060,7 +9060,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000296"
         ],
@@ -9110,7 +9110,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000029a"
         ],
@@ -9160,7 +9160,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000029e"
         ],
@@ -9222,7 +9222,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002a2"
         ],
@@ -9289,7 +9289,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000090"
         ],
@@ -9383,7 +9383,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000094"
         ],
@@ -9472,7 +9472,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000096"
         ],
@@ -9527,7 +9527,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000092"
         ],
@@ -9582,7 +9582,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000008a"
         ],
@@ -9637,7 +9637,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000008c"
         ],
@@ -9687,7 +9687,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000008e"
         ],
@@ -9742,7 +9742,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000026f"
         ],
@@ -9792,7 +9792,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002a7"
         ],
@@ -9852,7 +9852,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000282"
         ],
@@ -9903,7 +9903,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000266"
         ],
@@ -9954,7 +9954,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000269"
         ],
@@ -10005,7 +10005,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000026c"
         ],
@@ -10073,7 +10073,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000030"
         ],
@@ -10145,7 +10145,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000033"
         ],
@@ -10210,7 +10210,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000ec"
         ],
@@ -10275,7 +10275,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000ee"
         ],
@@ -10339,7 +10339,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000f0"
         ],
@@ -10414,7 +10414,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000f2"
         ],
@@ -10464,7 +10464,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000f4"
         ],
@@ -10527,7 +10527,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000f6"
         ],
@@ -10586,7 +10586,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000f8"
         ],
@@ -10640,7 +10640,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000fa"
         ],
@@ -10750,7 +10750,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000fc"
         ],
@@ -10827,7 +10827,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000000fe"
         ],
@@ -10886,7 +10886,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000100"
         ],
@@ -10950,7 +10950,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000102"
         ],
@@ -11004,7 +11004,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000104"
         ],
@@ -11072,7 +11072,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000106"
         ],
@@ -11728,9 +11728,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-dispatch-commands",
+        "siteIds": [
+          "0x0000000f00000304"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式書式トークンをInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
@@ -12177,7 +12190,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000232"
         ],
@@ -12228,7 +12241,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000234"
         ],
@@ -12279,7 +12292,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000236"
         ],
@@ -12330,7 +12343,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000239",
           "0x0000000f0000023d"
@@ -12382,7 +12395,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000023b"
         ],
@@ -12433,7 +12446,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002aa"
         ],
@@ -12484,7 +12497,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002ac"
         ],
@@ -12535,7 +12548,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002ae"
         ],
@@ -12586,7 +12599,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002b0"
         ],
@@ -12637,7 +12650,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002b2"
         ],
@@ -12766,7 +12779,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000003e"
         ],
@@ -12850,7 +12863,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000040"
         ],
@@ -12925,7 +12938,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000002c"
         ],
@@ -12975,7 +12988,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000042"
         ],
@@ -13025,7 +13038,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000044"
         ],
@@ -13075,7 +13088,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000046"
         ],
@@ -13129,7 +13142,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000048"
         ],
@@ -13179,7 +13192,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000004a"
         ],
@@ -13229,7 +13242,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000004c"
         ],
@@ -13279,7 +13292,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000004e"
         ],
@@ -13329,7 +13342,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000050"
         ],
@@ -13379,7 +13392,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000052"
         ],
@@ -13429,7 +13442,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000054"
         ],
@@ -13479,7 +13492,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000056"
         ],
@@ -13529,7 +13542,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000058"
         ],
@@ -13579,7 +13592,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000005a"
         ],
@@ -13629,7 +13642,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000005b"
         ],
@@ -13821,7 +13834,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000002e",
           "0x0000000f00000031",
@@ -13912,7 +13925,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000020c"
         ],
@@ -13966,7 +13979,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000023f"
         ],
@@ -14020,7 +14033,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000241"
         ],
@@ -14070,7 +14083,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000247"
         ],
@@ -14124,7 +14137,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000243"
         ],
@@ -14178,7 +14191,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000245"
         ],
@@ -14228,7 +14241,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000249"
         ],
@@ -14429,7 +14442,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000036"
         ],
@@ -14491,7 +14504,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000038"
         ],
@@ -14582,7 +14595,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000003a"
         ],
@@ -14640,7 +14653,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000003c"
         ],
@@ -14755,7 +14768,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000285"
         ],
@@ -14819,7 +14832,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000290"
         ],
@@ -14942,7 +14955,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000028e"
         ],
@@ -15002,7 +15015,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000288"
         ],
@@ -15109,7 +15122,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000028b"
         ],
@@ -15159,7 +15172,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000293"
         ],
@@ -15223,7 +15236,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000291"
         ],
@@ -15326,7 +15339,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000a00000001",
           "0x0000000d00000001",
@@ -15682,7 +15695,8 @@
           "0x0000000f000002f5",
           "0x0000000f000002f7",
           "0x0000000f000002fb",
-          "0x0000000f000002fd"
+          "0x0000000f000002fd",
+          "0x0000000f00000305"
         ],
         "officialComparison": [
           "officialSource",
@@ -15692,7 +15706,7 @@
         ],
         "state": "trace-confirmed-unattested"
       },
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（355 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（356 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "継続表示プールと表示ログを含めて実装し、公式差分テストに成功"
     },
     {
@@ -15731,7 +15745,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002cb"
         ],
@@ -15782,7 +15796,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002cd"
         ],
@@ -15833,7 +15847,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002cc"
         ],
@@ -15917,7 +15931,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002cf"
         ],
@@ -15968,7 +15982,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002d3"
         ],
@@ -16019,7 +16033,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002d4"
         ],
@@ -16073,7 +16087,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002e1"
         ],
@@ -16123,7 +16137,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002e2"
         ],
@@ -16173,7 +16187,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002e3"
         ],
@@ -16239,7 +16253,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002e5"
         ],
@@ -16289,7 +16303,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002e6"
         ],
@@ -16339,7 +16353,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002e7"
         ],
@@ -16393,7 +16407,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000700000001",
           "0x0000000800000001"
@@ -16444,7 +16458,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002e4"
         ],
@@ -16495,7 +16509,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002e8",
           "0x0000000f000002f9"
@@ -16547,7 +16561,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002eb"
         ],
@@ -16598,7 +16612,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002ee"
         ],
@@ -16649,7 +16663,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002f2",
           "0x0000000f000002fc"
@@ -16701,7 +16715,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002f4"
         ],
@@ -16752,7 +16766,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002f6"
         ],
@@ -16803,7 +16817,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002f8"
         ],
@@ -16921,7 +16935,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000108"
         ],
@@ -16971,7 +16985,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000010a"
         ],
@@ -17021,7 +17035,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000010c"
         ],
@@ -17071,7 +17085,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000010e"
         ],
@@ -17121,7 +17135,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000110"
         ],
@@ -17171,7 +17185,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000112"
         ],
@@ -17221,7 +17235,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000114"
         ],
@@ -17271,7 +17285,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000116"
         ],
@@ -17321,7 +17335,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000118"
         ],
@@ -17371,7 +17385,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000011a"
         ],
@@ -17421,7 +17435,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000011c"
         ],
@@ -17471,7 +17485,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000011e"
         ],
@@ -17521,7 +17535,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000120"
         ],
@@ -17571,7 +17585,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000122"
         ],
@@ -17621,7 +17635,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000124"
         ],
@@ -17671,7 +17685,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000126"
         ],
@@ -17721,7 +17735,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000128"
         ],
@@ -17771,7 +17785,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000012a"
         ],
@@ -17821,7 +17835,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000012c"
         ],
@@ -17871,7 +17885,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000012e"
         ],
@@ -17921,7 +17935,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000130"
         ],
@@ -17971,7 +17985,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000132"
         ],
@@ -18021,7 +18035,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000134"
         ],
@@ -18071,7 +18085,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000136"
         ],
@@ -18121,7 +18135,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000138"
         ],
@@ -18239,7 +18253,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000013a"
         ],
@@ -18289,7 +18303,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000013c"
         ],
@@ -18339,7 +18353,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000013e"
         ],
@@ -18389,7 +18403,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000140"
         ],
@@ -18439,7 +18453,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000142"
         ],
@@ -18489,7 +18503,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000144"
         ],
@@ -18539,7 +18553,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000146"
         ],
@@ -18589,7 +18603,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000148"
         ],
@@ -18639,7 +18653,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000014a"
         ],
@@ -18689,7 +18703,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000014c"
         ],
@@ -18739,7 +18753,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f0000014e"
         ],
@@ -18838,7 +18852,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002fe",
           "0x0000000f00000301"
@@ -18897,7 +18911,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f000002ff"
         ],
@@ -18947,7 +18961,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000302"
         ],
@@ -18997,7 +19011,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000300"
         ],
@@ -19047,7 +19061,7 @@
       "executionEvidenceState": "trace-confirmed-unattested",
       "executionEvidence": {
         "proofSchema": "lnako.dispatch-evidence.v2",
-        "fixtureId": "native-cut-commands",
+        "fixtureId": "native-dispatch-commands",
         "siteIds": [
           "0x0000000f00000303"
         ],
