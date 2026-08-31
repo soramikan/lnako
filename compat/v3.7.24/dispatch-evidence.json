@@ -8,7 +8,7 @@
   "fixture": {
     "id": "native-cut-commands",
     "file": "native-cases.json",
-    "sourceSha256": "ec86141bcb58ec4868bec583a0761cf32779304e528f7d94ff17df0796f1fb3a"
+    "sourceSha256": "7a3bd52ef896fe09879606d865ec40dd5f444d51e5241cc88ef77175d35ce18a"
   },
   "officialComparison": {
     "oracle": "official-source",
@@ -23,25 +23,25 @@
       "officialSource": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "bbcb046b8a74da90bf1202c130ee11e11f1cef30f624e1fb2860e2f6eec45522",
+        "stdoutSha256": "3099b4685863ca47f2109a5e7973998d9862614b8c823d8bb61c46b87239bfaa",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "officialGenerated": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "bbcb046b8a74da90bf1202c130ee11e11f1cef30f624e1fb2860e2f6eec45522",
+        "stdoutSha256": "3099b4685863ca47f2109a5e7973998d9862614b8c823d8bb61c46b87239bfaa",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoRun": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "bbcb046b8a74da90bf1202c130ee11e11f1cef30f624e1fb2860e2f6eec45522",
+        "stdoutSha256": "3099b4685863ca47f2109a5e7973998d9862614b8c823d8bb61c46b87239bfaa",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoNativeO0": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "bbcb046b8a74da90bf1202c130ee11e11f1cef30f624e1fb2860e2f6eec45522",
+        "stdoutSha256": "3099b4685863ca47f2109a5e7973998d9862614b8c823d8bb61c46b87239bfaa",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       }
     }
@@ -63,23 +63,23 @@
     },
     "lnako": {
       "binarySha256": "497adbe25fb4c6720e3e81c2431ef8c02060918e05fa3f1e05dff03e35693c87",
-      "commit": "9e24b4f57710fddce4c0641d7a0cab16177bcf41",
+      "commit": "7d20b10f037f0a06be675d7142e9fd5aff0bb70a",
       "dirty": false
     },
     "raw": {
-      "interpreterTraceSha256": "507b3a359547125dacf8e7359798a4b36ba96b4cb21bb3773b066c3bc71a4fd5",
-      "aotTraceSha256": "f64482d46a1129493fbe0033eb31bdd43c21f9c0cff425f97f747c2cb37a59e0",
-      "compileManifestSha256": "bf637fa822be748f72112e2474951002ba0e126a24f76554097c519840517114"
+      "interpreterTraceSha256": "8ceb83e1bc032a4edfdd867445321d0c7b8569de37c6cfb87acae5126e48f91e",
+      "aotTraceSha256": "628c34c6f6f59ee182ca746a96d240fb2f115ed6149be3549a2d64e37fb45538",
+      "compileManifestSha256": "8d99411cad56e19b608bc534aa3766bde03839c50c6c8bd927860ccc84e27e0f"
     }
   },
   "trace": {
     "interpreter": {
       "schema": 2,
-      "eventCount": 737
+      "eventCount": 740
     },
     "aot": {
       "schema": 2,
-      "eventCount": 1474
+      "eventCount": 1480
     }
   },
   "sites": [
@@ -16868,6 +16868,75 @@
         "aot": {
           "success": true,
           "callId": 736,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0316",
+      "name": "秒待機",
+      "plugin": "plugin_system",
+      "siteId": "0x00000006000002e2",
+      "sourceName": "秒待機",
+      "canonicalOpcode": "timer_wait",
+      "opcode": 251,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 737,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0317",
+      "name": "秒逐次待機",
+      "plugin": "plugin_system",
+      "siteId": "0x00000006000002e3",
+      "sourceName": "秒逐次待機",
+      "canonicalOpcode": "timer_wait",
+      "opcode": 251,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 738,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0322",
+      "name": "全タイマー停止",
+      "plugin": "plugin_system",
+      "siteId": "0x00000006000002e4",
+      "sourceName": "全タイマー停止",
+      "canonicalOpcode": "timer_stop_all",
+      "opcode": 299,
+      "route": "timer",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 739,
           "count": 1
         }
       },
