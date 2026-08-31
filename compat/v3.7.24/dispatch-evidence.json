@@ -8,7 +8,7 @@
   "fixture": {
     "id": "native-cut-commands",
     "file": "native-cases.json",
-    "sourceSha256": "b2e4b75324dcabfe2e65d0ae838bdffecc0335e7ce1795edf813e885c36b8f05"
+    "sourceSha256": "d991eedae1dee773842e118088470720ddef590d7fa7f5974cd54dd019513329"
   },
   "officialComparison": {
     "oracle": "official-source",
@@ -23,25 +23,25 @@
       "officialSource": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "31df4867e0d35ec8a3090bc7fc56cda1f2ca44c30ab5897dee221c52caeace30",
+        "stdoutSha256": "e48a6d6006f8022f20016d26f6f1147cb31bbcb6d4abc9efae9c72083070493c",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "officialGenerated": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "31df4867e0d35ec8a3090bc7fc56cda1f2ca44c30ab5897dee221c52caeace30",
+        "stdoutSha256": "e48a6d6006f8022f20016d26f6f1147cb31bbcb6d4abc9efae9c72083070493c",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoRun": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "31df4867e0d35ec8a3090bc7fc56cda1f2ca44c30ab5897dee221c52caeace30",
+        "stdoutSha256": "e48a6d6006f8022f20016d26f6f1147cb31bbcb6d4abc9efae9c72083070493c",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoNativeO0": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "31df4867e0d35ec8a3090bc7fc56cda1f2ca44c30ab5897dee221c52caeace30",
+        "stdoutSha256": "e48a6d6006f8022f20016d26f6f1147cb31bbcb6d4abc9efae9c72083070493c",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       }
     }
@@ -63,23 +63,23 @@
     },
     "lnako": {
       "binarySha256": "497adbe25fb4c6720e3e81c2431ef8c02060918e05fa3f1e05dff03e35693c87",
-      "commit": "1c87e42c4a930494fca9d1a2d42657c1645c06bd",
+      "commit": "ce845e719b99b279bcd814251be1e4ba1263d1aa",
       "dirty": true
     },
     "raw": {
-      "interpreterTraceSha256": "6cd010bacc478118eca430347476eb629fc5c54e5dfc98b1a663e2315ce735be",
-      "aotTraceSha256": "c7e2cf2c4a0b8ebd1d9cd92553d021a4c342ea334b7a0ee480f94060d01a070b",
-      "compileManifestSha256": "e92f6a3269e4e1e5398494c0011d9d4c8a5257d6ba0c05047d8f5fab80d5dc27"
+      "interpreterTraceSha256": "59db15b14243522e3b6f0ab74283912525ac1d2af8a4b1f8d878e20d0752e192",
+      "aotTraceSha256": "e76d37ff73a35d186b1c55727d23cae6c07672e84b7d78d03f5356faf39c2689",
+      "compileManifestSha256": "8ae15a5209cc2ba588af40b595371395baec6c1e32811ad3136365cd2c871783"
     }
   },
   "trace": {
     "interpreter": {
       "schema": 2,
-      "eventCount": 734
+      "eventCount": 735
     },
     "aot": {
       "schema": 2,
-      "eventCount": 1468
+      "eventCount": 1470
     }
   },
   "sites": [
@@ -16799,6 +16799,29 @@
         "aot": {
           "success": true,
           "callId": 733,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0060",
+      "name": "実行時間計測",
+      "plugin": "plugin_system",
+      "siteId": "0x00000006000002df",
+      "sourceName": "実行時間計測",
+      "canonicalOpcode": "system_measure_time",
+      "opcode": 280,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 734,
           "count": 1
         }
       },

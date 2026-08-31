@@ -22,8 +22,8 @@
   },
   "executionEvidenceStates": {
     "verified": 0,
-    "trace-confirmed-unattested": 249,
-    "unverified": 278
+    "trace-confirmed-unattested": 250,
+    "unverified": 277
   },
   "entries": [
     {
@@ -2287,6 +2287,7 @@
         "system-runtime-execution-and-debug"
       ],
       "aotFixtureIds": [
+        "native-cut-commands",
         "native-system-measure-time"
       ],
       "compatJsFixtureIds": [],
@@ -2298,6 +2299,9 @@
           ]
         },
         "aot": {
+          "native-cut-commands": [
+            "fixture.commands"
+          ],
           "native-system-measure-time": [
             "fixture.commands"
           ]
@@ -2306,9 +2310,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-cut-commands",
+        "siteIds": [
+          "0x00000006000002df"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Zig製実行時システム命令で公式cnako3との差分テストに成功"
     },
     {
