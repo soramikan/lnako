@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 390,
-    "nativeAot": 296,
+    "total": 391,
+    "nativeAot": 297,
     "interpreter": 99,
     "compatJs": 9
   },
@@ -7814,6 +7814,7 @@
         "plugin-system-table"
       ],
       "aotFixtureIds": [
+        "native-system-byte-buffer-null-prototype",
         "native-system-table-byte-buffer-inherited-length",
         "native-system-table-byte-row-properties",
         "native-system-table-inherited-length",
@@ -7830,6 +7831,9 @@
           ]
         },
         "aot": {
+          "native-system-byte-buffer-null-prototype": [
+            "fixture.commands"
+          ],
           "native-system-table-byte-buffer-inherited-length": [
             "fixture.commands"
           ],
@@ -7856,7 +7860,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 6件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 7件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "空表で1を返す公式挙動とBuffer・Uint8Arrayのlengthを含めて実装し、公式差分テストに成功"
     },
     {
@@ -8030,6 +8034,7 @@
         "native-system-array-own-properties",
         "native-system-byte-buffer-backing",
         "native-system-byte-buffer-direct-properties",
+        "native-system-byte-buffer-null-prototype",
         "native-system-byte-buffer-property",
         "native-system-table-byte-buffer-inherited-length",
         "native-system-table-byte-row-properties",
@@ -8063,6 +8068,9 @@
           "native-system-byte-buffer-direct-properties": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-system-byte-buffer-null-prototype": [
+            "fixture.commands"
           ],
           "native-system-byte-buffer-property": [
             "fixture.commands",
@@ -8103,7 +8111,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 13件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 14件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムでBuffer・Uint8Array・ArrayBufferのlengthと数値添字、byteLength・byteOffset・BYTES_PER_ELEMENT・bufferなどのproperty、表列取得の疎配列map挙動、および匿名関数のname/length propertyを実装し、公式差分テストに成功"
     },
     {
@@ -9863,6 +9871,7 @@
         "native-system-array-fill-byte-buffer-json-clone",
         "native-system-byte-buffer-backing",
         "native-system-byte-buffer-direct-properties",
+        "native-system-byte-buffer-null-prototype",
         "native-system-reference-byte-buffer-properties",
         "native-system-reference-inherited-properties",
         "native-system-typeof-command"
@@ -9893,6 +9902,9 @@
             "fixture.commands",
             "implemented.tests"
           ],
+          "native-system-byte-buffer-null-prototype": [
+            "fixture.commands"
+          ],
           "native-system-reference-byte-buffer-properties": [
             "fixture.commands"
           ],
@@ -9909,7 +9921,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 8件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 9件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製ランタイムで実装し、なでしこ3 v3.7.24との公式差分テストに成功"
     },
     {
@@ -11470,6 +11482,7 @@
         "native-system-array-sparse-ordering",
         "native-system-array-sparse-presence",
         "native-system-byte-buffer-direct-properties",
+        "native-system-byte-buffer-null-prototype",
         "native-system-dictionary-byte-buffer-enumeration",
         "native-system-dictionary-byte-buffer-properties",
         "native-system-dictionary-hash-commands",
@@ -11512,6 +11525,9 @@
           "native-system-byte-buffer-direct-properties": [
             "implemented.tests"
           ],
+          "native-system-byte-buffer-null-prototype": [
+            "fixture.commands"
+          ],
           "native-system-dictionary-byte-buffer-enumeration": [
             "fixture.commands",
             "implemented.tests"
@@ -11549,7 +11565,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 16件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 17件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "辞書・配列・関数・Buffer/Uint8Array/ArrayBufferのown propertyと標準prototype propertyの存在判定、配列holeの非存在化、動的エラー文言をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
@@ -11717,6 +11733,7 @@
         "plugin-system-dictionary-hash"
       ],
       "aotFixtureIds": [
+        "native-system-byte-buffer-null-prototype",
         "native-system-dictionary-byte-buffer-properties",
         "native-system-dictionary-hash-commands",
         "native-system-dictionary-inherited-properties"
@@ -11730,6 +11747,9 @@
           ]
         },
         "aot": {
+          "native-system-byte-buffer-null-prototype": [
+            "fixture.commands"
+          ],
           "native-system-dictionary-byte-buffer-properties": [
             "fixture.commands",
             "implemented.tests"
@@ -11748,7 +11768,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 4件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "辞書・配列・関数・Buffer/Uint8Array/ArrayBufferのown propertyと標準prototype propertyの存在判定、動的エラー文言をInterpreterとLLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
@@ -17895,6 +17915,7 @@
         "native-system-byte-buffer-backing-identity",
         "native-system-byte-buffer-direct-properties",
         "native-system-byte-buffer-method-calls",
+        "native-system-byte-buffer-null-prototype",
         "native-system-byte-buffer-property",
         "native-system-dictionary-buffer-enumerable-properties",
         "native-system-dictionary-byte-buffer-enumeration",
@@ -17941,6 +17962,9 @@
             "fixture.commands"
           ],
           "native-system-byte-buffer-method-calls": [
+            "fixture.commands"
+          ],
+          "native-system-byte-buffer-null-prototype": [
             "fixture.commands"
           ],
           "native-system-byte-buffer-property": [
@@ -18002,7 +18026,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 22件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 23件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式7経路のSHA-256・Buffer境界とエンコード形式の差分テストに成功"
     },
     {
@@ -18054,6 +18078,7 @@
         "native-system-byte-buffer-backing",
         "native-system-byte-buffer-backing-identity",
         "native-system-byte-buffer-direct-properties",
+        "native-system-byte-buffer-null-prototype",
         "native-system-byte-buffer-property",
         "native-system-dictionary-byte-buffer-enumeration",
         "native-system-dictionary-byte-buffer-properties",
@@ -18088,6 +18113,9 @@
           "native-system-byte-buffer-direct-properties": [
             "fixture.commands"
           ],
+          "native-system-byte-buffer-null-prototype": [
+            "fixture.commands"
+          ],
           "native-system-byte-buffer-property": [
             "fixture.commands",
             "implemented.tests"
@@ -18110,7 +18138,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 10件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 11件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "公式7経路のUint8Array長さ・要素境界の差分テストに成功"
     },
     {

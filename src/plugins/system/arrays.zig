@@ -1933,6 +1933,7 @@ fn rowLengthValue(runtime: *Runtime, row: Value) !Value {
             // undefined result when the custom chain has no value.
             var units = [_]u16{ 'l', 'e', 'n', 'g', 't', 'h' };
             if (try tableInheritedProperty(runtime, row, &units)) |value| break :blk value;
+            if (!byteBufferAllowsStandardPrototype(buffer)) break :blk .undefined;
             break :blk if (buffer.kind == .array_buffer) .undefined else .{ .number = @floatFromInt(buffer.bytes.len) };
         },
         .null_value, .undefined => {
@@ -2509,6 +2510,14 @@ fn tableInheritedByteBufferMethod(runtime: *Runtime, receiver: Value, name: []co
     return tableInheritedFunction(runtime, cache_kind, name);
 }
 
+pub fn byteBufferAllowsStandardPrototype(buffer: *const value_mod.ByteBuffer) bool {
+    return switch (buffer.prototype) {
+        .null_value => false,
+        .dictionary => |prototype| !value_mod.dictionaryPrototypeBlocksStandard(prototype),
+        else => true,
+    };
+}
+
 fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) !?Value {
     if (source == .dictionary and source.dictionary.prototype != .undefined) {
         if (asciiUnitsEqual(units, "__proto__")) return source.dictionary.prototype;
@@ -2521,12 +2530,13 @@ fn tableInheritedProperty(runtime: *Runtime, source: Value, units: []const u16) 
         if (value_mod.arrayPrototypeBlocksStandard(source.array)) return null;
     }
     if (source == .bytes and source.bytes.prototype != .undefined) {
-        if (asciiUnitsEqual(units, "__proto__")) return if (source.bytes.prototype == .null_value) .undefined else source.bytes.prototype;
+        if (asciiUnitsEqual(units, "__proto__")) return if (source.bytes.prototype == .null_value) null else source.bytes.prototype;
         if (source.bytes.prototype == .dictionary) {
             if (value_mod.dictionaryOwnPropertyUnits(source.bytes.prototype.dictionary, units)) |value| return value;
             if (value_mod.dictionaryPrototypePropertyUnits(source.bytes.prototype.dictionary, units)) |value| return value;
             if (value_mod.dictionaryPrototypeBlocksStandard(source.bytes.prototype.dictionary)) return null;
         }
+        if (source.bytes.prototype == .null_value) return null;
     }
 
     if (asciiUnitsEqual(units, "__proto__")) {
@@ -3024,10 +3034,11 @@ fn indexed(runtime: *Runtime, source: Value, key: Value) !Value {
         return try runtime.stringCodeUnits(&.{rooted[0].string.units[index]});
     }
     if (rooted[0] == .bytes) {
+        const allows_standard_prototype = byteBufferAllowsStandardPrototype(rooted[0].bytes);
         if (propertyIndexUnits(rooted[2].string.units) == null) {
             if (try tableInheritedProperty(runtime, rooted[0], rooted[2].string.units)) |value| return value;
         }
-        if (rooted[0].bytes.kind != .array_buffer and std.mem.eql(u16, rooted[2].string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return .{ .number = @floatFromInt(rooted[0].bytes.bytes.len) };
+        if (allows_standard_prototype and rooted[0].bytes.kind != .array_buffer and std.mem.eql(u16, rooted[2].string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return .{ .number = @floatFromInt(rooted[0].bytes.bytes.len) };
         if (rooted[0].bytes.kind != .array_buffer) if (propertyIndexUnits(rooted[2].string.units)) |index| return rooted[0].bytes.get(index);
         if (try tableInheritedProperty(runtime, rooted[0], rooted[2].string.units)) |value| return value;
         return .undefined;
@@ -3696,6 +3707,60 @@ test "表行propertyはbyte bufferのprototype属性を解決する" {
     try std.testing.expect(!(try indexed(&runtime, array_buffer, detached_key)).boolean);
     try std.testing.expect((try indexed(&runtime, array_buffer, bytes_per_element_key)) == .undefined);
     try std.testing.expect((try indexed(&runtime, array_buffer, buffer_key)) == .undefined);
+}
+
+test "byte bufferのnull prototypeは標準propertyを隠し添字と表の長さを保持する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var buffer = try runtime.createBytes(&.{ 85, 66 });
+    try roots.protect(&buffer);
+    var uint8 = try runtime.createUint8Array(&.{ 85, 66 });
+    try roots.protect(&uint8);
+    var array_buffer = try runtime.createArrayBuffer(&.{ 85, 66 });
+    try roots.protect(&array_buffer);
+    buffer.bytes.prototype = .null_value;
+    uint8.bytes.prototype = .null_value;
+    array_buffer.bytes.prototype = .null_value;
+
+    var length_key = try runtime.stringUtf8("length");
+    try roots.protect(&length_key);
+    var byte_length_key = try runtime.stringUtf8("byteLength");
+    try roots.protect(&byte_length_key);
+    var slice_key = try runtime.stringUtf8("slice");
+    try roots.protect(&slice_key);
+    var map_key = try runtime.stringUtf8("map");
+    try roots.protect(&map_key);
+
+    try std.testing.expect((try indexed(&runtime, buffer, length_key)) == .undefined);
+    try std.testing.expect((try indexed(&runtime, buffer, byte_length_key)) == .undefined);
+    try std.testing.expect((try indexed(&runtime, buffer, slice_key)) == .undefined);
+    try std.testing.expectEqual(@as(f64, 85), (try indexed(&runtime, buffer, .{ .number = 0 })).number);
+    try std.testing.expect((try indexed(&runtime, uint8, length_key)) == .undefined);
+    try std.testing.expect((try indexed(&runtime, uint8, map_key)) == .undefined);
+    try std.testing.expectEqual(@as(f64, 85), (try indexed(&runtime, uint8, .{ .number = 0 })).number);
+    try std.testing.expect((try indexed(&runtime, array_buffer, byte_length_key)) == .undefined);
+    try std.testing.expect((try indexed(&runtime, array_buffer, .{ .number = 0 })) == .undefined);
+
+    var buffer_table = try common.arrayFromValues(&runtime, &.{buffer});
+    try roots.protect(&buffer_table);
+    var buffer_length = try tableColumn(&runtime, buffer_table, length_key);
+    try roots.protect(&buffer_length);
+    try std.testing.expect(buffer_length.array.get(0) == .undefined);
+    var buffer_index = try tableColumn(&runtime, buffer_table, .{ .number = 0 });
+    try roots.protect(&buffer_index);
+    try std.testing.expectEqual(@as(f64, 85), buffer_index.array.get(0).number);
+    try std.testing.expectEqual(@as(f64, 1), (try tableColumnCount(&runtime, buffer_table)).number);
+
+    var array_buffer_table = try common.arrayFromValues(&runtime, &.{array_buffer});
+    try roots.protect(&array_buffer_table);
+    var array_buffer_length = try tableColumn(&runtime, array_buffer_table, byte_length_key);
+    try roots.protect(&array_buffer_length);
+    try std.testing.expect(array_buffer_length.array.get(0) == .undefined);
+    try std.testing.expectEqual(@as(f64, 1), (try tableColumnCount(&runtime, array_buffer_table)).number);
 }
 
 test "byte bufferから抽出したslice関数は未束縛エラーを再現する" {

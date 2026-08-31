@@ -1351,6 +1351,13 @@ const Runtime = struct {
                     };
                     if (inherited) |value| return value;
                 }
+                if (!aotByteBufferAllowsStandardPrototype(source)) {
+                    const index = tablePropertyIndex(key_units) orelse return .{};
+                    return if (rooted_buffer.kind == .array_buffer or index >= rooted_buffer.bytes.len)
+                        .{}
+                    else
+                        numberValue(@floatFromInt(rooted_buffer.bytes[index]));
+                }
                 if (sameKey(rooted[1], staticStringValue("length"))) {
                     return if (rooted_buffer.kind == .array_buffer) .{} else numberValue(@floatFromInt(rooted_buffer.bytes.len));
                 }
@@ -2184,6 +2191,16 @@ fn valueIndex(value: Value) ?usize {
     const number: f64 = @bitCast(value.payload);
     if (!std.math.isFinite(number) or number < 0 or @trunc(number) != number or number > @as(f64, @floatFromInt(std.math.maxInt(usize)))) return null;
     return @intFromFloat(number);
+}
+
+fn aotByteBufferAllowsStandardPrototype(value: Value) bool {
+    const object = value.object() orelse return true;
+    if (object.payload != .byte_buffer) return true;
+    return switch (@as(Tag, @enumFromInt(object.prototype.tag))) {
+        .null_value => false,
+        .dictionary => !dictionaryPrototypeBlocksStandard(object.prototype),
+        else => true,
+    };
 }
 
 fn aotByteBufferScalarProperty(buffer: ByteBuffer, key: Value) ?Value {
@@ -15276,7 +15293,7 @@ fn dictionaryHasBuiltin(runtime: *Runtime, source: Value, key: Value) !bool {
             const buffer = object.payload.byte_buffer;
             for (object.array_properties.items) |property| if (runtime.aotPropertyKeyMatchesUnits(property.key, key_units)) return true;
             if (buffer.kind != .array_buffer) {
-                if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return true;
+                if (aotByteBufferAllowsStandardPrototype(roots[0]) and std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return true;
                 if (runtime.aotCanonicalArrayIndexUnits(key_units)) |index| return index < buffer.bytes.len;
             }
             return (try tableInheritedProperty(runtime, roots[0], .byte_buffer, key_units)) != null;
@@ -15919,12 +15936,13 @@ fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []
         if (arrayPrototypeBlocksStandard(row)) return null;
     }
     if (row_tag == .byte_buffer and row.object().?.prototype.tag != @intFromEnum(Tag.undefined)) {
-        if (tableAsciiUnitsEqual(units, "__proto__")) return if (row.object().?.prototype.tag == @intFromEnum(Tag.null_value)) .{} else row.object().?.prototype;
+        if (tableAsciiUnitsEqual(units, "__proto__")) return if (row.object().?.prototype.tag == @intFromEnum(Tag.null_value)) null else row.object().?.prototype;
         if (row.object().?.prototype.tag == @intFromEnum(Tag.dictionary)) {
             if (dictionaryOwnProperty(row.object().?.prototype, units)) |value| return value;
             if (dictionaryPrototypeProperty(row.object().?.prototype, units)) |value| return value;
             if (dictionaryPrototypeBlocksStandard(row.object().?.prototype)) return null;
         }
+        if (row.object().?.prototype.tag == @intFromEnum(Tag.null_value)) return null;
     }
 
     if (tableAsciiUnitsEqual(units, "__proto__")) {
@@ -16078,11 +16096,12 @@ fn tableRowProperty(runtime: *Runtime, row: Value, column: Value) !Value {
     if (row_tag == .byte_buffer) {
         const object = row.object() orelse return error.InvalidByteBuffer;
         if (object.payload != .byte_buffer) return error.InvalidByteBuffer;
+        const allows_standard_prototype = aotByteBufferAllowsStandardPrototype(row);
         if (runtime.aotObjectOwnPropertyGetUnits(object, key_units)) |value| return value;
         if (tablePropertyIndex(key_units) == null) {
             if (try tableInheritedProperty(runtime, row, row_tag, key_units)) |value| return value;
         }
-        if (std.mem.eql(u16, key_units, &table_length_key)) {
+        if (allows_standard_prototype and std.mem.eql(u16, key_units, &table_length_key)) {
             return if (object.payload.byte_buffer.kind == .array_buffer)
                 .{}
             else
@@ -23387,6 +23406,45 @@ test "AOT辞書キー存在はbyte bufferのown indexとprototype propertyを含
     try std.testing.expect(!(try dictionaryHasBuiltin(&runtime, roots[2], staticStringValue("length"))));
     try std.testing.expect(!(try dictionaryHasBuiltin(&runtime, roots[2], staticStringValue("buffer"))));
     try std.testing.expect(!(try dictionaryHasBuiltin(&runtime, roots[0], staticStringValue("missing"))));
+}
+
+test "AOT byte bufferのnull prototypeは標準propertyを隠し添字と表の長さを保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 5;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createBytes(&.{ 85, 66 });
+    roots[1] = try runtime.createUint8Array(&.{ 85, 66 });
+    roots[2] = try runtime.createArrayBuffer(&.{ 85, 66 });
+    roots[0].object().?.prototype = .{ .tag = @intFromEnum(Tag.null_value) };
+    roots[1].object().?.prototype = .{ .tag = @intFromEnum(Tag.null_value) };
+    roots[2].object().?.prototype = .{ .tag = @intFromEnum(Tag.null_value) };
+
+    const undefined_tag = @intFromEnum(Tag.undefined);
+    try std.testing.expectEqual(undefined_tag, runtime.indexGet(roots[0], staticStringValue("length")).tag);
+    try std.testing.expectEqual(undefined_tag, runtime.indexGet(roots[0], staticStringValue("byteLength")).tag);
+    try std.testing.expectEqual(undefined_tag, runtime.indexGet(roots[0], staticStringValue("slice")).tag);
+    try std.testing.expectEqual(@as(f64, 85), valueToNumber(runtime.indexGet(roots[0], numberValue(0))));
+    try std.testing.expectEqual(undefined_tag, runtime.indexGet(roots[1], staticStringValue("map")).tag);
+    try std.testing.expectEqual(@as(f64, 85), valueToNumber(runtime.indexGet(roots[1], numberValue(0))));
+    try std.testing.expectEqual(undefined_tag, runtime.indexGet(roots[2], staticStringValue("byteLength")).tag);
+    try std.testing.expectEqual(undefined_tag, runtime.indexGet(roots[2], numberValue(0)).tag);
+
+    roots[3] = try runtime.createArray(&.{roots[0]});
+    try std.testing.expectEqual(undefined_tag, (try tableRowProperty(&runtime, roots[0], staticStringValue("length"))).tag);
+    try std.testing.expectEqual(@as(f64, 85), valueToNumber(try tableRowProperty(&runtime, roots[0], numberValue(0))));
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(try tableColumnCountBuiltin(&runtime, roots[3])));
+    try std.testing.expectEqual(undefined_tag, (try tableRowProperty(&runtime, roots[2], staticStringValue("byteLength"))).tag);
+
+    try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[0], numberValue(0)));
+    try std.testing.expect(!(try dictionaryHasBuiltin(&runtime, roots[0], staticStringValue("length"))));
+    try std.testing.expect(!(try dictionaryHasBuiltin(&runtime, roots[0], staticStringValue("slice"))));
+    try std.testing.expect(try dictionaryHasBuiltin(&runtime, roots[1], numberValue(0)));
+    try std.testing.expect(!(try dictionaryHasBuiltin(&runtime, roots[1], staticStringValue("map"))));
+    try std.testing.expect(!(try dictionaryHasBuiltin(&runtime, roots[2], staticStringValue("byteLength"))));
 }
 
 test "AOT辞書キー列挙とハッシュ内容列挙はbyte bufferのown要素を扱う" {

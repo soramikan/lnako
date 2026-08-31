@@ -211,7 +211,7 @@ fn has(runtime: *Runtime, source: Value, key_value: Value) !bool {
         try roots.protect(&key);
         for (rooted_source.bytes.properties.items) |property| if (value_mod.String.eql(property.key.*, key.string.*)) return true;
         if (rooted_source.bytes.kind != .array_buffer) {
-            if (std.mem.eql(u16, key.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return true;
+            if (arrays.byteBufferAllowsStandardPrototype(rooted_source.bytes) and std.mem.eql(u16, key.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return true;
             if (canonicalArrayIndex(key.string.units)) |index| return index < rooted_source.bytes.bytes.len;
         }
         return arrays.hasStandardInheritedProperty(runtime, rooted_source, key.string.units);
@@ -441,6 +441,52 @@ test "辞書キー存在はbyte bufferのown indexとprototype propertyを含む
     };
     for (probes) |probe| {
         const result = (try call(&runtime, "ハッシュキー存在", &.{ probe.source, probe.key })).?;
+        try std.testing.expectEqual(probe.expected, result.boolean);
+    }
+}
+
+test "辞書キー存在はbyte bufferのnull prototypeで標準propertyを除外する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var buffer = try runtime.createBytes(&.{ 85, 66 });
+    try roots.protect(&buffer);
+    var uint8 = try runtime.createUint8Array(&.{ 85, 66 });
+    try roots.protect(&uint8);
+    var array_buffer = try runtime.createArrayBuffer(&.{ 85, 66 });
+    try roots.protect(&array_buffer);
+    buffer.bytes.prototype = .null_value;
+    uint8.bytes.prototype = .null_value;
+    array_buffer.bytes.prototype = .null_value;
+
+    var length_key = try runtime.stringUtf8("length");
+    try roots.protect(&length_key);
+    var byte_length_key = try runtime.stringUtf8("byteLength");
+    try roots.protect(&byte_length_key);
+    var slice_key = try runtime.stringUtf8("slice");
+    try roots.protect(&slice_key);
+    var map_key = try runtime.stringUtf8("map");
+    try roots.protect(&map_key);
+    var constructor_key = try runtime.stringUtf8("constructor");
+    try roots.protect(&constructor_key);
+
+    const probes = [_]struct { source: Value, key: Value, expected: bool }{
+        .{ .source = buffer, .key = .{ .number = 0 }, .expected = true },
+        .{ .source = buffer, .key = length_key, .expected = false },
+        .{ .source = buffer, .key = byte_length_key, .expected = false },
+        .{ .source = buffer, .key = slice_key, .expected = false },
+        .{ .source = buffer, .key = constructor_key, .expected = false },
+        .{ .source = uint8, .key = .{ .number = 0 }, .expected = true },
+        .{ .source = uint8, .key = length_key, .expected = false },
+        .{ .source = uint8, .key = map_key, .expected = false },
+        .{ .source = array_buffer, .key = byte_length_key, .expected = false },
+        .{ .source = array_buffer, .key = slice_key, .expected = false },
+    };
+    for (probes) |probe| {
+        const result = (try call(&runtime, "辞書キー存在", &.{ probe.source, probe.key })).?;
         try std.testing.expectEqual(probe.expected, result.boolean);
     }
 }

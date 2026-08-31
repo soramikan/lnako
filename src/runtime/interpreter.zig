@@ -1862,6 +1862,11 @@ pub const Interpreter = struct {
             if (interpreterArrayIndex(key_text.string.units) == null) {
                 if (try plugin_system.arrays.standardInheritedProperty(self.runtime, container_root, key_text.string.units)) |value| return value;
             }
+            if (!plugin_system.arrays.byteBufferAllowsStandardPrototype(container_root.bytes)) {
+                if (container_root.bytes.kind == .array_buffer) return .undefined;
+                const position = interpreterArrayIndex(key_text.string.units) orelse return .undefined;
+                return container_root.bytes.get(position);
+            }
             if (std.mem.eql(u16, key_text.string.units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) {
                 return if (container_root.bytes.kind == .array_buffer) .undefined else .{ .number = @floatFromInt(container_root.bytes.bytes.len) };
             }

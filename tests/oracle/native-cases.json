@@ -931,6 +931,11 @@
     "source": "B=ハッシュ値計算(\"A\",\"sha256\",undefined)\nU=ランダム配列生成(2)\nAB=B[\"buffer\"]\n辞書キー存在(B,0)を表示\nハッシュキー存在(B,\"length\")を表示\n辞書キー存在(B,\"byteLength\")を表示\nハッシュキー存在(B,\"buffer\")を表示\n辞書キー存在(U,0)を表示\nハッシュキー存在(U,\"length\")を表示\n辞書キー存在(U,\"map\")を表示\nハッシュキー存在(U,\"byteLength\")を表示\n辞書キー存在(AB,\"byteLength\")を表示\nハッシュキー存在(AB,\"maxByteLength\")を表示\n辞書キー存在(AB,\"toString\")を表示\nハッシュキー存在(AB,0)を表示\n辞書キー存在(AB,\"length\")を表示\nハッシュキー存在(AB,\"buffer\")を表示\n辞書キー存在(B,\"missing\")を表示\n"
   },
   {
+    "id": "native-system-byte-buffer-null-prototype",
+    "commands": ["表列数", "表列取得", "辞書キー存在", "ハッシュキー存在", "ハッシュ値計算", "ランダム配列生成", "TYPEOF"],
+    "source": "B=ハッシュ値計算(\"A\",\"sha256\",undefined)\nU=ランダム配列生成(2)\nU[0]=85\nU[1]=66\nAB=B[\"buffer\"]\nB[\"__proto__\"]=NULL\nU[\"__proto__\"]=NULL\nAB[\"__proto__\"]=NULL\nTYPEOF(B[\"slice\"])を表示\nB[\"length\"]を表示\nB[\"byteLength\"]を表示\nB[0]を表示\n辞書キー存在(B,0)を表示\n辞書キー存在(B,\"slice\")を表示\nTYPEOF(U[\"slice\"])を表示\nU[\"length\"]を表示\nU[\"byteLength\"]を表示\nU[0]を表示\nハッシュキー存在(U,0)を表示\nハッシュキー存在(U,\"map\")を表示\nAB[\"slice\"]を表示\nAB[\"byteLength\"]を表示\nAB[\"maxByteLength\"]を表示\n辞書キー存在(AB,\"slice\")を表示\n辞書キー存在(AB,\"byteLength\")を表示\nC=表列取得([B],\"length\")\nC[0]を表示\nC=表列取得([B],0)\nC[0]を表示\n表列数([B])を表示\nC=表列取得([AB],\"byteLength\")\nC[0]を表示\n表列数([AB])を表示\n"
+  },
+  {
     "id": "native-system-dictionary-byte-buffer-enumeration",
     "oracle": "official-generated",
     "commands": ["辞書キー列挙", "ハッシュキー列挙", "ハッシュ内容列挙", "辞書キー削除", "辞書キー存在", "ハッシュ値計算", "ランダム配列生成", "JSON変換"],
