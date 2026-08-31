@@ -8,7 +8,7 @@
   "fixture": {
     "id": "native-cut-commands",
     "file": "native-cases.json",
-    "sourceSha256": "194128e7e04e9624f4420bc4deed0bb4800cb11cabaef8ce755a4464819c68a6"
+    "sourceSha256": "e0ead237c47bdd2cbc8fe5e97cf357f9b2049d5cb651b77709dde1fbe5361fba"
   },
   "officialComparison": {
     "oracle": "official-source",
@@ -23,25 +23,25 @@
       "officialSource": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "5b59462550d49a3eb379c8ff616df0077cb7ff3eea51f7c40d70760deb2b0f7e",
+        "stdoutSha256": "6c8b97a498cb98f03a59be2b6756ab01d779ccea502a58833e2fcbf06db5b33c",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "officialGenerated": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "5b59462550d49a3eb379c8ff616df0077cb7ff3eea51f7c40d70760deb2b0f7e",
+        "stdoutSha256": "6c8b97a498cb98f03a59be2b6756ab01d779ccea502a58833e2fcbf06db5b33c",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoRun": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "5b59462550d49a3eb379c8ff616df0077cb7ff3eea51f7c40d70760deb2b0f7e",
+        "stdoutSha256": "6c8b97a498cb98f03a59be2b6756ab01d779ccea502a58833e2fcbf06db5b33c",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoNativeO0": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "5b59462550d49a3eb379c8ff616df0077cb7ff3eea51f7c40d70760deb2b0f7e",
+        "stdoutSha256": "6c8b97a498cb98f03a59be2b6756ab01d779ccea502a58833e2fcbf06db5b33c",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       }
     }
@@ -63,23 +63,23 @@
     },
     "lnako": {
       "binarySha256": "497adbe25fb4c6720e3e81c2431ef8c02060918e05fa3f1e05dff03e35693c87",
-      "commit": "2d5b88570ed459b35191082ba4cffa13a0f9a813",
+      "commit": "1c7bb04a433fd90f69744cfa31b0fb84b934e47c",
       "dirty": true
     },
     "raw": {
-      "interpreterTraceSha256": "eb81e6a9df38160f9275ea5c535e17f10d62ad52bfa21ba79b2b7fa49127ae58",
-      "aotTraceSha256": "783abfaea6e94326b5085fff7a1f98e373f5f5e3ec59920af3ec6f55e4f536d3",
-      "compileManifestSha256": "48525c9f972c09690dc51b79a11e142beb96434449911b2a6be3fd4d9bdc7ff0"
+      "interpreterTraceSha256": "d129ba763560d696330d18fc45f06115b4b5aecf831d60096533ee0da924eac7",
+      "aotTraceSha256": "2118b6b3b5b4114bc364375345586424fde023829eaff606240019bbea6af39c",
+      "compileManifestSha256": "30629f51f951ecaf6e7ef79016b3aa4ec1a7c109167b8dd2c1b776db45850020"
     }
   },
   "trace": {
     "interpreter": {
       "schema": 2,
-      "eventCount": 726
+      "eventCount": 732
     },
     "aot": {
       "schema": 2,
-      "eventCount": 1452
+      "eventCount": 1464
     }
   },
   "sites": [
@@ -16615,6 +16615,144 @@
         "aot": {
           "success": true,
           "callId": 725,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0062",
+      "name": "デバッグ表示",
+      "plugin": "plugin_system",
+      "siteId": "0x00000006000002d7",
+      "sourceName": "デバッグ表示",
+      "canonicalOpcode": "system_debug_display",
+      "opcode": 255,
+      "route": "debug-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 726,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0062",
+      "name": "デバッグ表示",
+      "plugin": "plugin_system",
+      "siteId": "0x00000006000002d8",
+      "sourceName": "デバッグ表示",
+      "canonicalOpcode": "system_debug_display",
+      "opcode": 255,
+      "route": "debug-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 727,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0062",
+      "name": "デバッグ表示",
+      "plugin": "plugin_system",
+      "siteId": "0x00000006000002d9",
+      "sourceName": "デバッグ表示",
+      "canonicalOpcode": "system_debug_display",
+      "opcode": 255,
+      "route": "debug-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 728,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0062",
+      "name": "デバッグ表示",
+      "plugin": "plugin_system",
+      "siteId": "0x00000006000002da",
+      "sourceName": "デバッグ表示",
+      "canonicalOpcode": "system_debug_display",
+      "opcode": 255,
+      "route": "debug-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 729,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0190",
+      "name": "配列シャッフル",
+      "plugin": "plugin_system",
+      "siteId": "0x00000006000002db",
+      "sourceName": "配列シャッフル",
+      "canonicalOpcode": "array_shuffle",
+      "opcode": 264,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 730,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x00000006000002dc",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 731,
           "count": 1
         }
       },
