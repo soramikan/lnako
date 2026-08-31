@@ -13,6 +13,8 @@ const setupOracle = await readFile(resolve(root, "tools/setup_oracle.mjs"), "utf
 const httpAotScript = await readFile(resolve(root, "tools/compare_http_server_aot_oracle.mjs"), "utf8");
 const dispatchSecurityScript = await readFile(resolve(root, "tools/check_dispatch_trace_security.mjs"), "utf8");
 const dispatchAuditsScript = await readFile(resolve(root, "tools/check_dispatch_audits_parallel.mjs"), "utf8");
+const aotSuiteScript = await readFile(resolve(root, "tools/check_aot_suite_parallel.mjs"), "utf8");
+const nativeOracleScript = await readFile(resolve(root, "tools/compare_native_oracle.mjs"), "utf8");
 const trackedAttestationChecker = await readFile(resolve(root, "tools/check_tracked_dispatch_attestation.mjs"), "utf8");
 const syncEvidence = await readFile(resolve(root, "tools/sync_compat_evidence.mjs"), "utf8");
 if (!trackedAttestationChecker.includes("gh") || !trackedAttestationChecker.includes("--cert-oidc-issuer") || !trackedAttestationChecker.includes("--deny-self-hosted-runners") || !syncEvidence.includes("--historical-commit") || !syncEvidence.includes("canonical --output")) {
@@ -62,10 +64,8 @@ const stepSuites = new Map([
   ["Native plugin ABI test", "host"],
   ["Differential Node host test", "host"],
   ["Distribution package self-test", "core"],
-  ["Differential native AOT oracle test", "aot"],
-  ["Differential native AOT HTTP server test", "aot"],
-  ["Differential native AOT dispatch security test", "aot"],
-  ["Differential native AOT dispatch audits", "aot"],
+  ["Build AOT verification compiler", "aot"],
+  ["Differential native AOT verification", "aot"],
   ["Format", "core"],
   ["Test", "core"],
   ["Test QuickJS build", "compat-aot"],
@@ -81,10 +81,8 @@ for (const [name, suite] of stepSuites) {
 }
 
 const nativeAotStepNames = [
-  "Differential native AOT oracle test",
-  "Differential native AOT HTTP server test",
-  "Differential native AOT dispatch security test",
-  "Differential native AOT dispatch audits",
+  "Build AOT verification compiler",
+  "Differential native AOT verification",
 ];
 const nativeAotBlocks = new Map();
 let previousNativeAotBlockEnd = -1;
@@ -98,38 +96,46 @@ for (const name of nativeAotStepNames) {
   previousNativeAotBlockEnd = blockStart + block.length;
   nativeAotBlocks.set(name, block);
 }
-const nativeAotOracleBlock = nativeAotBlocks.get("Differential native AOT oracle test");
-if (!nativeAotOracleBlock.includes("LNAKO_NATIVE_ORACLE_ARTIFACT: ${{ runner.temp }}/lnako-native-oracle.json") ||
-    !nativeAotOracleBlock.includes('LNAKO_NATIVE_ORACLE_JOBS: "4"') ||
-    (nativeAotOracleBlock.match(/node tools\/compare_native_oracle\.mjs/g) ?? []).length !== 1) {
-  throw new Error("AOT差分artifact、native oracle worker数、または比較stepが不正です");
+const nativeAotBuildBlock = nativeAotBlocks.get("Build AOT verification compiler");
+if (!nativeAotBuildBlock.includes("run: zig build")) {
+  throw new Error("AOT検証用compilerの先行buildがありません");
 }
-const nativeAotHttpBlock = nativeAotBlocks.get("Differential native AOT HTTP server test");
-if ((nativeAotHttpBlock.match(/node tools\/compare_http_server_aot_oracle\.mjs --no-build/g) ?? []).length !== 1) {
-  throw new Error("AOT HTTPサーバー差分比較のno-build stepがありません");
+const nativeAotVerificationBlock = nativeAotBlocks.get("Differential native AOT verification");
+if (!nativeAotVerificationBlock.includes('LNAKO_NATIVE_ORACLE_JOBS: "4"') ||
+    (nativeAotVerificationBlock.match(/node tools\/check_aot_suite_parallel\.mjs/g) ?? []).length !== 1 ||
+    !nativeAotVerificationBlock.includes("--artifact \"${{ runner.temp }}/lnako-native-oracle.json\"") ||
+    !nativeAotVerificationBlock.includes("--evidence-output \"${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json\"") ||
+    !nativeAotVerificationBlock.includes("--coverage-output \"${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}.json\"")) {
+  throw new Error("AOT並列検査のartifact、worker数、または出力先が不正です");
+}
+if (!nativeOracleScript.includes("const noBuild = parseNoBuild();") ||
+    !nativeOracleScript.includes("if (!noBuild) buildLnako();") || !nativeOracleScript.includes("else await access(executable);")) {
+  throw new Error("native oracleの先行build再利用実装がありません");
 }
 if (!httpAotScript.includes("if (!noBuild) buildLnako();") || !httpAotScript.includes("else await access(executable);")) {
   throw new Error("AOT HTTPサーバー比較のno-build実装がありません");
 }
-const nativeAotSecurityBlock = nativeAotBlocks.get("Differential native AOT dispatch security test");
-if ((nativeAotSecurityBlock.match(/node tools\/check_dispatch_trace_security\.mjs --no-build/g) ?? []).length !== 1) {
-  throw new Error("AOT dispatch securityのtiny fixture stepがありません");
-}
 if (!dispatchSecurityScript.includes("tests/fixtures/dispatch-security.nako3") || !dispatchSecurityScript.includes("assertExistingManifestPreserved") ||
     !dispatchSecurityScript.includes("assertFailedManifestRemoved") || !dispatchSecurityScript.includes("assertRepeatedSite")) {
   throw new Error("AOT dispatch securityのtiny fixture実装または不変条件検査が不完全です");
-}
-const nativeAotAuditsBlock = nativeAotBlocks.get("Differential native AOT dispatch audits");
-if (!nativeAotAuditsBlock.includes("node tools/check_dispatch_audits_parallel.mjs") ||
-    !nativeAotAuditsBlock.includes("--evidence-output") || !nativeAotAuditsBlock.includes("--coverage-output")) {
-  throw new Error("AOT dispatch evidence/coverage並列監査の生成stepがありません");
 }
 if (!dispatchAuditsScript.includes('"check_dispatch_trace.mjs"') || !dispatchAuditsScript.includes('"check_dispatch_coverage.mjs"') ||
     !dispatchAuditsScript.includes('"--no-build"') || !dispatchAuditsScript.includes("Promise.all") ||
     !dispatchAuditsScript.includes("values.evidenceOutput === values.coverageOutput")) {
   throw new Error("AOT dispatch evidence/coverageの並列監査実装または出力分離検査が不完全です");
 }
-const nativeAotBlockEnd = workflow.indexOf(nativeAotAuditsBlock) + nativeAotAuditsBlock.length;
+if (!aotSuiteScript.includes('"compare_native_oracle.mjs"') || !aotSuiteScript.includes('"--no-build"') ||
+    !aotSuiteScript.includes('"compare_http_server_aot_oracle.mjs"') || !aotSuiteScript.includes('"check_dispatch_trace_security.mjs"') ||
+    !aotSuiteScript.includes('"check_dispatch_audits_parallel.mjs"') || !aotSuiteScript.includes("Promise.all") ||
+    !aotSuiteScript.includes("values.artifact, values.evidence, values.coverage") ||
+    !aotSuiteScript.includes("child.on(\"close\"") ) {
+  throw new Error("AOT全検査の並列runner、no-build、出力分離、全子検査待機の実装が不完全です");
+}
+if (!workflow.includes("if: matrix.suite == 'core'\n        with:\n          fetch-depth: 0") ||
+    !workflow.includes("if: matrix.suite != 'core'\n      - uses: mlugg/setup-zig")) {
+  throw new Error("coreの証拠追従検査に必要なfull checkout条件がありません");
+}
+const nativeAotBlockEnd = workflow.indexOf(nativeAotVerificationBlock) + nativeAotVerificationBlock.length;
 const uploadName = "Upload native AOT oracle artifact";
 const uploadStart = workflow.indexOf(`      - name: ${uploadName}`);
 if (uploadStart !== nativeAotBlockEnd) throw new Error("AOT artifact uploadは差分比較の直後に配置してください");

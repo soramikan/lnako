@@ -44,6 +44,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "docs/CI.md",
   "docs/DEVELOPMENT.md",
   "tools/check_ci_workflow.mjs",
+  "tools/check_aot_suite_parallel.mjs",
   "tools/compare_native_oracle.mjs",
   "tools/sync_compat_evidence.mjs",
 ]);

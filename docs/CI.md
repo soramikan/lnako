@@ -39,40 +39,55 @@ canonical dispatch evidence artifactとは別fixtureですが、HTTP serverの10
 `tools/check_dispatch_coverage.mjs`は、命令関連付けだけではAOT実行証拠にならない境界を保持したまま、成功したInterpreter/AOT siteの到達範囲を
 3 OS別`lnako-dispatch-coverage-*` artifactへ保存します。attestation jobのcanonical dispatch evidenceとは別のunattested監査です。
 
-## AOT検証stepの安全な分割
+## AOT検証の共通buildと安全な並列実行
 
-`aot` suiteの重い検証は、次の4つの順序付きstepへ分けています。実行順序と各stepのsuite条件は
-`tools/check_ci_workflow.mjs`で固定し、3正式OS・O0〜O3・7経路・artifact保存・attestationの範囲は変えません。
+`aot` suiteはcompilerを一度だけbuildした後、重い検証を専用runnerから独立した子プロセスとして並列起動します。
+step条件、子検査、3正式OS・O0〜O3・7経路・artifact保存・attestationの範囲は
+`tools/check_ci_workflow.mjs`で固定し、子検査の全完了を待ってから成功／失敗を判定します。
 
 | step | 内容 | 共有するもの |
 |---|---|---|
-| `Differential native AOT oracle test` | 公式CLI・生成JavaScript・`lnako run`・AOT O0〜O3の全native fixture差分 | `compare_native_oracle.mjs`が作るcompilerとnative oracle artifact |
-| `Differential native AOT HTTP server test` | HTTP serverの公式処理系対AOT O0〜O3実通信差分 | 先行stepのcompilerを`--no-build`で再利用 |
-| `Differential native AOT dispatch security test` | tiny fixtureによるtrace無効、既存trace／manifest保持、失敗manifest cleanup、attempt/result整合、loop同一site反復 | `tests/fixtures/dispatch-security.nako3`だけを使用し、catalog evidenceへ混入しない |
-| `Differential native AOT dispatch audits` | canonical fixtureのdispatch evidenceと全選択fixtureのcoverage auditを、独立した子プロセスで並列実行 | evidenceはattestation対象、coverageは別のunattested監査artifact |
+| `Build AOT verification compiler` | 並列検査が共有する通常compilerを一度だけbuild | `zig-out/bin/lnako` |
+| `Differential native AOT verification` | `check_aot_suite_parallel.mjs`から次の4検査を同時起動 | 各検査は独立temporary directory／出力先を使用 |
 
-HTTP server stepは、先行するnative oracle stepが同じcheckout上でcompilerを構築済みであることを前提に
-`--no-build`を指定します。単独実行時は従来どおり引数なしでcompilerをbuildし、`--no-build`時はcompilerの存在を確認してから進みます。
-これにより同一AOT job内の不要な`zig build`だけを除去し、HTTPの14リクエスト×O0〜O3比較自体は維持します。
+並列runnerが起動する検査は、native oracle（公式CLI・生成JavaScript・`lnako run`・AOT O0〜O3の全native fixture差分）、
+HTTP serverの公式処理系対AOT O0〜O3実通信差分、tiny fixtureのdispatch security、canonical dispatch evidenceとcoverage auditです。
+native oracleには`--no-build`を追加し、先行buildのcompilerを読むだけにします。native oracleの各fixture内にある7経路とO0〜O3は直列のまま、
+全fixture・全リクエスト・manifest／trace／site到達検査も維持します。
+
+HTTP／security／dispatch監査も共有compilerを`--no-build`で再利用します。単独実行時は各スクリプトが従来どおりcompilerをbuildし、
+`--no-build`時はcompilerの存在を確認してから進みます。これにより同一AOT job内の不要なbuildと、native oracle完了後に
+dispatch監査を待つ直列区間を除去します。
 
 canonical dispatch検査からsecurity専用の追加buildを切り離しました。canonical側では全対象命令の一回のAOT compileと
 trace／公式差分を維持し、security側では小さな固定fixtureでmanifest・traceの原子的な出力、既存ファイル非上書き、失敗時cleanup、
 trace無効時の無出力、loopの同一site反復を検査します。検査項目を減らしたり、canonical evidenceをtiny fixtureへ置き換えたりはしません。
 
-step分割により、比較失敗時はnative oracle、HTTP、security、dispatch監査のどの境界で止まったかをGitHub Actions上で
-確認できます。dispatch evidenceとcoverageは、AOT compilerを先行stepで構築済みであること、互いに一時ディレクトリと出力先を
-分離できることを検査したうえで並列実行します。各子検査の全fixture・公式差分・trace／manifest・site到達判定は維持し、どちらかが
-失敗しても他方の完了を待って両方のログを出力します。分割後の実CI時間、壁時計、runner合計時間、cache hit/missは次回pushの
+並列化により、比較失敗時はnative oracle、HTTP、security、dispatch監査のどの子検査で止まったかをGitHub Actions上で
+確認できます。runnerは4子検査の全完了を待って各stdout／stderrを検査順に出力し、どれかが失敗しても他の検証を中断しません。
+artifactは従来どおり`always()`で保存します。並列化後の実CI時間、壁時計、runner合計時間、cache hit/missは次回pushの
 完了済みrunで記録し、実測前に性能改善とは扱いません。
 
 2026-08-31にmacOS arm64の現行fixtureで並列runnerをローカル実測したところ、dispatch evidence（Interpreter 777イベント、AOT
 manifest 779件・runtime 1,554イベント）とcoverage（30 fixture、1,688 unambiguous site、309/523 native entry）を両方成功させて
 約3分54秒だった。前回CIの同じmacOS AOT jobでは、この2 stepを直列に実行して約3分54秒＋約4分28秒だったため、対象区間は
 同時実行の長い方へ短縮できる見込みである。ただしローカルとCI runnerは性能条件が異なり、3 OSのwall-clock・runner合計時間・cache
-hit/missをまだ測っていないため、CI全体の短縮証拠とは扱わない。次回以降のpushでは、並列audit stepの各子検査の成功、3 OS artifact、
+hit/missをまだ測っていないため、CI全体の短縮証拠とは扱わない。次回以降のpushでは、AOT並列runnerの各子検査の成功、3 OS artifact、
 AOT全体時間、wall-clock、runner合計時間、cache状態を完了済みrunで確認する。
 
-元のコマンドは削除せず、各OSでいずれか1スイートが一度だけ実行します。OSごとの互換検証をLinuxだけへ
+同日、先行`zig build`後のAOT全検査runnerをmacOS arm64でloopback権限付きに実測した。native oracle 284件は795.14秒、HTTP
+serverは30.19秒、dispatch securityは1.15秒、dispatch evidence/coverageは340.36秒で、4検査すべて成功した。並列runnerのwall-clockは
+795.14秒（13分15.14秒）、単純直列合計は1,166.84秒（19分26.84秒）で、ローカル対象区間では371.70秒（約31.8%）短縮した。
+このnative oracleはartifactを含む全7経路・O0〜O3、dispatch側はInterpreter 777イベント・AOT manifest 779件・runtime 1,554イベントと
+30 fixture・1,688 siteを検証している。作業機とCI runnerの性能差、cache状態、3 OSの同時実行条件は別なので、正式な改善値は次回pushの
+完了済みrunで確定する。
+
+直近の[run 33389904362](https://github.com/soramikan/lnako/actions/runs/33389904362)は32分25秒で、AOT自体は3 OSとも成功した。
+ただしmacOS/Linuxの`core`が、浅いcheckoutで証拠生成commitの祖先をたどれず`cleanなdispatch証拠のlnako commitが現行HEADと一致しません`
+で失敗し、Windows `core`は成功したため、attestationはskipされた。AOT job時間はLinux 29分10秒、macOS 20分57秒、Windows 31分06秒で、
+このrunのAOT検査はnative oracleとdispatch監査を直列に実行していた。次回runではcoreのfull checkoutと全AOT検査runner並列化を同時に検証する。
+
+元の検証コマンドは並列runner内から削除せず、各OSでいずれか1スイートが一度だけ実行します。OSごとの互換検証をLinuxだけへ
 縮小する最適化は行いません。ジョブ上限は50分とし、停止しないホスト・ネットワークテストを検出します。
 
 ## 同一refの旧run取消
@@ -83,6 +98,11 @@ pushされた場合だけ、進行中の古いrunを取り消します。別ブ�
 最新commitは古いcommitを祖先として含むため、最新runが累積したソースを全スイートで検証します。一方、取り消された
 個々のcommitにはGitHub上の完走記録が残らないため、機能コミット前のローカル検証と署名を省略してよい規則では
 ありません。リリース候補やマイルストーンのcommitは、後続pushを止めて全15ジョブとattestation jobの完走を証拠として残します。
+
+追跡中のdispatch証拠が直前のfixture commitを指す場合、`sync_compat_evidence.mjs`はそのcommitから現HEADまでの変更が
+CI・文書・証拠検証のallowlistだけであることを`git merge-base`とpath差分で確認します。この検査に必要な履歴を確保するため、
+`core`の3 jobだけは`actions/checkout`の`fetch-depth: 0`を使い、他の12 jobは既定の浅いcheckoutを維持します。full checkoutは証拠追従の
+検査範囲を広げるものではなく、fixture・catalog・product sourceの変更を引き続き拒否します。
 
 ## キャッシュ
 

@@ -127,6 +127,8 @@ fixtureに`stdin`を指定した場合は、公式CLI・公式生成JavaScript�
 node tools/compare_native_oracle.mjs --artifact /absolute/path/native-oracle.json
 # または
 LNAKO_NATIVE_ORACLE_ARTIFACT=/absolute/path/native-oracle.json node tools/compare_native_oracle.mjs
+# 先行したzig buildの成果物を再利用する場合（CIのAOT並列runner）
+node tools/compare_native_oracle.mjs --no-build --artifact /absolute/path/native-oracle.json
 ```
 
 artifactは公式baselineのタグ・commit、lnakoのcommit、OS/CPUアーキテクチャ、7経路名、fixture ID、

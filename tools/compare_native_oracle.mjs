@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
 
 const root = resolve(import.meta.dirname, "..");
+const noBuild = parseNoBuild();
 const oracleArg = process.argv.indexOf("--oracle");
 const oracleRoot = resolve(
   oracleArg >= 0 ? process.argv[oracleArg + 1] : process.env.NADESIKO3_ORACLE ?? resolve(root, ".cache/oracle/nadesiko3-3.7.24"),
@@ -38,7 +39,8 @@ const routeNames = ["officialSource", "officialGenerated", "lnakoRun", "lnakoNat
 let artifactLnakoBinarySha256 = null;
 
 try {
-  buildLnako();
+  if (!noBuild) buildLnako();
+  else await access(executable);
   if (artifactPath !== null) artifactLnakoBinarySha256 = sha256(await readFile(executable));
   let failures = 0;
   let generatedOracleCases = 0;
@@ -305,6 +307,16 @@ function nativeOracleConcurrency() {
   if (configured === undefined || configured === "2") return 2;
   if (["1", "3", "4"].includes(configured)) return Number(configured);
   throw new Error("LNAKO_NATIVE_ORACLE_JOBSは1〜4の整数を指定してください");
+}
+
+function parseNoBuild() {
+  let noBuild = false;
+  for (const argument of process.argv.slice(2)) {
+    if (argument !== "--no-build") continue;
+    if (noBuild) throw new Error("--no-buildは1回だけ指定してください");
+    noBuild = true;
+  }
+  return noBuild;
 }
 
 function buildLnako() {
