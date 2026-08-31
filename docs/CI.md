@@ -24,8 +24,9 @@ Linuxログでは通常のmath・CSV・TOML・Promise差分は約0.8秒で完了
 
 ## 検証jobの分割
 
-各正式環境（Linux x86_64、macOS arm64、Windows x86_64）で、通常の`test` matrix 12 jobに加えて、AOT専用matrix 12 jobを
-並列実行します。全体は24 test job＋1 attestation jobです。
+各正式環境（Linux x86_64、macOS arm64、Windows x86_64）で、通常の`test` matrix 9 jobに加えて、AOT専用matrix 12 jobを
+並列実行します。全体は21 test job＋1 attestation jobです。Linux／Windowsは4つの通常suite、macOSは4つの通常suiteを
+1つの`mac-bundle` job内で順番に実行します。
 
 | job／suite | 検証内容 |
 |---|---|
@@ -35,6 +36,7 @@ Linuxログでは通常のmath・CSV・TOML・Promise差分は約0.8秒で完了
 | `aot-native` shard 1/3〜3/3 | 各OSでnative fixture 284件を重み付き固定割当し、公式CLI・公式生成JavaScript・`lnako run`・LLVM AOT O0〜O3の7経路を全件実行 |
 | `aot-support` | HTTP serverの公式処理系対AOT O0〜O3実通信、canonical dispatch evidence、coverage、dispatch security、ReleaseSafe build、通常smoke |
 | `compat-aot` | QuickJS Debug単体テスト、QuickJS ReleaseSafe compiler build、compat-js smoke |
+| `mac-bundle`（macOSのみ） | `core`・`standard`・`host`・`compat-aot`の4 suiteを同じmacOS runnerで実行。検証内容は各suiteと同一 |
 
 `aot-native`は各fixture内の7経路・O0〜O3を直列に保ったまま、fixture集合を3つの独立jobへ分けます。
 重みはsource長と明示commands数から決定的に計算し、全284件を重複なく3 shardへ割り当てます。workerを増やして同一runnerへ
@@ -43,11 +45,18 @@ Linuxログでは通常のmath・CSV・TOML・Promise差分は約0.8秒で完了
 
 `aot-support`のHTTP、canonical dispatch、coverage、security、ReleaseSafe build、smokeは同じOSの専用jobで実行します。
 dispatch evidenceとcoverageの全fixture・全site、HTTP serverの10命令・14リクエスト、tiny fixtureの全security不変条件は維持します。
-`tools/check_ci_workflow.mjs`はnative 9 job、support 3 job、通常12 job、3正式OS、7経路、O0〜O3、artifact、attestationの構成を固定します。
+`tools/check_ci_workflow.mjs`はnative 9 job、support 3 job、通常9 job、macOS 5 job、3正式OS、7経路、O0〜O3、artifact、attestationの構成を固定します。
 
-GitHub ActionsのmacOS runnerは同時に5 jobまでのため、macOSでは通常の4 job、native 3 shard、support jobが全て同時に実行されるとは限りません。
-3 shard化はこの上限を無視して待ち行列を増やすためではなく、native処理の重量偏りを抑え、利用可能になったrunner枠を短い単位で埋めるための調整です。
-実際の効果は、queue時間を含む壁時計、runner合計時間、各job時間を完了済みrunで確認します。
+GitHub ActionsのmacOS runnerは同時に5 jobまでです。現行workflowでは`mac-bundle`、native 3 shard、supportの5 jobだけを
+macOSへ割り当て、同一run内で6件目以降が待ち行列へ入らない構成にします。Linux／Windowsの通常4 job、native 3 shard、supportは
+従来どおり独立runnerで実行します。別workflowや同時runがrunner枠を使用する場合の外部queueは残るため、queue時間を含む壁時計、
+runner合計時間、各job時間は完了済みrunで別途確認します。
+
+直前の[run 33407218789](https://github.com/soramikan/lnako/actions/runs/33407218789)（`2a9c00a`）では、変更前のmacOS matrixが8 jobあり、
+最初の5 jobが15:14:15〜15:14:19Zに開始した後、`AOT native shard 1/3`は15:15:28Z、`compat-aot`は15:17:35Z、
+`AOT native shard 2/3`は15:17:47Zまで開始を待っていた。coreの証拠台帳エラーでrun自体は失敗したため、これは性能改善値ではなく、
+macOS上限によるqueue発生の観測記録として扱う。現行の5 job構成では、4通常suiteを`mac-bundle`内で順番に実行し、AOT native 3 shardと
+supportの独立実行を維持する。
 
 ## AOT検証の共通buildとjob分割
 
@@ -60,7 +69,7 @@ GitHub ActionsのmacOS runnerは同時に5 jobまでのため、macOSでは通�
 | `aot-native` × 3 OS × 3 shard | `zig build` → native oracle shard（全284件の一部、各7経路・O0〜O3） | OS・shard別native oracle artifact |
 | `aot-support` × 3 OS | `zig build` → HTTP AOT、dispatch evidence／coverage／security、ReleaseSafe build、通常smoke | OS別dispatch evidence／coverage artifact |
 
-通常の`test` jobはcore／standard／host／compat-aotの12 jobへ限定し、AOT専用条件を混ぜません。したがってAOTだけの失敗は
+通常の`test` matrixはLinux／Windowsのcore／standard／host／compat-aot 8 jobとmacOSの`mac-bundle` 1 jobへ限定し、AOT専用条件を混ぜません。したがってAOTだけの失敗は
 native shardかsupportのどのjob／stepで起きたかを直接確認できます。attestation jobは`test`と`aot` matrixの両方が成功した場合だけ
 起動し、3 OSのdispatch evidenceを取得します。job数を増やした結果、setupの重複とrunner合計時間は増える可能性があるため、
 壁時計、runner合計、各job時間、cache hit/missは分割後の完了済みrunで別々に記録します。
@@ -97,11 +106,11 @@ pushされた場合だけ、進行中の古いrunを取り消します。別ブ�
 
 最新commitは古いcommitを祖先として含むため、最新runが累積したソースを全スイートで検証します。一方、取り消された
 個々のcommitにはGitHub上の完走記録が残らないため、機能コミット前のローカル検証と署名を省略してよい規則では
-ありません。リリース候補やマイルストーンのcommitは、後続pushを止めて全15ジョブとattestation jobの完走を証拠として残します。
+ありません。リリース候補やマイルストーンのcommitは、後続pushを止めて全21テストjobとattestation jobの完走を証拠として残します。
 
 追跡中のdispatch証拠が直前のfixture commitを指す場合、`sync_compat_evidence.mjs`はそのcommitから現HEADまでの変更が
 CI・文書・証拠検証のallowlistだけであることを`git merge-base`とpath差分で確認します。この検査に必要な履歴を確保するため、
-`core`の3 jobだけは`actions/checkout`の`fetch-depth: 0`を使い、他の12 jobは既定の浅いcheckoutを維持します。full checkoutは証拠追従の
+Linux／Windowsの`core`とmacOSの`mac-bundle`の3 jobだけは`actions/checkout`の`fetch-depth: 0`を使い、他の18 test/AOT jobは既定の浅いcheckoutを維持します。full checkoutは証拠追従の
 検査範囲を広げるものではなく、fixture・catalog・product sourceの変更を引き続き拒否します。
 
 ## キャッシュ
@@ -121,7 +130,7 @@ runごとに増えます。2026-08-27に確認した時点では、Actions cache
 退避された後のrunで5つのLinuxジョブが同じ配布物の取得・SHA-256検証・展開を約148秒ずつ重複していました。
 
 検証工程を変えずにcacheの増加を抑えるため、cross-runのZig build cacheは`host`とnative fixtureを担当する`aot-native`だけに限定します。
-3 OSで最大12個/run（`host` 3＋`aot-native` 9）となり、`core`・`standard`・`aot-support`・`compat-aot`もjob内のZig cacheは通常どおり使用します。
+3 OSで最大12個/run（host相当3［Linux／Windowsの`host`＋macOSの`mac-bundle`］＋`aot-native` 9）となり、`core`・`standard`・`aot-support`・`compat-aot`もjob内のZig cacheは通常どおり使用します。
 `use-cache: false`のjobでも、setup actionが管理する固定Zig 0.16.0配布物のcacheは別系統で維持されます。
 
 1,536 MiB上限を超えたbuild cacheはactionの仕様上、部分的なLRU整理ではなく空にして保存されます。このため上限を小さく

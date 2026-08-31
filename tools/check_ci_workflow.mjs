@@ -44,14 +44,21 @@ const matrixEntries = [...workflow.matchAll(/^          - name: (.+)\n          
   .map((match) => ({ name: match[1], os: match[2], suite: match[3] }));
 const actualMatrix = new Set(matrixEntries.map((entry) => `${entry.name}\0${entry.os}\0${entry.suite}`));
 const expectedMatrix = new Set();
-for (const [name, os] of platforms) for (const suite of suites) expectedMatrix.add(`${name}\0${os}\0${suite}`);
+for (const [name, os] of platforms) {
+  const expectedSuites = name === "macOS arm64" ? ["mac-bundle", "aot-native", "aot-support"] : suites;
+  for (const suite of expectedSuites) expectedMatrix.add(`${name}\0${os}\0${suite}`);
+}
 assertSetEqual(actualMatrix, expectedMatrix, "CI matrix");
+const macosMatrixEntries = matrixEntries.filter((entry) => entry.name === "macOS arm64");
+if (macosMatrixEntries.length !== 5 || macosMatrixEntries.filter((entry) => entry.suite === "mac-bundle").length !== 1) {
+  throw new Error(`macOS同時実行上限5に合わせたjob構成が不正です: actual=${macosMatrixEntries.length}`);
+}
 const nativeAotMatrixEntries = matrixEntries.filter((entry) => entry.suite === "aot-native");
 const supportAotMatrixEntries = matrixEntries.filter((entry) => entry.suite === "aot-support");
 if (nativeAotMatrixEntries.length !== 9 || supportAotMatrixEntries.length !== 3) {
   throw new Error(`AOT job分割数が不正です: native=${nativeAotMatrixEntries.length} support=${supportAotMatrixEntries.length}`);
 }
-if (matrixEntries.length !== 24) throw new Error(`CI matrixの実job数が不正です: actual=${matrixEntries.length}`);
+if (matrixEntries.length !== 21) throw new Error(`CI matrixの実job数が不正です: actual=${matrixEntries.length}`);
 const nativeAotJob = workflow.match(/  aot:[\s\S]*?(?=\n  attest-dispatch-evidence:)/)?.[0];
 if (!nativeAotJob) throw new Error("分割AOT jobがありません");
 const nativeShardRows = [...nativeAotJob.matchAll(/^          - name: (.+)\n            os: (.+)\n            suite: aot-native\n            task: native\n            shardIndex: (\d+)\n            shardCount: (\d+)\n            jobName: (.+)$/gm)]
@@ -89,7 +96,14 @@ const stepSuites = new Map([
 ]);
 for (const [name, suite] of stepSuites) {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(`^      - name: ${escaped}\\n        if: matrix\\.suite == '${suite}'$`, "m");
+  const condition = suite === "core"
+    ? "matrix.suite == 'core' || matrix.suite == 'mac-bundle'"
+    : suite === "standard"
+      ? "matrix.suite == 'standard' || matrix.suite == 'mac-bundle'"
+      : suite === "host"
+        ? "matrix.suite == 'host' || matrix.suite == 'mac-bundle'"
+        : "matrix.suite == 'compat-aot' || matrix.suite == 'mac-bundle'";
+  const pattern = new RegExp(`^      - name: ${escaped}\\n        if: ${condition.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m");
   if (!pattern.test(workflow)) throw new Error(`${name}のsuite条件が${suite}ではありません`);
 }
 
@@ -184,8 +198,8 @@ if (!coverageUploadBlock || !coverageUploadBlock.includes("if: matrix.task == 's
     !coverageUploadBlock.includes("if-no-files-found: ignore")) {
   throw new Error("OS別dispatch coverage artifactの設定が不正です");
 }
-if (!workflow.includes("if: matrix.suite == 'core'\n        with:\n          fetch-depth: 0") ||
-    !workflow.includes("if: matrix.suite != 'core'\n      - uses: mlugg/setup-zig")) {
+if (!workflow.includes("if: matrix.suite == 'core' || matrix.suite == 'mac-bundle'\n        with:\n          fetch-depth: 0") ||
+    !workflow.includes("if: matrix.suite != 'core' && matrix.suite != 'mac-bundle'\n      - uses: mlugg/setup-zig")) {
   throw new Error("coreの証拠追従検査に必要なfull checkout条件がありません");
 }
 const attestJob = workflow.match(/  attest-dispatch-evidence:[\s\S]*$/)?.[0];
@@ -233,7 +247,7 @@ const setupZigBlocks = [...workflow.matchAll(
 )].map((match) => match[0]);
 const setupZigCacheSizeLimitMiB = 1536;
 if (setupZigBlocks.length !== 2 ||
-    !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.suite == 'host' }}") && block.includes("cache-key: ${{ matrix.suite }}")) ||
+    !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-bundle' }}") && block.includes("cache-key: ${{ matrix.suite }}")) ||
     !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.task == 'native' }}") && block.includes("cache-key: ${{ matrix.suite }}")) ||
     (workflow.match(/cache-size-limit:/g) ?? []).length !== 2) {
   throw new Error(`setup-zigのcache保存対象または${setupZigCacheSizeLimitMiB} MiB上限が不正です`);
@@ -250,7 +264,7 @@ if (setupNodeBlock === undefined || !setupNodeBlock.includes("if: matrix.suite !
 for (const required of [
   "group: ci-${{ github.workflow }}-${{ github.ref }}",
   "cancel-in-progress: true",
-  "use-cache: ${{ matrix.suite == 'host' }}",
+  "use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-bundle' }}",
   "use-cache: ${{ matrix.task == 'native' }}",
   "cache-key: ${{ matrix.suite }}",
   `cache-size-limit: ${setupZigCacheSizeLimitMiB}`,

@@ -18,7 +18,7 @@ Actions artifactの保持期限後も外部検証できるよう、run `32983175
 historical catalogのdigestとworkflow identityを固定し、`node tools/check_tracked_dispatch_attestation.mjs`が禁止field、対象commit、bundleの
 in-toto subject、SLSA predicate、GitHub Actions workflow identityを検査する。bundleの署名を暗号学的に再検証する場合は、保存したbundleを
 公式`gh attestation verify`へ同じ厳格なidentity引数で渡す。固定されたhistorical catalogの`verified: 4`は現在commitの台帳へ自動反映せず、
-追跡中の`compat/v3.7.24/evidence.json`は`verified: 0`、`trace-confirmed-unattested: 148`を維持する。catalog再生成時の`--historical-commit`は
+追跡中の`compat/v3.7.24/evidence.json`は`verified: 0`、`trace-confirmed-unattested: 271`を維持する。catalog再生成時の`--historical-commit`は
 この明示的な履歴検査でだけ対象commitとの差異を許可し、明示的な非canonical outputを必須にする（通常のsync検査は、証拠生成元のfixture/source commitとの一致、またはその祖先から証拠・台帳・文書・CIとdispatch生成器以外の検証器だけを記録した後続commitを要求し、canonical output保護は緩めない）。target commitとこの履歴固定を追加する後続commitを混同しない。
 
 ### 証拠記録commitの追従
