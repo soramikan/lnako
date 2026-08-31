@@ -10,9 +10,7 @@ export async function readDispatchFixture(root, cases) {
   }
   const definition = config.fixture;
   if (definition.baseFile !== "native-cases.json" || typeof definition.baseId !== "string" || definition.baseId.length === 0 ||
-      typeof definition.id !== "string" || definition.id.length === 0 ||
-      (definition.sourcePrefix !== undefined && (typeof definition.sourcePrefix !== "string" || !definition.sourcePrefix.endsWith("\n"))) ||
-      typeof definition.sourceSuffix !== "string" ||
+      typeof definition.id !== "string" || definition.id.length === 0 || typeof definition.sourceSuffix !== "string" ||
       !definition.sourceSuffix.endsWith("\n") || !Array.isArray(definition.commands) || definition.commands.length === 0 ||
       definition.commands.some((name) => typeof name !== "string" || name.length === 0) ||
       new Set(definition.commands).size !== definition.commands.length) {
@@ -27,7 +25,7 @@ export async function readDispatchFixture(root, cases) {
   return {
     id: definition.id,
     file: definition.baseFile,
-    source: `${definition.sourcePrefix ?? ""}${base.source}${base.source.endsWith("\n") ? "" : "\n"}${definition.sourceSuffix}`,
+    source: `${base.source}${base.source.endsWith("\n") ? "" : "\n"}${definition.sourceSuffix}`,
     commands,
   };
 }
