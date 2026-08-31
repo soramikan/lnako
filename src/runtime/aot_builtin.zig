@@ -386,6 +386,39 @@ pub fn canonicalOpcodeName(command: Command) []const u8 {
     return @tagName(command);
 }
 
+/// Returns the stable route name shared by the LLVM manifest and the AOT
+/// runtime trace. Keeping this mapping next to the opcode enum prevents a
+/// generic ABI call from being reported as `builtin` when the emitter has
+/// assigned it to a specialized native route.
+pub fn dispatchRoute(command: Command) []const u8 {
+    return switch (command) {
+        .cut, .cut_range => "cut",
+        .regexp_match, .regexp_extract, .regexp_replace, .regexp_split => "regexp",
+        .timer_after, .timer_every, .timer_stop, .timer_stop_all => "timer",
+        .promise_create, .promise_success, .promise_settled, .promise_failure, .promise_finally, .promise_all => "promise",
+        .node_file_open, .node_file_read, .node_file_binary_read, .node_file_save => "node-file-io",
+        .node_file_sjis_read, .node_file_sjis_save, .node_file_euc_read, .node_file_euc_save => "node-file-encoding",
+        .node_encoding_sjis_encode, .node_encoding_sjis_decode, .node_encoding_encode, .node_encoding_decode => "node-encoding",
+        .node_file_list, .node_file_list_all, .node_folder_create, .node_file_copy, .node_file_copy_overwrite, .node_file_move, .node_file_move_overwrite, .node_file_delete => "node-file-operation",
+        .system_debug_display => "debug-display",
+        .system_hatena_execute => "hatena-default",
+        .system_nadesiko, .system_nadesiko_continue => "dynamic-execute",
+        .system_hatena_configure => "hatena-configure",
+        .node_interrupt_callback => "node-interrupt",
+        .http_server_start, .http_server_static, .http_server_receive, .http_server_output, .http_server_headers, .http_server_redirect => "http-server",
+        .system_debug_breakpoint_wait => "debug-breakpoint-wait",
+        .node_stdin_line, .node_stdin_character, .node_stdin_callback => "node-stdin-lines",
+        .node_archive_tool_path_set => "archive-tool-path",
+        .node_archive_extract, .node_archive_extract_callback, .node_archive_create, .node_archive_create_callback => "node-archive",
+        .node_process_run_wait, .node_process_run, .node_process_start, .node_process_run_wait_output, .node_process_start_callback, .node_open_external_browser, .node_open_external_explorer => "node-process",
+        .node_file_process_callback, .node_file_process_stop, .node_file_copy_callback, .node_file_move_callback, .node_file_delete_callback => "node-file-callback",
+        .node_ajax_options_set => "ajax-options",
+        .node_ajax_onerror_set => "ajax-onerror",
+        .node_ajax_send_callback, .node_ajax_receive_callback, .node_get_send_callback, .node_post_send_callback, .node_post_form_send_callback, .node_ajax_response_promise, .node_http_response_promise, .node_get_response_promise, .node_post_response_promise, .node_post_form_response_promise, .node_ajax_content_get, .node_ajax_receive, .node_post_send, .node_post_form_send, .node_ajax_text_get, .node_ajax_json_get, .node_ajax_binary_get, .node_discord_send, .node_discord_file_send => "node-http",
+        else => "builtin",
+    };
+}
+
 pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "文字列変換") or std.mem.eql(u8, name, "TOSTR")) return .to_string;
     if (std.mem.eql(u8, name, "変数型確認") or std.mem.eql(u8, name, "TYPEOF")) return .type_of;

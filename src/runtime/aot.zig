@@ -9039,16 +9039,13 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
 }
 
 fn builtinDispatchRoute(command: aot_builtin.Command) []const u8 {
-    return switch (command) {
-        .system_hatena_configure => "hatena-configure",
-        .node_interrupt_callback => "node-interrupt",
-        else => "builtin",
-    };
+    return aot_builtin.dispatchRoute(command);
 }
 
 test "AOT generic builtin dispatch routeはmanifestと一致する" {
     try std.testing.expectEqualStrings("hatena-configure", builtinDispatchRoute(.system_hatena_configure));
     try std.testing.expectEqualStrings("node-interrupt", builtinDispatchRoute(.node_interrupt_callback));
+    try std.testing.expectEqualStrings("node-encoding", builtinDispatchRoute(.node_encoding_sjis_encode));
     try std.testing.expectEqualStrings("builtin", builtinDispatchRoute(.to_string));
 }
 
