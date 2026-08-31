@@ -8,7 +8,7 @@
   "fixture": {
     "id": "native-cut-commands",
     "file": "native-cases.json",
-    "sourceSha256": "0ebfd2afc20bac56f175a72f56da118917aa6ae0cbe4482c93891e6d199c46c2"
+    "sourceSha256": "83edb4c52f9669353b23c5e315fe06b28298e59ce9f0fa1b1db93f28e26edaa1"
   },
   "officialComparison": {
     "oracle": "official-source",
@@ -23,25 +23,25 @@
       "officialSource": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "a4292c7f9db75b46fdf829e00e15f8cc6fc03951392d6081eaf8f045a3430958",
+        "stdoutSha256": "64e238e737bce07656cddba9519df0e6d3bcf219c9c9eaa9489b81adc788e55c",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "officialGenerated": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "a4292c7f9db75b46fdf829e00e15f8cc6fc03951392d6081eaf8f045a3430958",
+        "stdoutSha256": "64e238e737bce07656cddba9519df0e6d3bcf219c9c9eaa9489b81adc788e55c",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoRun": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "a4292c7f9db75b46fdf829e00e15f8cc6fc03951392d6081eaf8f045a3430958",
+        "stdoutSha256": "64e238e737bce07656cddba9519df0e6d3bcf219c9c9eaa9489b81adc788e55c",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoNativeO0": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "a4292c7f9db75b46fdf829e00e15f8cc6fc03951392d6081eaf8f045a3430958",
+        "stdoutSha256": "64e238e737bce07656cddba9519df0e6d3bcf219c9c9eaa9489b81adc788e55c",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       }
     }
@@ -63,23 +63,23 @@
     },
     "lnako": {
       "binarySha256": "497adbe25fb4c6720e3e81c2431ef8c02060918e05fa3f1e05dff03e35693c87",
-      "commit": "391572cfee178347c9f0f21670006064ce82b33b",
+      "commit": "58ace75dea5fbc703bb5fd230837fdae71cf7522",
       "dirty": true
     },
     "raw": {
-      "interpreterTraceSha256": "afe69a3be0853b304e25ff571042e116a8639d30dad8b73170756d2d0f5f05f9",
-      "aotTraceSha256": "2a92c53bef75321122338503489faeb2446a17ec8fa1943fbba3144da8c847ed",
-      "compileManifestSha256": "d978162fe82052a01e80267beff7c2b0c1c95a17a6220b3bc41321638baaf293"
+      "interpreterTraceSha256": "adb3be80e275347560172ac10dbf8561ab74a75faa54b73ac014a09193d63d13",
+      "aotTraceSha256": "794faaa643a450c2fd59b29a4ba9ffcabee5346ccceb4d8f7258203295bc4806",
+      "compileManifestSha256": "f50202502fb2562167e8de410dfce8b6c3b619d1161de5bb17f29c5b73254d65"
     }
   },
   "trace": {
     "interpreter": {
       "schema": 2,
-      "eventCount": 570
+      "eventCount": 588
     },
     "aot": {
       "schema": 2,
-      "eventCount": 1140
+      "eventCount": 1176
     }
   },
   "sites": [
@@ -13096,6 +13096,420 @@
         "aot": {
           "success": true,
           "callId": 569,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0289",
+      "name": "JSONエンコード",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000023f",
+      "sourceName": "JSONエンコード",
+      "canonicalOpcode": "json_encode",
+      "opcode": 143,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 570,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000240",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 571,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0290",
+      "name": "JSONエンコード整形",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000241",
+      "sourceName": "JSONエンコード整形",
+      "canonicalOpcode": "json_encode_pretty",
+      "opcode": 144,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 572,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000242",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 573,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0292",
+      "name": "JSON_E",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000243",
+      "sourceName": "JSON_E",
+      "canonicalOpcode": "json_encode",
+      "opcode": 143,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 574,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000244",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 575,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0293",
+      "name": "JSON_ES",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000245",
+      "sourceName": "JSON_ES",
+      "canonicalOpcode": "json_encode_pretty",
+      "opcode": 144,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 576,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000246",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 577,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0291",
+      "name": "JSONデコード",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000247",
+      "sourceName": "JSONデコード",
+      "canonicalOpcode": "json_decode",
+      "opcode": 145,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 578,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000248",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 579,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0294",
+      "name": "JSON_D",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000249",
+      "sourceName": "JSON_D",
+      "canonicalOpcode": "json_decode",
+      "opcode": 145,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 580,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000024a",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 581,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0178",
+      "name": "配列只結合",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000024b",
+      "sourceName": "配列只結合",
+      "canonicalOpcode": "array_join_only",
+      "opcode": 57,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 582,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000024c",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 583,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0180",
+      "name": "配列要素数",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000024d",
+      "sourceName": "配列要素数",
+      "canonicalOpcode": "element_count",
+      "opcode": 55,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 584,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000024e",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 585,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0181",
+      "name": "要素数",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000024f",
+      "sourceName": "要素数",
+      "canonicalOpcode": "element_count",
+      "opcode": 55,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 586,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000250",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 587,
           "count": 1
         }
       },
