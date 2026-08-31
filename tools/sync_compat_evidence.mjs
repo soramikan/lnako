@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { readDispatchFixture } from "./dispatch_fixture.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const lockPath = resolve(root, "compat/upstream.lock.json");
@@ -262,6 +263,18 @@ async function readFixtureRecords() {
       records.push(record);
     }
   }
+  const nativeCases = await readJson(resolve(oracleDirectory, "native-cases.json"));
+  const dispatchFixture = await readDispatchFixture(root, nativeCases);
+  const dispatchRecord = {
+    id: dispatchFixture.id,
+    file: dispatchFixture.file,
+    aot: false,
+    sourceSha256: createHash("sha256").update(dispatchFixture.source).digest("hex"),
+    commandNames: new Set(),
+    associationOrigins: new Map(),
+  };
+  for (const name of dispatchFixture.commands) addAssociation(dispatchRecord, name, "fixture.commands");
+  records.push(dispatchRecord);
   if (new Set(records.map((record) => record.id)).size !== records.length) throw new Error("オラクルfixture IDが重複しています");
 
   return records;
@@ -589,7 +602,7 @@ function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, a
     if (entry.fixtureCoverageState !== expectedCoverage) throw new Error(`fixtureCoverageStateが関連IDと不一致です: ${entry.id}`);
     if (entry.executionEvidenceState !== "unverified") {
       assertKnownObjectKeys(entry.executionEvidence, ["proofSchema", "fixtureId", "siteIds", "officialComparison", "state"], `evidence.entries.${entry.id}.executionEvidence`);
-      if (entry.identityResolution !== "unique-name" || entry.executionEvidence?.proofSchema !== "lnako.dispatch-evidence.v2" || entry.executionEvidence?.fixtureId !== "native-cut-commands" || entry.executionEvidence?.state !== entry.executionEvidenceState || !Array.isArray(entry.executionEvidence.siteIds) || entry.executionEvidence.siteIds.length === 0 || !Array.isArray(entry.executionEvidence.officialComparison) || entry.executionEvidence.officialComparison.length === 0) {
+      if (entry.identityResolution !== "unique-name" || entry.executionEvidence?.proofSchema !== "lnako.dispatch-evidence.v2" || entry.executionEvidence?.fixtureId !== "native-dispatch-commands" || entry.executionEvidence?.state !== entry.executionEvidenceState || !Array.isArray(entry.executionEvidence.siteIds) || entry.executionEvidence.siteIds.length === 0 || !Array.isArray(entry.executionEvidence.officialComparison) || entry.executionEvidence.officialComparison.length === 0) {
         throw new Error(`dispatch証拠付きentryが不正です: ${entry.id}`);
       }
     } else if (entry.executionEvidence !== null) {

@@ -1,0 +1,10 @@
+{
+  "schema": "lnako.dispatch-fixture.v1",
+  "fixture": {
+    "id": "native-dispatch-commands",
+    "baseFile": "native-cases.json",
+    "baseId": "native-cut-commands",
+    "commands": ["日時書式変換"],
+    "sourceSuffix": "日時書式変換(\"2024/02/29 03:04:05\",\"YYYY-MM-DD HH:mm:ss\")を表示\n"
+  }
+}

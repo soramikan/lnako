@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
+import { readDispatchFixture } from "./dispatch_fixture.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const arguments_ = process.argv.slice(2);
@@ -34,8 +35,7 @@ const catalog = JSON.parse(await readFile(resolve(root, "compat/v3.7.24/standard
 if (catalog.commandCount !== 527 || catalog.commands.length !== 527) throw new Error("標準cnakoカタログが527 entryではありません");
 const catalogByName = Map.groupBy(catalog.commands, (command) => command.name);
 const cases = JSON.parse(await readFile(resolve(root, "tests/oracle/native-cases.json"), "utf8"));
-const fixture = cases.find((candidate) => candidate.id === "native-cut-commands");
-if (fixture === undefined) throw new Error("dispatch trace用fixtureがありません: native-cut-commands");
+const fixture = await readDispatchFixture(root, cases);
 const nodeCases = JSON.parse(await readFile(resolve(root, "tests/oracle/node-file-cases.json"), "utf8"));
 const nodeFixture = nodeCases.find((candidate) => candidate.id === "plugin-node-path-host");
 if (nodeFixture === undefined) throw new Error("Node route trace用fixtureがありません: plugin-node-path-host");
