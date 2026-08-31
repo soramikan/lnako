@@ -7980,7 +7980,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         return;
     };
     const command_name = aot_builtin.canonicalOpcodeName(command);
-    const route = if (command == .node_interrupt_callback) "node-interrupt" else "builtin";
+    const route = builtinDispatchRoute(command);
     const call_id = runtime.dispatch_trace.begin(command_name, opcode, route, site_id);
     var success = false;
     defer runtime.dispatch_trace.result(call_id, command_name, opcode, route, site_id, success);
@@ -9035,6 +9035,20 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
         },
     }
     success = runtime.failure_epoch == start_epoch;
+}
+
+fn builtinDispatchRoute(command: aot_builtin.Command) []const u8 {
+    return switch (command) {
+        .system_hatena_configure => "hatena-configure",
+        .node_interrupt_callback => "node-interrupt",
+        else => "builtin",
+    };
+}
+
+test "AOT generic builtin dispatch routeはmanifestと一致する" {
+    try std.testing.expectEqualStrings("hatena-configure", builtinDispatchRoute(.system_hatena_configure));
+    try std.testing.expectEqualStrings("node-interrupt", builtinDispatchRoute(.node_interrupt_callback));
+    try std.testing.expectEqualStrings("builtin", builtinDispatchRoute(.to_string));
 }
 
 fn typeNameValue(value: Value) Value {
