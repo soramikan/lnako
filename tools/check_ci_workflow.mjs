@@ -48,18 +48,18 @@ for (const [name, os] of platforms) for (const suite of suites) expectedMatrix.a
 assertSetEqual(actualMatrix, expectedMatrix, "CI matrix");
 const nativeAotMatrixEntries = matrixEntries.filter((entry) => entry.suite === "aot-native");
 const supportAotMatrixEntries = matrixEntries.filter((entry) => entry.suite === "aot-support");
-if (nativeAotMatrixEntries.length !== 6 || supportAotMatrixEntries.length !== 3) {
+if (nativeAotMatrixEntries.length !== 9 || supportAotMatrixEntries.length !== 3) {
   throw new Error(`AOT job分割数が不正です: native=${nativeAotMatrixEntries.length} support=${supportAotMatrixEntries.length}`);
 }
-if (matrixEntries.length !== 21) throw new Error(`CI matrixの実job数が不正です: actual=${matrixEntries.length}`);
+if (matrixEntries.length !== 24) throw new Error(`CI matrixの実job数が不正です: actual=${matrixEntries.length}`);
 const nativeAotJob = workflow.match(/  aot:[\s\S]*?(?=\n  attest-dispatch-evidence:)/)?.[0];
 if (!nativeAotJob) throw new Error("分割AOT jobがありません");
 const nativeShardRows = [...nativeAotJob.matchAll(/^          - name: (.+)\n            os: (.+)\n            suite: aot-native\n            task: native\n            shardIndex: (\d+)\n            shardCount: (\d+)\n            jobName: (.+)$/gm)]
   .map((match) => ({ name: match[1], os: match[2], index: Number(match[3]), count: Number(match[4]), jobName: match[5] }));
 const supportRows = [...nativeAotJob.matchAll(/^          - name: (.+)\n            os: (.+)\n            suite: aot-support\n            task: support\n            jobName: (.+)$/gm)]
   .map((match) => ({ name: match[1], os: match[2], jobName: match[3] }));
-if (nativeShardRows.length !== 6 || supportRows.length !== 3 || nativeShardRows.some((row) => row.count !== 2 || ![0, 1].includes(row.index)) ||
-    new Set(nativeShardRows.map((row) => `${row.name}\0${row.os}\0${row.index}`)).size !== 6 ||
+if (nativeShardRows.length !== 9 || supportRows.length !== 3 || nativeShardRows.some((row) => row.count !== 3 || ![0, 1, 2].includes(row.index)) ||
+    new Set(nativeShardRows.map((row) => `${row.name}\0${row.os}\0${row.index}`)).size !== 9 ||
     new Set(supportRows.map((row) => `${row.name}\0${row.os}`)).size !== 3) {
   throw new Error("AOT native/support jobのOS別shard matrixが不正です");
 }

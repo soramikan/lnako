@@ -201,43 +201,64 @@ jobs:
             suite: aot-native
             task: native
             shardIndex: 0
-            shardCount: 2
-            jobName: AOT native shard 1/2
+            shardCount: 3
+            jobName: AOT native shard 1/3
           - name: Linux x86_64
             os: ubuntu-24.04
             suite: aot-native
             task: native
             shardIndex: 1
-            shardCount: 2
-            jobName: AOT native shard 2/2
+            shardCount: 3
+            jobName: AOT native shard 2/3
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-native
+            task: native
+            shardIndex: 2
+            shardCount: 3
+            jobName: AOT native shard 3/3
           - name: macOS arm64
             os: macos-15
             suite: aot-native
             task: native
             shardIndex: 0
-            shardCount: 2
-            jobName: AOT native shard 1/2
+            shardCount: 3
+            jobName: AOT native shard 1/3
           - name: macOS arm64
             os: macos-15
             suite: aot-native
             task: native
             shardIndex: 1
-            shardCount: 2
-            jobName: AOT native shard 2/2
+            shardCount: 3
+            jobName: AOT native shard 2/3
+          - name: macOS arm64
+            os: macos-15
+            suite: aot-native
+            task: native
+            shardIndex: 2
+            shardCount: 3
+            jobName: AOT native shard 3/3
           - name: Windows x86_64
             os: windows-2025
             suite: aot-native
             task: native
             shardIndex: 0
-            shardCount: 2
-            jobName: AOT native shard 1/2
+            shardCount: 3
+            jobName: AOT native shard 1/3
           - name: Windows x86_64
             os: windows-2025
             suite: aot-native
             task: native
             shardIndex: 1
-            shardCount: 2
-            jobName: AOT native shard 2/2
+            shardCount: 3
+            jobName: AOT native shard 2/3
+          - name: Windows x86_64
+            os: windows-2025
+            suite: aot-native
+            task: native
+            shardIndex: 2
+            shardCount: 3
+            jobName: AOT native shard 3/3
           - name: Linux x86_64
             os: ubuntu-24.04
             suite: aot-support

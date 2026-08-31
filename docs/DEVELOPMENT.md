@@ -130,8 +130,8 @@ node tools/compare_native_oracle.mjs --artifact /absolute/path/native-oracle.jso
 LNAKO_NATIVE_ORACLE_ARTIFACT=/absolute/path/native-oracle.json node tools/compare_native_oracle.mjs
 # 先行したzig buildの成果物を再利用する場合（CIのAOT並列runner）
 node tools/compare_native_oracle.mjs --no-build --artifact /absolute/path/native-oracle.json
-# CIと同じ2 shardの一方だけを実行する場合
-node tools/compare_native_oracle.mjs --no-build --shard-index 0 --shard-count 2 --artifact /absolute/path/native-oracle-shard-0.json
+# CIと同じ3 shardの一方だけを実行する場合
+node tools/compare_native_oracle.mjs --no-build --shard-index 0 --shard-count 3 --artifact /absolute/path/native-oracle-shard-0.json
 ```
 
 artifactは公式baselineのタグ・commit、lnakoのcommit、OS/CPUアーキテクチャ、7経路名、fixture ID、
