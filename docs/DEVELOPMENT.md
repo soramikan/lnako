@@ -119,7 +119,8 @@ loopbackサーバーを使って公式CLI・公式生成JavaScript・Interpreter
 成功表示にも基準別の件数を出します。
 
 `native-cases.json`全284件の実行結果を保存する必要がある検証では、任意の絶対パスを明示してJSON artifactを生成できます。
-CIのfixture shard検証では`--shard-index`と`--shard-count`を併用し、artifactの`selection`で部分結果であることを確認します。
+CIのfixture shard検証では`--shard-index`と`--shard-count`を併用し、route分割検証では`--optimizations`へ`O0`〜`O3`の
+カンマ区切り値を指定します。artifactの`selection`でfixtureと最適化routeの部分結果であることを確認します。
 通常実行のstdout、所要時間、比較処理は変わりません。
 
 fixtureに`stdin`を指定した場合は、公式CLI・公式生成JavaScript・`lnako run`・LLVM AOTのO0〜O3の実行経路へ同じUTF-8入力を渡します。コンパイル経路そのものへは入力を渡しません。
@@ -131,10 +132,12 @@ LNAKO_NATIVE_ORACLE_ARTIFACT=/absolute/path/native-oracle.json node tools/compar
 # 先行したzig buildの成果物を再利用する場合（CIのAOT並列runner）
 node tools/compare_native_oracle.mjs --no-build --artifact /absolute/path/native-oracle.json
 # CIと同じ3 shardの一方だけを実行する場合
-node tools/compare_native_oracle.mjs --no-build --shard-index 0 --shard-count 3 --artifact /absolute/path/native-oracle-shard-0.json
+node tools/compare_native_oracle.mjs --no-build --optimizations O1 --shard-index 0 --shard-count 3 --artifact /absolute/path/native-oracle-shard-0-o1.json
+# macOSのroute group（全284 fixture、O0とO1）を実行する場合
+node tools/compare_native_oracle.mjs --no-build --optimizations O0,O1 --artifact /absolute/path/native-oracle-o0-o1.json
 ```
 
-artifactは公式baselineのタグ・commit、lnakoのcommit、OS/CPUアーキテクチャ、7経路名、fixture ID、
+artifactは公式baselineのタグ・commit、lnakoのcommit、OS/CPUアーキテクチャ、実行経路名、fixture ID、
 採用した既知oracle、各経路の終了状態、fixture単位の等価性判定を含みます。各fixtureのソース、生成JS、
 各経路の正規化stdout/stderr、比較スクリプト、lnako本体はSHA-256だけを記録します。プログラムの
 stdout/stderr、引数、ソース本文は保存しません。出力先は絶対パスの新規ファイルに限り、同一ディレクトリ内の一時ファイルから
@@ -145,8 +148,10 @@ canonical opcode・route・固定site IDをfixtureの`compileManifest`へ要約�
 トップレベルの`status`は比較失敗とインフラ失敗を区別し、インフラ失敗ではfixture結果を空にして成功扱いにしません。
 実際に実行した公式CLIと固定情報markerのSHA-256も保存し、markerがbaselineのタグ・commit・archive hashと一致しない場合や、
 CLI／markerの実体hashが`upstream.lock.json`のoracle identityと一致しない場合は実行前に拒否します。
-shard指定時のartifactは`lnako.native-oracle-artifact.v2`となり、source長と明示commands数による重み付き割当のshard番号・総数・
-全fixture数を保存します。shard artifact単体を284件全体の証拠として扱わず、全shard jobの成功を合わせて全件と判定します。
+shardまたは`--optimizations`指定時のartifactは`lnako.native-oracle-artifact.v3`となり、source長と明示commands数による重み付き割当の
+fixture shard番号・総数・全fixture数と、実行した最適化レベルを保存します。route artifact単体を284件・O0〜O3全体の証拠として扱わず、
+各OSの全fixture shard／route group jobの成功を合わせて全件・全routeと判定します。`O0`を選択したartifactだけがcompile manifestを要約し、
+他の最適化artifactは選択したcompile statusだけを保存します。
 
 標準命令を実装して個別の公式差分テストを追加したら `compat/v3.7.24/implemented.json` にテストIDと理由を記録し、
 `node tools/sync_compat.mjs --generate` で分類表と集計を再生成します。固定した公式スナップショット自体を再取得する

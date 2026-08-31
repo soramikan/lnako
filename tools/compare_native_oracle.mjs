@@ -13,7 +13,9 @@ const oracleRoot = resolve(
   oracleArg >= 0 ? process.argv[oracleArg + 1] : process.env.NADESIKO3_ORACLE ?? resolve(root, ".cache/oracle/nadesiko3-3.7.24"),
 );
 const cases = JSON.parse(await readFile(resolve(root, "tests/oracle/native-cases.json"), "utf8"));
+const allOptimizations = ["O0", "O1", "O2", "O3"];
 const shard = parseShard();
+const selectedOptimizations = parseOptimizations();
 let selectedCases;
 const standardCatalog = JSON.parse(await readFile(resolve(root, "compat/v3.7.24/standard-cnako.json"), "utf8"));
 if (standardCatalog.commandCount !== 527 || !Array.isArray(standardCatalog.commands) || standardCatalog.commands.length !== 527) throw new Error("標準cnakoカタログが527 entryではありません");
@@ -37,7 +39,7 @@ const artifactOracleIdentity = artifactPath === null ? null : oracleIdentity;
 const temporary = await mkdtemp(join(root, ".tmp-lnako-native-"));
 const maxBuffer = 16 * 1024 * 1024;
 const knownCaseFields = new Set(["id", "source", "sourceFileName", "oracle", "stderrIncludes", "normalizeDebugDump", "commands", "stdin"]);
-const routeNames = ["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0", "lnakoNativeO1", "lnakoNativeO2", "lnakoNativeO3"];
+const routeNames = ["officialSource", "officialGenerated", "lnakoRun", ...selectedOptimizations.map((optimization) => `lnakoNative${optimization}`)];
 let artifactLnakoBinarySha256 = null;
 
 try {
@@ -152,7 +154,7 @@ try {
   }
   if (failures > 0) throw new Error(`AOT実行結果の差分が${failures}件あります`);
   console.log(
-    `公式cnako3・公式生成JavaScript・lnako run・LLVM AOT O0/O1/O2/O3の7経路実行差分テスト: ${selectedCases.length}件成功` +
+    `公式cnako3・公式生成JavaScript・lnako run・LLVM AOT ${selectedOptimizations.join("/")}の${routeNames.length}経路実行差分テスト: ${selectedCases.length}件成功` +
       (shard === null ? "" : `（fixture shard ${shard.index + 1}/${shard.count}）`) +
       (generatedOracleCases + sourceOracleCases > 0
         ? `（既知の公式経路差: CLI基準${sourceOracleCases}件、生成JavaScript基準${generatedOracleCases}件）`
@@ -230,10 +232,10 @@ async function runCase(testCase, index, temporary, executable, officialCli, coll
     lnakoRun: normalizeStderr(interpreted),
   };
   const compileErrors = [];
-  const manifestPath = collectManifest ? resolve(fixtureDirectory, `${stem}-manifest.jsonl`) : null;
+  const manifestPath = collectManifest && selectedOptimizations.includes("O0") ? resolve(fixtureDirectory, `${stem}-manifest.jsonl`) : null;
   let manifestSummary = null;
-  const compileStatuses = collectManifest ? {} : null;
-  for (const optimization of ["O0", "O1", "O2", "O3"]) {
+  const compileStatuses = collectManifest ? Object.fromEntries(selectedOptimizations.map((optimization) => [optimization, null])) : null;
+  for (const optimization of selectedOptimizations) {
     const nativeExecutable = resolve(fixtureDirectory, `${stem}-${optimization}${process.platform === "win32" ? ".exe" : ""}`);
     const compileOptions = manifestPath !== null && optimization === "O0"
       ? { ...options, env: { ...options.env, LNAKO_COMPILE_MANIFEST: manifestPath } }
@@ -314,6 +316,21 @@ function nativeOracleConcurrency() {
   throw new Error("LNAKO_NATIVE_ORACLE_JOBSは1〜4の整数を指定してください");
 }
 
+function parseOptimizations() {
+  const arguments_ = process.argv.filter((argument) => argument === "--optimizations" || argument.startsWith("--optimizations="));
+  if (arguments_.length > 1) throw new Error("--optimizationsは1回だけ指定してください");
+  if (arguments_.length === 0) return allOptimizations;
+  const flagIndex = process.argv.indexOf("--optimizations");
+  const inline = process.argv.find((argument) => argument.startsWith("--optimizations="));
+  if (flagIndex >= 0 && process.argv[flagIndex + 1] === undefined) throw new Error("--optimizationsにはO0〜O3のカンマ区切り値を指定してください");
+  const value = flagIndex >= 0 ? process.argv[flagIndex + 1] : inline.slice("--optimizations=".length);
+  const requested = value.split(",").map((optimization) => optimization.trim()).filter((optimization) => optimization.length > 0);
+  if (requested.length === 0 || requested.some((optimization) => !allOptimizations.includes(optimization)) || new Set(requested).size !== requested.length) {
+    throw new Error("--optimizationsには重複しないO0〜O3のカンマ区切り値を指定してください");
+  }
+  return allOptimizations.filter((optimization) => requested.includes(optimization));
+}
+
 function parseShard() {
   let shardIndex = null;
   let shardCount = null;
@@ -356,8 +373,8 @@ function selectCases(allCases, shard) {
 
 function artifactSelection(totalFixtureCount, shard) {
   return shard === null
-    ? { mode: "all", shardIndex: null, shardCount: 1, totalFixtureCount }
-    : { mode: "weighted-source-command", shardIndex: shard.index, shardCount: shard.count, totalFixtureCount };
+    ? { mode: "all", shardIndex: null, shardCount: 1, totalFixtureCount, optimizations: selectedOptimizations }
+    : { mode: "weighted-source-command", shardIndex: shard.index, shardCount: shard.count, totalFixtureCount, optimizations: selectedOptimizations };
 }
 
 function parseNoBuild() {
@@ -553,7 +570,7 @@ function createArtifact(fixtures, failureCount, fixtureCount, baseline, toolchai
     officialGenerated: fixtures.filter((fixture) => fixture.knownOracleSelection === "official-generated").length,
   };
   return {
-    schema: "lnako.native-oracle-artifact.v2",
+    schema: "lnako.native-oracle-artifact.v3",
     generatedAt: new Date().toISOString(),
     baseline: {
       repository: baseline.repository,
@@ -594,7 +611,7 @@ function createArtifact(fixtures, failureCount, fixtureCount, baseline, toolchai
 
 function validateArtifact(artifact) {
   assertExactKeys(artifact, ["schema", "generatedAt", "baseline", "oracle", "lnako", "toolchain", "artifactSha256", "environment", "fixtureCount", "routeCount", "routes", "knownOracleSelections", "status", "comparisonSucceeded", "failureCount", "selection", "fixtures"], "AOT差分artifact");
-  if (artifact.schema !== "lnako.native-oracle-artifact.v2" || artifact.routeCount !== routeNames.length) {
+  if (artifact.schema !== "lnako.native-oracle-artifact.v3" || artifact.routeCount !== routeNames.length) {
     throw new Error("AOT差分artifactのschemaまたはrouteCountが不正です");
   }
   if (typeof artifact.generatedAt !== "string" || Number.isNaN(Date.parse(artifact.generatedAt))) throw new Error("AOT差分artifactの生成日時が不正です");
@@ -617,13 +634,14 @@ function validateArtifact(artifact) {
     throw new Error("AOT差分artifactの集計値が不正です");
   }
   if (!Array.isArray(artifact.fixtures)) throw new Error("AOT差分artifactのfixturesが配列ではありません");
-  assertExactKeys(artifact.selection, ["mode", "shardIndex", "shardCount", "totalFixtureCount"], "AOT差分artifact.selection");
+  assertExactKeys(artifact.selection, ["mode", "shardIndex", "shardCount", "totalFixtureCount", "optimizations"], "AOT差分artifact.selection");
   if (!["all", "weighted-source-command"].includes(artifact.selection.mode) ||
       (artifact.selection.mode === "all" && (artifact.selection.shardIndex !== null || artifact.selection.shardCount !== 1)) ||
       (artifact.selection.mode === "weighted-source-command" && (!Number.isSafeInteger(artifact.selection.shardIndex) || !Number.isSafeInteger(artifact.selection.shardCount) || artifact.selection.shardCount < 2 || artifact.selection.shardIndex < 0 || artifact.selection.shardIndex >= artifact.selection.shardCount)) ||
       !Number.isSafeInteger(artifact.selection.totalFixtureCount) || artifact.selection.totalFixtureCount < artifact.fixtureCount) {
     throw new Error("AOT差分artifactのfixture選択情報が不正です");
   }
+  assertStringArray(artifact.selection.optimizations, selectedOptimizations, "AOT差分artifact.selection.optimizations");
   if (artifact.comparisonSucceeded !== (artifact.status === "success") || (artifact.failureCount === 0) !== (artifact.status === "success")) {
     throw new Error("AOT差分artifactのstatusとcomparisonSucceededが一致しません");
   }
@@ -683,11 +701,11 @@ function validateArtifact(artifact) {
       if ((result.exitCode !== null && !Number.isSafeInteger(result.exitCode)) || (result.signal !== null && typeof result.signal !== "string") ||
           !["success", "runtime-error"].includes(result.stderrClass)) throw new Error(`AOT差分artifactのroute結果が不正です: ${fixture.id}`);
     }
-    assertExactKeys(fixture.compileStatuses, ["O0", "O1", "O2", "O3"], `AOT差分artifact.fixture(${fixture.id}).compileStatuses`);
+    assertExactKeys(fixture.compileStatuses, selectedOptimizations, `AOT差分artifact.fixture(${fixture.id}).compileStatuses`);
     if (Object.values(fixture.compileStatuses).some((status) => status !== null && !Number.isSafeInteger(status))) {
       throw new Error(`AOT差分artifactのcompile statusが不正です: ${fixture.id}`);
     }
-    if ((fixture.compileManifest === null) !== (fixture.compileStatuses.O0 !== 0)) {
+    if ((fixture.compileManifest === null) !== (!selectedOptimizations.includes("O0") || fixture.compileStatuses.O0 !== 0)) {
       throw new Error(`AOT差分artifactのcompile manifest有無がO0結果と一致しません: ${fixture.id}`);
     }
     for (const result of Object.values(fixture.results)) {

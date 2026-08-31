@@ -60,27 +60,44 @@ if (macosMatrixEntries.length !== 5 || macosMatrixEntries.filter((entry) => entr
 const nativeAotMatrixEntries = matrixEntries.filter((entry) => entry.suite === "aot-native");
 const supportAotMatrixEntries = matrixEntries.filter((entry) => entry.suite === "aot-support");
 const nativeShardCounts = new Map([
-  ["Linux x86_64", 6],
-  ["macOS arm64", 3],
-  ["Windows x86_64", 6],
+  ["Linux x86_64", 3],
+  ["macOS arm64", 1],
+  ["Windows x86_64", 3],
 ]);
-if (nativeAotMatrixEntries.length !== 15 || supportAotMatrixEntries.length !== 3) {
+const nativeOptimizationGroups = new Map([
+  ["Linux x86_64", [["O0", "O0"], ["O1", "O1"], ["O2", "O2"], ["O3", "O3"]]],
+  ["macOS arm64", [["O0-O1", "O0,O1"], ["O2", "O2"], ["O3", "O3"]]],
+  ["Windows x86_64", [["O0", "O0"], ["O1", "O1"], ["O2", "O2"], ["O3", "O3"]]],
+]);
+const expectedNativeRowCount = [...nativeShardCounts].reduce((total, [name, shardCount]) => total + shardCount * nativeOptimizationGroups.get(name).length, 0);
+if (nativeAotMatrixEntries.length !== expectedNativeRowCount || supportAotMatrixEntries.length !== 3) {
   throw new Error(`AOT job分割数が不正です: native=${nativeAotMatrixEntries.length} support=${supportAotMatrixEntries.length}`);
 }
-if (matrixEntries.length !== 27) throw new Error(`CI matrixの実job数が不正です: actual=${matrixEntries.length}`);
+if (matrixEntries.length !== 39) throw new Error(`CI matrixの実job数が不正です: actual=${matrixEntries.length}`);
 const nativeAotJob = workflow.match(/  aot:[\s\S]*?(?=\n  attest-dispatch-evidence:)/)?.[0];
 if (!nativeAotJob) throw new Error("分割AOT jobがありません");
-const nativeShardRows = [...nativeAotJob.matchAll(/^          - name: (.+)\n            os: (.+)\n            suite: aot-native\n            task: native\n            shardIndex: (\d+)\n            shardCount: (\d+)\n            jobName: (.+)$/gm)]
-  .map((match) => ({ name: match[1], os: match[2], index: Number(match[3]), count: Number(match[4]), jobName: match[5] }));
+const nativeShardRows = [...nativeAotJob.matchAll(/^          - name: (.+)\n            os: (.+)\n            suite: aot-native\n            task: native\n            fixtureShardIndex: (\d+)\n            fixtureShardCount: (\d+)\n            fixtureSharded: (true|false)\n            optimizationKey: (.+)\n            optimizations: (.+)\n            jobName: (.+)$/gm)]
+  .map((match) => ({ name: match[1], os: match[2], index: Number(match[3]), count: Number(match[4]), sharded: match[5] === "true", optimizationKey: match[6], optimizations: match[7], jobName: match[8] }));
 const supportRows = [...nativeAotJob.matchAll(/^          - name: (.+)\n            os: (.+)\n            suite: aot-support\n            task: support\n            jobName: (.+)$/gm)]
   .map((match) => ({ name: match[1], os: match[2], jobName: match[3] }));
-if (nativeShardRows.length !== 15 || supportRows.length !== 3 || nativeShardRows.some((row) => {
+const expectedNativeRows = new Set();
+for (const [name, count] of nativeShardCounts) {
+  const groups = nativeOptimizationGroups.get(name);
+  for (let index = 0; index < count; index += 1) {
+    for (const [optimizationKey, optimizations] of groups) {
+      const sharded = count > 1;
+      const jobName = sharded ? `AOT native shard ${index + 1}/${count} / ${optimizationKey}` : `AOT native routes ${optimizationKey.replace("-", "+")}`;
+      expectedNativeRows.add(`${name}\0${platforms.get(name)}\0${index}\0${count}\0${sharded}\0${optimizationKey}\0${optimizations}\0${jobName}`);
+    }
+  }
+}
+if (nativeShardRows.length !== expectedNativeRowCount || supportRows.length !== 3 || nativeShardRows.some((row) => {
   const expectedCount = nativeShardCounts.get(row.name);
-  return expectedCount === undefined || row.count !== expectedCount || row.index < 0 || row.index >= expectedCount || row.jobName !== `AOT native shard ${row.index + 1}/${expectedCount}`;
+  return expectedCount === undefined || !expectedNativeRows.has(`${row.name}\0${row.os}\0${row.index}\0${row.count}\0${row.sharded}\0${row.optimizationKey}\0${row.optimizations}\0${row.jobName}`);
 }) ||
-    new Set(nativeShardRows.map((row) => `${row.name}\0${row.os}\0${row.index}`)).size !== 15 ||
+    new Set(nativeShardRows.map((row) => `${row.name}\0${row.os}\0${row.index}\0${row.optimizationKey}`)).size !== expectedNativeRowCount ||
     new Set(supportRows.map((row) => `${row.name}\0${row.os}`)).size !== 3) {
-  throw new Error("AOT native/support jobのOS別shard matrixが不正です");
+  throw new Error("AOT native/support jobのOS別fixture shard／optimization matrixが不正です");
 }
 
 const stepSuites = new Map([
@@ -133,19 +150,19 @@ const nativeAotBuildBlock = aotStep("Build AOT verification compiler");
 if (!nativeAotBuildBlock || !nativeAotBuildBlock.includes("run: zig build")) {
   throw new Error("AOT検証用compilerの先行buildがありません");
 }
-const nativeAotVerificationBlock = aotStep("Differential native AOT verification (fixture shard)");
+const nativeAotVerificationBlock = aotStep("Differential native AOT verification (fixture/route shard)");
 if (!nativeAotVerificationBlock || !nativeAotVerificationBlock.includes("if: matrix.task == 'native'") ||
     !nativeAotVerificationBlock.includes('LNAKO_NATIVE_ORACLE_JOBS: "1"') ||
     (nativeAotVerificationBlock.match(/node tools\/compare_native_oracle\.mjs/g) ?? []).length !== 1 ||
-    !nativeAotVerificationBlock.includes("--no-build") || !nativeAotVerificationBlock.includes("--shard-index") ||
+    !nativeAotVerificationBlock.includes("--no-build") || !nativeAotVerificationBlock.includes("--optimizations") || !nativeAotVerificationBlock.includes("--shard-index") ||
     !nativeAotVerificationBlock.includes("--shard-count") || !nativeAotVerificationBlock.includes("--artifact")) {
-  throw new Error("AOT fixture shardのworker、shard指定、またはartifact出力が不正です");
+  throw new Error("AOT fixture／route shardのworker、shard指定、またはartifact出力が不正です");
 }
 if (nativeAotJob.includes("check_aot_suite_parallel.mjs")) throw new Error("旧AOT全検査runnerを分割jobへ再導入しないでください");
 if (!nativeOracleScript.includes("const shard = parseShard();") || !nativeOracleScript.includes("selectedCases = selectCases(cases, shard);") ||
-    !nativeOracleScript.includes("weighted-source-command") || !nativeOracleScript.includes("--shard-index") ||
-    !nativeOracleScript.includes('schema: "lnako.native-oracle-artifact.v2"')) {
-  throw new Error("native oracleのfixture shard実装がありません");
+    !nativeOracleScript.includes("const selectedOptimizations = parseOptimizations();") || !nativeOracleScript.includes("weighted-source-command") || !nativeOracleScript.includes("--shard-index") ||
+    !nativeOracleScript.includes("--optimizations") || !nativeOracleScript.includes('schema: "lnako.native-oracle-artifact.v3"')) {
+  throw new Error("native oracleのfixture／route shard実装がありません");
 }
 const supportStepNames = [
   "Differential HTTP server AOT oracle",
@@ -189,7 +206,7 @@ if (!aotSuiteScript.includes('"compare_native_oracle.mjs"') || !aotSuiteScript.i
 const nativeUpload = aotStep("Upload native AOT oracle artifact");
 if (!nativeUpload || !nativeUpload.includes("if: matrix.task == 'native' && always()") ||
     !nativeUpload.includes("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a") ||
-    !nativeUpload.includes("matrix.os") || !nativeUpload.includes("matrix.shardIndex") ||
+    !nativeUpload.includes("matrix.os") || !nativeUpload.includes("matrix.fixtureShardIndex") || !nativeUpload.includes("matrix.optimizationKey") ||
     !nativeUpload.includes("if-no-files-found: ignore") || !nativeUpload.includes("retention-days: 30")) {
   throw new Error("AOT shard artifact uploadの設定が不正です");
 }
