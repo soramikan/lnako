@@ -65,6 +65,13 @@ step分割により、比較失敗時はnative oracle、HTTP、security、dispat
 失敗しても他方の完了を待って両方のログを出力します。分割後の実CI時間、壁時計、runner合計時間、cache hit/missは次回pushの
 完了済みrunで記録し、実測前に性能改善とは扱いません。
 
+2026-08-31にmacOS arm64の現行fixtureで並列runnerをローカル実測したところ、dispatch evidence（Interpreter 777イベント、AOT
+manifest 779件・runtime 1,554イベント）とcoverage（30 fixture、1,688 unambiguous site、309/523 native entry）を両方成功させて
+約3分54秒だった。前回CIの同じmacOS AOT jobでは、この2 stepを直列に実行して約3分54秒＋約4分28秒だったため、対象区間は
+同時実行の長い方へ短縮できる見込みである。ただしローカルとCI runnerは性能条件が異なり、3 OSのwall-clock・runner合計時間・cache
+hit/missをまだ測っていないため、CI全体の短縮証拠とは扱わない。次回以降のpushでは、並列audit stepの各子検査の成功、3 OS artifact、
+AOT全体時間、wall-clock、runner合計時間、cache状態を完了済みrunで確認する。
+
 元のコマンドは削除せず、各OSでいずれか1スイートが一度だけ実行します。OSごとの互換検証をLinuxだけへ
 縮小する最適化は行いません。ジョブ上限は50分とし、停止しないホスト・ネットワークテストを検出します。
 
