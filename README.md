@@ -62,7 +62,7 @@ hex/base64、Shift_JIS/EUC-JP、中国語・韓国語・Big5の多バイト8系�
 一意命令名の実装台帳は496件（`native` 492件、`compat-js` 4件）で、同名異pluginの重複は31組62 entryです。
 catalog ID単位で別に扱います。これらの分類・台帳・fixture関連付けと実行証拠の状態は
 `compat/v3.7.24/summary.json`、`implemented.json`、`evidence.json`を正本とし、現行の実行証拠は
-`verified` 0件、`trace-confirmed-unattested` 57件、`unverified` 470件です。分類やfixtureの存在は、全entryのAOT実行証明を意味しません。
+`verified` 0件、`trace-confirmed-unattested` 78件、`unverified` 449件です。分類やfixtureの存在は、全entryのAOT実行証明を意味しません。
 外部ネイティブ拡張向けには、Cの公開ヘッダ、opaque値、sync・async・pure属性、Promise、host callbackを持つ
 `lnako_plugin_v1` ABIを実装しています。`lnako run`とLLVM AOT `-O0`〜`-O3`の両方が同じloaderを使い、
 AOTではJavaScriptを使わず埋め込みZig Interpreterでhost callbackとPromiseを橋渡しします。
