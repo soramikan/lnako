@@ -3,7 +3,7 @@
 `compat/v3.7.24/evidence.json`は、標準cnako 527 entryをカタログID単位で
 既存fixtureへ関連付ける台帳です。通常のfixture関連付けは実行結果やdispatch接続を証明しません。
 追跡中の証拠は、macOS arm64の単一実行環境で、明示fixture `native-cut-commands`についてcompile manifest、Interpreter/AOT trace、公式差分を
-同一fixture・siteで突き合わせられた一意名45 entryが`trace-confirmed-unattested`です（既存14命令に型変換系16命令と算術・比較系15命令を加えた範囲）。追跡中のJSONにはattestationを記録しないため、ローカルの`verified`は0件で、残り482 entryが`unverified`です。
+同一fixture・siteで突き合わせられた一意名57 entryが`trace-confirmed-unattested`です（既存14命令に型変換系16命令、算術・比較系15命令、配列系12命令を加えた範囲）。追跡中のJSONにはattestationを記録しないため、ローカルの`verified`は0件で、残り470 entryが`unverified`です。
 
 AOT差分artifactとdispatch証拠は入力・実行物・結果のSHA-256を内包します。CIのmain push/workflow_dispatchでは、3正式OSのdispatch JSONを
 公式`actions/attest`のmulti-subject artifact attestationへ結び付け、公式`gh attestation verify`で署名、SLSA predicate、workflow identity、
@@ -17,7 +17,7 @@ Actions artifactの保持期限後も外部検証できるよう、run `32983175
 historical catalogのdigestとworkflow identityを固定し、`node tools/check_tracked_dispatch_attestation.mjs`が禁止field、対象commit、bundleの
 in-toto subject、SLSA predicate、GitHub Actions workflow identityを検査する。bundleの署名を暗号学的に再検証する場合は、保存したbundleを
 公式`gh attestation verify`へ同じ厳格なidentity引数で渡す。固定されたhistorical catalogの`verified: 4`は現在commitの台帳へ自動反映せず、
-追跡中の`compat/v3.7.24/evidence.json`は`verified: 0`、`trace-confirmed-unattested: 45`を維持する。catalog再生成時の`--historical-commit`は
+追跡中の`compat/v3.7.24/evidence.json`は`verified: 0`、`trace-confirmed-unattested: 57`を維持する。catalog再生成時の`--historical-commit`は
 この明示的な履歴検査でだけ対象commitとの差異を許可し、明示的な非canonical outputを必須にする（通常のsync検査の現行HEAD一致制約とcanonical output保護は緩めない）。target commitとこの履歴固定を追加する後続commitを混同しない。
 
 ## 生成と検証
@@ -94,7 +94,7 @@ Node Bufferのenumerable prototype property 95件の順序・`parent`・`offset`
 疎な最上位表のhole・nullish行に対する`length` property read診断は`native-system-table-sparse-length-errors`で`表列数`・`表行列交換`・`表右回転`を比較します。
 同一ユーザー関数の`prototype` object identityと、そのown `constructor` back-referenceは`native-system-table-inherited-properties`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較します。
 `interpreter-only` 0 entryです。execution evidenceは`verified` 0、
-`trace-confirmed-unattested` 45、`unverified` 482のままです。
+`trace-confirmed-unattested` 57、`unverified` 470のままです。
 fixtureの関連付けを変更した場合は、次で派生台帳の生成と検査を行います。
 
 ```sh

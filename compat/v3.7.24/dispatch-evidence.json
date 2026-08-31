@@ -8,7 +8,7 @@
   "fixture": {
     "id": "native-cut-commands",
     "file": "native-cases.json",
-    "sourceSha256": "88c698480cc7475ea26fd6b8a461b55932cd18334c5610bb14c74084463544fa"
+    "sourceSha256": "a9131a970a146a3ef4942fab2c560d9422c1ca09249161e102479f3db6dbac61"
   },
   "officialComparison": {
     "oracle": "official-source",
@@ -23,25 +23,25 @@
       "officialSource": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "d3361a115b4f69abf96a9fc76785f60bf5b16a5aacdc86f915d1018ec0fd7c8f",
+        "stdoutSha256": "85698fcaa8b77c8a1f52abfb44523b654d8f59e4af14a23139b4577830458934",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "officialGenerated": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "d3361a115b4f69abf96a9fc76785f60bf5b16a5aacdc86f915d1018ec0fd7c8f",
+        "stdoutSha256": "85698fcaa8b77c8a1f52abfb44523b654d8f59e4af14a23139b4577830458934",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoRun": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "d3361a115b4f69abf96a9fc76785f60bf5b16a5aacdc86f915d1018ec0fd7c8f",
+        "stdoutSha256": "85698fcaa8b77c8a1f52abfb44523b654d8f59e4af14a23139b4577830458934",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoNativeO0": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "d3361a115b4f69abf96a9fc76785f60bf5b16a5aacdc86f915d1018ec0fd7c8f",
+        "stdoutSha256": "85698fcaa8b77c8a1f52abfb44523b654d8f59e4af14a23139b4577830458934",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       }
     }
@@ -63,23 +63,23 @@
     },
     "lnako": {
       "binarySha256": "497adbe25fb4c6720e3e81c2431ef8c02060918e05fa3f1e05dff03e35693c87",
-      "commit": "e73b8a0ed8ee1e644b461bd4016e7c50c9ff0b3e",
+      "commit": "7076d92c0e8176c201a344c9c1d1ac5d5ef1257c",
       "dirty": true
     },
     "raw": {
-      "interpreterTraceSha256": "2e6a02508b1c2c076096e9629c7149e19831370f65c964989394731ebaecde39",
-      "aotTraceSha256": "f89189b4f6326ce71e791785bebaa1b23342bb6d04b6cba762aa325079347997",
-      "compileManifestSha256": "0143eae3a7c405d104e523c007203528ce250c2deda8d2cdb05a6005ff80253d"
+      "interpreterTraceSha256": "4385583ca6dfd05bcd2c6c39749c62b959f84cc47db14fbe241a59f371c2e899",
+      "aotTraceSha256": "38d25fddb141f8b42e11a2d8482fe9f890dbb2a5109e9b31a5267109f247f599",
+      "compileManifestSha256": "4f3291413faf7a229d9f4878d8188d550bd26f46c485d487f7fd2052127ece6d"
     }
   },
   "trace": {
     "interpreter": {
       "schema": 2,
-      "eventCount": 126
+      "eventCount": 150
     },
     "aot": {
       "schema": 2,
-      "eventCount": 252
+      "eventCount": 300
     }
   },
   "sites": [
@@ -2907,6 +2907,558 @@
         "aot": {
           "success": true,
           "callId": 125,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0185",
+      "name": "配列ソート",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000081",
+      "sourceName": "配列ソート",
+      "canonicalOpcode": "array_sort",
+      "opcode": 59,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 126,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000083",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 127,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0187",
+      "name": "配列数値ソート",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000084",
+      "sourceName": "配列数値ソート",
+      "canonicalOpcode": "array_numeric_sort",
+      "opcode": 61,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 128,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000085",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 129,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0186",
+      "name": "配列数値変換",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000086",
+      "sourceName": "配列数値変換",
+      "canonicalOpcode": "array_numeric_convert",
+      "opcode": 60,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 130,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000087",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 131,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0189",
+      "name": "配列逆順",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000088",
+      "sourceName": "配列逆順",
+      "canonicalOpcode": "array_reverse",
+      "opcode": 62,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 132,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000089",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 133,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0202",
+      "name": "配列最大値",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000008a",
+      "sourceName": "配列最大値",
+      "canonicalOpcode": "array_maximum",
+      "opcode": 73,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 134,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000008b",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 135,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0203",
+      "name": "配列最小値",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000008c",
+      "sourceName": "配列最小値",
+      "canonicalOpcode": "array_minimum",
+      "opcode": 74,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 136,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000008d",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 137,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0204",
+      "name": "配列合計",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000008e",
+      "sourceName": "配列合計",
+      "canonicalOpcode": "array_sum",
+      "opcode": 75,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 138,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000008f",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 139,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0198",
+      "name": "配列範囲コピー",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000090",
+      "sourceName": "配列範囲コピー",
+      "canonicalOpcode": "array_range_copy",
+      "opcode": 70,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 140,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000091",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 141,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0201",
+      "name": "配列足",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000092",
+      "sourceName": "配列足",
+      "canonicalOpcode": "array_add",
+      "opcode": 72,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 142,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000093",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 143,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0199",
+      "name": "参照",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000094",
+      "sourceName": "参照",
+      "canonicalOpcode": "reference",
+      "opcode": 71,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 144,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000095",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 145,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0200",
+      "name": "配列参照",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000096",
+      "sourceName": "配列参照",
+      "canonicalOpcode": "reference",
+      "opcode": 71,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 146,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000097",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 147,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0179",
+      "name": "配列検索",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000098",
+      "sourceName": "配列検索",
+      "canonicalOpcode": "array_search",
+      "opcode": 58,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_system",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 148,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000099",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 149,
           "count": 1
         }
       },
