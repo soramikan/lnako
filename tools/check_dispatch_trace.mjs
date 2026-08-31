@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
 import { readDispatchFixture } from "./dispatch_fixture.mjs";
 
@@ -21,6 +22,9 @@ for (let index = 0; index < arguments_.length; index += 1) {
   throw new Error("usage: node tools/check_dispatch_trace.mjs [--no-build] [--evidence-output /absolute/path]");
 }
 const noBuild = arguments_.includes("--no-build");
+// Official source, generated JavaScript, and lnako use the same fixed clock
+// and PRNG inputs so nondeterministic builtins can be compared byte-for-byte.
+const fixedHostArguments = ["--import", pathToFileURL(resolve(root, "tools/oracle/fixed_host.mjs")).href];
 if (evidenceOutput !== null) {
   try {
     await readFile(evidenceOutput);
@@ -53,7 +57,13 @@ try {
   await writeFile(source, fixture.source, "utf8");
   await writeFile(nodeSource, nodeFixture.source, "utf8");
 
-  const baseEnvironment = { ...process.env, TZ: "Asia/Tokyo" };
+  const baseEnvironment = {
+    ...process.env,
+    TZ: "Asia/Tokyo",
+    LNAKO_TEST_NOW_MS: "1735689845678",
+    LNAKO_TEST_MONOTONIC_MS: "123.5",
+    LNAKO_TEST_RANDOM_SEED: "5573589319906701683",
+  };
   const interpretedWithoutTrace = run(compiler, ["run", source], baseEnvironment, temporary);
   assertSuccess("trace無効Interpreter", interpretedWithoutTrace);
   assertNoJsonl(await readdir(temporary));
@@ -109,7 +119,7 @@ try {
     const oracle = await readOracleIdentity();
     const officialSource = run(
       process.execPath,
-      [oracle.cliPath, source],
+      [...fixedHostArguments, oracle.cliPath, source],
       baseEnvironment,
       temporary,
     );
@@ -117,12 +127,12 @@ try {
     const officialGeneratedPath = resolve(temporary, "official-generated.mjs");
     const officialCompile = run(
       process.execPath,
-      [oracle.cliPath, "--compile", "--silent", "--output", officialGeneratedPath, source],
+      [...fixedHostArguments, oracle.cliPath, "--compile", "--silent", "--output", officialGeneratedPath, source],
       baseEnvironment,
       temporary,
     );
     assertSuccess("公式cnako3 JavaScript生成", officialCompile);
-    const officialGenerated = run(process.execPath, [officialGeneratedPath], baseEnvironment, temporary);
+    const officialGenerated = run(process.execPath, [...fixedHostArguments, officialGeneratedPath], baseEnvironment, temporary);
     assertSuccess("公式生成JavaScript", officialGenerated);
     for (const [label, result] of [
       ["公式生成JavaScript", officialGenerated],
