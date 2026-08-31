@@ -119,6 +119,7 @@ loopbackサーバーを使って公式CLI・公式生成JavaScript・Interpreter
 成功表示にも基準別の件数を出します。
 
 `native-cases.json`全284件の実行結果を保存する必要がある検証では、任意の絶対パスを明示してJSON artifactを生成できます。
+CIのfixture shard検証では`--shard-index`と`--shard-count`を併用し、artifactの`selection`で部分結果であることを確認します。
 通常実行のstdout、所要時間、比較処理は変わりません。
 
 fixtureに`stdin`を指定した場合は、公式CLI・公式生成JavaScript・`lnako run`・LLVM AOTのO0〜O3の実行経路へ同じUTF-8入力を渡します。コンパイル経路そのものへは入力を渡しません。
@@ -129,6 +130,8 @@ node tools/compare_native_oracle.mjs --artifact /absolute/path/native-oracle.jso
 LNAKO_NATIVE_ORACLE_ARTIFACT=/absolute/path/native-oracle.json node tools/compare_native_oracle.mjs
 # 先行したzig buildの成果物を再利用する場合（CIのAOT並列runner）
 node tools/compare_native_oracle.mjs --no-build --artifact /absolute/path/native-oracle.json
+# CIと同じ2 shardの一方だけを実行する場合
+node tools/compare_native_oracle.mjs --no-build --shard-index 0 --shard-count 2 --artifact /absolute/path/native-oracle-shard-0.json
 ```
 
 artifactは公式baselineのタグ・commit、lnakoのcommit、OS/CPUアーキテクチャ、7経路名、fixture ID、
@@ -142,6 +145,8 @@ canonical opcode・route・固定site IDをfixtureの`compileManifest`へ要約�
 トップレベルの`status`は比較失敗とインフラ失敗を区別し、インフラ失敗ではfixture結果を空にして成功扱いにしません。
 実際に実行した公式CLIと固定情報markerのSHA-256も保存し、markerがbaselineのタグ・commit・archive hashと一致しない場合や、
 CLI／markerの実体hashが`upstream.lock.json`のoracle identityと一致しない場合は実行前に拒否します。
+shard指定時のartifactは`lnako.native-oracle-artifact.v2`となり、source長と明示commands数による重み付き割当のshard番号・総数・
+全fixture数を保存します。shard artifact単体を284件全体の証拠として扱わず、全shard jobの成功を合わせて全件と判定します。
 
 標準命令を実装して個別の公式差分テストを追加したら `compat/v3.7.24/implemented.json` にテストIDと理由を記録し、
 `node tools/sync_compat.mjs --generate` で分類表と集計を再生成します。固定した公式スナップショット自体を再取得する

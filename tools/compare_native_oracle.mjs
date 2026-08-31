@@ -13,6 +13,8 @@ const oracleRoot = resolve(
   oracleArg >= 0 ? process.argv[oracleArg + 1] : process.env.NADESIKO3_ORACLE ?? resolve(root, ".cache/oracle/nadesiko3-3.7.24"),
 );
 const cases = JSON.parse(await readFile(resolve(root, "tests/oracle/native-cases.json"), "utf8"));
+const shard = parseShard();
+let selectedCases;
 const standardCatalog = JSON.parse(await readFile(resolve(root, "compat/v3.7.24/standard-cnako.json"), "utf8"));
 if (standardCatalog.commandCount !== 527 || !Array.isArray(standardCatalog.commands) || standardCatalog.commands.length !== 527) throw new Error("標準cnakoカタログが527 entryではありません");
 const standardCommandNames = new Set(standardCatalog.commands.map((command) => command.name));
@@ -68,12 +70,13 @@ try {
       throw new Error(`stdinは文字列で指定してください: ${testCase.id}`);
     }
   }
+  selectedCases = selectCases(cases, shard);
   let completed;
   try {
-    completed = await runCases(cases, temporary, executable, officialCli, nativeOracleConcurrency());
+    completed = await runCases(selectedCases, temporary, executable, officialCli, nativeOracleConcurrency());
   } catch (error) {
     if (artifactPath !== null) {
-      const artifact = createArtifact([], 1, cases.length, artifactBaseline, artifactToolchain, artifactGitState, artifactCompareScriptSha256, artifactLnakoBinarySha256, artifactOracleIdentity, "infrastructure-failure");
+      const artifact = createArtifact([], 1, selectedCases.length, artifactBaseline, artifactToolchain, artifactGitState, artifactCompareScriptSha256, artifactLnakoBinarySha256, artifactOracleIdentity, "infrastructure-failure", artifactSelection(cases.length, shard));
       validateArtifact(artifact);
       await writeArtifactExclusive(artifactPath, artifact);
     }
@@ -134,7 +137,7 @@ try {
     const artifact = createArtifact(
       artifactFixtures,
       failures,
-      cases.length,
+      selectedCases.length,
       artifactBaseline,
       artifactToolchain,
       artifactGitState,
@@ -142,13 +145,15 @@ try {
       artifactLnakoBinarySha256,
       artifactOracleIdentity,
       failures === 0 ? "success" : "comparison-failure",
+      artifactSelection(cases.length, shard),
     );
     validateArtifact(artifact);
     await writeArtifactExclusive(artifactPath, artifact);
   }
   if (failures > 0) throw new Error(`AOT実行結果の差分が${failures}件あります`);
   console.log(
-    `公式cnako3・公式生成JavaScript・lnako run・LLVM AOT O0/O1/O2/O3の7経路実行差分テスト: ${cases.length}件成功` +
+    `公式cnako3・公式生成JavaScript・lnako run・LLVM AOT O0/O1/O2/O3の7経路実行差分テスト: ${selectedCases.length}件成功` +
+      (shard === null ? "" : `（fixture shard ${shard.index + 1}/${shard.count}）`) +
       (generatedOracleCases + sourceOracleCases > 0
         ? `（既知の公式経路差: CLI基準${sourceOracleCases}件、生成JavaScript基準${generatedOracleCases}件）`
         : ""),
@@ -307,6 +312,52 @@ function nativeOracleConcurrency() {
   if (configured === undefined || configured === "2") return 2;
   if (["1", "3", "4"].includes(configured)) return Number(configured);
   throw new Error("LNAKO_NATIVE_ORACLE_JOBSは1〜4の整数を指定してください");
+}
+
+function parseShard() {
+  let shardIndex = null;
+  let shardCount = null;
+  for (let index = 0; index < process.argv.length - 1; index += 1) {
+    const argument = process.argv[index];
+    if (argument !== "--shard-index" && argument !== "--shard-count") continue;
+    const value = process.argv[index + 1];
+    if (value === undefined || !/^\d+$/.test(value)) throw new Error(`${argument}には0以上の整数を指定してください`);
+    if (argument === "--shard-index") {
+      if (shardIndex !== null) throw new Error("--shard-indexは1回だけ指定してください");
+      shardIndex = Number(value);
+    } else {
+      if (shardCount !== null) throw new Error("--shard-countは1回だけ指定してください");
+      shardCount = Number(value);
+    }
+    index += 1;
+  }
+  if (shardIndex === null && shardCount === null) return null;
+  if (shardIndex === null || shardCount === null || !Number.isSafeInteger(shardIndex) || !Number.isSafeInteger(shardCount) ||
+      shardCount < 2 || shardCount > 64 || shardIndex >= shardCount) {
+    throw new Error("--shard-indexと--shard-countには、2〜64のshard数と範囲内のindexを指定してください");
+  }
+  return { index: shardIndex, count: shardCount };
+}
+
+function selectCases(allCases, shard) {
+  if (shard === null) return allCases;
+  const bins = Array.from({ length: shard.count }, (_, index) => ({ index, weight: 0, caseIndexes: [] }));
+  const weightedCases = allCases
+    .map((testCase, index) => ({ index, weight: Math.max(1, testCase.source.length) + (testCase.commands?.length ?? 0) * 8 }))
+    .sort((left, right) => right.weight - left.weight || left.index - right.index);
+  for (const item of weightedCases) {
+    const bin = bins.reduce((best, candidate) => candidate.weight < best.weight ? candidate : best);
+    bin.weight += item.weight;
+    bin.caseIndexes.push(item.index);
+  }
+  const selected = new Set(bins[shard.index].caseIndexes);
+  return allCases.filter((_, index) => selected.has(index));
+}
+
+function artifactSelection(totalFixtureCount, shard) {
+  return shard === null
+    ? { mode: "all", shardIndex: null, shardCount: 1, totalFixtureCount }
+    : { mode: "weighted-source-command", shardIndex: shard.index, shardCount: shard.count, totalFixtureCount };
 }
 
 function parseNoBuild() {
@@ -495,14 +546,14 @@ function summarizeResults(results, stderrResults) {
   }));
 }
 
-function createArtifact(fixtures, failureCount, fixtureCount, baseline, toolchain, git, compareScriptSha256, lnakoBinarySha256, oracleIdentity, status) {
+function createArtifact(fixtures, failureCount, fixtureCount, baseline, toolchain, git, compareScriptSha256, lnakoBinarySha256, oracleIdentity, status, selection) {
   const knownOracleSelections = {
     defaultOfficialSource: fixtures.filter((fixture) => fixture.knownOracleSelection === null).length,
     officialSource: fixtures.filter((fixture) => fixture.knownOracleSelection === "official-source").length,
     officialGenerated: fixtures.filter((fixture) => fixture.knownOracleSelection === "official-generated").length,
   };
   return {
-    schema: "lnako.native-oracle-artifact.v1",
+    schema: "lnako.native-oracle-artifact.v2",
     generatedAt: new Date().toISOString(),
     baseline: {
       repository: baseline.repository,
@@ -536,13 +587,14 @@ function createArtifact(fixtures, failureCount, fixtureCount, baseline, toolchai
     status,
     comparisonSucceeded: failureCount === 0,
     failureCount,
+    selection,
     fixtures,
   };
 }
 
 function validateArtifact(artifact) {
-  assertExactKeys(artifact, ["schema", "generatedAt", "baseline", "oracle", "lnako", "toolchain", "artifactSha256", "environment", "fixtureCount", "routeCount", "routes", "knownOracleSelections", "status", "comparisonSucceeded", "failureCount", "fixtures"], "AOT差分artifact");
-  if (artifact.schema !== "lnako.native-oracle-artifact.v1" || artifact.routeCount !== routeNames.length) {
+  assertExactKeys(artifact, ["schema", "generatedAt", "baseline", "oracle", "lnako", "toolchain", "artifactSha256", "environment", "fixtureCount", "routeCount", "routes", "knownOracleSelections", "status", "comparisonSucceeded", "failureCount", "selection", "fixtures"], "AOT差分artifact");
+  if (artifact.schema !== "lnako.native-oracle-artifact.v2" || artifact.routeCount !== routeNames.length) {
     throw new Error("AOT差分artifactのschemaまたはrouteCountが不正です");
   }
   if (typeof artifact.generatedAt !== "string" || Number.isNaN(Date.parse(artifact.generatedAt))) throw new Error("AOT差分artifactの生成日時が不正です");
@@ -565,6 +617,13 @@ function validateArtifact(artifact) {
     throw new Error("AOT差分artifactの集計値が不正です");
   }
   if (!Array.isArray(artifact.fixtures)) throw new Error("AOT差分artifactのfixturesが配列ではありません");
+  assertExactKeys(artifact.selection, ["mode", "shardIndex", "shardCount", "totalFixtureCount"], "AOT差分artifact.selection");
+  if (!["all", "weighted-source-command"].includes(artifact.selection.mode) ||
+      (artifact.selection.mode === "all" && (artifact.selection.shardIndex !== null || artifact.selection.shardCount !== 1)) ||
+      (artifact.selection.mode === "weighted-source-command" && (!Number.isSafeInteger(artifact.selection.shardIndex) || !Number.isSafeInteger(artifact.selection.shardCount) || artifact.selection.shardCount < 2 || artifact.selection.shardIndex < 0 || artifact.selection.shardIndex >= artifact.selection.shardCount)) ||
+      !Number.isSafeInteger(artifact.selection.totalFixtureCount) || artifact.selection.totalFixtureCount < artifact.fixtureCount) {
+    throw new Error("AOT差分artifactのfixture選択情報が不正です");
+  }
   if (artifact.comparisonSucceeded !== (artifact.status === "success") || (artifact.failureCount === 0) !== (artifact.status === "success")) {
     throw new Error("AOT差分artifactのstatusとcomparisonSucceededが一致しません");
   }

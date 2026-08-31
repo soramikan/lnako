@@ -31,9 +31,6 @@ jobs:
             suite: host
           - name: Linux x86_64
             os: ubuntu-24.04
-            suite: aot
-          - name: Linux x86_64
-            os: ubuntu-24.04
             suite: compat-aot
           - name: macOS arm64
             os: macos-15
@@ -46,9 +43,6 @@ jobs:
             suite: host
           - name: macOS arm64
             os: macos-15
-            suite: aot
-          - name: macOS arm64
-            os: macos-15
             suite: compat-aot
           - name: Windows x86_64
             os: windows-2025
@@ -59,9 +53,6 @@ jobs:
           - name: Windows x86_64
             os: windows-2025
             suite: host
-          - name: Windows x86_64
-            os: windows-2025
-            suite: aot
           - name: Windows x86_64
             os: windows-2025
             suite: compat-aot
@@ -77,7 +68,7 @@ jobs:
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
-          use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'aot' }}
+          use-cache: ${{ matrix.suite == 'host' }}
           cache-key: ${{ matrix.suite }}
           cache-size-limit: 1536
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
@@ -182,45 +173,6 @@ jobs:
           node tools/check_node_current_directory_realpath.mjs
           node tools/check_node_current_directory_errors.mjs
           node tools/check_node_archive_smoke.mjs
-      - name: Build AOT verification compiler
-        if: matrix.suite == 'aot'
-        run: zig build
-      - name: Differential native AOT verification
-        if: matrix.suite == 'aot'
-        env:
-          LNAKO_NATIVE_ORACLE_JOBS: "2"
-        run: >
-          node tools/check_aot_suite_parallel.mjs
-          --artifact "${{ runner.temp }}/lnako-native-oracle.json"
-          --evidence-output "${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json"
-          --coverage-output "${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}.json"
-      - name: Upload native AOT oracle artifact
-        if: matrix.suite == 'aot' && always()
-        continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: lnako-native-oracle-${{ matrix.os }}
-          path: ${{ runner.temp }}/lnako-native-oracle.json
-          if-no-files-found: ignore
-          retention-days: 30
-      - name: Upload native dispatch evidence
-        if: matrix.suite == 'aot' && always()
-        continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: lnako-dispatch-evidence-${{ matrix.os }}
-          path: ${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json
-          if-no-files-found: ignore
-          retention-days: 30
-      - name: Upload native dispatch coverage audit
-        if: matrix.suite == 'aot' && always()
-        continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: lnako-dispatch-coverage-${{ matrix.os }}
-          path: ${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}.json
-          if-no-files-found: ignore
-          retention-days: 30
       - name: Format
         if: matrix.suite == 'core'
         run: zig build fmt-check
@@ -233,11 +185,163 @@ jobs:
       - name: Build QuickJS compiler
         if: matrix.suite == 'compat-aot'
         run: zig build -Dcompat-js=true -Doptimize=ReleaseSafe
-      - name: Build
-        if: matrix.suite == 'aot'
+      - name: Compatibility smoke test
+        if: matrix.suite == 'compat-aot'
+        shell: bash
+        run: ./zig-out/bin/lnako run tests/fixtures/compat-js-basic.nako3 --compat-js
+
+  aot:
+    name: ${{ matrix.name }} / ${{ matrix.jobName }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-native
+            task: native
+            shardIndex: 0
+            shardCount: 2
+            jobName: AOT native shard 1/2
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-native
+            task: native
+            shardIndex: 1
+            shardCount: 2
+            jobName: AOT native shard 2/2
+          - name: macOS arm64
+            os: macos-15
+            suite: aot-native
+            task: native
+            shardIndex: 0
+            shardCount: 2
+            jobName: AOT native shard 1/2
+          - name: macOS arm64
+            os: macos-15
+            suite: aot-native
+            task: native
+            shardIndex: 1
+            shardCount: 2
+            jobName: AOT native shard 2/2
+          - name: Windows x86_64
+            os: windows-2025
+            suite: aot-native
+            task: native
+            shardIndex: 0
+            shardCount: 2
+            jobName: AOT native shard 1/2
+          - name: Windows x86_64
+            os: windows-2025
+            suite: aot-native
+            task: native
+            shardIndex: 1
+            shardCount: 2
+            jobName: AOT native shard 2/2
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-support
+            task: support
+            jobName: AOT support
+          - name: macOS arm64
+            os: macos-15
+            suite: aot-support
+            task: support
+            jobName: AOT support
+          - name: Windows x86_64
+            os: windows-2025
+            suite: aot-support
+            task: support
+            jobName: AOT support
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+          use-cache: ${{ matrix.task == 'native' }}
+          cache-key: ${{ matrix.suite }}
+          cache-size-limit: 1536
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/toolchains
+          key: toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ runner.os }}-${{ runner.arch }}-v1
+      - name: Set up pinned LLVM and LLD
+        run: node tools/setup_llvm.mjs
+      - name: Set up pinned QuickJS
+        run: node tools/setup_quickjs.mjs
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/oracle
+          key: nadesiko3-oracle-3.7.24-${{ runner.os }}-${{ runner.arch }}-ac3bedbf10111-v4
+      - name: Build official oracle
+        run: node tools/setup_oracle.mjs
+      - name: Build AOT verification compiler
+        run: zig build
+      - name: Differential native AOT verification (fixture shard)
+        if: matrix.task == 'native'
+        env:
+          LNAKO_NATIVE_ORACLE_JOBS: "1"
+        run: >
+          node tools/compare_native_oracle.mjs
+          --no-build
+          --shard-index "${{ matrix.shardIndex }}"
+          --shard-count "${{ matrix.shardCount }}"
+          --artifact "${{ runner.temp }}/lnako-native-oracle-${{ matrix.shardIndex }}.json"
+      - name: Upload native AOT oracle artifact
+        if: matrix.task == 'native' && always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-native-oracle-${{ matrix.os }}-shard-${{ matrix.shardIndex }}
+          path: ${{ runner.temp }}/lnako-native-oracle-${{ matrix.shardIndex }}.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Differential HTTP server AOT oracle
+        if: matrix.task == 'support'
+        run: node tools/compare_http_server_aot_oracle.mjs --no-build
+      - name: Dispatch evidence audit
+        if: matrix.task == 'support'
+        run: >
+          node tools/check_dispatch_trace.mjs
+          --no-build
+          --evidence-output "${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json"
+      - name: Dispatch coverage audit
+        if: matrix.task == 'support'
+        run: >
+          node tools/check_dispatch_coverage.mjs
+          --no-build
+          --output "${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}.json"
+      - name: Dispatch trace security audit
+        if: matrix.task == 'support'
+        run: node tools/check_dispatch_trace_security.mjs --no-build
+      - name: Upload native dispatch evidence
+        if: matrix.task == 'support' && always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-dispatch-evidence-${{ matrix.os }}
+          path: ${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Upload native dispatch coverage audit
+        if: matrix.task == 'support' && always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-dispatch-coverage-${{ matrix.os }}
+          path: ${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Build ReleaseSafe compiler
+        if: matrix.task == 'support'
         run: zig build -Doptimize=ReleaseSafe
       - name: Normal smoke test
-        if: matrix.suite == 'aot'
+        if: matrix.task == 'support'
         shell: bash
         run: |
           ./zig-out/bin/lnako --version
@@ -246,15 +350,11 @@ jobs:
           ./zig-out/bin/lnako check tests/fixtures/module/main.nako3
           ./zig-out/bin/lnako run tests/fixtures/run-control.nako3
           ./zig-out/bin/lnako test tests/fixtures/run-tests.nako3
-      - name: Compatibility smoke test
-        if: matrix.suite == 'compat-aot'
-        shell: bash
-        run: ./zig-out/bin/lnako run tests/fixtures/compat-js-basic.nako3 --compat-js
 
   attest-dispatch-evidence:
     name: Attest and verify dispatch evidence
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') && needs.test.result == 'success'
-    needs: test
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') && needs.test.result == 'success' && needs.aot.result == 'success'
+    needs: [test, aot]
     runs-on: ubuntu-24.04
     permissions:
       contents: read

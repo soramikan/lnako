@@ -22,51 +22,47 @@ Linuxログでは通常のmath・CSV・TOML・Promise差分は約0.8秒で完了
 1本だけに24分13秒かかっていました。検証値を削らず、同じ文を最大96文ずつのfixtureへ分け、各fixtureで
 公式処理系とlnakoを比較します。公式パーサーへ巨大な1ソースを渡す非線形コストだけを避けます。
 
-## 5スイートへの分割
+## 検証jobの分割
 
-各正式環境（Linux x86_64、macOS arm64、Windows x86_64）で、次の5スイートを並列実行します。
+各正式環境（Linux x86_64、macOS arm64、Windows x86_64）で、通常の`test` matrix 12 jobに加えて、AOT専用matrix 9 jobを
+並列実行します。全体は21 test job＋1 attestation jobです。
 
-| スイート | 検証内容 |
+| job／suite | 検証内容 |
 |---|---|
 | `core` | 互換台帳、字句・構文変換・構文・文法生成fuzz・意味・動的値・インタープリタ・plugin_system差分、format、全Zig単体テスト |
 | `standard` | math・CSV・TOML・Promise、markup・caniuse・kansujiの公式差分と全生成コーパス |
 | `host` | QuickJS互換差分、ネイティブプラグインABI、ファイル・プロセス・HTTP・暗号・文字コード・圧縮などNodeホスト差分。symlink経由のカレントディレクトリ実パスと失敗時のchdir診断も公式CLI・Interpreter・AOT O0〜O3で確認 |
-| `aot` | 公式CLI・公式生成JavaScript・インタープリタ・LLVM AOT O0〜O3差分、dispatch security、命令dispatch coverage audit、通常ビルドとスモークテスト |
+| `aot-native` shard 1/2・2/2 | 各OSでnative fixture 284件を重み付き固定割当し、公式CLI・公式生成JavaScript・`lnako run`・LLVM AOT O0〜O3の7経路を全件実行 |
+| `aot-support` | HTTP serverの公式処理系対AOT O0〜O3実通信、canonical dispatch evidence、coverage、dispatch security、ReleaseSafe build、通常smoke |
 | `compat-aot` | QuickJS Debug単体テスト、QuickJS ReleaseSafe compiler build、compat-js smoke |
 
-`aot` suiteのHTTP server検証は、`plugin-httpserver-all`を使った公式処理系対AOT O0〜O3のlocalhost実通信比較です。
-canonical dispatch evidence artifactとは別fixtureですが、HTTP serverの10命令・14リクエストを検証範囲から除外しません。
-`tools/check_dispatch_coverage.mjs`は、命令関連付けだけではAOT実行証拠にならない境界を保持したまま、成功したInterpreter/AOT siteの到達範囲を
-3 OS別`lnako-dispatch-coverage-*` artifactへ保存します。attestation jobのcanonical dispatch evidenceとは別のunattested監査です。
+`aot-native`は各fixture内の7経路・O0〜O3を直列に保ったまま、fixture集合を2つの独立jobへ分けます。
+重みはsource長と明示commands数から決定的に計算し、全284件を重複なく2 shardへ割り当てます。workerを増やして同一runnerへ
+負荷を集中させず、native oracleの長い処理を別runnerで同時に進めます。各shardのartifactには選択方式・shard番号・全fixture数を
+記録し、部分結果を全件結果と誤認しない`lnako.native-oracle-artifact.v2`とします。
 
-## AOT検証の共通buildと安全な並列実行
+`aot-support`のHTTP、canonical dispatch、coverage、security、ReleaseSafe build、smokeは同じOSの専用jobで実行します。
+dispatch evidenceとcoverageの全fixture・全site、HTTP serverの10命令・14リクエスト、tiny fixtureの全security不変条件は維持します。
+`tools/check_ci_workflow.mjs`はnative 6 job、support 3 job、通常12 job、3正式OS、7経路、O0〜O3、artifact、attestationの構成を固定します。
 
-`aot` suiteはcompilerを一度だけbuildした後、重い検証を専用runnerから独立した子プロセスとして並列起動します。
-step条件、子検査、3正式OS・O0〜O3・7経路・artifact保存・attestationの範囲は
-`tools/check_ci_workflow.mjs`で固定し、子検査の全完了を待ってから成功／失敗を判定します。
+## AOT検証の共通buildとjob分割
 
-| step | 内容 | 共有するもの |
+各AOT jobは自身のrunner上でcompilerを一度だけbuildし、`--no-build`の検査へ渡します。native jobは`LNAKO_NATIVE_ORACLE_JOBS=1`
+とし、AOT fixtureの分割そのものをjob並列化の単位にします。support jobも同じ先行compilerをHTTP／dispatch／coverage／securityへ
+再利用し、検査間のcompiler build重複を避けます。
+
+| job | 主なstep | artifact |
 |---|---|---|
-| `Build AOT verification compiler` | 並列検査が共有する通常compilerを一度だけbuild | `zig-out/bin/lnako` |
-| `Differential native AOT verification` | `check_aot_suite_parallel.mjs`から次の4検査を同時起動 | 各検査は独立temporary directory／出力先を使用 |
+| `aot-native` × 3 OS × 2 shard | `zig build` → native oracle shard（全284件の一部、各7経路・O0〜O3） | OS・shard別native oracle artifact |
+| `aot-support` × 3 OS | `zig build` → HTTP AOT、dispatch evidence／coverage／security、ReleaseSafe build、通常smoke | OS別dispatch evidence／coverage artifact |
 
-並列runnerが起動する検査は、native oracle（公式CLI・生成JavaScript・`lnako run`・AOT O0〜O3の全native fixture差分）、
-HTTP serverの公式処理系対AOT O0〜O3実通信差分、tiny fixtureのdispatch security、canonical dispatch evidenceとcoverage auditです。
-native oracleには`--no-build`を追加し、先行buildのcompilerを読むだけにします。native oracleの各fixture内にある7経路とO0〜O3は直列のまま、
-全fixture・全リクエスト・manifest／trace／site到達検査も維持します。
+通常の`test` jobはcore／standard／host／compat-aotの12 jobへ限定し、AOT専用条件を混ぜません。したがってAOTだけの失敗は
+native shardかsupportのどのjob／stepで起きたかを直接確認できます。attestation jobは`test`と`aot` matrixの両方が成功した場合だけ
+起動し、3 OSのdispatch evidenceを取得します。job数を増やした結果、setupの重複とrunner合計時間は増える可能性があるため、
+壁時計、runner合計、各job時間、cache hit/missは分割後の完了済みrunで別々に記録します。
 
-HTTP／security／dispatch監査も共有compilerを`--no-build`で再利用します。単独実行時は各スクリプトが従来どおりcompilerをbuildし、
-`--no-build`時はcompilerの存在を確認してから進みます。これにより同一AOT job内の不要なbuildと、native oracle完了後に
-dispatch監査を待つ直列区間を除去します。
-
-canonical dispatch検査からsecurity専用の追加buildを切り離しました。canonical側では全対象命令の一回のAOT compileと
-trace／公式差分を維持し、security側では小さな固定fixtureでmanifest・traceの原子的な出力、既存ファイル非上書き、失敗時cleanup、
-trace無効時の無出力、loopの同一site反復を検査します。検査項目を減らしたり、canonical evidenceをtiny fixtureへ置き換えたりはしません。
-
-並列化により、比較失敗時はnative oracle、HTTP、security、dispatch監査のどの子検査で止まったかをGitHub Actions上で
-確認できます。runnerは4子検査の全完了を待って各stdout／stderrを検査順に出力し、どれかが失敗しても他の検証を中断しません。
-artifactは従来どおり`always()`で保存します。並列化後の実CI時間、壁時計、runner合計時間、cache hit/missは次回pushの
-完了済みrunで記録し、実測前に性能改善とは扱いません。
+元の検証コマンドを削除せず、AOT専用jobへ移動しただけです。OSごとの互換検証をLinuxだけへ縮小する最適化は行いません。
+job上限は50分とし、停止しないホスト・ネットワークテストを検出します。
 
 2026-08-31にmacOS arm64の現行fixtureで並列runnerをローカル実測したところ、dispatch evidence（Interpreter 777イベント、AOT
 manifest 779件・runtime 1,554イベント）とcoverage（30 fixture、1,688 unambiguous site、309/523 native entry）を両方成功させて
@@ -107,21 +103,21 @@ CI・文書・証拠検証のallowlistだけであることを`git merge-base`�
 ## キャッシュ
 
 - LLVM/LLD・QuickJSと公式なでしこ3オラクルはOS別の固定バージョン・ハッシュ付きキャッシュを全スイートで共有します。
-- Zigのglobal/local cacheは長時間の`host`・`aot`だけで保存し、OSに加えてスイート名をキーへ含めます。上限は1,536 MiBです。
+- Zigのglobal/local cacheは長時間の`host`・`aot-native`だけで保存し、OSに加えてスイート名をキーへ含めます。上限は1,536 MiBです。
 - キャッシュmissでもセットアップスクリプトがlockfileのSHA-256を検証します。キャッシュhitを安全性の根拠にはしません。
 - 初回またはキャッシュ失効時はダウンロード時間が加わるため、定常時と同じ所要時間にはなりません。
 
-分割した各スイートはセットアップを個別に行うため、単一runだけの総runner時間は直列構成より少し増える可能性があります。
+分割した各スイートはセットアップを個別に行うため、単一runだけの総runner時間は直列構成より増える可能性があります。
 壁時計時間を短縮し、旧run取消によって複数run全体の無駄なrunner時間を抑える設計です。
 
 ### Zig build cacheの保存対象
 
-`mlugg/setup-zig`のbuild cacheは、保存keyへrun IDとattemptが付くため、全15ジョブで有効にすると最大15個の新規cacheが
+`mlugg/setup-zig`のbuild cacheは、保存keyへrun IDとattemptが付くため、全21ジョブで有効にすると最大21個の新規cacheが
 runごとに増えます。2026-08-27に確認した時点では、Actions cacheが30件・約11.6 GBに達し、固定Linux LLVM cacheが
 退避された後のrunで5つのLinuxジョブが同じ配布物の取得・SHA-256検証・展開を約148秒ずつ重複していました。
 
-検証工程を変えずにcacheの増加を抑えるため、cross-runのZig build cacheはコンパイル量の大きい`host`と`aot`だけに限定します。
-3 OSで最大6個/runとなり、`core`・`standard`・`compat-aot`もjob内のZig cacheは通常どおり使用します。
+検証工程を変えずにcacheの増加を抑えるため、cross-runのZig build cacheは`host`とnative fixtureを担当する`aot-native`だけに限定します。
+3 OSで最大9個/run（`host` 3＋`aot-native` 6）となり、`core`・`standard`・`aot-support`・`compat-aot`もjob内のZig cacheは通常どおり使用します。
 `use-cache: false`のjobでも、setup actionが管理する固定Zig 0.16.0配布物のcacheは別系統で維持されます。
 
 1,536 MiB上限を超えたbuild cacheはactionの仕様上、部分的なLRU整理ではなく空にして保存されます。このため上限を小さく
@@ -374,10 +370,14 @@ compat smokeに絞って診断できる。片方のsuiteが成功しても他方
 
 ### AOT差分artifact
 
-`aot` suiteは、公式CLI・公式生成JavaScript・`lnako run`・LLVM AOT O0〜O3の比較を実行した同じ1回の結果から、
-`${{ runner.temp }}/lnako-native-oracle.json`を生成し、Linux x86_64・macOS arm64・Windows x86_64の各ジョブで
-`lnako-native-oracle-${{ matrix.os }}`というOS別名へ保存する。artifact保存のためにAOT差分テストを追加実行したり、
-経路を減らしたりはしない。保持期間は30日である。
+`aot-native`の各shardは、公式CLI・公式生成JavaScript・`lnako run`・LLVM AOT O0〜O3の比較を実行した同じ1回の結果から、
+`${{ runner.temp }}/lnako-native-oracle-${{ matrix.shardIndex }}.json`を生成し、Linux x86_64・macOS arm64・Windows x86_64の
+各shard jobで`lnako-native-oracle-${{ matrix.os }}-shard-${{ matrix.shardIndex }}`というOS・shard別名へ保存する。
+artifact保存のためにAOT差分テストを追加実行したり、経路・fixtureを減らしたりはしない。保持期間は30日である。
+
+各native artifactの`selection`は`weighted-source-command`、shard番号、shard数、全fixture数を示す。1つのartifactは284件全体の
+結果ではなく、重み付き固定割当の一部である。全件のCI成功は2 shard jobの全てが成功したことと、個々のartifactのfixture数・選択情報を
+合わせて判定する。schemaを`lnako.native-oracle-artifact.v2`へ上げ、旧v1の全件artifactと混同しないようにした。
 
 比較失敗時も、比較処理が最後までfixture結果を書けた場合は`status: comparison-failure`のartifactを保存する。
 セットアップ、ビルド、または比較基盤の失敗でartifactが生成されない場合は、uploadを`if-no-files-found: ignore`かつ
@@ -391,7 +391,7 @@ compat smokeに絞って診断できる。片方のsuiteが成功しても他方
 
 ### dispatch evidenceの外部attestation
 
-`aot` suiteは同じ検証runで`${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json`も生成し、OS別artifactへ保存する。dispatch JSONは
+`aot-support` jobは同じ検証runで`${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json`を生成し、OS別artifactへ保存する。dispatch JSONは
 引数・値・source本文・ローカルパス・標準出力を含まない。main pushまたはmainへのworkflow_dispatchだけが、専用の
 `attest-dispatch-evidence` job（`contents/actions: read`、`id-token: write`、`attestations/artifact-metadata: write`）へ進む。
 
@@ -453,3 +453,20 @@ attestation、壁時計、runner合計時間、cache hit/missを完了済みrun�
 ローカルmacOS arm64で同じ2 worker設定を使ったAOT runnerでは、native oracleが796.92秒、dispatch evidence/coverageが283.75秒、
 securityが1.02秒で成功した。通常sandboxではHTTPのloopback bindだけが`EPERM`になったため、loopback権限付きの単独検査でHTTPの
 10命令・O0〜O3・各14リクエスト成功を確認した。この測定は実CIの壁時計やrunner合計時間とは分け、正式な短縮値は次回pushの完了済みrunで判定する。
+
+## AOT native fixtureの独立job分割
+
+worker=2へ戻した`17c073b`後も、native oracleとdispatch監査を同一runnerで実行する構造では、workerを増やした時と同じ負荷競合を
+避けられない。そこで次のCI変更では、AOTを`aot-native`と`aot-support`へ分ける。`aot-native`は3正式OSそれぞれをさらに2 shardへ
+分け、native-cases.jsonの284 fixtureを重み付き固定割当する。各shardのworkerは1で、fixture内の公式CLI・生成JavaScript・Interpreter・
+AOT O0〜O3の7経路と、O0〜O3の順序は維持する。
+
+`aot-support`はOSごとに1 jobとし、HTTP server AOT差分、canonical dispatch evidence、dispatch coverage、dispatch security、
+ReleaseSafe build、通常smokeを実行する。従って通常の`test` 12 job、native 6 job、support 3 jobの計21 test jobとなり、
+各OSでnativeの長い処理がsupportの追加監査を待たない。dispatch evidence／coverage artifactはsupport jobから、native oracle artifactは
+OS・shard別に保存し、attestationは`test`とAOT matrix全体の成功後だけ実行する。
+
+この変更で検証対象を削減していないことを、`tools/check_ci_workflow.mjs`がmatrixの実job数、OS集合、shard 0/1、全7経路、O0〜O3、
+artifact、attestation依存関係として検査する。job分割はrunnerの同時実行枠とsetup重複を増やすため、実CIで成功を確認するまで短縮効果とは
+扱わない。次のpush時には、前回の完了済みCIの結論と失敗ログを先に確認し、その後新CI runは完了待ちせず、次の実装を進めながら次回push前に
+完了済みrunの各native shard／support job、wall-clock、runner合計、cache hit/missを確認する。
