@@ -1046,7 +1046,7 @@ const Runtime = struct {
             errdefer self.allocator.free(owned_captures);
             break :blk try self.createObject(.{ .function = .{ .callback = callback, .arity = arity, .name = owned_name, .captures = owned_captures, .promise_kind = promise_kind } }, .function);
         };
-        if (register_global and name.len > 0) {
+        if (register_global and shouldRegisterNamedFunction(name)) {
             const registered_name = try self.allocator.dupe(u8, name);
             errdefer self.allocator.free(registered_name);
             try self.named_functions.append(self.allocator, .{ .name = registered_name, .object = result.object().? });
@@ -5485,15 +5485,16 @@ test "AOTグローバル関数一覧取得は登録済み関数を作成順で�
         runtime = active_runtime.?;
         active_runtime = null;
     }
-    var roots = [_]Value{ .{}, .{}, .{} };
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
     var frame = RootFrame{};
     lnako_aot_push_roots(&frame, &roots, roots.len);
     defer lnako_aot_pop_roots(&frame);
 
     roots[0] = try active_runtime.?.createNamedFunction(testAotFunction, 1, "module__甲", &.{});
     roots[1] = try active_runtime.?.createNamedFunction(testAotFunction, 1, "module__乙", &.{});
-    lnako_aot_builtin_call(&roots[2], null, 0, @intFromEnum(aot_builtin.Command.system_global_function_names));
-    const names = roots[2].object().?.payload.array.items;
+    roots[2] = try active_runtime.?.createNamedFunction(testAotFunction, 1, "module__lambda$0", &.{});
+    lnako_aot_builtin_call(&roots[3], null, 0, @intFromEnum(aot_builtin.Command.system_global_function_names));
+    const names = roots[3].object().?.payload.array.items;
     try std.testing.expectEqual(@as(usize, 2), names.len);
     try expectUtf16String(&active_runtime.?, names[0], "module__甲");
     try expectUtf16String(&active_runtime.?, names[1], "module__乙");
@@ -11476,6 +11477,13 @@ fn measureCallableBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     roots[2] = try invokeAotCallback(runtime, roots[1], null, 0);
     const finished = monotonicTimeMilliseconds(runtime);
     return numberValue(finished - started);
+}
+
+fn shouldRegisterNamedFunction(name: []const u8) bool {
+    // HIR gives anonymous functions an internal name for calls and debug
+    // metadata, but the official global-function list exposes named language
+    // functions only.  Closures must therefore not enter named_functions.
+    return name.len > 0 and std.mem.indexOf(u8, name, "__lambda$") == null;
 }
 
 fn systemGlobalFunctionNamesBuiltin(runtime: *Runtime) !Value {
