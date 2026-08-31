@@ -249,8 +249,6 @@ async function readFixtureRecords() {
         id: fixture.id,
         file,
         aot: file === "native-cases.json" || fixture.aot === true,
-        source: typeof fixture.source === "string" ? fixture.source : null,
-        dispatchFixtureIds: Array.isArray(fixture.dispatchFixtureIds) ? [...fixture.dispatchFixtureIds] : null,
         sourceSha256: typeof fixture.source === "string" ? createHash("sha256").update(fixture.source).digest("hex") : null,
         commandNames: new Set(),
         associationOrigins: new Map(),
@@ -265,22 +263,6 @@ async function readFixtureRecords() {
     }
   }
   if (new Set(records.map((record) => record.id)).size !== records.length) throw new Error("オラクルfixture IDが重複しています");
-
-  const recordsById = new Map(records.map((record) => [record.id, record]));
-  for (const record of records) {
-    if (record.dispatchFixtureIds === null) continue;
-    if (record.file !== "native-cases.json" || record.dispatchFixtureIds.length === 0 || record.dispatchFixtureIds[0] !== record.id || new Set(record.dispatchFixtureIds).size !== record.dispatchFixtureIds.length || record.dispatchFixtureIds.some((id) => typeof id !== "string" || id.length === 0)) {
-      throw new Error(`dispatch trace用fixtureのdispatchFixtureIdsが不正です: ${record.id}`);
-    }
-    const components = record.dispatchFixtureIds.map((id) => recordsById.get(id));
-    if (components.some((component) => component === undefined || component.file !== "native-cases.json" || component.source === null)) {
-      throw new Error(`dispatch trace用fixtureの構成要素が不正です: ${record.id}`);
-    }
-    record.sourceSha256 = createHash("sha256").update(components.map((component) => component.source).join("\n")).digest("hex");
-    for (const component of components) {
-      for (const name of component.commandNames) addAssociation(record, name, "dispatchFixture.commands");
-    }
-  }
 
   return records;
 }
