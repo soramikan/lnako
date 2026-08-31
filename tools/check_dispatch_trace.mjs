@@ -50,13 +50,8 @@ try {
   const compileManifest = resolve(temporary, "compile-manifest.jsonl");
   const nodeSource = resolve(temporary, "node-route.nako3");
   const nodeTrace = resolve(temporary, "node-route.jsonl");
-  const loopSource = resolve(temporary, "loop.nako3");
-  const loopNative = resolve(temporary, process.platform === "win32" ? "loop.exe" : "loop");
-  const loopTrace = resolve(temporary, "loop.jsonl");
-  const loopManifest = resolve(temporary, "loop-manifest.jsonl");
   await writeFile(source, fixture.source, "utf8");
   await writeFile(nodeSource, nodeFixture.source, "utf8");
-  await writeFile(loopSource, "N=2\n(N>0)の間、繰り返す\nNを表示\nN=N-1\nここまで\n", "utf8");
 
   const baseEnvironment = { ...process.env, TZ: "Asia/Tokyo" };
   const interpretedWithoutTrace = run(compiler, ["run", source], baseEnvironment, temporary);
@@ -72,7 +67,6 @@ try {
   assertEquivalent("Interpreter", interpretedWithoutTrace, interpretedWithTrace);
   const interpreterEvents = await readTrace(interpreterTrace, "interpreter", "dispatch-result");
   assertFixtureInterpreterCoverage(interpreterEvents, fixture.commands);
-  await assertExistingTracePreserved("Interpreter", compiler, ["run", source], interpretedWithoutTrace, resolve(temporary, "interpreter-existing.jsonl"), baseEnvironment, temporary);
 
   const nodeEnvironment = { ...baseEnvironment, LNAKO_NODE_TEST: "dispatch-trace" };
   const nodeWithoutTrace = run(compiler, ["run", nodeSource], nodeEnvironment, temporary);
@@ -97,8 +91,6 @@ try {
   assertSuccess("AOTコンパイル", compiled);
   const manifestEntries = await readCompileManifest(compileManifest, source);
   assertFixtureManifestCoverage(manifestEntries, fixture.commands);
-  await assertExistingManifestPreserved(compiler, source, baseEnvironment, temporary);
-  await assertFailedManifestRemoved(compiler, source, baseEnvironment, temporary);
   const aotWithoutTrace = run(native, [], baseEnvironment, temporary);
   assertSuccess("trace無効AOT", aotWithoutTrace);
   if ((await readdir(temporary)).some((name) => name === "aot.jsonl")) throw new Error("trace無効AOTがtraceファイルを生成しました");
@@ -147,22 +139,7 @@ try {
     });
   }
 
-  const loopCompiled = run(
-    compiler,
-    ["build", loopSource, "-o", loopNative, "-O0"],
-    { ...baseEnvironment, LNAKO_COMPILE_MANIFEST: loopManifest },
-    temporary,
-  );
-  assertSuccess("ループAOTコンパイル", loopCompiled);
-  const loopManifestEntries = await readCompileManifest(loopManifest, loopSource);
-  const loopWithTrace = run(loopNative, [], { ...baseEnvironment, LNAKO_DISPATCH_TRACE: loopTrace }, temporary);
-  assertSuccess("ループAOT trace実行", loopWithTrace);
-  const loopEvents = await readTrace(loopTrace, "aot");
-  assertAotTrace(loopEvents, loopManifestEntries);
-  assertRepeatedSite(loopEvents);
-  await assertExistingTracePreserved("AOT", native, [], aotWithoutTrace, resolve(temporary, "aot-existing.jsonl"), baseEnvironment, temporary);
-
-  console.log(`dispatch証拠スモークテスト: Interpreter ${interpreterEvents.length}イベント / Node ${nodeEvents.length}イベント / AOT manifest ${manifestEntries.length}件・runtime ${aotEvents.length}イベント / loop ${loopEvents.length}イベント成功`);
+  console.log(`dispatch証拠スモークテスト: Interpreter ${interpreterEvents.length}イベント / Node ${nodeEvents.length}イベント / AOT manifest ${manifestEntries.length}件・runtime ${aotEvents.length}イベント成功`);
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }
@@ -332,14 +309,6 @@ function assertAotTrace(events, manifestEntries) {
     resultsByCall.set(result.callId, result);
   }
   if (resultsByCall.size !== attemptsByCall.size) throw new Error("AOT traceに対応しないattemptがあります");
-}
-
-function assertRepeatedSite(events) {
-  const siteCallCounts = new Map();
-  for (const attempt of events.filter((event) => event.phase === "dispatch-attempt")) {
-    if (attempt.siteId !== null) siteCallCounts.set(attempt.siteId, (siteCallCounts.get(attempt.siteId) ?? 0) + 1);
-  }
-  if (!Array.from(siteCallCounts.values()).some((count) => count > 1)) throw new Error("同一siteの複数callId実行を検証できません");
 }
 
 function assertTraceSitesContained(events, manifestEntries) {
@@ -626,42 +595,4 @@ async function readOracleIdentity() {
     treeHashAlgorithm: oracleTreeHashAlgorithm,
     treeSha256: actualTreeSha256,
   };
-}
-
-async function assertExistingTracePreserved(label, command, arguments_, expected, path, environment, cwd) {
-  const sentinel = "既存traceは上書きしない\n";
-  await writeFile(path, sentinel, "utf8");
-  const result = run(command, arguments_, { ...environment, LNAKO_DISPATCH_TRACE: path }, cwd);
-  assertEquivalent(`${label}既存trace`, expected, result);
-  if (await readFile(path, "utf8") !== sentinel) throw new Error(`${label}が既存traceを上書きしました`);
-}
-
-async function assertExistingManifestPreserved(command, source, environment, cwd) {
-  const path = resolve(cwd, "manifest-existing.jsonl");
-  const output = resolve(cwd, process.platform === "win32" ? "manifest-existing.exe" : "manifest-existing");
-  const sentinel = "既存manifestは上書きしない\n";
-  await writeFile(path, sentinel, "utf8");
-  const result = run(command, ["build", source, "-o", output, "-O0"], { ...environment, LNAKO_COMPILE_MANIFEST: path }, cwd);
-  if (result.status === 0) throw new Error("既存AOT compile manifestを指定したbuildが成功しました");
-  if (await readFile(path, "utf8") !== sentinel) throw new Error("AOT compile manifestが既存ファイルを上書きしました");
-}
-
-async function assertFailedManifestRemoved(command, source, environment, cwd) {
-  const path = resolve(cwd, "manifest-failed.jsonl");
-  const output = resolve(cwd, process.platform === "win32" ? "failed.exe" : "failed");
-  const missingLlvm = resolve(cwd, process.platform === "win32" ? "missing-LLVM-C.dll" : "missing-libLLVM");
-  const result = run(
-    command,
-    ["build", source, "-o", output, "-O0"],
-    { ...environment, LNAKO_COMPILE_MANIFEST: path, LNAKO_LLVM_LIBRARY: missingLlvm },
-    cwd,
-  );
-  if (result.status === 0) throw new Error("存在しないLLVMライブラリを指定したAOT buildが成功しました");
-  try {
-    await readFile(path, "utf8");
-  } catch (error) {
-    if (error.code === "ENOENT") return;
-    throw error;
-  }
-  throw new Error("失敗したAOT buildが部分manifestを残しました");
 }

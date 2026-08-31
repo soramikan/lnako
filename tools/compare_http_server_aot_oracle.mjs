@@ -1,9 +1,25 @@
 import http from "node:http";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 
 const root = resolve(import.meta.dirname, "..");
+const arguments_ = process.argv.slice(2);
+let noBuild = false;
+for (let index = 0; index < arguments_.length; index += 1) {
+  const argument = arguments_[index];
+  if (argument === "--no-build") {
+    if (noBuild) throw new Error("--no-buildは1回だけ指定してください");
+    noBuild = true;
+    continue;
+  }
+  if (argument === "--oracle") {
+    if (index + 1 >= arguments_.length || arguments_[index + 1].startsWith("--")) throw new Error("--oracleにはパスを指定してください");
+    index += 1;
+    continue;
+  }
+  throw new Error("usage: node tools/compare_http_server_aot_oracle.mjs [--no-build] [--oracle /absolute/path]");
+}
 const oracleArg = process.argv.indexOf("--oracle");
 const oracleRoot = resolve(oracleArg >= 0 ? process.argv[oracleArg + 1] : process.env.NADESIKO3_ORACLE ?? resolve(root, ".cache/oracle/nadesiko3-3.7.24"));
 const officialCli = resolve(oracleRoot, "src/cnako3.mjs");
@@ -17,7 +33,8 @@ const pluginPath = relative(temporary, resolve(oracleRoot, "src/plugin_httpserve
 const staticDirectory = resolve(temporary, "static");
 await mkdir(staticDirectory);
 await writeFile(resolve(staticDirectory, "hello.txt"), "STATIC", "utf8");
-buildLnako();
+if (!noBuild) buildLnako();
+else await access(executable);
 
 try {
   const official = await runSuite("official", null);

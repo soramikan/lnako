@@ -31,13 +31,38 @@ Linuxログでは通常のmath・CSV・TOML・Promise差分は約0.8秒で完了
 | `core` | 互換台帳、字句・構文変換・構文・文法生成fuzz・意味・動的値・インタープリタ・plugin_system差分、format、全Zig単体テスト |
 | `standard` | math・CSV・TOML・Promise、markup・caniuse・kansujiの公式差分と全生成コーパス |
 | `host` | QuickJS互換差分、ネイティブプラグインABI、ファイル・プロセス・HTTP・暗号・文字コード・圧縮などNodeホスト差分。symlink経由のカレントディレクトリ実パスと失敗時のchdir診断も公式CLI・Interpreter・AOT O0〜O3で確認 |
-| `aot` | 公式CLI・公式生成JavaScript・インタープリタ・LLVM AOT O0〜O3差分、命令dispatch coverage audit、通常/QuickJSビルドとスモークテスト |
+| `aot` | 公式CLI・公式生成JavaScript・インタープリタ・LLVM AOT O0〜O3差分、dispatch security、命令dispatch coverage audit、通常ビルドとスモークテスト |
 | `compat-aot` | QuickJS Debug単体テスト、QuickJS ReleaseSafe compiler build、compat-js smoke |
 
 `aot` suiteのHTTP server検証は、`plugin-httpserver-all`を使った公式処理系対AOT O0〜O3のlocalhost実通信比較です。
-通常の193件AOT artifact／dispatch証拠とは別fixtureですが、HTTP serverの10命令・14リクエストを検証範囲から除外しません。
+canonical dispatch evidence artifactとは別fixtureですが、HTTP serverの10命令・14リクエストを検証範囲から除外しません。
 `tools/check_dispatch_coverage.mjs`は、命令関連付けだけではAOT実行証拠にならない境界を保持したまま、成功したInterpreter/AOT siteの到達範囲を
 3 OS別`lnako-dispatch-coverage-*` artifactへ保存します。attestation jobのcanonical dispatch evidenceとは別のunattested監査です。
+
+## AOT検証stepの安全な分割
+
+`aot` suiteの重い検証は、次の5 stepへ分けています。実行順序と各stepのsuite条件は
+`tools/check_ci_workflow.mjs`で固定し、3正式OS・O0〜O3・7経路・artifact保存・attestationの範囲は変えません。
+
+| step | 内容 | 共有するもの |
+|---|---|---|
+| `Differential native AOT oracle test` | 公式CLI・生成JavaScript・`lnako run`・AOT O0〜O3の全native fixture差分 | `compare_native_oracle.mjs`が作るcompilerとnative oracle artifact |
+| `Differential native AOT HTTP server test` | HTTP serverの公式処理系対AOT O0〜O3実通信差分 | 先行stepのcompilerを`--no-build`で再利用 |
+| `Differential native AOT dispatch security test` | tiny fixtureによるtrace無効、既存trace／manifest保持、失敗manifest cleanup、attempt/result整合、loop同一site反復 | `tests/fixtures/dispatch-security.nako3`だけを使用し、catalog evidenceへ混入しない |
+| `Differential native AOT dispatch evidence` | canonical fixtureのInterpreter trace、AOT compile manifest／runtime trace、公式source／生成JavaScriptとの差分、OS別dispatch evidence生成 | canonical fixtureの結果のみをattestation対象へ渡す |
+| `Differential native AOT dispatch coverage` | 全選択fixtureの成功site到達範囲とOS別coverage audit | dispatch evidenceとは別のunattested監査artifact |
+
+HTTP server stepは、先行するnative oracle stepが同じcheckout上でcompilerを構築済みであることを前提に
+`--no-build`を指定します。単独実行時は従来どおり引数なしでcompilerをbuildし、`--no-build`時はcompilerの存在を確認してから進みます。
+これにより同一AOT job内の不要な`zig build`だけを除去し、HTTPの14リクエスト×O0〜O3比較自体は維持します。
+
+canonical dispatch検査からsecurity専用の追加buildを切り離しました。canonical側では全対象命令の一回のAOT compileと
+trace／公式差分を維持し、security側では小さな固定fixtureでmanifest・traceの原子的な出力、既存ファイル非上書き、失敗時cleanup、
+trace無効時の無出力、loopの同一site反復を検査します。検査項目を減らしたり、canonical evidenceをtiny fixtureへ置き換えたりはしません。
+
+step分割により、比較失敗時はnative oracle、HTTP、security、canonical evidence、coverageのどの境界で止まったかをGitHub Actions上で
+個別に確認できます。step自体は直列なので、wall-clock短縮は重複compiler buildの除去と早期診断によるものだけです。分割後の実CI時間、壁時計、
+runner合計時間、cache hit/missは次回pushの完了済みrunで記録し、実測前に性能改善とは扱いません。
 
 元のコマンドは削除せず、各OSでいずれか1スイートが一度だけ実行します。OSごとの互換検証をLinuxだけへ
 縮小する最適化は行いません。ジョブ上限は50分とし、停止しないホスト・ネットワークテストを検出します。

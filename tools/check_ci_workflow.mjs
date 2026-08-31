@@ -10,6 +10,8 @@ if (floatingActions.length > 0) throw new Error(`GitHub Actionをcommit SHAへ�
 if (!workflow.includes("node tools/check_dispatch_attestation_security.mjs")) throw new Error("dispatch attestationの偽造拒否検査がCIにありません");
 if (!workflow.includes("node tools/check_tracked_dispatch_attestation.mjs --offline") || !workflow.includes("node tools/check_tracked_dispatch_attestation.mjs\n") || !workflow.includes("node tools/check_tracked_dispatch_attestation_security.mjs")) throw new Error("tracked dispatch attestationの固定／改変検査がCIにありません");
 const setupOracle = await readFile(resolve(root, "tools/setup_oracle.mjs"), "utf8");
+const httpAotScript = await readFile(resolve(root, "tools/compare_http_server_aot_oracle.mjs"), "utf8");
+const dispatchSecurityScript = await readFile(resolve(root, "tools/check_dispatch_trace_security.mjs"), "utf8");
 const trackedAttestationChecker = await readFile(resolve(root, "tools/check_tracked_dispatch_attestation.mjs"), "utf8");
 const syncEvidence = await readFile(resolve(root, "tools/sync_compat_evidence.mjs"), "utf8");
 if (!trackedAttestationChecker.includes("gh") || !trackedAttestationChecker.includes("--cert-oidc-issuer") || !trackedAttestationChecker.includes("--deny-self-hosted-runners") || !syncEvidence.includes("--historical-commit") || !syncEvidence.includes("canonical --output")) {
@@ -59,7 +61,11 @@ const stepSuites = new Map([
   ["Native plugin ABI test", "host"],
   ["Differential Node host test", "host"],
   ["Distribution package self-test", "core"],
-  ["Differential native AOT test", "aot"],
+  ["Differential native AOT oracle test", "aot"],
+  ["Differential native AOT HTTP server test", "aot"],
+  ["Differential native AOT dispatch security test", "aot"],
+  ["Differential native AOT dispatch evidence", "aot"],
+  ["Differential native AOT dispatch coverage", "aot"],
   ["Format", "core"],
   ["Test", "core"],
   ["Test QuickJS build", "compat-aot"],
@@ -74,27 +80,54 @@ for (const [name, suite] of stepSuites) {
   if (!pattern.test(workflow)) throw new Error(`${name}のsuite条件が${suite}ではありません`);
 }
 
-const nativeAotBlock = workflow.match(
-  /      - name: Differential native AOT test[\s\S]*?(?=      - name:|$)/,
-);
-if (!nativeAotBlock) throw new Error("Differential native AOT testブロックがありません");
-if (!nativeAotBlock[0].includes("if: matrix.suite == 'aot'")) throw new Error("Differential native AOT testのsuite条件がありません");
-if (!nativeAotBlock[0].includes("LNAKO_NATIVE_ORACLE_ARTIFACT: ${{ runner.temp }}/lnako-native-oracle.json")) {
-  throw new Error("AOT差分artifactの絶対出力先envがありません");
+const nativeAotStepNames = [
+  "Differential native AOT oracle test",
+  "Differential native AOT HTTP server test",
+  "Differential native AOT dispatch security test",
+  "Differential native AOT dispatch evidence",
+  "Differential native AOT dispatch coverage",
+];
+const nativeAotBlocks = new Map();
+let previousNativeAotBlockEnd = -1;
+for (const name of nativeAotStepNames) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const block = workflow.match(new RegExp(`      - name: ${escaped}[\\s\\S]*?(?=      - name:|$)`))?.[0];
+  if (!block) throw new Error(`${name}ブロックがありません`);
+  if (!block.includes("if: matrix.suite == 'aot'")) throw new Error(`${name}のsuite条件がありません`);
+  const blockStart = workflow.indexOf(block);
+  if (blockStart < previousNativeAotBlockEnd) throw new Error(`AOT stepの順序が不正です: ${name}`);
+  previousNativeAotBlockEnd = blockStart + block.length;
+  nativeAotBlocks.set(name, block);
 }
-if (!nativeAotBlock[0].includes("node tools/check_dispatch_trace.mjs --no-build --evidence-output")) {
-  throw new Error("AOT dispatch evidenceの生成がありません");
+const nativeAotOracleBlock = nativeAotBlocks.get("Differential native AOT oracle test");
+if (!nativeAotOracleBlock.includes("LNAKO_NATIVE_ORACLE_ARTIFACT: ${{ runner.temp }}/lnako-native-oracle.json") ||
+    (nativeAotOracleBlock.match(/node tools\/compare_native_oracle\.mjs/g) ?? []).length !== 1) {
+  throw new Error("AOT差分artifactまたはnative oracle比較stepが不正です");
 }
-if (!nativeAotBlock[0].includes("node tools/check_dispatch_coverage.mjs --no-build --output")) {
-  throw new Error("AOT dispatch coverage auditの生成がありません");
+const nativeAotHttpBlock = nativeAotBlocks.get("Differential native AOT HTTP server test");
+if ((nativeAotHttpBlock.match(/node tools\/compare_http_server_aot_oracle\.mjs --no-build/g) ?? []).length !== 1) {
+  throw new Error("AOT HTTPサーバー差分比較のno-build stepがありません");
 }
-if ((nativeAotBlock[0].match(/node tools\/compare_native_oracle\.mjs/g) ?? []).length !== 1) {
-  throw new Error("AOT差分比較は同一suite内で1回だけ実行してください");
+if (!httpAotScript.includes("if (!noBuild) buildLnako();") || !httpAotScript.includes("else await access(executable);")) {
+  throw new Error("AOT HTTPサーバー比較のno-build実装がありません");
 }
-if ((nativeAotBlock[0].match(/node tools\/compare_http_server_aot_oracle\.mjs/g) ?? []).length !== 1) {
-  throw new Error("AOT HTTPサーバー差分比較がありません");
+const nativeAotSecurityBlock = nativeAotBlocks.get("Differential native AOT dispatch security test");
+if ((nativeAotSecurityBlock.match(/node tools\/check_dispatch_trace_security\.mjs --no-build/g) ?? []).length !== 1) {
+  throw new Error("AOT dispatch securityのtiny fixture stepがありません");
 }
-const nativeAotBlockEnd = workflow.indexOf(nativeAotBlock[0]) + nativeAotBlock[0].length;
+if (!dispatchSecurityScript.includes("tests/fixtures/dispatch-security.nako3") || !dispatchSecurityScript.includes("assertExistingManifestPreserved") ||
+    !dispatchSecurityScript.includes("assertFailedManifestRemoved") || !dispatchSecurityScript.includes("assertRepeatedSite")) {
+  throw new Error("AOT dispatch securityのtiny fixture実装または不変条件検査が不完全です");
+}
+const nativeAotEvidenceBlock = nativeAotBlocks.get("Differential native AOT dispatch evidence");
+if (!nativeAotEvidenceBlock.includes("node tools/check_dispatch_trace.mjs --no-build --evidence-output")) {
+  throw new Error("AOT dispatch evidenceの生成stepがありません");
+}
+const nativeAotCoverageBlock = nativeAotBlocks.get("Differential native AOT dispatch coverage");
+if (!nativeAotCoverageBlock.includes("node tools/check_dispatch_coverage.mjs --no-build --output")) {
+  throw new Error("AOT dispatch coverage auditの生成stepがありません");
+}
+const nativeAotBlockEnd = workflow.indexOf(nativeAotCoverageBlock) + nativeAotCoverageBlock.length;
 const uploadName = "Upload native AOT oracle artifact";
 const uploadStart = workflow.indexOf(`      - name: ${uploadName}`);
 if (uploadStart !== nativeAotBlockEnd) throw new Error("AOT artifact uploadは差分比較の直後に配置してください");

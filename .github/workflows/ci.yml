@@ -177,14 +177,25 @@ jobs:
           node tools/check_node_current_directory_realpath.mjs
           node tools/check_node_current_directory_errors.mjs
           node tools/check_node_archive_smoke.mjs
-      - name: Differential native AOT test
+      - name: Differential native AOT oracle test
         if: matrix.suite == 'aot'
         env:
           LNAKO_NATIVE_ORACLE_ARTIFACT: ${{ runner.temp }}/lnako-native-oracle.json
         run: |
           node tools/compare_native_oracle.mjs
-          node tools/compare_http_server_aot_oracle.mjs
+      - name: Differential native AOT HTTP server test
+        if: matrix.suite == 'aot'
+        run: node tools/compare_http_server_aot_oracle.mjs --no-build
+      - name: Differential native AOT dispatch security test
+        if: matrix.suite == 'aot'
+        run: node tools/check_dispatch_trace_security.mjs --no-build
+      - name: Differential native AOT dispatch evidence
+        if: matrix.suite == 'aot'
+        run: |
           node tools/check_dispatch_trace.mjs --no-build --evidence-output "${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json"
+      - name: Differential native AOT dispatch coverage
+        if: matrix.suite == 'aot'
+        run: |
           node tools/check_dispatch_coverage.mjs --no-build --output "${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}.json"
       - name: Upload native AOT oracle artifact
         if: matrix.suite == 'aot' && always()
