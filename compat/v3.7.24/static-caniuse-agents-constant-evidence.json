@@ -1,0 +1,124 @@
+{
+  "schema": "lnako.static-constant-evidence.v2",
+  "generator": "tools/check_static_constant_evidence.mjs",
+  "baseline": {
+    "tag": "3.7.24",
+    "commit": "aa18c7e640523938c680958fe731418cc6f7a58f"
+  },
+  "fixture": {
+    "id": "native-caniuse-agents",
+    "file": "native-cases.json",
+    "sourceSha256": "3c1929ab30d0e65006b76cf5d81a32dd1d62abafbf8e5be303cce825b2d5b20b",
+    "globalReadNames": [
+      "ブラウザ名変換表"
+    ],
+    "literalNames": []
+  },
+  "officialComparison": {
+    "oracle": "official-source",
+    "routes": [
+      "officialSource",
+      "officialGenerated",
+      "lnakoRun",
+      "lnakoNativeO0"
+    ],
+    "equivalent": true,
+    "results": {
+      "officialSource": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "0738f6f31192f29571e108e13525716fef48a0489a69b1797f577940a0b36bb2",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "officialGenerated": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "b9e52043acaab3b3b49e752fd68942fac08ae7a6a5f6d7ab24867e54b924efb2",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "lnakoRun": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "0738f6f31192f29571e108e13525716fef48a0489a69b1797f577940a0b36bb2",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "lnakoNativeO0": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "0738f6f31192f29571e108e13525716fef48a0489a69b1797f577940a0b36bb2",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  },
+  "attestation": null,
+  "provenance": {
+    "environment": {
+      "platform": "darwin",
+      "arch": "arm64",
+      "node": "v24.19.0"
+    },
+    "oracle": {
+      "build": 4,
+      "archiveSha256": "c3bedbf101118a261f631d331127ae441657fec091c712b07d237c4336eb0011",
+      "cliSha256": "65e32f1d7de0b2da18edf3f4c49565c37d31aa474d31ee08426f2f6a0c0d6c81",
+      "markerSha256": "e9444955298c3bb22164a219c0f342ee32301e901ec967d648cae9a25d8bf531",
+      "treeHashAlgorithm": "sha256-json-records-v3",
+      "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
+    },
+    "lnako": {
+      "binarySha256": "26f4c59f32798661d86b56ad54905813de77c00817a12a2f3e4c0d89edc353af",
+      "commit": "3fd04843b7923bd8eba7654450b20db5d477d622",
+      "dirty": false
+    },
+    "raw": {
+      "interpreterTraceSha256": "b03f49d6e7fd26c73bd620ae20a70022b8ef9796a2bb19c86fb68419e7fbea54",
+      "aotTraceSha256": "24592e862083cbc64cf19442216d831d165670a6dd41543ce236b21a75fca936",
+      "globalManifestSha256": "4c8016aa06bb014290e126954d0093e82519c30fe462d3fcb3955d2dca71bdf6",
+      "literalInterpreterTraceSha256": "d1a240ca85bb6425f4ad3e15b23d56a4366b64e8631f58b1af10c96a38b65232",
+      "literalAotTraceSha256": "b503b7eae644c3b3cc2fbe7504669a86aa68f5db0642b31b5d61cde895e2a1ea",
+      "literalManifestSha256": "0634b02a5bc8e823071d8efdf8c05604c6bae18f893653a5248196e39302fb15"
+    }
+  },
+  "trace": {
+    "global": {
+      "interpreter": {
+        "schema": 1,
+        "eventCount": 3
+      },
+      "aot": {
+        "schema": 1,
+        "eventCount": 3
+      }
+    },
+    "literal": {
+      "interpreter": {
+        "schema": 1,
+        "eventCount": 0
+      },
+      "aot": {
+        "schema": 1,
+        "eventCount": 0
+      }
+    }
+  },
+  "entries": [
+    {
+      "catalogId": "command-0835",
+      "name": "ブラウザ名変換表",
+      "plugin": "plugin_caniuse",
+      "kind": "global-read",
+      "siteId": "0x0000000000000003",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    }
+  ]
+}
