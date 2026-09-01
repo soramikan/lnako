@@ -399,7 +399,7 @@ function assertOnlyManifestCommands(entries, allowed) {
 function resolveCatalogCommand(name, route) {
   const overrideId = catalogOverrides.get(name);
   if (overrideId !== undefined) {
-    const command = catalog.find((candidate) => candidate.id === overrideId && candidate.name === name);
+    const command = catalog.commands.find((candidate) => candidate.id === overrideId && candidate.name === name);
     return command === undefined ? null : { command, reason: "explicit-catalog-id" };
   }
   const candidates = catalogByName.get(name) ?? [];
