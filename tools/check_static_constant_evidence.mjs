@@ -32,6 +32,15 @@ const staticConstantFixtureDefinitions = {
     literalNames: new Set(),
     plugin: "plugin_system",
   },
+  "native-datetime-era-data": {
+    catalogIds: new Map([["元号データ", "command-0227"]]),
+    globalReadCount: 1,
+    globalTraceCount: 3,
+    manifestGlobalReadNames: ["元号データ", "元号データ", "元号データ"],
+    manifestExtraGlobalReadNames: ["scalar-constants__A"],
+    literalNames: new Set(),
+    plugin: "plugin_system",
+  },
   "native-node-archive-constant": {
     globalReadCount: 1,
     literalNames: new Set(),
@@ -114,9 +123,24 @@ for (const command of catalog.commands) {
   commands.push(command);
   catalogByName.set(command.name, commands);
 }
+const catalogById = new Map(catalog.commands.map((command) => [command.id, command]));
+const configuredCatalogIds = fixtureDefinition.catalogIds ?? new Map();
+for (const [name, id] of configuredCatalogIds) {
+  const command = catalogById.get(id);
+  if (!staticConstantNames.includes(name) || command?.name !== name) {
+    throw new Error(`静的定数fixtureのcatalog ID指定が不正です: ${name}/${id}`);
+  }
+}
+function catalogCommandFor(name) {
+  const commands = catalogByName.get(name) ?? [];
+  const expectedId = configuredCatalogIds.get(name);
+  return expectedId === undefined ? (commands.length === 1 ? commands[0] : undefined) : catalogById.get(expectedId);
+}
 for (const name of staticConstantNames) {
   const commands = catalogByName.get(name) ?? [];
-  if (commands.length !== 1 || commands[0].plugin !== expectedPluginFor(name) || commands[0].type !== "定数") {
+  const command = catalogCommandFor(name);
+  const identityIsUnambiguous = configuredCatalogIds.has(name) ? command?.id === configuredCatalogIds.get(name) : commands.length === 1;
+  if (!identityIsUnambiguous || command?.name !== name || command.plugin !== expectedPluginFor(name) || command.type !== "定数") {
     throw new Error(`静的定数fixtureのcatalog identityが一意に解決できません: ${name}`);
   }
 }
@@ -230,7 +254,7 @@ try {
   const entries = staticConstantNames.map((name) => {
     const kind = literalConstantNames.has(name) ? "literal" : "global-read";
     const manifest = manifestByName.get(`${kind}:${name}`);
-    const command = catalogByName.get(name)?.[0];
+    const command = catalogCommandFor(name);
     const interpreterEvent = kind === "literal"
       ? interpreterLiteralBySiteId.get(manifest?.siteId)
       : interpreterGlobalBySiteId.get(manifest?.siteId);
@@ -307,7 +331,8 @@ try {
     },
     entries,
   };
-  validateEvidence(evidence, lock, fixture, globalReadNames, literalNames, manifestByKey, interpreterGlobalEvents.length);
+  const expectedCatalogIds = new Map(staticConstantNames.map((name) => [name, catalogCommandFor(name).id]));
+  validateEvidence(evidence, lock, fixture, globalReadNames, literalNames, manifestByKey, interpreterGlobalEvents.length, expectedCatalogIds);
   if (evidenceOutput !== null) await writeFile(evidenceOutput, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
   console.log(`静的定数のInterpreter/AOT証拠: global read ${globalReadNames.length}件 + literal ${literalNames.length}件 = ${entries.length}件成功`);
 } finally {
@@ -512,7 +537,7 @@ function assertKeys(value, allowedKeys, label) {
   for (const key of Object.keys(value)) if (!allowed.has(key)) throw new Error(`${label}に未知fieldがあります: ${key}`);
 }
 
-function validateEvidence(evidence, lock, fixture, globalReadNames, literalNames, manifestByKey, globalTraceCount) {
+function validateEvidence(evidence, lock, fixture, globalReadNames, literalNames, manifestByKey, globalTraceCount, expectedCatalogIds) {
   assertKeys(evidence, ["schema", "generator", "baseline", "fixture", "officialComparison", "attestation", "provenance", "trace", "entries"], "static constant evidence");
   if (evidence.schema !== "lnako.static-constant-evidence.v2" || evidence.generator !== "tools/check_static_constant_evidence.mjs" || evidence.baseline.tag !== lock.nadesiko3.tag || evidence.baseline.commit !== lock.nadesiko3.commit) throw new Error("静的定数証拠のidentityが不正です");
   assertKeys(evidence.fixture, ["id", "file", "sourceSha256", "globalReadNames", "literalNames"], "static constant evidence fixture");
@@ -548,7 +573,7 @@ function validateEvidence(evidence, lock, fixture, globalReadNames, literalNames
     const expectedNames = entry.kind === "global-read" ? globalReadNames : entry.kind === "literal" ? literalNames : null;
     const manifest = expectedNames === null ? undefined : manifestByKey.get(`${entry.kind}:${entry.siteId}`);
     const nameSet = entry.kind === "global-read" ? names.global : entry.kind === "literal" ? names.literal : null;
-    if (manifest === undefined || manifest.name !== entry.name || entry.plugin !== expectedPluginFor(entry.name) || nameSet === null || nameSet.has(entry.name) || expectedNames === null || !expectedNames.includes(entry.name) || !/^command-\d{4}$/.test(entry.catalogId) || entry.officialEquivalent !== true || entry.runtime.interpreter.success !== true || entry.runtime.interpreter.count !== 1 || entry.runtime.aot.success !== true || entry.runtime.aot.count !== 1) throw new Error(`静的定数証拠entryが不正です: ${entry.name}`);
+    if (manifest === undefined || manifest.name !== entry.name || entry.plugin !== expectedPluginFor(entry.name) || nameSet === null || nameSet.has(entry.name) || expectedNames === null || !expectedNames.includes(entry.name) || entry.catalogId !== expectedCatalogIds.get(entry.name) || !/^command-\d{4}$/.test(entry.catalogId) || entry.officialEquivalent !== true || entry.runtime.interpreter.success !== true || entry.runtime.interpreter.count !== 1 || entry.runtime.aot.success !== true || entry.runtime.aot.count !== 1) throw new Error(`静的定数証拠entryが不正です: ${entry.name}`);
     nameSet.add(entry.name);
   }
   if (names.global.size !== globalReadNames.length || names.literal.size !== literalNames.length || [...names.global].some((name) => !globalReadNames.includes(name)) || [...names.literal].some((name) => !literalNames.includes(name))) throw new Error("静的定数証拠のname集合が不一致です");

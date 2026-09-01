@@ -35,6 +35,17 @@ const staticConstantEvidenceInputs = [
     plugin: "plugin_system",
   },
   {
+    path: resolve(root, "compat/v3.7.24/static-datetime-era-constant-evidence.json"),
+    fixtureId: "native-datetime-era-data",
+    catalogIds: new Map([["元号データ", "command-0227"]]),
+    globalReadCount: 1,
+    globalTraceCount: 3,
+    manifestGlobalReadNames: ["元号データ", "元号データ", "元号データ"],
+    manifestExtraGlobalReadNames: ["scalar-constants__A"],
+    literalNames: new Set(),
+    plugin: "plugin_system",
+  },
+  {
     path: resolve(root, "compat/v3.7.24/static-node-archive-constant-evidence.json"),
     fixtureId: "native-node-archive-constant",
     globalReadCount: 1,
@@ -120,6 +131,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "compat/v3.7.24/static-constant-evidence.json",
   "compat/v3.7.24/static-string-constant-evidence.json",
   "compat/v3.7.24/static-array-constant-evidence.json",
+  "compat/v3.7.24/static-datetime-era-constant-evidence.json",
   "compat/v3.7.24/static-node-archive-constant-evidence.json",
   "compat/v3.7.24/static-node-command-line-constant-evidence.json",
   "compat/v3.7.24/static-node-mother-path-constant-evidence.json",
@@ -782,6 +794,13 @@ function validateStaticConstantEvidence(evidence, lock, standard, records, defin
     commands.push(command);
     standardByName.set(command.name, commands);
   }
+  const configuredCatalogIds = definition.catalogIds ?? new Map();
+  for (const [name, id] of configuredCatalogIds) {
+    const command = standardById.get(id);
+    if (!expectedStaticNames.has(name) || command?.name !== name) {
+      throw new Error(`静的定数証拠のcatalog ID指定が不正です: ${name}/${id}`);
+    }
+  }
   if (!Array.isArray(evidence.entries) || evidence.entries.length !== globalReadNames.length + literalNames.length) throw new Error("静的定数証拠のentry数が不正です");
   const names = { global: new Set(), literal: new Set() };
   const catalogIds = new Set();
@@ -793,11 +812,15 @@ function validateStaticConstantEvidence(evidence, lock, standard, records, defin
     assertKnownObjectKeys(entry.runtime.aot, ["success", "count"], "static-constant-evidence.entry.runtime.aot");
     const command = standardById.get(entry.catalogId);
     const commandsByName = standardByName.get(entry.name) ?? [];
+    const expectedCatalogId = configuredCatalogIds.get(entry.name);
+    const identityMatches = expectedCatalogId === undefined
+      ? commandsByName.length === 1 && entry.catalogId === commandsByName[0].id
+      : entry.catalogId === expectedCatalogId;
     const expectedNames = entry.kind === "global-read" ? globalReadNames : entry.kind === "literal" ? literalNames : null;
     const nameSet = entry.kind === "global-read" ? names.global : entry.kind === "literal" ? names.literal : null;
     const siteKey = `${entry.kind}:${entry.siteId}`;
     if (command === undefined || command.name !== entry.name || command.plugin !== entry.plugin || command.plugin !== expectedStaticConstantPlugin(definition, entry.name) ||
-        command.type !== "定数" || command.status !== "native" || commandsByName.length !== 1 || expectedNames === null || !expectedNames.includes(entry.name) ||
+        command.type !== "定数" || command.status !== "native" || !identityMatches || expectedNames === null || !expectedNames.includes(entry.name) ||
         nameSet === null || nameSet.has(entry.name) || catalogIds.has(entry.catalogId) || siteKeys.has(siteKey) || !/^0x[0-9a-f]{16}$/.test(entry.siteId) ||
         entry.officialEquivalent !== true || entry.runtime.interpreter.success !== true || entry.runtime.interpreter.count !== 1 ||
         entry.runtime.aot.success !== true || entry.runtime.aot.count !== 1) {
