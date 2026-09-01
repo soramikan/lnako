@@ -42,6 +42,12 @@ const staticConstantFixtureDefinitions = {
     literalNames: new Set(),
     plugin: "plugin_node",
   },
+  "native-node-mother-path": {
+    constantNames: new Set(["母艦パス"]),
+    globalReadCount: 1,
+    literalNames: new Set(),
+    plugin: "plugin_node",
+  },
   "native-node-http-initial-constants": {
     globalReadCount: 5,
     literalNames: new Set(),
@@ -80,20 +86,24 @@ if (fixture === undefined) throw new Error(`静的定数fixtureがありませ�
 if (!Array.isArray(fixture.commands) || fixture.commands.length === 0 || new Set(fixture.commands).size !== fixture.commands.length) {
   throw new Error("静的定数fixtureのcommandsが不正です");
 }
+const staticConstantNames = fixtureDefinition.constantNames === undefined ? fixture.commands : [...fixtureDefinition.constantNames];
+if (staticConstantNames.length === 0 || new Set(staticConstantNames).size !== staticConstantNames.length || staticConstantNames.some((name) => !fixture.commands.includes(name))) {
+  throw new Error("静的定数fixtureのconstantNamesが不正です");
+}
 const catalogByName = new Map();
 for (const command of catalog.commands) {
   const commands = catalogByName.get(command.name) ?? [];
   commands.push(command);
   catalogByName.set(command.name, commands);
 }
-for (const name of fixture.commands) {
+for (const name of staticConstantNames) {
   const commands = catalogByName.get(name) ?? [];
   if (commands.length !== 1 || commands[0].plugin !== expectedPluginFor(name) || commands[0].type !== "定数") {
     throw new Error(`静的定数fixtureのcatalog identityが一意に解決できません: ${name}`);
   }
 }
-const globalReadNames = fixture.commands.filter((name) => !literalConstantNames.has(name));
-const literalNames = fixture.commands.filter((name) => literalConstantNames.has(name));
+const globalReadNames = staticConstantNames.filter((name) => !literalConstantNames.has(name));
+const literalNames = staticConstantNames.filter((name) => literalConstantNames.has(name));
 if (globalReadNames.length !== fixtureDefinition.globalReadCount || literalNames.length !== fixtureDefinition.literalNames.size) {
   throw new Error(`静的定数fixtureのliteral/global分類が想定外です: ${literalNames.length}/${globalReadNames.length}`);
 }
@@ -193,7 +203,7 @@ try {
     ...globalManifestData.entries.map((entry) => [`global-read:${entry.name}`, entry]),
     ...literalManifestData.entries.map((entry) => [`literal:${entry.name}`, entry]),
   ]);
-  const entries = fixture.commands.map((name) => {
+  const entries = staticConstantNames.map((name) => {
     const kind = literalConstantNames.has(name) ? "literal" : "global-read";
     const manifest = manifestByName.get(`${kind}:${name}`);
     const command = catalogByName.get(name)?.[0];

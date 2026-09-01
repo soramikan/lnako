@@ -49,6 +49,14 @@ const staticConstantEvidenceInputs = [
     plugin: "plugin_node",
   },
   {
+    path: resolve(root, "compat/v3.7.24/static-node-mother-path-constant-evidence.json"),
+    fixtureId: "native-node-mother-path",
+    constantNames: new Set(["母艦パス"]),
+    globalReadCount: 1,
+    literalNames: new Set(),
+    plugin: "plugin_node",
+  },
+  {
     path: resolve(root, "compat/v3.7.24/static-node-http-initial-constant-evidence.json"),
     fixtureId: "native-node-http-initial-constants",
     globalReadCount: 5,
@@ -96,6 +104,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "compat/v3.7.24/static-array-constant-evidence.json",
   "compat/v3.7.24/static-node-archive-constant-evidence.json",
   "compat/v3.7.24/static-node-command-line-constant-evidence.json",
+  "compat/v3.7.24/static-node-mother-path-constant-evidence.json",
   "compat/v3.7.24/static-node-http-initial-constant-evidence.json",
   "compat/v3.7.24/evidence.json",
   "compat/v3.7.24/interpreter-only-classification.json",
@@ -677,13 +686,14 @@ function validateStaticConstantEvidence(evidence, lock, standard, records, defin
   }
   const globalReadNames = evidence.fixture.globalReadNames;
   const literalNames = evidence.fixture.literalNames;
+  const expectedStaticNames = definition.constantNames ?? fixture.commandNames;
   if (!Array.isArray(globalReadNames) || !Array.isArray(literalNames) ||
       globalReadNames.length !== definition.globalReadCount || literalNames.length !== definition.literalNames.size ||
       new Set(globalReadNames).size !== globalReadNames.length || new Set(literalNames).size !== literalNames.length ||
       literalNames.some((name) => !definition.literalNames.has(name)) ||
       globalReadNames.some((name) => definition.literalNames.has(name)) ||
-      new Set([...globalReadNames, ...literalNames]).size !== fixture.commandNames.size ||
-      [...fixture.commandNames].some((name) => !globalReadNames.includes(name) && !literalNames.includes(name))) {
+      new Set([...globalReadNames, ...literalNames]).size !== expectedStaticNames.size ||
+      [...expectedStaticNames].some((name) => !globalReadNames.includes(name) && !literalNames.includes(name))) {
     throw new Error("静的定数証拠のliteral/global分類が不正です");
   }
 
