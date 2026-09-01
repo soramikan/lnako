@@ -1,0 +1,200 @@
+{
+  "schema": "lnako.static-constant-evidence.v2",
+  "generator": "tools/check_static_constant_evidence.mjs",
+  "baseline": {
+    "tag": "3.7.24",
+    "commit": "aa18c7e640523938c680958fe731418cc6f7a58f"
+  },
+  "fixture": {
+    "id": "native-node-http-initial-constants",
+    "file": "native-cases.json",
+    "sourceSha256": "d73f6b298b020203c32bbbaef4c6258b0062d95ff0ff90264a65d70e34548f45",
+    "globalReadNames": [
+      "AJAXオプション",
+      "HTTPメソッド",
+      "GETデータ",
+      "POSTデータ",
+      "FILESデータ"
+    ],
+    "literalNames": []
+  },
+  "officialComparison": {
+    "oracle": "official-source",
+    "routes": [
+      "officialSource",
+      "officialGenerated",
+      "lnakoRun",
+      "lnakoNativeO0"
+    ],
+    "equivalent": true,
+    "results": {
+      "officialSource": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "597bff92da07c059a708b17f14203caf21685b55b6acd245f8f9deb85eb82834",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "officialGenerated": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "597bff92da07c059a708b17f14203caf21685b55b6acd245f8f9deb85eb82834",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "lnakoRun": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "597bff92da07c059a708b17f14203caf21685b55b6acd245f8f9deb85eb82834",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "lnakoNativeO0": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "597bff92da07c059a708b17f14203caf21685b55b6acd245f8f9deb85eb82834",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  },
+  "attestation": null,
+  "provenance": {
+    "environment": {
+      "platform": "darwin",
+      "arch": "arm64",
+      "node": "v24.19.0"
+    },
+    "oracle": {
+      "build": 4,
+      "archiveSha256": "c3bedbf101118a261f631d331127ae441657fec091c712b07d237c4336eb0011",
+      "cliSha256": "65e32f1d7de0b2da18edf3f4c49565c37d31aa474d31ee08426f2f6a0c0d6c81",
+      "markerSha256": "e9444955298c3bb22164a219c0f342ee32301e901ec967d648cae9a25d8bf531",
+      "treeHashAlgorithm": "sha256-json-records-v3",
+      "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
+    },
+    "lnako": {
+      "binarySha256": "26f4c59f32798661d86b56ad54905813de77c00817a12a2f3e4c0d89edc353af",
+      "commit": "1e40b7c7bf4bab3dad20fac8692b08c03cf1857f",
+      "dirty": false
+    },
+    "raw": {
+      "interpreterTraceSha256": "61110a79cbd78ee896940e14e255399e518fa358191cef31e1473a1d62d6b1c2",
+      "aotTraceSha256": "24592e862083cbc64cf19442216d831d165670a6dd41543ce236b21a75fca936",
+      "globalManifestSha256": "15a678c5e49713cc249baae302b6be31da6d2b6d86b1bedce8197e4d154de08b",
+      "literalInterpreterTraceSha256": "d1a240ca85bb6425f4ad3e15b23d56a4366b64e8631f58b1af10c96a38b65232",
+      "literalAotTraceSha256": "b503b7eae644c3b3cc2fbe7504669a86aa68f5db0642b31b5d61cde895e2a1ea",
+      "literalManifestSha256": "903c52ca1158f97d1f1bda6c2169206b137e5712c8abf300f874d29e7cae28e2"
+    }
+  },
+  "trace": {
+    "global": {
+      "interpreter": {
+        "schema": 1,
+        "eventCount": 5
+      },
+      "aot": {
+        "schema": 1,
+        "eventCount": 5
+      }
+    },
+    "literal": {
+      "interpreter": {
+        "schema": 1,
+        "eventCount": 0
+      },
+      "aot": {
+        "schema": 1,
+        "eventCount": 0
+      }
+    }
+  },
+  "entries": [
+    {
+      "catalogId": "command-0767",
+      "name": "AJAXオプション",
+      "plugin": "plugin_node",
+      "kind": "global-read",
+      "siteId": "0x0000000000000001",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0795",
+      "name": "HTTPメソッド",
+      "plugin": "plugin_httpserver",
+      "kind": "global-read",
+      "siteId": "0x0000000000000002",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0796",
+      "name": "GETデータ",
+      "plugin": "plugin_httpserver",
+      "kind": "global-read",
+      "siteId": "0x0000000000000003",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0797",
+      "name": "POSTデータ",
+      "plugin": "plugin_httpserver",
+      "kind": "global-read",
+      "siteId": "0x0000000000000004",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0798",
+      "name": "FILESデータ",
+      "plugin": "plugin_httpserver",
+      "kind": "global-read",
+      "siteId": "0x0000000000000005",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    }
+  ]
+}

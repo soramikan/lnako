@@ -48,6 +48,19 @@ const staticConstantEvidenceInputs = [
     literalNames: new Set(),
     plugin: "plugin_node",
   },
+  {
+    path: resolve(root, "compat/v3.7.24/static-node-http-initial-constant-evidence.json"),
+    fixtureId: "native-node-http-initial-constants",
+    globalReadCount: 5,
+    literalNames: new Set(),
+    commandPlugins: {
+      "AJAXオプション": "plugin_node",
+      "HTTPメソッド": "plugin_httpserver",
+      "GETデータ": "plugin_httpserver",
+      "POSTデータ": "plugin_httpserver",
+      "FILESデータ": "plugin_httpserver",
+    },
+  },
 ];
 const staticConstantFixtureIds = new Set(staticConstantEvidenceInputs.map((input) => input.fixtureId));
 const oracleDirectory = resolve(root, "tests/oracle");
@@ -83,6 +96,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "compat/v3.7.24/static-array-constant-evidence.json",
   "compat/v3.7.24/static-node-archive-constant-evidence.json",
   "compat/v3.7.24/static-node-command-line-constant-evidence.json",
+  "compat/v3.7.24/static-node-http-initial-constant-evidence.json",
   "compat/v3.7.24/evidence.json",
   "compat/v3.7.24/interpreter-only-classification.json",
   "docs/COMPATIBILITY_EVIDENCE.md",
@@ -753,7 +767,7 @@ function validateStaticConstantEvidence(evidence, lock, standard, records, defin
     const expectedNames = entry.kind === "global-read" ? globalReadNames : entry.kind === "literal" ? literalNames : null;
     const nameSet = entry.kind === "global-read" ? names.global : entry.kind === "literal" ? names.literal : null;
     const siteKey = `${entry.kind}:${entry.siteId}`;
-    if (command === undefined || command.name !== entry.name || command.plugin !== entry.plugin || command.plugin !== definition.plugin ||
+    if (command === undefined || command.name !== entry.name || command.plugin !== entry.plugin || command.plugin !== expectedStaticConstantPlugin(definition, entry.name) ||
         command.type !== "定数" || command.status !== "native" || commandsByName.length !== 1 || expectedNames === null || !expectedNames.includes(entry.name) ||
         nameSet === null || nameSet.has(entry.name) || catalogIds.has(entry.catalogId) || siteKeys.has(siteKey) || !/^0x[0-9a-f]{16}$/.test(entry.siteId) ||
         entry.officialEquivalent !== true || entry.runtime.interpreter.success !== true || entry.runtime.interpreter.count !== 1 ||
@@ -765,6 +779,10 @@ function validateStaticConstantEvidence(evidence, lock, standard, records, defin
     siteKeys.add(siteKey);
   }
   if (names.global.size !== globalReadNames.length || names.literal.size !== literalNames.length || [...names.global].some((name) => !globalReadNames.includes(name)) || [...names.literal].some((name) => !literalNames.includes(name))) throw new Error("静的定数証拠のname集合が不一致です");
+}
+
+function expectedStaticConstantPlugin(definition, name) {
+  return definition.commandPlugins?.[name] ?? definition.plugin;
 }
 
 function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, aotFixtureIds, compatJsFixtureIds, standard, matrix, dispatchEvidenceByCatalogId, staticConstantEvidenceByCatalogId) {
