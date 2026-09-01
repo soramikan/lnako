@@ -1032,12 +1032,14 @@
   {
     "id": "native-kansuji-commands",
     "oracle": "official-source",
+    "stderrIncludes": "is not a function",
     "commands": ["漢数字", "算用数字"],
     "source": "!「${PLUGIN_KANSUJI}」を取り込む\n漢数字(0)を表示\n漢数字(10001)を表示\n漢数字(0.01)を表示\n漢数字(-12)を表示\n漢数字(\"1e-3\")を表示\n漢数字(\"１２３\")を表示\n算用数字(\"一万一\")を表示\n算用数字(\"一・二\")を表示\n算用数字(\"一二万\")を表示\n算用数字(\"無量大数\")を表示\n算用数字(\"一無量大数\")を表示\n"
   },
   {
     "id": "native-kansuji-aot-generated-boundaries",
     "oracle": "official-source",
+    "stderrIncludes": "is not a function",
     "commands": ["漢数字", "算用数字"],
     "source": "!「${PLUGIN_KANSUJI}」を取り込む\n漢数字(\"\")を表示\n漢数字(\".5\")を表示\n漢数字(\"1.\")を表示\n漢数字(\"10e1\")を表示\n漢数字(\"01e2\")を表示\n漢数字(\".5e1\")を表示\n漢数字(\"1.2e-3\")を表示\n漢数字(\"-1e3\")を表示\n漢数字(\"+1e3\")を表示\n漢数字(\" 1 \")を表示\n漢数字(\"　1　\")を表示\n漢数字(\"Infinity\")を表示\n漢数字(\"-Infinity\")を表示\n漢数字(\"0x10\")を表示\n漢数字(\"0b10\")を表示\n漢数字(\"0o10\")を表示\n算用数字(\"一二\")を表示\n算用数字(\"一二万\")を表示\n算用数字(\"十百\")を表示\n算用数字(\"万\")を表示\n算用数字(\"一無量大数\")を表示\n"
   },
@@ -1076,6 +1078,7 @@
   {
     "id": "native-markup-commands",
     "oracle": "official-source",
+    "stderrIncludes": "is not a function",
     "commands": ["マークダウンHTML変換", "HTML整形"],
     "source": "!「${PLUGIN_MARKUP}」を取り込む\nJSON変換(マークダウンHTML変換(『# Heading\\n\\nplain *em* **strong**』))を表示\nJSON変換(HTML整形(『<div><p>A <strong>B</strong></p><p>C</p></div>』))を表示\n"
   },
