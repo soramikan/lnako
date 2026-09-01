@@ -157,12 +157,14 @@ pub const DynamicPreparationFn = *const fn (context: *anyopaque, interpreter: *I
 pub const BufferHost = struct {
     allocator: std.mem.Allocator,
     output: std.ArrayList(u8) = .empty,
+    dispatch_trace: std.ArrayList(u8) = .empty,
     elapsed_milliseconds: u64 = 0,
     now_milliseconds: i64 = 1_735_689_845_678,
     random_state: u64 = 0x4d595df4d0f33173,
 
     pub fn deinit(self: *BufferHost) void {
         self.output.deinit(self.allocator);
+        self.dispatch_trace.deinit(self.allocator);
         self.* = undefined;
     }
 
@@ -184,6 +186,11 @@ pub const BufferHost = struct {
     fn write(context: *anyopaque, bytes: []const u8) !void {
         const self: *BufferHost = @ptrCast(@alignCast(context));
         try self.output.appendSlice(self.allocator, bytes);
+    }
+
+    fn writeDispatchTrace(context: *anyopaque, _: []const u8, bytes: []const u8) !void {
+        const self: *BufferHost = @ptrCast(@alignCast(context));
+        try self.dispatch_trace.appendSlice(self.allocator, bytes);
     }
 
     fn sleepMilliseconds(context: *anyopaque, milliseconds: u64) !void {
@@ -1137,8 +1144,9 @@ pub const Interpreter = struct {
     }
 
     fn currentProgramOwner(self: *const Interpreter) *const ir.Program {
+        if (self.active_program_owner) |owner| return owner;
         if (self.active_frame) |frame| return frame.owner_program;
-        return self.active_program_owner orelse &self.root_program;
+        return &self.root_program;
     }
 
     fn sourcePathForFunction(self: Interpreter, owner_program: *const ir.Program, function_name: []const u8) []const u8 {
@@ -2611,6 +2619,29 @@ test "例外監視と動的ななでしこ実行を処理する" {
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("失敗\n3\n", host.written());
+}
+
+test "動的実行のbuiltin traceは動的IRのsiteを親IRへ混ぜない" {
+    const source = "\"1を表示\"をナデシコする。\n\"2を表示\"をナデシコ続。\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var runtime_host = host.host();
+    runtime_host.dispatch_trace_path = "dynamic-trace.jsonl";
+    runtime_host.dispatch_trace_writeFn = BufferHost.writeDispatchTrace;
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, runtime_host);
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("1\n2\n", host.written());
+    try std.testing.expect(std.mem.indexOf(u8, host.dispatch_trace.items, "\"siteId\":null,\"command\":\"表示\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, host.dispatch_trace.items, "\"siteId\":null,\"command\":\"ナデシコ\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, host.dispatch_trace.items, "\"siteId\":null,\"command\":\"ナデシコ続\"") == null);
 }
 
 test "動的実行中も保留Promiseのcallbackが生成元IRを参照する" {

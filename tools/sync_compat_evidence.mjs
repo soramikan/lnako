@@ -37,6 +37,8 @@ const runtimeFixtureFiles = new Set([
 const dispatchEvidenceFollowUpPaths = new Set([
   ".github/workflows/ci.yml",
   "README.md",
+  "benchmarks/results/latest.json",
+  "benchmarks/results/latest.md",
   "compat/v3.7.24/dispatch-evidence.json",
   "compat/v3.7.24/evidence.json",
   "compat/v3.7.24/interpreter-only-classification.json",
