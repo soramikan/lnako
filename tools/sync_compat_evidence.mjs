@@ -271,16 +271,16 @@ const entries = standard.commands.map((command) => {
     .map((record) => record.id)
     .sort();
   const fixtureCoverageState = fixtureCoverageStateFor(command.status, interpreterFixtureIds, aotFixtureIdsForCommand, compatJsFixtureIdsForCommand);
-  const identityResolution = duplicateNames.has(command.name) ? "ambiguous-name" : "unique-name";
   const dispatchSites = dispatchEvidenceByCatalogId.get(command.id) ?? [];
   const staticConstantSites = staticConstantEvidenceByCatalogId.get(command.id) ?? [];
-  const selectedProof = identityResolution === "unique-name"
-    ? dispatchSites.length > 0
-      ? { kind: "dispatch", schema: dispatchEvidence.schema, fixture: dispatchEvidence.fixture, officialComparison: dispatchEvidence.officialComparison, sites: dispatchSites }
-      : staticConstantSites.length > 0
-        ? { kind: "static-constant", ...staticConstantProofByCatalogId.get(command.id), sites: staticConstantSites }
-        : null
-    : null;
+  const identityResolution = duplicateNames.has(command.name)
+    ? staticConstantSites.length > 0 ? "explicit-catalog-id" : "ambiguous-name"
+    : "unique-name";
+  const selectedProof = identityResolution === "unique-name" && dispatchSites.length > 0
+    ? { kind: "dispatch", schema: dispatchEvidence.schema, fixture: dispatchEvidence.fixture, officialComparison: dispatchEvidence.officialComparison, sites: dispatchSites }
+    : staticConstantSites.length > 0
+      ? { kind: "static-constant", ...staticConstantProofByCatalogId.get(command.id), sites: staticConstantSites }
+      : null;
   const executionSites = selectedProof?.sites ?? [];
   const executionEvidenceState = selectedProof === null
     ? "unverified"
@@ -441,6 +441,8 @@ function evidenceReason(status, coverage, identityResolution, interpreterFixture
   const identity =
     identityResolution === "ambiguous-name"
       ? "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。"
+      : identityResolution === "explicit-catalog-id"
+        ? "同名異pluginだが、静的定数fixtureの明示catalog IDで対象entryを固定した。"
       : "catalog IDに対する実行dispatch接続はまだ追跡していない。";
   const proofDescription = proofKind === "static-constant"
     ? "明示catalog ID・global/literal site IDについて、同一fixtureのInterpreter/AOT trace、対応manifest、公式差分の成功を機械検証した"
@@ -861,7 +863,10 @@ function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, a
     if (entry.name !== canonical.name || entry.plugin !== canonical.plugin || entry.status !== canonical.status) throw new Error(`evidence.jsonのcatalog identityが不一致です: ${entry.id}`);
     if (!allowedCoverage.has(entry.fixtureCoverageState)) throw new Error(`fixtureCoverageStateが不正です: ${entry.id}`);
     if (!new Set(["verified", "trace-confirmed-unattested", "unverified"]).has(entry.executionEvidenceState)) throw new Error(`executionEvidenceStateが不正です: ${entry.id}`);
-    const expectedIdentity = duplicateNames.has(entry.name) ? "ambiguous-name" : "unique-name";
+    const hasStaticConstantProof = (staticConstantEvidenceByCatalogId.get(entry.id) ?? []).length > 0;
+    const expectedIdentity = duplicateNames.has(entry.name)
+      ? hasStaticConstantProof ? "explicit-catalog-id" : "ambiguous-name"
+      : "unique-name";
     if (entry.identityResolution !== expectedIdentity) throw new Error(`identityResolutionが不一致です: ${entry.id}`);
     if (entry.interpreterFixtureIds.some((id) => nativeFixtureIds.has(id) || compatJsFixtureIds.has(id))) throw new Error(`interpreterFixtureIdsにAOTまたはcompat-js IDがあります: ${entry.id}`);
     for (const id of entry.aotFixtureIds ?? []) if (!aotFixtureIds.has(id)) throw new Error(`AOT fixture IDがAOT対応fixtureにありません: ${entry.id} -> ${id}`);
@@ -887,7 +892,7 @@ function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, a
       const expectedSiteIds = proofSites.map((site) => site.siteId).sort();
       const validStaticState = isStaticConstantProof && entry.executionEvidenceState === "trace-confirmed-unattested" && entry.status === "native" && matrix.entries.find((candidate) => candidate.id === entry.id)?.type === "定数";
       const validDispatchState = isDispatchProof && ["verified", "trace-confirmed-unattested"].includes(entry.executionEvidenceState);
-      if (entry.identityResolution !== "unique-name" || (!validDispatchState && !validStaticState) ||
+      if (!new Set(["unique-name", "explicit-catalog-id"]).has(entry.identityResolution) || (!validDispatchState && !validStaticState) ||
           (isDispatchProof && proof.fixtureId !== "native-dispatch-commands") || (isStaticConstantProof && !staticConstantFixtureIds.has(proof.fixtureId)) ||
           proof.state !== entry.executionEvidenceState || !Array.isArray(proof.siteIds) || proof.siteIds.length === 0 || JSON.stringify(proof.siteIds) !== JSON.stringify(expectedSiteIds) ||
           !Array.isArray(proof.officialComparison) || proof.officialComparison.length === 0) {
