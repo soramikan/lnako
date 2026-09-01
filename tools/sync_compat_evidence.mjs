@@ -56,6 +56,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "benchmarks/results/latest.md",
   "compat/v3.7.24/dispatch-evidence.json",
   "compat/v3.7.24/static-constant-evidence.json",
+  "compat/v3.7.24/static-string-constant-evidence.json",
   "compat/v3.7.24/evidence.json",
   "compat/v3.7.24/interpreter-only-classification.json",
   "docs/COMPATIBILITY_EVIDENCE.md",
@@ -65,6 +66,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "tools/check_ci_workflow.mjs",
   "tools/check_aot_suite_parallel.mjs",
   "tools/compare_native_oracle.mjs",
+  "tools/check_static_constant_evidence.mjs",
   "tools/sync_compat_evidence.mjs",
 ]);
 const arguments_ = process.argv.slice(2);
