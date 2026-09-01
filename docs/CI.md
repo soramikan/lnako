@@ -69,6 +69,8 @@ macOSの通常suiteもjob境界へ分けます。それぞれLinux／Windowsは�
 macOS上限によるqueue発生の観測記録として扱う。現行の5 job構成では、通常suiteを`mac-core-standard-support`と`mac-host-compat`へ分け、
 AOT native 3 route jobへ割り当てる。macOSのAOT supportは前者へ統合し、全検証内容を維持したまま6件目のqueueを作らない。
 
+分割後の[run 33493025889](https://github.com/soramikan/lnako/actions/runs/33493025889)（`991dd3f`）は、45 test job＋1 attestation jobを全て成功させた。runの壁時計は09:35:34Z〜09:48:38Zの13分04秒、jobの実行時間合計は約283分47秒だった。macOSの5 job（通常2＋AOT native 3）は09:35:37〜09:35:38Zにすべて開始し、6件目の待ち行列は発生しなかった。これはjob分割後の基準値であり、runner合計時間の削減を意味しない。macOSの同時実行上限を超えるjob追加は行わず、Linux／Windows側だけで独立job化の効果を測定する。
+
 ## AOT検証の共通buildとjob分割
 
 各AOT jobは自身のrunner上でcompilerを一度だけbuildし、`--no-build`の検査へ渡します。native jobは`LNAKO_NATIVE_ORACLE_JOBS=1`
