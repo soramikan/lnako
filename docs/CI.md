@@ -608,3 +608,27 @@ native 27 job＋support 8 job、通常test 10 jobの計45 test jobとなる。
 
 この変更のCI性能値は未確定であり、次のpushでは先に直前の完了済みrunの結論と失敗ログを確認する。新runの完了は待たずに実装を続け、
 次回push前にLinux／Windowsの4 support jobの開始待ち、各step時間、run全体のwall-clock、runner合計、cache hit/miss、3 OS artifact、attestationを確認する。
+
+## 直近CIの待機とmacOS 5枠（run 33505339154）
+
+[run 33505339154](https://github.com/soramikan/lnako/actions/runs/33505339154)（`ecb93ac`）は45 test job＋attestationをすべて成功させた。作成
+12:00:10Zから更新12:17:09Zまでのwall-clockは1,019秒（16分59秒）、job実測のrunner合計は17,448秒（4時間50分48秒）だった。
+失敗jobはなく、attestationも成功したため、検証範囲の削減やCI失敗とは扱わない。
+
+macOSは5 jobを作成し、4 jobは12:00:14〜12:00:18Zに開始したが、5件目の`AOT native routes O2`は12:02:17Z開始だった。
+このrunではmacOS runnerの同時実行枠によるものと判断される約2分03秒の待機を観測した。5件目を追加して6件へ増やす変更は行わず、macOSは常に5件以内へ制限する。
+
+| macOS job | 開始から完了まで |
+|---|---:|
+| `mac-core-standard-support` | 10分18秒 |
+| `mac-host-compat` | 5分29秒 |
+| `AOT native routes O0+O1` | 15分29秒 |
+| `AOT native routes O2` | 14分17秒（開始待機約2分03秒を別計上） |
+| `AOT native routes O3` | 9分25秒 |
+
+今回のcritical pathは`O0+O1`の15分29秒と、その後のattestation 31秒であり、Linux／Windowsのjob追加だけでmacOSの長いrouteを短縮できるとは判断しない。
+macOS native routeをさらにjob分割する場合は、通常2 jobの統合などで5枠を超えない代替構成を先に実測し、全O0〜O3・全fixture・attestationを維持できる場合だけ採用する。
+
+macOS 5 jobのZig tarball、Zig build、LLVM／QuickJS、公式oracle cacheは全jobでhitした。終了時のZig cache保存は同一run内のjob競合で一部がreserve失敗したが、検証結果には影響せず、次回runのrestore keyには前回成功cacheを使えている。従ってこのrunの遅延要因はcache missではなく、macOS O2の枠待ちと`O0+O1`の実行時間増加として記録する。
+
+次のpush時も、まずこのrunの結論と`gh run view --log-failed`を確認する。新runの完了は待たず、次回push前にmacOSの5 job開始時刻・queue、各native route、wall-clock、runner合計、cache hit/miss、3 OS artifact、attestationを再確認する。
