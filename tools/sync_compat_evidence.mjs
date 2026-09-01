@@ -57,6 +57,15 @@ const staticConstantEvidenceInputs = [
     plugin: "plugin_node",
   },
   {
+    path: resolve(root, "compat/v3.7.24/static-promise-reject-constant-evidence.json"),
+    fixtureId: "native-system-promise-reject",
+    constantNames: new Set(["そ"]),
+    globalReadCount: 1,
+    manifestExtraGlobalReadNames: ["対象", "scalar-constants__F"],
+    literalNames: new Set(),
+    plugin: "plugin_promise",
+  },
+  {
     path: resolve(root, "compat/v3.7.24/static-caniuse-agents-constant-evidence.json"),
     fixtureId: "native-caniuse-agents",
     globalReadCount: 1,

@@ -48,6 +48,13 @@ const staticConstantFixtureDefinitions = {
     literalNames: new Set(),
     plugin: "plugin_node",
   },
+  "native-system-promise-reject": {
+    constantNames: new Set(["そ"]),
+    globalReadCount: 1,
+    manifestExtraGlobalReadNames: ["対象", "scalar-constants__F"],
+    literalNames: new Set(),
+    plugin: "plugin_promise",
+  },
   "native-caniuse-agents": {
     globalReadCount: 1,
     globalTraceCount: 3,
