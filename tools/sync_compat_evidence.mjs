@@ -18,18 +18,28 @@ const staticConstantEvidenceInputs = [
     fixtureId: "native-scalar-system-constants",
     globalReadCount: 17,
     literalNames: new Set(["はい", "いいえ", "真", "偽", "オン", "オフ", "NULL"]),
+    plugin: "plugin_system",
   },
   {
     path: resolve(root, "compat/v3.7.24/static-string-constant-evidence.json"),
     fixtureId: "native-string-system-constants",
     globalReadCount: 24,
     literalNames: new Set(),
+    plugin: "plugin_system",
   },
   {
     path: resolve(root, "compat/v3.7.24/static-array-constant-evidence.json"),
     fixtureId: "native-array-system-constants",
     globalReadCount: 2,
     literalNames: new Set(),
+    plugin: "plugin_system",
+  },
+  {
+    path: resolve(root, "compat/v3.7.24/static-node-archive-constant-evidence.json"),
+    fixtureId: "native-node-archive-constant",
+    globalReadCount: 1,
+    literalNames: new Set(),
+    plugin: "plugin_node",
   },
 ];
 const staticConstantFixtureIds = new Set(staticConstantEvidenceInputs.map((input) => input.fixtureId));
@@ -64,6 +74,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "compat/v3.7.24/static-constant-evidence.json",
   "compat/v3.7.24/static-string-constant-evidence.json",
   "compat/v3.7.24/static-array-constant-evidence.json",
+  "compat/v3.7.24/static-node-archive-constant-evidence.json",
   "compat/v3.7.24/evidence.json",
   "compat/v3.7.24/interpreter-only-classification.json",
   "docs/COMPATIBILITY_EVIDENCE.md",
@@ -734,7 +745,7 @@ function validateStaticConstantEvidence(evidence, lock, standard, records, defin
     const expectedNames = entry.kind === "global-read" ? globalReadNames : entry.kind === "literal" ? literalNames : null;
     const nameSet = entry.kind === "global-read" ? names.global : entry.kind === "literal" ? names.literal : null;
     const siteKey = `${entry.kind}:${entry.siteId}`;
-    if (command === undefined || command.name !== entry.name || command.plugin !== entry.plugin || command.plugin !== "plugin_system" ||
+    if (command === undefined || command.name !== entry.name || command.plugin !== entry.plugin || command.plugin !== definition.plugin ||
         command.type !== "定数" || command.status !== "native" || commandsByName.length !== 1 || expectedNames === null || !expectedNames.includes(entry.name) ||
         nameSet === null || nameSet.has(entry.name) || catalogIds.has(entry.catalogId) || siteKeys.has(siteKey) || !/^0x[0-9a-f]{16}$/.test(entry.siteId) ||
         entry.officialEquivalent !== true || entry.runtime.interpreter.success !== true || entry.runtime.interpreter.count !== 1 ||
