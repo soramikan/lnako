@@ -3,7 +3,7 @@
 `compat/v3.7.24/evidence.json`は、標準cnako 527 entryをカタログID単位で
 既存fixtureへ関連付ける台帳です。通常のfixture関連付けは実行結果やdispatch接続を証明しません。
 追跡中の証拠は、macOS arm64の単一実行環境で、`tests/oracle/dispatch-cases.json`が`native-cut-commands`を基礎に生成する明示fixture `native-dispatch-commands`についてcompile manifest、Interpreter/AOT trace、公式差分を
-同一fixture・siteで突き合わせられた一意名314 entryが`trace-confirmed-unattested`です（既存14命令に型変換系16命令、算術・比較系15命令、配列系12命令、文字列系21命令、論理・ビット・集約系20命令、表系14命令、数学系36命令、文字変換系4命令、置換系2命令、出現1命令、形式・文字種判定系7命令、値・状態系12命令、文字列合成・URL系12命令、JSON・要素数系9命令、幅変換系8命令、配列callback系4命令、配列構造系7命令、辞書・hash key系7命令、配列スタック・複製・連番系5命令、パス系5命令、礼節系6命令、動的実行系2命令、標準出力系6命令、デバッグ待機系1命令、デバッグ表示・配列シャッフル系2命令、システム関数存在系1命令、実行時間計測系1命令、ハテナ関数設定・実行系2命令、システムメタデータ一覧系5命令（システム関数一覧取得、プラグイン一覧取得、モジュール一覧取得、助詞一覧取得、予約語一覧取得）、Node HTTP body系1命令（POSTデータ生成）、Node状態・ファイル情報系3命令（AJAXオプション設定、ファイルサイズ取得、ファイル情報取得）、Nodeファイル存在系2命令（存在、フォルダ存在）、Nodeファイル操作系5命令（フォルダ作成、保存、ファイル列挙、全ファイル列挙、ファイル削除）、Nodeファイルcopy・move系4命令（ファイルコピー、ファイル上書コピー、ファイル移動、ファイル上書移動）、CSV系7命令、秒待系8命令、Promise成功系3命令、Promise処理系2命令、Promise束ね系1命令、Node host情報・環境系10命令、ハッシュ値計算1命令、Node文字コード系4命令、日時書式系1命令、時間・乱数系4命令、グローバル関数一覧取得1命令を加えた範囲）。追跡中のJSONにはattestationを記録しないため、ローカルの`verified`は0件で、残り213 entryが`unverified`です。
+同一fixture・siteで突き合わせられた一意名316 entryが`trace-confirmed-unattested`です（既存14命令に型変換系16命令、算術・比較系15命令、配列系12命令、文字列系21命令、論理・ビット・集約系20命令、表系14命令、数学系36命令、文字変換系4命令、置換系2命令、出現1命令、形式・文字種判定系7命令、値・状態系12命令、文字列合成・URL系12命令、JSON・要素数系9命令、幅変換系8命令、配列callback系4命令、配列構造系7命令、辞書・hash key系7命令、配列スタック・複製・連番系5命令、パス系5命令、礼節系6命令、動的実行系2命令、標準出力系6命令、デバッグ待機系1命令、デバッグ表示・配列シャッフル系2命令、システム関数存在系1命令、実行時間計測系1命令、ハテナ関数設定・実行系2命令、システムメタデータ一覧系5命令（システム関数一覧取得、プラグイン一覧取得、モジュール一覧取得、助詞一覧取得、予約語一覧取得）、Node HTTP body系1命令（POSTデータ生成）、Node状態・ファイル情報系3命令（AJAXオプション設定、ファイルサイズ取得、ファイル情報取得）、Nodeファイル存在系2命令（存在、フォルダ存在）、Nodeファイル操作系5命令（フォルダ作成、保存、ファイル列挙、全ファイル列挙、ファイル削除）、Nodeファイルcopy・move系4命令（ファイルコピー、ファイル上書コピー、ファイル移動、ファイル上書移動）、Node cwd変更系2命令（カレントディレクトリ変更、作業フォルダ変更）、CSV系7命令、秒待系8命令、Promise成功系3命令、Promise処理系2命令、Promise束ね系1命令、Node host情報・環境系10命令、ハッシュ値計算1命令、Node文字コード系4命令、日時書式系1命令、時間・乱数系4命令、グローバル関数一覧取得1命令を加えた範囲）。追跡中のJSONにはattestationを記録しないため、ローカルの`verified`は0件で、残り211 entryが`unverified`です。
 
 AOT差分artifactとdispatch証拠は入力・実行物・結果のSHA-256を内包します。各OS内では公式source・生成JavaScript・lnako run・AOT O0の
 stdout/stderr hashを一致させますが、OS間のdispatch意味比較では、パス区切りなどOS依存の出力hashを含めず、fixture・route結果状態・catalog/site構造を比較します。
@@ -18,7 +18,7 @@ Actions artifactの保持期限後も外部検証できるよう、run `32983175
 historical catalogのdigestとworkflow identityを固定し、`node tools/check_tracked_dispatch_attestation.mjs`が禁止field、対象commit、bundleの
 in-toto subject、SLSA predicate、GitHub Actions workflow identityを検査する。bundleの署名を暗号学的に再検証する場合は、保存したbundleを
 公式`gh attestation verify`へ同じ厳格なidentity引数で渡す。固定されたhistorical catalogの`verified: 4`は現在commitの台帳へ自動反映せず、
-追跡中の`compat/v3.7.24/evidence.json`は`verified: 0`、`trace-confirmed-unattested: 314`を記録する。catalog再生成時の`--historical-commit`は
+追跡中の`compat/v3.7.24/evidence.json`は`verified: 0`、`trace-confirmed-unattested: 316`を記録する。catalog再生成時の`--historical-commit`は
 この明示的な履歴検査でだけ対象commitとの差異を許可し、明示的な非canonical outputを必須にする（通常のsync検査は、証拠生成元のfixture/source commitとの一致、またはその祖先から証拠・台帳・文書・CIとdispatch生成器以外の検証器だけを記録した後続commitを要求し、canonical output保護は緩めない）。target commitとこの履歴固定を追加する後続commitを混同しない。
 
 ### 証拠記録commitの追従
@@ -99,7 +99,7 @@ Node Bufferのenumerable prototype property 95件の順序・`parent`・`offset`
 疎な最上位表のhole・nullish行に対する`length` property read診断は`native-system-table-sparse-length-errors`で`表列数`・`表行列交換`・`表右回転`を比較します。
 同一ユーザー関数の`prototype` object identityと、そのown `constructor` back-referenceは`native-system-table-inherited-properties`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較します。
 `interpreter-only` 0 entryです。execution evidenceは`verified` 0、
-`trace-confirmed-unattested` 314、`unverified` 213です。
+`trace-confirmed-unattested` 316、`unverified` 211です。
 fixtureの関連付けを変更した場合は、次で派生台帳の生成と検査を行います。
 
 ```sh

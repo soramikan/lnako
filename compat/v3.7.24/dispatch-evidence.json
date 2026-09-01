@@ -8,7 +8,7 @@
   "fixture": {
     "id": "native-dispatch-commands",
     "file": "native-cases.json",
-    "sourceSha256": "0d0833c75a6e71b27d21e67445f0539083643b3134ad85f6925ade299332478d"
+    "sourceSha256": "a5b276d467e6045f224013100da2657493bcf96d7c0937c3f30fda0a06c85f11"
   },
   "officialComparison": {
     "oracle": "official-source",
@@ -23,25 +23,25 @@
       "officialSource": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "b99cac43bf68f2b6b946a12c1d8d0c5627045781f52a62a003d1ec670129e6e4",
+        "stdoutSha256": "fef4fcec6ae1c86b35cfc3f8c92387dee433099d9d80ee07f1d3929929f926c2",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "officialGenerated": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "b99cac43bf68f2b6b946a12c1d8d0c5627045781f52a62a003d1ec670129e6e4",
+        "stdoutSha256": "fef4fcec6ae1c86b35cfc3f8c92387dee433099d9d80ee07f1d3929929f926c2",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoRun": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "b99cac43bf68f2b6b946a12c1d8d0c5627045781f52a62a003d1ec670129e6e4",
+        "stdoutSha256": "fef4fcec6ae1c86b35cfc3f8c92387dee433099d9d80ee07f1d3929929f926c2",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoNativeO0": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "b99cac43bf68f2b6b946a12c1d8d0c5627045781f52a62a003d1ec670129e6e4",
+        "stdoutSha256": "fef4fcec6ae1c86b35cfc3f8c92387dee433099d9d80ee07f1d3929929f926c2",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       }
     }
@@ -63,23 +63,23 @@
     },
     "lnako": {
       "binarySha256": "e1960a50cde0c248245d25e6fbd2e9f70e3659eac1468cbff896c76a8c4c5eaa",
-      "commit": "0e12ce393517ab4af72aa98c3b492b8cae1ed8c6",
+      "commit": "855f209d5772e622c3e95d1b743d6215af2fe705",
       "dirty": false
     },
     "raw": {
-      "interpreterTraceSha256": "d4fb69b9abd6559c97164bff58e3e8d03614bf0c217ac5c21d417e11c6861598",
-      "aotTraceSha256": "c95b0a0116075d20ca97380c344f4c49a9d0c2f21269b5c10ae574ffd7a4da79",
-      "compileManifestSha256": "630ec8d07a42a5166239608df5d921cc047111f99e79961eb0a910299d2c17fa"
+      "interpreterTraceSha256": "f692d5fd64a64cea49b867e34955f1a805072db8fa98bd9203dccdb9e7a1a70b",
+      "aotTraceSha256": "e35fef77d295b7f8a4f8c9c0a24590a48c3ea41828ebabf4b90c5968d0c1e2c4",
+      "compileManifestSha256": "76f9eb4ec20918d3d882736237e1b763e91f857a1fb616b7dd119e03370cffb4"
     }
   },
   "trace": {
     "interpreter": {
       "schema": 2,
-      "eventCount": 871
+      "eventCount": 873
     },
     "aot": {
       "schema": 2,
-      "eventCount": 1742
+      "eventCount": 1746
     }
   },
   "sites": [
@@ -123,7 +123,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 869,
+          "callId": 871,
           "count": 1
         }
       },
@@ -146,7 +146,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 870,
+          "callId": 872,
           "count": 1
         }
       },
@@ -169,7 +169,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 860,
+          "callId": 862,
           "count": 1
         }
       },
@@ -192,7 +192,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 861,
+          "callId": 863,
           "count": 1
         }
       },
@@ -215,7 +215,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 862,
+          "callId": 864,
           "count": 1
         }
       },
@@ -238,7 +238,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 865,
+          "callId": 867,
           "count": 1
         }
       },
@@ -261,7 +261,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 866,
+          "callId": 868,
           "count": 1
         }
       },
@@ -284,7 +284,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 867,
+          "callId": 869,
           "count": 1
         }
       },
@@ -307,7 +307,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 863,
+          "callId": 865,
           "count": 1
         }
       },
@@ -330,7 +330,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 864,
+          "callId": 866,
           "count": 1
         }
       },
@@ -353,7 +353,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 868,
+          "callId": 870,
           "count": 1
         }
       },
@@ -19933,10 +19933,56 @@
       "officialEquivalent": true
     },
     {
+      "catalogId": "command-0729",
+      "name": "作業フォルダ変更",
+      "plugin": "plugin_node",
+      "siteId": "0x000000170000035c",
+      "sourceName": "作業フォルダ変更",
+      "canonicalOpcode": "node_change_directory",
+      "opcode": 200,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_node",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 859,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0727",
+      "name": "カレントディレクトリ変更",
+      "plugin": "plugin_node",
+      "siteId": "0x000000170000035d",
+      "sourceName": "カレントディレクトリ変更",
+      "canonicalOpcode": "node_change_directory",
+      "opcode": 200,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_node",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 860,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
       "catalogId": "command-0718",
       "name": "ファイル削除",
       "plugin": "plugin_node",
-      "siteId": "0x000000170000035c",
+      "siteId": "0x000000170000035e",
       "sourceName": "ファイル削除",
       "canonicalOpcode": "node_file_delete",
       "opcode": 325,
@@ -19949,7 +19995,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 859,
+          "callId": 861,
           "count": 1
         }
       },
