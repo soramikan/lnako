@@ -469,10 +469,14 @@ Windowsの外部Nodeプロセス起動と350msの待機窓がrunner負荷の影�
 [run 33381540990](https://github.com/soramikan/lnako/actions/runs/33381540990)では、Windows native oracleは9分34秒、dispatch evidenceは2分03秒、
 coverageは2分27秒で完了しており、4 workerがこの並列構成でwall-clockを改善したとは扱えない。
 
-次のpushでは、AOT runnerの`LNAKO_NATIVE_ORACLE_JOBS`を2へ戻す。native oracleの各fixture内の7経路・O0〜O3と、dispatch監査の全fixture・
+当時の次のpushでは、AOT runnerの`LNAKO_NATIVE_ORACLE_JOBS`を2へ戻す計画とした。native oracleの各fixture内の7経路・O0〜O3と、dispatch監査の全fixture・
 全siteは維持し、worker数だけをrunner負荷に合わせる。また、完了順を検証するfixtureの待機を0.35秒から1秒へ広げる。fast側5ms・slow側200msの
-相対的な完了順は変えず、外部プロセス起動の揺らぎだけに余裕を持たせるためである。次回以降、3 OSのAOT子検査、15 matrix job、artifact、
-attestation、壁時計、runner合計時間、cache hit/missを完了済みrunで記録し、worker=2の短縮効果と再現性を確定する。
+相対的な完了順は変えず、外部プロセス起動の揺らぎだけに余裕を持たせるためである。実際にはこの1秒待機・5ms対200msの差でも、macOS 5 job同時実行時の
+`mac-host-compat`でInterpreterの順序が`SLOW,FAST`へ反転した（[run 33467401327](https://github.com/soramikan/lnako/actions/runs/33467401327)）。
+その後、worker内並列化では壁時計の改善が再現しなかったため、現行workflowはnative routeをjobへ分割し、各native jobの
+`LNAKO_NATIVE_ORACLE_JOBS`を1としている。検証を削らずに起動揺らぎの余裕をさらに広げるため、現在のfixtureはfast側を即時出力、slow側を1秒遅延、
+待機を2秒へ変更する。次回以降、3 OSのAOT子検査、現行の39 test job＋attestation、artifact、壁時計、runner合計時間、cache hit/missを
+完了済みrunで記録し、macOS 5 job枠内での再現性を確認する。
 
 ローカルmacOS arm64で同じ2 worker設定を使ったAOT runnerでは、native oracleが796.92秒、dispatch evidence/coverageが283.75秒、
 securityが1.02秒で成功した。通常sandboxではHTTPのloopback bindだけが`EPERM`になったため、loopback権限付きの単独検査でHTTPの

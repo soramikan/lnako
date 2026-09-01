@@ -49,10 +49,10 @@
     "aot": true,
     "commands": ["起動時"],
     "files": {
-      "child-slow.mjs": "setTimeout(() => process.stdout.write('SLOW'), 200)",
-      "child-fast.mjs": "setTimeout(() => process.stdout.write('FAST'), 5)"
+      "child-slow.mjs": "setTimeout(() => process.stdout.write('SLOW'), 1000)",
+      "child-fast.mjs": "process.stdout.write('FAST')"
     },
-    "source": "C=[]\nF=関数(S)それは配列追加(C,S);ここまで\nFで\"node child-slow.mjs\"を起動時\nFで\"node child-fast.mjs\"を起動時\n1秒待\nJSON変換(C)を表示\n"
+    "source": "C=[]\nF=関数(S)それは配列追加(C,S);ここまで\nFで\"node child-slow.mjs\"を起動時\nFで\"node child-fast.mjs\"を起動時\n2秒待\nJSON変換(C)を表示\n"
   },
   {
     "id": "plugin-node-stdin",
