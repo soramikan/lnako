@@ -9,28 +9,28 @@ export async function readDispatchFixture(root, cases) {
     throw new Error("dispatch専用fixture設定のschemaが不正です");
   }
   const definition = config.fixture;
-  const prefixCommands = definition.prefixCommands ?? [];
-  const sourcePrefix = definition.sourcePrefix ?? "";
+  const postfixCommands = definition.postfixCommands ?? [];
+  const sourcePostfix = definition.sourcePostfix ?? "";
   if (definition.baseFile !== "native-cases.json" || typeof definition.baseId !== "string" || definition.baseId.length === 0 ||
       typeof definition.id !== "string" || definition.id.length === 0 || typeof definition.sourceSuffix !== "string" ||
       !definition.sourceSuffix.endsWith("\n") || !Array.isArray(definition.commands) || definition.commands.length === 0 ||
       definition.commands.some((name) => typeof name !== "string" || name.length === 0) ||
-      new Set(definition.commands).size !== definition.commands.length || !Array.isArray(prefixCommands) ||
-      prefixCommands.some((name) => typeof name !== "string" || name.length === 0) ||
-      new Set(prefixCommands).size !== prefixCommands.length || typeof sourcePrefix !== "string" ||
-      (sourcePrefix.length > 0 && !sourcePrefix.endsWith("\n"))) {
+      new Set(definition.commands).size !== definition.commands.length || !Array.isArray(postfixCommands) ||
+      postfixCommands.some((name) => typeof name !== "string" || name.length === 0) ||
+      new Set(postfixCommands).size !== postfixCommands.length || typeof sourcePostfix !== "string" ||
+      (sourcePostfix.length > 0 && !sourcePostfix.endsWith("\n"))) {
     throw new Error("dispatch専用fixture設定の定義が不正です");
   }
   const base = cases.find((candidate) => candidate.id === definition.baseId);
   if (base === undefined || !Array.isArray(base.commands) || typeof base.source !== "string") {
     throw new Error(`dispatch専用fixtureのbaseがありません: ${definition.baseId}`);
   }
-  const commands = [...base.commands, ...prefixCommands, ...definition.commands];
+  const commands = [...base.commands, ...definition.commands, ...postfixCommands];
   if (new Set(commands).size !== commands.length) throw new Error("dispatch専用fixtureのcommandsがbaseと重複しています");
   return {
     id: definition.id,
     file: definition.baseFile,
-    source: `${base.source}${base.source.endsWith("\n") ? "" : "\n"}${sourcePrefix}${definition.sourceSuffix}`,
+    source: `${base.source}${base.source.endsWith("\n") ? "" : "\n"}${definition.sourceSuffix}${sourcePostfix}`,
     commands,
   };
 }
