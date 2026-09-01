@@ -538,6 +538,12 @@ Node 24のECMAScript property escapeを生成時oracleとして、General_Catego
 |---|---|---|---|
 | `\\p{...}` / `\\P{...}`のproperty名 | `u`/`v`フラグ時にECMAScriptのbinary property、General_Category、Script / Script_Extensions propertyと規定aliasを解決し、未知名は`Invalid property name`で失敗する | 生成済みZig範囲表でbinary 53種・General_Category 38種・Script/Script_Extensions 175値を解決する。`iu`/`iv`ではsimple foldグループのproperty所属を使って大文字・小文字を照合する。`v`の基本code point property escapeと基本的な集合演算は実装するが、文字列property escapeなど未対応の集合構文は拒否する。通常モードはJS runtimeを使わない | `native-system-regexp-unicode-properties`、`native-system-regexp-unicode-property-aliases`、`native-system-regexp-unicode-script-extensions`、`native-system-regexp-unicode-all-scripts`、`native-system-regexp-unicode-ignore-case`、`native-system-regexp-unicode-v-basic`、`native-system-regexp-unicode-property-error`、`TODO: regexp-unicode-flags` |
 
+## 同名日時命令のcatalog IDと公式登録経路
+
+公式の命令一覧は、`今`、`システム時間`、`今日`、`明日`、`昨日`、`今年`、`来年`、`去年`、`今月`、`来月`、`先月`、`曜日`、`曜日番号取得`、`UNIXTIME変換`、`UNIX時間変換`、`日時変換`、`和暦変換`、`年数差`、`月数差`、`日数差`、`時間差`、`分差`、`秒差`、`日時差`、`時間加算`、`日付加算`、`日時加算`を`plugin_system`と`plugin_datetime`へ重複掲載する。一方、固定v3.7.24の通常cnako3初期化は`plugin_system`側を登録し、`plugin_datetime`側は通常経路に現れない。命令名だけのfixtureではこのcatalog IDを区別できず、公式ドキュメントの短い命令説明からも登録経路までは判断できないため、catalog／登録経路の不具合候補として記録する。
+
+canonical `native-dispatch-commands`は、通常経路で実際に呼ばれる`plugin_system`側27 entryを`catalogIds`で`command-0228`〜`command-0256`の該当IDへ明示固定し、Interpreter trace・AOT compile manifest・AOT runtime trace・公式4経路比較を同じsiteへ結び付ける。`plugin_datetime`側はこのtraceから推測せず、明示importを含む別fixtureができるまで`unverified`とする。これは日時命令の実装未完了を示すものではなく、同名catalog identityを過大主張しないための証拠制限である。対象経路はInterpreter／純LLVM AOTで、QuickJSは標準命令の証拠対象外。TODOは`duplicate-catalog-dispatch-identity`と`catalog-plugin-datetime-target`である。
+
 ## 更新規則
 
 - 説明文と実装が食い違う場合は、固定した公式v3.7.24の実行結果を優先する。

@@ -225,7 +225,7 @@ function validateCatalogEntryStates(catalog, dispatchIds, dispatchState, label) 
     stateIds.get(entry.executionEvidenceState).add(entry.id);
     const promoted = dispatchIds.has(entry.id);
     if (promoted) {
-      if (entry.executionEvidenceState !== dispatchState || entry.identityResolution !== "unique-name") throw new Error(`${label}のdispatch entry state／identityが不正です: ${entry.id}`);
+      if (entry.executionEvidenceState !== dispatchState || !new Set(["unique-name", "explicit-catalog-id"]).has(entry.identityResolution)) throw new Error(`${label}のdispatch entry state／identityが不正です: ${entry.id}`);
       assertKeys(entry.executionEvidence, ["proofSchema", "fixtureId", "siteIds", "officialComparison", "state"], `${label} execution evidence`);
       assertEqual(entry.executionEvidence.proofSchema, "lnako.dispatch-evidence.v2", `${label} proof schema`);
       assertEqual(entry.executionEvidence.fixtureId, "native-cut-commands", `${label} fixture ID`);

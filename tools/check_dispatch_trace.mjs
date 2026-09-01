@@ -40,6 +40,7 @@ if (catalog.commandCount !== 527 || catalog.commands.length !== 527) throw new E
 const catalogByName = Map.groupBy(catalog.commands, (command) => command.name);
 const cases = JSON.parse(await readFile(resolve(root, "tests/oracle/native-cases.json"), "utf8"));
 const fixture = await readDispatchFixture(root, cases);
+const catalogOverrides = fixture.catalogIds;
 const nodeCases = JSON.parse(await readFile(resolve(root, "tests/oracle/node-file-cases.json"), "utf8"));
 const nodeFixture = nodeCases.find((candidate) => candidate.id === "plugin-node-path-host");
 if (nodeFixture === undefined) throw new Error("Node route trace用fixtureがありません: plugin-node-path-host");
@@ -343,7 +344,7 @@ function assertFixtureInterpreterCoverage(events, commands) {
     if (event === undefined) throw new Error(`dispatch証拠fixtureの${name}に成功したInterpreter eventがありません`);
     const catalogRoute = event.route === "plugin_node" ? "plugin_node" : "plugin_system";
     const resolution = resolveCatalogCommand(name, catalogRoute);
-    if (resolution === null || resolution.reason !== "unique-name") {
+    if (resolution === null || !new Set(["unique-name", "explicit-catalog-id"]).has(resolution.reason)) {
       throw new Error(`dispatch証拠fixtureの${name}を一意なcatalog IDへ解決できません: ${JSON.stringify({ event, resolution })}`);
     }
   }
@@ -356,7 +357,7 @@ function assertFixtureManifestCoverage(entries, commands) {
     const entry = entries.find((candidate) => candidate.sourceName === name);
     if (entry === undefined) throw new Error(`AOT compile manifestにdispatch証拠fixtureの${name}がありません`);
     const resolution = resolveCatalogCommand(name, "plugin_system");
-    if (resolution === null || resolution.reason !== "unique-name") {
+    if (resolution === null || !new Set(["unique-name", "explicit-catalog-id"]).has(resolution.reason)) {
       throw new Error(`AOT compile manifestの${name}を一意なcatalog IDへ解決できません: ${JSON.stringify({ entry, resolution })}`);
     }
   }
@@ -396,6 +397,11 @@ function assertOnlyManifestCommands(entries, allowed) {
 }
 
 function resolveCatalogCommand(name, route) {
+  const overrideId = catalogOverrides.get(name);
+  if (overrideId !== undefined) {
+    const command = catalog.find((candidate) => candidate.id === overrideId && candidate.name === name);
+    return command === undefined ? null : { command, reason: "explicit-catalog-id" };
+  }
   const candidates = catalogByName.get(name) ?? [];
   if (candidates.length === 1) return { command: candidates[0], reason: "unique-name" };
   if (route === "plugin_node") {

@@ -20,7 +20,7 @@ Actions artifactの保持期限後も外部検証できるよう、run `32983175
 historical catalogのdigestとworkflow identityを固定し、`node tools/check_tracked_dispatch_attestation.mjs`が禁止field、対象commit、bundleの
 in-toto subject、SLSA predicate、GitHub Actions workflow identityを検査する。bundleの署名を暗号学的に再検証する場合は、保存したbundleを
 公式`gh attestation verify`へ同じ厳格なidentity引数で渡す。固定されたhistorical catalogの`verified: 4`は現在commitの台帳へ自動反映せず、
-追跡中の`compat/v3.7.24/evidence.json`は`verified: 0`、`trace-confirmed-unattested: 394`、`unverified: 133`を記録する。catalog再生成時の`--historical-commit`は
+追跡中の`compat/v3.7.24/evidence.json`は`verified: 0`、`trace-confirmed-unattested: 421`、`unverified: 106`を記録する。catalog再生成時の`--historical-commit`は
 この明示的な履歴検査でだけ対象commitとの差異を許可し、明示的な非canonical outputを必須にする（通常のsync検査は、証拠生成元のfixture/source commitとの一致、またはその祖先から証拠・台帳・文書・CIとdispatch生成器以外の検証器だけを記録した後続commitを要求し、canonical output保護は緩めない）。target commitとこの履歴固定を追加する後続commitを混同しない。
 
 ### 証拠記録commitの追従
@@ -122,7 +122,7 @@ Node Bufferのenumerable prototype property 95件の順序・`parent`・`offset`
 疎な最上位表のhole・nullish行に対する`length` property read診断は`native-system-table-sparse-length-errors`で`表列数`・`表行列交換`・`表右回転`を比較します。
 同一ユーザー関数の`prototype` object identityと、そのown `constructor` back-referenceは`native-system-table-inherited-properties`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較します。
 `interpreter-only` 0 entryです。execution evidenceは`verified` 0、
-`trace-confirmed-unattested` 394、`unverified` 133です。
+`trace-confirmed-unattested` 421、`unverified` 106です。
 fixtureの関連付けを変更した場合は、次で派生台帳の生成と検査を行います。
 
 ```sh
@@ -131,7 +131,7 @@ node tools/check_interpreter_only_classification.mjs --check
 ```
 
 `executionEvidenceState`は別の状態です。`verified`へ進めるには、dispatch証拠に記録されたcatalog IDが
-一意名として解決でき、明示fixtureの同一siteについてcompile manifest、Interpreterの成功result、
+一意名またはfixtureの明示catalog IDとして解決でき、明示fixtureの同一siteについてcompile manifest、Interpreterの成功result、
 AOTの成功attempt/result対、公式source・生成JavaScript・lnako run・AOT O0の終了結果が全て一致し、外部attestationが検証できなければなりません。
 attestationがない場合は`trace-confirmed-unattested`に留めます。
 この条件を満たさないentryは、fixtureが存在しても`unverified`のままです。
@@ -146,17 +146,17 @@ attestationがない場合は`trace-confirmed-unattested`に留めます。
 
 `plugin_markup`については、[`plugin-markup-html-script`](../tests/oracle/supplemental-plugin-cases.json)へraw HTMLと`javascript:`リンクを追加し、公式CLI・公式生成JavaScript・lnakoの出力一致を追加確認します。これは公式の危険なHTML出力を再現する回帰fixtureであり、sanitize済みであることや安全なHTML変換を証明するものではありません。命令カタログの短い説明からはこの境界を判断できないため、利用者向けの安全上の注意と、`marked`依存の仕様・不具合候補を`docs/COMPATIBILITY_QUIRKS.md`へ分離して記録します。`script`/`style` raw blockの分類など未比較の入力をこのfixtureから推測せず、別のprobeで扱います。
 
+`native-dispatch-commands`の日時追加分は、通常cnako3の`plugin_system` routeへ実際に解決された27命令をfixtureの`catalogIds`で明示し、命令名だけでは選ばない`plugin_datetime`側entryと分離します。この追加分を含むdispatch実行証拠は一意名331命令＋明示catalog ID 27 entryで、外部attestationがないためいずれも`trace-confirmed-unattested`です。
+
 ## 同名命令
 
 漢数字の指数・全角数字・小数・空白・Infinity・基数接頭辞と算用数字の非標準表記は、`native-kansuji-aot-generated-boundaries`で公式CLI・Interpreter・LLVM AOT O0〜O3を比較します。公式standalone生成JavaScriptはplugin登録を行わないため、oracleは公式CLIに固定し、残る全生成境界は`TODO: aot-kansuji-generated-boundaries`として扱います。
 
 正規表現の構文エラー文言は、`native-system-regexp-js-error-text`でUnicode時の単独量指定括弧、vフラグの集合演算子右辺欠落、クラス内の不正property・named escape、連続集合演算子を公式CLI・生成JavaScript・Interpreter・LLVM AOT O0〜O3で比較します。Unicode modeの多桁decimal backreferenceの成功と、capture数を超えた場合の`Invalid escape`は`native-system-regexp-unicode-decimal-backreferences`と`native-system-regexp-unicode-decimal-backreference-error`で同じ7経路を比較します。別構文の未検証なJavaScriptエラー文言は`TODO: regexp-js-error-text`として残します。
 
-同名異pluginの31組62 entryのうち、61 entryは`identityResolution: "ambiguous-name"`です。
-同じfixtureへ命令名で割り当てられていても、命令名だけではcatalog IDやpluginを識別できず、
-ID単位の実行証拠にはなりません。その理由は各entryへ明記され、実行証拠状態も`unverified`のままです。
-例外として`元号データ`の`plugin_system`側`command-0227`だけは、fixture定義と証拠entryの明示catalog IDが一致するため、
-`identityResolution: "explicit-catalog-id"`として静的定数の実行証拠を記録します。`plugin_datetime`側`command-0807`は同じfixtureから推測せず、未証拠のままです。
+同名異pluginの31組62 entryのうち、34 entryは`identityResolution: "explicit-catalog-id"`です。
+内訳は、静的定数fixtureで固定した`元号データ`の`plugin_system`側1 entryと、canonical dispatch fixtureで固定した`plugin_system`側日時27 entry、残る一意名として解決できない28 entryは`identityResolution: "ambiguous-name"`です。
+canonical fixtureの明示IDは、公式cnako3の既定登録経路で実行される`command-0228`〜`command-0256`の該当27 entryに限ります。`plugin_datetime`側の同名entryは同じ命令名のtraceから推測せず、別の明示import経路のfixtureができるまで未証拠のままです。
 
 ## 実dispatch trace
 
