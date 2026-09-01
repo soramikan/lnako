@@ -142,6 +142,8 @@ attestationがない場合は`trace-confirmed-unattested`に留めます。
 
 `native-system-dictionary-inherited-enumeration`は、custom辞書prototype chainの列挙順・shadowing・対応値を公式CLI・公式生成JavaScript・`lnako run`・LLVM AOT O0〜O3で比較するfixtureです。これによりfixture inventoryは全394件（AOT 299件、Interpreter 99件、QuickJS 9件）になりました。
 
+TOMLの既存`native-toml-commands`は表・配列テーブル・インライン表・文字列・数値の標準範囲を比較しますが、日時リテラルのDate系値とserializerのミリ秒正規化は含みません。公式マニュアルと命令説明からはこの境界を判断できないため、[`tests/fixtures/toml-temporal-probe.nako3`](../tests/fixtures/toml-temporal-probe.nako3)を仕様調査用probeとして保存し、公式CLIとlnako Interpreterの実測差を`docs/COMPATIBILITY_QUIRKS.md`へ記録します。このprobeは現行のAOT dispatch証拠・`evidence.json`の394 entryには算入せず、`TODO: toml-temporal-values`が解消されるまで標準TOMLの等価性証拠へ昇格しません。
+
 ## 同名命令
 
 漢数字の指数・全角数字・小数・空白・Infinity・基数接頭辞と算用数字の非標準表記は、`native-kansuji-aot-generated-boundaries`で公式CLI・Interpreter・LLVM AOT O0〜O3を比較します。公式standalone生成JavaScriptはplugin登録を行わないため、oracleは公式CLIに固定し、残る全生成境界は`TODO: aot-kansuji-generated-boundaries`として扱います。
