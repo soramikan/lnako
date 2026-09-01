@@ -53,6 +53,7 @@ const staticConstantFixtureDefinitions = {
     globalTraceCount: 3,
     literalNames: new Set(),
     manifestGlobalReadNames: ["ブラウザ名変換表", "ブラウザ名変換表", "ブラウザ名変換表"],
+    manifestExtraGlobalReadNames: ["scalar-constants__A", "scalar-constants__B"],
     plugin: "plugin_caniuse",
     sourceReplacements: {
       "${PLUGIN_CANIUSE}": (temporary) => relative(temporary, resolve(oracleRoot, "src/plugin_caniuse.mjs")).replaceAll("\\", "/"),
@@ -195,10 +196,15 @@ try {
   const oracleSelection = fixture.oracle ?? "official-source";
   const oracleRoute = oracleSelection === "official-generated" ? "officialGenerated" : "officialSource";
   assertEquivalentResults(results, oracleRoute);
-  const globalManifestData = await readGlobalManifest(globalManifest, sourcePath, fixtureDefinition.manifestGlobalReadNames ?? globalReadNames);
+  const globalManifestData = await readGlobalManifest(
+    globalManifest,
+    sourcePath,
+    fixtureDefinition.manifestGlobalReadNames ?? globalReadNames,
+    fixtureDefinition.manifestExtraGlobalReadNames ?? [],
+  );
   const literalManifestData = await readLiteralManifest(literalManifest, sourcePath, literalNames);
-  const interpreterGlobalEvents = await readGlobalTrace(interpreterTrace, "interpreter", globalManifestData);
-  const aotGlobalEvents = await readGlobalTrace(aotTrace, "aot", globalManifestData);
+  const interpreterGlobalEvents = (await readGlobalTrace(interpreterTrace, "interpreter", globalManifestData)).filter((event) => globalReadNames.includes(event.name));
+  const aotGlobalEvents = (await readGlobalTrace(aotTrace, "aot", globalManifestData)).filter((event) => globalManifestData.entries.some((entry) => entry.siteId === event.siteId && globalReadNames.includes(entry.name)));
   const interpreterLiteralEvents = await readLiteralTrace(interpreterLiteralTrace, "interpreter", literalManifestData);
   const aotLiteralEvents = await readLiteralTrace(aotLiteralTrace, "aot", literalManifestData);
   const manifestByKey = new Map([
@@ -293,7 +299,7 @@ try {
     },
     entries,
   };
-  validateEvidence(evidence, lock, fixture, globalReadNames, literalNames, manifestByKey, globalManifestData.entries.length);
+  validateEvidence(evidence, lock, fixture, globalReadNames, literalNames, manifestByKey, interpreterGlobalEvents.length);
   if (evidenceOutput !== null) await writeFile(evidenceOutput, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
   console.log(`静的定数のInterpreter/AOT証拠: global read ${globalReadNames.length}件 + literal ${literalNames.length}件 = ${entries.length}件成功`);
 } finally {
@@ -402,15 +408,15 @@ function normalizeLineEndings(value) {
   return value.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
 }
 
-async function readGlobalManifest(path, sourcePath, expectedNames) {
-  return readStaticManifest(path, sourcePath, expectedNames, "lnako.aot.global-manifest.v1", "global-load", "AOT global manifest");
+async function readGlobalManifest(path, sourcePath, expectedNames, extraNames) {
+  return readStaticManifest(path, sourcePath, expectedNames, "lnako.aot.global-manifest.v1", "global-load", "AOT global manifest", extraNames);
 }
 
 async function readLiteralManifest(path, sourcePath, expectedNames) {
   return readStaticManifest(path, sourcePath, expectedNames, "lnako.aot.literal-manifest.v1", "literal-constant", "AOT literal manifest");
 }
 
-async function readStaticManifest(path, sourcePath, expectedNames, schema, kind, label) {
+async function readStaticManifest(path, sourcePath, expectedNames, schema, kind, label, extraNames = []) {
   const lines = await readJsonLines(path, label);
   if (lines.length < 2) throw new Error("AOT global manifestが完了レコードを含みません");
   const header = lines[0];
@@ -424,8 +430,8 @@ async function readStaticManifest(path, sourcePath, expectedNames, schema, kind,
     throw new Error(`${label}の完了レコードが不正です`);
   }
   const entries = lines.slice(1, -1);
-  if (complete.entryCount !== entries.length || entries.length !== expectedNames.length) throw new Error(`${label}のentryCountが不一致です`);
-  const expected = new Set(expectedNames);
+  if (complete.entryCount !== entries.length || entries.length !== expectedNames.length + extraNames.length) throw new Error(`${label}のentryCountが不一致です`);
+  const expected = new Set([...expectedNames, ...extraNames]);
   const siteIds = new Set();
   const nameCounts = new Map();
   for (const entry of entries) {
@@ -440,8 +446,8 @@ async function readStaticManifest(path, sourcePath, expectedNames, schema, kind,
     nameCounts.set(entry.name, (nameCounts.get(entry.name) ?? 0) + 1);
   }
   const expectedCounts = new Map();
-  for (const name of expectedNames) expectedCounts.set(name, (expectedCounts.get(name) ?? 0) + 1);
-  if (entries.length !== expectedNames.length || nameCounts.size !== expectedCounts.size || [...expectedCounts].some(([name, count]) => nameCounts.get(name) !== count)) throw new Error(`${label}のname集合または件数が不一致です`);
+  for (const name of [...expectedNames, ...extraNames]) expectedCounts.set(name, (expectedCounts.get(name) ?? 0) + 1);
+  if (entries.length !== expectedNames.length + extraNames.length || nameCounts.size !== expectedCounts.size || [...expectedCounts].some(([name, count]) => nameCounts.get(name) !== count)) throw new Error(`${label}のname集合または件数が不一致です`);
   return { entries: entries.map((entry) => ({ ...entry })) };
 }
 
