@@ -1,5 +1,5 @@
 {
-  "schema": "lnako.static-constant-evidence.v1",
+  "schema": "lnako.static-constant-evidence.v2",
   "generator": "tools/check_static_constant_evidence.mjs",
   "baseline": {
     "tag": "3.7.24",
@@ -90,32 +90,156 @@
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
     "lnako": {
-      "binarySha256": "99da27c2d49961a481c8b947164f4264092ca236cf8c7664550d4115da515671",
-      "commit": "94760ec28cf835e3c23491bb99b4a7bb45155839",
+      "binarySha256": "26f4c59f32798661d86b56ad54905813de77c00817a12a2f3e4c0d89edc353af",
+      "commit": "42c13759ef5b8a61c5df93ab7f41d1a1bf08e579",
       "dirty": false
     },
     "raw": {
       "interpreterTraceSha256": "71bbe6d3165a3d9d7f13ce660912bed307a96ede2c62a7a11b147f5408946cb5",
       "aotTraceSha256": "ee70afdecb6fd6f9cb5d00f216fdd38569061c54a1649b1d5e9a2c614b0fded9",
-      "globalManifestSha256": "9ad55311b3cfbb2c6cf80d6bf59ea10841b3a1db0d035a5c981f19f6817338d8"
+      "globalManifestSha256": "087c68076060961a51a38a440c89767109c2296a171c32b1ec0b0898d3240abd",
+      "literalInterpreterTraceSha256": "8d24ebbefc0ee262a78416e96c0462f6aacd36c268bdb74db69002842cd7728b",
+      "literalAotTraceSha256": "f21736a97acb94985ebcf6a9d5b4b8f3060cc888a0563ab2de5cc87399b99a48",
+      "literalManifestSha256": "723446702a7bc1dcdeeeadc44de1a4963a50c7c98bc14dce9f9a26286229ea34"
     }
   },
   "trace": {
-    "interpreter": {
-      "schema": 1,
-      "eventCount": 17
+    "global": {
+      "interpreter": {
+        "schema": 1,
+        "eventCount": 17
+      },
+      "aot": {
+        "schema": 1,
+        "eventCount": 17
+      }
     },
-    "aot": {
-      "schema": 1,
-      "eventCount": 17
+    "literal": {
+      "interpreter": {
+        "schema": 1,
+        "eventCount": 7
+      },
+      "aot": {
+        "schema": 1,
+        "eventCount": 7
+      }
     }
   },
   "entries": [
     {
+      "catalogId": "command-0005",
+      "name": "はい",
+      "plugin": "plugin_system",
+      "kind": "literal",
+      "siteId": "0x0000000000000001",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0006",
+      "name": "いいえ",
+      "plugin": "plugin_system",
+      "kind": "literal",
+      "siteId": "0x0000000000000002",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0007",
+      "name": "真",
+      "plugin": "plugin_system",
+      "kind": "literal",
+      "siteId": "0x0000000000000003",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0008",
+      "name": "偽",
+      "plugin": "plugin_system",
+      "kind": "literal",
+      "siteId": "0x0000000000000004",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
       "catalogId": "command-0009",
       "name": "永遠",
       "plugin": "plugin_system",
+      "kind": "global-read",
       "siteId": "0x0000000000000001",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0010",
+      "name": "オン",
+      "plugin": "plugin_system",
+      "kind": "literal",
+      "siteId": "0x0000000000000005",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0011",
+      "name": "オフ",
+      "plugin": "plugin_system",
+      "kind": "literal",
+      "siteId": "0x0000000000000006",
       "runtime": {
         "interpreter": {
           "success": true,
@@ -132,6 +256,7 @@
       "catalogId": "command-0018",
       "name": "OK",
       "plugin": "plugin_system",
+      "kind": "global-read",
       "siteId": "0x0000000000000002",
       "runtime": {
         "interpreter": {
@@ -149,6 +274,7 @@
       "catalogId": "command-0019",
       "name": "NG",
       "plugin": "plugin_system",
+      "kind": "global-read",
       "siteId": "0x0000000000000003",
       "runtime": {
         "interpreter": {
@@ -166,6 +292,7 @@
       "catalogId": "command-0021",
       "name": "TRUE",
       "plugin": "plugin_system",
+      "kind": "global-read",
       "siteId": "0x0000000000000004",
       "runtime": {
         "interpreter": {
@@ -183,6 +310,7 @@
       "catalogId": "command-0022",
       "name": "FALSE",
       "plugin": "plugin_system",
+      "kind": "global-read",
       "siteId": "0x0000000000000005",
       "runtime": {
         "interpreter": {
@@ -200,6 +328,7 @@
       "catalogId": "command-0023",
       "name": "true",
       "plugin": "plugin_system",
+      "kind": "global-read",
       "siteId": "0x0000000000000006",
       "runtime": {
         "interpreter": {
@@ -217,6 +346,7 @@
       "catalogId": "command-0024",
       "name": "false",
       "plugin": "plugin_system",
+      "kind": "global-read",
       "siteId": "0x0000000000000007",
       "runtime": {
         "interpreter": {
@@ -234,6 +364,7 @@
       "catalogId": "command-0020",
       "name": "キャンセル",
       "plugin": "plugin_system",
+      "kind": "global-read",
       "siteId": "0x0000000000000008",
       "runtime": {
         "interpreter": {
@@ -251,6 +382,7 @@
       "catalogId": "command-0025",
       "name": "PI",
       "plugin": "plugin_system",
+      "kind": "global-read",
       "siteId": "0x0000000000000009",
       "runtime": {
         "interpreter": {
@@ -268,6 +400,7 @@
       "catalogId": "command-0038",
       "name": "戻値無",
       "plugin": "plugin_system",
+      "kind": "global-read",
       "siteId": "0x000000000000000a",
       "runtime": {
         "interpreter": {
@@ -285,6 +418,7 @@
       "catalogId": "command-0039",
       "name": "戻値有",
       "plugin": "plugin_system",
+      "kind": "global-read",
       "siteId": "0x000000000000000b",
       "runtime": {
         "interpreter": {
@@ -302,6 +436,7 @@
       "catalogId": "command-0067",
       "name": "__DEBUG強制待機",
       "plugin": "plugin_system",
+      "kind": "global-read",
       "siteId": "0x000000000000000c",
       "runtime": {
         "interpreter": {
@@ -319,6 +454,7 @@
       "catalogId": "command-0069",
       "name": "__DEBUG待機フラグ",
       "plugin": "plugin_system",
+      "kind": "global-read",
       "siteId": "0x000000000000000d",
       "runtime": {
         "interpreter": {
@@ -336,6 +472,7 @@
       "catalogId": "command-0036",
       "name": "非数",
       "plugin": "plugin_system",
+      "kind": "global-read",
       "siteId": "0x000000000000000e",
       "runtime": {
         "interpreter": {
@@ -353,7 +490,26 @@
       "catalogId": "command-0037",
       "name": "無限大",
       "plugin": "plugin_system",
+      "kind": "global-read",
       "siteId": "0x000000000000000f",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0027",
+      "name": "NULL",
+      "plugin": "plugin_system",
+      "kind": "literal",
+      "siteId": "0x0000000000000007",
       "runtime": {
         "interpreter": {
           "success": true,
@@ -370,6 +526,7 @@
       "catalogId": "command-0028",
       "name": "undefined",
       "plugin": "plugin_system",
+      "kind": "global-read",
       "siteId": "0x0000000000000010",
       "runtime": {
         "interpreter": {
@@ -387,6 +544,7 @@
       "catalogId": "command-0029",
       "name": "未定義",
       "plugin": "plugin_system",
+      "kind": "global-read",
       "siteId": "0x0000000000000011",
       "runtime": {
         "interpreter": {
