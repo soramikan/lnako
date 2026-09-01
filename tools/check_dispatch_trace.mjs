@@ -1,6 +1,7 @@
 import { link, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
@@ -21,7 +22,6 @@ for (let index = 0; index < arguments_.length; index += 1) {
   throw new Error("usage: node tools/check_dispatch_trace.mjs [--no-build] [--evidence-output /absolute/path]");
 }
 const noBuild = arguments_.includes("--no-build");
-const oracleRoot = resolve(process.env.NADESIKO3_ORACLE ?? resolve(root, ".cache/oracle/nadesiko3-3.7.24"));
 // Official source, generated JavaScript, and lnako use the same fixed clock
 // and PRNG inputs so nondeterministic builtins can be compared byte-for-byte.
 const fixedHostArguments = ["--import", pathToFileURL(resolve(root, "tools/oracle/fixed_host.mjs")).href];
@@ -44,9 +44,7 @@ const nodeCases = JSON.parse(await readFile(resolve(root, "tests/oracle/node-fil
 const nodeFixture = nodeCases.find((candidate) => candidate.id === "plugin-node-path-host");
 if (nodeFixture === undefined) throw new Error("Node route trace用fixtureがありません: plugin-node-path-host");
 
-// Keep the temporary fixture on the repository drive. cnako3 v3.7.24 treats
-// a Windows drive-letter path in 取り込む as a relative module specifier.
-const temporary = await mkdtemp(join(root, ".tmp-lnako-dispatch-trace-"));
+const temporary = await mkdtemp(join(tmpdir(), "lnako-dispatch-trace-"));
 try {
   if (!noBuild) buildCompiler();
   const source = resolve(temporary, "trace.nako3");
@@ -56,7 +54,7 @@ try {
   const compileManifest = resolve(temporary, "compile-manifest.jsonl");
   const nodeSource = resolve(temporary, "node-route.nako3");
   const nodeTrace = resolve(temporary, "node-route.jsonl");
-  await writeFile(source, replaceNativePluginPlaceholders(fixture.source, oracleRoot, temporary), "utf8");
+  await writeFile(source, fixture.source, "utf8");
   await writeFile(nodeSource, nodeFixture.source, "utf8");
 
   const baseEnvironment = {
@@ -198,16 +196,6 @@ function assertOfficialProcessEquivalent(label, left, right) {
 
 function normalizeLineEndings(value) {
   return value.replaceAll("\r\n", "\n");
-}
-
-function replaceNativePluginPlaceholders(sourceText, oracleDirectory, fixtureDirectory) {
-  const replacements = {
-    "${PLUGIN_CANIUSE}": relative(fixtureDirectory, resolve(oracleDirectory, "src/plugin_caniuse.mjs")).replaceAll("\\\\", "/"),
-    "${PLUGIN_KANSUJI}": relative(fixtureDirectory, resolve(oracleDirectory, "src/plugin_kansuji.mjs")).replaceAll("\\\\", "/"),
-    "${PLUGIN_MARKUP}": relative(fixtureDirectory, resolve(oracleDirectory, "src/plugin_markup.mjs")).replaceAll("\\\\", "/"),
-    "${PLUGIN_TOML}": relative(fixtureDirectory, resolve(oracleDirectory, "core/src/plugin_toml.mjs")).replaceAll("\\\\", "/"),
-  };
-  return Object.entries(replacements).reduce((result, [placeholder, path]) => result.replaceAll(placeholder, path), sourceText);
 }
 
 function assertNoJsonl(names) {
