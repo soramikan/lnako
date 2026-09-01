@@ -49,12 +49,18 @@ const matrixEntries = [...workflow.matchAll(/^          - name: (.+)\n          
 const actualMatrix = new Set(matrixEntries.map((entry) => `${entry.name}\0${entry.os}\0${entry.suite}`));
 const expectedMatrix = new Set();
 for (const [name, os] of platforms) {
-  const expectedSuites = name === "macOS arm64" ? ["mac-bundle", "aot-native", "aot-support"] : suites;
+  const expectedSuites = name === "macOS arm64"
+    ? ["mac-core-standard-support", "mac-host-compat", "aot-native"]
+    : suites;
   for (const suite of expectedSuites) expectedMatrix.add(`${name}\0${os}\0${suite}`);
 }
 assertSetEqual(actualMatrix, expectedMatrix, "CI matrix");
 const macosMatrixEntries = matrixEntries.filter((entry) => entry.name === "macOS arm64");
-if (macosMatrixEntries.length !== 5 || macosMatrixEntries.filter((entry) => entry.suite === "mac-bundle").length !== 1) {
+if (macosMatrixEntries.length !== 5 ||
+    macosMatrixEntries.filter((entry) => entry.suite === "mac-core-standard-support").length !== 1 ||
+    macosMatrixEntries.filter((entry) => entry.suite === "mac-host-compat").length !== 1 ||
+    macosMatrixEntries.filter((entry) => entry.suite === "aot-native").length !== 3 ||
+    macosMatrixEntries.some((entry) => entry.suite === "aot-support")) {
   throw new Error(`macOS同時実行上限5に合わせたjob構成が不正です: actual=${macosMatrixEntries.length}`);
 }
 const nativeAotMatrixEntries = matrixEntries.filter((entry) => entry.suite === "aot-native");
@@ -70,7 +76,7 @@ const nativeOptimizationGroups = new Map([
   ["Windows x86_64", [["O0", "O0"], ["O1", "O1"], ["O2", "O2"], ["O3", "O3"]]],
 ]);
 const expectedNativeRowCount = [...nativeShardCounts].reduce((total, [name, shardCount]) => total + shardCount * nativeOptimizationGroups.get(name).length, 0);
-if (nativeAotMatrixEntries.length !== expectedNativeRowCount || supportAotMatrixEntries.length !== 3) {
+if (nativeAotMatrixEntries.length !== expectedNativeRowCount || supportAotMatrixEntries.length !== 2) {
   throw new Error(`AOT job分割数が不正です: native=${nativeAotMatrixEntries.length} support=${supportAotMatrixEntries.length}`);
 }
 if (matrixEntries.length !== 39) throw new Error(`CI matrixの実job数が不正です: actual=${matrixEntries.length}`);
@@ -91,12 +97,14 @@ for (const [name, count] of nativeShardCounts) {
     }
   }
 }
-if (nativeShardRows.length !== expectedNativeRowCount || supportRows.length !== 3 || nativeShardRows.some((row) => {
+const expectedSupportOS = new Set(["Linux x86_64", "Windows x86_64"]);
+if (nativeShardRows.length !== expectedNativeRowCount || supportRows.length !== expectedSupportOS.size || nativeShardRows.some((row) => {
   const expectedCount = nativeShardCounts.get(row.name);
   return expectedCount === undefined || !expectedNativeRows.has(`${row.name}\0${row.os}\0${row.index}\0${row.count}\0${row.sharded}\0${row.optimizationKey}\0${row.optimizations}\0${row.jobName}`);
 }) ||
     new Set(nativeShardRows.map((row) => `${row.name}\0${row.os}\0${row.index}\0${row.optimizationKey}`)).size !== expectedNativeRowCount ||
-    new Set(supportRows.map((row) => `${row.name}\0${row.os}`)).size !== 3) {
+    new Set(supportRows.map((row) => `${row.name}\0${row.os}`)).size !== expectedSupportOS.size ||
+    supportRows.some((row) => !expectedSupportOS.has(row.name) || row.os !== platforms.get(row.name))) {
   throw new Error("AOT native/support jobのOS別fixture shard／optimization matrixが不正です");
 }
 
@@ -126,14 +134,39 @@ const stepSuites = new Map([
 for (const [name, suite] of stepSuites) {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const condition = suite === "core"
-    ? "matrix.suite == 'core' || matrix.suite == 'mac-bundle'"
+    ? "matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'"
     : suite === "standard"
-      ? "matrix.suite == 'standard' || matrix.suite == 'mac-bundle'"
+      ? "matrix.suite == 'standard' || matrix.suite == 'mac-core-standard-support'"
       : suite === "host"
-        ? "matrix.suite == 'host' || matrix.suite == 'mac-bundle'"
-        : "matrix.suite == 'compat-aot' || matrix.suite == 'mac-bundle'";
+        ? "matrix.suite == 'host' || matrix.suite == 'mac-host-compat'"
+        : "matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'";
   const pattern = new RegExp(`^      - name: ${escaped}\\n        if: ${condition.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m");
   if (!pattern.test(workflow)) throw new Error(`${name}のsuite条件が${suite}ではありません`);
+}
+
+const testJob = workflow.match(/  test:[\s\S]*?(?=\n  aot:)/)?.[0];
+if (!testJob) throw new Error("通常test jobがありません");
+const macSupportSteps = new Map([
+  ["Build macOS AOT verification compiler", "run: zig build"],
+  ["macOS AOT HTTP server oracle", "node tools/compare_http_server_aot_oracle.mjs --no-build"],
+  ["macOS dispatch evidence/coverage audit", "node tools/check_dispatch_audits_parallel.mjs"],
+  ["macOS dispatch trace security audit", "node tools/check_dispatch_trace_security.mjs --no-build"],
+  ["Upload macOS native dispatch evidence", "name: lnako-dispatch-evidence-macos-15"],
+  ["Upload macOS native dispatch coverage audit", "name: lnako-dispatch-coverage-macos-15"],
+  ["Build macOS ReleaseSafe compiler", "run: zig build -Doptimize=ReleaseSafe"],
+  ["macOS normal smoke test", "./zig-out/bin/lnako test tests/fixtures/run-tests.nako3"],
+]);
+for (const [name, required] of macSupportSteps) {
+  const marker = "      - name: " + name;
+  const start = testJob.indexOf(marker);
+  const next = testJob.indexOf("\n      - name:", start + marker.length);
+  const block = start < 0 ? null : testJob.slice(start, next < 0 ? testJob.length : next);
+  if (!block || !block.includes("if: matrix.suite == 'mac-core-standard-support'") || !block.includes(required)) {
+    throw new Error(`macOS分割jobの${name}が不完全です`);
+  }
+}
+if ((testJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 2) {
+  throw new Error("macOS分割jobのdispatch artifact uploadが2件ありません");
 }
 
 const aotStep = (name) => {
@@ -212,7 +245,10 @@ if (!nativeUpload || !nativeUpload.includes("if: matrix.task == 'native' && alwa
 }
 if (nativeUpload.includes("run:")) throw new Error("AOT shard artifact uploadで追加の検証コマンドを実行しないでください");
 const uploadActions = workflow.match(/^        uses: actions\/upload-artifact@/gm) ?? [];
-if (uploadActions.length !== 4 || (nativeAotJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 3) throw new Error(`actions/upload-artifactはAOT artifact 3＋attestation 1ステップ必要です: actual=${uploadActions.length}`);
+if (uploadActions.length !== 6 || (testJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 2 ||
+    (nativeAotJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 3) {
+  throw new Error(`actions/upload-artifactはmacOS dispatch 2＋AOT artifact 3＋attestation 1ステップ必要です: actual=${uploadActions.length}`);
+}
 const dispatchUploadBlock = aotStep("Upload native dispatch evidence");
 if (!dispatchUploadBlock || !dispatchUploadBlock.includes("if: matrix.task == 'support' && always()") ||
     !dispatchUploadBlock.includes("name: lnako-dispatch-evidence-") || !dispatchUploadBlock.includes("dispatch-evidence-") ||
@@ -225,8 +261,8 @@ if (!coverageUploadBlock || !coverageUploadBlock.includes("if: matrix.task == 's
     !coverageUploadBlock.includes("if-no-files-found: ignore")) {
   throw new Error("OS別dispatch coverage artifactの設定が不正です");
 }
-if (!workflow.includes("if: matrix.suite == 'core' || matrix.suite == 'mac-bundle'\n        with:\n          fetch-depth: 0") ||
-    !workflow.includes("if: matrix.suite != 'core' && matrix.suite != 'mac-bundle'\n      - uses: mlugg/setup-zig")) {
+if (!workflow.includes("if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'\n        with:\n          fetch-depth: 0") ||
+    !workflow.includes("if: matrix.suite != 'core' && matrix.suite != 'mac-core-standard-support'\n      - uses: mlugg/setup-zig")) {
   throw new Error("coreの証拠追従検査に必要なfull checkout条件がありません");
 }
 const attestJob = workflow.match(/  attest-dispatch-evidence:[\s\S]*$/)?.[0];
@@ -267,14 +303,14 @@ const legacySmokeCommands = [
 ];
 if (new Set(legacySmokeCommands).size !== legacySmokeCommands.length) throw new Error("smokeコマンドが重複しています");
 if (legacySmokeCommands.length !== 7) throw new Error(`smokeコマンド数が従来の7件ではありません: ${legacySmokeCommands.length}`);
-if ((workflow.match(/\.\/zig-out\/bin\/lnako/g) ?? []).length !== 6) throw new Error("lnako smokeコマンドの合計が従来の6件ではありません");
+if ((workflow.match(/\.\/zig-out\/bin\/lnako/g) ?? []).length !== 11) throw new Error("lnako smokeコマンドの合計が通常support＋macOS分割jobの11件ではありません");
 
 const setupZigBlocks = [...workflow.matchAll(
   /      - uses: mlugg\/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2\.2\.1[\s\S]*?(?=      - uses: actions\/setup-node@)/g,
 )].map((match) => match[0]);
 const setupZigCacheSizeLimitMiB = 1536;
 if (setupZigBlocks.length !== 2 ||
-    !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-bundle' }}") && block.includes("cache-key: ${{ matrix.suite }}")) ||
+    !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat' }}") && block.includes("cache-key: ${{ matrix.suite }}")) ||
     !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.task == 'native' }}") && block.includes("cache-key: ${{ matrix.suite }}")) ||
     (workflow.match(/cache-size-limit:/g) ?? []).length !== 2) {
   throw new Error(`setup-zigのcache保存対象または${setupZigCacheSizeLimitMiB} MiB上限が不正です`);
@@ -291,7 +327,7 @@ if (setupNodeBlock === undefined || !setupNodeBlock.includes("if: matrix.suite !
 for (const required of [
   "group: ci-${{ github.workflow }}-${{ github.ref }}",
   "cancel-in-progress: true",
-  "use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-bundle' }}",
+  "use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat' }}",
   "use-cache: ${{ matrix.task == 'native' }}",
   "cache-key: ${{ matrix.suite }}",
   `cache-size-limit: ${setupZigCacheSizeLimitMiB}`,

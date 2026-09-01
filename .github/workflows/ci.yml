@@ -32,12 +32,15 @@ jobs:
           - name: Linux x86_64
             os: ubuntu-24.04
             suite: compat-aot
-          # macOS-hosted runners admit at most five concurrent jobs. Bundle the
-          # four regular suites so the three native shards and support job can
-          # occupy the remaining four macOS slots without queueing a sixth job.
+          # macOS-hosted runners admit at most five concurrent jobs. Split the
+          # regular suites into two jobs and fold AOT support into the first so
+          # the three native route jobs still fit exactly within five slots.
           - name: macOS arm64
             os: macos-15
-            suite: mac-bundle
+            suite: mac-core-standard-support
+          - name: macOS arm64
+            os: macos-15
+            suite: mac-host-compat
           - name: Windows x86_64
             os: windows-2025
             suite: core
@@ -54,15 +57,15 @@ jobs:
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        if: matrix.suite == 'core' || matrix.suite == 'mac-bundle'
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         with:
           fetch-depth: 0
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        if: matrix.suite != 'core' && matrix.suite != 'mac-bundle'
+        if: matrix.suite != 'core' && matrix.suite != 'mac-core-standard-support'
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
-          use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-bundle' }}
+          use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat' }}
           cache-key: ${{ matrix.suite }}
           cache-size-limit: 1536
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
@@ -78,7 +81,7 @@ jobs:
       - name: Set up pinned QuickJS
         run: node tools/setup_quickjs.mjs
       - name: Verify compatibility baseline
-        if: matrix.suite == 'core' || matrix.suite == 'mac-bundle'
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: |
           node tools/check_ci_workflow.mjs
           node tools/check_dispatch_attestation_security.mjs
@@ -89,7 +92,7 @@ jobs:
           node tools/check_interpreter_only_classification.mjs --check
           node tools/check_builtin_catalog.mjs
       - name: Distribution package self-test
-        if: matrix.suite == 'core' || matrix.suite == 'mac-bundle'
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node tools/check_distribution.mjs --self-test
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         if: matrix.suite != 'compat-aot'
@@ -100,34 +103,34 @@ jobs:
         if: matrix.suite != 'compat-aot'
         run: node tools/setup_oracle.mjs
       - name: Differential lexer test
-        if: matrix.suite == 'core' || matrix.suite == 'mac-bundle'
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node tools/compare_lexer_oracle.mjs
       - name: Differential syntax transform test
-        if: matrix.suite == 'core' || matrix.suite == 'mac-bundle'
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node tools/compare_syntax_oracle.mjs
       - name: Differential parser test
-        if: matrix.suite == 'core' || matrix.suite == 'mac-bundle'
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node tools/compare_parser_oracle.mjs
       - name: Grammar-generating parser fuzz test
-        if: matrix.suite == 'core' || matrix.suite == 'mac-bundle'
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node tools/fuzz_parser_oracle.mjs --iterations 1024 --seed 20260830
       - name: Differential parser diagnostic test
-        if: matrix.suite == 'core' || matrix.suite == 'mac-bundle'
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node tools/compare_parser_diagnostics_oracle.mjs
       - name: Differential semantic test
-        if: matrix.suite == 'core' || matrix.suite == 'mac-bundle'
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node tools/compare_semantic_oracle.mjs
       - name: Differential semantic diagnostic test
-        if: matrix.suite == 'core' || matrix.suite == 'mac-bundle'
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node tools/compare_semantic_diagnostics_oracle.mjs
       - name: Differential dynamic value test
-        if: matrix.suite == 'core' || matrix.suite == 'mac-bundle'
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node tools/compare_value_oracle.mjs
       - name: Differential interpreter test
-        if: matrix.suite == 'core' || matrix.suite == 'mac-bundle'
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node tools/compare_interpreter_oracle.mjs
       - name: Differential plugin_system test
-        if: matrix.suite == 'core' || matrix.suite == 'mac-bundle'
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: |
           node tools/generate_unicode_case.mjs --check
           node tools/generate_unicode_properties.mjs --check
@@ -136,7 +139,7 @@ jobs:
           node tools/check_system_runtime_coverage.mjs
           node tools/compare_plugin_system_oracle.mjs
       - name: Differential standard plugin test
-        if: matrix.suite == 'standard' || matrix.suite == 'mac-bundle'
+        if: matrix.suite == 'standard' || matrix.suite == 'mac-core-standard-support'
         run: |
           node tools/check_standard_plugin_coverage.mjs
           node tools/compare_standard_plugin_oracle.mjs
@@ -144,15 +147,15 @@ jobs:
           node tools/check_supplemental_plugin_coverage.mjs
           node tools/compare_supplemental_plugin_oracle.mjs
       - name: Differential QuickJS compatibility test
-        if: matrix.suite == 'host' || matrix.suite == 'mac-bundle'
+        if: matrix.suite == 'host' || matrix.suite == 'mac-host-compat'
         run: |
           node tools/check_compat_js_coverage.mjs
           node tools/compare_compat_js_oracle.mjs
       - name: Native plugin ABI test
-        if: matrix.suite == 'host' || matrix.suite == 'mac-bundle'
+        if: matrix.suite == 'host' || matrix.suite == 'mac-host-compat'
         run: node tools/check_native_plugin_abi.mjs --release-safe
       - name: Differential Node host test
-        if: matrix.suite == 'host' || matrix.suite == 'mac-bundle'
+        if: matrix.suite == 'host' || matrix.suite == 'mac-host-compat'
         run: |
           node tools/generate_legacy_encoding.mjs --check
           node tools/update_node_implemented.mjs --check
@@ -168,21 +171,67 @@ jobs:
           node tools/check_node_current_directory_errors.mjs
           node tools/check_node_archive_smoke.mjs
       - name: Format
-        if: matrix.suite == 'core' || matrix.suite == 'mac-bundle'
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: zig build fmt-check
       - name: Test
-        if: matrix.suite == 'core' || matrix.suite == 'mac-bundle'
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: zig build test
       - name: Test QuickJS build
-        if: matrix.suite == 'compat-aot' || matrix.suite == 'mac-bundle'
+        if: matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'
         run: zig build -Dcompat-js=true test
       - name: Build QuickJS compiler
-        if: matrix.suite == 'compat-aot' || matrix.suite == 'mac-bundle'
+        if: matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'
         run: zig build -Dcompat-js=true -Doptimize=ReleaseSafe
       - name: Compatibility smoke test
-        if: matrix.suite == 'compat-aot' || matrix.suite == 'mac-bundle'
+        if: matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'
         shell: bash
         run: ./zig-out/bin/lnako run tests/fixtures/compat-js-basic.nako3 --compat-js
+      - name: Build macOS AOT verification compiler
+        if: matrix.suite == 'mac-core-standard-support'
+        run: zig build
+      - name: macOS AOT HTTP server oracle
+        if: matrix.suite == 'mac-core-standard-support'
+        run: node tools/compare_http_server_aot_oracle.mjs --no-build
+      - name: macOS dispatch evidence/coverage audit
+        if: matrix.suite == 'mac-core-standard-support'
+        run: >
+          node tools/check_dispatch_audits_parallel.mjs
+          --evidence-output "${{ runner.temp }}/dispatch-evidence-macos-15.json"
+          --coverage-output "${{ runner.temp }}/dispatch-coverage-macos-15.json"
+      - name: macOS dispatch trace security audit
+        if: matrix.suite == 'mac-core-standard-support'
+        run: node tools/check_dispatch_trace_security.mjs --no-build
+      - name: Upload macOS native dispatch evidence
+        if: matrix.suite == 'mac-core-standard-support' && always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-dispatch-evidence-macos-15
+          path: ${{ runner.temp }}/dispatch-evidence-macos-15.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Upload macOS native dispatch coverage audit
+        if: matrix.suite == 'mac-core-standard-support' && always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-dispatch-coverage-macos-15
+          path: ${{ runner.temp }}/dispatch-coverage-macos-15.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Build macOS ReleaseSafe compiler
+        if: matrix.suite == 'mac-core-standard-support'
+        run: zig build -Doptimize=ReleaseSafe
+      - name: macOS normal smoke test
+        if: matrix.suite == 'mac-core-standard-support'
+        shell: bash
+        run: |
+          ./zig-out/bin/lnako --version
+          node tools/check_compat_report.mjs --no-build
+          ./zig-out/bin/lnako check tests/fixtures/check-valid.nako3
+          ./zig-out/bin/lnako check tests/fixtures/module/main.nako3
+          ./zig-out/bin/lnako run tests/fixtures/run-control.nako3
+          ./zig-out/bin/lnako test tests/fixtures/run-tests.nako3
 
   aot:
     name: ${{ matrix.name }} / ${{ matrix.jobName }}
@@ -462,11 +511,6 @@ jobs:
             jobName: AOT native shard 3/3 / O3
           - name: Linux x86_64
             os: ubuntu-24.04
-            suite: aot-support
-            task: support
-            jobName: AOT support
-          - name: macOS arm64
-            os: macos-15
             suite: aot-support
             task: support
             jobName: AOT support
