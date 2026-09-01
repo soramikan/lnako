@@ -512,13 +512,43 @@ jobs:
           - name: Linux x86_64
             os: ubuntu-24.04
             suite: aot-support
-            task: support
-            jobName: AOT support
+            task: support-http
+            jobName: AOT support HTTP
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-support
+            task: support-dispatch-evidence
+            jobName: AOT support dispatch evidence
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-support
+            task: support-dispatch-coverage
+            jobName: AOT support dispatch coverage
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: aot-support
+            task: support-smoke
+            jobName: AOT support smoke
           - name: Windows x86_64
             os: windows-2025
             suite: aot-support
-            task: support
-            jobName: AOT support
+            task: support-http
+            jobName: AOT support HTTP
+          - name: Windows x86_64
+            os: windows-2025
+            suite: aot-support
+            task: support-dispatch-evidence
+            jobName: AOT support dispatch evidence
+          - name: Windows x86_64
+            os: windows-2025
+            suite: aot-support
+            task: support-dispatch-coverage
+            jobName: AOT support dispatch coverage
+          - name: Windows x86_64
+            os: windows-2025
+            suite: aot-support
+            task: support-smoke
+            jobName: AOT support smoke
     runs-on: ${{ matrix.os }}
     timeout-minutes: 50
     steps:
@@ -547,6 +577,7 @@ jobs:
       - name: Build official oracle
         run: node tools/setup_oracle.mjs
       - name: Build AOT verification compiler
+        if: matrix.task != 'support-smoke'
         run: zig build
       - name: Differential native AOT verification (fixture/route shard)
         if: matrix.task == 'native'
@@ -577,19 +608,23 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
       - name: Differential HTTP server AOT oracle
-        if: matrix.task == 'support'
+        if: matrix.task == 'support-http'
         run: node tools/compare_http_server_aot_oracle.mjs --no-build
-      - name: Dispatch evidence/coverage audit
-        if: matrix.task == 'support'
+      - name: Dispatch evidence audit
+        if: matrix.task == 'support-dispatch-evidence'
         run: >
-          node tools/check_dispatch_audits_parallel.mjs
+          node tools/check_dispatch_trace.mjs --no-build
           --evidence-output "${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json"
-          --coverage-output "${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}.json"
+      - name: Dispatch coverage audit
+        if: matrix.task == 'support-dispatch-coverage'
+        run: >
+          node tools/check_dispatch_coverage.mjs --no-build
+          --output "${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}.json"
       - name: Dispatch trace security audit
-        if: matrix.task == 'support'
+        if: matrix.task == 'support-dispatch-evidence'
         run: node tools/check_dispatch_trace_security.mjs --no-build
       - name: Upload native dispatch evidence
-        if: matrix.task == 'support' && always()
+        if: matrix.task == 'support-dispatch-evidence' && always()
         continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -598,7 +633,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
       - name: Upload native dispatch coverage audit
-        if: matrix.task == 'support' && always()
+        if: matrix.task == 'support-dispatch-coverage' && always()
         continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -607,10 +642,10 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
       - name: Build ReleaseSafe compiler
-        if: matrix.task == 'support'
+        if: matrix.task == 'support-smoke'
         run: zig build -Doptimize=ReleaseSafe
       - name: Normal smoke test
-        if: matrix.task == 'support'
+        if: matrix.task == 'support-smoke'
         shell: bash
         run: |
           ./zig-out/bin/lnako --version

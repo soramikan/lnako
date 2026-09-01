@@ -24,9 +24,9 @@ Linuxログでは通常のmath・CSV・TOML・Promise差分は約0.8秒で完了
 
 ## 検証jobの分割
 
-各正式環境（Linux x86_64、macOS arm64、Windows x86_64）で、通常の`test` matrix 10 jobに加えて、AOT専用matrix 29 jobを
-並列実行します。全体は39 test job＋1 attestation jobです。Linux／Windowsは4つの通常suite、macOSは通常suiteを2 jobへ
-分割し、AOT native 3 jobと合わせて同時実行上限5に収めます。
+各正式環境（Linux x86_64、macOS arm64、Windows x86_64）で、通常の`test` matrix 10 jobに加えて、AOT専用matrix 35 jobを
+並列実行します。全体は45 test job＋1 attestation jobです。Linux／Windowsは4つの通常suite、native 12 job、support 4 jobへ分割し、
+macOSは通常suiteを2 jobへ分割してAOT native 3 jobと合わせ、同時実行上限5に収めます。
 
 | job／suite | 検証内容 |
 |---|---|
@@ -34,7 +34,10 @@ Linuxログでは通常のmath・CSV・TOML・Promise差分は約0.8秒で完了
 | `standard` | math・CSV・TOML・Promise、markup・caniuse・kansujiの公式差分と全生成コーパス |
 | `host` | QuickJS互換差分、ネイティブプラグインABI、ファイル・プロセス・HTTP・暗号・文字コード・圧縮などNodeホスト差分。symlink経由のカレントディレクトリ実パスと失敗時のchdir診断も公式CLI・Interpreter・AOT O0〜O3で確認 |
 | `aot-native`（Linux／Windowsはfixture shard 1/3〜3/3 × O0〜O3、macOSはO0+O1／O2／O3） | 各OSでnative fixture 284件を重み付き固定割当し、公式CLI・公式生成JavaScript・`lnako run`と選択したLLVM AOT routeを実行。全route groupを合わせてO0〜O3の7経路を全件実行 |
-| `aot-support`（Linux／Windows） | HTTP serverの公式処理系対AOT O0〜O3実通信、canonical dispatch evidence／coverage（既存の並列監査runnerで同時実行）、dispatch security、ReleaseSafe build、通常smoke |
+| `aot-support` `support-http`（Linux／Windows） | HTTP serverの公式処理系対AOT O0〜O3実通信 |
+| `aot-support` `support-dispatch-evidence`（Linux／Windows） | canonical dispatch evidenceとdispatch security。evidence artifactを保存 |
+| `aot-support` `support-dispatch-coverage`（Linux／Windows） | canonical dispatch coverage。coverage artifactを保存 |
+| `aot-support` `support-smoke`（Linux／Windows） | ReleaseSafe buildと通常smoke |
 | `compat-aot` | QuickJS Debug単体テスト、QuickJS ReleaseSafe compiler build、compat-js smoke |
 | `mac-core-standard-support`（macOSのみ） | `core`・`standard`に加えて、macOSのAOT support（HTTP、dispatch evidence／coverage／security、ReleaseSafe、通常smoke）を実行 |
 | `mac-host-compat`（macOSのみ） | `host`・`compat-aot`を実行 |
@@ -46,18 +49,19 @@ O0〜O3の全routeを同じjobへ拘束しない構成です。macOSは同時実
 分けます。重み付きfixture選択はsource長と明示commands数から決定的に計算します。artifactにはfixture選択と実行した最適化レベルを
 記録し、部分結果を全件・全route結果と誤認しない`lnako.native-oracle-artifact.v3`とします。
 
-`aot-support`のHTTP、canonical dispatch、coverage、security、ReleaseSafe build、smokeはLinux／Windowsでは同じOSの専用jobで実行します。
-macOSではrunner上限5を超えないよう、これらを`mac-core-standard-support`へ移しています。
+`aot-support`のHTTP、canonical dispatch evidence／security、coverage、ReleaseSafe build／smokeは、Linux／Windowsで目的別の4 jobへ分けます。
+これにより同じrunner上での監査・build競合を避けます。macOSではrunner上限5を超えないよう、support全体を`mac-core-standard-support`へ移しています。
 dispatch evidenceとcoverageの全fixture・全site、HTTP serverの10命令・14リクエスト、tiny fixtureの全security不変条件は維持します。
-dispatch evidenceとcoverageは`tools/check_dispatch_audits_parallel.mjs`から独立した出力先へ同時に起動し、検査内容を削減せずに
-直列実行分の壁時計だけを短縮します。`tools/check_ci_workflow.mjs`はnative 27 job（Linux／Windows各12、macOS 3）、support 2 job、
-通常10 job、全39 test job、macOS 5 job、3正式OS、全7経路、O0〜O3、artifact、attestationの構成を固定します。
+dispatch evidenceとcoverageはそれぞれ専用jobで独立した出力先へ保存し、検査内容を削減せずにrunner上の競合を解消します。
+`tools/check_ci_workflow.mjs`はnative 27 job（Linux／Windows各12、macOS 3）、support 8 job（Linux／Windows各4）、通常10 job、
+全45 test job、macOS 5 job、3正式OS、全7経路、O0〜O3、artifact、attestationの構成を固定します。
 
 GitHub ActionsのmacOS runnerは同時に5 jobまでです。現行workflowでは`mac-core-standard-support`、`mac-host-compat`、native route 3 jobの
 5 jobだけをmacOSへ割り当て、同一run内で6件目以降が待ち行列へ入らない構成を維持します。Linux／Windowsのnative route shardに加えて
-macOSの通常suiteもjob境界へ分けます。それぞれLinux／Windowsは通常4 job・native 12 job・support 1 job、macOSは通常2 job・native 3 jobを
+macOSの通常suiteもjob境界へ分けます。それぞれLinux／Windowsは通常4 job・native 12 job・support 4 job、macOSは通常2 job・native 3 jobを
 独立runnerへ割り当てます。別workflowや同時runがrunner枠を使用する場合の
-外部queueは残るため、queue時間を含む壁時計、runner合計時間、各job時間は完了済みrunで別途確認します。
+外部queueは残るため、queue時間を含む壁時計、runner合計時間、各job時間は完了済みrunで別途確認します。macOSについてはworkflow自身が
+5 jobを超えないことを固定し、6件目以降の待ち行列を作らないことを検証します。
 
 直前の[run 33407218789](https://github.com/soramikan/lnako/actions/runs/33407218789)（`2a9c00a`）では、変更前のmacOS matrixが8 jobあり、
 最初の5 jobが15:14:15〜15:14:19Zに開始した後、`AOT native shard 1/3`は15:15:28Z、`compat-aot`は15:17:35Z、
@@ -68,13 +72,13 @@ AOT native 3 route jobへ割り当てる。macOSのAOT supportは前者へ統合
 ## AOT検証の共通buildとjob分割
 
 各AOT jobは自身のrunner上でcompilerを一度だけbuildし、`--no-build`の検査へ渡します。native jobは`LNAKO_NATIVE_ORACLE_JOBS=1`
-とし、AOT fixture shardと最適化routeの組み合わせをjob並列化の単位にします。support jobも同じ先行compilerをHTTP／dispatch／coverage／securityへ
-再利用し、検査間のcompiler build重複を避けます。dispatch evidenceとcoverageはsupport job内で独立プロセスとして同時に実行します。
+とし、AOT fixture shardと最適化routeの組み合わせをjob並列化の単位にします。supportも目的別jobごとに必要な先行compilerを一度だけbuildし、
+HTTP、dispatch evidence／security、dispatch coverage、ReleaseSafe／smokeの長い処理を別runnerへ分離します。
 
 | job | 主なstep | artifact |
 |---|---|---|
 | `aot-native` × 3 OS（Linux／Windows各12 job、macOS 3 job） | `zig build` → native oracleのfixture／route shard（全284件の一部または全件、公式3経路＋選択AOT route） | OS・fixture shard・optimization別native oracle artifact |
-| `aot-support` × Linux／Windows | `zig build` → HTTP AOT、dispatch evidence／coverage／security、ReleaseSafe build、通常smoke | OS別dispatch evidence／coverage artifact |
+| `aot-support` × Linux／Windows（4 purpose jobs／OS） | `zig build` → HTTP AOT、dispatch evidence／security、dispatch coverage、ReleaseSafe build／通常smokeを目的別jobで実行 | OS別dispatch evidence／coverage artifact |
 | `mac-core-standard-support` × macOS | 通常core／standard → `zig build` → HTTP AOT、dispatch evidence／coverage／security、ReleaseSafe build、通常smoke | macOS dispatch evidence／coverage artifact |
 
 通常の`test` matrixはLinux／Windowsのcore／standard／host／compat-aot 8 jobとmacOSの`mac-core-standard-support`／`mac-host-compat` 2 jobへ分け、AOT nativeの
@@ -116,11 +120,11 @@ pushされた場合だけ、進行中の古いrunを取り消します。別ブ�
 
 最新commitは古いcommitを祖先として含むため、最新runが累積したソースを全スイートで検証します。一方、取り消された
 個々のcommitにはGitHub上の完走記録が残らないため、機能コミット前のローカル検証と署名を省略してよい規則では
-ありません。リリース候補やマイルストーンのcommitは、後続pushを止めて全39テストjobとattestation jobの完走を証拠として残します。
+ありません。リリース候補やマイルストーンのcommitは、後続pushを止めて全45テストjobとattestation jobの完走を証拠として残します。
 
 追跡中のdispatch証拠が直前のfixture commitを指す場合、`sync_compat_evidence.mjs`はそのcommitから現HEADまでの変更が
 CI・文書・証拠検証のallowlistだけであることを`git merge-base`とpath差分で確認します。この検査に必要な履歴を確保するため、
-Linux／Windowsの`core`とmacOSの`mac-core-standard-support`の3 jobだけは`actions/checkout`の`fetch-depth: 0`を使い、他の36 test/AOT jobは既定の浅いcheckoutを維持します。full checkoutは証拠追従の
+Linux／Windowsの`core`とmacOSの`mac-core-standard-support`の3 jobだけは`actions/checkout`の`fetch-depth: 0`を使い、他の42 test/AOT jobは既定の浅いcheckoutを維持します。full checkoutは証拠追従の
 検査範囲を広げるものではなく、fixture・catalog・product sourceの変更を引き続き拒否します。
 
 ## キャッシュ
@@ -135,7 +139,7 @@ Linux／Windowsの`core`とmacOSの`mac-core-standard-support`の3 jobだけは`
 
 ### Zig build cacheの保存対象
 
-`mlugg/setup-zig`のbuild cacheは、保存keyへrun IDとattemptが付くため、全39ジョブで有効にすると最大39個の新規cacheが
+`mlugg/setup-zig`のbuild cacheは、保存keyへrun IDとattemptが付くため、全45ジョブで有効にすると最大45個の新規cacheが
 runごとに増えます。2026-08-27に確認した時点では、Actions cacheが30件・約11.6 GBに達し、固定Linux LLVM cacheが
 退避された後のrunで5つのLinuxジョブが同じ配布物の取得・SHA-256検証・展開を約148秒ずつ重複していました。
 
@@ -415,7 +419,8 @@ schemaを`lnako.native-oracle-artifact.v3`へ上げて旧v1/v2のartifactと混�
 
 ### dispatch evidenceの外部attestation
 
-`aot-support` jobは同じ検証runで`${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json`を生成し、OS別artifactへ保存する。dispatch JSONは
+Linux／Windowsの`support-dispatch-evidence` jobは同じ検証runで`${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json`を生成し、OS別artifactへ保存する。
+`support-dispatch-coverage` jobは対応するcoverage JSONを別artifactへ保存する。dispatch JSONは
 引数・値・source本文・ローカルパス・標準出力を含まない。main pushまたはmainへのworkflow_dispatchだけが、専用の
 `attest-dispatch-evidence` job（`contents/actions: read`、`id-token: write`、`attestations/artifact-metadata: write`）へ進む。
 
@@ -583,3 +588,21 @@ attestationが成功したため、macOS 5 job制約を守ったjob分割の短�
 
 次のpush時も、まずこのrunのように直前の完了済みCIの結論と失敗ログを確認する。新runの完了は待たずに実装を進め、次回push前に
 完了済みrunの各job、wall-clock、runner合計、cache hit/miss、artifact、attestationを確認する。
+
+## Linux／WindowsのAOT support目的別job分割
+
+worker数を増やしても壁時計の改善が再現しなかったため、supportの同一runner内並列をjob境界へ移した。Linux／Windowsそれぞれで、
+`support-http`、`support-dispatch-evidence`、`support-dispatch-coverage`、`support-smoke`の4 jobを起動する。これによりAOT matrixは
+native 27 job＋support 8 job、通常test 10 jobの計45 test jobとなる。
+
+各support jobの検証内容は維持する。HTTP jobは先行`zig build`後に公式HTTP serverとの差分をO0〜O3で実行し、evidence jobは
+先行build後にcanonical dispatch traceとtiny fixtureのsecurity不変条件を検査してevidence artifactを保存する。coverage jobは先行build後に
+全fixture・全siteのdispatch coverageを検査してcoverage artifactを保存する。smoke jobはReleaseSafe compilerをbuildし、`--version`、compat report、
+2件の`check`、通常`run`、`test`を実行する。dispatch evidence artifactは従来どおりattestation jobの3 OS subjectへ使い、coverage artifactも保存する。
+
+目的別jobではsetup、固定LLVM／QuickJS、公式オラクル取得、必要なcompiler buildが重複するため、単一runのrunner合計時間は増える可能性がある。
+一方、長いdispatch監査とReleaseSafe buildを同じrunnerのCPU・I/Oへ拘束せず、Linux／Windowsの壁時計改善を測定できる。macOSは
+`mac-core-standard-support`、`mac-host-compat`、native route 3 jobの5件を維持し、supportを追加して6件目のqueueを発生させない。
+
+この変更のCI性能値は未確定であり、次のpushでは先に直前の完了済みrunの結論と失敗ログを確認する。新runの完了は待たずに実装を続け、
+次回push前にLinux／Windowsの4 support jobの開始待ち、各step時間、run全体のwall-clock、runner合計、cache hit/miss、3 OS artifact、attestationを確認する。
