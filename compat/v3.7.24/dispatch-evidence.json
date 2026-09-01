@@ -8,7 +8,7 @@
   "fixture": {
     "id": "native-dispatch-commands",
     "file": "native-cases.json",
-    "sourceSha256": "dfa65b7534172ca3197bbcbcad7b0a50fee7ffd868e5eecc5e72e3b8f738079c"
+    "sourceSha256": "8361c02958b15eb07bb1a2738d09165409431d2c10be5aa1c98238e5148b6960"
   },
   "officialComparison": {
     "oracle": "official-source",
@@ -23,25 +23,25 @@
       "officialSource": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "47dedaa09a8b75b2d0f69292279f9d301e1a09d3d782b897b62efa4cff0d2424",
+        "stdoutSha256": "9e8a0ece41257b68165aa20377fd2f4635b3da5c73385708b81d69a8c1c27a1d",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "officialGenerated": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "47dedaa09a8b75b2d0f69292279f9d301e1a09d3d782b897b62efa4cff0d2424",
+        "stdoutSha256": "9e8a0ece41257b68165aa20377fd2f4635b3da5c73385708b81d69a8c1c27a1d",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoRun": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "47dedaa09a8b75b2d0f69292279f9d301e1a09d3d782b897b62efa4cff0d2424",
+        "stdoutSha256": "9e8a0ece41257b68165aa20377fd2f4635b3da5c73385708b81d69a8c1c27a1d",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoNativeO0": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "47dedaa09a8b75b2d0f69292279f9d301e1a09d3d782b897b62efa4cff0d2424",
+        "stdoutSha256": "9e8a0ece41257b68165aa20377fd2f4635b3da5c73385708b81d69a8c1c27a1d",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       }
     }
@@ -63,23 +63,23 @@
     },
     "lnako": {
       "binarySha256": "e1960a50cde0c248245d25e6fbd2e9f70e3659eac1468cbff896c76a8c4c5eaa",
-      "commit": "df640a3aeb716b0cc79c3e17464fa19e9057c981",
-      "dirty": false
+      "commit": "70bb89eaec110e611371e45441e2891df5333bce",
+      "dirty": true
     },
     "raw": {
-      "interpreterTraceSha256": "8366898252bcdb4522a6b350cea883694238ff1ee072ab85fcddcf973265ed1d",
-      "aotTraceSha256": "6d8e5ab9ad6d6d31590f68265b99a9c3eb214ac2ba1e48ab05aa142164af5c77",
-      "compileManifestSha256": "c8ec7034af9099bb557a2c6896b3977871b69e350d15996823d4c74afe87b1d5"
+      "interpreterTraceSha256": "eb4477cfd7b8e7f3aa4fd33dd0bee02b03822fcd4ce31f15543d1f97c52140a5",
+      "aotTraceSha256": "6bec47cc35f2913b0873375b28f223bff4cd09b91381ecbbc63a27631c8c679b",
+      "compileManifestSha256": "ab18aac5e4f63cee0f187d562a0f993180cf95c5a84a127332af25f3568b976e"
     }
   },
   "trace": {
     "interpreter": {
       "schema": 2,
-      "eventCount": 889
+      "eventCount": 890
     },
     "aot": {
       "schema": 2,
-      "eventCount": 1778
+      "eventCount": 1780
     }
   },
   "sites": [
@@ -123,7 +123,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 887,
+          "callId": 888,
           "count": 1
         }
       },
@@ -146,7 +146,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 888,
+          "callId": 889,
           "count": 1
         }
       },
@@ -169,7 +169,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 878,
+          "callId": 879,
           "count": 1
         }
       },
@@ -192,7 +192,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 879,
+          "callId": 880,
           "count": 1
         }
       },
@@ -215,7 +215,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 880,
+          "callId": 881,
           "count": 1
         }
       },
@@ -238,7 +238,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 883,
+          "callId": 884,
           "count": 1
         }
       },
@@ -261,7 +261,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 884,
+          "callId": 885,
           "count": 1
         }
       },
@@ -284,7 +284,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 885,
+          "callId": 886,
           "count": 1
         }
       },
@@ -307,7 +307,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 881,
+          "callId": 882,
           "count": 1
         }
       },
@@ -330,7 +330,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 882,
+          "callId": 883,
           "count": 1
         }
       },
@@ -353,7 +353,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 886,
+          "callId": 887,
           "count": 1
         }
       },
@@ -20364,6 +20364,29 @@
         "aot": {
           "success": true,
           "callId": 877,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0700",
+      "name": "コンソールクリア",
+      "plugin": "plugin_node",
+      "siteId": "0x000000170000036f",
+      "sourceName": "コンソールクリア",
+      "canonicalOpcode": "node_console_clear",
+      "opcode": 326,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_node",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 878,
           "count": 1
         }
       },
