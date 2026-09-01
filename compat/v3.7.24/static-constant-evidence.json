@@ -1,0 +1,404 @@
+{
+  "schema": "lnako.static-constant-evidence.v1",
+  "generator": "tools/check_static_constant_evidence.mjs",
+  "baseline": {
+    "tag": "3.7.24",
+    "commit": "aa18c7e640523938c680958fe731418cc6f7a58f"
+  },
+  "fixture": {
+    "id": "native-scalar-system-constants",
+    "file": "native-cases.json",
+    "sourceSha256": "8df7d95c692fc1a847605dd07cbfdb4ce8284589d803e5560e0d7818fb9e0cb5",
+    "globalReadNames": [
+      "永遠",
+      "OK",
+      "NG",
+      "TRUE",
+      "FALSE",
+      "true",
+      "false",
+      "キャンセル",
+      "PI",
+      "戻値無",
+      "戻値有",
+      "__DEBUG強制待機",
+      "__DEBUG待機フラグ",
+      "非数",
+      "無限大",
+      "undefined",
+      "未定義"
+    ],
+    "literalNames": [
+      "はい",
+      "いいえ",
+      "真",
+      "偽",
+      "オン",
+      "オフ",
+      "NULL"
+    ]
+  },
+  "officialComparison": {
+    "oracle": "official-source",
+    "routes": [
+      "officialSource",
+      "officialGenerated",
+      "lnakoRun",
+      "lnakoNativeO0"
+    ],
+    "equivalent": true,
+    "results": {
+      "officialSource": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "76e88087a38fea9b2a0ebdb74af6f5a3f69bfc43c666302f650ece62814f84c8",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "officialGenerated": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "76e88087a38fea9b2a0ebdb74af6f5a3f69bfc43c666302f650ece62814f84c8",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "lnakoRun": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "76e88087a38fea9b2a0ebdb74af6f5a3f69bfc43c666302f650ece62814f84c8",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "lnakoNativeO0": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "76e88087a38fea9b2a0ebdb74af6f5a3f69bfc43c666302f650ece62814f84c8",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  },
+  "attestation": null,
+  "provenance": {
+    "environment": {
+      "platform": "darwin",
+      "arch": "arm64",
+      "node": "v24.19.0"
+    },
+    "oracle": {
+      "build": 4,
+      "archiveSha256": "c3bedbf101118a261f631d331127ae441657fec091c712b07d237c4336eb0011",
+      "cliSha256": "65e32f1d7de0b2da18edf3f4c49565c37d31aa474d31ee08426f2f6a0c0d6c81",
+      "markerSha256": "e9444955298c3bb22164a219c0f342ee32301e901ec967d648cae9a25d8bf531",
+      "treeHashAlgorithm": "sha256-json-records-v3",
+      "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
+    },
+    "lnako": {
+      "binarySha256": "99da27c2d49961a481c8b947164f4264092ca236cf8c7664550d4115da515671",
+      "commit": "94760ec28cf835e3c23491bb99b4a7bb45155839",
+      "dirty": false
+    },
+    "raw": {
+      "interpreterTraceSha256": "71bbe6d3165a3d9d7f13ce660912bed307a96ede2c62a7a11b147f5408946cb5",
+      "aotTraceSha256": "ee70afdecb6fd6f9cb5d00f216fdd38569061c54a1649b1d5e9a2c614b0fded9",
+      "globalManifestSha256": "9ad55311b3cfbb2c6cf80d6bf59ea10841b3a1db0d035a5c981f19f6817338d8"
+    }
+  },
+  "trace": {
+    "interpreter": {
+      "schema": 1,
+      "eventCount": 17
+    },
+    "aot": {
+      "schema": 1,
+      "eventCount": 17
+    }
+  },
+  "entries": [
+    {
+      "catalogId": "command-0009",
+      "name": "永遠",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000001",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0018",
+      "name": "OK",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000002",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0019",
+      "name": "NG",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000003",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0021",
+      "name": "TRUE",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000004",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0022",
+      "name": "FALSE",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000005",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0023",
+      "name": "true",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000006",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0024",
+      "name": "false",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000007",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0020",
+      "name": "キャンセル",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000008",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0025",
+      "name": "PI",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000009",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0038",
+      "name": "戻値無",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000000a",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0039",
+      "name": "戻値有",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000000b",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0067",
+      "name": "__DEBUG強制待機",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000000c",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0069",
+      "name": "__DEBUG待機フラグ",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000000d",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0036",
+      "name": "非数",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000000e",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0037",
+      "name": "無限大",
+      "plugin": "plugin_system",
+      "siteId": "0x000000000000000f",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0028",
+      "name": "undefined",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000010",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0029",
+      "name": "未定義",
+      "plugin": "plugin_system",
+      "siteId": "0x0000000000000011",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    }
+  ]
+}
