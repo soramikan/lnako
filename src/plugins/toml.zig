@@ -1,6 +1,8 @@
 const std = @import("std");
 const value_mod = @import("../runtime/value.zig");
+const toml_temporal = @import("../runtime/toml_temporal.zig");
 const common = @import("system/common.zig");
+const json = @import("system/json.zig");
 
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
@@ -232,6 +234,10 @@ const Parser = struct {
         const start = self.index;
         while (self.index < self.input.len) {
             const byte = self.input[self.index];
+            if (byte == ' ' and self.index == start + 10 and toml_temporal.hasDatePrefix(self.input[start..]) and self.index + 1 < self.input.len and std.ascii.isDigit(self.input[self.index + 1])) {
+                self.index += 1;
+                continue;
+            }
             if (byte == ',' or byte == ']' or byte == '}' or byte == '#' or byte == '\n' or byte == '\r' or byte == ' ' or byte == '\t') break;
             self.index += 1;
         }
@@ -243,7 +249,12 @@ const Parser = struct {
         if (std.mem.eql(u8, token, "-inf")) return .{ .number = -std.math.inf(f64) };
         if (std.mem.eql(u8, token, "nan") or std.mem.eql(u8, token, "+nan")) return .{ .number = std.math.nan(f64) };
         if (std.mem.eql(u8, token, "-nan")) return .{ .number = -std.math.nan(f64) };
-        if (looksTemporal(token)) return self.runtime.stringUtf8(token);
+        if (try toml_temporal.normalize(self.runtime.allocator(), token)) |normalized_value| {
+            var normalized = normalized_value;
+            defer normalized.deinit();
+            return self.runtime.createTomlTemporal(normalized.kind, normalized.text, normalized.text);
+        }
+        if (toml_temporal.looksLikeTemporal(token)) return self.runtime.stringUtf8(token);
         const normalized = try removeUnderscores(self.runtime.allocator(), token);
         defer self.runtime.allocator().free(normalized);
         if (parseTomlInteger(normalized)) |integer| return .{ .number = integer } else |_| {}
@@ -272,9 +283,9 @@ const Parser = struct {
                 return table_value.dictionary;
             }
             if (existing) |found| {
-                if (found == .dictionary) {
+                if (found == .dictionary and found.dictionary.kind == .ordinary) {
                     current = found.dictionary;
-                } else if (found == .array and found.array.len() > 0 and found.array.get(found.array.len() - 1) == .dictionary) {
+                } else if (found == .array and found.array.len() > 0 and found.array.get(found.array.len() - 1) == .dictionary and found.array.get(found.array.len() - 1).dictionary.kind == .ordinary) {
                     current = found.array.get(found.array.len() - 1).dictionary;
                 } else return error.InvalidTomlTable;
             } else {
@@ -294,7 +305,7 @@ const Parser = struct {
         var current = base;
         for (path[0 .. path.len - 1]) |segment| {
             if (try self.get(current, segment)) |found| {
-                if (found != .dictionary) return error.InvalidTomlKey;
+                if (found != .dictionary or found.dictionary.kind != .ordinary) return error.InvalidTomlKey;
                 current = found.dictionary;
             } else {
                 var created = try self.runtime.createDictionary();
@@ -385,26 +396,26 @@ fn writeTable(runtime: *Runtime, output: *std.ArrayList(u8), dictionary: *value_
         try output.append(runtime.allocator(), '\n');
     }
     for (dictionary.keys(), dictionary.values()) |key, value| {
-        if (value == .dictionary or isArrayOfDictionaries(value)) continue;
+        if (isTableDictionary(value) or isArrayOfDictionaries(value)) continue;
         try writeKey(runtime, output, key);
         try output.appendSlice(runtime.allocator(), " = ");
         try writeValue(runtime, output, value, active_dictionaries, active_arrays);
         try output.append(runtime.allocator(), '\n');
     }
     for (dictionary.keys(), dictionary.values()) |key, value| {
-        if (value != .dictionary and !isArrayOfDictionaries(value)) continue;
+        if (!isTableDictionary(value) and !isArrayOfDictionaries(value)) continue;
         if (output.items.len > 0 and output.items[output.items.len - 1] != '\n') try output.append(runtime.allocator(), '\n');
         if (output.items.len > 0 and !(output.items.len >= 2 and output.items[output.items.len - 2] == '\n')) try output.append(runtime.allocator(), '\n');
         try path.append(runtime.allocator(), key);
         defer _ = path.pop();
-        if (value == .dictionary) {
+        if (isTableDictionary(value)) {
             try writeTable(runtime, output, value.dictionary, path, true, active_dictionaries, active_arrays);
         } else {
             if (active_arrays.contains(value.array)) return error.CircularTomlValue;
             try active_arrays.put(runtime.allocator(), value.array, {});
             defer _ = active_arrays.remove(value.array);
             for (value.array.items.items, 0..) |item, index| {
-                if (item != .dictionary) return error.UnsupportedTomlValue;
+                if (item != .dictionary or item.dictionary.kind != .ordinary) return error.UnsupportedTomlValue;
                 if (index > 0) try output.append(runtime.allocator(), '\n');
                 try writeHeader(runtime, output, path.items, true);
                 try output.append(runtime.allocator(), '\n');
@@ -462,6 +473,10 @@ fn writeValue(runtime: *Runtime, output: *std.ArrayList(u8), value: Value, activ
             try output.appendSlice(runtime.allocator(), " ]");
         },
         .dictionary => |dictionary| {
+            if (dictionary.kind == .toml_temporal) {
+                const temporal = dictionary.toml_temporal orelse return error.UnsupportedTomlValue;
+                return output.appendSlice(runtime.allocator(), temporal.toml_text);
+            }
             if (active_dictionaries.contains(dictionary)) return error.CircularTomlValue;
             try active_dictionaries.put(runtime.allocator(), dictionary, {});
             defer _ = active_dictionaries.remove(dictionary);
@@ -530,13 +545,12 @@ fn removeUnderscores(allocator: std.mem.Allocator, token: []const u8) ![]u8 {
     return output.toOwnedSlice(allocator);
 }
 
-fn looksTemporal(token: []const u8) bool {
-    if (token.len < 5 or !std.ascii.isDigit(token[0])) return false;
-    return std.mem.indexOfScalar(u8, token, ':') != null or (token.len >= 10 and token[4] == '-' and token[7] == '-');
+fn isArrayOfDictionaries(value: Value) bool {
+    return value == .array and value.array.len() > 0 and value.array.get(0) == .dictionary and value.array.get(0).dictionary.kind == .ordinary;
 }
 
-fn isArrayOfDictionaries(value: Value) bool {
-    return value == .array and value.array.len() > 0 and value.array.get(0) == .dictionary;
+fn isTableDictionary(value: Value) bool {
+    return value == .dictionary and value.dictionary.kind == .ordinary;
 }
 
 fn isBareKey(byte: u8) bool {
@@ -557,6 +571,39 @@ test "TOMLの表・配列・インライン表を相互変換する" {
     const utf8 = try encoded.string.toUtf8Lossy(std.testing.allocator);
     defer std.testing.allocator.free(utf8);
     try std.testing.expect(std.mem.indexOf(u8, utf8, "[server]\nport = 8080") != null);
+}
+
+test "TOML日時は専用値としてJSONとTOMLへ正規化する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var source = try runtime.stringUtf8("d=1979-05-27\nt=07:32\no=1979-05-27T07:32:00Z\nl=1979-05-27 07:32\n");
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&source);
+    var decoded = (try call(&runtime, "TOML取得", &.{source})).?;
+    try roots.protect(&decoded);
+
+    for ([_]struct { key: []const u8, kind: value_mod.TomlTemporalKind }{
+        .{ .key = "d", .kind = .date },
+        .{ .key = "t", .kind = .time },
+        .{ .key = "o", .kind = .offset_datetime },
+        .{ .key = "l", .kind = .local_datetime },
+    }) |case| {
+        const item = try dictionaryValue(&runtime, decoded.dictionary, case.key);
+        try std.testing.expect(item == .dictionary);
+        try std.testing.expectEqual(value_mod.DictionaryKind.toml_temporal, item.dictionary.kind);
+        try std.testing.expectEqual(case.kind, item.dictionary.toml_temporal.?.kind);
+    }
+
+    const encoded_json = (try json.call(&runtime, "JSON変換", &.{decoded})).?;
+    const json_utf8 = try encoded_json.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(json_utf8);
+    try std.testing.expectEqualStrings("{\"d\":\"1979-05-27\",\"t\":\"07:32:00.000\",\"o\":\"1979-05-27T07:32:00.000Z\",\"l\":\"1979-05-27T07:32:00.000\"}", json_utf8);
+
+    const encoded_toml = (try call(&runtime, "TOML変換", &.{decoded})).?;
+    const toml_utf8 = try encoded_toml.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(toml_utf8);
+    try std.testing.expectEqualStrings("d = 1979-05-27\nt = 07:32:00.000\no = 1979-05-27T07:32:00.000Z\nl = 1979-05-27T07:32:00.000\n", toml_utf8);
 }
 
 fn dictionaryValue(runtime: *Runtime, dictionary: *value_mod.Dictionary, key: []const u8) !Value {

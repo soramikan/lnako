@@ -117,6 +117,8 @@ Node HTTPクライアントの実通信は、`plugin-node-http-callbacks`、`plu
 
 `plugin-httpserver-all`で扱う簡易HTTPサーバ6 entryは、HTTPクライアントのAJAX命令とは別の純Zig routeです。AOTはlistener、HTTP/1.1 request parser、query/form/multipart、静的ファイル、登録callback、応答header、リダイレクトを実装し、`tools/compare_http_server_aot_oracle.mjs`で公式処理系とO0〜O3を比較します。
 
+TOMLの日時値は公式`smol-toml`のDate系値として、日付・時刻・local/offset datetimeの秒・ミリ秒・`T`正規化をInterpreterと純LLVM AOTで再現します。公式依存由来の分かりにくい境界と、時刻単独のoffset入力で観測される壊れた出力は[`docs/COMPATIBILITY_QUIRKS.md`](docs/COMPATIBILITY_QUIRKS.md)へ分離して記録しています。標準527 entry全件のAOT証拠やDateの全メソッド実装を意味するものではありません。
+
 ## CLI
 
 ```text

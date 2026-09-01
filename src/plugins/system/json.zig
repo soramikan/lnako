@@ -143,6 +143,12 @@ fn writeValue(
         },
         .dictionary => |dictionary| {
             if (dictionary.kind == .http_response) return writer.writeAll("{}");
+            if (dictionary.kind == .toml_temporal) {
+                const temporal = dictionary.toml_temporal orelse return error.UnsupportedJsonValue;
+                try writer.writeByte('"');
+                try writer.writeAll(temporal.json_text);
+                return writer.writeByte('"');
+            }
             if (jsonActiveIndexDictionary(active_objects.items, dictionary)) |cycle_start| {
                 try setCircularFailureMessage(runtime, active_objects.items, cycle_start, path);
                 return error.CircularCloneValue;

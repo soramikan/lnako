@@ -2,9 +2,11 @@ const std = @import("std");
 const string_mod = @import("string.zig");
 const bigint_mod = @import("bigint.zig");
 const number_mod = @import("number.zig");
+const toml_temporal = @import("toml_temporal.zig");
 
 pub const String = string_mod.String;
 pub const BigInt = bigint_mod.BigInt;
+pub const TomlTemporalKind = toml_temporal.Kind;
 
 pub const ByteKind = enum { buffer, uint8_array, array_buffer };
 
@@ -237,12 +239,26 @@ const StringKeyContext = struct {
 
 const DictionaryMap = std.ArrayHashMapUnmanaged(*String, Value, StringKeyContext, true);
 
-pub const DictionaryKind = enum { ordinary, http_response };
+pub const DictionaryKind = enum { ordinary, http_response, toml_temporal };
+
+pub const TomlTemporal = struct {
+    allocator: std.mem.Allocator,
+    kind: TomlTemporalKind,
+    json_text: []u8,
+    toml_text: []u8,
+
+    pub fn deinit(self: *TomlTemporal) void {
+        self.allocator.free(self.json_text);
+        self.allocator.free(self.toml_text);
+        self.* = undefined;
+    }
+};
 
 pub const Dictionary = struct {
     gc_marked: bool = false,
     allocator: std.mem.Allocator,
     kind: DictionaryKind = .ordinary,
+    toml_temporal: ?*TomlTemporal = null,
     map: DictionaryMap = .empty,
     external: ?ExternalHandle = null,
     /// Object-literal `__proto__` is represented separately from own
@@ -252,6 +268,10 @@ pub const Dictionary = struct {
 
     pub fn deinit(self: *Dictionary) void {
         if (self.external) |binding| binding.deinit();
+        if (self.toml_temporal) |temporal| {
+            temporal.deinit();
+            self.allocator.destroy(temporal);
+        }
         self.map.deinit(self.allocator);
         self.* = undefined;
     }
@@ -929,6 +949,23 @@ pub const Runtime = struct {
         result.* = .{ .allocator = self.allocator(), .kind = kind };
         try self.objects.append(self.allocator(), .{ .dictionary = result });
         return .{ .dictionary = result };
+    }
+
+    pub fn createTomlTemporal(self: *Runtime, kind: TomlTemporalKind, json_text: []const u8, toml_text: []const u8) !Value {
+        const temporal = try self.allocator().create(TomlTemporal);
+        errdefer self.allocator().destroy(temporal);
+        temporal.* = .{
+            .allocator = self.allocator(),
+            .kind = kind,
+            .json_text = &.{},
+            .toml_text = &.{},
+        };
+        errdefer temporal.deinit();
+        temporal.json_text = try self.allocator().dupe(u8, json_text);
+        temporal.toml_text = try self.allocator().dupe(u8, toml_text);
+        var result = try self.createDictionaryKind(.toml_temporal);
+        result.dictionary.toml_temporal = temporal;
+        return result;
     }
 
     pub fn createPromise(self: *Runtime) !Value {

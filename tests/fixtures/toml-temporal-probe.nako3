@@ -8,3 +8,12 @@ TOML変換(TOML取得(T))を表示
 H=『h=07:32:00+09:00』
 JSON変換(TOML取得(H))を表示
 TOML変換(TOML取得(H))を表示
+
+N=『time_short=07:32
+time_fraction=07:32:00.123456
+local=1979-05-27 07:32
+local_fraction=1979-05-27 07:32:00.123456
+utc_short=1979-05-27T07:32
+offset=1979-05-27T07:32:00-05:30』
+JSON変換(TOML取得(N))を表示
+TOML変換(TOML取得(N))を表示

@@ -1054,6 +1054,12 @@
     "source": "!「${PLUGIN_TOML}」を取り込む\nT=『title=\"x\"\nn=1_000\na=[1,2]\no={x=1}\n[server]\nport=8080\n[[products]]\nname=\"a\"\n[[products]]\nname=\"b\"』\nJSON変換(TOML取得(T))を表示\nTOML変換({\"a\":{\"b\":3}})を表示\n"
   },
   {
+    "id": "native-toml-temporal-values",
+    "oracle": "official-source",
+    "commands": ["TOML取得", "TOML変換"],
+    "source": "!「${PLUGIN_TOML}」を取り込む\nT=『d=1979-05-27\nt=07:32\no=1979-05-27T07:32:00Z\nl=1979-05-27 07:32\nf=07:32:00.123456\n[server]\nat=1979-05-27T07:32:00-05:30』\nD=TOML取得(T)\nJSON変換(D)を表示\nTOML変換(D)を表示\n"
+  },
+  {
     "id": "native-markup-commands",
     "oracle": "official-source",
     "commands": ["マークダウンHTML変換", "HTML整形"],

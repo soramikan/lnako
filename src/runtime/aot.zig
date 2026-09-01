@@ -19,6 +19,7 @@ const builtin_catalog = @import("../semantic/builtin_catalog.zig");
 const dynamic_ir = @import("../ir/nako_ir.zig");
 const dynamic_interpreter = @import("interpreter.zig");
 const dynamic_value = @import("value.zig");
+const toml_temporal = @import("toml_temporal.zig");
 
 extern "c" fn fflush(stream: ?*std.c.FILE) c_int;
 extern "c" fn time(timer: ?*i64) i64;
@@ -371,6 +372,17 @@ pub const RootFrame = extern struct {
 };
 
 const DictionaryEntry = struct { key: Value, value: Value };
+const AotTomlTemporal = struct {
+    kind: toml_temporal.Kind,
+    json_text: []u8,
+    toml_text: []u8,
+
+    fn deinit(self: *AotTomlTemporal, allocator: std.mem.Allocator) void {
+        allocator.free(self.json_text);
+        allocator.free(self.toml_text);
+        self.* = undefined;
+    }
+};
 const ByteKind = enum { buffer, uint8_array, array_buffer };
 const ByteStorage = struct {
     allocator: std.mem.Allocator,
@@ -862,6 +874,7 @@ const Object = struct {
     /// serialized fixtures already use it.
     array_properties: std.ArrayList(DictionaryEntry) = .empty,
     array_presence: std.ArrayList(bool) = .empty,
+    toml_temporal: ?AotTomlTemporal = null,
     payload: Payload,
 };
 
@@ -1151,6 +1164,17 @@ const Runtime = struct {
             try self.setDictionary(&roots[0].object().?.payload.dictionary, roots[1], roots[2]);
         }
         return roots[0];
+    }
+
+    fn createTomlTemporal(self: *Runtime, kind: toml_temporal.Kind, json_text: []const u8, toml_text: []const u8) !Value {
+        try self.beforeAllocation();
+        const owned_json = try self.allocator.dupe(u8, json_text);
+        errdefer self.allocator.free(owned_json);
+        const owned_toml = try self.allocator.dupe(u8, toml_text);
+        errdefer self.allocator.free(owned_toml);
+        const result = try self.createObject(.{ .dictionary = .empty }, .dictionary);
+        result.object().?.toml_temporal = .{ .kind = kind, .json_text = owned_json, .toml_text = owned_toml };
+        return result;
     }
 
     fn createObjectLiteral(self: *Runtime, values: []const Value) !Value {
@@ -1475,6 +1499,7 @@ const Runtime = struct {
     }
 
     fn destroyObject(self: *Runtime, object: *Object) void {
+        if (object.toml_temporal) |*temporal| temporal.deinit(self.allocator);
         switch (object.payload) {
             .utf16_string => |units| self.allocator.free(units),
             .byte_buffer => |buffer| {
@@ -2141,6 +2166,9 @@ fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror!dyn
             return result;
         },
         .dictionary => {
+            if (value.object().?.toml_temporal) |temporal| {
+                return state.value_runtime.createTomlTemporal(temporal.kind, temporal.json_text, temporal.toml_text);
+            }
             var result = try state.value_runtime.createDictionary();
             var roots = state.value_runtime.rootFrame();
             defer roots.deinit();
@@ -2199,6 +2227,10 @@ fn dynamicToAotValue(state: *DynamicInterpreterState, value: dynamic_value.Value
             break :blk result;
         },
         .dictionary => |dictionary| blk: {
+            if (dictionary.kind == .toml_temporal) {
+                const temporal = dictionary.toml_temporal orelse return error.DynamicValueUnsupported;
+                break :blk owner.createTomlTemporal(temporal.kind, temporal.json_text, temporal.toml_text);
+            }
             var result = try owner.createDictionary(&.{});
             var result_roots = RootFrame{};
             owner.pushRoots(&result_roots, @ptrCast(&result), 1);
@@ -2800,6 +2832,11 @@ fn jsonWriteValue(
         .dictionary => {
             if (isAotHttpResponse(value)) return writer.writeAll("{}");
             const object = value.object().?;
+            if (object.toml_temporal) |temporal| {
+                try writer.writeByte('"');
+                try writer.writeAll(temporal.json_text);
+                return writer.writeByte('"');
+            }
             if (jsonActiveIndex(active_objects.items, object)) |cycle_start| {
                 try jsonSetCircularFailureMessage(runtime, active_objects.items, cycle_start, path);
                 return error.CircularCloneValue;
@@ -11228,6 +11265,10 @@ const TomlAotParser = struct {
         const start = self.index;
         while (self.index < self.input.len) {
             const byte = self.input[self.index];
+            if (byte == ' ' and self.index == start + 10 and toml_temporal.hasDatePrefix(self.input[start..]) and self.index + 1 < self.input.len and std.ascii.isDigit(self.input[self.index + 1])) {
+                self.index += 1;
+                continue;
+            }
             if (byte == ',' or byte == ']' or byte == '}' or byte == '#' or byte == '\n' or byte == '\r' or byte == ' ' or byte == '\t') break;
             self.index += 1;
         }
@@ -11239,7 +11280,12 @@ const TomlAotParser = struct {
         if (std.mem.eql(u8, token, "-inf")) return numberValue(-std.math.inf(f64));
         if (std.mem.eql(u8, token, "nan") or std.mem.eql(u8, token, "+nan")) return numberValue(std.math.nan(f64));
         if (std.mem.eql(u8, token, "-nan")) return numberValue(-std.math.nan(f64));
-        if (tomlAotLooksTemporal(token)) return runtimeUtf8String(self.runtime, token);
+        if (try toml_temporal.normalize(self.runtime.allocator, token)) |normalized_value| {
+            var normalized = normalized_value;
+            defer normalized.deinit();
+            return self.runtime.createTomlTemporal(normalized.kind, normalized.text, normalized.text);
+        }
+        if (toml_temporal.looksLikeTemporal(token)) return runtimeUtf8String(self.runtime, token);
         const normalized = try tomlAotRemoveUnderscores(self.runtime.allocator, token);
         defer self.runtime.allocator.free(normalized);
         if (tomlAotParseInteger(normalized)) |integer| return numberValue(integer) else |_| {}
@@ -11268,7 +11314,7 @@ const TomlAotParser = struct {
                 return table_value;
             }
             if (existing) |found| {
-                if (found.tag == @intFromEnum(Tag.dictionary)) {
+                if (tomlAotIsTableDictionary(found)) {
                     current = found;
                 } else if (tomlAotLastArrayDictionary(found)) |last_table| {
                     current = last_table;
@@ -11287,7 +11333,7 @@ const TomlAotParser = struct {
         var current = base;
         for (path[0 .. path.len - 1]) |segment| {
             if (try tomlAotDictionaryGet(self.runtime, current.object().?.payload.dictionary.items, segment)) |found| {
-                if (found.tag != @intFromEnum(Tag.dictionary)) return error.InvalidTomlKey;
+                if (!tomlAotIsTableDictionary(found)) return error.InvalidTomlKey;
                 current = found;
             } else {
                 const created = try self.runtime.createDictionary(&.{});
@@ -11384,11 +11430,6 @@ fn tomlAotRemoveUnderscores(allocator: std.mem.Allocator, token: []const u8) ![]
     return output.toOwnedSlice(allocator);
 }
 
-fn tomlAotLooksTemporal(token: []const u8) bool {
-    if (token.len < 5 or !std.ascii.isDigit(token[0])) return false;
-    return std.mem.indexOfScalar(u8, token, ':') != null or (token.len >= 10 and token[4] == '-' and token[7] == '-');
-}
-
 fn tomlAotIsBareKey(byte: u8) bool {
     return std.ascii.isAlphanumeric(byte) or byte == '_' or byte == '-';
 }
@@ -11398,7 +11439,12 @@ fn tomlAotLastArrayDictionary(value: Value) ?Value {
     const object = value.object() orelse return null;
     if (object.payload != .array or object.payload.array.items.len == 0) return null;
     const item = object.payload.array.items[object.payload.array.items.len - 1];
-    return if (item.tag == @intFromEnum(Tag.dictionary)) item else null;
+    return if (tomlAotIsTableDictionary(item)) item else null;
+}
+
+fn tomlAotIsTableDictionary(value: Value) bool {
+    if (value.tag != @intFromEnum(Tag.dictionary)) return false;
+    return value.object().?.toml_temporal == null;
 }
 
 fn tomlStringify(runtime: *Runtime, source: Value) !Value {
@@ -11428,19 +11474,19 @@ fn tomlAotWriteTable(runtime: *Runtime, output: *std.ArrayList(u8), dictionary: 
         try output.append(runtime.allocator, '\n');
     }
     for (dictionary.payload.dictionary.items) |entry| {
-        if (entry.value.tag == @intFromEnum(Tag.dictionary) or tomlAotIsArrayOfDictionaries(entry.value)) continue;
+        if (tomlAotIsTableDictionary(entry.value) or tomlAotIsArrayOfDictionaries(entry.value)) continue;
         try tomlAotWriteKey(runtime, output, entry.key);
         try output.appendSlice(runtime.allocator, " = ");
         try tomlAotWriteValue(runtime, output, entry.value, active_dictionaries, active_arrays);
         try output.append(runtime.allocator, '\n');
     }
     for (dictionary.payload.dictionary.items) |entry| {
-        if (entry.value.tag != @intFromEnum(Tag.dictionary) and !tomlAotIsArrayOfDictionaries(entry.value)) continue;
+        if (!tomlAotIsTableDictionary(entry.value) and !tomlAotIsArrayOfDictionaries(entry.value)) continue;
         if (output.items.len > 0 and output.items[output.items.len - 1] != '\n') try output.append(runtime.allocator, '\n');
         if (output.items.len > 0 and !(output.items.len >= 2 and output.items[output.items.len - 2] == '\n')) try output.append(runtime.allocator, '\n');
         try path.append(runtime.allocator, entry.key);
         defer _ = path.pop();
-        if (entry.value.tag == @intFromEnum(Tag.dictionary)) {
+        if (tomlAotIsTableDictionary(entry.value)) {
             try tomlAotWriteTable(runtime, output, entry.value.object().?, path, true, active_dictionaries, active_arrays);
         } else {
             const array_object = entry.value.object().?;
@@ -11448,7 +11494,7 @@ fn tomlAotWriteTable(runtime: *Runtime, output: *std.ArrayList(u8), dictionary: 
             try active_arrays.put(runtime.allocator, array_object, {});
             defer _ = active_arrays.remove(array_object);
             for (array_object.payload.array.items, 0..) |item, index| {
-                if (item.tag != @intFromEnum(Tag.dictionary)) return error.UnsupportedTomlValue;
+                if (!tomlAotIsTableDictionary(item)) return error.UnsupportedTomlValue;
                 if (index > 0) try output.append(runtime.allocator, '\n');
                 try tomlAotWriteHeader(runtime, output, path.items, true);
                 try output.append(runtime.allocator, '\n');
@@ -11515,6 +11561,7 @@ fn tomlAotWriteValue(runtime: *Runtime, output: *std.ArrayList(u8), value: Value
         },
         .dictionary => {
             const object = value.object() orelse return error.UnsupportedTomlValue;
+            if (object.toml_temporal) |temporal| return output.appendSlice(runtime.allocator, temporal.toml_text);
             if (active_dictionaries.contains(object)) return error.CircularTomlValue;
             try active_dictionaries.put(runtime.allocator, object, {});
             defer _ = active_dictionaries.remove(object);
@@ -11553,7 +11600,7 @@ fn tomlAotIsArrayOfDictionaries(value: Value) bool {
     if (value.tag != @intFromEnum(Tag.array)) return false;
     const object = value.object() orelse return false;
     return switch (object.payload) {
-        .array => |items| items.items.len > 0 and items.items[0].tag == @intFromEnum(Tag.dictionary),
+        .array => |items| items.items.len > 0 and tomlAotIsTableDictionary(items.items[0]),
         else => false,
     };
 }
@@ -19188,6 +19235,33 @@ test "AOT TOML命令は表・配列・インライン表を処理する" {
     roots[3] = try active_runtime.?.createDictionary(&.{ staticStringValue("a"), numberValue(1) });
     lnako_aot_builtin_call(&roots[4], @ptrCast(&roots[3]), 1, @intFromEnum(aot_builtin.Command.toml_stringify));
     try expectUtf16String(&active_runtime.?, roots[4], "a = 1\n");
+}
+
+test "AOT TOML日時は専用値としてJSONとTOMLへ正規化する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try runtimeUtf8String(&active_runtime.?, "d=1979-05-27\nt=07:32\no=1979-05-27T07:32:00Z\nl=1979-05-27 07:32\n");
+    lnako_aot_builtin_call(&roots[1], @ptrCast(&roots[0]), 1, @intFromEnum(aot_builtin.Command.toml_parse));
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(roots[1].tag)));
+    const date = dictionaryProperty(roots[1], &.{'d'});
+    try std.testing.expect(date.object().?.toml_temporal != null);
+    try std.testing.expectEqual(toml_temporal.Kind.date, date.object().?.toml_temporal.?.kind);
+
+    lnako_aot_builtin_call(&roots[2], @ptrCast(&roots[1]), 1, @intFromEnum(aot_builtin.Command.json_encode));
+    try expectUtf16String(&active_runtime.?, roots[2], "{\"d\":\"1979-05-27\",\"t\":\"07:32:00.000\",\"o\":\"1979-05-27T07:32:00.000Z\",\"l\":\"1979-05-27T07:32:00.000\"}");
+
+    lnako_aot_builtin_call(&roots[3], @ptrCast(&roots[1]), 1, @intFromEnum(aot_builtin.Command.toml_stringify));
+    try expectUtf16String(&active_runtime.?, roots[3], "d = 1979-05-27\nt = 07:32:00.000\no = 1979-05-27T07:32:00.000Z\nl = 1979-05-27T07:32:00.000\n");
 }
 
 test "AOTマークアップ命令はMarkdownとHTMLを純Zigで変換する" {
