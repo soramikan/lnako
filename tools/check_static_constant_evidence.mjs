@@ -2,7 +2,7 @@ import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { execFile, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
 
@@ -52,6 +52,9 @@ const staticConstantFixtureDefinitions = {
     globalReadCount: 1,
     literalNames: new Set(),
     plugin: "plugin_caniuse",
+    sourceReplacements: {
+      "${PLUGIN_CANIUSE}": (temporary) => relative(temporary, resolve(oracleRoot, "src/plugin_caniuse.mjs")).replaceAll("\\", "/"),
+    },
   },
   "native-node-http-initial-constants": {
     globalReadCount: 5,
@@ -126,7 +129,7 @@ try {
   const interpreterLiteralTrace = resolve(temporary, "interpreter-literal.jsonl");
   const aotLiteralTrace = resolve(temporary, "aot-literal.jsonl");
   const literalManifest = resolve(temporary, "literal-manifest.jsonl");
-  await writeFile(sourcePath, fixture.source, "utf8");
+  await writeFile(sourcePath, prepareFixtureSource(fixture.source, temporary), "utf8");
 
   const baseEnvironment = {
     ...process.env,
@@ -346,6 +349,14 @@ function buildLnako() {
     maxBuffer,
   });
   if (result.status !== 0) throw new Error(`lnakoのビルドに失敗しました:\n${result.stderr}`);
+}
+
+function prepareFixtureSource(source, temporary) {
+  let prepared = source;
+  for (const [placeholder, replacement] of Object.entries(fixtureDefinition.sourceReplacements ?? {})) {
+    prepared = prepared.replaceAll(placeholder, typeof replacement === "function" ? replacement(temporary) : replacement);
+  }
+  return prepared;
 }
 
 function compilerPath(path) {
