@@ -100,7 +100,7 @@ try {
   );
   assertSuccess("AOTコンパイル", compiled);
   const manifestEntries = await readCompileManifest(compileManifest, source);
-  assertFixtureManifestCoverage(manifestEntries, fixture.commands);
+  assertFixtureManifestCoverage(manifestEntries, fixture.commands, interpreterEvents);
   const aotWithoutTrace = run(native, [], baseEnvironment, temporary);
   assertSuccess("trace無効AOT", aotWithoutTrace);
   if ((await readdir(temporary)).some((name) => name === "aot.jsonl")) throw new Error("trace無効AOTがtraceファイルを生成しました");
@@ -343,20 +343,21 @@ function assertFixtureInterpreterCoverage(events, commands) {
     if (event === undefined) throw new Error(`dispatch証拠fixtureの${name}に成功したInterpreter eventがありません`);
     const catalogRoute = event.route === "plugin_node" ? "plugin_node" : "plugin_system";
     const resolution = resolveCatalogCommand(name, catalogRoute);
-    if (resolution === null || resolution.reason !== "unique-name") {
+    if (resolution === null) {
       throw new Error(`dispatch証拠fixtureの${name}を一意なcatalog IDへ解決できません: ${JSON.stringify({ event, resolution })}`);
     }
   }
 }
 
-function assertFixtureManifestCoverage(entries, commands) {
+function assertFixtureManifestCoverage(entries, commands, interpreterEvents) {
   const expected = new Set(commands);
   assertOnlyManifestCommands(entries, expected);
   for (const name of expected) {
     const entry = entries.find((candidate) => candidate.sourceName === name);
     if (entry === undefined) throw new Error(`AOT compile manifestにdispatch証拠fixtureの${name}がありません`);
-    const resolution = resolveCatalogCommand(name, "plugin_system");
-    if (resolution === null || resolution.reason !== "unique-name") {
+    const interpreterEvent = interpreterEvents.find((event) => event.siteId === entry.siteId && event.command === name && event.result === "success");
+    const resolution = interpreterEvent === undefined ? null : resolveCatalogCommand(name, interpreterEvent.route);
+    if (resolution === null) {
       throw new Error(`AOT compile manifestの${name}を一意なcatalog IDへ解決できません: ${JSON.stringify({ entry, resolution })}`);
     }
   }
@@ -431,10 +432,6 @@ async function writeDispatchEvidence(output, fixture, interpreterEvents, aotEven
   const commandSiteCounts = new Map();
   const seenSites = new Set();
   for (const entry of manifestEntries) {
-    const resolution = resolveCatalogCommand(entry.sourceName, entry.route);
-    if (resolution === null || resolution.command.name !== entry.sourceName) {
-      throw new Error(`dispatch証拠のcatalog IDを一意に解決できません: ${entry.sourceName}/${entry.route}`);
-    }
     const interpreterSiteEvents = interpreterEvents.filter((event) => event.siteId === entry.siteId);
     if (interpreterSiteEvents.some((event) => event.command !== entry.sourceName)) {
       throw new Error(`dispatch証拠のsiteIdに異なるInterpreter命令があります: ${entry.siteId}`);
@@ -442,6 +439,11 @@ async function writeDispatchEvidence(output, fixture, interpreterEvents, aotEven
     const interpreterRoutes = new Set(interpreterSiteEvents.map((event) => event.route).filter((route) => typeof route === "string" && route.length > 0));
     if (interpreterSiteEvents.length > 0 && interpreterRoutes.size !== 1) {
       throw new Error(`dispatch証拠のInterpreter routeが一意ではありません: ${entry.siteId}`);
+    }
+    const interpreterRoute = [...interpreterRoutes][0] ?? entry.route;
+    const resolution = resolveCatalogCommand(entry.sourceName, interpreterRoute);
+    if (resolution === null || resolution.command.name !== entry.sourceName) {
+      throw new Error(`dispatch証拠のcatalog IDを一意に解決できません: ${entry.sourceName}/${interpreterRoute}`);
     }
     const interpreterMatches = interpreterSiteEvents.filter((event) => event.command === entry.sourceName && event.result === "success");
     const aotMatches = aotEvents
@@ -471,13 +473,11 @@ async function writeDispatchEvidence(output, fixture, interpreterEvents, aotEven
   }
   const expectedCommands = new Set(fixture.commands);
   for (const name of expectedCommands) {
-    const resolution = resolveCatalogCommand(name, "cut");
+    const candidate = manifestEntries.find((entry) => entry.sourceName === name);
+    const interpreterEvent = candidate === undefined ? undefined : interpreterEvents.find((event) => event.siteId === candidate.siteId && event.command === name && event.result === "success");
+    const resolution = interpreterEvent === undefined ? null : resolveCatalogCommand(name, interpreterEvent.route);
     if (resolution === null || (commandSiteCounts.get(resolution.command.id) ?? 0) === 0) {
-      const candidate = manifestEntries.find((entry) => entry.sourceName === name);
-      const actualResolution = candidate === undefined ? null : resolveCatalogCommand(name, candidate.route);
-      if (actualResolution === null || (commandSiteCounts.get(actualResolution.command.id) ?? 0) === 0) {
-        throw new Error(`dispatch証拠fixtureの${name}に成功した同一siteがありません`);
-      }
+      throw new Error(`dispatch証拠fixtureの${name}に成功した同一siteがありません`);
     }
   }
   const lock = JSON.parse(await readFile(resolve(root, "compat/upstream.lock.json"), "utf8"));
