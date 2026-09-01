@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { access, link, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
@@ -95,7 +96,10 @@ if (arguments_.output !== null) await assertOutputDoesNotExist(arguments_.output
 if (!arguments_.noBuild) buildCompiler();
 await access(compiler);
 
-const temporary = await mkdtemp(join(root, ".tmp-lnako-dispatch-coverage-"));
+// Keep the audit's scratch tree outside the repository. gitState() is part of
+// the evidence provenance, so a repository-local mkdtemp would report the
+// audit itself as an unclean working tree.
+const temporary = await mkdtemp(join(tmpdir(), "lnako-dispatch-coverage-"));
 try {
   const fixtureReports = [];
   const sites = [];
