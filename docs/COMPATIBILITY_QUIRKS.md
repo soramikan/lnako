@@ -212,11 +212,24 @@ lnakoはInterpreterと純LLVM AOTでこのown→custom prototype chainの順序�
 
 ## Promise
 
+公式カタログのPromise項目（[`doc/command_list.json`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/doc/command_list.json#L5860-L5965)）は戻り値の連鎖を中心に説明する一方、内部globalの更新規則を説明しません。固定sourceの[`core/src/plugin_promise.mts`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/core/src/plugin_promise.mts#L14-L100)を補助根拠にします。
+
 | 命令・境界 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID | TODO識別子 |
 |---|---|---|---|---|
 | `動時`・`成功時`・`処理時`・`失敗時`・`終了時` | Promiseのexecutorは同期的に実行され、解決・拒否後の反応はFIFOのmicrotaskとして実行される。`成功時`と`失敗時`は対応する値を受け取り、`処理時`は成否booleanと値を受け取り、`終了時`は成否にかかわらず元の状態と値を次へ伝播する | Interpreterと純LLVM AOTで`pending` / `fulfilled` / `rejected`、反応列、FIFOマイクロタスク、次のPromiseへの成功・失敗・finally伝播を実装する。AOTはJS runtimeを使わずresolver関数をRuntimeのGC対象関数値として保持する。QuickJS互換モードはcore Promiseのnative証拠経路に含めない | `native-system-promise-success`、`native-system-promise-reject-process-finally`、`native-system-promise-reject` | なし |
+| `そ` | 公式カタログでは`type: 定数`、初期値`''`として掲載されるが、実装上は「現在の最後のPromise」を保持する可変globalである。`動時`がexecutorを作成した直後、`成功時`・`処理時`・`失敗時`・`終了時`が連鎖Promiseを作成した直後、`束`が`Promise.all`を作成した直後に上書きされる。したがって未登録時は空文字列、Promise作成後は`Promise`オブジェクトとなり、定数という名前だけから型を固定してはならない | Interpreterと純LLVM AOTで初期値と直近Promiseのglobal更新を再現し、`そ`の参照をPromiseのGC rootとして保持する。通常モードはJavaScript runtimeを使わず、QuickJSは標準命令の証拠対象外。これは未実装ではなく、公式の登録形状と命令間副作用を明示した互換仕様である | `native-system-promise-reject`、`native-system-promise-success`、`native-system-promise-reject-process-finally`、`native-system-promise-bundle` | なし |
 | `束` | `Promise.all`相当で入力の順序を保った配列を返し、入力が空なら空配列を即時に解決する。入力Promiseが拒否されると最初の拒否値で束全体を拒否する | Interpreterと純LLVM AOTで入力順の結果配列、空入力、最初の拒否を処理する。AOTは各入力へ専用handlerを接続し、結果配列と残件数をGCルートとして保持する | `native-system-promise-bundle` | なし |
 | `AWAIT実行`のPromise待機 | `AWAIT実行`は第2引数を展開して関数を呼び、戻り値がPromiseなら解決まで待機して値を返す。Promiseでない戻り値はそのまま返す | Interpreterと純LLVM AOTで同じ引数展開を行い、AOTはPromiseマイクロタスクとタイマーをドレインしてfulfilled値を返す。拒否時は保留例外を上書きせず、既存のエラー経路へ渡す。通常モードへJavaScript runtimeを混入させず、QuickJSは対象外 | `native-system-promise-timer-await`、`native-system-execute` | なし |
+
+## 公式カタログの廃止構文・非推奨命令
+
+固定v3.7.24の公式[命令カタログ](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/doc/command_list.json)は、互換維持のための旧命令も一覧に残します。短い説明だけを読むと、現在も旧構文を使えるように見えるため、構文の生存と命令entryの生存を分けて記録します。廃止理由を示す公式案内は[`逐次実行`](https://nadesi.com/v3/doc/go.php?944)と[`非同期モード`](https://nadesi.com/v3/doc/go.php?1028)です。
+
+| 命令・構文 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 差分テストID / TODO識別子 |
+|---|---|---|---|
+| `!非同期モード` / `逐次実行` | 公式カタログ内の旧命令説明や旧プラグイン説明にはこれらの構文への参照が残るが、公式parserは両構文を廃止扱いにする。`!非同期モード`は廃止メッセージを出して空文へ進み、`逐次実行`も廃止メッセージを出して空文へ進む。公式CLIはこの未捕捉の文法エラーを終了コード0で報告し、生成JavaScript routeの失敗形式とは異なる | Lexerでは旧語を認識するが、lnako Parserはまだ公式の廃止分岐を持たない。現在は`逐次実行`を通常の関数呼出しノードとして解析し、`!非同期モード`は一般的な式エラーへ進むため、公式の廃止メッセージ・空文化とは一致しない。旧構文を暗黙にasync modeへ変換せず、現行の`ASYNC`・Promise命令へ移行する方針は維持する。対象はInterpreter/AOTの構文診断で、QuickJSは対象外。この差は未実装境界であり、旧命令の説明が残ることは公式ドキュメントの更新漏れ候補として扱う | `parser-probe`、`TODO: parser-legacy-async-deprecation`、`TODO: official-legacy-async-docs` |
+| `秒逐次待機` | 命令カタログは「逐次実行構文にて」「廃止予定」と説明するが、固定公式sourceには独立した関数entryが残り、実際の命令呼出しは`秒待`へ委譲してPromiseを返す。つまり旧構文は廃止されても、`0秒逐次待機`のような直接命令呼出しは動作する | Interpreterと純LLVM AOTでは直接命令entryを残し、`秒待`と同じ待機・`return_none`・イベント処理を実行する。一方、廃止された`逐次実行`構文を復活させることはしない。対象はInterpreter/AOT、QuickJSは対象外。命令の存続と説明中の構文の存続が食い違うため、公式カタログの移行案内が不明確な仕様候補として記録する | `native-system-timer-wait`、`TODO: official-legacy-async-docs` |
+| `空ハッシュ` / `空オブジェクト` | 公式は両方をv3.2以降非推奨としながら、標準catalogには別々の関数entryを残す。`空ハッシュ`は新しい`{}`を返し`pure: true`、`空オブジェクト`も新しい辞書を返すが内部で`空ハッシュ`をdispatchし`pure: false`である。observableな値は同じでも、登録metadata上のpure属性が異なるため、説明だけから共通化・定数化してよいとは判断できない | Interpreterと純LLVM AOTは両命令を毎回新しい辞書へlowerし、呼出し間のidentityを共有しない。純粋性metadataだけで破壊的な別名やglobal状態を削除しない。これは未実装ではなく、公式のfresh objectとcatalog metadata差を記録した互換注意である。QuickJSは標準命令の証拠対象外 | `native-system-empty-collection-truth-command`、`plugin-system-cases`、`TODO: builtin-pure-side-effect-metadata` |
 
 ## 例外監視
 
