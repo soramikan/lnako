@@ -142,7 +142,7 @@ attestationがない場合は`trace-confirmed-unattested`に留めます。
 
 `native-system-dictionary-inherited-enumeration`は、custom辞書prototype chainの列挙順・shadowing・対応値を公式CLI・公式生成JavaScript・`lnako run`・LLVM AOT O0〜O3で比較するfixtureです。これによりfixture inventoryは全394件（AOT 299件、Interpreter 99件、QuickJS 9件）になりました。
 
-TOMLの既存`native-toml-commands`は表・配列テーブル・インライン表・文字列・数値の標準範囲を比較しますが、日時リテラルのDate系値とserializerのミリ秒正規化は含みません。公式マニュアルと命令説明からはこの境界を判断できないため、[`tests/fixtures/toml-temporal-probe.nako3`](../tests/fixtures/toml-temporal-probe.nako3)を仕様調査用probeとして保存し、公式CLIとlnako Interpreterの実測差を`docs/COMPATIBILITY_QUIRKS.md`へ記録します。このprobeは現行のAOT dispatch証拠・`evidence.json`の394 entryには算入せず、`TODO: toml-temporal-values`が解消されるまで標準TOMLの等価性証拠へ昇格しません。
+TOMLの既存`native-toml-commands`は表・配列テーブル・インライン表・文字列・数値の標準範囲を比較しますが、日時リテラルのDate系値とserializerのミリ秒正規化は含みません。公式マニュアルと命令説明からはこの境界を判断できないため、[`tests/fixtures/toml-temporal-probe.nako3`](../tests/fixtures/toml-temporal-probe.nako3)を仕様調査用probeとして保存し、公式CLIとlnako Interpreterの実測差を`docs/COMPATIBILITY_QUIRKS.md`へ記録します。probeには、公式`smol-toml` v1.8.0が受理する時刻単独のオフセット付き値と、その`31T22:32:00.`という壊れたserializer結果も含めます。これは公式処理系の不具合候補であり、正常な互換仕様や成功証拠として扱いません。このprobeは現行のAOT dispatch証拠・`evidence.json`の394 entryには算入せず、`TODO: toml-temporal-values`が解消されるまで標準TOMLの等価性証拠へ昇格しません。
 
 ## 同名命令
 
