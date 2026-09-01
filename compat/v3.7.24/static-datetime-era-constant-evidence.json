@@ -1,0 +1,124 @@
+{
+  "schema": "lnako.static-constant-evidence.v2",
+  "generator": "tools/check_static_constant_evidence.mjs",
+  "baseline": {
+    "tag": "3.7.24",
+    "commit": "aa18c7e640523938c680958fe731418cc6f7a58f"
+  },
+  "fixture": {
+    "id": "native-datetime-era-data",
+    "file": "native-cases.json",
+    "sourceSha256": "bded8f0e6e0fc5278921a788d61a06d1d5f9d0551df5f1173a7f36d4adfb762b",
+    "globalReadNames": [
+      "元号データ"
+    ],
+    "literalNames": []
+  },
+  "officialComparison": {
+    "oracle": "official-source",
+    "routes": [
+      "officialSource",
+      "officialGenerated",
+      "lnakoRun",
+      "lnakoNativeO0"
+    ],
+    "equivalent": true,
+    "results": {
+      "officialSource": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "ed69d23e4b00ece9f47ef1003fe8983ac53fd4c48250e526f95d344bdb742bb9",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "officialGenerated": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "ed69d23e4b00ece9f47ef1003fe8983ac53fd4c48250e526f95d344bdb742bb9",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "lnakoRun": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "ed69d23e4b00ece9f47ef1003fe8983ac53fd4c48250e526f95d344bdb742bb9",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "lnakoNativeO0": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "ed69d23e4b00ece9f47ef1003fe8983ac53fd4c48250e526f95d344bdb742bb9",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  },
+  "attestation": null,
+  "provenance": {
+    "environment": {
+      "platform": "darwin",
+      "arch": "arm64",
+      "node": "v24.15.0"
+    },
+    "oracle": {
+      "build": 4,
+      "archiveSha256": "c3bedbf101118a261f631d331127ae441657fec091c712b07d237c4336eb0011",
+      "cliSha256": "65e32f1d7de0b2da18edf3f4c49565c37d31aa474d31ee08426f2f6a0c0d6c81",
+      "markerSha256": "e9444955298c3bb22164a219c0f342ee32301e901ec967d648cae9a25d8bf531",
+      "treeHashAlgorithm": "sha256-json-records-v3",
+      "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
+    },
+    "lnako": {
+      "binarySha256": "26f4c59f32798661d86b56ad54905813de77c00817a12a2f3e4c0d89edc353af",
+      "commit": "50b0c7ce67d209146278a93f5aa8d3431792c4f0",
+      "dirty": false
+    },
+    "raw": {
+      "interpreterTraceSha256": "7c19b1834198213419db9148d53b3cbdf7ebca3ee9d279a3ba668a19bb7d650a",
+      "aotTraceSha256": "0a19cbcaa887312b53f00ef132735fdfbfc742c19da2438014a1fbb00f4d56f5",
+      "globalManifestSha256": "d4c6231f4435ecf6edb5bfd8f99ab4f9add0952f8952180f6afb3fc2806b8ce4",
+      "literalInterpreterTraceSha256": "d1a240ca85bb6425f4ad3e15b23d56a4366b64e8631f58b1af10c96a38b65232",
+      "literalAotTraceSha256": "b503b7eae644c3b3cc2fbe7504669a86aa68f5db0642b31b5d61cde895e2a1ea",
+      "literalManifestSha256": "74012463bfa7d56556c7e5672547d88d61ef1f56e3e56036e85008be0b56930e"
+    }
+  },
+  "trace": {
+    "global": {
+      "interpreter": {
+        "schema": 1,
+        "eventCount": 3
+      },
+      "aot": {
+        "schema": 1,
+        "eventCount": 3
+      }
+    },
+    "literal": {
+      "interpreter": {
+        "schema": 1,
+        "eventCount": 0
+      },
+      "aot": {
+        "schema": 1,
+        "eventCount": 0
+      }
+    }
+  },
+  "entries": [
+    {
+      "catalogId": "command-0227",
+      "name": "元号データ",
+      "plugin": "plugin_system",
+      "kind": "global-read",
+      "siteId": "0x0000000000000004",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    }
+  ]
+}
