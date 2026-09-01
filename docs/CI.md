@@ -314,14 +314,22 @@ fixture・7経路・O0〜O3の検証範囲は変更しない。
 [run 33333195998](https://github.com/soramikan/lnako/actions/runs/33333195998)では、Windows `aot`の
 `compare_native_oracle.mjs`で`native-caniuse-browsers`の公式生成JavaScriptが見つからない事象が発生した。
 Windows runnerでは公式オラクルが`D:`、`os.tmpdir()`が`C:`となり、`path.relative()`がドライブ跨ぎの
-`D:/...`を返す。なでしこ3 v3.7.24の`取り込む`判定は`D:\...`を絶対pathとして扱うため、公式compileが
-エラーを握って終了コード0を返し、生成ファイルだけが作られなかった。
+`D:/...`を返す。なでしこ3 v3.7.24のJSプラグイン検索は`X:\`（バックスラッシュ）だけをドライブ付き
+フルパスとして認識するため、`D:/...`をfixtureからの相対pathとして連結し、公式compileがエラーを握って
+終了コード0を返し、生成ファイルだけが作られなかった。この仕様境界は
+[`COMPATIBILITY_QUIRKS.md`](COMPATIBILITY_QUIRKS.md)へ記録した。
 
 `tools/compare_native_oracle.mjs`の一時ディレクトリをリポジトリ側へ移し、オラクルと同じドライブで
 相対plugin pathを生成するよう修正した。後者のrunでは新たに追加したdispatch coverage auditが
 `plugin-csv-all`のWindows結果差も報告したが、macOSの同じ26 fixture監査では再現していない。次回pushの
 Windows `aot`で両方を再確認し、失敗時は出力値を含む診断から追加修正する。CIの完了を待つ運用には変えず、
 pushごとに完了済みrunをスナップショット確認する。
+
+その後の[run 33567310023](https://github.com/soramikan/lnako/actions/runs/33567310023)（`3e1e75a`）では、
+`compare_native_oracle.mjs`側の修正済み経路とは別に、dispatch coverage auditが`plugin-markup-all`で同じ
+ドライブ跨ぎの公式plugin path失敗を報告した。`check_dispatch_coverage.mjs`も一時領域をリポジトリ側へ移し、
+監査開始前のGit状態を証拠へ保存するよう修正する。coverage artifactの再生成後、次回pushでWindows
+`support-dispatch-coverage`を再実行するが、CI完了は待たずに次の実装を進める。
 
 その後の[run 33335610101](https://github.com/soramikan/lnako/actions/runs/33335610101)（`2057d2d`）では、
 `native-caniuse-browsers`の生成JavaScript欠落は再発しなかった。一方、Windows `aot`の比較artifactには

@@ -545,6 +545,14 @@ Node 24のECMAScript property escapeを生成時oracleとして、General_Catego
 
 canonical `native-dispatch-commands`は、通常経路で実際に呼ばれる`plugin_system`側27 entryを`catalogIds`で`command-0228`〜`command-0256`の該当IDへ明示固定し、Interpreter trace・AOT compile manifest・AOT runtime trace・公式4経路比較を同じsiteへ結び付ける。`plugin_datetime`側はこのtraceから推測せず、明示importを含む別fixtureができるまで`unverified`とする。これは日時命令の実装未完了を示すものではなく、同名catalog identityを過大主張しないための証拠制限である。対象経路はInterpreter／純LLVM AOTで、QuickJSは標準命令の証拠対象外。TODOは`duplicate-catalog-dispatch-identity`と`catalog-plugin-datetime-target`である。
 
+## WindowsのJSプラグイン取り込みとドライブレター
+
+公式の短い命令説明には、`取り込む`へ渡すJSプラグインのpathがWindowsのドライブレターと区切り文字の組み合わせでどう判定されるかは記載されていない。固定v3.7.24の[`src/cnako3mod.mts`のJSプラグイン検索](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/src/cnako3mod.mts#L641-L655)は、先頭`/`、`X:\`、`file:/`だけをフルパス分岐へ入れ、それ以外で`/`を含む値をプログラムファイルからの相対pathとして`path.join`する。したがってWindowsの`D:/a/.../plugin_markup.mjs`は、見た目は絶対pathでも`X:\`判定に入らず、相対pathとして処理される。
+
+Windows runnerで公式oracleを`D:`、fixtureの一時ディレクトリを`C:`へ置いた実測では、`path.relative()`後の`D:/...`を`!"D:/.../plugin_markup.mjs"を取り込む`へ埋め込むと、公式sourceが`C:\...\D:\...\plugin_markup.mjs`を検索して失敗した。`supplemental-plugin-cases.json/plugin-markup-all`の公式結果がこの状態になったことを、[run 33567310023](https://github.com/soramikan/lnako/actions/runs/33567310023)で確認した。これは公式実装のpath分類の不具合候補であり、通常のLinux/macOSでの相対plugin取り込み結果や、lnako製品runtimeのpath仕様から推測して修正済み扱いにしてはいけない。
+
+lnakoのdispatch監査は、公式source・Interpreter・純LLVM AOT O0を同じfixtureで比較するため、oracleが既定の`.cache/oracle`にあるCIでは監査のscratch treeをリポジトリ側へ置き、全OSでfixtureからoracle pluginへの相対pathを生成する。この変更は公式の挙動を隠すものではなく、公式oracleを実行可能な同一drive条件へ固定するテストハーネス上の意図的な回避策である。Interpreter/AOTのplugin routeはこのfixtureで比較し、公式生成JavaScriptのstandalone plugin登録差は別の既知gapとして扱う。対象経路は公式source・Interpreter・純LLVM AOTで、QuickJSは標準命令の証拠対象外である。差分テストIDは`dispatch coverage / supplemental-plugin-cases.json/plugin-markup-all`とし、公式側の追跡TODOは`TODO: official-cnako3-drive-letter-import-path`として残す。
+
 ## 更新規則
 
 - 説明文と実装が食い違う場合は、固定した公式v3.7.24の実行結果を優先する。

@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { access, link, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
@@ -96,10 +95,13 @@ if (arguments_.output !== null) await assertOutputDoesNotExist(arguments_.output
 if (!arguments_.noBuild) buildCompiler();
 await access(compiler);
 
-// Keep the audit's scratch tree outside the repository. gitState() is part of
-// the evidence provenance, so a repository-local mkdtemp would report the
-// audit itself as an unclean working tree.
-const temporary = await mkdtemp(join(tmpdir(), "lnako-dispatch-coverage-"));
+// cnako3 v3.7.24 recognizes a Windows drive-letter path as a full path only
+// when the separator after the drive is a backslash. The plugin resolver
+// therefore treats a `D:/...` path as relative. Keep the scratch tree on the
+// repository drive, which is also the default oracle drive in CI, so relative
+// plugin paths remain valid on Windows.
+const auditGitState = gitState();
+const temporary = await mkdtemp(join(root, ".tmp-lnako-dispatch-coverage-"));
 try {
   const fixtureReports = [];
   const sites = [];
@@ -111,7 +113,7 @@ try {
     unresolvedSites.push(...result.unresolvedSites);
   }
 
-  const report = createReport({ fixtureReports, sites, unresolvedSites, oracle });
+  const report = createReport({ fixtureReports, sites, unresolvedSites, oracle, git: auditGitState });
   if (arguments_.output !== null) await writeExclusive(arguments_.output, `${JSON.stringify(report, null, 2)}\n`);
   const nativeCoverage = report.coverage.unambiguousObservedNativeEntries;
   const nativeNames = report.coverage.unambiguousObservedNativeUniqueNames;
@@ -657,7 +659,7 @@ function resolveCatalogCommand(name, route) {
   return null;
 }
 
-function createReport({ fixtureReports, sites, unresolvedSites, oracle }) {
+function createReport({ fixtureReports, sites, unresolvedSites, oracle, git }) {
   const nativeCommands = catalog.commands.filter((command) => command.status === "native");
   const nativeIds = new Set(nativeCommands.map((command) => command.id));
   const nativeNames = new Set(nativeCommands.map((command) => command.name));
@@ -666,7 +668,6 @@ function createReport({ fixtureReports, sites, unresolvedSites, oracle }) {
   const observedNativeNames = new Set(observedNativeSites.map((site) => site.name));
   const unresolvedByName = Map.groupBy(unresolvedSites, (site) => site.sourceName);
   const associationWithoutDispatch = fixtureReports.flatMap((fixture) => fixture.associationWithoutDispatch.map((association) => ({ fixtureId: fixture.id, file: fixture.file, ...association })));
-  const git = gitState();
   return {
     schema: "lnako.dispatch-coverage.v1",
     kind: "sampled-unattested-dispatch-audit",
