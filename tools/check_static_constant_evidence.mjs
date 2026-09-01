@@ -16,14 +16,31 @@ const fixedHost = resolve(root, "tools/oracle/fixed_host.mjs");
 const evidenceOutput = optionValue("--evidence-output");
 const noBuild = process.argv.includes("--no-build");
 const fixtureId = argumentValue("--fixture") ?? "native-scalar-system-constants";
-const literalConstantNames = fixtureId === "native-scalar-system-constants"
-  ? new Set(["はい", "いいえ", "真", "偽", "オン", "オフ", "NULL"])
-  : new Set();
-const expectedFixtureShape = {
-  "native-scalar-system-constants": { globalReadCount: 17, literalCount: 7 },
-  "native-string-system-constants": { globalReadCount: 24, literalCount: 0 },
-  "native-array-system-constants": { globalReadCount: 2, literalCount: 0 },
-}[fixtureId];
+const staticConstantFixtureDefinitions = {
+  "native-scalar-system-constants": {
+    globalReadCount: 17,
+    literalNames: new Set(["はい", "いいえ", "真", "偽", "オン", "オフ", "NULL"]),
+    plugin: "plugin_system",
+  },
+  "native-string-system-constants": {
+    globalReadCount: 24,
+    literalNames: new Set(),
+    plugin: "plugin_system",
+  },
+  "native-array-system-constants": {
+    globalReadCount: 2,
+    literalNames: new Set(),
+    plugin: "plugin_system",
+  },
+  "native-node-archive-constant": {
+    globalReadCount: 1,
+    literalNames: new Set(),
+    plugin: "plugin_node",
+  },
+};
+const fixtureDefinition = staticConstantFixtureDefinitions[fixtureId];
+if (fixtureDefinition === undefined) throw new Error(`静的定数fixtureの定義がありません: ${fixtureId}`);
+const literalConstantNames = fixtureDefinition.literalNames;
 const maxBuffer = 16 * 1024 * 1024;
 
 validateArguments();
@@ -50,13 +67,13 @@ for (const command of catalog.commands) {
 }
 for (const name of fixture.commands) {
   const commands = catalogByName.get(name) ?? [];
-  if (commands.length !== 1 || commands[0].plugin !== "plugin_system" || commands[0].type !== "定数") {
+  if (commands.length !== 1 || commands[0].plugin !== fixtureDefinition.plugin || commands[0].type !== "定数") {
     throw new Error(`静的定数fixtureのcatalog identityが一意に解決できません: ${name}`);
   }
 }
 const globalReadNames = fixture.commands.filter((name) => !literalConstantNames.has(name));
 const literalNames = fixture.commands.filter((name) => literalConstantNames.has(name));
-if (expectedFixtureShape === undefined || globalReadNames.length !== expectedFixtureShape.globalReadCount || literalNames.length !== expectedFixtureShape.literalCount) {
+if (globalReadNames.length !== fixtureDefinition.globalReadCount || literalNames.length !== fixtureDefinition.literalNames.size) {
   throw new Error(`静的定数fixtureのliteral/global分類が想定外です: ${literalNames.length}/${globalReadNames.length}`);
 }
 
@@ -465,7 +482,7 @@ function validateEvidence(evidence, lock, fixture, globalReadNames, literalNames
     const expectedNames = entry.kind === "global-read" ? globalReadNames : entry.kind === "literal" ? literalNames : null;
     const manifest = expectedNames === null ? undefined : manifestByKey.get(`${entry.kind}:${entry.siteId}`);
     const nameSet = entry.kind === "global-read" ? names.global : entry.kind === "literal" ? names.literal : null;
-    if (manifest === undefined || manifest.name !== entry.name || entry.plugin !== "plugin_system" || nameSet === null || nameSet.has(entry.name) || expectedNames === null || !expectedNames.includes(entry.name) || !/^command-\d{4}$/.test(entry.catalogId) || entry.officialEquivalent !== true || entry.runtime.interpreter.success !== true || entry.runtime.interpreter.count !== 1 || entry.runtime.aot.success !== true || entry.runtime.aot.count !== 1) throw new Error(`静的定数証拠entryが不正です: ${entry.name}`);
+    if (manifest === undefined || manifest.name !== entry.name || entry.plugin !== fixtureDefinition.plugin || nameSet === null || nameSet.has(entry.name) || expectedNames === null || !expectedNames.includes(entry.name) || !/^command-\d{4}$/.test(entry.catalogId) || entry.officialEquivalent !== true || entry.runtime.interpreter.success !== true || entry.runtime.interpreter.count !== 1 || entry.runtime.aot.success !== true || entry.runtime.aot.count !== 1) throw new Error(`静的定数証拠entryが不正です: ${entry.name}`);
     nameSet.add(entry.name);
   }
   if (names.global.size !== globalReadNames.length || names.literal.size !== literalNames.length || [...names.global].some((name) => !globalReadNames.includes(name)) || [...names.literal].some((name) => !literalNames.includes(name))) throw new Error("静的定数証拠のname集合が不一致です");
