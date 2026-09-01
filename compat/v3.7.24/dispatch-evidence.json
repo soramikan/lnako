@@ -8,7 +8,7 @@
   "fixture": {
     "id": "native-dispatch-commands",
     "file": "native-cases.json",
-    "sourceSha256": "7b77d6ea62a8ba50f6059f1c1cc943740eb4b7a25dae6a695e7ffada5ee74f46"
+    "sourceSha256": "64496ad685588597478b765e15f1589aa688a75bfc1873a09083ab5d306b0a7a"
   },
   "officialComparison": {
     "oracle": "official-source",
@@ -23,25 +23,25 @@
       "officialSource": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "f4047c381dec4e3f25104825e7bd90d8428f8270984884dcae1ed280545666fe",
+        "stdoutSha256": "ffad7ff634521da81b3c0c6a4d30390df3d94845b3833b6b01a5d7be60739176",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "officialGenerated": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "f4047c381dec4e3f25104825e7bd90d8428f8270984884dcae1ed280545666fe",
+        "stdoutSha256": "ffad7ff634521da81b3c0c6a4d30390df3d94845b3833b6b01a5d7be60739176",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoRun": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "f4047c381dec4e3f25104825e7bd90d8428f8270984884dcae1ed280545666fe",
+        "stdoutSha256": "ffad7ff634521da81b3c0c6a4d30390df3d94845b3833b6b01a5d7be60739176",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoNativeO0": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "f4047c381dec4e3f25104825e7bd90d8428f8270984884dcae1ed280545666fe",
+        "stdoutSha256": "ffad7ff634521da81b3c0c6a4d30390df3d94845b3833b6b01a5d7be60739176",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       }
     }
@@ -63,23 +63,23 @@
     },
     "lnako": {
       "binarySha256": "e1960a50cde0c248245d25e6fbd2e9f70e3659eac1468cbff896c76a8c4c5eaa",
-      "commit": "b5bd56238a3f2d4b969307f2320ae6e91a8553ad",
+      "commit": "ad4bd6669f4490314fccda6f1720644541a908cb",
       "dirty": false
     },
     "raw": {
-      "interpreterTraceSha256": "f1f081c1bde935e42744e3ae270abcde168e8a29b5c6a969ef8269de4d45b205",
-      "aotTraceSha256": "00699bcfd6473fba6deaf41c0471b9beb23671739a7b6cc169566dc1345e041c",
-      "compileManifestSha256": "1987b34d53b17b928797e03ff066ecd3934da0e5d7c5468667bf760acb465cfe"
+      "interpreterTraceSha256": "d8381a74662a7af16e00e7b01e57358179c1ab1b681ee9a3e4ec724f12132d40",
+      "aotTraceSha256": "ff79907074d76781d70a4d18dfdf674d8e51d4c7bc04c23edaf042916e37358a",
+      "compileManifestSha256": "9fb283ef0b656a572edfca2da5e1d17ad0a1ec092c1af08db0350a74b8438c45"
     }
   },
   "trace": {
     "interpreter": {
       "schema": 2,
-      "eventCount": 876
+      "eventCount": 880
     },
     "aot": {
       "schema": 2,
-      "eventCount": 1752
+      "eventCount": 1760
     }
   },
   "sites": [
@@ -123,7 +123,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 874,
+          "callId": 878,
           "count": 1
         }
       },
@@ -146,7 +146,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 875,
+          "callId": 879,
           "count": 1
         }
       },
@@ -169,7 +169,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 865,
+          "callId": 869,
           "count": 1
         }
       },
@@ -192,7 +192,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 866,
+          "callId": 870,
           "count": 1
         }
       },
@@ -215,7 +215,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 867,
+          "callId": 871,
           "count": 1
         }
       },
@@ -238,7 +238,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 870,
+          "callId": 874,
           "count": 1
         }
       },
@@ -261,7 +261,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 871,
+          "callId": 875,
           "count": 1
         }
       },
@@ -284,7 +284,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 872,
+          "callId": 876,
           "count": 1
         }
       },
@@ -307,7 +307,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 868,
+          "callId": 872,
           "count": 1
         }
       },
@@ -330,7 +330,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 869,
+          "callId": 873,
           "count": 1
         }
       },
@@ -353,7 +353,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 873,
+          "callId": 877,
           "count": 1
         }
       },
@@ -19151,10 +19151,102 @@
       "officialEquivalent": true
     },
     {
+      "catalogId": "command-0693",
+      "name": "SJISファイル保存",
+      "plugin": "plugin_node",
+      "siteId": "0x000000170000033a",
+      "sourceName": "SJISファイル保存",
+      "canonicalOpcode": "node_file_sjis_save",
+      "opcode": 311,
+      "route": "node-file-encoding",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_node",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 825,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0692",
+      "name": "SJISファイル読",
+      "plugin": "plugin_node",
+      "siteId": "0x000000170000033b",
+      "sourceName": "SJISファイル読",
+      "canonicalOpcode": "node_file_sjis_read",
+      "opcode": 310,
+      "route": "node-file-encoding",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_node",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 826,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0695",
+      "name": "EUCファイル保存",
+      "plugin": "plugin_node",
+      "siteId": "0x000000170000033c",
+      "sourceName": "EUCファイル保存",
+      "canonicalOpcode": "node_file_euc_save",
+      "opcode": 313,
+      "route": "node-file-encoding",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_node",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 827,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0694",
+      "name": "EUCファイル読",
+      "plugin": "plugin_node",
+      "siteId": "0x000000170000033d",
+      "sourceName": "EUCファイル読",
+      "canonicalOpcode": "node_file_euc_read",
+      "opcode": 312,
+      "route": "node-file-encoding",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_node",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 828,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
       "catalogId": "command-0786",
       "name": "文字コード変換サポート判定",
       "plugin": "plugin_node",
-      "siteId": "0x000000170000033a",
+      "siteId": "0x000000170000033e",
       "sourceName": "文字コード変換サポート判定",
       "canonicalOpcode": "node_encoding_supports",
       "opcode": 285,
@@ -19167,98 +19259,6 @@
         },
         "aot": {
           "success": true,
-          "callId": 825,
-          "count": 1
-        }
-      },
-      "officialEquivalent": true
-    },
-    {
-      "catalogId": "command-0307",
-      "name": "表示",
-      "plugin": "plugin_system",
-      "siteId": "0x000000170000033b",
-      "sourceName": "表示",
-      "canonicalOpcode": "display",
-      "opcode": 0,
-      "route": "direct-display",
-      "runtime": {
-        "interpreter": {
-          "result": "success",
-          "route": "interpreter-core",
-          "count": 1
-        },
-        "aot": {
-          "success": true,
-          "callId": 826,
-          "count": 1
-        }
-      },
-      "officialEquivalent": true
-    },
-    {
-      "catalogId": "command-0071",
-      "name": "グローバル関数一覧取得",
-      "plugin": "plugin_system",
-      "siteId": "0x000000170000033c",
-      "sourceName": "グローバル関数一覧取得",
-      "canonicalOpcode": "system_global_function_names",
-      "opcode": 257,
-      "route": "builtin",
-      "runtime": {
-        "interpreter": {
-          "result": "success",
-          "route": "interpreter-core",
-          "count": 1
-        },
-        "aot": {
-          "success": true,
-          "callId": 827,
-          "count": 1
-        }
-      },
-      "officialEquivalent": true
-    },
-    {
-      "catalogId": "command-0287",
-      "name": "JSON変換",
-      "plugin": "plugin_system",
-      "siteId": "0x000000170000033d",
-      "sourceName": "JSON変換",
-      "canonicalOpcode": "json_encode",
-      "opcode": 143,
-      "route": "builtin",
-      "runtime": {
-        "interpreter": {
-          "result": "success",
-          "route": "plugin_system",
-          "count": 1
-        },
-        "aot": {
-          "success": true,
-          "callId": 828,
-          "count": 1
-        }
-      },
-      "officialEquivalent": true
-    },
-    {
-      "catalogId": "command-0307",
-      "name": "表示",
-      "plugin": "plugin_system",
-      "siteId": "0x000000170000033e",
-      "sourceName": "表示",
-      "canonicalOpcode": "display",
-      "opcode": 0,
-      "route": "direct-display",
-      "runtime": {
-        "interpreter": {
-          "result": "success",
-          "route": "interpreter-core",
-          "count": 1
-        },
-        "aot": {
-          "success": true,
           "callId": 829,
           "count": 1
         }
@@ -19266,14 +19266,14 @@
       "officialEquivalent": true
     },
     {
-      "catalogId": "command-0072",
-      "name": "システム関数一覧取得",
+      "catalogId": "command-0307",
+      "name": "表示",
       "plugin": "plugin_system",
       "siteId": "0x000000170000033f",
-      "sourceName": "システム関数一覧取得",
-      "canonicalOpcode": "system_function_names",
-      "opcode": 258,
-      "route": "builtin",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
       "runtime": {
         "interpreter": {
           "result": "success",
@@ -19289,14 +19289,14 @@
       "officialEquivalent": true
     },
     {
-      "catalogId": "command-0307",
-      "name": "表示",
+      "catalogId": "command-0071",
+      "name": "グローバル関数一覧取得",
       "plugin": "plugin_system",
       "siteId": "0x0000001700000340",
-      "sourceName": "表示",
-      "canonicalOpcode": "display",
-      "opcode": 0,
-      "route": "direct-display",
+      "sourceName": "グローバル関数一覧取得",
+      "canonicalOpcode": "system_global_function_names",
+      "opcode": 257,
+      "route": "builtin",
       "runtime": {
         "interpreter": {
           "result": "success",
@@ -19312,18 +19312,18 @@
       "officialEquivalent": true
     },
     {
-      "catalogId": "command-0074",
-      "name": "プラグイン一覧取得",
+      "catalogId": "command-0287",
+      "name": "JSON変換",
       "plugin": "plugin_system",
       "siteId": "0x0000001700000341",
-      "sourceName": "プラグイン一覧取得",
-      "canonicalOpcode": "plugin_names",
-      "opcode": 260,
+      "sourceName": "JSON変換",
+      "canonicalOpcode": "json_encode",
+      "opcode": 143,
       "route": "builtin",
       "runtime": {
         "interpreter": {
           "result": "success",
-          "route": "interpreter-core",
+          "route": "plugin_system",
           "count": 1
         },
         "aot": {
@@ -19358,13 +19358,13 @@
       "officialEquivalent": true
     },
     {
-      "catalogId": "command-0075",
-      "name": "モジュール一覧取得",
+      "catalogId": "command-0072",
+      "name": "システム関数一覧取得",
       "plugin": "plugin_system",
       "siteId": "0x0000001700000343",
-      "sourceName": "モジュール一覧取得",
-      "canonicalOpcode": "plugin_names",
-      "opcode": 260,
+      "sourceName": "システム関数一覧取得",
+      "canonicalOpcode": "system_function_names",
+      "opcode": 258,
       "route": "builtin",
       "runtime": {
         "interpreter": {
@@ -19404,13 +19404,13 @@
       "officialEquivalent": true
     },
     {
-      "catalogId": "command-0076",
-      "name": "助詞一覧取得",
+      "catalogId": "command-0074",
+      "name": "プラグイン一覧取得",
       "plugin": "plugin_system",
       "siteId": "0x0000001700000345",
-      "sourceName": "助詞一覧取得",
-      "canonicalOpcode": "josi_names",
-      "opcode": 261,
+      "sourceName": "プラグイン一覧取得",
+      "canonicalOpcode": "plugin_names",
+      "opcode": 260,
       "route": "builtin",
       "runtime": {
         "interpreter": {
@@ -19450,13 +19450,13 @@
       "officialEquivalent": true
     },
     {
-      "catalogId": "command-0077",
-      "name": "予約語一覧取得",
+      "catalogId": "command-0075",
+      "name": "モジュール一覧取得",
       "plugin": "plugin_system",
       "siteId": "0x0000001700000347",
-      "sourceName": "予約語一覧取得",
-      "canonicalOpcode": "reserved_words",
-      "opcode": 262,
+      "sourceName": "モジュール一覧取得",
+      "canonicalOpcode": "plugin_names",
+      "opcode": 260,
       "route": "builtin",
       "runtime": {
         "interpreter": {
@@ -19496,18 +19496,18 @@
       "officialEquivalent": true
     },
     {
-      "catalogId": "command-0776",
-      "name": "POSTデータ生成",
-      "plugin": "plugin_node",
+      "catalogId": "command-0076",
+      "name": "助詞一覧取得",
+      "plugin": "plugin_system",
       "siteId": "0x0000001700000349",
-      "sourceName": "POSTデータ生成",
-      "canonicalOpcode": "node_post_data",
-      "opcode": 287,
+      "sourceName": "助詞一覧取得",
+      "canonicalOpcode": "josi_names",
+      "opcode": 261,
       "route": "builtin",
       "runtime": {
         "interpreter": {
           "result": "success",
-          "route": "plugin_node",
+          "route": "interpreter-core",
           "count": 1
         },
         "aot": {
@@ -19542,10 +19542,102 @@
       "officialEquivalent": true
     },
     {
+      "catalogId": "command-0077",
+      "name": "予約語一覧取得",
+      "plugin": "plugin_system",
+      "siteId": "0x000000170000034b",
+      "sourceName": "予約語一覧取得",
+      "canonicalOpcode": "reserved_words",
+      "opcode": 262,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 842,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x000000170000034c",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 843,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0776",
+      "name": "POSTデータ生成",
+      "plugin": "plugin_node",
+      "siteId": "0x000000170000034d",
+      "sourceName": "POSTデータ生成",
+      "canonicalOpcode": "node_post_data",
+      "opcode": 287,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_node",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 844,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "siteId": "0x000000170000034e",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "interpreter-core",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 845,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
       "catalogId": "command-0768",
       "name": "AJAXオプション設定",
       "plugin": "plugin_node",
-      "siteId": "0x000000170000034b",
+      "siteId": "0x000000170000034f",
       "sourceName": "AJAXオプション設定",
       "canonicalOpcode": "node_ajax_options_set",
       "opcode": 288,
@@ -19558,7 +19650,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 842,
+          "callId": 846,
           "count": 1
         }
       },
@@ -19568,102 +19660,10 @@
       "catalogId": "command-0721",
       "name": "ファイルサイズ取得",
       "plugin": "plugin_node",
-      "siteId": "0x000000170000034c",
+      "siteId": "0x0000001700000350",
       "sourceName": "ファイルサイズ取得",
       "canonicalOpcode": "node_file_size",
       "opcode": 284,
-      "route": "builtin",
-      "runtime": {
-        "interpreter": {
-          "result": "success",
-          "route": "plugin_node",
-          "count": 1
-        },
-        "aot": {
-          "success": true,
-          "callId": 843,
-          "count": 1
-        }
-      },
-      "officialEquivalent": true
-    },
-    {
-      "catalogId": "command-0307",
-      "name": "表示",
-      "plugin": "plugin_system",
-      "siteId": "0x000000170000034d",
-      "sourceName": "表示",
-      "canonicalOpcode": "display",
-      "opcode": 0,
-      "route": "direct-display",
-      "runtime": {
-        "interpreter": {
-          "result": "success",
-          "route": "interpreter-core",
-          "count": 1
-        },
-        "aot": {
-          "success": true,
-          "callId": 844,
-          "count": 1
-        }
-      },
-      "officialEquivalent": true
-    },
-    {
-      "catalogId": "command-0720",
-      "name": "ファイル情報取得",
-      "plugin": "plugin_node",
-      "siteId": "0x000000170000034e",
-      "sourceName": "ファイル情報取得",
-      "canonicalOpcode": "node_file_info",
-      "opcode": 292,
-      "route": "builtin",
-      "runtime": {
-        "interpreter": {
-          "result": "success",
-          "route": "plugin_node",
-          "count": 1
-        },
-        "aot": {
-          "success": true,
-          "callId": 845,
-          "count": 1
-        }
-      },
-      "officialEquivalent": true
-    },
-    {
-      "catalogId": "command-0307",
-      "name": "表示",
-      "plugin": "plugin_system",
-      "siteId": "0x000000170000034f",
-      "sourceName": "表示",
-      "canonicalOpcode": "display",
-      "opcode": 0,
-      "route": "direct-display",
-      "runtime": {
-        "interpreter": {
-          "result": "success",
-          "route": "interpreter-core",
-          "count": 1
-        },
-        "aot": {
-          "success": true,
-          "callId": 846,
-          "count": 1
-        }
-      },
-      "officialEquivalent": true
-    },
-    {
-      "catalogId": "command-0706",
-      "name": "存在",
-      "plugin": "plugin_node",
-      "siteId": "0x0000001700000350",
-      "sourceName": "存在",
-      "canonicalOpcode": "node_file_exists",
-      "opcode": 272,
       "route": "builtin",
       "runtime": {
         "interpreter": {
@@ -19703,13 +19703,13 @@
       "officialEquivalent": true
     },
     {
-      "catalogId": "command-0707",
-      "name": "フォルダ存在",
+      "catalogId": "command-0720",
+      "name": "ファイル情報取得",
       "plugin": "plugin_node",
       "siteId": "0x0000001700000352",
-      "sourceName": "フォルダ存在",
-      "canonicalOpcode": "node_folder_exists",
-      "opcode": 273,
+      "sourceName": "ファイル情報取得",
+      "canonicalOpcode": "node_file_info",
+      "opcode": 292,
       "route": "builtin",
       "runtime": {
         "interpreter": {
@@ -19749,14 +19749,14 @@
       "officialEquivalent": true
     },
     {
-      "catalogId": "command-0708",
-      "name": "フォルダ作成",
+      "catalogId": "command-0706",
+      "name": "存在",
       "plugin": "plugin_node",
       "siteId": "0x0000001700000354",
-      "sourceName": "フォルダ作成",
-      "canonicalOpcode": "node_folder_create",
-      "opcode": 320,
-      "route": "node-file-operation",
+      "sourceName": "存在",
+      "canonicalOpcode": "node_file_exists",
+      "opcode": 272,
+      "route": "builtin",
       "runtime": {
         "interpreter": {
           "result": "success",
@@ -19772,18 +19772,18 @@
       "officialEquivalent": true
     },
     {
-      "catalogId": "command-0691",
-      "name": "保存",
-      "plugin": "plugin_node",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
       "siteId": "0x0000001700000355",
-      "sourceName": "保存",
-      "canonicalOpcode": "node_file_save",
-      "opcode": 309,
-      "route": "node-file-io",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
       "runtime": {
         "interpreter": {
           "result": "success",
-          "route": "plugin_node",
+          "route": "interpreter-core",
           "count": 1
         },
         "aot": {
@@ -19795,14 +19795,14 @@
       "officialEquivalent": true
     },
     {
-      "catalogId": "command-0688",
-      "name": "開",
+      "catalogId": "command-0707",
+      "name": "フォルダ存在",
       "plugin": "plugin_node",
       "siteId": "0x0000001700000356",
-      "sourceName": "開",
-      "canonicalOpcode": "node_file_open",
-      "opcode": 306,
-      "route": "node-file-io",
+      "sourceName": "フォルダ存在",
+      "canonicalOpcode": "node_folder_exists",
+      "opcode": 273,
+      "route": "builtin",
       "runtime": {
         "interpreter": {
           "result": "success",
@@ -19818,18 +19818,18 @@
       "officialEquivalent": true
     },
     {
-      "catalogId": "command-0689",
-      "name": "読",
-      "plugin": "plugin_node",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
       "siteId": "0x0000001700000357",
-      "sourceName": "読",
-      "canonicalOpcode": "node_file_read",
-      "opcode": 307,
-      "route": "node-file-io",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
       "runtime": {
         "interpreter": {
           "result": "success",
-          "route": "plugin_node",
+          "route": "interpreter-core",
           "count": 1
         },
         "aot": {
@@ -19841,14 +19841,14 @@
       "officialEquivalent": true
     },
     {
-      "catalogId": "command-0690",
-      "name": "バイナリ読",
+      "catalogId": "command-0708",
+      "name": "フォルダ作成",
       "plugin": "plugin_node",
       "siteId": "0x0000001700000358",
-      "sourceName": "バイナリ読",
-      "canonicalOpcode": "node_file_binary_read",
-      "opcode": 308,
-      "route": "node-file-io",
+      "sourceName": "フォルダ作成",
+      "canonicalOpcode": "node_folder_create",
+      "opcode": 320,
+      "route": "node-file-operation",
       "runtime": {
         "interpreter": {
           "result": "success",
@@ -19864,14 +19864,14 @@
       "officialEquivalent": true
     },
     {
-      "catalogId": "command-0704",
-      "name": "ファイル列挙",
+      "catalogId": "command-0691",
+      "name": "保存",
       "plugin": "plugin_node",
       "siteId": "0x0000001700000359",
-      "sourceName": "ファイル列挙",
-      "canonicalOpcode": "node_file_list",
-      "opcode": 318,
-      "route": "node-file-operation",
+      "sourceName": "保存",
+      "canonicalOpcode": "node_file_save",
+      "opcode": 309,
+      "route": "node-file-io",
       "runtime": {
         "interpreter": {
           "result": "success",
@@ -19887,14 +19887,14 @@
       "officialEquivalent": true
     },
     {
-      "catalogId": "command-0705",
-      "name": "全ファイル列挙",
+      "catalogId": "command-0688",
+      "name": "開",
       "plugin": "plugin_node",
       "siteId": "0x000000170000035a",
-      "sourceName": "全ファイル列挙",
-      "canonicalOpcode": "node_file_list_all",
-      "opcode": 319,
-      "route": "node-file-operation",
+      "sourceName": "開",
+      "canonicalOpcode": "node_file_open",
+      "opcode": 306,
+      "route": "node-file-io",
       "runtime": {
         "interpreter": {
           "result": "success",
@@ -19910,14 +19910,14 @@
       "officialEquivalent": true
     },
     {
-      "catalogId": "command-0710",
-      "name": "ファイルコピー",
+      "catalogId": "command-0689",
+      "name": "読",
       "plugin": "plugin_node",
       "siteId": "0x000000170000035b",
-      "sourceName": "ファイルコピー",
-      "canonicalOpcode": "node_file_copy",
-      "opcode": 321,
-      "route": "node-file-operation",
+      "sourceName": "読",
+      "canonicalOpcode": "node_file_read",
+      "opcode": 307,
+      "route": "node-file-io",
       "runtime": {
         "interpreter": {
           "result": "success",
@@ -19933,14 +19933,14 @@
       "officialEquivalent": true
     },
     {
-      "catalogId": "command-0711",
-      "name": "ファイル上書コピー",
+      "catalogId": "command-0690",
+      "name": "バイナリ読",
       "plugin": "plugin_node",
       "siteId": "0x000000170000035c",
-      "sourceName": "ファイル上書コピー",
-      "canonicalOpcode": "node_file_copy_overwrite",
-      "opcode": 322,
-      "route": "node-file-operation",
+      "sourceName": "バイナリ読",
+      "canonicalOpcode": "node_file_binary_read",
+      "opcode": 308,
+      "route": "node-file-io",
       "runtime": {
         "interpreter": {
           "result": "success",
@@ -19956,13 +19956,13 @@
       "officialEquivalent": true
     },
     {
-      "catalogId": "command-0713",
-      "name": "ファイル移動",
+      "catalogId": "command-0704",
+      "name": "ファイル列挙",
       "plugin": "plugin_node",
       "siteId": "0x000000170000035d",
-      "sourceName": "ファイル移動",
-      "canonicalOpcode": "node_file_move",
-      "opcode": 323,
+      "sourceName": "ファイル列挙",
+      "canonicalOpcode": "node_file_list",
+      "opcode": 318,
       "route": "node-file-operation",
       "runtime": {
         "interpreter": {
@@ -19979,13 +19979,13 @@
       "officialEquivalent": true
     },
     {
-      "catalogId": "command-0714",
-      "name": "ファイル上書移動",
+      "catalogId": "command-0705",
+      "name": "全ファイル列挙",
       "plugin": "plugin_node",
       "siteId": "0x000000170000035e",
-      "sourceName": "ファイル上書移動",
-      "canonicalOpcode": "node_file_move_overwrite",
-      "opcode": 324,
+      "sourceName": "全ファイル列挙",
+      "canonicalOpcode": "node_file_list_all",
+      "opcode": 319,
       "route": "node-file-operation",
       "runtime": {
         "interpreter": {
@@ -20002,14 +20002,14 @@
       "officialEquivalent": true
     },
     {
-      "catalogId": "command-0729",
-      "name": "作業フォルダ変更",
+      "catalogId": "command-0710",
+      "name": "ファイルコピー",
       "plugin": "plugin_node",
       "siteId": "0x000000170000035f",
-      "sourceName": "作業フォルダ変更",
-      "canonicalOpcode": "node_change_directory",
-      "opcode": 200,
-      "route": "builtin",
+      "sourceName": "ファイルコピー",
+      "canonicalOpcode": "node_file_copy",
+      "opcode": 321,
+      "route": "node-file-operation",
       "runtime": {
         "interpreter": {
           "result": "success",
@@ -20025,14 +20025,14 @@
       "officialEquivalent": true
     },
     {
-      "catalogId": "command-0727",
-      "name": "カレントディレクトリ変更",
+      "catalogId": "command-0711",
+      "name": "ファイル上書コピー",
       "plugin": "plugin_node",
       "siteId": "0x0000001700000360",
-      "sourceName": "カレントディレクトリ変更",
-      "canonicalOpcode": "node_change_directory",
-      "opcode": 200,
-      "route": "builtin",
+      "sourceName": "ファイル上書コピー",
+      "canonicalOpcode": "node_file_copy_overwrite",
+      "opcode": 322,
+      "route": "node-file-operation",
       "runtime": {
         "interpreter": {
           "result": "success",
@@ -20048,10 +20048,102 @@
       "officialEquivalent": true
     },
     {
+      "catalogId": "command-0713",
+      "name": "ファイル移動",
+      "plugin": "plugin_node",
+      "siteId": "0x0000001700000361",
+      "sourceName": "ファイル移動",
+      "canonicalOpcode": "node_file_move",
+      "opcode": 323,
+      "route": "node-file-operation",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_node",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 864,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0714",
+      "name": "ファイル上書移動",
+      "plugin": "plugin_node",
+      "siteId": "0x0000001700000362",
+      "sourceName": "ファイル上書移動",
+      "canonicalOpcode": "node_file_move_overwrite",
+      "opcode": 324,
+      "route": "node-file-operation",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_node",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 865,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0729",
+      "name": "作業フォルダ変更",
+      "plugin": "plugin_node",
+      "siteId": "0x0000001700000363",
+      "sourceName": "作業フォルダ変更",
+      "canonicalOpcode": "node_change_directory",
+      "opcode": 200,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_node",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 866,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0727",
+      "name": "カレントディレクトリ変更",
+      "plugin": "plugin_node",
+      "siteId": "0x0000001700000364",
+      "sourceName": "カレントディレクトリ変更",
+      "canonicalOpcode": "node_change_directory",
+      "opcode": 200,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_node",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 867,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
       "catalogId": "command-0718",
       "name": "ファイル削除",
       "plugin": "plugin_node",
-      "siteId": "0x0000001700000361",
+      "siteId": "0x0000001700000365",
       "sourceName": "ファイル削除",
       "canonicalOpcode": "node_file_delete",
       "opcode": 325,
@@ -20064,7 +20156,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 864,
+          "callId": 868,
           "count": 1
         }
       },

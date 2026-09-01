@@ -22,8 +22,8 @@
   },
   "executionEvidenceStates": {
     "verified": 0,
-    "trace-confirmed-unattested": 319,
-    "unverified": 208
+    "trace-confirmed-unattested": 323,
+    "unverified": 204
   },
   "entries": [
     {
@@ -2788,7 +2788,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x000000170000033c"
+          "0x0000001700000340"
         ],
         "officialComparison": [
           "officialSource",
@@ -2835,7 +2835,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x000000170000033f"
+          "0x0000001700000343"
         ],
         "officialComparison": [
           "officialSource",
@@ -2933,7 +2933,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x0000001700000341"
+          "0x0000001700000345"
         ],
         "officialComparison": [
           "officialSource",
@@ -2980,7 +2980,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x0000001700000343"
+          "0x0000001700000347"
         ],
         "officialComparison": [
           "officialSource",
@@ -3027,7 +3027,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x0000001700000345"
+          "0x0000001700000349"
         ],
         "officialComparison": [
           "officialSource",
@@ -3074,7 +3074,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x0000001700000347"
+          "0x000000170000034b"
         ],
         "officialComparison": [
           "officialSource",
@@ -13989,7 +13989,7 @@
           "0x000000170000032c",
           "0x0000001700000331",
           "0x0000001700000336",
-          "0x000000170000033d"
+          "0x0000001700000341"
         ],
         "officialComparison": [
           "officialSource",
@@ -15843,18 +15843,18 @@
           "0x0000001700000334",
           "0x0000001700000337",
           "0x0000001700000339",
-          "0x000000170000033b",
-          "0x000000170000033e",
-          "0x0000001700000340",
+          "0x000000170000033f",
           "0x0000001700000342",
           "0x0000001700000344",
           "0x0000001700000346",
           "0x0000001700000348",
           "0x000000170000034a",
-          "0x000000170000034d",
-          "0x000000170000034f",
+          "0x000000170000034c",
+          "0x000000170000034e",
           "0x0000001700000351",
-          "0x0000001700000353"
+          "0x0000001700000353",
+          "0x0000001700000355",
+          "0x0000001700000357"
         ],
         "officialComparison": [
           "officialSource",
@@ -19350,7 +19350,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x0000001700000356"
+          "0x000000170000035a"
         ],
         "officialComparison": [
           "officialSource",
@@ -19397,7 +19397,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x0000001700000357"
+          "0x000000170000035b"
         ],
         "officialComparison": [
           "officialSource",
@@ -19444,7 +19444,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x0000001700000358"
+          "0x000000170000035c"
         ],
         "officialComparison": [
           "officialSource",
@@ -19491,7 +19491,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x0000001700000355"
+          "0x0000001700000359"
         ],
         "officialComparison": [
           "officialSource",
@@ -19533,9 +19533,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-dispatch-commands",
+        "siteIds": [
+          "0x000000170000033b"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式7経路の文字コード変換・SJIS/EUCファイルI/O差分テストに成功"
     },
     {
@@ -19567,9 +19580,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-dispatch-commands",
+        "siteIds": [
+          "0x000000170000033a"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式7経路の文字コード変換・SJIS/EUCファイルI/O差分テストに成功"
     },
     {
@@ -19601,9 +19627,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-dispatch-commands",
+        "siteIds": [
+          "0x000000170000033d"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式7経路の文字コード変換・SJIS/EUCファイルI/O差分テストに成功"
     },
     {
@@ -19635,9 +19674,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-dispatch-commands",
+        "siteIds": [
+          "0x000000170000033c"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式7経路の文字コード変換・SJIS/EUCファイルI/O差分テストに成功"
     },
     {
@@ -19976,7 +20028,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x0000001700000359"
+          "0x000000170000035d"
         ],
         "officialComparison": [
           "officialSource",
@@ -20023,7 +20075,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x000000170000035a"
+          "0x000000170000035e"
         ],
         "officialComparison": [
           "officialSource",
@@ -20070,7 +20122,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x0000001700000350"
+          "0x0000001700000354"
         ],
         "officialComparison": [
           "officialSource",
@@ -20117,7 +20169,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x0000001700000352"
+          "0x0000001700000356"
         ],
         "officialComparison": [
           "officialSource",
@@ -20164,7 +20216,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x0000001700000354"
+          "0x0000001700000358"
         ],
         "officialComparison": [
           "officialSource",
@@ -20244,7 +20296,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x000000170000035b"
+          "0x000000170000035f"
         ],
         "officialComparison": [
           "officialSource",
@@ -20291,7 +20343,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x000000170000035c"
+          "0x0000001700000360"
         ],
         "officialComparison": [
           "officialSource",
@@ -20372,7 +20424,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x000000170000035d"
+          "0x0000001700000361"
         ],
         "officialComparison": [
           "officialSource",
@@ -20419,7 +20471,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x000000170000035e"
+          "0x0000001700000362"
         ],
         "officialComparison": [
           "officialSource",
@@ -20568,7 +20620,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x0000001700000361"
+          "0x0000001700000365"
         ],
         "officialComparison": [
           "officialSource",
@@ -20649,7 +20701,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x000000170000034e"
+          "0x0000001700000352"
         ],
         "officialComparison": [
           "officialSource",
@@ -20695,7 +20747,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x000000170000034c"
+          "0x0000001700000350"
         ],
         "officialComparison": [
           "officialSource",
@@ -20967,7 +21019,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x0000001700000360"
+          "0x0000001700000364"
         ],
         "officialComparison": [
           "officialSource",
@@ -21061,7 +21113,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x000000170000035f"
+          "0x0000001700000363"
         ],
         "officialComparison": [
           "officialSource",
@@ -22499,7 +22551,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x000000170000034b"
+          "0x000000170000034f"
         ],
         "officialComparison": [
           "officialSource",
@@ -22784,7 +22836,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x0000001700000349"
+          "0x000000170000034d"
         ],
         "officialComparison": [
           "officialSource",
@@ -23152,7 +23204,7 @@
         "proofSchema": "lnako.dispatch-evidence.v2",
         "fixtureId": "native-dispatch-commands",
         "siteIds": [
-          "0x000000170000033a"
+          "0x000000170000033e"
         ],
         "officialComparison": [
           "officialSource",
