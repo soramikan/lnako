@@ -1,0 +1,162 @@
+{
+  "schema": "lnako.static-constant-evidence.v2",
+  "generator": "tools/check_static_constant_evidence.mjs",
+  "baseline": {
+    "tag": "3.7.24",
+    "commit": "aa18c7e640523938c680958fe731418cc6f7a58f"
+  },
+  "fixture": {
+    "id": "native-node-command-line-constants",
+    "file": "native-cases.json",
+    "sourceSha256": "a474be8d7996793e5582b4836bb923941af075727161fbd0aa82e4dfacc6bf21",
+    "globalReadNames": [
+      "コマンドライン",
+      "ナデシコランタイム",
+      "ナデシコランタイムパス"
+    ],
+    "literalNames": []
+  },
+  "officialComparison": {
+    "oracle": "official-source",
+    "routes": [
+      "officialSource",
+      "officialGenerated",
+      "lnakoRun",
+      "lnakoNativeO0"
+    ],
+    "equivalent": true,
+    "results": {
+      "officialSource": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "36768a89e8faf166700f48bc8df99361609e43956dd7d2bffebde9439ea5033c",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "officialGenerated": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "36768a89e8faf166700f48bc8df99361609e43956dd7d2bffebde9439ea5033c",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "lnakoRun": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "36768a89e8faf166700f48bc8df99361609e43956dd7d2bffebde9439ea5033c",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "lnakoNativeO0": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "36768a89e8faf166700f48bc8df99361609e43956dd7d2bffebde9439ea5033c",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  },
+  "attestation": null,
+  "provenance": {
+    "environment": {
+      "platform": "darwin",
+      "arch": "arm64",
+      "node": "v24.19.0"
+    },
+    "oracle": {
+      "build": 4,
+      "archiveSha256": "c3bedbf101118a261f631d331127ae441657fec091c712b07d237c4336eb0011",
+      "cliSha256": "65e32f1d7de0b2da18edf3f4c49565c37d31aa474d31ee08426f2f6a0c0d6c81",
+      "markerSha256": "e9444955298c3bb22164a219c0f342ee32301e901ec967d648cae9a25d8bf531",
+      "treeHashAlgorithm": "sha256-json-records-v3",
+      "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
+    },
+    "lnako": {
+      "binarySha256": "26f4c59f32798661d86b56ad54905813de77c00817a12a2f3e4c0d89edc353af",
+      "commit": "680d7cab4f6b68add26f8daffd58ae722a821007",
+      "dirty": false
+    },
+    "raw": {
+      "interpreterTraceSha256": "48bcece450aae15379862166d60eb80031ed4fb30af078515c36dd6f159a7ac4",
+      "aotTraceSha256": "8563fae5ec29d621b51a24d9ec37e50d89bb5b8186f336d5e42d28e9467a6cb4",
+      "globalManifestSha256": "3306eed6399ef787af5024d8dd879e578de453847281615edee998bb3219ccd9",
+      "literalInterpreterTraceSha256": "d1a240ca85bb6425f4ad3e15b23d56a4366b64e8631f58b1af10c96a38b65232",
+      "literalAotTraceSha256": "b503b7eae644c3b3cc2fbe7504669a86aa68f5db0642b31b5d61cde895e2a1ea",
+      "literalManifestSha256": "dc3814ca0782ae438b46902b6567275aec77a525211246ab11fb8b6591cc20fb"
+    }
+  },
+  "trace": {
+    "global": {
+      "interpreter": {
+        "schema": 1,
+        "eventCount": 3
+      },
+      "aot": {
+        "schema": 1,
+        "eventCount": 3
+      }
+    },
+    "literal": {
+      "interpreter": {
+        "schema": 1,
+        "eventCount": 0
+      },
+      "aot": {
+        "schema": 1,
+        "eventCount": 0
+      }
+    }
+  },
+  "entries": [
+    {
+      "catalogId": "command-0751",
+      "name": "コマンドライン",
+      "plugin": "plugin_node",
+      "kind": "global-read",
+      "siteId": "0x0000000000000001",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0752",
+      "name": "ナデシコランタイム",
+      "plugin": "plugin_node",
+      "kind": "global-read",
+      "siteId": "0x0000000000000002",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0753",
+      "name": "ナデシコランタイムパス",
+      "plugin": "plugin_node",
+      "kind": "global-read",
+      "siteId": "0x0000000000000003",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    }
+  ]
+}

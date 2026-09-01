@@ -3,7 +3,7 @@
 `compat/v3.7.24/evidence.json`は、標準cnako 527 entryをカタログID単位で
 既存fixtureへ関連付ける台帳です。通常のfixture関連付けは実行結果やdispatch接続を証明しません。
 追跡中の証拠は、macOS arm64の単一実行環境で、`tests/oracle/dispatch-cases.json`が`native-cut-commands`を基礎に生成する明示fixture `native-dispatch-commands`についてcompile manifest、Interpreter/AOT trace、公式差分を
-同一fixture・siteで突き合わせられた一意名331 entryが`trace-confirmed-unattested`です（既存14命令に型変換系16命令、算術・比較系15命令、配列系12命令、文字列系21命令、論理・ビット・集約系20命令、表系14命令、数学系36命令、文字変換系4命令、置換系2命令、出現1命令、形式・文字種判定系7命令、値・状態系12命令、文字列合成・URL系12命令、JSON・要素数系9命令、幅変換系8命令、配列callback系4命令、配列構造系7命令、辞書・hash key系7命令、配列スタック・複製・連番系5命令、パス系5命令、礼節系6命令、動的実行系2命令、標準出力系6命令、デバッグ待機系1命令、デバッグ表示・配列シャッフル系2命令、システム関数存在系1命令、実行時間計測系1命令、ハテナ関数設定・実行系2命令、システムメタデータ一覧系5命令（システム関数一覧取得、プラグイン一覧取得、モジュール一覧取得、助詞一覧取得、予約語一覧取得）、Node HTTP body系1命令（POSTデータ生成）、Node状態・ファイル情報系3命令（AJAXオプション設定、ファイルサイズ取得、ファイル情報取得）、Nodeファイル存在系2命令（存在、フォルダ存在）、Node基本ファイルI/O系3命令（開、読、バイナリ読）、Node文字コードファイルI/O系4命令（SJISファイル読、SJISファイル保存、EUCファイル読、EUCファイル保存）、Nodeファイル操作系5命令（フォルダ作成、保存、ファイル列挙、全ファイル列挙、ファイル削除）、Nodeファイルcopy・move系4命令（ファイルコピー、ファイル上書コピー、ファイル移動、ファイル上書移動）、Node cwd変更系2命令（カレントディレクトリ変更、作業フォルダ変更）、CSV系7命令、秒待系8命令、Promise成功系3命令、Promise処理系2命令、Promise束ね系1命令、Node host情報・環境系10命令、Node一時・乱数系3命令（一時フォルダ作成、ランダムUUID生成、ランダム配列生成）、Node archive state系1命令（圧縮解凍ツールパス変更）、ハッシュ値計算1命令、Node文字コード系4命令、日時書式系1命令、時間・乱数系4命令、グローバル関数一覧取得1命令、Node console・assertion系2命令（コンソールクリア、ASSERT等）を加えた範囲）。さらに`native-scalar-system-constants`の24件は、17件のglobal readと7件のtyped literalを、専用manifest／Interpreter・AOT trace／公式4経路比較で`lnako.static-constant-evidence.v2`へ別namespaceとして記録する。`native-string-system-constants`の24件は公式sourceをoracleにした比較で、`lnako.static-constant-evidence.v2`へ別namespaceとして記録する。公式生成JavaScriptには初期`名前空間`の既知差があるため、string fixtureでは公式source・lnako run・AOT O0の一致と公式生成JavaScriptの成功を記録する。`native-array-system-constants`の2件は、共有配列を変更してから表示する公式source・生成JavaScript・lnako run・AOT O0の一致を同じ証拠形式で記録し、`native-node-archive-constant`の`plugin_node` global read 1件は公式カタログの初期値`7z`を読む公式source・公式生成JavaScript・`lnako run`・AOT O0の一致を同じ証拠形式で記録する。追跡中のJSONにはattestationを記録しないため、ローカルの`verified`は0件で、合計382 entryが`trace-confirmed-unattested`、145 entryが`unverified`です。
+同一fixture・siteで突き合わせられた一意名331 entryが`trace-confirmed-unattested`です（既存14命令に型変換系16命令、算術・比較系15命令、配列系12命令、文字列系21命令、論理・ビット・集約系20命令、表系14命令、数学系36命令、文字変換系4命令、置換系2命令、出現1命令、形式・文字種判定系7命令、値・状態系12命令、文字列合成・URL系12命令、JSON・要素数系9命令、幅変換系8命令、配列callback系4命令、配列構造系7命令、辞書・hash key系7命令、配列スタック・複製・連番系5命令、パス系5命令、礼節系6命令、動的実行系2命令、標準出力系6命令、デバッグ待機系1命令、デバッグ表示・配列シャッフル系2命令、システム関数存在系1命令、実行時間計測系1命令、ハテナ関数設定・実行系2命令、システムメタデータ一覧系5命令（システム関数一覧取得、プラグイン一覧取得、モジュール一覧取得、助詞一覧取得、予約語一覧取得）、Node HTTP body系1命令（POSTデータ生成）、Node状態・ファイル情報系3命令（AJAXオプション設定、ファイルサイズ取得、ファイル情報取得）、Nodeファイル存在系2命令（存在、フォルダ存在）、Node基本ファイルI/O系3命令（開、読、バイナリ読）、Node文字コードファイルI/O系4命令（SJISファイル読、SJISファイル保存、EUCファイル読、EUCファイル保存）、Nodeファイル操作系5命令（フォルダ作成、保存、ファイル列挙、全ファイル列挙、ファイル削除）、Nodeファイルcopy・move系4命令（ファイルコピー、ファイル上書コピー、ファイル移動、ファイル上書移動）、Node cwd変更系2命令（カレントディレクトリ変更、作業フォルダ変更）、CSV系7命令、秒待系8命令、Promise成功系3命令、Promise処理系2命令、Promise束ね系1命令、Node host情報・環境系10命令、Node一時・乱数系3命令（一時フォルダ作成、ランダムUUID生成、ランダム配列生成）、Node archive state系1命令（圧縮解凍ツールパス変更）、ハッシュ値計算1命令、Node文字コード系4命令、日時書式系1命令、時間・乱数系4命令、グローバル関数一覧取得1命令、Node console・assertion系2命令（コンソールクリア、ASSERT等）を加えた範囲）。さらに`native-scalar-system-constants`の24件は、17件のglobal readと7件のtyped literalを、専用manifest／Interpreter・AOT trace／公式4経路比較で`lnako.static-constant-evidence.v2`へ別namespaceとして記録する。`native-string-system-constants`の24件は公式sourceをoracleにした比較で、`lnako.static-constant-evidence.v2`へ別namespaceとして記録する。公式生成JavaScriptには初期`名前空間`の既知差があるため、string fixtureでは公式source・lnako run・AOT O0の一致と公式生成JavaScriptの成功を記録する。`native-array-system-constants`の2件は、共有配列を変更してから表示する公式source・生成JavaScript・lnako run・AOT O0の一致を同じ証拠形式で記録し、`native-node-archive-constant`の`plugin_node` global read 1件は公式カタログの初期値`7z`を読む公式source・公式生成JavaScript・`lnako run`・AOT O0の一致を同じ証拠形式で記録する。`native-node-command-line-constants`の`plugin_node` global read 3件は、argv由来の非空条件を公式source oracle・lnako run・AOT O0で比較し、同じ証拠形式で記録する。追跡中のJSONにはattestationを記録しないため、ローカルの`verified`は0件で、合計385 entryが`trace-confirmed-unattested`、142 entryが`unverified`です。
 
 `ASSERT等`は公式マニュアルの詳細説明が準備中で、成功時の戻り値と保留Promiseの排出順は短い説明だけからは確定できません。固定v3.7.24の公式CLIでは、Promise callbackを登録した後に`ASSERT等(1,1)`を実行するとcallback群を先に排出してから`undefined`を出力します。lnakoのInterpreter/AOTは同期dispatchの`undefined`を先に出力してからcallback群を排出するため、この混在順序は未実装境界として`docs/COMPATIBILITY_QUIRKS.md`へ分離しました。canonical `native-dispatch-commands`では`ASSERT等`をPromise登録より前に置き、同一siteのInterpreter/AOT trace・compile manifest・公式4経路を一致させています。さらにpipe出力で副作用が観測できない`コンソールクリア`も同じcanonical fixtureへ追加しました。
 
@@ -20,7 +20,7 @@ Actions artifactの保持期限後も外部検証できるよう、run `32983175
 historical catalogのdigestとworkflow identityを固定し、`node tools/check_tracked_dispatch_attestation.mjs`が禁止field、対象commit、bundleの
 in-toto subject、SLSA predicate、GitHub Actions workflow identityを検査する。bundleの署名を暗号学的に再検証する場合は、保存したbundleを
 公式`gh attestation verify`へ同じ厳格なidentity引数で渡す。固定されたhistorical catalogの`verified: 4`は現在commitの台帳へ自動反映せず、
-追跡中の`compat/v3.7.24/evidence.json`は`verified: 0`、`trace-confirmed-unattested: 382`を記録する。catalog再生成時の`--historical-commit`は
+追跡中の`compat/v3.7.24/evidence.json`は`verified: 0`、`trace-confirmed-unattested: 385`を記録する。catalog再生成時の`--historical-commit`は
 この明示的な履歴検査でだけ対象commitとの差異を許可し、明示的な非canonical outputを必須にする（通常のsync検査は、証拠生成元のfixture/source commitとの一致、またはその祖先から証拠・台帳・文書・CIとdispatch生成器以外の検証器だけを記録した後続commitを要求し、canonical output保護は緩めない）。target commitとこの履歴固定を追加する後続commitを混同しない。
 
 ### 証拠記録commitの追従
@@ -40,6 +40,7 @@ node tools/check_static_constant_evidence.mjs --no-build --fixture native-scalar
 node tools/check_static_constant_evidence.mjs --no-build --fixture native-string-system-constants --evidence-output /absolute/path/static-string-constant-evidence.json
 node tools/check_static_constant_evidence.mjs --no-build --fixture native-array-system-constants --evidence-output /absolute/path/static-array-constant-evidence.json
 node tools/check_static_constant_evidence.mjs --no-build --fixture native-node-archive-constant --evidence-output /absolute/path/static-node-archive-constant-evidence.json
+node tools/check_static_constant_evidence.mjs --no-build --fixture native-node-command-line-constants --evidence-output /absolute/path/static-node-command-line-constant-evidence.json
 # CIで生成された3 OS artifactを公式GitHub CLIで検証し、一時catalog evidenceを生成
 node tools/verify_dispatch_attestation.mjs --directory /absolute/path/dispatch-evidence --bundle /absolute/path/attestation-bundle.json --output /absolute/path/dispatch-attestation.json --catalog-evidence /absolute/path/evidence-verified.json --repository soramikan/lnako --commit <40-hex-commit> --source-ref refs/heads/main --workflow soramikan/lnako/.github/workflows/ci.yml
 ```
@@ -57,6 +58,7 @@ node tools/verify_dispatch_attestation.mjs --directory /absolute/path/dispatch-e
 - `compat/v3.7.24/static-string-constant-evidence.json`（`native-string-system-constants`のglobal read 24件の実行証拠）
 - `compat/v3.7.24/static-array-constant-evidence.json`（`native-array-system-constants`のglobal read 2件の実行証拠）
 - `compat/v3.7.24/static-node-archive-constant-evidence.json`（`native-node-archive-constant`の`plugin_node` global read 1件の実行証拠）
+- `compat/v3.7.24/static-node-command-line-constant-evidence.json`（`native-node-command-line-constants`の`plugin_node` global read 3件の実行証拠）
 
 `upstream.lock.json`の`nadesiko3.oracleIdentity`にはoracle build 4のCLIとmarkerのSHA-256に加え、marker自身を除く
 実行ツリー全体の決定的tree hashも固定しています。tree hashは相対POSIXパス、entry種別、通常ファイルのサイズと
@@ -110,7 +112,7 @@ Node Bufferのenumerable prototype property 95件の順序・`parent`・`offset`
 疎な最上位表のhole・nullish行に対する`length` property read診断は`native-system-table-sparse-length-errors`で`表列数`・`表行列交換`・`表右回転`を比較します。
 同一ユーザー関数の`prototype` object identityと、そのown `constructor` back-referenceは`native-system-table-inherited-properties`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較します。
 `interpreter-only` 0 entryです。execution evidenceは`verified` 0、
-`trace-confirmed-unattested` 382、`unverified` 145です。
+`trace-confirmed-unattested` 385、`unverified` 142です。
 fixtureの関連付けを変更した場合は、次で派生台帳の生成と検査を行います。
 
 ```sh
@@ -188,7 +190,7 @@ plugin-system・system-runtime・standard-plugin・supplemental-pluginの命令�
 `fixture.commands`に名前があるだけ、検証器がglobal read trace／manifestを確認していない定数読出し、同名異pluginをrouteだけで推定しただけのentryは実行証拠へ数えず、
 レポートの`associationWithoutDispatch`、`unresolvedObservedSites`、`unobservedNativeEntryIds`へ分離します。
 ただし`native-scalar-system-constants`については、公式source・公式生成JavaScript・`lnako run`・AOT O0の4経路が同じ結果になり、AOTの`lnako.aot.global-manifest.v1`／`lnako.aot.literal-manifest.v1`とInterpreter/AOTのschema 1 traceが、global read 17 siteとtyped literal 7 siteをそれぞれ指すことを専用checkerで確認します。`native-string-system-constants`は公式sourceをoracleとし、`lnako run`・AOT O0の一致、公式生成JavaScriptの実行成功、`lnako.aot.global-manifest.v1`、Interpreter/AOTのschema 1 `global-read` traceで24 siteを確認します。公式生成JavaScriptは初期`名前空間`の初期化経路が異なるため、string fixtureの比較ではこの既知差をoracle間の不一致として保持します。`native-array-system-constants`は共有配列を変更してから表示する公式source・公式生成JavaScript・`lnako run`・AOT O0の一致と、AOTの`lnako.aot.global-manifest.v1`、Interpreter/AOTのschema 1 `global-read` traceで2 siteを確認します。
-この51 entryはbuiltin dispatchとは別の4つの`lnako.static-constant-evidence.v2`へ記録し、`trace-confirmed-unattested`へ反映します。fixture内の`はい`・`いいえ`・`真`・`偽`・`オン`・`オフ`・`NULL`の7 entryは型付きliteral loweringで、global readとは別の命令経路です。scalar fixtureは公式4経路のstdout/stderr一致、string fixtureは公式source・lnako run・AOT O0の一致と公式生成JavaScriptの成功、array fixtureは共有配列変更後の公式4経路のstdout/stderr一致、Node archive fixtureは初期値`7z`の公式4経路のstdout/stderr一致、ならびに全fixtureの命令siteを確認していますが、外部attestationはまだありません。
+この54 entryはbuiltin dispatchとは別の5つの`lnako.static-constant-evidence.v2`へ記録し、`trace-confirmed-unattested`へ反映します。fixture内の`はい`・`いいえ`・`真`・`偽`・`オン`・`オフ`・`NULL`の7 entryは型付きliteral loweringで、global readとは別の命令経路です。scalar fixtureは公式4経路のstdout/stderr一致、string fixtureは公式source・lnako run・AOT O0の一致と公式生成JavaScriptの成功、array fixtureは共有配列変更後の公式4経路のstdout/stderr一致、Node archive fixtureは初期値`7z`の公式4経路のstdout/stderr一致、Node command-line fixtureはargv由来の非空条件を公式source oracle・lnako run・AOT O0で一致させ、ならびに全fixtureの命令siteを確認していますが、外部attestationはまだありません。
 公式生成JavaScriptがstandalone host／plugin登録を持たないfixture、また公式sourceとAOT O0が一致しない
 `system-runtime-execution-and-debug`は、明示したroute制限・AOT gapとしてレポートし、成功coverageへ混入させません。
 出力schemaは`lnako.dispatch-coverage.v1`で、`kind`は`sampled-unattested-dispatch-audit`です。これは`verified`やattestation済みcatalog evidenceではありません。
@@ -245,11 +247,11 @@ manifest自体にはcatalog IDやpluginを記録しません。検証器が標�
 保存せず、builtin dispatch traceとは別namespaceのsite IDを使います。
 
 `node tools/check_static_constant_evidence.mjs --no-build`をfixtureごとに実行すると、固定fixture
-`native-scalar-system-constants`、`native-string-system-constants`、`native-array-system-constants`、`native-node-archive-constant`について、公式source、公式生成JavaScript、`lnako run`、
-AOT O0のstdout/stderr、global/literal manifest、Interpreter/AOT traceを突き合わせます。scalarのglobal read 17件＋typed literal 7件、stringのglobal read 24件、arrayのglobal read 2件、Node archiveのglobal read 1件をcatalog IDへ一意に解決し、
-`compat/v3.7.24/static-constant-evidence.json`、`compat/v3.7.24/static-string-constant-evidence.json`、`compat/v3.7.24/static-array-constant-evidence.json`、`compat/v3.7.24/static-node-archive-constant-evidence.json`へ
+`native-scalar-system-constants`、`native-string-system-constants`、`native-array-system-constants`、`native-node-archive-constant`、`native-node-command-line-constants`について、公式source、公式生成JavaScript、`lnako run`、
+AOT O0のstdout/stderr、global/literal manifest、Interpreter/AOT traceを突き合わせます。scalarのglobal read 17件＋typed literal 7件、stringのglobal read 24件、arrayのglobal read 2件、Node archiveのglobal read 1件、Node command-lineのglobal read 3件をcatalog IDへ一意に解決し、
+`compat/v3.7.24/static-constant-evidence.json`、`compat/v3.7.24/static-string-constant-evidence.json`、`compat/v3.7.24/static-array-constant-evidence.json`、`compat/v3.7.24/static-node-archive-constant-evidence.json`、`compat/v3.7.24/static-node-command-line-constant-evidence.json`へ
 それぞれ`lnako.static-constant-evidence.v2`として記録しています。attestationはまだ付いていないため、
-この51件は`trace-confirmed-unattested`であり、`verified`ではありません。
+この54件は`trace-confirmed-unattested`であり、`verified`ではありません。
 
 同じfixtureの`はい`・`いいえ`・`真`・`偽`・`オン`・`オフ`・`NULL`の7件は、公式の値と一致する
 型付きliteralへlowerされるため、global-read siteを持ちません。これは定数実装の失敗を意味せず、

@@ -41,6 +41,13 @@ const staticConstantEvidenceInputs = [
     literalNames: new Set(),
     plugin: "plugin_node",
   },
+  {
+    path: resolve(root, "compat/v3.7.24/static-node-command-line-constant-evidence.json"),
+    fixtureId: "native-node-command-line-constants",
+    globalReadCount: 3,
+    literalNames: new Set(),
+    plugin: "plugin_node",
+  },
 ];
 const staticConstantFixtureIds = new Set(staticConstantEvidenceInputs.map((input) => input.fixtureId));
 const oracleDirectory = resolve(root, "tests/oracle");
@@ -75,6 +82,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "compat/v3.7.24/static-string-constant-evidence.json",
   "compat/v3.7.24/static-array-constant-evidence.json",
   "compat/v3.7.24/static-node-archive-constant-evidence.json",
+  "compat/v3.7.24/static-node-command-line-constant-evidence.json",
   "compat/v3.7.24/evidence.json",
   "compat/v3.7.24/interpreter-only-classification.json",
   "docs/COMPATIBILITY_EVIDENCE.md",
