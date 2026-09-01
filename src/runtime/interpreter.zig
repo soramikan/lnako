@@ -171,6 +171,72 @@ const GlobalTrace = struct {
     }
 };
 
+/// Typed literal tracing is deliberately separate from global-read tracing.
+/// The catalog exposes both forms as `定数`, but only the latter performs a
+/// runtime global lookup. This channel records execution of the seven fixed
+/// system literal spellings without adding values to the evidence ABI.
+const LiteralTrace = struct {
+    path: ?[]const u8 = null,
+    context: ?*anyopaque = null,
+    writeFn: ?DispatchTraceWriteFn = null,
+    disabled: bool = false,
+    sequence: u64 = 0,
+    locked: std.atomic.Value(bool) = .init(false),
+
+    fn lock(self: *LiteralTrace) void {
+        while (self.locked.swap(true, .acquire)) std.atomic.spinLoopHint();
+    }
+
+    fn unlock(self: *LiteralTrace) void {
+        self.locked.store(false, .release);
+    }
+
+    fn emit(self: *LiteralTrace, name: []const u8, site_id: ?u64) void {
+        self.lock();
+        defer self.unlock();
+        if (self.disabled) return;
+        const path = self.path orelse return;
+        const writeFn = self.writeFn orelse return;
+        const context = self.context orelse return;
+        var line: [1024]u8 = undefined;
+        const rendered = (if (site_id) |id| std.fmt.bufPrint(
+            &line,
+            "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"literal\",\"seq\":{d},\"siteId\":\"0x{x:0>16}\",\"name\":\"{s}\"}}\n",
+            .{ self.sequence, id, name },
+        ) else std.fmt.bufPrint(
+            &line,
+            "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"literal\",\"seq\":{d},\"siteId\":null,\"name\":\"{s}\"}}\n",
+            .{ self.sequence, name },
+        )) catch {
+            self.disabled = true;
+            return;
+        };
+        writeFn(context, path, rendered) catch {
+            self.disabled = true;
+            return;
+        };
+        self.sequence += 1;
+    }
+
+    fn finish(self: *LiteralTrace) void {
+        self.lock();
+        defer self.unlock();
+        if (self.disabled) return;
+        const path = self.path orelse return;
+        const writeFn = self.writeFn orelse return;
+        const context = self.context orelse return;
+        var line: [160]u8 = undefined;
+        const rendered = std.fmt.bufPrint(
+            &line,
+            "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"trace-end\",\"seq\":{d},\"dropped\":0}}\n",
+            .{self.sequence},
+        ) catch return;
+        writeFn(context, path, rendered) catch return;
+        self.sequence += 1;
+        self.disabled = true;
+    }
+};
+
 fn traceBuiltinName(name: []const u8) []const u8 {
     for (builtin_catalog.names) |known| {
         if (std.mem.eql(u8, known, name)) return name;
@@ -187,6 +253,8 @@ pub const Host = struct {
     dispatch_trace_writeFn: ?DispatchTraceWriteFn = null,
     global_trace_path: ?[]const u8 = null,
     global_trace_writeFn: ?DispatchTraceWriteFn = null,
+    literal_trace_path: ?[]const u8 = null,
+    literal_trace_writeFn: ?DispatchTraceWriteFn = null,
     sleepMillisecondsFn: ?*const fn (context: *anyopaque, milliseconds: u64) anyerror!void = null,
     nowMillisecondsFn: ?*const fn (context: *anyopaque) anyerror!i64 = null,
     monotonicMillisecondsFn: ?*const fn (context: *anyopaque) anyerror!f64 = null,
@@ -226,6 +294,7 @@ pub const BufferHost = struct {
     output: std.ArrayList(u8) = .empty,
     dispatch_trace: std.ArrayList(u8) = .empty,
     global_trace: std.ArrayList(u8) = .empty,
+    literal_trace: std.ArrayList(u8) = .empty,
     elapsed_milliseconds: u64 = 0,
     now_milliseconds: i64 = 1_735_689_845_678,
     random_state: u64 = 0x4d595df4d0f33173,
@@ -234,6 +303,7 @@ pub const BufferHost = struct {
         self.output.deinit(self.allocator);
         self.dispatch_trace.deinit(self.allocator);
         self.global_trace.deinit(self.allocator);
+        self.literal_trace.deinit(self.allocator);
         self.* = undefined;
     }
 
@@ -265,6 +335,11 @@ pub const BufferHost = struct {
     fn writeGlobalTrace(context: *anyopaque, _: []const u8, bytes: []const u8) !void {
         const self: *BufferHost = @ptrCast(@alignCast(context));
         try self.global_trace.appendSlice(self.allocator, bytes);
+    }
+
+    fn writeLiteralTrace(context: *anyopaque, _: []const u8, bytes: []const u8) !void {
+        const self: *BufferHost = @ptrCast(@alignCast(context));
+        try self.literal_trace.appendSlice(self.allocator, bytes);
     }
 
     fn sleepMilliseconds(context: *anyopaque, milliseconds: u64) !void {
@@ -417,6 +492,7 @@ pub const Interpreter = struct {
     external_root_provider: bool = false,
     dispatch_trace: DispatchTrace = .{},
     global_trace: GlobalTrace = .{},
+    literal_trace: LiteralTrace = .{},
     dispatch_route_stack: [64][]const u8 = undefined,
     dispatch_route_depth: usize = 0,
     dispatch_route_overflow: usize = 0,
@@ -424,7 +500,7 @@ pub const Interpreter = struct {
     active_program_owner: ?*const ir.Program = null,
 
     pub fn init(allocator: std.mem.Allocator, runtime: *Runtime, program: ir.Program, host: Host) Interpreter {
-        return .{ .allocator = allocator, .runtime = runtime, .program = program, .root_program = program, .host = host, .dispatch_trace = .{ .path = host.dispatch_trace_path, .context = host.context, .writeFn = host.dispatch_trace_writeFn }, .global_trace = .{ .path = host.global_trace_path, .context = host.context, .writeFn = host.global_trace_writeFn }, .csv_state = plugin_csv.State.init(allocator), .quickjs_state = quickjs.State.init(program.compat_js), .native_plugin_state = plugin_native.State.init() };
+        return .{ .allocator = allocator, .runtime = runtime, .program = program, .root_program = program, .host = host, .dispatch_trace = .{ .path = host.dispatch_trace_path, .context = host.context, .writeFn = host.dispatch_trace_writeFn }, .global_trace = .{ .path = host.global_trace_path, .context = host.context, .writeFn = host.global_trace_writeFn }, .literal_trace = .{ .path = host.literal_trace_path, .context = host.context, .writeFn = host.literal_trace_writeFn }, .csv_state = plugin_csv.State.init(allocator), .quickjs_state = quickjs.State.init(program.compat_js), .native_plugin_state = plugin_native.State.init() };
     }
 
     pub fn deinit(self: *Interpreter) void {
@@ -432,6 +508,7 @@ pub const Interpreter = struct {
         self.runtime.clearPrimitiveHook(self);
         self.dispatch_trace.finish();
         self.global_trace.finish();
+        self.literal_trace.finish();
         // Native plugins may retain host handles and stop worker threads from
         // deinitialize, so tear them down while all interpreter services exist.
         self.native_plugin_state.deinit();
@@ -751,8 +828,18 @@ pub const Interpreter = struct {
         switch (instruction.opcode) {
             .const_number => result = .{ .number = instruction.number_value orelse 0 },
             .const_bigint => result = try self.runtime.bigIntLiteral(instruction.text),
-            .const_boolean => result = .{ .boolean = instruction.boolean_value },
-            .const_null => result = .null_value,
+            .const_boolean => {
+                result = .{ .boolean = instruction.boolean_value };
+                if (instruction.literal_site_id) |site_id| {
+                    self.literal_trace.emit(instruction.text, if (frame.owner_program == &self.root_program) site_id else null);
+                }
+            },
+            .const_null => {
+                result = .null_value;
+                if (instruction.literal_site_id) |site_id| {
+                    self.literal_trace.emit(instruction.text, if (frame.owner_program == &self.root_program) site_id else null);
+                }
+            },
             .const_string => result = try self.runtime.stringUtf8(instruction.text),
             .const_undefined => result = .undefined,
             .load_global => {
@@ -2725,6 +2812,33 @@ test "global read traceはbuiltin dispatch traceと分離される" {
     try std.testing.expect(std.mem.indexOf(u8, host.global_trace.items, "\"name\":\"PI\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, host.global_trace.items, "\"name\":\"永遠\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, host.global_trace.items, "\"phase\":\"dispatch-result\"") == null);
+}
+
+test "catalog literal traceはglobal read traceと分離される" {
+    const source = "はいを表示\nいいえを表示\n真を表示\n偽を表示\nオンを表示\nオフを表示\nNULLを表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var runtime_host = host.host();
+    runtime_host.literal_trace_path = "literal-trace.jsonl";
+    runtime_host.literal_trace_writeFn = BufferHost.writeLiteralTrace;
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, runtime_host);
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    var lines = std.mem.splitScalar(u8, host.literal_trace.items, '\n');
+    var event_count: usize = 0;
+    while (lines.next()) |line| {
+        if (line.len > 0 and std.mem.indexOf(u8, line, "\"phase\":\"literal\"") != null) event_count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 7), event_count);
+    try std.testing.expect(std.mem.indexOf(u8, host.literal_trace.items, "\"name\":\"NULL\"") != null);
+    try std.testing.expect(host.global_trace.items.len == 0);
 }
 
 test "動的実行のbuiltin traceは動的IRのsiteを親IRへ混ぜない" {

@@ -49,6 +49,7 @@ pub fn lower(backing_allocator: std.mem.Allocator, hir_program: hir.Program) !ir
 fn assignDispatchSiteIds(function: *ir.Function) !void {
     var ordinal: u64 = 0;
     var global_ordinal: u64 = 0;
+    var literal_ordinal: u64 = 0;
     for (function.blocks) |*block| {
         for (block.instructions) |*instruction| {
             if (instruction.opcode == .call and instruction.direct_callee == null and instruction.is_builtin_call) {
@@ -61,8 +62,24 @@ fn assignDispatchSiteIds(function: *ir.Function) !void {
                 if (global_ordinal > std.math.maxInt(u32)) return error.GlobalSiteIdOverflow;
                 instruction.global_site_id = (@as(u64, function.id) << 32) | global_ordinal;
             }
+            if (isStaticLiteralInstruction(instruction)) {
+                literal_ordinal += 1;
+                if (literal_ordinal > std.math.maxInt(u32)) return error.LiteralSiteIdOverflow;
+                instruction.literal_site_id = (@as(u64, function.id) << 32) | literal_ordinal;
+            }
         }
     }
+}
+
+fn isStaticLiteralInstruction(instruction: *const ir.Instruction) bool {
+    if (instruction.opcode != .const_boolean and instruction.opcode != .const_null) return false;
+    return std.mem.eql(u8, instruction.text, "はい") or
+        std.mem.eql(u8, instruction.text, "いいえ") or
+        std.mem.eql(u8, instruction.text, "真") or
+        std.mem.eql(u8, instruction.text, "偽") or
+        std.mem.eql(u8, instruction.text, "オン") or
+        std.mem.eql(u8, instruction.text, "オフ") or
+        std.mem.eql(u8, instruction.text, "NULL");
 }
 
 const BlockBuilder = struct {
@@ -754,6 +771,34 @@ test "builtin dispatchとglobal readのsite IDを別namespaceで安定化する"
     try std.testing.expectEqual(@as(u64, 2), dispatch_sites[1]);
     try std.testing.expectEqual(@as(u64, 1), global_sites[0]);
     try std.testing.expectEqual(@as(u64, 2), global_sites[1]);
+}
+
+test "catalog literalのsite IDをglobal readと別namespaceで付与する" {
+    const parser = @import("../frontend/parser.zig");
+    const semantic = @import("../semantic/analyzer.zig");
+    const source = "はいを表示\nいいえを表示\n真を表示\n偽を表示\nオンを表示\nオフを表示\nNULLを表示\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "literal-sites.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "literal-sites.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "literal-sites.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+
+    const entry = program.findFunction("main__$entry").?;
+    var literal_count: usize = 0;
+    var expected_id: u64 = 1;
+    for (entry.blocks) |block| for (block.instructions) |instruction| {
+        if (instruction.literal_site_id) |site_id| {
+            try std.testing.expect(instruction.opcode == .const_boolean or instruction.opcode == .const_null);
+            try std.testing.expectEqual(expected_id, site_id);
+            try std.testing.expect(instruction.global_site_id == null);
+            literal_count += 1;
+            expected_id += 1;
+        }
+    };
+    try std.testing.expectEqual(@as(usize, 7), literal_count);
 }
 
 test "利用者関数名のbuiltin衝突と動的plugin命令にはsite IDを付けない" {

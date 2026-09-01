@@ -61,6 +61,11 @@ pub const Instruction = struct {
     /// separate namespace from builtin dispatch sites so adding this evidence
     /// never changes existing dispatch trace identities.
     global_site_id: ?u64 = null,
+    /// Stable identity for a catalog constant that the parser lowers directly
+    /// to a typed literal. Literal constants use a third namespace so their
+    /// execution evidence cannot be mistaken for a global read or builtin
+    /// dispatch.
+    literal_site_id: ?u64 = null,
     is_builtin_call: bool = false,
     operands: []ValueId = &.{},
     phi_incoming: []PhiIncoming = &.{},

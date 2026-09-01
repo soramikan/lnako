@@ -36,6 +36,7 @@ pub const ManifestCall = struct {
 
 const manifest_schema = "lnako.aot.builtin-manifest.v1";
 const global_manifest_schema = "lnako.aot.global-manifest.v1";
+const literal_manifest_schema = "lnako.aot.literal-manifest.v1";
 
 const ManifestHeader = struct {
     schema: []const u8,
@@ -90,6 +91,31 @@ const GlobalManifestEntry = struct {
 };
 
 const GlobalManifestComplete = struct {
+    schema: []const u8,
+    phase: []const u8,
+    kind: []const u8,
+    complete: bool,
+    entryCount: usize,
+};
+
+const LiteralManifestHeader = struct {
+    schema: []const u8,
+    phase: []const u8,
+    sourcePath: []const u8,
+    siteIdEncoding: []const u8,
+};
+
+const LiteralManifestEntry = struct {
+    schema: []const u8,
+    phase: []const u8,
+    kind: []const u8,
+    name: []const u8,
+    siteId: []const u8,
+    function: []const u8,
+    source: ManifestSource,
+};
+
+const LiteralManifestComplete = struct {
     schema: []const u8,
     phase: []const u8,
     kind: []const u8,
@@ -269,6 +295,80 @@ pub fn completeGlobalManifest(io: std.Io, manifest_path: []const u8, entry_count
     try file_writer.seekTo(stat.size);
     try writeManifestLine(&file_writer.interface, GlobalManifestComplete{
         .schema = global_manifest_schema,
+        .phase = "pre-opt",
+        .kind = "complete",
+        .complete = true,
+        .entryCount = entry_count,
+    });
+    try file_writer.interface.flush();
+}
+
+/// Writes a separate JSONL manifest for catalog constants lowered directly to
+/// typed literals. This must stay separate from both builtin dispatch and
+/// global-read manifests because no runtime global lookup occurs.
+pub fn writeLiteralManifest(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, source_path: []const u8, manifest_path: []const u8) !usize {
+    if (!std.fs.path.isAbsolute(manifest_path)) return error.ManifestPathMustBeAbsolute;
+
+    var file = try std.Io.Dir.createFileAbsolute(io, manifest_path, .{ .exclusive = true });
+    var keep_file = true;
+    defer {
+        file.close(io);
+        if (keep_file) std.Io.Dir.deleteFileAbsolute(io, manifest_path) catch {};
+    }
+
+    var buffer: [4096]u8 = undefined;
+    var file_writer = file.writer(io, &buffer);
+    const writer = &file_writer.interface;
+    var seen_site_ids: std.AutoHashMapUnmanaged(u64, void) = .empty;
+    defer seen_site_ids.deinit(allocator);
+    try writeManifestLine(writer, LiteralManifestHeader{
+        .schema = literal_manifest_schema,
+        .phase = "pre-opt",
+        .sourcePath = source_path,
+        .siteIdEncoding = "u64-hex16",
+    });
+    var entry_count: usize = 0;
+    for (program.functions) |function| {
+        for (function.blocks) |block| {
+            for (block.instructions) |instruction| {
+                const site_id = instruction.literal_site_id orelse continue;
+                if (instruction.opcode != .const_boolean and instruction.opcode != .const_null) return error.InvalidLiteralSite;
+                if (seen_site_ids.contains(site_id)) return error.ManifestSiteIdCollision;
+                try seen_site_ids.put(allocator, site_id, {});
+                var site_id_text: [18]u8 = undefined;
+                entry_count += 1;
+                try writeManifestLine(writer, LiteralManifestEntry{
+                    .schema = literal_manifest_schema,
+                    .phase = "pre-opt",
+                    .kind = "literal-constant",
+                    .name = instruction.text,
+                    .siteId = formatSiteId(&site_id_text, site_id),
+                    .function = function.name,
+                    .source = .{
+                        .line = instruction.span.line + 1,
+                        .column = @max(@as(usize, 1), instruction.span.column),
+                        .sourceStart = instruction.span.source_start,
+                        .sourceEnd = instruction.span.source_end,
+                    },
+                });
+            }
+        }
+    }
+    try writer.flush();
+    keep_file = false;
+    return entry_count;
+}
+
+pub fn completeLiteralManifest(io: std.Io, manifest_path: []const u8, entry_count: usize) !void {
+    if (!std.fs.path.isAbsolute(manifest_path)) return error.ManifestPathMustBeAbsolute;
+    var file = try std.Io.Dir.openFileAbsolute(io, manifest_path, .{ .mode = .read_write });
+    defer file.close(io);
+    const stat = try file.stat(io);
+    var buffer: [1024]u8 = undefined;
+    var file_writer = file.writer(io, &buffer);
+    try file_writer.seekTo(stat.size);
+    try writeManifestLine(&file_writer.interface, LiteralManifestComplete{
+        .schema = literal_manifest_schema,
         .phase = "pre-opt",
         .kind = "complete",
         .complete = true,
@@ -488,6 +588,7 @@ const Emitter = struct {
                 "declare i64 @lnako_aot_dispatch_display_begin_with_epoch(i64, ptr)\n" ++
                 "declare void @lnako_aot_dispatch_result(i64, i64, i64)\n" ++
                 "declare void @lnako_aot_global_read_site(i64)\n" ++
+                "declare void @lnako_aot_literal_site(i64)\n" ++
                 "declare i32 @printf(ptr, ...)\n" ++
                 "declare i32 @puts(ptr)\n" ++
                 "declare double @llvm.pow.f64(double, double)\n" ++
@@ -907,8 +1008,14 @@ const Emitter = struct {
                 try self.output.writer.print("  %v{d} = insertvalue %lnako.Value {{ i8 3, i64 0 }}, i64 %number.bits.{d}, 1", .{ id, id });
                 try self.debugSuffix(instruction.span, scope);
             },
-            .const_boolean => try self.writeBoxConstant(result orelse return error.MissingInstructionResult, 2, @intFromBool(instruction.boolean_value), instruction.span, scope),
-            .const_null => try self.writeBoxConstant(result orelse return error.MissingInstructionResult, 1, 0, instruction.span, scope),
+            .const_boolean => {
+                if (instruction.literal_site_id) |site_id| try self.output.writer.print("  call void @lnako_aot_literal_site(i64 {d})\n", .{site_id});
+                try self.writeBoxConstant(result orelse return error.MissingInstructionResult, 2, @intFromBool(instruction.boolean_value), instruction.span, scope);
+            },
+            .const_null => {
+                if (instruction.literal_site_id) |site_id| try self.output.writer.print("  call void @lnako_aot_literal_site(i64 {d})\n", .{site_id});
+                try self.writeBoxConstant(result orelse return error.MissingInstructionResult, 1, 0, instruction.span, scope);
+            },
             .const_undefined => try self.writeBoxConstant(result orelse return error.MissingInstructionResult, 0, 0, instruction.span, scope),
             .const_bigint => {
                 const id = result orelse return error.MissingInstructionResult;
@@ -2792,6 +2899,26 @@ test "global loadを専用AOT trace ABIへ出力する" {
     defer module.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_global_read_site(i64)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_global_read_site(i64 1)") != null);
+}
+
+test "catalog literalを専用AOT trace ABIへ出力する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "真を表示\nNULLを表示\n", "literal-trace.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "literal-trace.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "literal-trace.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    var module = try generate(std.testing.allocator, program, "literal-trace.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_literal_site(i64)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_literal_site(i64 1)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_literal_site(i64 2)") != null);
 }
 
 test "参照されたスカラーシステム定数をAOTグローバルへ初期化する" {

@@ -63,6 +63,9 @@ try {
   const interpreterTrace = resolve(temporary, "interpreter-global.jsonl");
   const aotTrace = resolve(temporary, "aot-global.jsonl");
   const globalManifest = resolve(temporary, "global-manifest.jsonl");
+  const interpreterLiteralTrace = resolve(temporary, "interpreter-literal.jsonl");
+  const aotLiteralTrace = resolve(temporary, "aot-literal.jsonl");
+  const literalManifest = resolve(temporary, "literal-manifest.jsonl");
   await writeFile(sourcePath, fixture.source, "utf8");
 
   const baseEnvironment = {
@@ -86,15 +89,36 @@ try {
   const interpreted = await runProcess(
     compiler,
     ["run", sourcePath],
-    { cwd: temporary, env: { ...baseEnvironment, LNAKO_GLOBAL_TRACE: interpreterTrace } },
+    {
+      cwd: temporary,
+      env: {
+        ...baseEnvironment,
+        LNAKO_GLOBAL_TRACE: interpreterTrace,
+        LNAKO_LITERAL_TRACE: interpreterLiteralTrace,
+      },
+    },
   );
   const nativeCompile = await runProcess(
     compiler,
     ["build", sourcePath, "-o", native, "-O0"],
-    { cwd: temporary, env: { ...baseEnvironment, LNAKO_GLOBAL_MANIFEST: globalManifest } },
+    {
+      cwd: temporary,
+      env: {
+        ...baseEnvironment,
+        LNAKO_GLOBAL_MANIFEST: globalManifest,
+        LNAKO_LITERAL_MANIFEST: literalManifest,
+      },
+    },
   );
   const nativeResult = nativeCompile.status === 0
-    ? await runProcess(compilerPath(native), [], { cwd: temporary, env: { ...baseEnvironment, LNAKO_GLOBAL_TRACE: aotTrace } })
+    ? await runProcess(compilerPath(native), [], {
+      cwd: temporary,
+      env: {
+        ...baseEnvironment,
+        LNAKO_GLOBAL_TRACE: aotTrace,
+        LNAKO_LITERAL_TRACE: aotLiteralTrace,
+      },
+    })
     : nativeCompile;
 
   const results = {
@@ -104,27 +128,46 @@ try {
     lnakoNativeO0: nativeResult,
   };
   assertEquivalentResults(results);
-  const manifest = await readGlobalManifest(globalManifest, sourcePath, globalReadNames);
-  const interpreterEvents = await readGlobalTrace(interpreterTrace, "interpreter", manifest);
-  const aotEvents = await readGlobalTrace(aotTrace, "aot", manifest);
-  const manifestBySiteId = new Map(manifest.entries.map((entry) => [entry.siteId, entry]));
-  const interpreterBySiteId = new Map(interpreterEvents.map((event) => [event.siteId, event]));
-  const aotBySiteId = new Map(aotEvents.map((event) => [event.siteId, event]));
-  const entries = manifest.entries.map((entry) => {
-    const command = catalogByName.get(entry.name)?.[0];
-    const interpreterEvent = interpreterBySiteId.get(entry.siteId);
-    const aotEvent = aotBySiteId.get(entry.siteId);
-    if (command === undefined || interpreterEvent === undefined || aotEvent === undefined) {
-      throw new Error(`静的定数の実行siteが不足しています: ${entry.name}/${entry.siteId}`);
+  const globalManifestData = await readGlobalManifest(globalManifest, sourcePath, globalReadNames);
+  const literalManifestData = await readLiteralManifest(literalManifest, sourcePath, literalNames);
+  const interpreterGlobalEvents = await readGlobalTrace(interpreterTrace, "interpreter", globalManifestData);
+  const aotGlobalEvents = await readGlobalTrace(aotTrace, "aot", globalManifestData);
+  const interpreterLiteralEvents = await readLiteralTrace(interpreterLiteralTrace, "interpreter", literalManifestData);
+  const aotLiteralEvents = await readLiteralTrace(aotLiteralTrace, "aot", literalManifestData);
+  const manifestByKey = new Map([
+    ...globalManifestData.entries.map((entry) => [`global-read:${entry.siteId}`, entry]),
+    ...literalManifestData.entries.map((entry) => [`literal:${entry.siteId}`, entry]),
+  ]);
+  const interpreterGlobalBySiteId = new Map(interpreterGlobalEvents.map((event) => [event.siteId, event]));
+  const aotGlobalBySiteId = new Map(aotGlobalEvents.map((event) => [event.siteId, event]));
+  const interpreterLiteralBySiteId = new Map(interpreterLiteralEvents.map((event) => [event.siteId, event]));
+  const aotLiteralBySiteId = new Map(aotLiteralEvents.map((event) => [event.siteId, event]));
+  const manifestByName = new Map([
+    ...globalManifestData.entries.map((entry) => [`global-read:${entry.name}`, entry]),
+    ...literalManifestData.entries.map((entry) => [`literal:${entry.name}`, entry]),
+  ]);
+  const entries = fixture.commands.map((name) => {
+    const kind = literalConstantNames.has(name) ? "literal" : "global-read";
+    const manifest = manifestByName.get(`${kind}:${name}`);
+    const command = catalogByName.get(name)?.[0];
+    const interpreterEvent = kind === "literal"
+      ? interpreterLiteralBySiteId.get(manifest?.siteId)
+      : interpreterGlobalBySiteId.get(manifest?.siteId);
+    const aotEvent = kind === "literal"
+      ? aotLiteralBySiteId.get(manifest?.siteId)
+      : aotGlobalBySiteId.get(manifest?.siteId);
+    if (command === undefined || manifest === undefined || interpreterEvent === undefined || aotEvent === undefined) {
+      throw new Error(`静的定数の実行siteが不足しています: ${name}/${manifest?.siteId ?? "missing"}`);
     }
-    if (interpreterEvent.name !== entry.name || interpreterEvent.found !== true || aotEvent.success !== true) {
-      throw new Error(`静的定数のruntime証拠が不正です: ${entry.name}/${entry.siteId}`);
+    if (interpreterEvent.name !== name || (kind === "global-read" && interpreterEvent.found !== true) || aotEvent.success !== true) {
+      throw new Error(`静的定数のruntime証拠が不正です: ${name}/${manifest.siteId}`);
     }
     return {
       catalogId: command.id,
       name: command.name,
       plugin: command.plugin,
-      siteId: entry.siteId,
+      kind,
+      siteId: manifest.siteId,
       runtime: {
         interpreter: { success: true, count: 1 },
         aot: { success: true, count: 1 },
@@ -136,7 +179,7 @@ try {
 
   const git = readGitState();
   const evidence = {
-    schema: "lnako.static-constant-evidence.v1",
+    schema: "lnako.static-constant-evidence.v2",
     generator: "tools/check_static_constant_evidence.mjs",
     baseline: { tag: lock.nadesiko3.tag, commit: lock.nadesiko3.commit },
     fixture: {
@@ -166,17 +209,26 @@ try {
         interpreterTraceSha256: sha256(await readFile(interpreterTrace)),
         aotTraceSha256: sha256(await readFile(aotTrace)),
         globalManifestSha256: sha256(await readFile(globalManifest)),
+        literalInterpreterTraceSha256: sha256(await readFile(interpreterLiteralTrace)),
+        literalAotTraceSha256: sha256(await readFile(aotLiteralTrace)),
+        literalManifestSha256: sha256(await readFile(literalManifest)),
       },
     },
     trace: {
-      interpreter: { schema: 1, eventCount: interpreterEvents.length },
-      aot: { schema: 1, eventCount: aotEvents.length },
+      global: {
+        interpreter: { schema: 1, eventCount: interpreterGlobalEvents.length },
+        aot: { schema: 1, eventCount: aotGlobalEvents.length },
+      },
+      literal: {
+        interpreter: { schema: 1, eventCount: interpreterLiteralEvents.length },
+        aot: { schema: 1, eventCount: aotLiteralEvents.length },
+      },
     },
     entries,
   };
-  validateEvidence(evidence, lock, fixture, globalReadNames, literalNames, manifestBySiteId);
+  validateEvidence(evidence, lock, fixture, globalReadNames, literalNames, manifestByKey);
   if (evidenceOutput !== null) await writeFile(evidenceOutput, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
-  console.log(`静的定数のInterpreter/AOT global-read証拠: ${entries.length}件成功（literal lowering ${literalNames.length}件はglobal-read対象外）`);
+  console.log(`静的定数のInterpreter/AOT証拠: global read ${globalReadNames.length}件 + literal ${literalNames.length}件 = ${entries.length}件成功`);
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }
@@ -275,58 +327,77 @@ function normalizeLineEndings(value) {
 }
 
 async function readGlobalManifest(path, sourcePath, expectedNames) {
-  const lines = await readJsonLines(path, "AOT global manifest");
+  return readStaticManifest(path, sourcePath, expectedNames, "lnako.aot.global-manifest.v1", "global-load", "AOT global manifest");
+}
+
+async function readLiteralManifest(path, sourcePath, expectedNames) {
+  return readStaticManifest(path, sourcePath, expectedNames, "lnako.aot.literal-manifest.v1", "literal-constant", "AOT literal manifest");
+}
+
+async function readStaticManifest(path, sourcePath, expectedNames, schema, kind, label) {
+  const lines = await readJsonLines(path, label);
   if (lines.length < 2) throw new Error("AOT global manifestが完了レコードを含みません");
   const header = lines[0];
-  assertKeys(header, ["schema", "phase", "sourcePath", "siteIdEncoding"], "global manifest header");
-  if (header.schema !== "lnako.aot.global-manifest.v1" || header.phase !== "pre-opt" || header.sourcePath !== sourcePath || header.siteIdEncoding !== "u64-hex16") {
-    throw new Error("AOT global manifestのheaderが不正です");
+  assertKeys(header, ["schema", "phase", "sourcePath", "siteIdEncoding"], `${label} header`);
+  if (header.schema !== schema || header.phase !== "pre-opt" || header.sourcePath !== sourcePath || header.siteIdEncoding !== "u64-hex16") {
+    throw new Error(`${label}のheaderが不正です`);
   }
   const complete = lines.at(-1);
-  assertKeys(complete, ["schema", "phase", "kind", "complete", "entryCount"], "global manifest complete");
+  assertKeys(complete, ["schema", "phase", "kind", "complete", "entryCount"], `${label} complete`);
   if (complete.schema !== header.schema || complete.phase !== "pre-opt" || complete.kind !== "complete" || complete.complete !== true || !Number.isSafeInteger(complete.entryCount)) {
-    throw new Error("AOT global manifestの完了レコードが不正です");
+    throw new Error(`${label}の完了レコードが不正です`);
   }
   const entries = lines.slice(1, -1);
-  if (complete.entryCount !== entries.length || entries.length !== expectedNames.length) throw new Error("AOT global manifestのentryCountが不一致です");
+  if (complete.entryCount !== entries.length || entries.length !== expectedNames.length) throw new Error(`${label}のentryCountが不一致です`);
   const expected = new Set(expectedNames);
   const siteIds = new Set();
+  const names = new Set();
   for (const entry of entries) {
-    assertKeys(entry, ["schema", "phase", "kind", "name", "siteId", "function", "source"], "global manifest entry");
-    assertKeys(entry.source, ["line", "column", "sourceStart", "sourceEnd"], "global manifest entry source");
-    if (entry.schema !== header.schema || entry.phase !== "pre-opt" || entry.kind !== "global-load" || !expected.has(entry.name)) throw new Error(`AOT global manifestのnameが不正です: ${entry.name}`);
-    if (!/^0x[0-9a-f]{16}$/.test(entry.siteId) || siteIds.has(entry.siteId)) throw new Error(`AOT global manifestのsiteIdが不正または重複しています: ${entry.siteId}`);
+    assertKeys(entry, ["schema", "phase", "kind", "name", "siteId", "function", "source"], `${label} entry`);
+    assertKeys(entry.source, ["line", "column", "sourceStart", "sourceEnd"], `${label} entry source`);
+    if (entry.schema !== header.schema || entry.phase !== "pre-opt" || entry.kind !== kind || !expected.has(entry.name) || names.has(entry.name)) throw new Error(`${label}のnameが不正です: ${entry.name}`);
+    if (!/^0x[0-9a-f]{16}$/.test(entry.siteId) || siteIds.has(entry.siteId)) throw new Error(`${label}のsiteIdが不正または重複しています: ${entry.siteId}`);
     if (!Number.isSafeInteger(entry.source.line) || entry.source.line < 1 || !Number.isSafeInteger(entry.source.column) || entry.source.column < 1 || !Number.isSafeInteger(entry.source.sourceStart) || !Number.isSafeInteger(entry.source.sourceEnd) || entry.source.sourceStart < 0 || entry.source.sourceEnd < entry.source.sourceStart) {
-      throw new Error(`AOT global manifestのsource位置が不正です: ${entry.name}`);
+      throw new Error(`${label}のsource位置が不正です: ${entry.name}`);
     }
     siteIds.add(entry.siteId);
+    names.add(entry.name);
   }
-  if (new Set(entries.map((entry) => entry.name)).size !== expectedNames.length) throw new Error("AOT global manifestのnameが不足または重複しています");
+  if (names.size !== expectedNames.length || [...names].some((name) => !expected.has(name))) throw new Error(`${label}のnameが不足または重複しています`);
   return { entries: entries.map((entry) => ({ ...entry })) };
 }
 
 async function readGlobalTrace(path, engine, manifest) {
-  const lines = await readJsonLines(path, `${engine} global trace`);
-  if (lines.length < 2) throw new Error(`${engine} global traceが空です`);
+  return readStaticTrace(path, engine, manifest, "global-read", "global trace");
+}
+
+async function readLiteralTrace(path, engine, manifest) {
+  return readStaticTrace(path, engine, manifest, "literal", "literal trace");
+}
+
+async function readStaticTrace(path, engine, manifest, phase, label) {
+  const lines = await readJsonLines(path, `${engine} ${label}`);
+  if (lines.length < 2) throw new Error(`${engine} ${label}が空です`);
   const end = lines.at(-1);
-  assertKeys(end, ["schema", "engine", "phase", "seq", "dropped"], `${engine} global trace end`);
-  if (end.schema !== 1 || end.engine !== engine || end.phase !== "trace-end" || !Number.isSafeInteger(end.seq) || end.dropped !== 0) throw new Error(`${engine} global traceの終了レコードが不正です`);
+  assertKeys(end, ["schema", "engine", "phase", "seq", "dropped"], `${engine} ${label} end`);
+  if (end.schema !== 1 || end.engine !== engine || end.phase !== "trace-end" || !Number.isSafeInteger(end.seq) || end.dropped !== 0) throw new Error(`${engine} ${label}の終了レコードが不正です`);
   const events = lines.slice(0, -1);
   const siteIds = new Set();
-  for (const event of events) {
+  for (const [index, event] of events.entries()) {
     const allowed = engine === "interpreter"
-      ? ["schema", "engine", "phase", "seq", "siteId", "name", "found"]
+      ? ["schema", "engine", "phase", "seq", "siteId", "name", ...(phase === "global-read" ? ["found"] : [])]
       : ["schema", "engine", "phase", "seq", "siteId", "success"];
-    assertKeys(event, allowed, `${engine} global trace event`);
-    if (event.schema !== 1 || event.engine !== engine || event.phase !== "global-read" || !Number.isSafeInteger(event.seq) || !/^0x[0-9a-f]{16}$/.test(event.siteId) || siteIds.has(event.siteId)) {
-      throw new Error(`${engine} global trace eventが不正です`);
+    assertKeys(event, allowed, `${engine} ${label} event`);
+    if (event.schema !== 1 || event.engine !== engine || event.phase !== phase || event.seq !== index || !/^0x[0-9a-f]{16}$/.test(event.siteId) || siteIds.has(event.siteId)) {
+      throw new Error(`${engine} ${label} eventが不正です`);
     }
-    if (!manifest.entries.some((entry) => entry.siteId === event.siteId)) throw new Error(`${engine} global traceがmanifest外のsiteを含みます: ${event.siteId}`);
-    if (engine === "interpreter" && (typeof event.name !== "string" || event.found !== true)) throw new Error("Interpreter global traceのname/foundが不正です");
-    if (engine === "aot" && event.success !== true) throw new Error("AOT global traceのsuccessが不正です");
+    const manifestEntry = manifest.entries.find((entry) => entry.siteId === event.siteId);
+    if (manifestEntry === undefined) throw new Error(`${engine} ${label}がmanifest外のsiteを含みます: ${event.siteId}`);
+    if (engine === "interpreter" && (event.name !== manifestEntry.name || (phase === "global-read" && event.found !== true))) throw new Error(`Interpreter ${label}のname/foundが不正です`);
+    if (engine === "aot" && event.success !== true) throw new Error(`AOT ${label}のsuccessが不正です`);
     siteIds.add(event.siteId);
   }
-  if (siteIds.size !== manifest.entries.length || end.seq !== events.length) throw new Error(`${engine} global traceの件数がmanifestと一致しません`);
+  if (siteIds.size !== manifest.entries.length || end.seq !== events.length) throw new Error(`${engine} ${label}の件数がmanifestと一致しません`);
   return events;
 }
 
@@ -348,9 +419,9 @@ function assertKeys(value, allowedKeys, label) {
   for (const key of Object.keys(value)) if (!allowed.has(key)) throw new Error(`${label}に未知fieldがあります: ${key}`);
 }
 
-function validateEvidence(evidence, lock, fixture, globalReadNames, literalNames, manifestBySiteId) {
+function validateEvidence(evidence, lock, fixture, globalReadNames, literalNames, manifestByKey) {
   assertKeys(evidence, ["schema", "generator", "baseline", "fixture", "officialComparison", "attestation", "provenance", "trace", "entries"], "static constant evidence");
-  if (evidence.schema !== "lnako.static-constant-evidence.v1" || evidence.generator !== "tools/check_static_constant_evidence.mjs" || evidence.baseline.tag !== lock.nadesiko3.tag || evidence.baseline.commit !== lock.nadesiko3.commit) throw new Error("静的定数証拠のidentityが不正です");
+  if (evidence.schema !== "lnako.static-constant-evidence.v2" || evidence.generator !== "tools/check_static_constant_evidence.mjs" || evidence.baseline.tag !== lock.nadesiko3.tag || evidence.baseline.commit !== lock.nadesiko3.commit) throw new Error("静的定数証拠のidentityが不正です");
   assertKeys(evidence.fixture, ["id", "file", "sourceSha256", "globalReadNames", "literalNames"], "static constant evidence fixture");
   if (evidence.fixture.id !== fixture.id || evidence.fixture.file !== "native-cases.json" || evidence.fixture.sourceSha256 !== sha256(fixture.source) || JSON.stringify(evidence.fixture.globalReadNames) !== JSON.stringify(globalReadNames) || JSON.stringify(evidence.fixture.literalNames) !== JSON.stringify(literalNames)) throw new Error("静的定数証拠のfixtureが不一致です");
   assertKeys(evidence.officialComparison, ["oracle", "routes", "equivalent", "results"], "static constant comparison");
@@ -364,23 +435,28 @@ function validateEvidence(evidence, lock, fixture, globalReadNames, literalNames
     if (result.status !== 0 || result.signal !== null || result.stdoutSha256 !== reference.stdoutSha256 || result.stderrSha256 !== reference.stderrSha256 || !/^[0-9a-f]{64}$/.test(result.stdoutSha256) || !/^[0-9a-f]{64}$/.test(result.stderrSha256)) throw new Error(`静的定数証拠の公式比較結果が不正です: ${route}`);
   }
   if (evidence.attestation !== null) throw new Error("静的定数証拠に未対応のattestationがあります");
-  assertKeys(evidence.trace, ["interpreter", "aot"], "static constant trace");
-  for (const engine of ["interpreter", "aot"]) {
-    assertKeys(evidence.trace[engine], ["schema", "eventCount"], `static constant trace ${engine}`);
-    if (evidence.trace[engine].schema !== 1 || evidence.trace[engine].eventCount !== globalReadNames.length) throw new Error(`静的定数証拠のtrace件数が不正です: ${engine}`);
+  assertKeys(evidence.trace, ["global", "literal"], "static constant trace");
+  for (const [kind, names] of [["global", globalReadNames], ["literal", literalNames]]) {
+    assertKeys(evidence.trace[kind], ["interpreter", "aot"], `static constant trace ${kind}`);
+    for (const engine of ["interpreter", "aot"]) {
+      assertKeys(evidence.trace[kind][engine], ["schema", "eventCount"], `static constant trace ${kind}/${engine}`);
+      if (evidence.trace[kind][engine].schema !== 1 || evidence.trace[kind][engine].eventCount !== names.length) throw new Error(`静的定数証拠のtrace件数が不正です: ${kind}/${engine}`);
+    }
   }
-  if (!Array.isArray(evidence.entries) || evidence.entries.length !== globalReadNames.length) throw new Error("静的定数証拠のentry数が不正です");
-  const names = new Set();
+  if (!Array.isArray(evidence.entries) || evidence.entries.length !== globalReadNames.length + literalNames.length) throw new Error("静的定数証拠のentry数が不正です");
+  const names = { global: new Set(), literal: new Set() };
   for (const entry of evidence.entries) {
-    assertKeys(entry, ["catalogId", "name", "plugin", "siteId", "runtime", "officialEquivalent"], "static constant evidence entry");
+    assertKeys(entry, ["catalogId", "name", "plugin", "kind", "siteId", "runtime", "officialEquivalent"], "static constant evidence entry");
     assertKeys(entry.runtime, ["interpreter", "aot"], "static constant evidence runtime");
     assertKeys(entry.runtime.interpreter, ["success", "count"], "static constant evidence interpreter");
     assertKeys(entry.runtime.aot, ["success", "count"], "static constant evidence aot");
-    const manifest = manifestBySiteId.get(entry.siteId);
-    if (manifest === undefined || manifest.name !== entry.name || entry.plugin !== "plugin_system" || names.has(entry.name) || !/^command-\d{4}$/.test(entry.catalogId) || entry.officialEquivalent !== true || entry.runtime.interpreter.success !== true || entry.runtime.interpreter.count !== 1 || entry.runtime.aot.success !== true || entry.runtime.aot.count !== 1) throw new Error(`静的定数証拠entryが不正です: ${entry.name}`);
-    names.add(entry.name);
+    const expectedNames = entry.kind === "global-read" ? globalReadNames : entry.kind === "literal" ? literalNames : null;
+    const manifest = expectedNames === null ? undefined : manifestByKey.get(`${entry.kind}:${entry.siteId}`);
+    const nameSet = entry.kind === "global-read" ? names.global : entry.kind === "literal" ? names.literal : null;
+    if (manifest === undefined || manifest.name !== entry.name || entry.plugin !== "plugin_system" || nameSet === null || nameSet.has(entry.name) || expectedNames === null || !expectedNames.includes(entry.name) || !/^command-\d{4}$/.test(entry.catalogId) || entry.officialEquivalent !== true || entry.runtime.interpreter.success !== true || entry.runtime.interpreter.count !== 1 || entry.runtime.aot.success !== true || entry.runtime.aot.count !== 1) throw new Error(`静的定数証拠entryが不正です: ${entry.name}`);
+    nameSet.add(entry.name);
   }
-  if (names.size !== globalReadNames.length || [...names].some((name) => !globalReadNames.includes(name))) throw new Error("静的定数証拠のname集合が不一致です");
+  if (names.global.size !== globalReadNames.length || names.literal.size !== literalNames.length || [...names.global].some((name) => !globalReadNames.includes(name)) || [...names.literal].some((name) => !literalNames.includes(name))) throw new Error("静的定数証拠のname集合が不一致です");
 }
 
 function readGitState() {

@@ -338,7 +338,7 @@ function evidenceReason(status, coverage, identityResolution, interpreterFixture
       ? "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。"
       : "catalog IDに対する実行dispatch接続はまだ追跡していない。";
   const proofDescription = proofKind === "static-constant"
-    ? "明示catalog ID・global site IDについて、同一fixtureのInterpreter/AOT global-read trace、global manifest、公式差分の成功を機械検証した"
+    ? "明示catalog ID・global/literal site IDについて、同一fixtureのInterpreter/AOT trace、対応manifest、公式差分の成功を機械検証した"
     : "明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した";
   if (executionEvidenceState === "trace-confirmed-unattested") {
     return `${identity} ${proofDescription}（${executionSites.length} site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。`;
@@ -597,7 +597,7 @@ function attestedSha256(subject) {
 function validateStaticConstantEvidence(evidence, lock, standard, records) {
   rejectForbiddenEvidenceFields(evidence);
   assertKnownObjectKeys(evidence, ["schema", "generator", "baseline", "fixture", "officialComparison", "attestation", "provenance", "trace", "entries"], "static-constant-evidence");
-  if (evidence.schema !== "lnako.static-constant-evidence.v1" || evidence.generator !== "tools/check_static_constant_evidence.mjs") {
+  if (evidence.schema !== "lnako.static-constant-evidence.v2" || evidence.generator !== "tools/check_static_constant_evidence.mjs") {
     throw new Error("静的定数証拠のschemaまたは生成元が不正です");
   }
   assertKnownObjectKeys(evidence.baseline, ["tag", "commit"], "static-constant-evidence.baseline");
@@ -642,11 +642,14 @@ function validateStaticConstantEvidence(evidence, lock, standard, records) {
   }
   if (evidence.attestation !== null) throw new Error("静的定数証拠に未対応のattestationがあります");
 
-  assertKnownObjectKeys(evidence.trace, ["interpreter", "aot"], "static-constant-evidence.trace");
-  for (const engine of ["interpreter", "aot"]) {
-    assertKnownObjectKeys(evidence.trace[engine], ["schema", "eventCount"], `static-constant-evidence.trace.${engine}`);
-    if (evidence.trace[engine].schema !== 1 || evidence.trace[engine].eventCount !== globalReadNames.length) {
-      throw new Error(`静的定数証拠の${engine} trace件数が不正です`);
+  assertKnownObjectKeys(evidence.trace, ["global", "literal"], "static-constant-evidence.trace");
+  for (const [kind, names] of [["global", globalReadNames], ["literal", literalNames]]) {
+    assertKnownObjectKeys(evidence.trace[kind], ["interpreter", "aot"], `static-constant-evidence.trace.${kind}`);
+    for (const engine of ["interpreter", "aot"]) {
+      assertKnownObjectKeys(evidence.trace[kind][engine], ["schema", "eventCount"], `static-constant-evidence.trace.${kind}.${engine}`);
+      if (evidence.trace[kind][engine].schema !== 1 || evidence.trace[kind][engine].eventCount !== names.length) {
+        throw new Error(`静的定数証拠の${kind}/${engine} trace件数が不正です`);
+      }
     }
   }
 
@@ -654,7 +657,7 @@ function validateStaticConstantEvidence(evidence, lock, standard, records) {
   assertKnownObjectKeys(evidence.provenance.environment, ["platform", "arch", "node"], "static-constant-evidence.provenance.environment");
   assertKnownObjectKeys(evidence.provenance.oracle, ["build", "archiveSha256", "cliSha256", "markerSha256", "treeHashAlgorithm", "treeSha256"], "static-constant-evidence.provenance.oracle");
   assertKnownObjectKeys(evidence.provenance.lnako, ["binarySha256", "commit", "dirty"], "static-constant-evidence.provenance.lnako");
-  assertKnownObjectKeys(evidence.provenance.raw, ["interpreterTraceSha256", "aotTraceSha256", "globalManifestSha256"], "static-constant-evidence.provenance.raw");
+  assertKnownObjectKeys(evidence.provenance.raw, ["interpreterTraceSha256", "aotTraceSha256", "globalManifestSha256", "literalInterpreterTraceSha256", "literalAotTraceSha256", "literalManifestSha256"], "static-constant-evidence.provenance.raw");
   const commitPattern = /^[0-9a-f]{40}$/i;
   const environment = evidence.provenance.environment;
   const oracle = evidence.provenance.oracle;
@@ -668,7 +671,8 @@ function validateStaticConstantEvidence(evidence, lock, standard, records) {
       oracle.treeSha256 !== lock.nadesiko3.oracleIdentity?.treeSha256ByPlatform?.[platformKey] ||
       !hashPattern.test(oracle.archiveSha256) || !hashPattern.test(oracle.cliSha256) || !hashPattern.test(oracle.markerSha256) || !hashPattern.test(oracle.treeSha256) ||
       !hashPattern.test(lnako.binarySha256) || !commitPattern.test(lnako.commit) || lnako.dirty !== false ||
-      !hashPattern.test(raw.interpreterTraceSha256) || !hashPattern.test(raw.aotTraceSha256) || !hashPattern.test(raw.globalManifestSha256)) {
+      !hashPattern.test(raw.interpreterTraceSha256) || !hashPattern.test(raw.aotTraceSha256) || !hashPattern.test(raw.globalManifestSha256) ||
+      !hashPattern.test(raw.literalInterpreterTraceSha256) || !hashPattern.test(raw.literalAotTraceSha256) || !hashPattern.test(raw.literalManifestSha256)) {
     throw new Error("静的定数証拠のprovenanceが不正です");
   }
   const currentGit = readGitState();
@@ -683,29 +687,32 @@ function validateStaticConstantEvidence(evidence, lock, standard, records) {
     commands.push(command);
     standardByName.set(command.name, commands);
   }
-  if (!Array.isArray(evidence.entries) || evidence.entries.length !== globalReadNames.length) throw new Error("静的定数証拠のentry数が不正です");
-  const names = new Set();
+  if (!Array.isArray(evidence.entries) || evidence.entries.length !== globalReadNames.length + literalNames.length) throw new Error("静的定数証拠のentry数が不正です");
+  const names = { global: new Set(), literal: new Set() };
   const catalogIds = new Set();
-  const siteIds = new Set();
+  const siteKeys = new Set();
   for (const entry of evidence.entries) {
-    assertKnownObjectKeys(entry, ["catalogId", "name", "plugin", "siteId", "runtime", "officialEquivalent"], "static-constant-evidence.entry");
+    assertKnownObjectKeys(entry, ["catalogId", "name", "plugin", "kind", "siteId", "runtime", "officialEquivalent"], "static-constant-evidence.entry");
     assertKnownObjectKeys(entry.runtime, ["interpreter", "aot"], "static-constant-evidence.entry.runtime");
     assertKnownObjectKeys(entry.runtime.interpreter, ["success", "count"], "static-constant-evidence.entry.runtime.interpreter");
     assertKnownObjectKeys(entry.runtime.aot, ["success", "count"], "static-constant-evidence.entry.runtime.aot");
     const command = standardById.get(entry.catalogId);
     const commandsByName = standardByName.get(entry.name) ?? [];
+    const expectedNames = entry.kind === "global-read" ? globalReadNames : entry.kind === "literal" ? literalNames : null;
+    const nameSet = entry.kind === "global-read" ? names.global : entry.kind === "literal" ? names.literal : null;
+    const siteKey = `${entry.kind}:${entry.siteId}`;
     if (command === undefined || command.name !== entry.name || command.plugin !== entry.plugin || command.plugin !== "plugin_system" ||
-        command.type !== "定数" || command.status !== "native" || commandsByName.length !== 1 || !globalReadNames.includes(entry.name) ||
-        names.has(entry.name) || catalogIds.has(entry.catalogId) || siteIds.has(entry.siteId) || !/^0x[0-9a-f]{16}$/.test(entry.siteId) ||
+        command.type !== "定数" || command.status !== "native" || commandsByName.length !== 1 || expectedNames === null || !expectedNames.includes(entry.name) ||
+        nameSet === null || nameSet.has(entry.name) || catalogIds.has(entry.catalogId) || siteKeys.has(siteKey) || !/^0x[0-9a-f]{16}$/.test(entry.siteId) ||
         entry.officialEquivalent !== true || entry.runtime.interpreter.success !== true || entry.runtime.interpreter.count !== 1 ||
         entry.runtime.aot.success !== true || entry.runtime.aot.count !== 1) {
       throw new Error(`静的定数証拠entryが不正です: ${entry.name}`);
     }
-    names.add(entry.name);
+    nameSet.add(entry.name);
     catalogIds.add(entry.catalogId);
-    siteIds.add(entry.siteId);
+    siteKeys.add(siteKey);
   }
-  if (names.size !== globalReadNames.length || [...names].some((name) => !globalReadNames.includes(name))) throw new Error("静的定数証拠のname集合が不一致です");
+  if (names.global.size !== globalReadNames.length || names.literal.size !== literalNames.length || [...names.global].some((name) => !globalReadNames.includes(name)) || [...names.literal].some((name) => !literalNames.includes(name))) throw new Error("静的定数証拠のname集合が不一致です");
 }
 
 function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, aotFixtureIds, compatJsFixtureIds, standard, matrix, dispatchEvidenceByCatalogId, staticConstantEvidenceByCatalogId) {
@@ -748,7 +755,7 @@ function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, a
       assertKnownObjectKeys(entry.executionEvidence, ["proofSchema", "fixtureId", "siteIds", "officialComparison", "state"], `evidence.entries.${entry.id}.executionEvidence`);
       const proof = entry.executionEvidence;
       const isDispatchProof = proof?.proofSchema === "lnako.dispatch-evidence.v2";
-      const isStaticConstantProof = proof?.proofSchema === "lnako.static-constant-evidence.v1";
+      const isStaticConstantProof = proof?.proofSchema === "lnako.static-constant-evidence.v2";
       const proofSites = isDispatchProof
         ? dispatchEvidenceByCatalogId.get(entry.id) ?? []
         : isStaticConstantProof

@@ -116,6 +116,7 @@ pub fn main(init: std.process.Init) !void {
                 .runtime_library = init.environ_map.get("LNAKO_AOT_RUNTIME_LIBRARY"),
                 .compile_manifest_path = init.environ_map.get("LNAKO_COMPILE_MANIFEST"),
                 .global_manifest_path = init.environ_map.get("LNAKO_GLOBAL_MANIFEST"),
+                .literal_manifest_path = init.environ_map.get("LNAKO_LITERAL_MANIFEST"),
                 .trace = init.environ_map.get("LNAKO_LLVM_TRACE") != null,
             }, stderr) catch |err| {
                 try stderr.print("build: ネイティブコード生成に失敗しました: {s}\n", .{@errorName(err)});
@@ -647,10 +648,12 @@ const CliHost = struct {
     upload_sequence: u64 = 1,
     dispatch_trace_file: ?std.Io.File = null,
     global_trace_file: ?std.Io.File = null,
+    literal_trace_file: ?std.Io.File = null,
 
     fn deinit(self: *CliHost) void {
         if (self.dispatch_trace_file) |file| file.close(self.io);
         if (self.global_trace_file) |file| file.close(self.io);
+        if (self.literal_trace_file) |file| file.close(self.io);
         if (self.http_connection) |stream| stream.close(self.io);
         for (self.held_http_connections.items) |stream| stream.close(self.io);
         self.held_http_connections.deinit(std.heap.page_allocator);
@@ -667,6 +670,8 @@ const CliHost = struct {
             .dispatch_trace_writeFn = writeDispatchTrace,
             .global_trace_path = self.environmentValue("LNAKO_GLOBAL_TRACE"),
             .global_trace_writeFn = writeGlobalTrace,
+            .literal_trace_path = self.environmentValue("LNAKO_LITERAL_TRACE"),
+            .literal_trace_writeFn = writeLiteralTrace,
             .sleepMillisecondsFn = sleepMilliseconds,
             .nowMillisecondsFn = nowMilliseconds,
             .monotonicMillisecondsFn = monotonicMilliseconds,
@@ -749,6 +754,17 @@ const CliHost = struct {
                 try std.Io.Dir.cwd().createFile(self.io, path, .{ .exclusive = true });
         }
         try self.global_trace_file.?.writeStreamingAll(self.io, bytes);
+    }
+
+    fn writeLiteralTrace(context: *anyopaque, path: []const u8, bytes: []const u8) !void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        if (self.literal_trace_file == null) {
+            self.literal_trace_file = if (std.fs.path.isAbsolute(path))
+                try std.Io.Dir.createFileAbsolute(self.io, path, .{ .exclusive = true })
+            else
+                try std.Io.Dir.cwd().createFile(self.io, path, .{ .exclusive = true });
+        }
+        try self.literal_trace_file.?.writeStreamingAll(self.io, bytes);
     }
 
     fn write(context: *anyopaque, bytes: []const u8) !void {
