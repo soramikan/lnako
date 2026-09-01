@@ -203,8 +203,9 @@ try {
     fixtureDefinition.manifestExtraGlobalReadNames ?? [],
   );
   const literalManifestData = await readLiteralManifest(literalManifest, sourcePath, literalNames);
-  const interpreterGlobalEvents = (await readGlobalTrace(interpreterTrace, "interpreter", globalManifestData)).filter((event) => globalReadNames.includes(event.name));
-  const aotGlobalEvents = (await readGlobalTrace(aotTrace, "aot", globalManifestData)).filter((event) => globalManifestData.entries.some((entry) => entry.siteId === event.siteId && globalReadNames.includes(entry.name)));
+  const extraGlobalReadNames = fixtureDefinition.manifestExtraGlobalReadNames ?? [];
+  const interpreterGlobalEvents = (await readGlobalTrace(interpreterTrace, "interpreter", globalManifestData, extraGlobalReadNames)).filter((event) => globalReadNames.includes(event.name));
+  const aotGlobalEvents = (await readGlobalTrace(aotTrace, "aot", globalManifestData, extraGlobalReadNames)).filter((event) => globalManifestData.entries.some((entry) => entry.siteId === event.siteId && globalReadNames.includes(entry.name)));
   const interpreterLiteralEvents = await readLiteralTrace(interpreterLiteralTrace, "interpreter", literalManifestData);
   const aotLiteralEvents = await readLiteralTrace(aotLiteralTrace, "aot", literalManifestData);
   const manifestByKey = new Map([
@@ -451,15 +452,15 @@ async function readStaticManifest(path, sourcePath, expectedNames, schema, kind,
   return { entries: entries.map((entry) => ({ ...entry })) };
 }
 
-async function readGlobalTrace(path, engine, manifest) {
-  return readStaticTrace(path, engine, manifest, "global-read", "global trace");
+async function readGlobalTrace(path, engine, manifest, extraNames) {
+  return readStaticTrace(path, engine, manifest, "global-read", "global trace", extraNames);
 }
 
 async function readLiteralTrace(path, engine, manifest) {
   return readStaticTrace(path, engine, manifest, "literal", "literal trace");
 }
 
-async function readStaticTrace(path, engine, manifest, phase, label) {
+async function readStaticTrace(path, engine, manifest, phase, label, extraNames = []) {
   const lines = await readJsonLines(path, `${engine} ${label}`);
   if (lines.length < 1) throw new Error(`${engine} ${label}が空です`);
   const end = lines.at(-1);
@@ -477,7 +478,8 @@ async function readStaticTrace(path, engine, manifest, phase, label) {
     }
     const manifestEntry = manifest.entries.find((entry) => entry.siteId === event.siteId);
     if (manifestEntry === undefined) throw new Error(`${engine} ${label}がmanifest外のsiteを含みます: ${event.siteId}`);
-    if (engine === "interpreter" && (event.name !== manifestEntry.name || (phase === "global-read" && event.found !== true))) throw new Error(`Interpreter ${label}のname/foundが不正です`);
+    const nonCatalogExtra = engine === "interpreter" && extraNames.includes(manifestEntry.name) && event.name === "<non-catalog>";
+    if (engine === "interpreter" && ((!nonCatalogExtra && event.name !== manifestEntry.name) || (phase === "global-read" && event.found !== true))) throw new Error(`Interpreter ${label}のname/foundが不正です`);
     if (engine === "aot" && event.success !== true) throw new Error(`AOT ${label}のsuccessが不正です`);
     siteIds.add(event.siteId);
   }
