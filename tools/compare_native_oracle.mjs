@@ -38,7 +38,7 @@ const artifactOracleIdentity = artifactPath === null ? null : oracleIdentity;
 // different drive.
 const temporary = await mkdtemp(join(root, ".tmp-lnako-native-"));
 const maxBuffer = 16 * 1024 * 1024;
-const knownCaseFields = new Set(["id", "source", "sourceFileName", "oracle", "stderrIncludes", "normalizeDebugDump", "commands", "stdin"]);
+const knownCaseFields = new Set(["id", "source", "sourceFileName", "oracle", "stderrIncludes", "officialSourceStdoutIncludes", "normalizeDebugDump", "commands", "stdin"]);
 const routeNames = ["officialSource", "officialGenerated", "lnakoRun", ...selectedOptimizations.map((optimization) => `lnakoNative${optimization}`)];
 let artifactLnakoBinarySha256 = null;
 
@@ -58,6 +58,10 @@ try {
     }
     if (testCase.stderrIncludes !== undefined && (typeof testCase.stderrIncludes !== "string" || testCase.stderrIncludes.length === 0)) {
       throw new Error(`stderrIncludesは空でない文字列を指定してください: ${testCase.id}`);
+    }
+    if (testCase.officialSourceStdoutIncludes !== undefined &&
+        (testCase.oracle !== "official-generated" || typeof testCase.officialSourceStdoutIncludes !== "string" || testCase.officialSourceStdoutIncludes.length === 0)) {
+      throw new Error(`officialSourceStdoutIncludesはoracle=official-generatedの空でない文字列で指定してください: ${testCase.id}`);
     }
     if (testCase.normalizeDebugDump !== undefined && typeof testCase.normalizeDebugDump !== "boolean") {
       throw new Error(`normalizeDebugDumpはbooleanで指定してください: ${testCase.id}`);
@@ -104,6 +108,7 @@ try {
       if (compileErrors.length > 0) console.error(`lnakoネイティブ生成エラー:\n${compileErrors.join("\n")}`);
     }
     let stderrMismatch = false;
+    let stdoutObservationMismatch = false;
     if (testCase.stderrIncludes !== undefined) {
       const stderrCompared = Object.entries(stderrResults).filter(([key]) =>
         key === oracleKey ||
@@ -119,13 +124,23 @@ try {
         for (const [key, stderr] of missing) console.error(`${key}: ${JSON.stringify(stderr)}`);
       }
     }
+    if (testCase.officialSourceStdoutIncludes !== undefined) {
+      const officialSource = results.officialSource;
+      if (!officialSource.stdout.includes(testCase.officialSourceStdoutIncludes)) {
+        failures += 1;
+        stdoutObservationMismatch = true;
+        failureKinds.push("stdout-mismatch");
+        console.error(`公式CLI sourceの既知エラー出力差分 ${testCase.id}: ${testCase.officialSourceStdoutIncludes}`);
+        console.error(`officialSource stdout: ${JSON.stringify(officialSource.stdout)}`);
+      }
+    }
     if (artifactPath !== null) {
       artifactFixtures.push({
         id: testCase.id,
         knownOracleSelection: testCase.oracle ?? null,
         oracleRoute: oracleKey,
         comparedRoutes: compared.map(([key]) => key),
-        equivalent: !resultMismatch && !stderrMismatch,
+        equivalent: !resultMismatch && !stderrMismatch && !stdoutObservationMismatch,
         failureKinds,
         sourceSha256: sha256(testCase.source),
         generatedJavaScriptSha256,
@@ -261,6 +276,7 @@ function replaceNativePluginPlaceholders(source, oracleRoot, fixtureDirectory) {
     "${PLUGIN_MARKUP}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_markup.mjs")).replaceAll("\\", "/"),
     "${PLUGIN_CSV}": relative(fixtureDirectory, resolve(oracleRoot, "core/src/plugin_csv.mjs")).replaceAll("\\", "/"),
     "${PLUGIN_TOML}": relative(fixtureDirectory, resolve(oracleRoot, "core/src/plugin_toml.mjs")).replaceAll("\\", "/"),
+    "${PLUGIN_DATETIME}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_datetime.mjs")).replaceAll("\\", "/"),
   };
   return Object.entries(replacements).reduce((result, [placeholder, path]) => result.replaceAll(placeholder, path), source);
 }
@@ -690,7 +706,7 @@ function validateArtifact(artifact) {
       (fixture.knownOracleSelection !== "official-source" || route !== "officialGenerated"),
     );
     assertStringArray(fixture.comparedRoutes, expectedComparedRoutes, `AOT差分artifact.fixture(${fixture.id}).comparedRoutes`);
-    assertStringArray(fixture.failureKinds, null, `AOT差分artifact.fixture(${fixture.id}).failureKinds`, new Set(["result-mismatch", "stderr-mismatch"]));
+    assertStringArray(fixture.failureKinds, null, `AOT差分artifact.fixture(${fixture.id}).failureKinds`, new Set(["result-mismatch", "stderr-mismatch", "stdout-mismatch"]));
     if (fixture.equivalent !== (fixture.failureKinds.length === 0)) throw new Error(`AOT差分artifactのfixture statusが不正です: ${fixture.id}`);
     if (!hashPattern.test(fixture.sourceSha256) || (fixture.generatedJavaScriptSha256 !== null && !hashPattern.test(fixture.generatedJavaScriptSha256))) {
       throw new Error(`AOT差分artifactのfixture hashが不正です: ${fixture.id}`);
