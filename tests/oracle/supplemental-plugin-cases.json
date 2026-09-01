@@ -12,7 +12,7 @@
   {
     "id": "plugin-markup-html-script",
     "commands": [],
-    "source": "!\"${PLUGIN_MARKUP}\"を取り込む\nJSON変換(HTML整形(『<div><script>if(a){\n  x();\n}</script><style>a { color: red; }</style></div>』))を表示\nJSON変換(HTML整形(『<!-- a  b --><div x = \"a b\" y=  \"c\"> z </div>』))を表示\n"
+    "source": "!\"${PLUGIN_MARKUP}\"を取り込む\nJSON変換(HTML整形(『<div><script>if(a){\n  x();\n}</script><style>a { color: red; }</style></div>』))を表示\nJSON変換(HTML整形(『<!-- a  b --><div x = \"a b\" y=  \"c\"> z </div>』))を表示\nJSON変換(マークダウンHTML変換(『<div><script>alert(1)</script></div>\n\n[link](javascript:alert(1))』))を表示\n"
   },
   {
     "id": "plugin-markup-commonmark-gfm",

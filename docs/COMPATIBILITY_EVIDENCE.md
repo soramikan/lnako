@@ -144,6 +144,8 @@ attestationがない場合は`trace-confirmed-unattested`に留めます。
 
 TOMLの既存`native-toml-commands`は表・配列テーブル・インライン表・文字列・数値の標準範囲を比較しますが、日時リテラルのDate系値とserializerのミリ秒正規化は含みません。公式マニュアルと命令説明からはこの境界を判断できないため、[`tests/fixtures/toml-temporal-probe.nako3`](../tests/fixtures/toml-temporal-probe.nako3)を仕様調査用probeとして保存し、公式CLIとlnako Interpreterの実測差を`docs/COMPATIBILITY_QUIRKS.md`へ記録します。probeには、公式`smol-toml` v1.8.0が受理する時刻単独のオフセット付き値と、その`31T22:32:00.`という壊れたserializer結果も含めます。これは公式処理系の不具合候補であり、正常な互換仕様や成功証拠として扱いません。このprobeは現行のAOT dispatch証拠・`evidence.json`の394 entryには算入せず、`TODO: toml-temporal-values`が解消されるまで標準TOMLの等価性証拠へ昇格しません。
 
+`plugin_markup`については、[`plugin-markup-html-script`](../tests/oracle/supplemental-plugin-cases.json)へraw HTMLと`javascript:`リンクを追加し、公式CLI・公式生成JavaScript・lnakoの出力一致を追加確認します。これは公式の危険なHTML出力を再現する回帰fixtureであり、sanitize済みであることや安全なHTML変換を証明するものではありません。命令カタログの短い説明からはこの境界を判断できないため、利用者向けの安全上の注意と、`marked`依存の仕様・不具合候補を`docs/COMPATIBILITY_QUIRKS.md`へ分離して記録します。`script`/`style` raw blockの分類など未比較の入力をこのfixtureから推測せず、別のprobeで扱います。
+
 ## 同名命令
 
 漢数字の指数・全角数字・小数・空白・Infinity・基数接頭辞と算用数字の非標準表記は、`native-kansuji-aot-generated-boundaries`で公式CLI・Interpreter・LLVM AOT O0〜O3を比較します。公式standalone生成JavaScriptはplugin登録を行わないため、oracleは公式CLIに固定し、残る全生成境界は`TODO: aot-kansuji-generated-boundaries`として扱います。
