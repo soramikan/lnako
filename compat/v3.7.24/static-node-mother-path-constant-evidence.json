@@ -1,0 +1,124 @@
+{
+  "schema": "lnako.static-constant-evidence.v2",
+  "generator": "tools/check_static_constant_evidence.mjs",
+  "baseline": {
+    "tag": "3.7.24",
+    "commit": "aa18c7e640523938c680958fe731418cc6f7a58f"
+  },
+  "fixture": {
+    "id": "native-node-mother-path",
+    "file": "native-cases.json",
+    "sourceSha256": "8287e105f07edabcf8dcab98c0f90cbc3d705f4285adb14867d5fd17ad395ecd",
+    "globalReadNames": [
+      "母艦パス"
+    ],
+    "literalNames": []
+  },
+  "officialComparison": {
+    "oracle": "official-source",
+    "routes": [
+      "officialSource",
+      "officialGenerated",
+      "lnakoRun",
+      "lnakoNativeO0"
+    ],
+    "equivalent": true,
+    "results": {
+      "officialSource": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "01e245fdd1184731d6a2855dc2d9f8600bf77def7e308ab82aa3eb70720fb816",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "officialGenerated": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "01e245fdd1184731d6a2855dc2d9f8600bf77def7e308ab82aa3eb70720fb816",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "lnakoRun": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "01e245fdd1184731d6a2855dc2d9f8600bf77def7e308ab82aa3eb70720fb816",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "lnakoNativeO0": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "01e245fdd1184731d6a2855dc2d9f8600bf77def7e308ab82aa3eb70720fb816",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  },
+  "attestation": null,
+  "provenance": {
+    "environment": {
+      "platform": "darwin",
+      "arch": "arm64",
+      "node": "v24.19.0"
+    },
+    "oracle": {
+      "build": 4,
+      "archiveSha256": "c3bedbf101118a261f631d331127ae441657fec091c712b07d237c4336eb0011",
+      "cliSha256": "65e32f1d7de0b2da18edf3f4c49565c37d31aa474d31ee08426f2f6a0c0d6c81",
+      "markerSha256": "e9444955298c3bb22164a219c0f342ee32301e901ec967d648cae9a25d8bf531",
+      "treeHashAlgorithm": "sha256-json-records-v3",
+      "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
+    },
+    "lnako": {
+      "binarySha256": "26f4c59f32798661d86b56ad54905813de77c00817a12a2f3e4c0d89edc353af",
+      "commit": "02573ca2d6a076808d0fb1460beb143c409c5ad2",
+      "dirty": false
+    },
+    "raw": {
+      "interpreterTraceSha256": "71bcc330212d7fdd1ca0eb5411eaabb798e5500cc3f4253f8813eecc88e381ca",
+      "aotTraceSha256": "29f838c4860b7a6b36b5bc12699d08cc224529255cd99782c2801558857ee42b",
+      "globalManifestSha256": "0f0d74e51b78dccf24990289faecd2322cbe70d3c5acfedd27d330b5456a33dc",
+      "literalInterpreterTraceSha256": "d1a240ca85bb6425f4ad3e15b23d56a4366b64e8631f58b1af10c96a38b65232",
+      "literalAotTraceSha256": "b503b7eae644c3b3cc2fbe7504669a86aa68f5db0642b31b5d61cde895e2a1ea",
+      "literalManifestSha256": "58d6f79e446440050e5371ea47c0015fcb5b178f5b399e8b6f7c5da1c0be1b37"
+    }
+  },
+  "trace": {
+    "global": {
+      "interpreter": {
+        "schema": 1,
+        "eventCount": 1
+      },
+      "aot": {
+        "schema": 1,
+        "eventCount": 1
+      }
+    },
+    "literal": {
+      "interpreter": {
+        "schema": 1,
+        "eventCount": 0
+      },
+      "aot": {
+        "schema": 1,
+        "eventCount": 0
+      }
+    }
+  },
+  "entries": [
+    {
+      "catalogId": "command-0733",
+      "name": "母艦パス",
+      "plugin": "plugin_node",
+      "kind": "global-read",
+      "siteId": "0x0000000000000001",
+      "runtime": {
+        "interpreter": {
+          "success": true,
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    }
+  ]
+}
