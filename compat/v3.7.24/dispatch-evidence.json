@@ -8,7 +8,7 @@
   "fixture": {
     "id": "native-dispatch-commands",
     "file": "native-cases.json",
-    "sourceSha256": "ed348be41af0b597ff0910462871fc070b38ac9f59bf1770e2114ac2a5a625bb"
+    "sourceSha256": "f2e3f0c71fad3ae4d1a37e72841133bc888c3531ae4e381b411fc3ad339afb08"
   },
   "officialComparison": {
     "oracle": "official-source",
@@ -23,25 +23,25 @@
       "officialSource": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "3195a21a6201539599126837a909b3a1e3a8f2ddd9d6975b58633e79171b39b6",
+        "stdoutSha256": "dba68e1d338e62159587e7cc4f2e89bf17d2be03f79588fc1fb4f35d2809a4b4",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "officialGenerated": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "3195a21a6201539599126837a909b3a1e3a8f2ddd9d6975b58633e79171b39b6",
+        "stdoutSha256": "dba68e1d338e62159587e7cc4f2e89bf17d2be03f79588fc1fb4f35d2809a4b4",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoRun": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "3195a21a6201539599126837a909b3a1e3a8f2ddd9d6975b58633e79171b39b6",
+        "stdoutSha256": "dba68e1d338e62159587e7cc4f2e89bf17d2be03f79588fc1fb4f35d2809a4b4",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoNativeO0": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "3195a21a6201539599126837a909b3a1e3a8f2ddd9d6975b58633e79171b39b6",
+        "stdoutSha256": "dba68e1d338e62159587e7cc4f2e89bf17d2be03f79588fc1fb4f35d2809a4b4",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       }
     }
@@ -63,23 +63,23 @@
     },
     "lnako": {
       "binarySha256": "e1960a50cde0c248245d25e6fbd2e9f70e3659eac1468cbff896c76a8c4c5eaa",
-      "commit": "ec40a7f731305ca7d54ac737729514fe3b937e41",
+      "commit": "1a7f3405224a874844feaf70c3c20cf987aa2f5a",
       "dirty": false
     },
     "raw": {
-      "interpreterTraceSha256": "a629db2d887131079b7fa0bdb86a69e1d7af413363c07e8ab1b030b54a6e7797",
-      "aotTraceSha256": "61ca76e119a750b64282a035b1e3f8573f0d4a082ae672e264279b2faa61d2e0",
-      "compileManifestSha256": "0784c90c345ba87756d66089e71500952531bb6a751f6201ae756900159e6102"
+      "interpreterTraceSha256": "d443a2c318cb9e07e742ea856751ae5b1d29b400cbb069df2bf6589e27ed5280",
+      "aotTraceSha256": "df0cfabc496035e45c5364a0ae63a4a12c100ea0f4294d39fa0e58070bc4492d",
+      "compileManifestSha256": "ec323b889427c54fb26999d700f1c2dc253eafd58cb2085cd4a9c86d522fc0b9"
     }
   },
   "trace": {
     "interpreter": {
       "schema": 2,
-      "eventCount": 882
+      "eventCount": 886
     },
     "aot": {
       "schema": 2,
-      "eventCount": 1764
+      "eventCount": 1772
     }
   },
   "sites": [
@@ -123,7 +123,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 880,
+          "callId": 884,
           "count": 1
         }
       },
@@ -146,7 +146,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 881,
+          "callId": 885,
           "count": 1
         }
       },
@@ -169,7 +169,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 871,
+          "callId": 875,
           "count": 1
         }
       },
@@ -192,7 +192,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 872,
+          "callId": 876,
           "count": 1
         }
       },
@@ -215,7 +215,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 873,
+          "callId": 877,
           "count": 1
         }
       },
@@ -238,7 +238,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 876,
+          "callId": 880,
           "count": 1
         }
       },
@@ -261,7 +261,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 877,
+          "callId": 881,
           "count": 1
         }
       },
@@ -284,7 +284,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 878,
+          "callId": 882,
           "count": 1
         }
       },
@@ -307,7 +307,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 874,
+          "callId": 878,
           "count": 1
         }
       },
@@ -330,7 +330,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 875,
+          "callId": 879,
           "count": 1
         }
       },
@@ -353,7 +353,7 @@
         },
         "aot": {
           "success": true,
-          "callId": 879,
+          "callId": 883,
           "count": 1
         }
       },
@@ -20203,6 +20203,98 @@
         "aot": {
           "success": true,
           "callId": 870,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0736",
+      "name": "一時フォルダ作成",
+      "plugin": "plugin_node",
+      "siteId": "0x0000001700000368",
+      "sourceName": "一時フォルダ作成",
+      "canonicalOpcode": "node_temporary_directory_create",
+      "opcode": 279,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_node",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 871,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0718",
+      "name": "ファイル削除",
+      "plugin": "plugin_node",
+      "siteId": "0x0000001700000369",
+      "sourceName": "ファイル削除",
+      "canonicalOpcode": "node_file_delete",
+      "opcode": 325,
+      "route": "node-file-operation",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_node",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 872,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0793",
+      "name": "ランダムUUID生成",
+      "plugin": "plugin_node",
+      "siteId": "0x000000170000036a",
+      "sourceName": "ランダムUUID生成",
+      "canonicalOpcode": "node_random_uuid",
+      "opcode": 294,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_node",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 873,
+          "count": 1
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0794",
+      "name": "ランダム配列生成",
+      "plugin": "plugin_node",
+      "siteId": "0x000000170000036b",
+      "sourceName": "ランダム配列生成",
+      "canonicalOpcode": "node_random_array",
+      "opcode": 295,
+      "route": "builtin",
+      "runtime": {
+        "interpreter": {
+          "result": "success",
+          "route": "plugin_node",
+          "count": 1
+        },
+        "aot": {
+          "success": true,
+          "callId": 874,
           "count": 1
         }
       },
