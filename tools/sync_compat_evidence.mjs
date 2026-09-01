@@ -25,6 +25,12 @@ const staticConstantEvidenceInputs = [
     globalReadCount: 24,
     literalNames: new Set(),
   },
+  {
+    path: resolve(root, "compat/v3.7.24/static-array-constant-evidence.json"),
+    fixtureId: "native-array-system-constants",
+    globalReadCount: 2,
+    literalNames: new Set(),
+  },
 ];
 const staticConstantFixtureIds = new Set(staticConstantEvidenceInputs.map((input) => input.fixtureId));
 const oracleDirectory = resolve(root, "tests/oracle");
@@ -57,6 +63,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "compat/v3.7.24/dispatch-evidence.json",
   "compat/v3.7.24/static-constant-evidence.json",
   "compat/v3.7.24/static-string-constant-evidence.json",
+  "compat/v3.7.24/static-array-constant-evidence.json",
   "compat/v3.7.24/evidence.json",
   "compat/v3.7.24/interpreter-only-classification.json",
   "docs/COMPATIBILITY_EVIDENCE.md",

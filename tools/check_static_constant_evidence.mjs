@@ -22,6 +22,7 @@ const literalConstantNames = fixtureId === "native-scalar-system-constants"
 const expectedFixtureShape = {
   "native-scalar-system-constants": { globalReadCount: 17, literalCount: 7 },
   "native-string-system-constants": { globalReadCount: 24, literalCount: 0 },
+  "native-array-system-constants": { globalReadCount: 2, literalCount: 0 },
 }[fixtureId];
 const maxBuffer = 16 * 1024 * 1024;
 
