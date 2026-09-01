@@ -530,7 +530,7 @@ native routeはO0+O1が11分44秒、O2が9分12秒、O3が9分13秒、supportが
 全OSのnative artifact、support artifact、attestationを含めて成功しているため、現行の5 job制約内route分割と検証完全性を確認できた。次回push時はこのrunを
 前回完了runとして先に確認し、新runの完了は待たず、失敗があれば`gh run view --log-failed`で原因を調査・修正する。
 
-## macOS通常suiteの2 job分割（次回runで実測）
+## macOS通常suiteの2 job分割（実測）
 
 直前の[run 33452654559](https://github.com/soramikan/lnako/actions/runs/33452654559)（`e20872e`）は、39 test jobとattestationを
 すべて成功させた。作成23:55:00Zから更新00:12:33Zまでのwall-clockは約17分33秒だった。macOSの5 jobは23:55:03〜23:55:05Zに
@@ -545,3 +545,37 @@ ReleaseSafe、通常smokeはmacOSの前者へ移すため、検証項目・3 OS�
 
 この変更後は、push時にまず直前の完了済みrunの結論と失敗ログを確認する。新runの完了は待たずに実装を継続し、次回push前にmacOS 5 jobの
 開始時刻、queueの有無、各job／step時間、wall-clock、runner合計、cache hit/miss、3 OS artifactとattestationの成否を確認して記録する。
+
+直後の[run 33454974826](https://github.com/soramikan/lnako/actions/runs/33454974826)（`e078c00`）は、39 test jobとattestationの
+計40 jobをすべて成功させた。作成00:29:46Zから更新00:45:23Zまでのwall-clockは15分37秒で、直前のrun 33452654559の17分33秒から
+1分56秒（約11.0%）短縮した。runner時間はjob実測の合計で4時間53分46秒（直前は5時間01分45秒）となり、wall-clockだけでなく
+合計も7分59秒（約2.6%）減少した。全284 fixture、全7経路、O0〜O3、3 OS artifact、attestationは維持されている。
+
+macOSの5 jobは00:29:49〜00:29:50Zにすべて開始し、6件目以降のqueueは観測されなかった。job別の実測は次のとおりである。
+
+| macOS job | 所要時間 |
+|---|---:|
+| `mac-core-standard-support` | 14分10秒 |
+| `mac-host-compat` | 9分04秒 |
+| `AOT native routes O0+O1` | 10分34秒 |
+| `AOT native routes O2` | 8分23秒 |
+| `AOT native routes O3` | 8分33秒 |
+
+macOSでは分割後の通常jobとnative route jobが同時に進み、通常検証を1 runnerへ拘束しなくなった。全体の最長test jobはLinux
+`AOT support`の14分55秒で、今回の全体wall-clock 15分37秒のcritical pathはmacOSのqueueではない。attestationは00:44:47〜00:45:22Zの
+35秒で完了した。
+
+Actions cacheはrun後に33件・10,604,474,798 bytes（約10.60 GB）だった。macOSのOracle／LLVM cacheは5 jobすべてでhitし、Zig build
+cacheは各jobで上限1,536 MiB以内だったため、上限超過によるclearは発生していない。
+
+| macOS job | Zig cache（展開後） |
+|---|---:|
+| `mac-core-standard-support` | 298,865,393 bytes（約299 MB） |
+| `mac-host-compat` | 374,241,852 bytes（約374 MB） |
+| `AOT native routes O0+O1`／`O2`／`O3` | 各303,866,433 bytes（約304 MB） |
+
+cache hit/miss、固定toolchainの残存、cache上限判定は各jobログで確認し、検証範囲を削減していない。このrunで3 OSのartifact uploadと
+attestationが成功したため、macOS 5 job制約を守ったjob分割の短縮効果を実測で確定する。
+
+次のpush時も、まずこのrunのように直前の完了済みCIの結論と失敗ログを確認する。新runの完了は待たずに実装を進め、次回push前に
+完了済みrunの各job、wall-clock、runner合計、cache hit/miss、artifact、attestationを確認する。
