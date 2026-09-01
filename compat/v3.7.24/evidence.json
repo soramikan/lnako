@@ -22,8 +22,8 @@
   },
   "executionEvidenceStates": {
     "verified": 0,
-    "trace-confirmed-unattested": 323,
-    "unverified": 204
+    "trace-confirmed-unattested": 325,
+    "unverified": 202
   },
   "entries": [
     {
@@ -21155,9 +21155,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-dispatch-commands",
+        "siteIds": [
+          "0x0000001700000366"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式7経路のホームディレクトリ差分テストに成功"
     },
     {
@@ -21291,9 +21304,22 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-evidence.v2",
+        "fixtureId": "native-dispatch-commands",
+        "siteIds": [
+          "0x0000001700000367"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式7経路の母艦パス取得差分テストに成功"
     },
     {
