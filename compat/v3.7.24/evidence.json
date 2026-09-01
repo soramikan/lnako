@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 396,
-    "nativeAot": 301,
+    "total": 397,
+    "nativeAot": 302,
     "interpreter": 99,
     "compatJs": 9
   },
@@ -18043,6 +18043,7 @@
       "aotFixtureIds": [
         "native-toml-commands",
         "native-toml-default-generated-route",
+        "native-toml-imported-generated-route",
         "native-toml-temporal-values"
       ],
       "compatJsFixtureIds": [],
@@ -18061,6 +18062,9 @@
           "native-toml-default-generated-route": [
             "fixture.commands"
           ],
+          "native-toml-imported-generated-route": [
+            "fixture.commands"
+          ],
           "native-toml-temporal-values": [
             "fixture.commands"
           ]
@@ -18071,7 +18075,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 4件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製TOMLプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
@@ -18084,6 +18088,7 @@
       ],
       "aotFixtureIds": [
         "native-toml-commands",
+        "native-toml-imported-generated-route",
         "native-toml-temporal-values"
       ],
       "compatJsFixtureIds": [],
@@ -18099,6 +18104,9 @@
             "fixture.commands",
             "implemented.tests"
           ],
+          "native-toml-imported-generated-route": [
+            "fixture.commands"
+          ],
           "native-toml-temporal-values": [
             "fixture.commands"
           ]
@@ -18109,7 +18117,7 @@
       "identityResolution": "unique-name",
       "executionEvidenceState": "unverified",
       "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 3件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
       "implementationReason": "Zig製TOMLプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {

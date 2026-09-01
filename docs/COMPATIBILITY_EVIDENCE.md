@@ -140,9 +140,11 @@ attestationがない場合は`trace-confirmed-unattested`に留めます。
 
 可変長lookbehindの貪欲・非貪欲量指定は後ろ側のatomから逆向きに評価され、captureの結果と複数一致時の探索順へ影響します。`native-system-regexp-lookbehind-capture-order`で公式CLI・生成JavaScript・Interpreter・LLVM AOT O0〜O3を比較し、lookbehind内部のbackreferenceでは、逆向き評価時点で未確定のcaptureを空文字として扱う規則も含めて比較します。さらに複雑なcapture副作用順序は`TODO: regexp-backtracking-edge`として未検証のまま分離します。
 
-`native-system-dictionary-inherited-enumeration`は、custom辞書prototype chainの列挙順・shadowing・対応値を公式CLI・公式生成JavaScript・`lnako run`・LLVM AOT O0〜O3で比較するfixtureです。これによりfixture inventoryは全394件（AOT 299件、Interpreter 99件、QuickJS 9件）になりました。
+`native-system-dictionary-inherited-enumeration`は、custom辞書prototype chainの列挙順・shadowing・対応値を公式CLI・公式生成JavaScript・`lnako run`・LLVM AOT O0〜O3で比較するfixtureです。TOMLの生成standalone差分fixtureを含む現行fixture inventoryは全397件（AOT 302件、Interpreter 99件、QuickJS 9件）です。
 
 `native-toml-commands`は表・配列テーブル・インライン表・文字列・数値の標準範囲を比較し、`native-toml-temporal-values`は日付、時刻、local datetime、offset datetimeのDate系値と、秒・ミリ秒・`T`への正規化を公式CLI・公式生成JavaScript・`lnako run`・LLVM AOT O0〜O3で比較します。公式マニュアルと命令説明からは依存ライブラリ由来の型と正規化を判断できないため、[`tests/fixtures/toml-temporal-probe.nako3`](../tests/fixtures/toml-temporal-probe.nako3)には正常系に加えて時刻単独のオフセット付き値を仕様調査用probeとして保存しています。後者は公式`smol-toml` v1.8.0が受理するものの`31T22:32:00.`という壊れたserializer結果になる不具合候補であり、正常な互換仕様や成功証拠へ混ぜません。`native-toml-temporal-values`のfixture実行はAOT dispatch証拠ではなく、外部署名のない現在の`evidence.json`へentryを自動昇格させません。Dateのメソッド、完全な`ToPrimitive`、異常入力の全範囲は`TODO: toml-temporal-values`として継続します。
+
+`native-toml-default-generated-route`と`native-toml-imported-generated-route`は、公式CLI直接実行ではTOML命令が動作する一方、明示importの有無にかかわらず`--compile`で生成したstandalone JavaScriptが`TypeError: __self.__varslist[0].get(...) is not a function`で失敗することを固定します。これは「プラグインを取り込めば生成経路でも使える」と公式の短い説明から推測しないための回帰証拠であり、生成コード側の基本plugin登録不一致候補を`docs/COMPATIBILITY_QUIRKS.md`へ分離します。
 
 `plugin_markup`については、[`plugin-markup-html-script`](../tests/oracle/supplemental-plugin-cases.json)へraw HTMLと`javascript:`リンクを追加し、公式CLI・公式生成JavaScript・lnakoの出力一致を追加確認します。これは公式の危険なHTML出力を再現する回帰fixtureであり、sanitize済みであることや安全なHTML変換を証明するものではありません。命令カタログの短い説明からはこの境界を判断できないため、利用者向けの安全上の注意と、`marked`依存の仕様・不具合候補を`docs/COMPATIBILITY_QUIRKS.md`へ分離して記録します。`script`/`style` raw blockの分類など未比較の入力をこのfixtureから推測せず、別のprobeで扱います。
 

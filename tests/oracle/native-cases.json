@@ -1067,6 +1067,13 @@
     "source": "T=TOML取得(\"value=1\")\nJSON変換(T)を表示\n"
   },
   {
+    "id": "native-toml-imported-generated-route",
+    "oracle": "official-source",
+    "stderrIncludes": "is not a function",
+    "commands": ["TOML取得", "TOML変換"],
+    "source": "!「${PLUGIN_TOML}」を取り込む\nT=TOML取得(\"value=1\")\nJSON変換(T)を表示\nTOML変換({\"a\":{\"b\":3}})を表示\n"
+  },
+  {
     "id": "native-markup-commands",
     "oracle": "official-source",
     "commands": ["マークダウンHTML変換", "HTML整形"],
