@@ -60,7 +60,9 @@ const staticConstantEvidenceInputs = [
     path: resolve(root, "compat/v3.7.24/static-caniuse-agents-constant-evidence.json"),
     fixtureId: "native-caniuse-agents",
     globalReadCount: 1,
+    globalTraceCount: 3,
     literalNames: new Set(),
+    manifestGlobalReadNames: ["ブラウザ名変換表", "ブラウザ名変換表", "ブラウザ名変換表"],
     plugin: "plugin_caniuse",
   },
   {
@@ -727,11 +729,11 @@ function validateStaticConstantEvidence(evidence, lock, standard, records, defin
   if (evidence.attestation !== null) throw new Error("静的定数証拠に未対応のattestationがあります");
 
   assertKnownObjectKeys(evidence.trace, ["global", "literal"], "static-constant-evidence.trace");
-  for (const [kind, names] of [["global", globalReadNames], ["literal", literalNames]]) {
+  for (const [kind, names, expectedEventCount] of [["global", globalReadNames, definition.globalTraceCount ?? globalReadNames.length], ["literal", literalNames, literalNames.length]]) {
     assertKnownObjectKeys(evidence.trace[kind], ["interpreter", "aot"], `static-constant-evidence.trace.${kind}`);
     for (const engine of ["interpreter", "aot"]) {
       assertKnownObjectKeys(evidence.trace[kind][engine], ["schema", "eventCount"], `static-constant-evidence.trace.${kind}.${engine}`);
-      if (evidence.trace[kind][engine].schema !== 1 || evidence.trace[kind][engine].eventCount !== names.length) {
+      if (evidence.trace[kind][engine].schema !== 1 || evidence.trace[kind][engine].eventCount !== expectedEventCount) {
         throw new Error(`静的定数証拠の${kind}/${engine} trace件数が不正です`);
       }
     }

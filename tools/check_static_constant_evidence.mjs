@@ -50,7 +50,9 @@ const staticConstantFixtureDefinitions = {
   },
   "native-caniuse-agents": {
     globalReadCount: 1,
+    globalTraceCount: 3,
     literalNames: new Set(),
+    manifestGlobalReadNames: ["ブラウザ名変換表", "ブラウザ名変換表", "ブラウザ名変換表"],
     plugin: "plugin_caniuse",
     sourceReplacements: {
       "${PLUGIN_CANIUSE}": (temporary) => relative(temporary, resolve(oracleRoot, "src/plugin_caniuse.mjs")).replaceAll("\\", "/"),
@@ -193,7 +195,7 @@ try {
   const oracleSelection = fixture.oracle ?? "official-source";
   const oracleRoute = oracleSelection === "official-generated" ? "officialGenerated" : "officialSource";
   assertEquivalentResults(results, oracleRoute);
-  const globalManifestData = await readGlobalManifest(globalManifest, sourcePath, globalReadNames);
+  const globalManifestData = await readGlobalManifest(globalManifest, sourcePath, fixtureDefinition.manifestGlobalReadNames ?? globalReadNames);
   const literalManifestData = await readLiteralManifest(literalManifest, sourcePath, literalNames);
   const interpreterGlobalEvents = await readGlobalTrace(interpreterTrace, "interpreter", globalManifestData);
   const aotGlobalEvents = await readGlobalTrace(aotTrace, "aot", globalManifestData);
@@ -291,7 +293,7 @@ try {
     },
     entries,
   };
-  validateEvidence(evidence, lock, fixture, globalReadNames, literalNames, manifestByKey);
+  validateEvidence(evidence, lock, fixture, globalReadNames, literalNames, manifestByKey, globalManifestData.entries.length);
   if (evidenceOutput !== null) await writeFile(evidenceOutput, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
   console.log(`静的定数のInterpreter/AOT証拠: global read ${globalReadNames.length}件 + literal ${literalNames.length}件 = ${entries.length}件成功`);
 } finally {
@@ -425,19 +427,21 @@ async function readStaticManifest(path, sourcePath, expectedNames, schema, kind,
   if (complete.entryCount !== entries.length || entries.length !== expectedNames.length) throw new Error(`${label}のentryCountが不一致です`);
   const expected = new Set(expectedNames);
   const siteIds = new Set();
-  const names = new Set();
+  const nameCounts = new Map();
   for (const entry of entries) {
     assertKeys(entry, ["schema", "phase", "kind", "name", "siteId", "function", "source"], `${label} entry`);
     assertKeys(entry.source, ["line", "column", "sourceStart", "sourceEnd"], `${label} entry source`);
-    if (entry.schema !== header.schema || entry.phase !== "pre-opt" || entry.kind !== kind || !expected.has(entry.name) || names.has(entry.name)) throw new Error(`${label}のnameが不正です: ${entry.name}`);
+    if (entry.schema !== header.schema || entry.phase !== "pre-opt" || entry.kind !== kind || !expected.has(entry.name)) throw new Error(`${label}のnameが不正です: ${entry.name}`);
     if (!/^0x[0-9a-f]{16}$/.test(entry.siteId) || siteIds.has(entry.siteId)) throw new Error(`${label}のsiteIdが不正または重複しています: ${entry.siteId}`);
     if (!Number.isSafeInteger(entry.source.line) || entry.source.line < 1 || !Number.isSafeInteger(entry.source.column) || entry.source.column < 1 || !Number.isSafeInteger(entry.source.sourceStart) || !Number.isSafeInteger(entry.source.sourceEnd) || entry.source.sourceStart < 0 || entry.source.sourceEnd < entry.source.sourceStart) {
       throw new Error(`${label}のsource位置が不正です: ${entry.name}`);
     }
     siteIds.add(entry.siteId);
-    names.add(entry.name);
+    nameCounts.set(entry.name, (nameCounts.get(entry.name) ?? 0) + 1);
   }
-  if (names.size !== expectedNames.length || [...names].some((name) => !expected.has(name))) throw new Error(`${label}のnameが不足または重複しています`);
+  const expectedCounts = new Map();
+  for (const name of expectedNames) expectedCounts.set(name, (expectedCounts.get(name) ?? 0) + 1);
+  if (entries.length !== expectedNames.length || nameCounts.size !== expectedCounts.size || [...expectedCounts].some(([name, count]) => nameCounts.get(name) !== count)) throw new Error(`${label}のname集合または件数が不一致です`);
   return { entries: entries.map((entry) => ({ ...entry })) };
 }
 
@@ -493,7 +497,7 @@ function assertKeys(value, allowedKeys, label) {
   for (const key of Object.keys(value)) if (!allowed.has(key)) throw new Error(`${label}に未知fieldがあります: ${key}`);
 }
 
-function validateEvidence(evidence, lock, fixture, globalReadNames, literalNames, manifestByKey) {
+function validateEvidence(evidence, lock, fixture, globalReadNames, literalNames, manifestByKey, globalTraceCount) {
   assertKeys(evidence, ["schema", "generator", "baseline", "fixture", "officialComparison", "attestation", "provenance", "trace", "entries"], "static constant evidence");
   if (evidence.schema !== "lnako.static-constant-evidence.v2" || evidence.generator !== "tools/check_static_constant_evidence.mjs" || evidence.baseline.tag !== lock.nadesiko3.tag || evidence.baseline.commit !== lock.nadesiko3.commit) throw new Error("静的定数証拠のidentityが不正です");
   assertKeys(evidence.fixture, ["id", "file", "sourceSha256", "globalReadNames", "literalNames"], "static constant evidence fixture");
@@ -512,11 +516,11 @@ function validateEvidence(evidence, lock, fixture, globalReadNames, literalNames
   }
   if (evidence.attestation !== null) throw new Error("静的定数証拠に未対応のattestationがあります");
   assertKeys(evidence.trace, ["global", "literal"], "static constant trace");
-  for (const [kind, names] of [["global", globalReadNames], ["literal", literalNames]]) {
+  for (const [kind, names, expectedEventCount] of [["global", globalReadNames, globalTraceCount], ["literal", literalNames, literalNames.length]]) {
     assertKeys(evidence.trace[kind], ["interpreter", "aot"], `static constant trace ${kind}`);
     for (const engine of ["interpreter", "aot"]) {
       assertKeys(evidence.trace[kind][engine], ["schema", "eventCount"], `static constant trace ${kind}/${engine}`);
-      if (evidence.trace[kind][engine].schema !== 1 || evidence.trace[kind][engine].eventCount !== names.length) throw new Error(`静的定数証拠のtrace件数が不正です: ${kind}/${engine}`);
+      if (evidence.trace[kind][engine].schema !== 1 || evidence.trace[kind][engine].eventCount !== expectedEventCount) throw new Error(`静的定数証拠のtrace件数が不正です: ${kind}/${engine}`);
     }
   }
   if (!Array.isArray(evidence.entries) || evidence.entries.length !== globalReadNames.length + literalNames.length) throw new Error("静的定数証拠のentry数が不正です");
