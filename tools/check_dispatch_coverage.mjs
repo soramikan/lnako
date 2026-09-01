@@ -161,13 +161,12 @@ async function loadSelectedFixtures() {
     { file: "supplemental-plugin-cases.json", selection: (testCase) => testCase.commands?.length > 0 && testCase.expectedFailure !== true },
     { file: "node-file-cases.json", selection: (testCase) => testCase.aot === true && testCase.commands?.length > 0 && testCase.expectError !== true },
     { file: "node-native-cases.json", selection: (testCase) => testCase.aot === true && testCase.commands?.length > 0 && testCase.expectError !== true },
-    { file: "native-cases.json", selection: (testCase) => testCase.id === "native-cut-commands" || testCase.id === "native-datetime-explicit-plugin-route" },
+    { file: "native-cases.json", selection: (testCase) => testCase.id === "native-cut-commands" },
   ];
   if (arguments_.includeNative) {
     specifications.push({
       file: "native-cases.json",
-      selection: (testCase) => testCase.commands?.length > 0 && testCase.expectedFailure !== true &&
-        testCase.id !== "native-cut-commands" && testCase.id !== "native-datetime-explicit-plugin-route",
+      selection: (testCase) => testCase.commands?.length > 0 && testCase.expectedFailure !== true && testCase.id !== "native-cut-commands",
     });
   }
   const fixtures = [];
@@ -181,7 +180,7 @@ async function loadSelectedFixtures() {
       fixtures.push({ file: specification.file, ...testCase });
     }
   }
-  const expectedFixtureCount = arguments_.includeNative ? 200 : 31;
+  const expectedFixtureCount = arguments_.includeNative ? 200 : 30;
   if (fixtures.length !== expectedFixtureCount) throw new Error(`dispatch coverageのfixture数が想定外です: ${fixtures.length}`);
   return fixtures;
 }
@@ -401,7 +400,6 @@ function replacePluginPlaceholders(source, fixtureDirectory) {
     "${PLUGIN_MARKUP}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_markup.mjs")).replaceAll("\\", "/"),
     "${PLUGIN_CSV}": relative(fixtureDirectory, resolve(oracleRoot, "core/src/plugin_csv.mjs")).replaceAll("\\", "/"),
     "${PLUGIN_TOML}": relative(fixtureDirectory, resolve(oracleRoot, "core/src/plugin_toml.mjs")).replaceAll("\\", "/"),
-    "${PLUGIN_DATETIME}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_datetime.mjs")).replaceAll("\\", "/"),
   };
   return Object.entries(replacements).reduce((result, [placeholder, path]) => result.replaceAll(placeholder, path), source);
 }
