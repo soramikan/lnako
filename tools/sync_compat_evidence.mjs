@@ -12,6 +12,7 @@ const standardPath = resolve(root, "compat/v3.7.24/standard-cnako.json");
 const implementationPath = resolve(root, "compat/v3.7.24/implemented.json");
 const evidencePath = resolve(root, "compat/v3.7.24/evidence.json");
 const dispatchEvidencePath = resolve(root, "compat/v3.7.24/dispatch-evidence.json");
+const dispatchCoverageEvidencePath = resolve(root, "compat/v3.7.24/dispatch-coverage-evidence.json");
 const staticConstantEvidenceInputs = [
   {
     path: resolve(root, "compat/v3.7.24/static-constant-evidence.json"),
@@ -128,6 +129,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "benchmarks/results/latest.json",
   "benchmarks/results/latest.md",
   "compat/v3.7.24/dispatch-evidence.json",
+  "compat/v3.7.24/dispatch-coverage-evidence.json",
   "compat/v3.7.24/static-constant-evidence.json",
   "compat/v3.7.24/static-string-constant-evidence.json",
   "compat/v3.7.24/static-array-constant-evidence.json",
@@ -146,6 +148,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "docs/DEVELOPMENT.md",
   "tools/check_ci_workflow.mjs",
   "tools/check_aot_suite_parallel.mjs",
+  "tools/check_dispatch_coverage.mjs",
   "tools/compare_native_oracle.mjs",
   "tools/check_static_constant_evidence.mjs",
   "tools/sync_compat_evidence.mjs",
@@ -205,6 +208,11 @@ const unresolvedByName = new Map();
 const dispatchEvidenceBytes = await readFile(dispatchEvidenceInputPath);
 const dispatchEvidenceBase = JSON.parse(dispatchEvidenceBytes.toString("utf8"));
 const dispatchEvidenceInputSha256 = createHash("sha256").update(dispatchEvidenceBytes).digest("hex");
+const dispatchCoverageEvidenceBytes = await readFile(dispatchCoverageEvidencePath);
+const dispatchCoverageEvidence = JSON.parse(dispatchCoverageEvidenceBytes.toString("utf8"));
+const dispatchCoverageAuditScriptSha256 = createHash("sha256")
+  .update(await readFile(resolve(root, "tools/check_dispatch_coverage.mjs")))
+  .digest("hex");
 const staticConstantEvidenceRecords = await Promise.all(staticConstantEvidenceInputs.map(async (input) => ({
   ...input,
   evidence: JSON.parse((await readFile(input.path)).toString("utf8")),
@@ -215,12 +223,19 @@ const dispatchEvidence = suppliedAttestation === null
   ? dispatchEvidenceBase
   : { ...dispatchEvidenceBase, attestation: suppliedAttestation };
 validateDispatchEvidence(dispatchEvidence, lock, standard, records, dispatchEvidenceInputSha256, dispatchEvidenceInputPath, attestationBundlePath, attestationBundleBytes, historicalCommit);
+validateDispatchCoverageEvidence(dispatchCoverageEvidence, lock, standard, records, dispatchCoverageAuditScriptSha256);
 for (const input of staticConstantEvidenceRecords) validateStaticConstantEvidence(input.evidence, lock, standard, records, input);
 const dispatchEvidenceByCatalogId = new Map();
 for (const site of dispatchEvidence.sites) {
   const sites = dispatchEvidenceByCatalogId.get(site.catalogId) ?? [];
   sites.push(site);
   dispatchEvidenceByCatalogId.set(site.catalogId, sites);
+}
+const dispatchCoverageEvidenceByCatalogId = new Map();
+for (const site of dispatchCoverageEvidence.sites) {
+  const sites = dispatchCoverageEvidenceByCatalogId.get(site.catalogId) ?? [];
+  sites.push(site);
+  dispatchCoverageEvidenceByCatalogId.set(site.catalogId, sites);
 }
 const dispatchFixtureRecord = records.find((record) => record.id === "native-dispatch-commands");
 const dispatchCatalogIds = dispatchFixtureRecord?.catalogIds ?? new Map();
@@ -274,6 +289,7 @@ const entries = standard.commands.map((command) => {
     .sort();
   const fixtureCoverageState = fixtureCoverageStateFor(command.status, interpreterFixtureIds, aotFixtureIdsForCommand, compatJsFixtureIdsForCommand);
   const dispatchSites = dispatchEvidenceByCatalogId.get(command.id) ?? [];
+  const dispatchCoverageSites = dispatchCoverageEvidenceByCatalogId.get(command.id) ?? [];
   const staticConstantSites = staticConstantEvidenceByCatalogId.get(command.id) ?? [];
   const explicitlyMappedDispatch = dispatchCatalogIds.get(command.name) === command.id;
   const identityResolution = duplicateNames.has(command.name)
@@ -283,13 +299,21 @@ const entries = standard.commands.map((command) => {
     ? { kind: "dispatch", schema: dispatchEvidence.schema, fixture: dispatchEvidence.fixture, officialComparison: dispatchEvidence.officialComparison, sites: dispatchSites }
     : staticConstantSites.length > 0
       ? { kind: "static-constant", ...staticConstantProofByCatalogId.get(command.id), sites: staticConstantSites }
+      : dispatchCoverageSites.length > 0
+        ? {
+            kind: "coverage",
+            schema: dispatchCoverageEvidence.schema,
+            fixture: { id: "dispatch-coverage", file: "compat/v3.7.24/dispatch-coverage-evidence.json" },
+            officialComparison: { routes: ["officialSource", "lnakoRun", "lnakoNativeO0"] },
+            sites: dispatchCoverageSites,
+          }
       : null;
   const executionSites = selectedProof?.sites ?? [];
   const executionEvidenceState = selectedProof === null
     ? "unverified"
-    : selectedProof.kind === "static-constant" || dispatchEvidence.attestation === null
-      ? "trace-confirmed-unattested"
-      : "verified";
+    : selectedProof.kind === "dispatch" && dispatchEvidence.attestation !== null
+      ? "verified"
+      : "trace-confirmed-unattested";
   const reason = evidenceReason(
     command.status,
     fixtureCoverageState,
@@ -322,7 +346,7 @@ const entries = standard.commands.map((command) => {
       ? {
           proofSchema: selectedProof.schema,
           fixtureId: selectedProof.fixture.id,
-          siteIds: executionSites.map((site) => site.siteId).sort(),
+          siteIds: executionSites.map((site) => selectedProof.kind === "coverage" ? coverageSiteKey(site) : site.siteId).sort(),
           officialComparison: selectedProof.officialComparison.routes,
           state: executionEvidenceState,
         }
@@ -361,7 +385,7 @@ if (mode === "--generate") {
 } else {
   const actual = await readFile(evidenceOutputPath, "utf8");
   if (actual !== expected) throw new Error(`カタログ証拠レイヤーが最新ではありません: ${evidenceOutputPath}`);
-  validateEvidence(JSON.parse(actual), lock, catalogSourceSha256, nativeFixtureIds, aotFixtureIds, compatJsFixtureIds, standard, matrix, dispatchEvidenceByCatalogId, staticConstantEvidenceByCatalogId);
+  validateEvidence(JSON.parse(actual), lock, catalogSourceSha256, nativeFixtureIds, aotFixtureIds, compatJsFixtureIds, standard, matrix, dispatchEvidenceByCatalogId, dispatchCoverageEvidenceByCatalogId, staticConstantEvidenceByCatalogId);
   console.log(`カタログ証拠レイヤーを検証しました: ${entries.length}件（同名異plugin ${evidence.duplicateNameCount * 2} entry、verified ${evidence.executionEvidenceStates.verified}件 / trace-confirmed-unattested ${evidence.executionEvidenceStates["trace-confirmed-unattested"]}件 / unverified ${evidence.executionEvidenceStates.unverified}件）`);
 }
 
@@ -450,6 +474,8 @@ function evidenceReason(status, coverage, identityResolution, interpreterFixture
       : "catalog IDに対する実行dispatch接続はまだ追跡していない。";
   const proofDescription = proofKind === "static-constant"
     ? "明示catalog ID・global/literal site IDについて、同一fixtureのInterpreter/AOT trace、対応manifest、公式差分の成功を機械検証した"
+    : proofKind === "coverage"
+      ? "dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した"
     : "明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した";
   if (executionEvidenceState === "trace-confirmed-unattested") {
     return `${identity} ${proofDescription}（${executionSites.length} site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。`;
@@ -468,6 +494,171 @@ function duplicateNameSet(entries) {
   const counts = new Map();
   for (const entry of entries) counts.set(entry.name, (counts.get(entry.name) ?? 0) + 1);
   return new Set([...counts].filter(([, count]) => count > 1).map(([name]) => name));
+}
+
+function coverageSiteKey(site) {
+  return `${site.fixtureId}/${site.siteId}`;
+}
+
+function validateDispatchCoverageEvidence(evidence, lock, standard, records, auditScriptSha256) {
+  rejectForbiddenEvidenceFields(evidence);
+  assertKnownObjectKeys(evidence, ["schema", "kind", "baseline", "scope", "provenance", "coverage", "fixtures", "sites"], "dispatch-coverage-evidence");
+  if (evidence.schema !== "lnako.dispatch-coverage.v1" || evidence.kind !== "sampled-unattested-dispatch-audit") {
+    throw new Error("dispatch coverage証拠のschemaまたはkindが不正です");
+  }
+  assertKnownObjectKeys(evidence.baseline, ["tag", "commit"], "dispatch-coverage-evidence.baseline");
+  if (evidence.baseline.tag !== lock.nadesiko3.tag || evidence.baseline.commit !== lock.nadesiko3.commit) {
+    throw new Error("dispatch coverage証拠のbaselineがupstream.lock.jsonと一致しません");
+  }
+
+  assertKnownObjectKeys(evidence.scope, ["catalogEntries", "nativeEntries", "nativeUniqueNames", "fixtureSelection", "fixtureCount", "excludedFixtures", "commandAssociationIsNotExecutionEvidence"], "dispatch-coverage-evidence.scope");
+  if (evidence.scope.catalogEntries !== 527 || evidence.scope.nativeEntries !== 523 || evidence.scope.nativeUniqueNames !== 492 ||
+      typeof evidence.scope.fixtureSelection !== "string" || evidence.scope.fixtureCount !== 30 ||
+      !Array.isArray(evidence.scope.excludedFixtures) || evidence.scope.commandAssociationIsNotExecutionEvidence !== true) {
+    throw new Error("dispatch coverage証拠のscopeが標準527 entryと一致しません");
+  }
+  for (const exclusion of evidence.scope.excludedFixtures) {
+    assertKnownObjectKeys(exclusion, ["key", "reason"], "dispatch-coverage-evidence.scope.excludedFixtures");
+    if (typeof exclusion.key !== "string" || exclusion.key.length === 0 || typeof exclusion.reason !== "string" || exclusion.reason.length === 0) {
+      throw new Error("dispatch coverage証拠の除外fixtureが不正です");
+    }
+  }
+
+  assertKnownObjectKeys(evidence.provenance, ["environment", "oracle", "lnako", "auditScriptSha256"], "dispatch-coverage-evidence.provenance");
+  assertKnownObjectKeys(evidence.provenance.environment, ["platform", "arch", "node"], "dispatch-coverage-evidence.provenance.environment");
+  assertKnownObjectKeys(evidence.provenance.oracle, ["build", "archiveSha256", "cliSha256", "markerSha256", "treeHashAlgorithm", "treeSha256"], "dispatch-coverage-evidence.provenance.oracle");
+  assertKnownObjectKeys(evidence.provenance.lnako, ["binarySha256", "commit", "dirty"], "dispatch-coverage-evidence.provenance.lnako");
+  const hashPattern = /^[0-9a-f]{64}$/;
+  const commitPattern = /^[0-9a-f]{40}$/i;
+  const environment = evidence.provenance.environment;
+  const oracle = evidence.provenance.oracle;
+  const lnako = evidence.provenance.lnako;
+  const platformKey = `${environment.platform}-${environment.arch}`;
+  if (![environment.platform, environment.arch, environment.node].every((value) => typeof value === "string" && value.length > 0) ||
+      !Number.isSafeInteger(oracle.build) || oracle.build < 1 || oracle.build !== lock.nadesiko3.oracleIdentity?.build ||
+      oracle.archiveSha256 !== lock.nadesiko3.archive.sha256 || oracle.cliSha256 !== lock.nadesiko3.oracleIdentity?.cliSha256 ||
+      oracle.markerSha256 !== lock.nadesiko3.oracleIdentity?.markerSha256 || oracle.treeHashAlgorithm !== lock.nadesiko3.oracleIdentity?.treeHashAlgorithm ||
+      oracle.treeSha256 !== lock.nadesiko3.oracleIdentity?.treeSha256ByPlatform?.[platformKey] ||
+      !hashPattern.test(oracle.archiveSha256) || !hashPattern.test(oracle.cliSha256) || !hashPattern.test(oracle.markerSha256) || !hashPattern.test(oracle.treeSha256) ||
+      !hashPattern.test(lnako.binarySha256) || !commitPattern.test(lnako.commit) || lnako.dirty !== false ||
+      !hashPattern.test(evidence.provenance.auditScriptSha256) || evidence.provenance.auditScriptSha256 !== auditScriptSha256) {
+    throw new Error("dispatch coverage証拠のprovenanceが不正です");
+  }
+  const currentGit = readGitState();
+  if (lnako.commit !== currentGit.commit && !isAllowedDispatchEvidenceFollowUp(lnako.commit, currentGit.commit)) {
+    throw new Error("cleanなdispatch coverage証拠のlnako commitが現行HEADと一致しません");
+  }
+
+  const standardById = new Map(standard.commands.map((command) => [command.id, command]));
+  const nativeCommands = standard.commands.filter((command) => command.status === "native");
+  const nativeIds = new Set(nativeCommands.map((command) => command.id));
+  const nativeNames = new Set(nativeCommands.map((command) => command.name));
+  if (!Array.isArray(evidence.fixtures) || evidence.fixtures.length !== evidence.scope.fixtureCount) {
+    throw new Error("dispatch coverage証拠のfixture件数が不正です");
+  }
+  const fixtureReports = new Map();
+  for (const report of evidence.fixtures) {
+    assertKnownObjectKeys(report, ["id", "file", "sourceSha256", "associatedCommandNames", "associationWithoutDispatch", "observedStaticCommandNames", "officialComparison", "interpreter", "aot"], "dispatch-coverage-evidence.fixture");
+    const key = `${report.file}/${report.id}`;
+    if (fixtureReports.has(key)) throw new Error(`dispatch coverage証拠のfixtureが重複しています: ${key}`);
+    const fixture = records.find((candidate) => candidate.id === report.id && candidate.file === report.file);
+    if (fixture === undefined || !hashPattern.test(report.sourceSha256) || report.sourceSha256 !== fixture.sourceSha256 ||
+        !Array.isArray(report.associatedCommandNames) || new Set(report.associatedCommandNames).size !== report.associatedCommandNames.length ||
+        report.associatedCommandNames.some((name) => !standard.commands.some((command) => command.name === name)) ||
+        !Array.isArray(report.observedStaticCommandNames) || !Array.isArray(report.associationWithoutDispatch)) {
+      throw new Error(`dispatch coverage証拠のfixture identityが不正です: ${key}`);
+    }
+    validateCoverageComparison(report.officialComparison, hashPattern, key);
+    assertKnownObjectKeys(report.interpreter, ["dispatchEventCount", "staticSuccessSiteCount", "staticSiteWithoutAotManifestCount", "traceSha256"], `${key}.interpreter`);
+    assertKnownObjectKeys(report.aot, ["manifestEntryCount", "dispatchAttemptCount", "dispatchResultCount", "staticSuccessSiteCount", "failedDispatchCount", "traceSha256", "compileManifestSha256"], `${key}.aot`);
+    if (!Number.isSafeInteger(report.interpreter.dispatchEventCount) || report.interpreter.dispatchEventCount < 1 ||
+        !Number.isSafeInteger(report.interpreter.staticSuccessSiteCount) || report.interpreter.staticSuccessSiteCount < 1 ||
+        !Number.isSafeInteger(report.interpreter.staticSiteWithoutAotManifestCount) || report.interpreter.staticSiteWithoutAotManifestCount < 0 ||
+        !hashPattern.test(report.interpreter.traceSha256) ||
+        !Number.isSafeInteger(report.aot.manifestEntryCount) || report.aot.manifestEntryCount < 1 ||
+        !Number.isSafeInteger(report.aot.dispatchAttemptCount) || report.aot.dispatchAttemptCount < 1 ||
+        report.aot.dispatchAttemptCount !== report.aot.dispatchResultCount ||
+        !Number.isSafeInteger(report.aot.staticSuccessSiteCount) || report.aot.staticSuccessSiteCount < 1 ||
+        !Number.isSafeInteger(report.aot.failedDispatchCount) || report.aot.failedDispatchCount < 0 ||
+        !hashPattern.test(report.aot.traceSha256) || !hashPattern.test(report.aot.compileManifestSha256)) {
+      throw new Error(`dispatch coverage証拠のfixture trace件数が不正です: ${key}`);
+    }
+    fixtureReports.set(key, report);
+  }
+
+  assertKnownObjectKeys(evidence.coverage, ["unambiguousObservedNativeEntries", "unambiguousObservedNativeUniqueNames", "unambiguousObservedNativeEntryRatio", "unambiguousObservedNativeUniqueNameRatio", "unobservedNativeEntryIds", "unobservedNativeNames", "unresolvedObservedSites", "unresolvedObservedNames", "associationWithoutDispatchCount", "associationWithoutDispatch"], "dispatch-coverage-evidence.coverage");
+  if (!Array.isArray(evidence.sites) || evidence.sites.length === 0) throw new Error("dispatch coverage証拠にsiteがありません");
+  const siteKeys = new Set();
+  const observedIds = new Set();
+  const observedNames = new Set();
+  for (const site of evidence.sites) {
+    assertKnownObjectKeys(site, ["fixtureId", "file", "siteId", "sourceName", "canonicalOpcode", "opcode", "route", "runtimeRoutes", "interpreterRoutes", "interpreterCount", "aotCount", "catalogId", "name", "plugin", "catalogStatus", "resolution", "selectedOracleEquivalent"], "dispatch-coverage-evidence.site");
+    const hasStringIdentity = ["fixtureId", "file", "siteId", "sourceName", "canonicalOpcode", "route", "catalogId", "name", "plugin", "catalogStatus", "resolution"]
+      .every((key) => typeof site[key] === "string");
+    const siteKey = hasStringIdentity ? coverageSiteKey(site) : "<invalid-site>";
+    const fixtureKey = typeof site.file === "string" && typeof site.fixtureId === "string" ? `${site.file}/${site.fixtureId}` : "<invalid-fixture>";
+    if (!hasStringIdentity || !fixtureReports.has(fixtureKey) || site.file.length === 0 || site.fixtureId.length === 0 || !/^0x[0-9a-f]{16}$/.test(site.siteId) ||
+        siteKeys.has(siteKey) || site.sourceName !== site.name || site.canonicalOpcode.length === 0 || !Number.isInteger(site.opcode) || site.opcode < 0 || site.opcode > 0xffff ||
+        site.route.length === 0 || !Array.isArray(site.runtimeRoutes) || site.runtimeRoutes.length === 0 || site.runtimeRoutes.some((route) => typeof route !== "string" || route.length === 0) ||
+        !Array.isArray(site.interpreterRoutes) || site.interpreterRoutes.length === 0 || site.interpreterRoutes.some((route) => typeof route !== "string" || route.length === 0) ||
+        !Number.isSafeInteger(site.interpreterCount) || site.interpreterCount < 1 || !Number.isSafeInteger(site.aotCount) || site.aotCount < 1 ||
+        site.catalogStatus !== "native" || site.resolution !== "unique-name" || site.selectedOracleEquivalent !== true) {
+      throw new Error(`dispatch coverage証拠のsite metadataが不正です: ${siteKey}`);
+    }
+    const command = standardById.get(site.catalogId);
+    if (command === undefined || !nativeIds.has(command.id) || command.name !== site.name || command.plugin !== site.plugin || site.catalogStatus !== "native") {
+      throw new Error(`dispatch coverage証拠のcatalog identityが不正です: ${siteKey}`);
+    }
+    siteKeys.add(siteKey);
+    observedIds.add(site.catalogId);
+    observedNames.add(site.name);
+  }
+  const expectedUnobservedIds = nativeCommands.filter((command) => !observedIds.has(command.id)).map((command) => command.id);
+  const expectedUnobservedNames = nativeCommands.map((command) => command.name).filter((name, index, values) => values.indexOf(name) === index && !observedNames.has(name));
+  if (evidence.coverage.unambiguousObservedNativeEntries !== observedIds.size || evidence.coverage.unambiguousObservedNativeUniqueNames !== observedNames.size ||
+      evidence.coverage.unambiguousObservedNativeEntryRatio !== observedIds.size / nativeCommands.length ||
+      evidence.coverage.unambiguousObservedNativeUniqueNameRatio !== observedNames.size / nativeNames.size ||
+      JSON.stringify(evidence.coverage.unobservedNativeEntryIds) !== JSON.stringify(expectedUnobservedIds) ||
+      JSON.stringify(evidence.coverage.unobservedNativeNames) !== JSON.stringify(expectedUnobservedNames) ||
+      !Number.isSafeInteger(evidence.coverage.associationWithoutDispatchCount) || evidence.coverage.associationWithoutDispatchCount < 0 ||
+      !Array.isArray(evidence.coverage.unresolvedObservedSites) || !Array.isArray(evidence.coverage.unresolvedObservedNames) ||
+      !Array.isArray(evidence.coverage.associationWithoutDispatch) || evidence.coverage.associationWithoutDispatch.length !== evidence.coverage.associationWithoutDispatchCount) {
+    throw new Error("dispatch coverage証拠の集計がsite集合と一致しません");
+  }
+}
+
+function validateCoverageComparison(comparison, hashPattern, fixtureKey) {
+  assertKnownObjectKeys(comparison, ["oracle", "routes", "selectedOracleEquivalent", "officialGeneratedAvailable", "officialGeneratedRouteUnavailableReason", "officialRoutesEquivalent", "results"], `${fixtureKey}.officialComparison`);
+  const expectedRoutes = ["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0"];
+  if (comparison.oracle !== "officialSource" || JSON.stringify(comparison.routes) !== JSON.stringify(expectedRoutes) || comparison.selectedOracleEquivalent !== true ||
+      typeof comparison.officialGeneratedAvailable !== "boolean" || (comparison.officialGeneratedAvailable && comparison.officialGeneratedRouteUnavailableReason !== null) ||
+      (!comparison.officialGeneratedAvailable && typeof comparison.officialGeneratedRouteUnavailableReason !== "string") ||
+      typeof comparison.officialRoutesEquivalent !== "boolean") {
+    throw new Error(`dispatch coverage証拠の公式差分metadataが不正です: ${fixtureKey}`);
+  }
+  assertKnownObjectKeys(comparison.results, expectedRoutes, `${fixtureKey}.officialComparison.results`);
+  const source = comparison.results.officialSource;
+  for (const route of expectedRoutes) {
+    const result = comparison.results[route];
+    assertKnownObjectKeys(result, ["status", "signal", "stdoutSha256", "stderrSha256"], `${fixtureKey}.officialComparison.results.${route}`);
+    if (!Number.isInteger(result.status) || !hashPattern.test(result.stdoutSha256) || !hashPattern.test(result.stderrSha256)) {
+      throw new Error(`dispatch coverage証拠の公式差分結果が不正です: ${fixtureKey}/${route}`);
+    }
+  }
+  for (const route of ["officialSource", "lnakoRun", "lnakoNativeO0"]) {
+    const result = comparison.results[route];
+    if (result.status !== 0 || result.signal !== null || result.stdoutSha256 !== source.stdoutSha256 || result.stderrSha256 !== source.stderrSha256) {
+      throw new Error(`dispatch coverage証拠のsource差分結果が不一致です: ${fixtureKey}/${route}`);
+    }
+  }
+  const generated = comparison.results.officialGenerated;
+  if (comparison.officialGeneratedAvailable) {
+    if (generated.status !== 0 || generated.signal !== null) {
+      throw new Error(`dispatch coverage証拠のgenerated成功状態が不正です: ${fixtureKey}`);
+    }
+  } else if (generated.status === 0 || generated.signal !== null) {
+    throw new Error(`dispatch coverage証拠のgenerated unavailable状態が不正です: ${fixtureKey}`);
+  }
 }
 
 function duplicateNameCount(entries) {
@@ -846,7 +1037,7 @@ function expectedStaticConstantPlugin(definition, name) {
   return definition.commandPlugins?.[name] ?? definition.plugin;
 }
 
-function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, aotFixtureIds, compatJsFixtureIds, standard, matrix, dispatchEvidenceByCatalogId, staticConstantEvidenceByCatalogId) {
+function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, aotFixtureIds, compatJsFixtureIds, standard, matrix, dispatchEvidenceByCatalogId, dispatchCoverageEvidenceByCatalogId, staticConstantEvidenceByCatalogId) {
   rejectForbiddenEvidenceFields(actual);
   assertKnownObjectKeys(actual, ["schemaVersion", "baseline", "sourceSha256", "commandCount", "duplicateNameCount", "fixtureInventory", "fixtureCoverageStates", "executionEvidenceStates", "entries"], "evidence");
   assertKnownObjectKeys(actual.baseline, ["tag", "commit"], "evidence.baseline");
@@ -870,7 +1061,7 @@ function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, a
     if (!allowedCoverage.has(entry.fixtureCoverageState)) throw new Error(`fixtureCoverageStateが不正です: ${entry.id}`);
     if (!new Set(["verified", "trace-confirmed-unattested", "unverified"]).has(entry.executionEvidenceState)) throw new Error(`executionEvidenceStateが不正です: ${entry.id}`);
     const hasStaticConstantProof = (staticConstantEvidenceByCatalogId.get(entry.id) ?? []).length > 0;
-    const hasDispatchProof = (dispatchEvidenceByCatalogId.get(entry.id) ?? []).length > 0;
+    const hasDispatchProof = (dispatchEvidenceByCatalogId.get(entry.id) ?? []).length > 0 || (dispatchCoverageEvidenceByCatalogId.get(entry.id) ?? []).length > 0;
     const expectedIdentity = duplicateNames.has(entry.name)
       ? hasStaticConstantProof || hasDispatchProof ? "explicit-catalog-id" : "ambiguous-name"
       : "unique-name";
@@ -890,19 +1081,26 @@ function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, a
       assertKnownObjectKeys(entry.executionEvidence, ["proofSchema", "fixtureId", "siteIds", "officialComparison", "state"], `evidence.entries.${entry.id}.executionEvidence`);
       const proof = entry.executionEvidence;
       const isDispatchProof = proof?.proofSchema === "lnako.dispatch-evidence.v2";
+      const isDispatchCoverageProof = proof?.proofSchema === "lnako.dispatch-coverage.v1";
       const isStaticConstantProof = proof?.proofSchema === "lnako.static-constant-evidence.v2";
       const proofSites = isDispatchProof
         ? dispatchEvidenceByCatalogId.get(entry.id) ?? []
+        : isDispatchCoverageProof
+          ? dispatchCoverageEvidenceByCatalogId.get(entry.id) ?? []
         : isStaticConstantProof
           ? staticConstantEvidenceByCatalogId.get(entry.id) ?? []
           : [];
-      const expectedSiteIds = proofSites.map((site) => site.siteId).sort();
+      const expectedSiteIds = proofSites.map((site) => isDispatchCoverageProof ? coverageSiteKey(site) : site.siteId).sort();
       const validStaticState = isStaticConstantProof && entry.executionEvidenceState === "trace-confirmed-unattested" && entry.status === "native" && matrix.entries.find((candidate) => candidate.id === entry.id)?.type === "定数";
       const validDispatchState = isDispatchProof && ["verified", "trace-confirmed-unattested"].includes(entry.executionEvidenceState);
-      if (!new Set(["unique-name", "explicit-catalog-id"]).has(entry.identityResolution) || (!validDispatchState && !validStaticState) ||
-          (isDispatchProof && proof.fixtureId !== "native-dispatch-commands") || (isStaticConstantProof && !staticConstantFixtureIds.has(proof.fixtureId)) ||
+      const validDispatchCoverageState = isDispatchCoverageProof && entry.executionEvidenceState === "trace-confirmed-unattested" && entry.status === "native";
+      if (!new Set(["unique-name", "explicit-catalog-id"]).has(entry.identityResolution) || (!validDispatchState && !validDispatchCoverageState && !validStaticState) ||
+          (isDispatchProof && proof.fixtureId !== "native-dispatch-commands") ||
+          (isDispatchCoverageProof && proof.fixtureId !== "dispatch-coverage") ||
+          (isStaticConstantProof && !staticConstantFixtureIds.has(proof.fixtureId)) ||
           proof.state !== entry.executionEvidenceState || !Array.isArray(proof.siteIds) || proof.siteIds.length === 0 || JSON.stringify(proof.siteIds) !== JSON.stringify(expectedSiteIds) ||
-          !Array.isArray(proof.officialComparison) || proof.officialComparison.length === 0) {
+          !Array.isArray(proof.officialComparison) || proof.officialComparison.length === 0 ||
+          (isDispatchCoverageProof && JSON.stringify(proof.officialComparison) !== JSON.stringify(["officialSource", "lnakoRun", "lnakoNativeO0"]))) {
         throw new Error(`dispatch証拠付きentryが不正です: ${entry.id}`);
       }
     } else if (entry.executionEvidence !== null) {
