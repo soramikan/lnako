@@ -1,7 +1,7 @@
 import { link, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
@@ -25,7 +25,6 @@ const noBuild = arguments_.includes("--no-build");
 // Official source, generated JavaScript, and lnako use the same fixed clock
 // and PRNG inputs so nondeterministic builtins can be compared byte-for-byte.
 const fixedHostArguments = ["--import", pathToFileURL(resolve(root, "tools/oracle/fixed_host.mjs")).href];
-const oracleRoot = resolve(process.env.NADESIKO3_ORACLE ?? resolve(root, ".cache/oracle/nadesiko3-3.7.24"));
 if (evidenceOutput !== null) {
   try {
     await readFile(evidenceOutput);
@@ -55,7 +54,7 @@ try {
   const compileManifest = resolve(temporary, "compile-manifest.jsonl");
   const nodeSource = resolve(temporary, "node-route.nako3");
   const nodeTrace = resolve(temporary, "node-route.jsonl");
-  await writeFile(source, replaceNativePluginPlaceholders(fixture.source, oracleRoot, temporary), "utf8");
+  await writeFile(source, fixture.source, "utf8");
   await writeFile(nodeSource, nodeFixture.source, "utf8");
 
   const baseEnvironment = {
@@ -163,17 +162,6 @@ function buildCompiler() {
     maxBuffer: 16 * 1024 * 1024,
   });
   assertSuccess("lnakoビルド", result);
-}
-
-function replaceNativePluginPlaceholders(source, oracleRoot, fixtureDirectory) {
-  const replacements = {
-    "${PLUGIN_CANIUSE}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_caniuse.mjs")).replaceAll("\\", "/"),
-    "${PLUGIN_KANSUJI}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_kansuji.mjs")).replaceAll("\\", "/"),
-    "${PLUGIN_MARKUP}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_markup.mjs")).replaceAll("\\", "/"),
-    "${PLUGIN_CSV}": relative(fixtureDirectory, resolve(oracleRoot, "core/src/plugin_csv.mjs")).replaceAll("\\", "/"),
-    "${PLUGIN_TOML}": relative(fixtureDirectory, resolve(oracleRoot, "core/src/plugin_toml.mjs")).replaceAll("\\", "/"),
-  };
-  return Object.entries(replacements).reduce((result, [placeholder, path]) => result.replaceAll(placeholder, path), source);
 }
 
 function run(command, arguments_, env, cwd) {
