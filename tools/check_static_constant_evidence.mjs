@@ -37,6 +37,11 @@ const staticConstantFixtureDefinitions = {
     literalNames: new Set(),
     plugin: "plugin_node",
   },
+  "native-node-command-line-constants": {
+    globalReadCount: 3,
+    literalNames: new Set(),
+    plugin: "plugin_node",
+  },
 };
 const fixtureDefinition = staticConstantFixtureDefinitions[fixtureId];
 if (fixtureDefinition === undefined) throw new Error(`静的定数fixtureの定義がありません: ${fixtureId}`);
