@@ -35,6 +35,7 @@ pub const ManifestCall = struct {
 };
 
 const manifest_schema = "lnako.aot.builtin-manifest.v1";
+const global_manifest_schema = "lnako.aot.global-manifest.v1";
 
 const ManifestHeader = struct {
     schema: []const u8,
@@ -64,6 +65,31 @@ const ManifestEntry = struct {
 };
 
 const ManifestComplete = struct {
+    schema: []const u8,
+    phase: []const u8,
+    kind: []const u8,
+    complete: bool,
+    entryCount: usize,
+};
+
+const GlobalManifestHeader = struct {
+    schema: []const u8,
+    phase: []const u8,
+    sourcePath: []const u8,
+    siteIdEncoding: []const u8,
+};
+
+const GlobalManifestEntry = struct {
+    schema: []const u8,
+    phase: []const u8,
+    kind: []const u8,
+    name: []const u8,
+    siteId: []const u8,
+    function: []const u8,
+    source: ManifestSource,
+};
+
+const GlobalManifestComplete = struct {
     schema: []const u8,
     phase: []const u8,
     kind: []const u8,
@@ -169,6 +195,80 @@ pub fn completeBuiltinManifest(io: std.Io, manifest_path: []const u8, entry_coun
     try file_writer.seekTo(stat.size);
     try writeManifestLine(&file_writer.interface, ManifestComplete{
         .schema = manifest_schema,
+        .phase = "pre-opt",
+        .kind = "complete",
+        .complete = true,
+        .entryCount = entry_count,
+    });
+    try file_writer.interface.flush();
+}
+
+/// Writes a separate JSONL manifest for statically lowered global reads. It is
+/// intentionally not part of the builtin manifest because a constant lookup
+/// is a load, not a builtin dispatch call.
+pub fn writeGlobalManifest(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, source_path: []const u8, manifest_path: []const u8) !usize {
+    if (!std.fs.path.isAbsolute(manifest_path)) return error.ManifestPathMustBeAbsolute;
+
+    var file = try std.Io.Dir.createFileAbsolute(io, manifest_path, .{ .exclusive = true });
+    var keep_file = true;
+    defer {
+        file.close(io);
+        if (keep_file) std.Io.Dir.deleteFileAbsolute(io, manifest_path) catch {};
+    }
+
+    var buffer: [4096]u8 = undefined;
+    var file_writer = file.writer(io, &buffer);
+    const writer = &file_writer.interface;
+    var seen_site_ids: std.AutoHashMapUnmanaged(u64, void) = .empty;
+    defer seen_site_ids.deinit(allocator);
+    try writeManifestLine(writer, GlobalManifestHeader{
+        .schema = global_manifest_schema,
+        .phase = "pre-opt",
+        .sourcePath = source_path,
+        .siteIdEncoding = "u64-hex16",
+    });
+    var entry_count: usize = 0;
+    for (program.functions) |function| {
+        for (function.blocks) |block| {
+            for (block.instructions) |instruction| {
+                if (instruction.opcode != .load_global) continue;
+                const site_id = instruction.global_site_id orelse return error.MissingGlobalSiteId;
+                if (seen_site_ids.contains(site_id)) return error.ManifestSiteIdCollision;
+                try seen_site_ids.put(allocator, site_id, {});
+                var site_id_text: [18]u8 = undefined;
+                entry_count += 1;
+                try writeManifestLine(writer, GlobalManifestEntry{
+                    .schema = global_manifest_schema,
+                    .phase = "pre-opt",
+                    .kind = "global-load",
+                    .name = instruction.name,
+                    .siteId = formatSiteId(&site_id_text, site_id),
+                    .function = function.name,
+                    .source = .{
+                        .line = instruction.span.line + 1,
+                        .column = @max(@as(usize, 1), instruction.span.column),
+                        .sourceStart = instruction.span.source_start,
+                        .sourceEnd = instruction.span.source_end,
+                    },
+                });
+            }
+        }
+    }
+    try writer.flush();
+    keep_file = false;
+    return entry_count;
+}
+
+pub fn completeGlobalManifest(io: std.Io, manifest_path: []const u8, entry_count: usize) !void {
+    if (!std.fs.path.isAbsolute(manifest_path)) return error.ManifestPathMustBeAbsolute;
+    var file = try std.Io.Dir.openFileAbsolute(io, manifest_path, .{ .mode = .read_write });
+    defer file.close(io);
+    const stat = try file.stat(io);
+    var buffer: [1024]u8 = undefined;
+    var file_writer = file.writer(io, &buffer);
+    try file_writer.seekTo(stat.size);
+    try writeManifestLine(&file_writer.interface, GlobalManifestComplete{
+        .schema = global_manifest_schema,
         .phase = "pre-opt",
         .kind = "complete",
         .complete = true,
@@ -387,6 +487,7 @@ const Emitter = struct {
                 "declare i64 @lnako_aot_dispatch_display_begin(i64)\n" ++
                 "declare i64 @lnako_aot_dispatch_display_begin_with_epoch(i64, ptr)\n" ++
                 "declare void @lnako_aot_dispatch_result(i64, i64, i64)\n" ++
+                "declare void @lnako_aot_global_read_site(i64)\n" ++
                 "declare i32 @printf(ptr, ...)\n" ++
                 "declare i32 @puts(ptr)\n" ++
                 "declare double @llvm.pow.f64(double, double)\n" ++
@@ -827,6 +928,10 @@ const Emitter = struct {
             },
             .load_global => {
                 const index = self.globalIndex(instruction.name) orelse return error.UnknownGlobal;
+                if (instruction.global_site_id) |site_id| {
+                    try self.output.writer.print("  call void @lnako_aot_global_read_site(i64 {d})", .{site_id});
+                    try self.debugSuffix(instruction.span, scope);
+                }
                 try self.output.writer.print("  %v{d} = load %lnako.Value, ptr @lnako.global.{d}", .{ result orelse return error.MissingInstructionResult, index });
                 try self.debugSuffix(instruction.span, scope);
             },
@@ -2668,6 +2773,25 @@ test "site-aware builtin emissionはsite ID欠落を拒否する" {
     };
     try std.testing.expect(found_builtin);
     try std.testing.expectError(error.MissingDispatchSiteId, generate(std.testing.allocator, program, "missing-site.nako3", false));
+}
+
+test "global loadを専用AOT trace ABIへ出力する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "PIを表示\n", "global-trace.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "global-trace.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "global-trace.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    var module = try generate(std.testing.allocator, program, "global-trace.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_global_read_site(i64)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_global_read_site(i64 1)") != null);
 }
 
 test "参照されたスカラーシステム定数をAOTグローバルへ初期化する" {

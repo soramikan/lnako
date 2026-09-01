@@ -18,6 +18,7 @@ pub const Options = struct {
     llvm_library: ?[]const u8 = null,
     runtime_library: ?[]const u8 = null,
     compile_manifest_path: ?[]const u8 = null,
+    global_manifest_path: ?[]const u8 = null,
     trace: bool = false,
 };
 
@@ -31,7 +32,13 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
     var manifest_entry_count: ?usize = null;
     var manifest_created = false;
     var manifest_complete = false;
+    var global_manifest_entry_count: ?usize = null;
+    var global_manifest_created = false;
+    var global_manifest_complete = false;
     defer if (manifest_created and !manifest_complete) if (options.compile_manifest_path) |manifest_path| {
+        std.Io.Dir.deleteFileAbsolute(io, manifest_path) catch {};
+    };
+    defer if (global_manifest_created and !global_manifest_complete) if (options.global_manifest_path) |manifest_path| {
         std.Io.Dir.deleteFileAbsolute(io, manifest_path) catch {};
     };
     if (options.compile_manifest_path) |manifest_path| {
@@ -40,6 +47,13 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
             return error.CompileManifestFailed;
         };
         manifest_created = true;
+    }
+    if (options.global_manifest_path) |manifest_path| {
+        global_manifest_entry_count = module_mod.writeGlobalManifest(allocator, io, program, options.source_path, manifest_path) catch |failure| {
+            try diagnostics.print("AOT global manifest生成エラー: {s}\n", .{@errorName(failure)});
+            return error.CompileManifestFailed;
+        };
+        global_manifest_created = true;
     }
     var optimized_program: ?ir.Program = null;
     defer if (optimized_program) |*owned| owned.deinit();
@@ -161,6 +175,13 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
             return error.CompileManifestFailed;
         };
         manifest_complete = true;
+    }
+    if (global_manifest_entry_count) |entry_count| {
+        module_mod.completeGlobalManifest(io, options.global_manifest_path.?, entry_count) catch |failure| {
+            try diagnostics.print("AOT global manifest完了記録エラー: {s}\n", .{@errorName(failure)});
+            return error.CompileManifestFailed;
+        };
+        global_manifest_complete = true;
     }
 }
 

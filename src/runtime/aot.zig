@@ -168,6 +168,97 @@ const DispatchTrace = struct {
     }
 };
 
+/// Global-read tracing is a separate opt-in channel from builtin dispatch
+/// tracing. It records only that a statically identified global load executed;
+/// names and values remain in the compile manifest and never cross the ABI.
+const GlobalTrace = struct {
+    file: ?*std.c.FILE = null,
+    initialized: bool = false,
+    disabled: bool = false,
+    sequence: u64 = 0,
+    locked: std.atomic.Value(bool) = .init(false),
+
+    fn lock(self: *GlobalTrace) void {
+        while (self.locked.swap(true, .acquire)) std.atomic.spinLoopHint();
+    }
+
+    fn unlock(self: *GlobalTrace) void {
+        self.locked.store(false, .release);
+    }
+
+    fn deinit(self: *GlobalTrace) void {
+        self.finish();
+        self.lock();
+        defer self.unlock();
+        if (self.file) |file| _ = std.c.fclose(file);
+        self.file = null;
+    }
+
+    fn ensureFile(self: *GlobalTrace) ?*std.c.FILE {
+        if (self.disabled) return null;
+        if (!self.initialized) {
+            self.initialized = true;
+            const path = std.c.getenv("LNAKO_GLOBAL_TRACE") orelse return null;
+            if (path[0] == 0) return null;
+            self.file = std.c.fopen(path, "wbx") orelse {
+                self.disabled = true;
+                return null;
+            };
+        }
+        return self.file;
+    }
+
+    fn writeLine(self: *GlobalTrace, file: *std.c.FILE, rendered: []const u8) bool {
+        if (std.c.fwrite(rendered.ptr, 1, rendered.len, file) != rendered.len or fflush(file) != 0) {
+            _ = std.c.fclose(file);
+            self.file = null;
+            self.disabled = true;
+            return false;
+        }
+        self.sequence += 1;
+        return true;
+    }
+
+    fn record(self: *GlobalTrace, site_id: u64) void {
+        self.lock();
+        defer self.unlock();
+        const file = self.ensureFile() orelse return;
+        var line: [256]u8 = undefined;
+        const rendered = std.fmt.bufPrint(
+            &line,
+            "{{\"schema\":1,\"engine\":\"aot\",\"phase\":\"global-read\",\"seq\":{d},\"siteId\":\"0x{x:0>16}\",\"success\":true}}\n",
+            .{ self.sequence, site_id },
+        ) catch {
+            self.disabled = true;
+            return;
+        };
+        _ = self.writeLine(file, rendered);
+    }
+
+    fn finish(self: *GlobalTrace) void {
+        self.lock();
+        defer self.unlock();
+        if (self.disabled) return;
+        const file = if (self.initialized) self.file orelse return else blk: {
+            self.initialized = true;
+            const path = std.c.getenv("LNAKO_GLOBAL_TRACE") orelse return;
+            if (path[0] == 0) return;
+            self.file = std.c.fopen(path, "wbx") orelse {
+                self.disabled = true;
+                return;
+            };
+            break :blk self.file;
+        } orelse return;
+        var line: [160]u8 = undefined;
+        const rendered = std.fmt.bufPrint(
+            &line,
+            "{{\"schema\":1,\"engine\":\"aot\",\"phase\":\"trace-end\",\"seq\":{d},\"dropped\":0}}\n",
+            .{self.sequence},
+        ) catch return;
+        if (self.writeLine(file, rendered)) self.disabled = true;
+    }
+};
+
 pub const Value = extern struct {
     tag: u8 = @intFromEnum(Tag.undefined),
     payload: u64 = 0,
@@ -737,6 +828,7 @@ const Runtime = struct {
     courtesy_level: f64 = std.math.nan(f64),
     print_pool: std.ArrayList(u8) = .empty,
     dispatch_trace: DispatchTrace = .{},
+    global_trace: GlobalTrace = .{},
     random_state: u64 = 0,
     clock_milliseconds: ?i64 = null,
     monotonic_milliseconds: ?f64 = null,
@@ -785,6 +877,7 @@ const Runtime = struct {
 
     fn deinit(self: *Runtime) void {
         self.dispatch_trace.deinit();
+        self.global_trace.deinit();
         const io = std.Io.Threaded.global_single_threaded.io();
         if (self.http_connection) |*stream| stream.close(io);
         for (self.held_http_connections.items) |*stream| stream.close(io);
@@ -6407,6 +6500,13 @@ pub export fn lnako_aot_runtime_init() callconv(.c) c_int {
         active_runtime = runtime;
     }
     return 0;
+}
+
+/// Records execution of one statically identified global load. The generated
+/// module supplies the ID from its pre-optimization global manifest.
+pub export fn lnako_aot_global_read_site(site_id: u64) callconv(.c) void {
+    const runtime = if (active_runtime) |*active| active else return;
+    runtime.global_trace.record(site_id);
 }
 
 /// Registers one absolute native-plugin path embedded by the LLVM module.

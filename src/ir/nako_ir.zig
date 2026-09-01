@@ -57,6 +57,10 @@ pub const Instruction = struct {
     /// while lowering, before optimization, and is intentionally independent
     /// of source paths so it can join compile and runtime traces.
     site_id: ?u64 = null,
+    /// Stable identity for a statically named global read. Global reads use a
+    /// separate namespace from builtin dispatch sites so adding this evidence
+    /// never changes existing dispatch trace identities.
+    global_site_id: ?u64 = null,
     is_builtin_call: bool = false,
     operands: []ValueId = &.{},
     phi_incoming: []PhiIncoming = &.{},

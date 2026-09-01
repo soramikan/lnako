@@ -48,12 +48,19 @@ pub fn lower(backing_allocator: std.mem.Allocator, hir_program: hir.Program) !ir
 /// depend on absolute paths or allocator addresses.
 fn assignDispatchSiteIds(function: *ir.Function) !void {
     var ordinal: u64 = 0;
+    var global_ordinal: u64 = 0;
     for (function.blocks) |*block| {
         for (block.instructions) |*instruction| {
-            if (instruction.opcode != .call or instruction.direct_callee != null or !instruction.is_builtin_call) continue;
-            ordinal += 1;
-            if (ordinal > std.math.maxInt(u32)) return error.DispatchSiteIdOverflow;
-            instruction.site_id = (@as(u64, function.id) << 32) | ordinal;
+            if (instruction.opcode == .call and instruction.direct_callee == null and instruction.is_builtin_call) {
+                ordinal += 1;
+                if (ordinal > std.math.maxInt(u32)) return error.DispatchSiteIdOverflow;
+                instruction.site_id = (@as(u64, function.id) << 32) | ordinal;
+            }
+            if (instruction.opcode == .load_global) {
+                global_ordinal += 1;
+                if (global_ordinal > std.math.maxInt(u32)) return error.GlobalSiteIdOverflow;
+                instruction.global_site_id = (@as(u64, function.id) << 32) | global_ordinal;
+            }
         }
     }
 }
@@ -708,6 +715,45 @@ test "dispatch site IDはパス非依存で一意かつclone後も保持する" 
         clone_count += 1;
     };
     try std.testing.expectEqual(first_count, clone_count);
+}
+
+test "builtin dispatchとglobal readのsite IDを別namespaceで安定化する" {
+    const parser = @import("../frontend/parser.zig");
+    const semantic = @import("../semantic/analyzer.zig");
+    var parsed = try parser.parse(std.testing.allocator, "PIを表示\n永遠を表示\n", "global-sites.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "global-sites.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "global-sites.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+
+    const entry = program.findFunction("main__$entry").?;
+    var dispatch_sites: [2]u64 = undefined;
+    var global_sites: [2]u64 = undefined;
+    var dispatch_count: usize = 0;
+    var global_count: usize = 0;
+    for (entry.blocks) |block| for (block.instructions) |instruction| {
+        if (instruction.site_id) |site_id| {
+            try std.testing.expectEqual(ir.Opcode.call, instruction.opcode);
+            try std.testing.expect(dispatch_count < dispatch_sites.len);
+            dispatch_sites[dispatch_count] = site_id;
+            dispatch_count += 1;
+        }
+        if (instruction.global_site_id) |site_id| {
+            try std.testing.expectEqual(ir.Opcode.load_global, instruction.opcode);
+            try std.testing.expect(global_count < global_sites.len);
+            global_sites[global_count] = site_id;
+            global_count += 1;
+        }
+    };
+    try std.testing.expectEqual(@as(usize, 2), dispatch_count);
+    try std.testing.expectEqual(@as(usize, 2), global_count);
+    try std.testing.expectEqual(@as(u64, 1), dispatch_sites[0]);
+    try std.testing.expectEqual(@as(u64, 2), dispatch_sites[1]);
+    try std.testing.expectEqual(@as(u64, 1), global_sites[0]);
+    try std.testing.expectEqual(@as(u64, 2), global_sites[1]);
 }
 
 test "利用者関数名のbuiltin衝突と動的plugin命令にはsite IDを付けない" {
