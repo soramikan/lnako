@@ -1,6 +1,7 @@
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { execFile, spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
@@ -54,7 +55,7 @@ if (globalReadNames.length !== 17 || literalNames.length !== 7) {
 
 if (!noBuild) buildLnako();
 await access(compiler);
-const temporary = await mkdtemp(join(root, ".tmp-lnako-static-constant-"));
+const temporary = await mkdtemp(join(tmpdir(), "lnako-static-constant-"));
 try {
   const sourcePath = resolve(temporary, "scalar-constants.nako3");
   const generatedJavaScript = resolve(temporary, "scalar-constants.mjs");
