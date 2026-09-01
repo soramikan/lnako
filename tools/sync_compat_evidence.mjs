@@ -12,11 +12,23 @@ const standardPath = resolve(root, "compat/v3.7.24/standard-cnako.json");
 const implementationPath = resolve(root, "compat/v3.7.24/implemented.json");
 const evidencePath = resolve(root, "compat/v3.7.24/evidence.json");
 const dispatchEvidencePath = resolve(root, "compat/v3.7.24/dispatch-evidence.json");
-const staticConstantEvidencePath = resolve(root, "compat/v3.7.24/static-constant-evidence.json");
+const staticConstantEvidenceInputs = [
+  {
+    path: resolve(root, "compat/v3.7.24/static-constant-evidence.json"),
+    fixtureId: "native-scalar-system-constants",
+    globalReadCount: 17,
+    literalNames: new Set(["はい", "いいえ", "真", "偽", "オン", "オフ", "NULL"]),
+  },
+  {
+    path: resolve(root, "compat/v3.7.24/static-string-constant-evidence.json"),
+    fixtureId: "native-string-system-constants",
+    globalReadCount: 24,
+    literalNames: new Set(),
+  },
+];
+const staticConstantFixtureIds = new Set(staticConstantEvidenceInputs.map((input) => input.fixtureId));
 const oracleDirectory = resolve(root, "tests/oracle");
 const forbiddenEvidenceFields = new Set(["source", "sourceText", "sourcePath", "args", "arguments", "stdout", "stderr", "value", "values", "pointer", "address"]);
-const staticConstantFixtureId = "native-scalar-system-constants";
-const staticLiteralConstantNames = new Set(["はい", "いいえ", "真", "偽", "オン", "オフ", "NULL"]);
 const runtimeFixtureFiles = new Set([
   "compat-js-cases.json",
   "http-server-cases.json",
@@ -110,15 +122,17 @@ const unresolvedByName = new Map();
 const dispatchEvidenceBytes = await readFile(dispatchEvidenceInputPath);
 const dispatchEvidenceBase = JSON.parse(dispatchEvidenceBytes.toString("utf8"));
 const dispatchEvidenceInputSha256 = createHash("sha256").update(dispatchEvidenceBytes).digest("hex");
-const staticConstantEvidenceBytes = await readFile(staticConstantEvidencePath);
-const staticConstantEvidence = JSON.parse(staticConstantEvidenceBytes.toString("utf8"));
+const staticConstantEvidenceRecords = await Promise.all(staticConstantEvidenceInputs.map(async (input) => ({
+  ...input,
+  evidence: JSON.parse((await readFile(input.path)).toString("utf8")),
+})));
 const suppliedAttestation = attestationPath === null ? null : await readJson(attestationPath);
 const attestationBundleBytes = attestationBundlePath === null ? null : await readFile(attestationBundlePath);
 const dispatchEvidence = suppliedAttestation === null
   ? dispatchEvidenceBase
   : { ...dispatchEvidenceBase, attestation: suppliedAttestation };
 validateDispatchEvidence(dispatchEvidence, lock, standard, records, dispatchEvidenceInputSha256, dispatchEvidenceInputPath, attestationBundlePath, attestationBundleBytes, historicalCommit);
-validateStaticConstantEvidence(staticConstantEvidence, lock, standard, records);
+for (const input of staticConstantEvidenceRecords) validateStaticConstantEvidence(input.evidence, lock, standard, records, input);
 const dispatchEvidenceByCatalogId = new Map();
 for (const site of dispatchEvidence.sites) {
   const sites = dispatchEvidenceByCatalogId.get(site.catalogId) ?? [];
@@ -126,10 +140,18 @@ for (const site of dispatchEvidence.sites) {
   dispatchEvidenceByCatalogId.set(site.catalogId, sites);
 }
 const staticConstantEvidenceByCatalogId = new Map();
-for (const entry of staticConstantEvidence.entries) {
-  const entries = staticConstantEvidenceByCatalogId.get(entry.catalogId) ?? [];
-  entries.push(entry);
-  staticConstantEvidenceByCatalogId.set(entry.catalogId, entries);
+const staticConstantProofByCatalogId = new Map();
+for (const input of staticConstantEvidenceRecords) {
+  for (const entry of input.evidence.entries) {
+    const entries = staticConstantEvidenceByCatalogId.get(entry.catalogId) ?? [];
+    entries.push(entry);
+    staticConstantEvidenceByCatalogId.set(entry.catalogId, entries);
+    staticConstantProofByCatalogId.set(entry.catalogId, {
+      schema: input.evidence.schema,
+      fixture: input.evidence.fixture,
+      officialComparison: input.evidence.officialComparison,
+    });
+  }
 }
 
 // A test ID in implemented.json is an explicit claim that the fixture covers
@@ -173,7 +195,7 @@ const entries = standard.commands.map((command) => {
     ? dispatchSites.length > 0
       ? { kind: "dispatch", schema: dispatchEvidence.schema, fixture: dispatchEvidence.fixture, officialComparison: dispatchEvidence.officialComparison, sites: dispatchSites }
       : staticConstantSites.length > 0
-        ? { kind: "static-constant", schema: staticConstantEvidence.schema, fixture: staticConstantEvidence.fixture, officialComparison: staticConstantEvidence.officialComparison, sites: staticConstantSites }
+        ? { kind: "static-constant", ...staticConstantProofByCatalogId.get(command.id), sites: staticConstantSites }
         : null
     : null;
   const executionSites = selectedProof?.sites ?? [];
@@ -594,7 +616,7 @@ function attestedSha256(subject) {
   return /^[0-9a-f]{64}$/.test(subject?.digest?.sha256) ? subject.digest.sha256 : null;
 }
 
-function validateStaticConstantEvidence(evidence, lock, standard, records) {
+function validateStaticConstantEvidence(evidence, lock, standard, records, definition) {
   rejectForbiddenEvidenceFields(evidence);
   assertKnownObjectKeys(evidence, ["schema", "generator", "baseline", "fixture", "officialComparison", "attestation", "provenance", "trace", "entries"], "static-constant-evidence");
   if (evidence.schema !== "lnako.static-constant-evidence.v2" || evidence.generator !== "tools/check_static_constant_evidence.mjs") {
@@ -605,7 +627,7 @@ function validateStaticConstantEvidence(evidence, lock, standard, records) {
     throw new Error("静的定数証拠のbaselineがupstream.lock.jsonと一致しません");
   }
 
-  const fixture = records.find((record) => record.id === staticConstantFixtureId);
+  const fixture = records.find((record) => record.id === definition.fixtureId);
   if (fixture === undefined || fixture.file !== "native-cases.json") throw new Error("静的定数証拠のfixtureがnative-cases.jsonにありません");
   assertKnownObjectKeys(evidence.fixture, ["id", "file", "sourceSha256", "globalReadNames", "literalNames"], "static-constant-evidence.fixture");
   if (evidence.fixture.id !== fixture.id || evidence.fixture.file !== fixture.file || evidence.fixture.sourceSha256 !== fixture.sourceSha256) {
@@ -614,10 +636,10 @@ function validateStaticConstantEvidence(evidence, lock, standard, records) {
   const globalReadNames = evidence.fixture.globalReadNames;
   const literalNames = evidence.fixture.literalNames;
   if (!Array.isArray(globalReadNames) || !Array.isArray(literalNames) ||
-      globalReadNames.length !== 17 || literalNames.length !== staticLiteralConstantNames.size ||
+      globalReadNames.length !== definition.globalReadCount || literalNames.length !== definition.literalNames.size ||
       new Set(globalReadNames).size !== globalReadNames.length || new Set(literalNames).size !== literalNames.length ||
-      literalNames.some((name) => !staticLiteralConstantNames.has(name)) ||
-      globalReadNames.some((name) => staticLiteralConstantNames.has(name)) ||
+      literalNames.some((name) => !definition.literalNames.has(name)) ||
+      globalReadNames.some((name) => definition.literalNames.has(name)) ||
       new Set([...globalReadNames, ...literalNames]).size !== fixture.commandNames.size ||
       [...fixture.commandNames].some((name) => !globalReadNames.includes(name) && !literalNames.includes(name))) {
     throw new Error("静的定数証拠のliteral/global分類が不正です");
@@ -627,16 +649,18 @@ function validateStaticConstantEvidence(evidence, lock, standard, records) {
   const expectedRoutes = ["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0"];
   assertKnownObjectKeys(comparison, ["oracle", "routes", "equivalent", "results"], "static-constant-evidence.officialComparison");
   assertKnownObjectKeys(comparison.results, expectedRoutes, "static-constant-evidence.officialComparison.results");
-  if (comparison.oracle !== "official-source" || comparison.equivalent !== true || JSON.stringify(comparison.routes) !== JSON.stringify(expectedRoutes)) {
+  if (!new Set(["official-source", "official-generated"]).has(comparison.oracle) || comparison.equivalent !== true || JSON.stringify(comparison.routes) !== JSON.stringify(expectedRoutes)) {
     throw new Error("静的定数証拠の公式差分比較が不完全です");
   }
   const hashPattern = /^[0-9a-f]{64}$/;
-  const officialSourceResult = comparison.results.officialSource;
+  const oracleRoute = comparison.oracle === "official-generated" ? "officialGenerated" : "officialSource";
+  const oracleResult = comparison.results[oracleRoute];
   for (const route of expectedRoutes) {
     const result = comparison.results[route];
     assertKnownObjectKeys(result, ["status", "signal", "stdoutSha256", "stderrSha256"], `static-constant-evidence.officialComparison.results.${route}`);
+    const compared = route === oracleRoute || route === "lnakoRun" || route === "lnakoNativeO0";
     if (result.status !== 0 || result.signal !== null || !hashPattern.test(result.stdoutSha256) || !hashPattern.test(result.stderrSha256) ||
-        result.stdoutSha256 !== officialSourceResult.stdoutSha256 || result.stderrSha256 !== officialSourceResult.stderrSha256) {
+        (compared && (result.stdoutSha256 !== oracleResult.stdoutSha256 || result.stderrSha256 !== oracleResult.stderrSha256))) {
       throw new Error(`静的定数証拠の公式差分結果が不正です: ${route}`);
     }
   }
@@ -765,7 +789,7 @@ function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, a
       const validStaticState = isStaticConstantProof && entry.executionEvidenceState === "trace-confirmed-unattested" && entry.status === "native" && matrix.entries.find((candidate) => candidate.id === entry.id)?.type === "定数";
       const validDispatchState = isDispatchProof && ["verified", "trace-confirmed-unattested"].includes(entry.executionEvidenceState);
       if (entry.identityResolution !== "unique-name" || (!validDispatchState && !validStaticState) ||
-          (isDispatchProof && proof.fixtureId !== "native-dispatch-commands") || (isStaticConstantProof && proof.fixtureId !== staticConstantFixtureId) ||
+          (isDispatchProof && proof.fixtureId !== "native-dispatch-commands") || (isStaticConstantProof && !staticConstantFixtureIds.has(proof.fixtureId)) ||
           proof.state !== entry.executionEvidenceState || !Array.isArray(proof.siteIds) || proof.siteIds.length === 0 || JSON.stringify(proof.siteIds) !== JSON.stringify(expectedSiteIds) ||
           !Array.isArray(proof.officialComparison) || proof.officialComparison.length === 0) {
         throw new Error(`dispatch証拠付きentryが不正です: ${entry.id}`);

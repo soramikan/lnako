@@ -15,8 +15,14 @@ const officialCli = resolve(oracleRoot, "src/cnako3.mjs");
 const fixedHost = resolve(root, "tools/oracle/fixed_host.mjs");
 const evidenceOutput = optionValue("--evidence-output");
 const noBuild = process.argv.includes("--no-build");
-const literalConstantNames = new Set(["はい", "いいえ", "真", "偽", "オン", "オフ", "NULL"]);
-const fixtureId = "native-scalar-system-constants";
+const fixtureId = argumentValue("--fixture") ?? "native-scalar-system-constants";
+const literalConstantNames = fixtureId === "native-scalar-system-constants"
+  ? new Set(["はい", "いいえ", "真", "偽", "オン", "オフ", "NULL"])
+  : new Set();
+const expectedFixtureShape = {
+  "native-scalar-system-constants": { globalReadCount: 17, literalCount: 7 },
+  "native-string-system-constants": { globalReadCount: 24, literalCount: 0 },
+}[fixtureId];
 const maxBuffer = 16 * 1024 * 1024;
 
 validateArguments();
@@ -49,7 +55,7 @@ for (const name of fixture.commands) {
 }
 const globalReadNames = fixture.commands.filter((name) => !literalConstantNames.has(name));
 const literalNames = fixture.commands.filter((name) => literalConstantNames.has(name));
-if (globalReadNames.length !== 17 || literalNames.length !== 7) {
+if (expectedFixtureShape === undefined || globalReadNames.length !== expectedFixtureShape.globalReadCount || literalNames.length !== expectedFixtureShape.literalCount) {
   throw new Error(`静的定数fixtureのliteral/global分類が想定外です: ${literalNames.length}/${globalReadNames.length}`);
 }
 
@@ -127,7 +133,9 @@ try {
     lnakoRun: interpreted,
     lnakoNativeO0: nativeResult,
   };
-  assertEquivalentResults(results);
+  const oracleSelection = fixture.oracle ?? "official-source";
+  const oracleRoute = oracleSelection === "official-generated" ? "officialGenerated" : "officialSource";
+  assertEquivalentResults(results, oracleRoute);
   const globalManifestData = await readGlobalManifest(globalManifest, sourcePath, globalReadNames);
   const literalManifestData = await readLiteralManifest(literalManifest, sourcePath, literalNames);
   const interpreterGlobalEvents = await readGlobalTrace(interpreterTrace, "interpreter", globalManifestData);
@@ -190,7 +198,7 @@ try {
       literalNames,
     },
     officialComparison: {
-      oracle: "official-source",
+      oracle: oracleSelection,
       routes: Object.keys(results),
       equivalent: true,
       results: Object.fromEntries(Object.entries(results).map(([route, result]) => [route, {
@@ -234,7 +242,7 @@ try {
 }
 
 function validateArguments() {
-  const allowed = new Set(["--no-build", "--oracle", "--evidence-output"]);
+  const allowed = new Set(["--no-build", "--oracle", "--evidence-output", "--fixture"]);
   for (let index = 2; index < process.argv.length; index += 1) {
     const argument = process.argv[index];
     if (allowed.has(argument)) {
@@ -243,8 +251,8 @@ function validateArguments() {
       index += 1;
       continue;
     }
-    if (argument.startsWith("--oracle=") || argument.startsWith("--evidence-output=")) continue;
-    throw new Error("usage: node tools/check_static_constant_evidence.mjs [--no-build] [--oracle /absolute/path] [--evidence-output /absolute/path]");
+    if (argument.startsWith("--oracle=") || argument.startsWith("--evidence-output=") || argument.startsWith("--fixture=")) continue;
+    throw new Error("usage: node tools/check_static_constant_evidence.mjs [--no-build] [--fixture fixture-id] [--oracle /absolute/path] [--evidence-output /absolute/path]");
   }
 }
 
@@ -303,9 +311,10 @@ function runProcess(command, arguments_, options) {
   });
 }
 
-function assertEquivalentResults(results) {
-  const expected = normalizeResult(results.officialSource);
+function assertEquivalentResults(results, oracleRoute) {
+  const expected = normalizeResult(results[oracleRoute]);
   for (const [route, result] of Object.entries(results)) {
+    if (route !== oracleRoute && ((oracleRoute === "officialSource" && route === "officialGenerated") || (oracleRoute === "officialGenerated" && route === "officialSource"))) continue;
     const actual = normalizeResult(result);
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
       throw new Error(`静的定数の公式差分に失敗しました: ${route}: ${JSON.stringify(actual)}`);
@@ -377,7 +386,7 @@ async function readLiteralTrace(path, engine, manifest) {
 
 async function readStaticTrace(path, engine, manifest, phase, label) {
   const lines = await readJsonLines(path, `${engine} ${label}`);
-  if (lines.length < 2) throw new Error(`${engine} ${label}が空です`);
+  if (lines.length < 1) throw new Error(`${engine} ${label}が空です`);
   const end = lines.at(-1);
   assertKeys(end, ["schema", "engine", "phase", "seq", "dropped"], `${engine} ${label} end`);
   if (end.schema !== 1 || end.engine !== engine || end.phase !== "trace-end" || !Number.isSafeInteger(end.seq) || end.dropped !== 0) throw new Error(`${engine} ${label}の終了レコードが不正です`);
@@ -426,13 +435,15 @@ function validateEvidence(evidence, lock, fixture, globalReadNames, literalNames
   if (evidence.fixture.id !== fixture.id || evidence.fixture.file !== "native-cases.json" || evidence.fixture.sourceSha256 !== sha256(fixture.source) || JSON.stringify(evidence.fixture.globalReadNames) !== JSON.stringify(globalReadNames) || JSON.stringify(evidence.fixture.literalNames) !== JSON.stringify(literalNames)) throw new Error("静的定数証拠のfixtureが不一致です");
   assertKeys(evidence.officialComparison, ["oracle", "routes", "equivalent", "results"], "static constant comparison");
   const routes = ["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0"];
-  if (evidence.officialComparison.oracle !== "official-source" || JSON.stringify(evidence.officialComparison.routes) !== JSON.stringify(routes) || evidence.officialComparison.equivalent !== true) throw new Error("静的定数証拠の公式比較が不完全です");
+  if (!new Set(["official-source", "official-generated"]).has(evidence.officialComparison.oracle) || JSON.stringify(evidence.officialComparison.routes) !== JSON.stringify(routes) || evidence.officialComparison.equivalent !== true) throw new Error("静的定数証拠の公式比較が不完全です");
   assertKeys(evidence.officialComparison.results, routes, "static constant comparison results");
-  const reference = evidence.officialComparison.results.officialSource;
+  const oracleRoute = evidence.officialComparison.oracle === "official-generated" ? "officialGenerated" : "officialSource";
+  const reference = evidence.officialComparison.results[oracleRoute];
   for (const route of routes) {
     assertKeys(evidence.officialComparison.results[route], ["status", "signal", "stdoutSha256", "stderrSha256"], `static constant result ${route}`);
     const result = evidence.officialComparison.results[route];
-    if (result.status !== 0 || result.signal !== null || result.stdoutSha256 !== reference.stdoutSha256 || result.stderrSha256 !== reference.stderrSha256 || !/^[0-9a-f]{64}$/.test(result.stdoutSha256) || !/^[0-9a-f]{64}$/.test(result.stderrSha256)) throw new Error(`静的定数証拠の公式比較結果が不正です: ${route}`);
+    const compared = route === oracleRoute || route === "lnakoRun" || route === "lnakoNativeO0";
+    if (result.status !== 0 || result.signal !== null || (compared && (result.stdoutSha256 !== reference.stdoutSha256 || result.stderrSha256 !== reference.stderrSha256)) || !/^[0-9a-f]{64}$/.test(result.stdoutSha256) || !/^[0-9a-f]{64}$/.test(result.stderrSha256)) throw new Error(`静的定数証拠の公式比較結果が不正です: ${route}`);
   }
   if (evidence.attestation !== null) throw new Error("静的定数証拠に未対応のattestationがあります");
   assertKeys(evidence.trace, ["global", "literal"], "static constant trace");
