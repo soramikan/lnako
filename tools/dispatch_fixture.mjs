@@ -9,9 +9,9 @@ export async function readDispatchFixture(root, cases) {
     throw new Error("dispatch専用fixture設定のschemaが不正です");
   }
   const definition = config.fixture;
+  const sourcePrefix = definition.sourcePrefix ?? "";
   const postfixCommands = definition.postfixCommands ?? [];
   const sourcePostfix = definition.sourcePostfix ?? "";
-  const sourcePostfixExtra = definition.sourcePostfixExtra ?? "";
   if (definition.baseFile !== "native-cases.json" || typeof definition.baseId !== "string" || definition.baseId.length === 0 ||
       typeof definition.id !== "string" || definition.id.length === 0 || typeof definition.sourceSuffix !== "string" ||
       !definition.sourceSuffix.endsWith("\n") || !Array.isArray(definition.commands) || definition.commands.length === 0 ||
@@ -19,8 +19,8 @@ export async function readDispatchFixture(root, cases) {
       new Set(definition.commands).size !== definition.commands.length || !Array.isArray(postfixCommands) ||
       postfixCommands.some((name) => typeof name !== "string" || name.length === 0) ||
       new Set(postfixCommands).size !== postfixCommands.length || typeof sourcePostfix !== "string" ||
-      (sourcePostfix.length > 0 && !sourcePostfix.endsWith("\n")) || typeof sourcePostfixExtra !== "string" ||
-      (sourcePostfixExtra.length > 0 && !sourcePostfixExtra.endsWith("\n"))) {
+      (sourcePostfix.length > 0 && !sourcePostfix.endsWith("\n")) || typeof sourcePrefix !== "string" ||
+      (sourcePrefix.length > 0 && !sourcePrefix.endsWith("\n"))) {
     throw new Error("dispatch専用fixture設定の定義が不正です");
   }
   const base = cases.find((candidate) => candidate.id === definition.baseId);
@@ -32,7 +32,7 @@ export async function readDispatchFixture(root, cases) {
   return {
     id: definition.id,
     file: definition.baseFile,
-    source: `${base.source}${base.source.endsWith("\n") ? "" : "\n"}${definition.sourceSuffix}${sourcePostfix}${sourcePostfixExtra}`,
+    source: `${sourcePrefix}${base.source}${base.source.endsWith("\n") ? "" : "\n"}${definition.sourceSuffix}${sourcePostfix}`,
     commands,
   };
 }
