@@ -42,10 +42,26 @@ const staticConstantFixtureDefinitions = {
     literalNames: new Set(),
     plugin: "plugin_node",
   },
+  "native-node-http-initial-constants": {
+    globalReadCount: 5,
+    literalNames: new Set(),
+    commandPlugins: {
+      "AJAXオプション": "plugin_node",
+      "HTTPメソッド": "plugin_httpserver",
+      "GETデータ": "plugin_httpserver",
+      "POSTデータ": "plugin_httpserver",
+      "FILESデータ": "plugin_httpserver",
+    },
+  },
 };
 const fixtureDefinition = staticConstantFixtureDefinitions[fixtureId];
 if (fixtureDefinition === undefined) throw new Error(`静的定数fixtureの定義がありません: ${fixtureId}`);
 const literalConstantNames = fixtureDefinition.literalNames;
+
+function expectedPluginFor(name) {
+  return fixtureDefinition.commandPlugins?.[name] ?? fixtureDefinition.plugin;
+}
+
 const maxBuffer = 16 * 1024 * 1024;
 
 validateArguments();
@@ -72,7 +88,7 @@ for (const command of catalog.commands) {
 }
 for (const name of fixture.commands) {
   const commands = catalogByName.get(name) ?? [];
-  if (commands.length !== 1 || commands[0].plugin !== fixtureDefinition.plugin || commands[0].type !== "定数") {
+  if (commands.length !== 1 || commands[0].plugin !== expectedPluginFor(name) || commands[0].type !== "定数") {
     throw new Error(`静的定数fixtureのcatalog identityが一意に解決できません: ${name}`);
   }
 }
@@ -487,7 +503,7 @@ function validateEvidence(evidence, lock, fixture, globalReadNames, literalNames
     const expectedNames = entry.kind === "global-read" ? globalReadNames : entry.kind === "literal" ? literalNames : null;
     const manifest = expectedNames === null ? undefined : manifestByKey.get(`${entry.kind}:${entry.siteId}`);
     const nameSet = entry.kind === "global-read" ? names.global : entry.kind === "literal" ? names.literal : null;
-    if (manifest === undefined || manifest.name !== entry.name || entry.plugin !== fixtureDefinition.plugin || nameSet === null || nameSet.has(entry.name) || expectedNames === null || !expectedNames.includes(entry.name) || !/^command-\d{4}$/.test(entry.catalogId) || entry.officialEquivalent !== true || entry.runtime.interpreter.success !== true || entry.runtime.interpreter.count !== 1 || entry.runtime.aot.success !== true || entry.runtime.aot.count !== 1) throw new Error(`静的定数証拠entryが不正です: ${entry.name}`);
+    if (manifest === undefined || manifest.name !== entry.name || entry.plugin !== expectedPluginFor(entry.name) || nameSet === null || nameSet.has(entry.name) || expectedNames === null || !expectedNames.includes(entry.name) || !/^command-\d{4}$/.test(entry.catalogId) || entry.officialEquivalent !== true || entry.runtime.interpreter.success !== true || entry.runtime.interpreter.count !== 1 || entry.runtime.aot.success !== true || entry.runtime.aot.count !== 1) throw new Error(`静的定数証拠entryが不正です: ${entry.name}`);
     nameSet.add(entry.name);
   }
   if (names.global.size !== globalReadNames.length || names.literal.size !== literalNames.length || [...names.global].some((name) => !globalReadNames.includes(name)) || [...names.literal].some((name) => !literalNames.includes(name))) throw new Error("静的定数証拠のname集合が不一致です");
