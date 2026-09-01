@@ -57,6 +57,13 @@ const staticConstantEvidenceInputs = [
     plugin: "plugin_node",
   },
   {
+    path: resolve(root, "compat/v3.7.24/static-caniuse-agents-constant-evidence.json"),
+    fixtureId: "native-caniuse-agents",
+    globalReadCount: 1,
+    literalNames: new Set(),
+    plugin: "plugin_caniuse",
+  },
+  {
     path: resolve(root, "compat/v3.7.24/static-node-http-initial-constant-evidence.json"),
     fixtureId: "native-node-http-initial-constants",
     globalReadCount: 5,
@@ -105,6 +112,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "compat/v3.7.24/static-node-archive-constant-evidence.json",
   "compat/v3.7.24/static-node-command-line-constant-evidence.json",
   "compat/v3.7.24/static-node-mother-path-constant-evidence.json",
+  "compat/v3.7.24/static-caniuse-agents-constant-evidence.json",
   "compat/v3.7.24/static-node-http-initial-constant-evidence.json",
   "compat/v3.7.24/evidence.json",
   "compat/v3.7.24/interpreter-only-classification.json",

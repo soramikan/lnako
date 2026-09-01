@@ -48,6 +48,11 @@ const staticConstantFixtureDefinitions = {
     literalNames: new Set(),
     plugin: "plugin_node",
   },
+  "native-caniuse-agents": {
+    globalReadCount: 1,
+    literalNames: new Set(),
+    plugin: "plugin_caniuse",
+  },
   "native-node-http-initial-constants": {
     globalReadCount: 5,
     literalNames: new Set(),
