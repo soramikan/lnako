@@ -18,9 +18,9 @@ U22完了時点の正本は、`compat/v3.7.24/evidence.json`、`compat/v3.7.24/c
 
 ### U22以降の現行更新
 
-現行HEADは署名済み`6a5d66281e55b3e3b3117058962d3fffcc1fc507`である。`compat/v3.7.24/evidence.json`は`verified 0 / trace-confirmed-unattested 527 / unverified 0`を維持しており、`compat/v3.7.24/dispatch-evidence.json`と`dispatch-coverage-evidence.json`をcleanな現行HEADから再生成した。coverageは225 fixture・4,464 site・426/523 native entry・424/492 unique nameを、純LLVM AOTの全件証明とは分けたunattested sampled coverageとして記録する。expected-exit、global/static constant、compat-js artifactも同じclean HEADのprovenanceへ更新した。ベンチマークは`benchmarks/results/latest.json`／`latest.md`へmacOS arm64・Zig 0.16.0・LLVM 22.1.8のInterpreter／AOT compile／AOT run結果を保存済みである。
+canonical dispatch artifactは署名済み`260a60abe7dd9abd187105bf4a2df466bb11f774`から、coverageとexpected-exit、global/static constant、compat-jsの補助artifactは署名済み`57ca05a82ee1d6f575ada2aca37de62f3070bdea`から、それぞれcleanなprovenanceで再生成した。`compat/v3.7.24/evidence.json`は`verified 0 / trace-confirmed-unattested 527 / unverified 0`を維持しており、coverageは225 fixture・4,464 site・426/523 native entry・424/492 unique nameを、純LLVM AOTの全件証明とは分けたunattested sampled coverageとして記録する。ベンチマークは`benchmarks/results/latest.json`／`latest.md`へmacOS arm64・Zig 0.16.0・LLVM 22.1.8のInterpreter／AOT compile／AOT run結果を保存済みである。
 
-CIはjob増加とmacOS同時実行上限を考慮し、通常10 job、native AOT 27 job、Linux/Windows support AOT 12 jobの合計49 matrix job、coverage shard検証job、attestation jobへ分割した。macOSは1 runあたり5 jobを維持し、Linux/Windowsのdispatch coverageだけを3 weighted shardへ分ける。直近pushのrun `33685952711`はmacOS runnerの同時実行待ちを含むqueued状態であり、壁時計・runner合計の改善値は完了runで測定するまで未確定とする。待機中に作業は停止せず、次回push前に完了済み失敗runを再確認する。
+CIはjob増加とmacOS同時実行上限を考慮し、通常10 job、native AOT 27 job、Linux/Windows support AOT 12 jobの合計49 matrix job、coverage shard検証job、attestation jobへ分割した。macOSは1 runあたり5 jobを維持し、Linux/Windowsのdispatch coverageだけを3 weighted shardへ分ける。直近完了run `33691715529`ではmacOS `mac-core-standard-support`のbaseline検証が、リモートに未pushだった現行HEAD由来dispatch証拠を参照して失敗した。これは証拠生成物のpush順序の問題であり、実装・AOT実行・macOS 5枠の失敗ではない。証拠更新を同じ署名コミットへまとめてからpushし、次回push前にも完了済み失敗runを再確認する。壁時計・runner合計の改善値は成功した完了runで測定するまで未確定とする。待機中に作業は停止しない。
 
 公式HTTPサーバqueryの異常系を、固定`plugin_httpserver.mts`の`decodeURIComponent`／`uri.split('?')`へ合わせた。`%`欠落・非16進・不正UTF-8は`URI malformed`、2個目以降の`?`は無視する。Interpreter/AOT単体テストと既存の公式HTTP差分を通過し、詳細は`docs/COMPATIBILITY_QUIRKS.md`へ記録した。この単位は`httpserver-query-parser-error`の未実装TODOを解消したもので、POSTフォームの`URLSearchParams`寛容性は変更していない。続くU23では、固定sourceのcase-sensitiveなmultipart content-type、boundary正規表現、LF-only header、引用付きContent-Dispositionの部分一致をInterpreter/AOTへ揃え、`plugin-httpserver-all`を21件から23件へ拡張した。壊れたbody全体の診断、外部endpoint、3正式OSのHTTP attestationは未確定のまま残す。
 
@@ -63,6 +63,8 @@ U22完了後の現行監査では、`--include-native`を用いてcleanな`2874f
 U23では、固定`plugin_httpserver.mts`のmultipart処理を再確認し、case-sensitiveな`multipart/form-data`判定、`boundary=`正規表現のquoted/unquoted分岐と`;`後続parameterの切り捨て、CRLF/LFのheader separator、引用付き`name`／`filename`の部分一致をInterpreter/AOTへ揃えた。公式CLI／Interpreterは23リクエスト、AOTはO0〜O3の各23リクエスト、Zig全体は832/832テストで成功した。`filename`だけのContent-Dispositionが`name`の部分一致でfield nameを得る挙動も、標準的なmultipart解釈へ補正せずfixtureと`docs/COMPATIBILITY_QUIRKS.md`へ記録した。壊れたbody全体の診断、外部endpoint、3正式OSのHTTP attestationは未確定のまま残す。
 
 U24では、固定公式parserの廃止構文分岐（[`nako_parser3.mts`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/core/src/nako_parser3.mts#L216-L220)、[`yTikuji`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/core/src/nako_parser3.mts#L673-L680)）を再実測し、`逐次実行`と`!非同期モード`を空文として消費しながら後続文を継続する非致命`legacy_deprecated`診断を実装した。公式の`logger.error`と終了成功の組合せを、Parserの成功判定では阻害せずCLI診断には表示する。これは旧構文をasyncへ復活させる変更ではなく、現行`ASYNC`／Promise経路へ移行するための互換境界である。`official-legacy-async-docs`は、カタログやplugin説明に残る旧参照の更新漏れ候補として継続する。
+
+U25では、配布検証器をmanifest／SBOMに記録されたpayloadとの完全一致へ厳格化した。tar.gzはustar magic、regular-file type、header checksum、厳密なoctal size、2ブロック終端と余分な末尾byteを検査し、ZIPはEOCD、single-disk、UTF-8名、local/central header、CRC32、size、offsetを相互照合する。self-testはtar header改変、manifest外entry、tar終端改変、ZIP payload CRC改変を拒否する。macOS arm64のLLVM/LLD同梱実配布物も生成・検証に成功したが、これは3正式OS配布物、checksum／SBOMの公開、署名済み`v1.0.0` Releaseの完了を意味しない。
 
 ## 証拠基盤の柱
 
