@@ -602,6 +602,8 @@ U10のfixtureは`tests/oracle/node-http-cases.json`の`plugin-node-http-callback
 
 U11では`tests/oracle/node-http-cases.json`の`plugin-node-http-options-and-promises`を更新し、`AJAX受信`の成功requestと`対象`表示を追加した。現行HEAD `17df1d1ad29d5a5252a1cf34c30b4060163f4012`から生成したcoverageは42 fixture・1,798 site・342 native entryで、7 entryすべてにInterpreter trace、AOT O0 manifest/runtime trace、公式sourceとの差分を接続している。別の公式Node HTTP差分テストは11ケース・27命令、AOT O0〜O3の7ケースに成功した。ただしこれは`trace-confirmed-unattested`であり、Promise reject専用fixture、外部HTTP endpoint、3正式OSの外部署名attestation、QuickJS標準命令証拠を意味しない。
 
+U12では既存の`plugin-node-http-async-values`を既定dispatch監査へ追加した。公式の[plugin_node命令一覧](https://nadesi.com/v3/doc/index.php?plugin_node=&show=)は5命令を「非同期通信の結果を得る」と短く記載するだけだが、固定v3.7.24の[`plugin_node.mts`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/src/plugin_node.mts#L1462-L1561)では、`POST送信`／`POSTフォーム送信`は本文textをPromiseから解決し、`AJAXテキスト取得`は`AJAXオプション`の空文字をGETへ置換し、`AJAX_JSON取得`はHTTP 204/205または`Content-Length: 0`の空本文だけを`null`へ変換し、`AJAXバイナリ取得`は`Response.arrayBuffer()`のArrayBufferを返す。loopbackの`plugin-node-http-async-values`は22 dispatch site（JSON通常body／空bodyを含む）を公式source・公式生成JavaScript・lnako Interpreter・LLVM AOT O0で比較し、5 entryを`trace-confirmed-unattested`へ接続した。これは明示した成功値の証拠であり、reject時のError文面、外部HTTP endpoint、3正式OSの外部署名attestation、QuickJS標準命令証拠は未完了として`TODO: node-http-cross-os-attestation`等へ残す。
+
 ## 更新規則
 
 - 説明文と実装が食い違う場合は、固定した公式v3.7.24の実行結果を優先する。
