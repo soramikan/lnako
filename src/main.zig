@@ -1740,6 +1740,11 @@ fn compileInputWithProvider(allocator: std.mem.Allocator, path: []const u8, comp
         };
         return null;
     }
+    // 公式処理系がlogger.errorを記録しつつ継続する廃止構文を、成功結果の
+    // 前に表示する。ParseResult.succeeded()はこの診断だけを非致命として扱う。
+    for (graph.modules) |module| if (module.parsed) |parsed| {
+        for (parsed.diagnostics) |item| try item.render(module.source, stderr);
+    };
     var program = try graph.analyze(allocator);
     defer program.deinit();
     if (!program.succeeded()) {

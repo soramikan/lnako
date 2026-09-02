@@ -19,6 +19,7 @@ pub const Code = enum {
     invalid_import,
     import_not_found,
     ambiguous_import,
+    legacy_deprecated,
 };
 
 pub const Diagnostic = struct {
@@ -27,6 +28,12 @@ pub const Diagnostic = struct {
     message: []const u8,
     file: []const u8,
     span: token_mod.Span,
+
+    /// 公式処理系がエラーとして記録しながら構文解析を継続する診断。
+    /// 通常のerror severityとは異なり、これだけではコンパイルを失敗させない。
+    pub fn blocksCompilation(self: Diagnostic) bool {
+        return self.severity == .error_severity and self.code != .legacy_deprecated;
+    }
 
     pub fn render(self: Diagnostic, source: []const u8, writer: *std.Io.Writer) !void {
         const line = sourceLine(source, self.span.source_start);

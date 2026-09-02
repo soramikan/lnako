@@ -1,4 +1,4 @@
-# `unverified` 89件の証拠化計画（U23完了時点）
+# `unverified` 89件の証拠化計画（U24完了時点）
 
 ## 目的と基準
 
@@ -61,6 +61,8 @@ coverage artifactはcleanな`f92c76d6ed91bfc4738854be202bdbe48984d8c7`由来の5
 U22完了後の現行監査では、`--include-native`を用いてcleanな`2874ff6`から225 fixture・4,464 site・426 native entry（492 unique names中424）を再実行し、未観測97 native entryを`unobservedNativeEntryIds`へ明示しました。同名命令はcatalog IDで解決し、公式generated routeが終了コード0でもstdoutだけ異なる場合は利用可能性とroute同値性を別metadataへ保存します。この拡張は初期89件の台帳状態（`trace-confirmed-unattested: 527`、`unverified: 0`）を変更せず、単一macOS環境のunattested sampled coverageを増やしたものとして扱います。3正式OSのAOT／QuickJS／fuzz実行、外部署名attestation、`verified`昇格は引き続き後続の完了条件です。
 
 U23では、固定`plugin_httpserver.mts`のmultipart処理を再確認し、case-sensitiveな`multipart/form-data`判定、`boundary=`正規表現のquoted/unquoted分岐と`;`後続parameterの切り捨て、CRLF/LFのheader separator、引用付き`name`／`filename`の部分一致をInterpreter/AOTへ揃えた。公式CLI／Interpreterは23リクエスト、AOTはO0〜O3の各23リクエスト、Zig全体は832/832テストで成功した。`filename`だけのContent-Dispositionが`name`の部分一致でfield nameを得る挙動も、標準的なmultipart解釈へ補正せずfixtureと`docs/COMPATIBILITY_QUIRKS.md`へ記録した。壊れたbody全体の診断、外部endpoint、3正式OSのHTTP attestationは未確定のまま残す。
+
+U24では、固定公式parserの廃止構文分岐（[`nako_parser3.mts`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/core/src/nako_parser3.mts#L216-L220)、[`yTikuji`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/core/src/nako_parser3.mts#L673-L680)）を再実測し、`逐次実行`と`!非同期モード`を空文として消費しながら後続文を継続する非致命`legacy_deprecated`診断を実装した。公式の`logger.error`と終了成功の組合せを、Parserの成功判定では阻害せずCLI診断には表示する。これは旧構文をasyncへ復活させる変更ではなく、現行`ASYNC`／Promise経路へ移行するための互換境界である。`official-legacy-async-docs`は、カタログやplugin説明に残る旧参照の更新漏れ候補として継続する。
 
 ## 証拠基盤の柱
 

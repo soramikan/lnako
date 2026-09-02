@@ -22,12 +22,15 @@ pub const ParseResult = struct {
     }
 
     pub fn succeeded(self: ParseResult) bool {
-        return self.root != null and self.diagnostics.len == 0;
+        if (self.root == null) return false;
+        for (self.diagnostics) |item| if (item.blocksCompilation()) return false;
+        return true;
     }
 };
 
 /// 字句解析・構文変換を含めてソース全体を構文解析する。
 /// 構文エラーは Zig の error ではなく diagnostics と root=null で返す。
+/// 公式処理系が継続する廃止構文は、diagnosticを残したままrootを返す。
 pub fn parse(backing_allocator: std.mem.Allocator, source: []const u8, filename: []const u8) Error!ParseResult {
     var stream = try lexer.tokenize(backing_allocator, source);
     errdefer stream.deinit();
@@ -92,6 +95,8 @@ const Parser = struct {
     fn parseStatement(self: *Parser) ParseFailure!*ast.Node {
         const token = self.peek();
         if (self.isImportDirective()) return self.parseImportDirective();
+        if (self.isLegacySequentialDirective()) return self.parseLegacySequentialDirective();
+        if (self.isLegacyAsyncDirective()) return self.parseLegacyAsyncDirective();
         if (token.kind == .identifier and std.mem.eql(u8, token.value, "それ") and std.mem.eql(u8, token.josi, "は")) return self.parseImplicitResultAssignment();
         return switch (token.kind) {
             .eol => self.parseEol(),
@@ -150,6 +155,43 @@ const Parser = struct {
         const node = try self.makeNode(.run_mode, first);
         node.value = first.value;
         return node;
+    }
+
+    fn parseLegacySequentialDirective(self: *Parser) ParseFailure!*ast.Node {
+        const directive = self.advance();
+        try self.reportLegacyDeprecation(directive, "『逐次実行』構文は廃止されました(https://nadesi.com/v3/doc/go.php?944)。");
+        // 公式は廃止語句を消費した後、次のトークンを位置に持つ空文を返す。
+        // 実際の改行や後続文は次のparseStatementへ渡して継続する。
+        return self.makeNode(.eol, self.peek());
+    }
+
+    fn parseLegacyAsyncDirective(self: *Parser) ParseFailure!*ast.Node {
+        _ = self.advance(); // !
+        _ = self.advance(); // 非同期モード
+        // 公式のlogger.errorも、!非同期モードを消費した後のpeekを位置に使う。
+        try self.reportLegacyDeprecation(self.peek(), "『非同期モード』構文は廃止されました(https://nadesi.com/v3/doc/go.php?1028)。");
+        return self.makeNode(.eol, self.peek());
+    }
+
+    fn reportLegacyDeprecation(self: *Parser, token: Token, message: []const u8) ParseFailure!void {
+        self.diagnostics.append(self.allocator, .{
+            .severity = .error_severity,
+            .code = .legacy_deprecated,
+            .message = message,
+            .file = self.filename,
+            .span = token.span,
+        }) catch return error.OutOfMemory;
+    }
+
+    fn isLegacySequentialDirective(self: *Parser) bool {
+        return self.peek().kind == .identifier and std.mem.eql(u8, self.peek().value, "逐次実行");
+    }
+
+    fn isLegacyAsyncDirective(self: *Parser) bool {
+        const token = self.peek();
+        const next = self.peekAhead(1);
+        return token.kind == .not and next.kind == .keyword_async and
+            std.mem.eql(u8, next.value, "非同期モード");
     }
 
     fn isModeDirective(self: *Parser) bool {
@@ -1544,4 +1586,29 @@ test "相対nako3取り込みをASTに保持する" {
     const import_node = result.root.?.children[0];
     try std.testing.expectEqual(ast.Kind.import, import_node.kind);
     try std.testing.expectEqualStrings("./lib.nako3", import_node.value);
+}
+
+test "公式同様に廃止された非同期構文を診断付き空文として継続する" {
+    const cases = [_]struct { source: []const u8, message: []const u8 }{
+        .{
+            .source = "逐次実行\n1を表示\n",
+            .message = "『逐次実行』構文は廃止されました(https://nadesi.com/v3/doc/go.php?944)。",
+        },
+        .{
+            .source = "!非同期モード\n1を表示\n",
+            .message = "『非同期モード』構文は廃止されました(https://nadesi.com/v3/doc/go.php?1028)。",
+        },
+    };
+    for (cases) |item| {
+        var result = try parse(std.testing.allocator, item.source, "legacy-async.nako3");
+        defer result.deinit();
+        try std.testing.expect(result.root != null);
+        try std.testing.expect(result.succeeded());
+        try std.testing.expectEqual(@as(usize, 1), result.diagnostics.len);
+        try std.testing.expectEqual(diagnostic.Code.legacy_deprecated, result.diagnostics[0].code);
+        try std.testing.expectEqual(diagnostic.Severity.error_severity, result.diagnostics[0].severity);
+        try std.testing.expectEqualStrings(item.message, result.diagnostics[0].message);
+        try std.testing.expect(result.root.?.children.len >= 2);
+        try std.testing.expectEqual(ast.Kind.function_call, result.root.?.children[result.root.?.children.len - 2].kind);
+    }
 }
