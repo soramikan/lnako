@@ -477,7 +477,7 @@ async function readStaticManifest(path, sourcePath, expectedNames, schema, kind,
     }
     siteIds.add(entry.siteId);
     if (entry.kind === "global-store") {
-      if (expected.has(entry.name)) throw new Error(`${label}に対象constantのstoreがあります: ${entry.name}`);
+      if (expectedNames.includes(entry.name)) throw new Error(`${label}に対象constantのstoreがあります: ${entry.name}`);
       continue;
     }
     if (!expected.has(entry.name)) throw new Error(`${label}のnameが不正です: ${entry.name}`);
