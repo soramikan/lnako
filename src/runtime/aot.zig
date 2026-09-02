@@ -4566,12 +4566,6 @@ fn isNodeHttpCommand(command: aot_builtin.Command) bool {
 }
 
 fn runAotExternal(runtime: *Runtime, target: []const u8, reveal: bool) !void {
-    // The fixture hook is intentionally an environment boundary, matching
-    // the CLI host without launching a desktop application during tests.
-    if (std.c.getenv("LNAKO_TEST_OPEN_EXTERNAL") != null) {
-        if (reveal and builtin.os.tag != .windows) return error.OpenExternalFailed;
-        return;
-    }
     const argv: []const []const u8 = switch (builtin.os.tag) {
         .macos => if (reveal) &.{ "/usr/bin/open", "-R", target } else &.{ "/usr/bin/open", target },
         .windows => if (reveal)
@@ -4583,6 +4577,14 @@ fn runAotExternal(runtime: *Runtime, target: []const u8, reveal: bool) !void {
         else
             &.{ "xdg-open", target },
     };
+    // Keep platform-specific argv construction on the production path, then
+    // stop only the final process launch in the hermetic fixture environment.
+    // This mirrors the CLI host and avoids starting a desktop application in
+    // CI while preserving the official non-Windows Explorer result.
+    if (std.c.getenv("LNAKO_TEST_OPEN_EXTERNAL") != null) {
+        if (reveal and builtin.os.tag != .windows) return error.OpenExternalFailed;
+        return;
+    }
     const result = try std.process.run(runtime.allocator, runtime.process_io.io(), .{
         .argv = argv,
         .stdout_limit = .limited(1024 * 1024),

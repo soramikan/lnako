@@ -1225,14 +1225,6 @@ const CliHost = struct {
 
     fn openExternal(context: *anyopaque, allocator: std.mem.Allocator, target: []const u8, reveal: bool) !void {
         const self: *CliHost = @ptrCast(@alignCast(context));
-        // Oracle fixtures opt into this hook so external applications are never
-        // started by CI. Preserve the official non-Windows Explorer behavior:
-        // the upstream command reports an unsupported OS after attempting the
-        // detached launch, while Windows returns successfully.
-        if (self.environmentValue("LNAKO_TEST_OPEN_EXTERNAL") != null) {
-            if (reveal and builtin.os.tag != .windows) return error.OpenExternalFailed;
-            return;
-        }
         const argv: []const []const u8 = switch (builtin.os.tag) {
             .macos => if (reveal) &.{ "/usr/bin/open", "-R", target } else &.{ "/usr/bin/open", target },
             .windows => if (reveal)
@@ -1244,6 +1236,15 @@ const CliHost = struct {
             else
                 &.{ "xdg-open", target },
         };
+        // Oracle fixtures opt into this hook after the platform-specific argv
+        // has been built, so CI never starts a browser or file manager while
+        // still exercising the production launcher selection. Preserve the
+        // official non-Windows Explorer behavior: upstream launches first and
+        // then reports an unsupported OS, while Windows returns successfully.
+        if (self.environmentValue("LNAKO_TEST_OPEN_EXTERNAL") != null) {
+            if (reveal and builtin.os.tag != .windows) return error.OpenExternalFailed;
+            return;
+        }
         const result = try std.process.run(allocator, self.io, .{ .argv = argv, .stdout_limit = .limited(1024 * 1024), .stderr_limit = .limited(1024 * 1024) });
         defer allocator.free(result.stdout);
         defer allocator.free(result.stderr);

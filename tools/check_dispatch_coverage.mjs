@@ -18,7 +18,6 @@ if (catalog.commandCount !== 527 || !Array.isArray(catalog.commands) || catalog.
 }
 const catalogByName = Map.groupBy(catalog.commands, (command) => command.name);
 const nativeDispatchCoverageExclusions = new Map([
-  ["node-file-cases.json/plugin-node-host-open-external", "外部アプリケーション起動を伴うため、dispatch監査では実行せずNodeホスト差分テストへ分離する"],
   ["node-native-cases.json/plugin-node-native-archive", "公式生成JavaScriptが外部7z実行ファイルを必要とするため、既存のNodeネイティブZIPスモークテストへ分離する"],
   ["native-cases.json/native-uncaught-exception", "公式生成JavaScriptが意図的な未捕捉例外で終了するため、成功経路のdispatch監査から除外する"],
   ["native-cases.json/native-system-width-half-uncaught-error", "公式生成JavaScriptが意図的な未捕捉例外で終了するため、成功経路のdispatch監査から除外する"],
@@ -73,6 +72,7 @@ const selectedFixtures = await loadSelectedFixtures();
 const compiler = resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
 const fixedHost = resolve(root, "tools/oracle/fixed_host.mjs");
 const normalizedDebugHost = resolve(root, "tools/oracle/normalize_debug_host.mjs");
+const safeExternalHost = resolve(root, "tools/oracle/safe_external_host.mjs");
 const maxBuffer = 32 * 1024 * 1024;
 const throwStatementOpcode = 0xffff;
 const fixtureStateMutationCommands = new Set([
@@ -182,7 +182,7 @@ async function loadSelectedFixtures() {
       fixtures.push({ file: specification.file, ...testCase });
     }
   }
-  const expectedFixtureCount = arguments_.includeNative ? 200 : 33;
+  const expectedFixtureCount = arguments_.includeNative ? 201 : 34;
   if (fixtures.length !== expectedFixtureCount) throw new Error(`dispatch coverageのfixture数が想定外です: ${fixtures.length}`);
   return fixtures;
 }
@@ -202,6 +202,9 @@ function validateFixture(testCase, file) {
     throw new Error(`fixtureのsourceFileNameが不正です: ${file}/${testCase.id}`);
   }
   if (testCase.stdin !== undefined && typeof testCase.stdin !== "string") throw new Error(`fixtureのstdinが不正です: ${file}/${testCase.id}`);
+  if (testCase.safeExternalMock !== undefined && typeof testCase.safeExternalMock !== "boolean") {
+    throw new Error(`fixtureのsafeExternalMockが不正です: ${file}/${testCase.id}`);
+  }
   if (testCase.dispatchExpectations !== undefined) {
     if (!Array.isArray(testCase.dispatchExpectations) || testCase.dispatchExpectations.length === 0) {
       throw new Error(`fixtureのdispatchExpectationsが不正です: ${file}/${testCase.id}`);
@@ -271,9 +274,13 @@ async function runFixture(fixture, index, temporary) {
   }));
 
   const baseEnvironment = fixedEnvironment();
+  const lnakoEnvironment = fixture.safeExternalMock
+    ? { ...baseEnvironment, LNAKO_TEST_OPEN_EXTERNAL: "mock" }
+    : baseEnvironment;
   const runOptions = fixture.stdin === undefined ? {} : { input: fixture.stdin };
-  const oracleHost = fixture.normalizeDebugDump === true ? normalizedDebugHost : fixedHost;
-  const oracleHostArguments = ["--import", pathToFileURL(oracleHost).href];
+  const oracleHostArguments = fixture.safeExternalMock
+    ? ["--import", pathToFileURL(fixedHost).href, "--import", pathToFileURL(safeExternalHost).href]
+    : ["--import", pathToFileURL(fixture.normalizeDebugDump === true ? normalizedDebugHost : fixedHost).href];
   const officialSource = run(process.execPath, [...oracleHostArguments, resolve(oracleRoot, "src/cnako3.mjs"), officialSourcePath], baseEnvironment, officialSourceDirectory, runOptions);
   assertSuccess(`${fixture.file}/${fixture.id} 公式source`, officialSource);
   const officialCompile = run(
@@ -290,9 +297,9 @@ async function runFixture(fixture, index, temporary) {
   }
   if (!generatedRouteUnavailable) assertSuccess(`${fixture.file}/${fixture.id} 公式生成JavaScript`, officialGenerated);
 
-  const interpreter = run(compiler, ["run", interpreterTraceSourcePath], { ...baseEnvironment, LNAKO_DISPATCH_TRACE: interpreterTracePath }, interpreterTraceDirectory, runOptions);
+  const interpreter = run(compiler, ["run", interpreterTraceSourcePath], { ...lnakoEnvironment, LNAKO_DISPATCH_TRACE: interpreterTracePath }, interpreterTraceDirectory, runOptions);
   assertSuccess(`${fixture.file}/${fixture.id} Interpreter`, interpreter);
-  const interpreterWithoutTrace = run(compiler, ["run", interpreterNoTraceSourcePath], baseEnvironment, interpreterNoTraceDirectory, runOptions);
+  const interpreterWithoutTrace = run(compiler, ["run", interpreterNoTraceSourcePath], lnakoEnvironment, interpreterNoTraceDirectory, runOptions);
   assertSuccess(`${fixture.file}/${fixture.id} Interpreter trace無効`, interpreterWithoutTrace);
   assertEquivalent(`${fixture.file}/${fixture.id} Interpreter trace`, interpreterWithoutTrace, interpreter);
   const interpreterTrace = await readInterpreterTrace(interpreterTracePath, fixture);
@@ -300,14 +307,14 @@ async function runFixture(fixture, index, temporary) {
   const compile = run(
     compiler,
     ["build", aotSourcePath, "-o", nativePath, "-O0"],
-    { ...baseEnvironment, LNAKO_COMPILE_MANIFEST: manifestPath },
+    { ...lnakoEnvironment, LNAKO_COMPILE_MANIFEST: manifestPath },
     aotTraceDirectory,
   );
   assertSuccess(`${fixture.file}/${fixture.id} AOT O0コンパイル`, compile);
   const manifest = await readCompileManifest(manifestPath, aotSourcePath, fixture);
-  const aot = run(nativePath, [], { ...baseEnvironment, LNAKO_DISPATCH_TRACE: aotTracePath }, aotTraceDirectory, runOptions);
+  const aot = run(nativePath, [], { ...lnakoEnvironment, LNAKO_DISPATCH_TRACE: aotTracePath }, aotTraceDirectory, runOptions);
   assertSuccess(`${fixture.file}/${fixture.id} AOT O0`, aot);
-  const aotWithoutTrace = run(nativePath, [], baseEnvironment, aotNoTraceDirectory, runOptions);
+  const aotWithoutTrace = run(nativePath, [], lnakoEnvironment, aotNoTraceDirectory, runOptions);
   assertSuccess(`${fixture.file}/${fixture.id} AOT O0 trace無効`, aotWithoutTrace);
   assertEquivalent(`${fixture.file}/${fixture.id} AOT trace`, aotWithoutTrace, aot);
   const aotTrace = await readAotTrace(aotTracePath, fixture, manifest.entries);
