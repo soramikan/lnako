@@ -631,7 +631,8 @@ function validateDispatchCoverageEvidence(evidence, lock, standard, records, aud
     const siteKey = hasStringIdentity ? coverageSiteKey(site) : "<invalid-site>";
     const fixtureKey = typeof site.file === "string" && typeof site.fixtureId === "string" ? `${site.file}/${site.fixtureId}` : "<invalid-fixture>";
     const fixtureReport = fixtureReports.get(fixtureKey);
-    const expectedFailure = fixtureReport?.dispatchExpectations.find((expectation) => expectation.command === site.name);
+    const expectedFailure = fixtureReport?.dispatchExpectations.find((expectation) =>
+      expectation.command === site.name && dispatchExpectationIsActive(expectation, evidence.provenance.environment.platform));
     const expectedResult = expectedFailure === undefined ? "success" : expectedFailure.result;
     if (!hasStringIdentity || !fixtureReports.has(fixtureKey) || site.file.length === 0 || site.fixtureId.length === 0 || !/^0x[0-9a-f]{16}$/.test(site.siteId) ||
         siteKeys.has(siteKey) || site.sourceName !== site.name || site.canonicalOpcode.length === 0 || !Number.isInteger(site.opcode) || site.opcode < 0 || site.opcode > 0xffff ||
@@ -639,7 +640,8 @@ function validateDispatchCoverageEvidence(evidence, lock, standard, records, aud
         !Array.isArray(site.interpreterRoutes) || site.interpreterRoutes.length === 0 || site.interpreterRoutes.some((route) => typeof route !== "string" || route.length === 0) ||
         !Number.isSafeInteger(site.interpreterCount) || site.interpreterCount < 1 || !Number.isSafeInteger(site.aotCount) || site.aotCount < 1 ||
         !new Set(["success", "failure"]).has(site.result) || site.result !== expectedResult ||
-        ((site.result === "failure") !== (site.canonicalOpcode === "throw_statement" && site.route === "throw" && site.opcode === throwStatementOpcode)) ||
+        ((site.result === "failure") !== (expectedFailure !== undefined ||
+          (site.canonicalOpcode === "throw_statement" && site.route === "throw" && site.opcode === throwStatementOpcode))) ||
         site.catalogStatus !== "native" || site.resolution !== "unique-name" || site.selectedOracleEquivalent !== true) {
       throw new Error(`dispatch coverage証拠のsite metadataが不正です: ${siteKey}`);
     }
@@ -676,7 +678,8 @@ function validateDispatchCoverageEvidence(evidence, lock, standard, records, aud
         report.interpreter.expectedFailureDispatchCount !== expectedFailureInterpreterCount || report.aot.expectedFailureDispatchCount !== expectedFailureAotCount) {
       throw new Error(`dispatch coverage証拠のfixture dispatch結果集計がsite集合と一致しません: ${fixtureKey}`);
     }
-    for (const expectation of report.dispatchExpectations) {
+    for (const expectation of report.dispatchExpectations.filter((candidate) =>
+      dispatchExpectationIsActive(candidate, evidence.provenance.environment.platform))) {
       const expectedSites = expectedFailureSites.filter((site) => site.name === expectation.command);
       const interpreterCount = expectedSites.reduce((count, site) => count + site.interpreterCount, 0);
       const aotCount = expectedSites.reduce((count, site) => count + site.aotCount, 0);
@@ -738,14 +741,24 @@ function validateDispatchExpectations(expectations, commandNames, label) {
   const expectedCommands = new Set();
   for (const expectation of expectations) {
     if (expectation === null || typeof expectation !== "object" || Array.isArray(expectation) ||
-        Object.keys(expectation).some((key) => !new Set(["command", "result", "count"]).has(key)) ||
+        Object.keys(expectation).some((key) => !new Set(["command", "result", "count", "platforms"]).has(key)) ||
         typeof expectation.command !== "string" || !commandNames.has(expectation.command) ||
         expectedCommands.has(expectation.command) || expectation.result !== "failure" ||
-        !Number.isSafeInteger(expectation.count) || expectation.count < 1) {
+        !Number.isSafeInteger(expectation.count) || expectation.count < 1 || !validDispatchExpectationPlatforms(expectation.platforms)) {
       throw new Error(`dispatchExpectationsが不正です: ${label}`);
     }
     expectedCommands.add(expectation.command);
   }
+}
+
+function dispatchExpectationIsActive(expectation, platform) {
+  return expectation.platforms === undefined || expectation.platforms.includes(platform);
+}
+
+function validDispatchExpectationPlatforms(platforms) {
+  return platforms === undefined ||
+    (Array.isArray(platforms) && platforms.length > 0 && new Set(platforms).size === platforms.length &&
+      platforms.every((platform) => ["darwin", "linux", "win32"].includes(platform)));
 }
 
 function duplicateNameCount(entries) {

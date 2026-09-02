@@ -212,10 +212,10 @@ function validateFixture(testCase, file) {
     const expectedCommands = new Set();
     for (const expectation of testCase.dispatchExpectations) {
       if (expectation === null || typeof expectation !== "object" || Array.isArray(expectation) ||
-          Object.keys(expectation).some((key) => !new Set(["command", "result", "count"]).has(key)) ||
+          Object.keys(expectation).some((key) => !new Set(["command", "result", "count", "platforms"]).has(key)) ||
           typeof expectation.command !== "string" || !testCase.commands.includes(expectation.command) ||
           expectedCommands.has(expectation.command) || expectation.result !== "failure" ||
-          !Number.isSafeInteger(expectation.count) || expectation.count < 1) {
+          !Number.isSafeInteger(expectation.count) || expectation.count < 1 || !validDispatchExpectationPlatforms(expectation.platforms)) {
         throw new Error(`fixtureのdispatchExpectationsが不正です: ${file}/${testCase.id}`);
       }
       expectedCommands.add(expectation.command);
@@ -617,7 +617,8 @@ async function readCompileManifest(path, sourcePath, fixture) {
     throw new Error(`${fixture.id} AOT compile manifest header/completeが不正です`);
   }
   const siteIds = new Set();
-  const expectedFailureCommands = new Set((fixture.dispatchExpectations ?? []).map((expectation) => expectation.command));
+  const activeExpectations = activeDispatchExpectations(fixture);
+  const expectedFailureCommands = new Set(activeExpectations.map((expectation) => expectation.command));
   for (const entry of entries) {
     const isBuiltinDispatch = entry.kind === "builtin-dispatch";
     const isThrowDispatch = entry.kind === "throw-dispatch" && entry.sourceName === "エラー発生" &&
@@ -648,15 +649,16 @@ function collectSites(fixture, interpreterEvents, aotTrace, manifestEntries) {
   const unresolvedSites = [];
   const staticSuccessNames = new Set();
   const observedCommandNames = new Set();
-  const expectedFailureByCommand = new Map((fixture.dispatchExpectations ?? []).map((expectation) => [expectation.command, expectation]));
+  const expectedFailureByCommand = new Map(activeDispatchExpectations(fixture).map((expectation) => [expectation.command, expectation]));
   const expectedFailureCounts = new Map();
   let staticSuccessSiteCount = 0;
   let expectedFailureSiteCount = 0;
   let expectedFailureDispatchCount = 0;
   for (const entry of manifestEntries) {
     const expectedFailure = expectedFailureByCommand.get(entry.sourceName);
-    if ((entry.kind === "throw-dispatch") !== (expectedFailure !== undefined)) {
-      throw new Error(`${fixture.id} throw-dispatchの期待失敗宣言が不一致です: ${entry.sourceName}/${entry.siteId}`);
+    if ((entry.kind === "throw-dispatch" && expectedFailure === undefined) ||
+        (expectedFailure !== undefined && entry.kind !== "builtin-dispatch" && entry.kind !== "throw-dispatch")) {
+      throw new Error(`${fixture.id} 期待失敗dispatchの宣言が不一致です: ${entry.sourceName}/${entry.siteId}`);
     }
     if (expectedFailure !== undefined) {
       const failedAot = aotTrace.results.filter((event) => event.siteId === entry.siteId && event.success === false);
@@ -741,7 +743,7 @@ function collectSites(fixture, interpreterEvents, aotTrace, manifestEntries) {
       selectedOracleEquivalent: true,
     });
   }
-  for (const expectation of fixture.dispatchExpectations ?? []) {
+  for (const expectation of activeDispatchExpectations(fixture)) {
     const observedCount = expectedFailureCounts.get(expectation.command) ?? 0;
     if (observedCount !== expectation.count) {
       throw new Error(`${fixture.id} 明示した期待失敗dispatch件数が一致しません: ${expectation.command} expected=${expectation.count} actual=${observedCount}`);
@@ -757,6 +759,17 @@ function collectSites(fixture, interpreterEvents, aotTrace, manifestEntries) {
     expectedFailureDispatchCount,
     interpreterSitesWithoutManifest,
   };
+}
+
+function activeDispatchExpectations(fixture, platform = process.platform) {
+  return (fixture.dispatchExpectations ?? []).filter((expectation) =>
+    expectation.platforms === undefined || expectation.platforms.includes(platform));
+}
+
+function validDispatchExpectationPlatforms(platforms) {
+  return platforms === undefined ||
+    (Array.isArray(platforms) && platforms.length > 0 && new Set(platforms).size === platforms.length &&
+      platforms.every((platform) => ["darwin", "linux", "win32"].includes(platform)));
 }
 
 function resolveCatalogCommand(name, route) {

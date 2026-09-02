@@ -82,6 +82,7 @@
     "aot": true,
     "commands": ["ブラウザ起動", "エクスプローラー起動"],
     "safeExternalMock": true,
+    "dispatchExpectations": [{"command": "エクスプローラー起動", "result": "failure", "count": 1, "platforms": ["darwin", "linux"]}],
     "source": "エラー監視\n\"https://example.invalid/\"をブラウザ起動\n\"BROWSER:OK\"を表示\nエラーならば\n\"BROWSER:ERROR\"を表示\nここまで\nエラー監視\n\"fixture-target.txt\"をエクスプローラー起動\n\"EXPLORER:OK\"を表示\nエラーならば\n\"EXPLORER:ERROR\"を表示\nここまで\n"
   }
 ]
