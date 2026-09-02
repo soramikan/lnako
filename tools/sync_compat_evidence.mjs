@@ -22,6 +22,21 @@ const globalBindingEvidenceInputs = [
     plugin: "plugin_node",
     accessKinds: ["global-load", "global-store", "global-load", "global-store", "global-load"],
   },
+  {
+    path: resolve(root, "compat/v3.7.24/directory-binding-evidence.json"),
+    schema: "lnako.global-binding-evidence.v2",
+    fixtureId: "native-node-directory-values",
+    bindings: [
+      { catalogId: "command-0731", name: "デスクトップ", plugin: "plugin_node" },
+      { catalogId: "command-0732", name: "マイドキュメント", plugin: "plugin_node" },
+      { catalogId: "command-0735", name: "テンポラリフォルダ", plugin: "plugin_node" },
+    ],
+    accesses: [
+      { catalogId: "command-0731", name: "デスクトップ", plugin: "plugin_node", kind: "global-load", phase: "global-read" },
+      { catalogId: "command-0732", name: "マイドキュメント", plugin: "plugin_node", kind: "global-load", phase: "global-read" },
+      { catalogId: "command-0735", name: "テンポラリフォルダ", plugin: "plugin_node", kind: "global-load", phase: "global-read" },
+    ],
+  },
 ];
 const staticConstantEvidenceInputs = [
   {
@@ -142,6 +157,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "compat/v3.7.24/dispatch-evidence.json",
   "compat/v3.7.24/dispatch-coverage-evidence.json",
   "compat/v3.7.24/global-binding-evidence.json",
+  "compat/v3.7.24/directory-binding-evidence.json",
   "compat/v3.7.24/static-constant-evidence.json",
   "compat/v3.7.24/static-string-constant-evidence.json",
   "compat/v3.7.24/static-array-constant-evidence.json",
@@ -275,12 +291,16 @@ for (const input of staticConstantEvidenceRecords) {
 const globalBindingEvidenceByCatalogId = new Map();
 const globalBindingProofByCatalogId = new Map();
 for (const input of globalBindingEvidenceRecords) {
-  globalBindingEvidenceByCatalogId.set(input.catalogId, input.evidence.binding.sites);
-  globalBindingProofByCatalogId.set(input.catalogId, {
-    schema: input.evidence.schema,
-    fixture: input.evidence.fixture,
-    officialComparison: input.evidence.officialComparison,
-  });
+  const bindings = Array.isArray(input.evidence.bindings) ? input.evidence.bindings : [input.evidence.binding];
+  for (const binding of bindings) {
+    if (globalBindingEvidenceByCatalogId.has(binding.catalogId)) throw new Error(`global binding証拠のcatalog IDが重複しています: ${binding.catalogId}`);
+    globalBindingEvidenceByCatalogId.set(binding.catalogId, binding.sites);
+    globalBindingProofByCatalogId.set(binding.catalogId, {
+      schema: input.evidence.schema,
+      fixture: input.evidence.fixture,
+      officialComparison: input.evidence.officialComparison,
+    });
+  }
 }
 
 // A test ID in implemented.json is an explicit claim that the fixture covers
@@ -1171,10 +1191,28 @@ function expectedStaticConstantPlugin(definition, name) {
   return definition.commandPlugins?.[name] ?? definition.plugin;
 }
 
+function globalBindingDefinitions(definition) {
+  return definition.bindings ?? [{ catalogId: definition.catalogId, name: definition.name, plugin: definition.plugin }];
+}
+
+function globalBindingAccesses(definition) {
+  return definition.accesses ?? definition.accessKinds.map((kind) => ({
+    catalogId: definition.catalogId,
+    name: definition.name,
+    plugin: definition.plugin,
+    kind,
+    phase: kind === "global-load" ? "global-read" : "global-write",
+  }));
+}
+
 function validateGlobalBindingEvidence(evidence, lock, standard, records, definition) {
+  const expectedBindings = globalBindingDefinitions(definition);
+  const expectedAccesses = globalBindingAccesses(definition);
+  const expectedSchema = definition.schema ?? "lnako.global-binding-evidence.v1";
+  const bindingField = expectedBindings.length === 1 ? "binding" : "bindings";
   rejectForbiddenEvidenceFields(evidence);
-  assertKnownObjectKeys(evidence, ["schema", "generator", "baseline", "fixture", "binding", "officialComparison", "attestation", "provenance", "trace"], "global-binding-evidence");
-  if (evidence.schema !== "lnako.global-binding-evidence.v1" || evidence.generator !== "tools/check_global_binding_evidence.mjs") {
+  assertKnownObjectKeys(evidence, ["schema", "generator", "baseline", "fixture", bindingField, "officialComparison", "attestation", "provenance", "trace"], "global-binding-evidence");
+  if (evidence.schema !== expectedSchema || evidence.generator !== "tools/check_global_binding_evidence.mjs") {
     throw new Error("global binding証拠のschemaまたは生成元が不正です");
   }
   assertKnownObjectKeys(evidence.baseline, ["tag", "commit"], "global-binding-evidence.baseline");
@@ -1189,25 +1227,34 @@ function validateGlobalBindingEvidence(evidence, lock, standard, records, defini
     throw new Error("global binding証拠のfixture identityまたはsource SHA-256が一致しません");
   }
 
-  const command = standard.commands.find((candidate) => candidate.id === definition.catalogId);
-  if (command === undefined || command.name !== definition.name || command.plugin !== definition.plugin || command.status !== "native" || command.type !== "変数") {
-    throw new Error("global binding証拠のcatalog identityが標準カタログと一致しません");
-  }
-  assertKnownObjectKeys(evidence.binding, ["catalogId", "name", "plugin", "accessSequence", "sites"], "global-binding-evidence.binding");
-  if (evidence.binding.catalogId !== definition.catalogId || evidence.binding.name !== definition.name || evidence.binding.plugin !== definition.plugin ||
-      !Array.isArray(evidence.binding.accessSequence) || JSON.stringify(evidence.binding.accessSequence) !== JSON.stringify(definition.accessKinds) ||
-      !Array.isArray(evidence.binding.sites) || evidence.binding.sites.length !== definition.accessKinds.length) {
-    throw new Error("global binding証拠のbinding access sequenceが不一致です");
-  }
-  const siteIds = new Set();
-  evidence.binding.sites.forEach((site, index) => {
-    assertKnownObjectKeys(site, ["catalogId", "name", "plugin", "kind", "siteId"], "global-binding-evidence.site");
-    if (site.catalogId !== definition.catalogId || site.name !== definition.name || site.plugin !== definition.plugin ||
-        site.kind !== definition.accessKinds[index] || !/^0x[0-9a-f]{16}$/.test(site.siteId) || siteIds.has(site.siteId)) {
-      throw new Error(`global binding証拠のsiteが不正です: ${index}`);
+  for (const expectedBinding of expectedBindings) {
+    const command = standard.commands.find((candidate) => candidate.id === expectedBinding.catalogId);
+    if (command === undefined || command.name !== expectedBinding.name || command.plugin !== expectedBinding.plugin || command.status !== "native" || command.type !== "変数") {
+      throw new Error("global binding証拠のcatalog identityが標準カタログと一致しません");
     }
-    siteIds.add(site.siteId);
-  });
+  }
+  const actualBindings = expectedBindings.length === 1 ? [evidence.binding] : evidence.bindings;
+  if (!Array.isArray(actualBindings) || actualBindings.length !== expectedBindings.length) throw new Error("global binding証拠のbinding数が不一致です");
+  const siteIds = new Set();
+  for (const [bindingIndex, expectedBinding] of expectedBindings.entries()) {
+    const actualBinding = actualBindings[bindingIndex];
+    const expectedSites = expectedAccesses.filter((access) => access.catalogId === expectedBinding.catalogId);
+    assertKnownObjectKeys(actualBinding, ["catalogId", "name", "plugin", "accessSequence", "sites"], "global-binding-evidence.binding");
+    if (actualBinding.catalogId !== expectedBinding.catalogId || actualBinding.name !== expectedBinding.name || actualBinding.plugin !== expectedBinding.plugin ||
+        !Array.isArray(actualBinding.accessSequence) || JSON.stringify(actualBinding.accessSequence) !== JSON.stringify(expectedSites.map((site) => site.kind)) ||
+        !Array.isArray(actualBinding.sites) || actualBinding.sites.length !== expectedSites.length) {
+      throw new Error(`global binding証拠のbinding access sequenceが不一致です: ${bindingIndex}`);
+    }
+    actualBinding.sites.forEach((site, siteIndex) => {
+      assertKnownObjectKeys(site, ["catalogId", "name", "plugin", "kind", "siteId"], "global-binding-evidence.site");
+      const expected = expectedSites[siteIndex];
+      if (site.catalogId !== expected.catalogId || site.name !== expected.name || site.plugin !== expected.plugin ||
+          site.kind !== expected.kind || !/^0x[0-9a-f]{16}$/.test(site.siteId) || siteIds.has(site.siteId)) {
+        throw new Error(`global binding証拠のsiteが不正です: ${bindingIndex}/${siteIndex}`);
+      }
+      siteIds.add(site.siteId);
+    });
+  }
 
   const expectedRoutes = ["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0"];
   const comparison = evidence.officialComparison;
@@ -1231,7 +1278,7 @@ function validateGlobalBindingEvidence(evidence, lock, standard, records, defini
   assertKnownObjectKeys(evidence.trace, ["interpreter", "aot"], "global-binding-evidence.trace");
   for (const engine of ["interpreter", "aot"]) {
     assertKnownObjectKeys(evidence.trace[engine], ["schema", "eventCount"], `global-binding-evidence.trace.${engine}`);
-    if (evidence.trace[engine].schema !== 1 || evidence.trace[engine].eventCount !== definition.accessKinds.length) {
+    if (evidence.trace[engine].schema !== 1 || evidence.trace[engine].eventCount !== expectedAccesses.length) {
       throw new Error(`global binding証拠の${engine} trace件数が不正です`);
     }
   }
@@ -1310,7 +1357,7 @@ function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, a
       const isDispatchProof = proof?.proofSchema === "lnako.dispatch-evidence.v2";
       const isDispatchCoverageProof = proof?.proofSchema === "lnako.dispatch-coverage.v1";
       const isStaticConstantProof = proof?.proofSchema === "lnako.static-constant-evidence.v2";
-      const isGlobalBindingProof = proof?.proofSchema === "lnako.global-binding-evidence.v1";
+      const isGlobalBindingProof = proof?.proofSchema === "lnako.global-binding-evidence.v1" || proof?.proofSchema === "lnako.global-binding-evidence.v2";
       const proofSites = isDispatchProof
         ? dispatchEvidenceByCatalogId.get(entry.id) ?? []
         : isDispatchCoverageProof

@@ -11,16 +11,41 @@ const compiler = resolve(root, "zig-out/bin", process.platform === "win32" ? "ln
 const oracleRoot = resolve(process.env.NADESIKO3_ORACLE ?? resolve(root, ".cache/oracle/nadesiko3-3.7.24"));
 const officialCli = resolve(oracleRoot, "src/cnako3.mjs");
 const fixedHost = resolve(root, "tools/oracle/fixed_host.mjs");
-const fixtureId = "native-node-file-copy-default";
-const bindingName = "ファイルコピーデフォルト動作";
-const bindingCatalogId = "command-0709";
-const expectedAccesses = [
-  { kind: "global-load", phase: "global-read" },
-  { kind: "global-store", phase: "global-write" },
-  { kind: "global-load", phase: "global-read" },
-  { kind: "global-store", phase: "global-write" },
-  { kind: "global-load", phase: "global-read" },
-];
+const profiles = {
+  "file-copy": {
+    schema: "lnako.global-binding-evidence.v1",
+    fixtureId: "native-node-file-copy-default",
+    bindings: [
+      { catalogId: "command-0709", name: "ファイルコピーデフォルト動作", plugin: "plugin_node" },
+    ],
+    accesses: [
+      { catalogId: "command-0709", name: "ファイルコピーデフォルト動作", plugin: "plugin_node", kind: "global-load", phase: "global-read" },
+      { catalogId: "command-0709", name: "ファイルコピーデフォルト動作", plugin: "plugin_node", kind: "global-store", phase: "global-write" },
+      { catalogId: "command-0709", name: "ファイルコピーデフォルト動作", plugin: "plugin_node", kind: "global-load", phase: "global-read" },
+      { catalogId: "command-0709", name: "ファイルコピーデフォルト動作", plugin: "plugin_node", kind: "global-store", phase: "global-write" },
+      { catalogId: "command-0709", name: "ファイルコピーデフォルト動作", plugin: "plugin_node", kind: "global-load", phase: "global-read" },
+    ],
+  },
+  "node-directory": {
+    schema: "lnako.global-binding-evidence.v2",
+    fixtureId: "native-node-directory-values",
+    bindings: [
+      { catalogId: "command-0731", name: "デスクトップ", plugin: "plugin_node" },
+      { catalogId: "command-0732", name: "マイドキュメント", plugin: "plugin_node" },
+      { catalogId: "command-0735", name: "テンポラリフォルダ", plugin: "plugin_node" },
+    ],
+    accesses: [
+      { catalogId: "command-0731", name: "デスクトップ", plugin: "plugin_node", kind: "global-load", phase: "global-read" },
+      { catalogId: "command-0732", name: "マイドキュメント", plugin: "plugin_node", kind: "global-load", phase: "global-read" },
+      { catalogId: "command-0735", name: "テンポラリフォルダ", plugin: "plugin_node", kind: "global-load", phase: "global-read" },
+    ],
+  },
+};
+const profileName = argumentValue("--profile") ?? "file-copy";
+const profile = profiles[profileName];
+if (profile === undefined) throw new Error(`未知のglobal binding profileです: ${profileName}`);
+const fixtureId = profile.fixtureId;
+const expectedAccesses = profile.accesses;
 const evidenceOutput = optionValue("--evidence-output");
 const noBuild = process.argv.includes("--no-build");
 const maxBuffer = 16 * 1024 * 1024;
@@ -37,11 +62,11 @@ if (catalog.commandCount !== 527 || !Array.isArray(catalog.commands) || catalog.
   throw new Error("標準cnakoカタログが527 entryではありません");
 }
 const fixture = cases.find((candidate) => candidate.id === fixtureId);
-if (fixture === undefined || !Array.isArray(fixture.commands) || !fixture.commands.includes(bindingName) || fixture.aot === false) {
+if (fixture === undefined || !Array.isArray(fixture.commands) || !profile.bindings.every((binding) => fixture.commands.includes(binding.name)) || fixture.aot === false) {
   throw new Error(`global binding fixtureが不正です: ${fixtureId}`);
 }
-const command = catalog.commands.find((candidate) => candidate.id === bindingCatalogId);
-if (command === undefined || command.name !== bindingName || command.plugin !== "plugin_node" || command.status !== "native" || command.type !== "変数") {
+const commands = profile.bindings.map((binding) => catalog.commands.find((candidate) => candidate.id === binding.catalogId));
+if (commands.some((command, index) => command === undefined || command.name !== profile.bindings[index].name || command.plugin !== profile.bindings[index].plugin || command.status !== "native" || command.type !== "変数")) {
   throw new Error("global bindingのcatalog identityが不正です");
 }
 
@@ -95,18 +120,27 @@ try {
   const interpreterEvents = await readBindingTrace(interpreterTrace, "interpreter", manifest);
   const aotEvents = await readBindingTrace(aotTrace, "aot", manifest);
   const git = readGitState();
+  const manifestSites = manifest.entries.map((entry, index) => ({
+    catalogId: expectedAccesses[index].catalogId,
+    name: expectedAccesses[index].name,
+    plugin: expectedAccesses[index].plugin,
+    kind: entry.kind,
+    siteId: entry.siteId,
+  }));
+  const bindingRecords = profile.bindings.map((binding) => {
+    const sites = manifestSites.filter((site) => site.catalogId === binding.catalogId);
+    return {
+      ...binding,
+      accessSequence: sites.map((site) => site.kind),
+      sites,
+    };
+  });
   const evidence = {
-    schema: "lnako.global-binding-evidence.v1",
+    schema: profile.schema,
     generator: "tools/check_global_binding_evidence.mjs",
     baseline: { tag: lock.nadesiko3.tag, commit: lock.nadesiko3.commit },
     fixture: { id: fixture.id, file: "native-cases.json", sourceSha256: sha256(fixture.source) },
-    binding: {
-      catalogId: command.id,
-      name: command.name,
-      plugin: command.plugin,
-      accessSequence: expectedAccesses.map((access_) => access_.kind),
-      sites: manifest.entries.map((entry) => ({ catalogId: command.id, name: command.name, plugin: command.plugin, kind: entry.kind, siteId: entry.siteId })),
-    },
+    ...(profile.bindings.length === 1 ? { binding: bindingRecords[0] } : { bindings: bindingRecords }),
     officialComparison: {
       oracle: "official-source",
       routes: Object.keys(results),
@@ -136,13 +170,13 @@ try {
   };
   validateEvidence(evidence, lock, fixture, manifest);
   if (evidenceOutput !== null) await writeFile(evidenceOutput, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
-  console.log(`global bindingのInterpreter/AOT証拠: ${bindingName} ${manifest.entries.length} access（read/write/read）成功`);
+  console.log(`global bindingのInterpreter/AOT証拠: ${profileName} ${manifest.entries.length} access成功`);
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }
 
 function validateArguments() {
-  const allowed = new Set(["--no-build", "--oracle", "--evidence-output"]);
+  const allowed = new Set(["--no-build", "--oracle", "--profile", "--evidence-output"]);
   for (let index = 2; index < process.argv.length; index += 1) {
     const argument = process.argv[index];
     if (allowed.has(argument)) {
@@ -151,8 +185,8 @@ function validateArguments() {
       index += 1;
       continue;
     }
-    if (argument.startsWith("--oracle=") || argument.startsWith("--evidence-output=")) continue;
-    throw new Error("usage: node tools/check_global_binding_evidence.mjs [--no-build] [--oracle /absolute/path] [--evidence-output /absolute/path]");
+    if (argument.startsWith("--oracle=") || argument.startsWith("--profile=") || argument.startsWith("--evidence-output=")) continue;
+    throw new Error("usage: node tools/check_global_binding_evidence.mjs [--no-build] [--profile file-copy|node-directory] [--oracle /absolute/path] [--evidence-output /absolute/path]");
   }
 }
 
@@ -244,7 +278,7 @@ async function readBindingManifest(path, sourcePath) {
     assertKeys(entry, ["schema", "phase", "kind", "name", "siteId", "function", "source"], "global binding manifest entry");
     assertKeys(entry.source, ["line", "column", "sourceStart", "sourceEnd"], "global binding manifest source");
     const expected = expectedAccesses[index];
-    if (entry.schema !== header.schema || entry.phase !== "pre-opt" || entry.kind !== expected.kind || entry.name !== bindingName || !/^0x[0-9a-f]{16}$/.test(entry.siteId) || siteIds.has(entry.siteId)) throw new Error(`global binding manifest entryが不正です: ${index}`);
+    if (entry.schema !== header.schema || entry.phase !== "pre-opt" || entry.kind !== expected.kind || entry.name !== expected.name || !/^0x[0-9a-f]{16}$/.test(entry.siteId) || siteIds.has(entry.siteId)) throw new Error(`global binding manifest entryが不正です: ${index}`);
     if (!Number.isSafeInteger(entry.source.line) || entry.source.line < 1 || !Number.isSafeInteger(entry.source.column) || entry.source.column < 1 || !Number.isSafeInteger(entry.source.sourceStart) || !Number.isSafeInteger(entry.source.sourceEnd) || entry.source.sourceStart < 0 || entry.source.sourceEnd < entry.source.sourceStart) throw new Error(`global binding manifestのsource位置が不正です: ${index}`);
     siteIds.add(entry.siteId);
   });
@@ -267,7 +301,7 @@ async function readBindingTrace(path, engine, manifest) {
       : ["schema", "engine", "phase", "seq", "siteId", "success"];
     assertKeys(event, keys, `${engine} global binding trace event`);
     if (event.schema !== 1 || event.engine !== engine || event.phase !== expected.phase || event.seq !== index || event.siteId !== entry.siteId || siteIds.has(event.siteId)) throw new Error(`${engine} global binding trace eventが不正です: ${index}`);
-    if (engine === "interpreter" && (event.name !== bindingName || (expected.phase === "global-read" && event.found !== true))) throw new Error(`Interpreter global binding traceのname/foundが不正です: ${index}`);
+    if (engine === "interpreter" && (event.name !== expected.name || (expected.phase === "global-read" && event.found !== true))) throw new Error(`Interpreter global binding traceのname/foundが不正です: ${index}`);
     if (engine === "aot" && event.success !== true) throw new Error(`AOT global binding traceのsuccessが不正です: ${index}`);
     siteIds.add(event.siteId);
   });
@@ -292,17 +326,27 @@ function assertKeys(value, allowedKeys, label) {
 }
 
 function validateEvidence(evidence, lock_, fixture_, manifest) {
-  assertKeys(evidence, ["schema", "generator", "baseline", "fixture", "binding", "officialComparison", "attestation", "provenance", "trace"], "global binding evidence");
-  if (evidence.schema !== "lnako.global-binding-evidence.v1" || evidence.generator !== "tools/check_global_binding_evidence.mjs" || evidence.baseline.tag !== lock_.nadesiko3.tag || evidence.baseline.commit !== lock_.nadesiko3.commit) throw new Error("global binding evidenceのidentityが不正です");
+  const bindingField = profile.bindings.length === 1 ? "binding" : "bindings";
+  assertKeys(evidence, ["schema", "generator", "baseline", "fixture", bindingField, "officialComparison", "attestation", "provenance", "trace"], "global binding evidence");
+  if (evidence.schema !== profile.schema || evidence.generator !== "tools/check_global_binding_evidence.mjs" || evidence.baseline.tag !== lock_.nadesiko3.tag || evidence.baseline.commit !== lock_.nadesiko3.commit) throw new Error("global binding evidenceのidentityが不正です");
   assertKeys(evidence.fixture, ["id", "file", "sourceSha256"], "global binding evidence fixture");
   if (evidence.fixture.id !== fixture_.id || evidence.fixture.file !== "native-cases.json" || evidence.fixture.sourceSha256 !== sha256(fixture_.source)) throw new Error("global binding evidenceのfixtureが不一致です");
-  assertKeys(evidence.binding, ["catalogId", "name", "plugin", "accessSequence", "sites"], "global binding evidence binding");
-  if (evidence.binding.catalogId !== bindingCatalogId || evidence.binding.name !== bindingName || evidence.binding.plugin !== "plugin_node" || JSON.stringify(evidence.binding.accessSequence) !== JSON.stringify(expectedAccesses.map((access_) => access_.kind)) || evidence.binding.sites.length !== expectedAccesses.length) throw new Error("global binding evidenceのbindingが不一致です");
-  evidence.binding.sites.forEach((site, index) => {
-    assertKeys(site, ["catalogId", "name", "plugin", "kind", "siteId"], "global binding evidence site");
-    const expected = expectedAccesses[index];
-    if (site.catalogId !== bindingCatalogId || site.name !== bindingName || site.plugin !== "plugin_node" || site.kind !== expected.kind || site.siteId !== manifest.entries[index].siteId) throw new Error(`global binding evidence siteが不一致です: ${index}`);
-  });
+  const bindingRecords = evidence[bindingField];
+  if (!Array.isArray(bindingRecords) && profile.bindings.length > 1) throw new Error("global binding evidenceのbindingsが配列ではありません");
+  const actualBindings = profile.bindings.length === 1 ? [bindingRecords] : bindingRecords;
+  if (actualBindings.length !== profile.bindings.length) throw new Error("global binding evidenceのbinding数が不一致です");
+  const manifestSites = manifest.entries.map((entry, index) => ({ ...expectedAccesses[index], siteId: entry.siteId }));
+  for (const [bindingIndex, expectedBinding] of profile.bindings.entries()) {
+    const actualBinding = actualBindings[bindingIndex];
+    const expectedSites = manifestSites.filter((site) => site.catalogId === expectedBinding.catalogId);
+    assertKeys(actualBinding, ["catalogId", "name", "plugin", "accessSequence", "sites"], "global binding evidence binding");
+    if (actualBinding.catalogId !== expectedBinding.catalogId || actualBinding.name !== expectedBinding.name || actualBinding.plugin !== expectedBinding.plugin || JSON.stringify(actualBinding.accessSequence) !== JSON.stringify(expectedSites.map((site) => site.kind)) || actualBinding.sites.length !== expectedSites.length) throw new Error("global binding evidenceのbindingが不一致です");
+    actualBinding.sites.forEach((site, index) => {
+      assertKeys(site, ["catalogId", "name", "plugin", "kind", "siteId"], "global binding evidence site");
+      const expected = expectedSites[index];
+      if (site.catalogId !== expected.catalogId || site.name !== expected.name || site.plugin !== expected.plugin || site.kind !== expected.kind || site.siteId !== expected.siteId) throw new Error(`global binding evidence siteが不一致です: ${bindingIndex}/${index}`);
+    });
+  }
   const routes = ["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0"];
   assertKeys(evidence.officialComparison, ["oracle", "routes", "equivalent", "results"], "global binding comparison");
   if (evidence.officialComparison.oracle !== "official-source" || JSON.stringify(evidence.officialComparison.routes) !== JSON.stringify(routes) || evidence.officialComparison.equivalent !== true) throw new Error("global binding comparisonが不完全です");
