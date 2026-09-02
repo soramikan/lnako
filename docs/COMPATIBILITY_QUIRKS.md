@@ -638,6 +638,24 @@ U12では既存の`plugin-node-http-async-values`を既定dispatch監査へ追�
 
 U13の`plugin-node-http-discord`、`plugin-node-http-discord-file`、`plugin-node-http-discord-failure`は、外部Discordへ送信せずloopback transportで公式source・公式生成JavaScript・lnako Interpreter・LLVM AOT O0の結果hashを比較した。cleanなU13 artifactでは46 fixture・1,826 site・350 native entryを監査し、Discord 2命令を3 site（success 2、HTTP 400を`エラー監視`で捕捉するexpected failure 1）へcatalog ID付きで接続し、`officialRoutesEquivalent: true`を確認した。これはJSON／multipartの意味結果と失敗dispatchの実行証拠であり、raw multipart boundary、実Discord APIとの相互運用性、3正式OSの外部署名attestation、QuickJS標準命令証拠を意味しない。したがってU13は`trace-confirmed-unattested`として完了し、実Discord endpoint・cross-OS attestation・reject文面の専用検証は未完了TODOに残す。
 
+## QuickJS互換4命令の明示境界と失敗相当
+
+公式の[system debug命令一覧](https://nadesi.com/v3/doc/index.php?plugin_system_debug=&show=)は、`JS実行`、`JSオブジェクト取得`、`JS関数実行`、`JSメソッド実行`の用途を示すが、評価対象、名前解決、`apply`のreceiver、配列でない引数、失敗時の終了境界までは十分に説明しない。固定v3.7.24の公式[`plugin_system_debug.mts`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/core/src/plugin_system_debug.mts#L11-L42)と[`plugin_system_debug.mts`のメソッド実行](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/core/src/plugin_system_debug.mts#L69-L88)をsource oracleとして、次の境界を記録する。
+
+| 命令・境界 | 公式v3.7.24の実装・実測 | lnakoの現在の動作 | 区分 / 差分テストID / TODO |
+|---|---|---|---|
+| `JS実行` | 渡されたsourceを`sys.__evalJS(src, sys)`へ渡し、評価結果を返す。評価対象は通常のcnako値ではなくJS sourceである | QuickJSをリンクした明示`--compat-js` buildだけでsourceを評価する。通常buildと通常のInterpreter／純LLVM AOTへJS engineを混入させない | `compat-js-basic`、`compat-js-host`、`compat-js-mutation`; 通常モードの拒否は意図的な安全境界 |
+| `JSオブジェクト取得` | `sys.__findVar(name, null)`でグローバル名を解決する。own propertyだけに限定した名前検索ではない | QuickJS globalから同じ名前解決を行い、結果を後続のcompat-js operationへ渡す | `compat-js-basic`、`compat-js-find-quirks`; prototype／global探索の未収録境界は`TODO: compat-js-global-resolution-edge` |
+| `JS関数実行` | 文字列名なら先にJS評価し、関数でなければ公式固有の「JS関数取得で実行できません。」エラーを出す。引数が配列でなければ1要素配列へ包み、`name.apply(null, args)`で呼ぶ | QuickJSのcall operationで同じ評価・callを行う。通常のなでしこ関数値とJS関数値を同一のnative dispatchとは扱わない | `compat-js-basic`、`compat-js-error-function`; 失敗診断の終了境界は`TODO: compat-js-failure-diagnostic-equivalence` |
+| `JSメソッド実行` | 文字列objectを評価し、objectでなければ「JSオブジェクトを取得できませんでした。」エラー。propertyからmethodを取り出し、非配列引数は1要素配列へ包んで`m.apply(obj, args)`で呼ぶ | QuickJSのmethod-call operationでreceiver付き呼出しを行う。receiverなしの通常AOT method ABIへ変換しない | `compat-js-basic`、`compat-js-error-method`; receiver／property descriptorの未収録境界は`TODO: compat-js-method-boundary` |
+| `ハテナ関数設定`の`JS:`指定 | 公式sourceは`JS:`で始まる配列要素を`sys.__evalJS`で評価し、それ以外はdebug function名として解決する。`ハテナ関数実行`は設定済みcallback列または既定`??`を呼ぶ | `JS:` callbackは明示compat-js経路に限定し、通常モードではJavaScriptを評価しない。非JS callbackは通常の関数値経路として扱う | `compat-js-hatena`; parserの`??` aliasは[`nako_parser3.mts`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/core/src/nako_parser3.mts#L742-L766)を参照 |
+
+`tests/oracle/compat-js-cases.json`の全9ケース（成功6、期待失敗3）は、公式sourceと`lnako run --compat-js`を比較する。成功6ケースでは正規化stdout・終了状態・signalを一致条件とし、stderrはSHA-256だけを保存する。期待失敗3ケースでは「両経路が失敗相当になった」ことだけを条件にし、公式の失敗表示とlnakoのQuickJS診断本文を同値とは扱わない。実測では、invalid evalで公式CLIはstdoutへ`null`とstderrのSyntaxErrorを出して終了コード0、lnakoはQuickJSエラーをstderrへ出して終了コード1となった。関数／methodの非callable境界でも、公式CLIは実行時エラーをstdoutへ表示して終了コード0、lnakoはQuickJSエラーをstderrへ出して終了コード1となる。この差は現在の証拠 checkerが意図的に「期待失敗」として保持する既知の互換性境界であり、完全な診断・終了コード同値の主張ではない。
+
+実行証拠は[`compat-js-evidence.json`](../compat/v3.7.24/compat-js-evidence.json)へ`lnako.compat-js-evidence.v1`として分離し、`JS実行` 11、`JSオブジェクト取得` 7、`JS関数実行` 2、`JSメソッド実行` 4の計24 direct root siteをoperation別のattempt/result metadataで記録する。traceへsource、引数、評価値、ポインタを保存しない。期待失敗のpartial traceはcatalog proofへ選択せず、native dispatch／純LLVM AOTの証拠へ流用しない。CIではLinux x86_64、Windows x86_64、macOS arm64のhost系jobでcheckerを実行するが、現artifactに3正式OSの外部署名attestationは付いていない。したがって4 entryは`trace-confirmed-unattested`であり、`verified`ではない。
+
+通常モードでJS評価を許可しないことは、JSランタイム混入を避けるためのlnakoの意図的な安全制限である。一方、公式sourceとlnakoの期待失敗時のstdout／stderr／終了コード差、receiverやglobal探索の未収録範囲は、未実装または追加検証が必要な互換境界として上記TODOへ分離する。
+
 ## 更新規則
 
 - 説明文と実装が食い違う場合は、固定した公式v3.7.24の実行結果を優先する。

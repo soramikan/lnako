@@ -32,7 +32,7 @@ macOSは通常suiteを2 jobへ分割してAOT native 3 jobと合わせ、同時�
 |---|---|
 | `core` | 互換台帳、字句・構文変換・構文・文法生成fuzz・意味・動的値・インタープリタ・plugin_system差分、format、全Zig単体テスト |
 | `standard` | math・CSV・TOML・Promise、markup・caniuse・kansujiの公式差分と全生成コーパス |
-| `host` | QuickJS互換差分、ネイティブプラグインABI、ファイル・プロセス・HTTP・暗号・文字コード・圧縮などNodeホスト差分。symlink経由のカレントディレクトリ実パスと失敗時のchdir診断も公式CLI・Interpreter・AOT O0〜O3で確認 |
+| `host` | QuickJS互換差分（`compat-js` 4 entryの9ケース実行証拠を含む）、ネイティブプラグインABI、ファイル・プロセス・HTTP・暗号・文字コード・圧縮などNodeホスト差分。symlink経由のカレントディレクトリ実パスと失敗時のchdir診断も公式CLI・Interpreter・AOT O0〜O3で確認 |
 | `aot-native`（Linux／Windowsはfixture shard 1/3〜3/3 × O0〜O3、macOSはO0+O1／O2／O3） | 各OSでnative fixture 284件を重み付き固定割当し、公式CLI・公式生成JavaScript・`lnako run`と選択したLLVM AOT routeを実行。全route groupを合わせてO0〜O3の7経路を全件実行 |
 | `aot-support` `support-http`（Linux／Windows） | HTTP serverの公式処理系対AOT O0〜O3実通信 |
 | `aot-support` `support-dispatch-evidence`（Linux／Windows） | canonical dispatch evidenceとdispatch security。evidence artifactを保存 |
@@ -650,3 +650,11 @@ macOS native routeをさらにjob分割する場合は、通常2 jobの統合な
 macOS 5 jobのZig tarball、Zig build、LLVM／QuickJS、公式oracle cacheは全jobでhitした。終了時のZig cache保存は同一run内のjob競合で一部がreserve失敗したが、検証結果には影響せず、次回runのrestore keyには前回成功cacheを使えている。従ってこのrunの遅延要因はcache missではなく、macOS O2の枠待ちと`O0+O1`の実行時間増加として記録する。
 
 次のpush時も、まずこのrunの結論と`gh run view --log-failed`を確認する。新runの完了は待たず、次回push前にmacOSの5 job開始時刻・queue、各native route、wall-clock、runner合計、cache hit/miss、3 OS artifact、attestationを再確認する。
+
+## U22前後の直近失敗と再発防止
+
+[run 33648917928](https://github.com/soramikan/lnako/actions/runs/33648917928)（`a353145`）は、macOS `mac-core-standard-support`とLinux `core`の2 jobが、偽造bundleを拒否するsecurity回帰検査の途中で失敗した。`sync_compat_evidence.mjs`が参照する`static-datetime-plugin-era-constant-evidence.json`がcommitへ含まれておらず、期待する偽造bundle拒否ではなく`ENOENT`になったことが原因である。artifactを現行証拠へ追加し、`0f19894`で追跡した。
+
+[run 33655328680](https://github.com/soramikan/lnako/actions/runs/33655328680)（`0f19894`）は、macOS `mac-core-standard-support`とLinux `core`の2 jobが、`evidence.json`更新後の`interpreter-only-classification.json`未再生成を検出して失敗した。これは製品実装やAOT／QuickJS経路の失敗ではなく、台帳から生成する派生artifactの同期漏れである。現行作業では`node tools/check_interpreter_only_classification.mjs --generate`後の`--check`を通し、U22の`compat-js-evidence.json`とともに派生artifactを同じ単位で更新する。
+
+両runとも他の検証jobはこの原因で停止した範囲を除き成功しており、Node 20移行警告は失敗原因ではない。次回以降もpush前に最新完了runの失敗jobと`gh run view --log-failed`を確認し、進行中runの完了は待たずに実装を継続する。macOSは5 job上限を維持し、job追加で6件目のqueueを作らない。

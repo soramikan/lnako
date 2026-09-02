@@ -22,8 +22,8 @@
   },
   "executionEvidenceStates": {
     "verified": 0,
-    "trace-confirmed-unattested": 523,
-    "unverified": 4
+    "trace-confirmed-unattested": 527,
+    "unverified": 0
   },
   "entries": [
     {
@@ -2452,9 +2452,30 @@
       },
       "fixtureCoverageState": "compat-js-only",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 compat-js-cases.jsonの明示関連付けを3件収録した（fixtureCoverageState=compat-js-only）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.compat-js-evidence.v1",
+        "fixtureId": "compat-js-evidence",
+        "siteIds": [
+          "compat-js-basic/0x0000000100000001",
+          "compat-js-basic/0x0000000100000003",
+          "compat-js-basic/0x0000000100000008",
+          "compat-js-basic/0x0000000100000010",
+          "compat-js-host/0x0000000100000001",
+          "compat-js-host/0x0000000100000003",
+          "compat-js-host/0x0000000100000005",
+          "compat-js-host/0x0000000100000007",
+          "compat-js-host/0x0000000100000009",
+          "compat-js-mutation/0x0000000000000001",
+          "compat-js-mutation/0x0000000000000008"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoCompatJs"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 明示catalog ID・operation別site IDについて、公式sourceとcompat-js実行結果、metadata-only traceを機械検証した（11 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "QuickJS 2026-06-04互換ビルドで公式cnako3との差分テストに成功"
     },
     {
@@ -2483,9 +2504,26 @@
       },
       "fixtureCoverageState": "compat-js-only",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 compat-js-cases.jsonの明示関連付けを2件収録した（fixtureCoverageState=compat-js-only）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.compat-js-evidence.v1",
+        "fixtureId": "compat-js-evidence",
+        "siteIds": [
+          "compat-js-basic/0x000000010000000b",
+          "compat-js-basic/0x000000010000000d",
+          "compat-js-find-quirks/0x0000000000000001",
+          "compat-js-find-quirks/0x0000000000000004",
+          "compat-js-find-quirks/0x0000000000000007",
+          "compat-js-find-quirks/0x000000000000000a",
+          "compat-js-find-quirks/0x000000000000000d"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoCompatJs"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 明示catalog ID・operation別site IDについて、公式sourceとcompat-js実行結果、metadata-only traceを機械検証した（7 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "QuickJS互換ブリッジで公式の変数・関数探索規則を再現"
     },
     {
@@ -2518,9 +2556,21 @@
       },
       "fixtureCoverageState": "compat-js-only",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 compat-js-cases.jsonの明示関連付けを3件収録した（fixtureCoverageState=compat-js-only）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.compat-js-evidence.v1",
+        "fixtureId": "compat-js-evidence",
+        "siteIds": [
+          "compat-js-basic/0x0000000100000006",
+          "compat-js-basic/0x000000010000000e"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoCompatJs"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 明示catalog ID・operation別site IDについて、公式sourceとcompat-js実行結果、metadata-only traceを機械検証した（2 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "QuickJS関数となでしこ関数の双方向呼び出しを公式差分テストで検証"
     },
     {
@@ -2660,9 +2710,23 @@
       },
       "fixtureCoverageState": "compat-js-only",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 compat-js-cases.jsonの明示関連付けを3件収録した（fixtureCoverageState=compat-js-only）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.compat-js-evidence.v1",
+        "fixtureId": "compat-js-evidence",
+        "siteIds": [
+          "compat-js-basic/0x0000000100000009",
+          "compat-js-mutation/0x0000000000000002",
+          "compat-js-mutation/0x0000000000000006",
+          "compat-js-mutation/0x0000000000000009"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoCompatJs"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 明示catalog ID・operation別site IDについて、公式sourceとcompat-js実行結果、metadata-only traceを機械検証した（4 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "QuickJSオブジェクトのthis束縛と変更同期を公式差分テストで検証"
     },
     {
