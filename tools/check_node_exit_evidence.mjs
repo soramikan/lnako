@@ -471,7 +471,7 @@ async function readCompileManifest(path, sourcePath, testCase) {
 
 function validateArtifact(artifact) {
   assertExactKeys(artifact, ["schema", "generator", "baseline", "fixture", "officialComparison", "provenance", "entries"]);
-  if (artifact.schema !== "lnako.expected-exit-evidence.v1" || artifact.generator !== "tools/check_node_exit_evidence.mjs" || artifact.baseline.tag !== baseline.tag || artifact.baseline.commit !== baseline.commit || !Array.isArray(artifact.entries) || artifact.entries.length !== 3) throw new Error("expected-exit証拠artifactのidentityが不正です");
+  if (artifact.schema !== "lnako.expected-exit-evidence.v1" || artifact.generator !== "tools/check_node_exit_evidence.mjs" || artifact.baseline.tag !== baseline.tag || artifact.baseline.commit !== baseline.commit || !Array.isArray(artifact.entries) || artifact.entries.length !== selectedCases.length) throw new Error("expected-exit証拠artifactのidentityが不正です");
   rejectForbidden(artifact);
   assertExactKeys(artifact.baseline, ["tag", "commit"]);
   assertExactKeys(artifact.fixture, ["id", "files", "cases"]);
