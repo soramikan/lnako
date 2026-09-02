@@ -462,22 +462,30 @@ async function readStaticManifest(path, sourcePath, expectedNames, schema, kind,
   if (complete.schema !== header.schema || complete.phase !== "pre-opt" || complete.kind !== "complete" || complete.complete !== true || !Number.isSafeInteger(complete.entryCount)) {
     throw new Error(`${label}の完了レコードが不正です`);
   }
-  const entries = lines.slice(1, -1);
-  if (complete.entryCount !== entries.length || entries.length !== expectedNames.length + extraNames.length) throw new Error(`${label}のentryCountが不一致です`);
+  const allEntries = lines.slice(1, -1);
+  if (complete.entryCount !== allEntries.length) throw new Error(`${label}のentryCountが不一致です`);
   const expected = new Set([...expectedNames, ...extraNames]);
+  const entries = [];
   const siteIds = new Set();
-  const nameCounts = new Map();
-  for (const entry of entries) {
+  for (const entry of allEntries) {
     assertKeys(entry, ["schema", "phase", "kind", "name", "siteId", "function", "source"], `${label} entry`);
     assertKeys(entry.source, ["line", "column", "sourceStart", "sourceEnd"], `${label} entry source`);
-    if (entry.schema !== header.schema || entry.phase !== "pre-opt" || entry.kind !== kind || !expected.has(entry.name)) throw new Error(`${label}のnameが不正です: ${entry.name}`);
+    if (entry.schema !== header.schema || entry.phase !== "pre-opt" || ![kind, ...(kind === "global-load" ? ["global-store"] : [])].includes(entry.kind)) throw new Error(`${label}のkindが不正です: ${entry.name}`);
     if (!/^0x[0-9a-f]{16}$/.test(entry.siteId) || siteIds.has(entry.siteId)) throw new Error(`${label}のsiteIdが不正または重複しています: ${entry.siteId}`);
     if (!Number.isSafeInteger(entry.source.line) || entry.source.line < 1 || !Number.isSafeInteger(entry.source.column) || entry.source.column < 1 || !Number.isSafeInteger(entry.source.sourceStart) || !Number.isSafeInteger(entry.source.sourceEnd) || entry.source.sourceStart < 0 || entry.source.sourceEnd < entry.source.sourceStart) {
       throw new Error(`${label}のsource位置が不正です: ${entry.name}`);
     }
     siteIds.add(entry.siteId);
-    nameCounts.set(entry.name, (nameCounts.get(entry.name) ?? 0) + 1);
+    if (entry.kind === "global-store") {
+      if (expected.has(entry.name)) throw new Error(`${label}に対象constantのstoreがあります: ${entry.name}`);
+      continue;
+    }
+    if (!expected.has(entry.name)) throw new Error(`${label}のnameが不正です: ${entry.name}`);
+    entries.push(entry);
   }
+  if (entries.length !== expectedNames.length + extraNames.length) throw new Error(`${label}のentryCountが不一致です`);
+  const nameCounts = new Map();
+  for (const entry of entries) nameCounts.set(entry.name, (nameCounts.get(entry.name) ?? 0) + 1);
   const expectedCounts = new Map();
   for (const name of [...expectedNames, ...extraNames]) expectedCounts.set(name, (expectedCounts.get(name) ?? 0) + 1);
   if (entries.length !== expectedNames.length + extraNames.length || nameCounts.size !== expectedCounts.size || [...expectedCounts].some(([name, count]) => nameCounts.get(name) !== count)) throw new Error(`${label}のname集合または件数が不一致です`);
@@ -498,24 +506,32 @@ async function readStaticTrace(path, engine, manifest, phase, label, extraNames 
   const end = lines.at(-1);
   assertKeys(end, ["schema", "engine", "phase", "seq", "dropped"], `${engine} ${label} end`);
   if (end.schema !== 1 || end.engine !== engine || end.phase !== "trace-end" || !Number.isSafeInteger(end.seq) || end.dropped !== 0) throw new Error(`${engine} ${label}の終了レコードが不正です`);
-  const events = lines.slice(0, -1);
+  const allEvents = lines.slice(0, -1);
+  const events = [];
   const siteIds = new Set();
-  for (const [index, event] of events.entries()) {
+  for (const [index, event] of allEvents.entries()) {
+    const isGlobalWrite = phase === "global-read" && event.phase === "global-write";
     const allowed = engine === "interpreter"
-      ? ["schema", "engine", "phase", "seq", "siteId", "name", ...(phase === "global-read" ? ["found"] : [])]
+      ? ["schema", "engine", "phase", "seq", "siteId", "name", ...(event.phase === "global-read" ? ["found"] : [])]
       : ["schema", "engine", "phase", "seq", "siteId", "success"];
     assertKeys(event, allowed, `${engine} ${label} event`);
-    if (event.schema !== 1 || event.engine !== engine || event.phase !== phase || event.seq !== index || !/^0x[0-9a-f]{16}$/.test(event.siteId) || siteIds.has(event.siteId)) {
+    if (event.schema !== 1 || event.engine !== engine || event.seq !== index || !/^0x[0-9a-f]{16}$/.test(event.siteId) || siteIds.has(event.siteId) || (isGlobalWrite ? event.phase !== "global-write" : event.phase !== phase)) {
       throw new Error(`${engine} ${label} eventが不正です`);
+    }
+    siteIds.add(event.siteId);
+    if (isGlobalWrite) {
+      if (engine === "interpreter" && (typeof event.name !== "string" || event.name.length === 0)) throw new Error(`Interpreter ${label}のglobal-write nameが不正です`);
+      if (engine === "aot" && event.success !== true) throw new Error(`AOT ${label}のglobal-write successが不正です`);
+      continue;
     }
     const manifestEntry = manifest.entries.find((entry) => entry.siteId === event.siteId);
     if (manifestEntry === undefined) throw new Error(`${engine} ${label}がmanifest外のsiteを含みます: ${event.siteId}`);
     const nonCatalogExtra = engine === "interpreter" && extraNames.includes(manifestEntry.name) && event.name === "<non-catalog>";
     if (engine === "interpreter" && ((!nonCatalogExtra && event.name !== manifestEntry.name) || (phase === "global-read" && event.found !== true))) throw new Error(`Interpreter ${label}のname/foundが不正です`);
     if (engine === "aot" && event.success !== true) throw new Error(`AOT ${label}のsuccessが不正です`);
-    siteIds.add(event.siteId);
+    events.push(event);
   }
-  if (siteIds.size !== manifest.entries.length || end.seq !== events.length) throw new Error(`${engine} ${label}の件数がmanifestと一致しません`);
+  if (events.length !== manifest.entries.length || end.seq !== allEvents.length) throw new Error(`${engine} ${label}の件数がmanifestと一致しません`);
   return events;
 }
 
