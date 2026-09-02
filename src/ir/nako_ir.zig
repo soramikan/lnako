@@ -85,6 +85,11 @@ pub const ConditionalBranch = struct { condition: ValueId, then_block: BlockId, 
 pub const Throw = struct {
     value: ValueId,
     target: ?BlockId = null,
+    /// Stable identity for the source-level `エラー発生` throw site. Throws
+    /// use a separate namespace from builtin calls because they do not enter
+    /// the generic dispatch ABI.
+    site_id: ?u64 = null,
+    span: ast.Span,
     /// `エラー発生` uses JavaScript Error(message) semantics rather than
     /// preserving an arbitrary thrown value in `エラーメッセージ`.
     coerce_to_error_message: bool = false,

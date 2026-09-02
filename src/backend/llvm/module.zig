@@ -197,6 +197,33 @@ pub fn writeBuiltinManifest(allocator: std.mem.Allocator, io: std.Io, program: i
                     },
                 });
             }
+            switch (block.terminator) {
+                .throw_value => |throw_value| {
+                    const site_id = throw_value.site_id orelse return error.MissingDispatchSiteId;
+                    if (seen_site_ids.contains(site_id)) return error.ManifestSiteIdCollision;
+                    try seen_site_ids.put(allocator, site_id, {});
+                    var site_id_text: [18]u8 = undefined;
+                    entry_count += 1;
+                    try writeManifestLine(writer, ManifestEntry{
+                        .schema = manifest_schema,
+                        .phase = "pre-opt",
+                        .kind = "throw-dispatch",
+                        .sourceName = "エラー発生",
+                        .canonicalOpcode = aot_builtin.throw_statement_canonical_opcode,
+                        .route = aot_builtin.throw_statement_route,
+                        .opcode = aot_builtin.throw_statement_opcode,
+                        .siteId = formatSiteId(&site_id_text, site_id),
+                        .function = function.name,
+                        .source = .{
+                            .line = throw_value.span.line + 1,
+                            .column = @max(@as(usize, 1), throw_value.span.column),
+                            .sourceStart = throw_value.span.source_start,
+                            .sourceEnd = throw_value.span.source_end,
+                        },
+                    });
+                },
+                else => {},
+            }
         }
     }
     try writer.flush();
@@ -523,6 +550,7 @@ const Emitter = struct {
                 "declare void @lnako_aot_pop_roots(ptr)\n" ++
                 "declare void @lnako_aot_exception_set(ptr)\n" ++
                 "declare void @lnako_aot_exception_set_error_message(ptr)\n" ++
+                "declare void @lnako_aot_throw_site(i64)\n" ++
                 "declare i32 @lnako_aot_exception_pending()\n" ++
                 "declare void @lnako_aot_exception_take(ptr)\n" ++
                 "declare void @lnako_aot_exception_abort()\n" ++
@@ -1981,6 +2009,10 @@ const Emitter = struct {
                 try self.debugSuffix(span, scope);
             },
             .throw_value => |throw_value| {
+                if (throw_value.site_id) |site_id| {
+                    try self.output.writer.print("  call void @lnako_aot_throw_site(i64 {d})", .{site_id});
+                    try self.debugSuffix(throw_value.span, scope);
+                }
                 const exception_set = if (throw_value.coerce_to_error_message) "lnako_aot_exception_set_error_message" else "lnako_aot_exception_set";
                 try self.output.writer.print("  call void @{s}(ptr %root.slot.{d})", .{ exception_set, throw_value.value });
                 try self.debugSuffix(span, scope);
@@ -2855,6 +2887,25 @@ test "AOT builtin manifestはdispatch routeとcanonical opcodeを保持する" {
 
     try std.testing.expect(manifestCall("利用者関数", 0, false) == null);
     try std.testing.expect(manifestCall("未知命令", null, false) == null);
+}
+
+test "AOT throw terminatorは専用dispatch trace ABIを出力する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "エラー監視\n1のエラー発生\nエラーならば\n\"handled\"を表示\nここまで\n", "throw-dispatch.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "throw-dispatch.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "throw-dispatch.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    var module = try generate(std.testing.allocator, program, "throw-dispatch.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_throw_site(i64)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_throw_site(i64 ") != null);
 }
 
 test "site-aware builtin emissionはsite ID欠落を拒否する" {

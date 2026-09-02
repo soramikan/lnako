@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const root = resolve(import.meta.dirname, "..");
+const throwStatementOpcode = 0xffff;
 const arguments_ = process.argv.slice(2);
 let noBuild = false;
 for (const argument of arguments_) {
@@ -177,7 +178,10 @@ async function readCompileManifest(path, sourcePath) {
   if (complete.schema !== schema || complete.phase !== "pre-opt" || complete.kind !== "complete" || complete.complete !== true || complete.entryCount !== entries.length) throw new Error("AOT compile manifest完了recordが不正です");
   const sites = new Set();
   for (const entry of entries) {
-    if (entry.schema !== schema || entry.phase !== "pre-opt" || entry.kind !== "builtin-dispatch" || typeof entry.sourceName !== "string" || typeof entry.canonicalOpcode !== "string" || typeof entry.route !== "string" || !Number.isInteger(entry.opcode) || typeof entry.siteId !== "string" || !/^0x[0-9a-f]{16}$/.test(entry.siteId) || sites.has(entry.siteId)) throw new Error("AOT compile manifest entryが不正です");
+    const validKind = entry.kind === "builtin-dispatch" ||
+      (entry.kind === "throw-dispatch" && entry.sourceName === "エラー発生" && entry.canonicalOpcode === "throw_statement" &&
+        entry.route === "throw" && entry.opcode === throwStatementOpcode);
+    if (entry.schema !== schema || entry.phase !== "pre-opt" || !validKind || typeof entry.sourceName !== "string" || typeof entry.canonicalOpcode !== "string" || typeof entry.route !== "string" || !Number.isInteger(entry.opcode) || typeof entry.siteId !== "string" || !/^0x[0-9a-f]{16}$/.test(entry.siteId) || sites.has(entry.siteId)) throw new Error("AOT compile manifest entryが不正です");
     sites.add(entry.siteId);
   }
   return entries;

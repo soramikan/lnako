@@ -8,6 +8,7 @@ import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs"
 import { readDispatchFixture } from "./dispatch_fixture.mjs";
 
 const root = resolve(import.meta.dirname, "..");
+const throwStatementOpcode = 0xffff;
 const arguments_ = process.argv.slice(2);
 let evidenceOutput = null;
 for (let index = 0; index < arguments_.length; index += 1) {
@@ -258,7 +259,10 @@ async function readCompileManifest(path, sourcePath) {
   }
   const siteIds = new Set();
   for (const entry of entries) {
-    if (entry.schema !== schema || entry.phase !== "pre-opt" || entry.kind !== "builtin-dispatch") {
+    const validKind = entry.kind === "builtin-dispatch" ||
+      (entry.kind === "throw-dispatch" && entry.sourceName === "エラー発生" && entry.canonicalOpcode === "throw_statement" &&
+        entry.route === "throw" && entry.opcode === throwStatementOpcode);
+    if (entry.schema !== schema || entry.phase !== "pre-opt" || !validKind) {
       throw new Error(`AOT compile manifest entryが不正です: ${JSON.stringify(entry)}`);
     }
     if (![entry.sourceName, entry.canonicalOpcode, entry.route, entry.function].every((value) => typeof value === "string" && value.length > 0)) {

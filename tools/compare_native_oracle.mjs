@@ -38,7 +38,8 @@ const artifactOracleIdentity = artifactPath === null ? null : oracleIdentity;
 // different drive.
 const temporary = await mkdtemp(join(root, ".tmp-lnako-native-"));
 const maxBuffer = 16 * 1024 * 1024;
-const knownCaseFields = new Set(["id", "source", "sourceFileName", "oracle", "stderrIncludes", "officialSourceStdoutIncludes", "normalizeDebugDump", "commands", "stdin"]);
+const knownCaseFields = new Set(["id", "source", "sourceFileName", "oracle", "stderrIncludes", "officialSourceStdoutIncludes", "normalizeDebugDump", "commands", "stdin", "dispatchExpectations"]);
+const throwStatementOpcode = 0xffff;
 const routeNames = ["officialSource", "officialGenerated", "lnakoRun", ...selectedOptimizations.map((optimization) => `lnakoNative${optimization}`)];
 let artifactLnakoBinarySha256 = null;
 
@@ -71,6 +72,9 @@ try {
     }
     if (testCase.commands !== undefined && (!Array.isArray(testCase.commands) || testCase.commands.length === 0 || testCase.commands.some((name) => typeof name !== "string" || name.length === 0 || !standardCommandNames.has(name)) || new Set(testCase.commands).size !== testCase.commands.length)) {
       throw new Error(`commandsは標準527命令の重複しない非空文字列配列で指定してください: ${testCase.id}`);
+    }
+    if (testCase.dispatchExpectations !== undefined) {
+      validateDispatchExpectations(testCase.dispatchExpectations, testCase.commands ?? [], testCase.id);
     }
     if (testCase.stdin !== undefined && typeof testCase.stdin !== "string") {
       throw new Error(`stdinは文字列で指定してください: ${testCase.id}`);
@@ -177,6 +181,22 @@ try {
   );
 } finally {
   await rm(temporary, { recursive: true, force: true });
+}
+
+function validateDispatchExpectations(expectations, commandNames, fixtureId) {
+  if (!Array.isArray(expectations)) throw new Error(`dispatchExpectationsが配列ではありません: ${fixtureId}`);
+  const commands = new Set(commandNames);
+  const expectedCommands = new Set();
+  for (const expectation of expectations) {
+    if (expectation === null || typeof expectation !== "object" || Array.isArray(expectation) ||
+        Object.keys(expectation).some((key) => !new Set(["command", "result", "count"]).has(key)) ||
+        typeof expectation.command !== "string" || !commands.has(expectation.command) ||
+        expectedCommands.has(expectation.command) || expectation.result !== "failure" ||
+        !Number.isSafeInteger(expectation.count) || expectation.count < 1) {
+      throw new Error(`dispatchExpectationsが不正です: ${fixtureId}`);
+    }
+    expectedCommands.add(expectation.command);
+  }
 }
 
 async function runCases(cases, temporary, executable, officialCli, concurrency) {
@@ -543,7 +563,10 @@ async function readManifestSummary(path) {
   if (complete.entryCount !== entries.length) throw new Error("AOT compile manifestのentryCountが一致しません");
   const siteIds = new Set();
   const entriesSummary = entries.map((entry, index) => {
-    if (entry.kind !== "builtin-dispatch" || entry.schema !== header.schema || entry.phase !== "pre-opt") {
+    const validKind = entry.kind === "builtin-dispatch" ||
+      (entry.kind === "throw-dispatch" && entry.sourceName === "エラー発生" && entry.canonicalOpcode === "throw_statement" &&
+        entry.route === "throw" && entry.opcode === throwStatementOpcode);
+    if (!validKind || entry.schema !== header.schema || entry.phase !== "pre-opt") {
       throw new Error(`AOT compile manifestのdispatchレコードが不正です（${index + 2}行目）`);
     }
     for (const field of ["sourceName", "canonicalOpcode", "route"]) {

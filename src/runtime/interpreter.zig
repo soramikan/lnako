@@ -798,6 +798,7 @@ pub const Interpreter = struct {
                 },
                 .return_value => |value| return if (value) |id| frame.values[id] else .undefined,
                 .throw_value => |throw_value| {
+                    self.dispatch_trace.emit(traceBuiltinName("エラー発生"), "throw", "failure", throw_value.site_id);
                     const thrown = frame.values[throw_value.value];
                     self.exception_value = if (throw_value.coerce_to_error_message) try self.errorMessageValue(thrown) else thrown;
                     if (frame.handlers.pop() orelse throw_value.target) |handler| {

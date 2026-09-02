@@ -6347,7 +6347,11 @@ fn aotHttpParseQuery(runtime: *Runtime, target: []const u8) !Value {
         const equal = std.mem.indexOfScalar(u8, pair, '=');
         const key = try aotHttpPercentDecode(runtime.allocator, if (equal) |index| pair[0..index] else pair, false);
         defer runtime.allocator.free(key);
-        const decoded_value = try aotHttpPercentDecode(runtime.allocator, if (equal) |index| pair[index + 1 ..] else "undefined", false);
+        const value_source = if (equal) |index| blk: {
+            const rest = pair[index + 1 ..];
+            break :blk rest[0 .. std.mem.indexOfScalar(u8, rest, '=') orelse rest.len];
+        } else "undefined";
+        const decoded_value = try aotHttpPercentDecode(runtime.allocator, value_source, false);
         defer runtime.allocator.free(decoded_value);
         roots[1] = try runtimeUtf8StringLossy(runtime, key);
         roots[2] = try runtimeUtf8StringLossy(runtime, decoded_value);
@@ -7014,6 +7018,28 @@ pub export fn lnako_aot_dispatch_display_begin_with_epoch(site_id: u64, epoch_ou
 pub export fn lnako_aot_dispatch_result(call_id: u64, site_id: u64, start_epoch: u64) callconv(.c) void {
     const runtime = if (active_runtime) |*active| active else return;
     runtime.dispatch_trace.result(call_id, "display", 0, "direct-display", site_id, runtime.failure_epoch == start_epoch);
+}
+
+/// Records a source-level `エラー発生` throw. This is intentionally a
+/// separate ABI from `lnako_aot_builtin_call_site`: the compiler lowers the
+/// command to a throw terminator so exception handler control flow remains
+/// explicit and no generic builtin dispatch is introduced.
+pub export fn lnako_aot_throw_site(site_id: u64) callconv(.c) void {
+    const runtime = if (active_runtime) |*active| active else return;
+    const call_id = runtime.dispatch_trace.begin(
+        aot_builtin.throw_statement_canonical_opcode,
+        aot_builtin.throw_statement_opcode,
+        aot_builtin.throw_statement_route,
+        site_id,
+    );
+    runtime.dispatch_trace.result(
+        call_id,
+        aot_builtin.throw_statement_canonical_opcode,
+        aot_builtin.throw_statement_opcode,
+        aot_builtin.throw_statement_route,
+        site_id,
+        false,
+    );
 }
 
 pub export fn lnako_aot_push_roots(frame: *RootFrame, values: ?[*]Value, len: usize) callconv(.c) void {
@@ -23931,6 +23957,29 @@ test "AOT HTTPのqueryとform parserはURL decode境界を保つ" {
         defer runtime.allocator.free(form_value);
         try std.testing.expectEqualStrings("A+B", form_value);
     }
+}
+
+test "AOT HTTPのqueryは重複キーと余分な区切りを公式splitどおり扱う" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const result = try aotHttpParseQuery(&runtime, "/a?duplicate=first&duplicate=last&flag&raw=a=b&empty=");
+    var roots = [_]Value{result};
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    const duplicate = try valueUtf8LossyAlloc(&runtime, runtime.indexGet(result, staticStringValue("duplicate")));
+    defer runtime.allocator.free(duplicate);
+    const flag = try valueUtf8LossyAlloc(&runtime, runtime.indexGet(result, staticStringValue("flag")));
+    defer runtime.allocator.free(flag);
+    const raw = try valueUtf8LossyAlloc(&runtime, runtime.indexGet(result, staticStringValue("raw")));
+    defer runtime.allocator.free(raw);
+    const empty = try valueUtf8LossyAlloc(&runtime, runtime.indexGet(result, staticStringValue("empty")));
+    defer runtime.allocator.free(empty);
+    try std.testing.expectEqualStrings("last", duplicate);
+    try std.testing.expectEqualStrings("undefined", flag);
+    try std.testing.expectEqualStrings("a", raw);
+    try std.testing.expectEqualStrings("", empty);
 }
 
 test "AOT HTTP routeと静的配信の補助判定は公式境界を保つ" {

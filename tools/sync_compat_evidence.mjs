@@ -103,6 +103,7 @@ const staticConstantEvidenceInputs = [
 const staticConstantFixtureIds = new Set(staticConstantEvidenceInputs.map((input) => input.fixtureId));
 const oracleDirectory = resolve(root, "tests/oracle");
 const forbiddenEvidenceFields = new Set(["source", "sourceText", "sourcePath", "args", "arguments", "stdout", "stderr", "value", "values", "pointer", "address"]);
+const throwStatementOpcode = 0xffff;
 const runtimeFixtureFiles = new Set([
   "compat-js-cases.json",
   "http-server-cases.json",
@@ -151,6 +152,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "tools/check_dispatch_coverage.mjs",
   "tools/compare_native_oracle.mjs",
   "tools/check_static_constant_evidence.mjs",
+  "docs/UNVERIFIED_EVIDENCE_PLAN.md",
   "tools/sync_compat_evidence.mjs",
 ]);
 const arguments_ = process.argv.slice(2);
@@ -412,6 +414,7 @@ async function readFixtureRecords() {
         sourceSha256: typeof fixture.source === "string" ? createHash("sha256").update(fixture.source).digest("hex") : null,
         commandNames: new Set(),
         associationOrigins: new Map(),
+        dispatchExpectations: Array.isArray(fixture.dispatchExpectations) ? fixture.dispatchExpectations : [],
       };
       if (!runtimeFixtureFiles.has(file) && fixture.commands !== undefined) {
         throw new Error(`実行fixture以外にcommandsがあります: ${file}/${fixture.id}`);
@@ -475,7 +478,9 @@ function evidenceReason(status, coverage, identityResolution, interpreterFixture
   const proofDescription = proofKind === "static-constant"
     ? "明示catalog ID・global/literal site IDについて、同一fixtureのInterpreter/AOT trace、対応manifest、公式差分の成功を機械検証した"
     : proofKind === "coverage"
-      ? "dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した"
+      ? executionSites.some((site) => site.result === "failure")
+        ? "dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分と明示した期待失敗結果を機械検証した"
+        : "dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した"
     : "明示catalog ID・site IDについて、同一fixtureのInterpreter/AOT trace、compile manifest、公式差分の成功を機械検証した";
   if (executionEvidenceState === "trace-confirmed-unattested") {
     return `${identity} ${proofDescription}（${executionSites.length} site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。`;
@@ -513,7 +518,7 @@ function validateDispatchCoverageEvidence(evidence, lock, standard, records, aud
 
   assertKnownObjectKeys(evidence.scope, ["catalogEntries", "nativeEntries", "nativeUniqueNames", "fixtureSelection", "fixtureCount", "excludedFixtures", "commandAssociationIsNotExecutionEvidence"], "dispatch-coverage-evidence.scope");
   if (evidence.scope.catalogEntries !== 527 || evidence.scope.nativeEntries !== 523 || evidence.scope.nativeUniqueNames !== 492 ||
-      typeof evidence.scope.fixtureSelection !== "string" || evidence.scope.fixtureCount !== 30 ||
+      typeof evidence.scope.fixtureSelection !== "string" || evidence.scope.fixtureCount !== 32 ||
       !Array.isArray(evidence.scope.excludedFixtures) || evidence.scope.commandAssociationIsNotExecutionEvidence !== true) {
     throw new Error("dispatch coverage証拠のscopeが標準527 entryと一致しません");
   }
@@ -558,27 +563,34 @@ function validateDispatchCoverageEvidence(evidence, lock, standard, records, aud
   }
   const fixtureReports = new Map();
   for (const report of evidence.fixtures) {
-    assertKnownObjectKeys(report, ["id", "file", "sourceSha256", "associatedCommandNames", "associationWithoutDispatch", "observedStaticCommandNames", "officialComparison", "interpreter", "aot"], "dispatch-coverage-evidence.fixture");
+    assertKnownObjectKeys(report, ["id", "file", "sourceSha256", "associatedCommandNames", "associationWithoutDispatch", "observedStaticCommandNames", "observedDispatchCommandNames", "dispatchExpectations", "officialComparison", "interpreter", "aot"], "dispatch-coverage-evidence.fixture");
     const key = `${report.file}/${report.id}`;
     if (fixtureReports.has(key)) throw new Error(`dispatch coverage証拠のfixtureが重複しています: ${key}`);
     const fixture = records.find((candidate) => candidate.id === report.id && candidate.file === report.file);
     if (fixture === undefined || !hashPattern.test(report.sourceSha256) || report.sourceSha256 !== fixture.sourceSha256 ||
         !Array.isArray(report.associatedCommandNames) || new Set(report.associatedCommandNames).size !== report.associatedCommandNames.length ||
         report.associatedCommandNames.some((name) => !standard.commands.some((command) => command.name === name)) ||
-        !Array.isArray(report.observedStaticCommandNames) || !Array.isArray(report.associationWithoutDispatch)) {
+        !Array.isArray(report.observedStaticCommandNames) || !Array.isArray(report.observedDispatchCommandNames) ||
+        !Array.isArray(report.dispatchExpectations) || JSON.stringify(report.dispatchExpectations) !== JSON.stringify(fixture.dispatchExpectations ?? []) ||
+        !Array.isArray(report.associationWithoutDispatch)) {
       throw new Error(`dispatch coverage証拠のfixture identityが不正です: ${key}`);
     }
+    validateDispatchExpectations(report.dispatchExpectations, fixture.commandNames, `${key}.dispatchExpectations`);
     validateCoverageComparison(report.officialComparison, hashPattern, key);
-    assertKnownObjectKeys(report.interpreter, ["dispatchEventCount", "staticSuccessSiteCount", "staticSiteWithoutAotManifestCount", "traceSha256"], `${key}.interpreter`);
-    assertKnownObjectKeys(report.aot, ["manifestEntryCount", "dispatchAttemptCount", "dispatchResultCount", "staticSuccessSiteCount", "failedDispatchCount", "traceSha256", "compileManifestSha256"], `${key}.aot`);
+    assertKnownObjectKeys(report.interpreter, ["dispatchEventCount", "staticSuccessSiteCount", "expectedFailureSiteCount", "expectedFailureDispatchCount", "staticSiteWithoutAotManifestCount", "traceSha256"], `${key}.interpreter`);
+    assertKnownObjectKeys(report.aot, ["manifestEntryCount", "dispatchAttemptCount", "dispatchResultCount", "staticSuccessSiteCount", "expectedFailureSiteCount", "expectedFailureDispatchCount", "failedDispatchCount", "traceSha256", "compileManifestSha256"], `${key}.aot`);
     if (!Number.isSafeInteger(report.interpreter.dispatchEventCount) || report.interpreter.dispatchEventCount < 1 ||
-        !Number.isSafeInteger(report.interpreter.staticSuccessSiteCount) || report.interpreter.staticSuccessSiteCount < 1 ||
+        !Number.isSafeInteger(report.interpreter.staticSuccessSiteCount) || report.interpreter.staticSuccessSiteCount < 0 ||
+        !Number.isSafeInteger(report.interpreter.expectedFailureSiteCount) || report.interpreter.expectedFailureSiteCount < 0 ||
+        !Number.isSafeInteger(report.interpreter.expectedFailureDispatchCount) || report.interpreter.expectedFailureDispatchCount < 0 ||
         !Number.isSafeInteger(report.interpreter.staticSiteWithoutAotManifestCount) || report.interpreter.staticSiteWithoutAotManifestCount < 0 ||
         !hashPattern.test(report.interpreter.traceSha256) ||
         !Number.isSafeInteger(report.aot.manifestEntryCount) || report.aot.manifestEntryCount < 1 ||
         !Number.isSafeInteger(report.aot.dispatchAttemptCount) || report.aot.dispatchAttemptCount < 1 ||
         report.aot.dispatchAttemptCount !== report.aot.dispatchResultCount ||
-        !Number.isSafeInteger(report.aot.staticSuccessSiteCount) || report.aot.staticSuccessSiteCount < 1 ||
+        !Number.isSafeInteger(report.aot.staticSuccessSiteCount) || report.aot.staticSuccessSiteCount < 0 ||
+        !Number.isSafeInteger(report.aot.expectedFailureSiteCount) || report.aot.expectedFailureSiteCount < 0 ||
+        !Number.isSafeInteger(report.aot.expectedFailureDispatchCount) || report.aot.expectedFailureDispatchCount < 0 ||
         !Number.isSafeInteger(report.aot.failedDispatchCount) || report.aot.failedDispatchCount < 0 ||
         !hashPattern.test(report.aot.traceSha256) || !hashPattern.test(report.aot.compileManifestSha256)) {
       throw new Error(`dispatch coverage証拠のfixture trace件数が不正です: ${key}`);
@@ -591,17 +603,43 @@ function validateDispatchCoverageEvidence(evidence, lock, standard, records, aud
   const siteKeys = new Set();
   const observedIds = new Set();
   const observedNames = new Set();
+  const sitesByFixture = new Map();
+  const unresolvedSitesByFixture = new Map();
+  if (!Array.isArray(evidence.coverage.unresolvedObservedSites)) throw new Error("dispatch coverage証拠の未解決site一覧が不正です");
+  for (const unresolved of evidence.coverage.unresolvedObservedSites) {
+    assertKnownObjectKeys(unresolved, ["fixtureId", "file", "siteId", "sourceName", "canonicalOpcode", "opcode", "route", "runtimeRoutes", "interpreterRoutes", "interpreterCount", "aotCount", "result", "candidateCatalogIds"], "dispatch-coverage-evidence.coverage.unresolvedObservedSites");
+    if (typeof unresolved.fixtureId !== "string" || typeof unresolved.file !== "string" || typeof unresolved.siteId !== "string" ||
+        !/^0x[0-9a-f]{16}$/.test(unresolved.siteId) || typeof unresolved.sourceName !== "string" || unresolved.sourceName.length === 0 ||
+        typeof unresolved.canonicalOpcode !== "string" || unresolved.canonicalOpcode.length === 0 || !Number.isInteger(unresolved.opcode) ||
+        unresolved.opcode < 0 || unresolved.opcode > 0xffff || typeof unresolved.route !== "string" || unresolved.route.length === 0 ||
+        !Array.isArray(unresolved.runtimeRoutes) || unresolved.runtimeRoutes.length === 0 || unresolved.runtimeRoutes.some((route) => typeof route !== "string" || route.length === 0) ||
+        !Array.isArray(unresolved.interpreterRoutes) || unresolved.interpreterRoutes.length === 0 || unresolved.interpreterRoutes.some((route) => typeof route !== "string" || route.length === 0) ||
+        !Number.isSafeInteger(unresolved.interpreterCount) || unresolved.interpreterCount < 1 || !Number.isSafeInteger(unresolved.aotCount) || unresolved.aotCount < 1 ||
+        !new Set(["success", "failure"]).has(unresolved.result) || !Array.isArray(unresolved.candidateCatalogIds) ||
+        unresolved.candidateCatalogIds.some((id) => typeof id !== "string" || id.length === 0)) {
+      throw new Error(`dispatch coverage証拠の未解決site metadataが不正です: ${unresolved.file}/${unresolved.fixtureId}/${unresolved.siteId}`);
+    }
+    const fixtureKey = `${unresolved.file}/${unresolved.fixtureId}`;
+    const unresolvedSites = unresolvedSitesByFixture.get(fixtureKey) ?? [];
+    unresolvedSites.push(unresolved);
+    unresolvedSitesByFixture.set(fixtureKey, unresolvedSites);
+  }
   for (const site of evidence.sites) {
-    assertKnownObjectKeys(site, ["fixtureId", "file", "siteId", "sourceName", "canonicalOpcode", "opcode", "route", "runtimeRoutes", "interpreterRoutes", "interpreterCount", "aotCount", "catalogId", "name", "plugin", "catalogStatus", "resolution", "selectedOracleEquivalent"], "dispatch-coverage-evidence.site");
+    assertKnownObjectKeys(site, ["fixtureId", "file", "siteId", "sourceName", "canonicalOpcode", "opcode", "route", "runtimeRoutes", "interpreterRoutes", "interpreterCount", "aotCount", "result", "catalogId", "name", "plugin", "catalogStatus", "resolution", "selectedOracleEquivalent"], "dispatch-coverage-evidence.site");
     const hasStringIdentity = ["fixtureId", "file", "siteId", "sourceName", "canonicalOpcode", "route", "catalogId", "name", "plugin", "catalogStatus", "resolution"]
       .every((key) => typeof site[key] === "string");
     const siteKey = hasStringIdentity ? coverageSiteKey(site) : "<invalid-site>";
     const fixtureKey = typeof site.file === "string" && typeof site.fixtureId === "string" ? `${site.file}/${site.fixtureId}` : "<invalid-fixture>";
+    const fixtureReport = fixtureReports.get(fixtureKey);
+    const expectedFailure = fixtureReport?.dispatchExpectations.find((expectation) => expectation.command === site.name);
+    const expectedResult = expectedFailure === undefined ? "success" : expectedFailure.result;
     if (!hasStringIdentity || !fixtureReports.has(fixtureKey) || site.file.length === 0 || site.fixtureId.length === 0 || !/^0x[0-9a-f]{16}$/.test(site.siteId) ||
         siteKeys.has(siteKey) || site.sourceName !== site.name || site.canonicalOpcode.length === 0 || !Number.isInteger(site.opcode) || site.opcode < 0 || site.opcode > 0xffff ||
         site.route.length === 0 || !Array.isArray(site.runtimeRoutes) || site.runtimeRoutes.length === 0 || site.runtimeRoutes.some((route) => typeof route !== "string" || route.length === 0) ||
         !Array.isArray(site.interpreterRoutes) || site.interpreterRoutes.length === 0 || site.interpreterRoutes.some((route) => typeof route !== "string" || route.length === 0) ||
         !Number.isSafeInteger(site.interpreterCount) || site.interpreterCount < 1 || !Number.isSafeInteger(site.aotCount) || site.aotCount < 1 ||
+        !new Set(["success", "failure"]).has(site.result) || site.result !== expectedResult ||
+        ((site.result === "failure") !== (site.canonicalOpcode === "throw_statement" && site.route === "throw" && site.opcode === throwStatementOpcode)) ||
         site.catalogStatus !== "native" || site.resolution !== "unique-name" || site.selectedOracleEquivalent !== true) {
       throw new Error(`dispatch coverage証拠のsite metadataが不正です: ${siteKey}`);
     }
@@ -612,6 +650,40 @@ function validateDispatchCoverageEvidence(evidence, lock, standard, records, aud
     siteKeys.add(siteKey);
     observedIds.add(site.catalogId);
     observedNames.add(site.name);
+    const fixtureSites = sitesByFixture.get(fixtureKey) ?? [];
+    fixtureSites.push(site);
+    sitesByFixture.set(fixtureKey, fixtureSites);
+  }
+  for (const [fixtureKey, report] of fixtureReports) {
+    const unresolvedSites = unresolvedSitesByFixture.get(fixtureKey) ?? [];
+    const allObservedSites = [...(sitesByFixture.get(fixtureKey) ?? []), ...unresolvedSites];
+    const observedDispatchNames = [...new Set(allObservedSites.map((site) => site.name ?? site.sourceName))].sort();
+    const observedStaticNames = [...new Set(allObservedSites.filter((site) => site.result === "success").map((site) => site.name ?? site.sourceName))].sort();
+    if (!Array.isArray(report.observedDispatchCommandNames) || JSON.stringify([...report.observedDispatchCommandNames].sort()) !== JSON.stringify(observedDispatchNames) ||
+        JSON.stringify([...report.observedStaticCommandNames].sort()) !== JSON.stringify(observedStaticNames) ||
+        report.observedStaticCommandNames.some((name) => !report.observedDispatchCommandNames.includes(name))) {
+      throw new Error(`dispatch coverage証拠のfixture command集計がsite集合と一致しません: ${fixtureKey}`);
+    }
+    const fixtureSites = allObservedSites;
+    const expectedFailureSites = fixtureSites.filter((site) => site.result === "failure");
+    const expectedFailureSiteCount = expectedFailureSites.length;
+    const expectedFailureInterpreterCount = expectedFailureSites.reduce((count, site) => count + site.interpreterCount, 0);
+    const expectedFailureAotCount = expectedFailureSites.reduce((count, site) => count + site.aotCount, 0);
+    const expectedSuccessSiteCount = fixtureSites.filter((site) => site.result === "success").length;
+    if (report.interpreter.staticSuccessSiteCount !== expectedSuccessSiteCount ||
+        report.aot.staticSuccessSiteCount !== report.interpreter.staticSuccessSiteCount ||
+        report.interpreter.expectedFailureSiteCount !== expectedFailureSiteCount || report.aot.expectedFailureSiteCount !== expectedFailureSiteCount ||
+        report.interpreter.expectedFailureDispatchCount !== expectedFailureInterpreterCount || report.aot.expectedFailureDispatchCount !== expectedFailureAotCount) {
+      throw new Error(`dispatch coverage証拠のfixture dispatch結果集計がsite集合と一致しません: ${fixtureKey}`);
+    }
+    for (const expectation of report.dispatchExpectations) {
+      const expectedSites = expectedFailureSites.filter((site) => site.name === expectation.command);
+      const interpreterCount = expectedSites.reduce((count, site) => count + site.interpreterCount, 0);
+      const aotCount = expectedSites.reduce((count, site) => count + site.aotCount, 0);
+      if (expectedSites.length === 0 || interpreterCount !== expectation.count || aotCount !== expectation.count) {
+        throw new Error(`dispatch coverage証拠の期待失敗結果が不一致です: ${fixtureKey}/${expectation.command}`);
+      }
+    }
   }
   const expectedUnobservedIds = nativeCommands.filter((command) => !observedIds.has(command.id)).map((command) => command.id);
   const expectedUnobservedNames = nativeCommands.map((command) => command.name).filter((name, index, values) => values.indexOf(name) === index && !observedNames.has(name));
@@ -658,6 +730,21 @@ function validateCoverageComparison(comparison, hashPattern, fixtureKey) {
     }
   } else if (generated.status === 0 || generated.signal !== null) {
     throw new Error(`dispatch coverage証拠のgenerated unavailable状態が不正です: ${fixtureKey}`);
+  }
+}
+
+function validateDispatchExpectations(expectations, commandNames, label) {
+  if (!Array.isArray(expectations)) throw new Error(`dispatchExpectationsが配列ではありません: ${label}`);
+  const expectedCommands = new Set();
+  for (const expectation of expectations) {
+    if (expectation === null || typeof expectation !== "object" || Array.isArray(expectation) ||
+        Object.keys(expectation).some((key) => !new Set(["command", "result", "count"]).has(key)) ||
+        typeof expectation.command !== "string" || !commandNames.has(expectation.command) ||
+        expectedCommands.has(expectation.command) || expectation.result !== "failure" ||
+        !Number.isSafeInteger(expectation.count) || expectation.count < 1) {
+      throw new Error(`dispatchExpectationsが不正です: ${label}`);
+    }
+    expectedCommands.add(expectation.command);
   }
 }
 

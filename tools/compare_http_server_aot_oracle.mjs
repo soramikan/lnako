@@ -86,6 +86,7 @@ async function runSuite(label, optimization) {
     await waitForServer(port, child, () => `stdout=${stdout}\nstderr=${stderr}`);
     const cases = [
       ["/echo?a=A%20B&plus=A+B", "GET"],
+      ["/echo?duplicate=first&duplicate=last&flag&raw=a=b&empty=", "GET"],
       ["/echo?head=1", "HEAD"],
       ["/echo", "PUT"],
       ["/echo", "POST", "application/json", JSON.stringify({ message: "日本語" })],
@@ -119,7 +120,7 @@ function suiteEnvironment() {
 }
 
 function requestCount() {
-  return 15;
+  return 16;
 }
 
 function multipartBody() {

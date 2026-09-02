@@ -379,6 +379,14 @@ pub const Command = enum(u16) {
     system_nadesiko_continue,
 };
 
+/// `エラー発生` is lowered to an IR throw terminator, not to the generic
+/// builtin-call ABI. Reserve an opcode outside the builtin enum so its
+/// compile/runtime evidence cannot be mistaken for one of the 527 command
+/// dispatches.
+pub const throw_statement_opcode: u16 = std.math.maxInt(u16);
+pub const throw_statement_canonical_opcode = "throw_statement";
+pub const throw_statement_route = "throw";
+
 /// The LLVM ABI receives an opcode after aliases have already been lowered.
 /// Trace consumers must therefore treat this as the canonical enum spelling,
 /// not as the source spelling used by a Nadesiko program.

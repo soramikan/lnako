@@ -1,0 +1,170 @@
+# `unverified` 89件の証拠化計画
+
+## 目的と基準
+
+この文書は、なでしこ3 v3.7.24（upstream `aa18c7e640523938c680958fe731418cc6f7a58f`）の標準cnako 527 entryについて、実装済み機能を過大評価せず、`compat/v3.7.24/evidence.json`の`unverified`を実行証拠へ接続するための計画である。2026-09-02時点の基準HEADは`27b8942fd2bcb8497539e0e122a646ad429c4e24`で、台帳は次の状態にある。
+
+| 状態 | entry数 | 意味 |
+|---|---:|---|
+| `verified` | 0 | 3正式OSの署名付きattestationまで揃った現在HEADの証拠 |
+| `trace-confirmed-unattested` | 438 | 公式差分、Interpreter/AOT trace、compile manifest等は揃うが、外部署名attestation前 |
+| `unverified` | 89 | 実装・fixtureの存在だけではcatalog ID単位の実行証拠にならない残件 |
+
+`native: 523`という分類、fixtureの存在、Interpreterだけの成功、artifactの生成は、AOT verifiedや`trace-confirmed-unattested`を意味しない。各単位を完了扱いにするのは、この文書の共通完了条件と台帳検査が同時に通った場合だけとする。最終的な目標は、まず`trace-confirmed-unattested 527 / unverified 0`、その後に3正式OSの外部署名attestationを含む`verified`へ進むことである。
+
+## 証拠基盤の柱
+
+89件を命令名だけで台帳へ付け替えない。次の4基盤を依存関係の柱として実装する。
+
+### P0 — fixture policyとalternate oracle
+
+fixtureごとに、成功終了だけでは表せない実行結果を明示する。
+
+| policy | 用途 |
+|---|---|
+| `oracle: official-source` / `official-generated` | 公式CLIと公式生成JavaScriptの既知差を選択的に扱う |
+| `generatedRouteUnavailable` | standalone生成時にplugin登録されない公式経路を明示する |
+| `expectedExit` | `終了`、`プロセス終`、廃止APIなどの期待終了・期待エラーを証拠化する |
+| `hostAdapter` | ブラウザ、Explorer、ネットワークなどの副作用をcapture環境へ置き換える |
+| `catalogIds` | 同名異pluginの実catalog IDをfixtureから指定する |
+| `resolution: explicit-catalog-id` | `unique-name`以外の安全な命令同定を明示する |
+| `officialSourceExpectedDifference` | 公式sourceとgenerated routeの既知差を隠さず記録する |
+
+`ambiguous-name`を名前だけで自動選択することは禁止する。
+
+### P1 — explicit catalog identity
+
+次の経路のすべてに、名前だけでなく`catalogId`、`plugin`、`sourceName`、`resolved route`を残す。
+
+```text
+semantic binding
+  -> compile manifest
+  -> Interpreter trace
+  -> AOT attempt/result
+  -> dispatch coverage site
+  -> evidence.json
+```
+
+同名命令の昇格条件は次の四者一致とする。
+
+```text
+fixture.catalogIds[name]
+= semantic catalog ID
+= Interpreter catalog ID
+= AOT manifest/runtime catalog ID
+```
+
+一致しないsiteは従来どおり`ambiguous-name`または`unverified`に残す。これが`終`、path alias、`plugin_datetime` 28 entryを扱う前提である。
+
+### P2 — global binding evidence
+
+裸のglobal参照や可変globalを関数dispatchへ偽装しない。`lnako.global-binding-evidence.v1`相当の証拠を、既存のstatic constant evidenceと同じ厳格さで追加する。
+
+最低限、catalog ID、global binding/site ID、Interpreter read/write trace、AOT manifest、AOT read/write trace、公式source/generated比較、clean commit provenanceを記録する。
+
+### P3 — compat-js evidence
+
+`compat-js`の4件はnative dispatchへ混ぜない。既存の公式CLIと`lnako run --compat-js`の比較へ、operation種別（`eval`、lookup、call、method-call）、catalog ID、stable site ID、attempt/resultを記録する`lnako.compat-js-evidence.v1`を接続する。
+
+## 89件の実装単位
+
+下表の「完了後」は、共通完了条件を満たして台帳の`unverified`が想定数だけ減った場合の値である。P1やP2の基盤作業自体はentry数を減らさない。
+
+| 単位 | 対象 | 件数 | 完了後 |
+|---|---|---:|---:|
+| U01 | `command-0065 エラー発生`、`command-0066 __DEBUG`。既存の監視内throwとdebug traceをcoverageへ接続し、未捕捉例外のU07とは分ける | 2 | 440 |
+| U02 | `command-0057 ナデシコ`、`command-0058 ナデシコ続`。外側のdynamic dispatchを証拠化し、generated standalone差をP0で扱う | 2 | 442 |
+| U03 | `0702 ブラウザ起動`、`0703 エクスプローラー起動`。OS別argvを本番経路で組み立て、最後の外部process生成だけhost adapterでcaptureする | 2 | 444 |
+| U04 | `0709 ファイルコピーデフォルト動作`。`上書禁止`→`上書`→`overwrite`のglobal read/write/readをP2で記録する | 1 | 445 |
+| U05 | `0731 デスクトップ`、`0732 マイドキュメント`、`0735 テンポラリフォルダ`。OS依存値を固定文字列にせず、host adapterとglobal readを記録する | 3 | 448 |
+| U06 | `0741 解凍`、`0742 解凍時`、`0743 圧縮`、`0744 圧縮時`。hermeticな7z互換helperで本体とcallbackを実行し、ZIPの意味結果を比較する | 4 | 452 |
+| U07 | `0746 プロセス終`、`0747 強制終了時`、`0748 終了`。終了直前のdispatch-result、terminal reason、`trace-end`をflushし、expected exitを証拠化する | 3 | 455 |
+| U08 | `0754 標準入力取得時`、`0755 尋`、`0756 文字尋`、`0757 標準入力全取得`。固定stdin、EOF、callback drainを同じsiteで比較する | 4 | 459 |
+| U09 | `0759 自分IPアドレス取得`、`0760 自分IPV6アドレス取得`。公式Nodeとlnakoへ同じnetwork topologyを供給し、順序・internal・IPv6 scopeを比較する | 2 | 461 |
+| U10 | `0761 AJAX送信時`、`0762 AJAX受信時`、`0763 GET送信時`、`0764 POST送信時`、`0765 POSTフォーム送信時`、`0766 AJAX失敗時`。loopbackでsuccess/failure/callback orderを証拠化する | 6 | 467 |
+| U11 | `0769 AJAX保障送信`〜`0775 AJAX受信`のPromise/保障系7件。resolve/rejectとevent drain完了後にtraceを閉じる | 7 | 474 |
+| U12 | `0777 POST送信`〜`0781 AJAXバイナリ取得`のasync値5件。text、JSON、binary、formをloopbackで比較し、AOT byte buffer種別まで確認する | 5 | 479 |
+| U13 | `0782 DISCORD送信`、`0783 DISCORDファイル送信`。外部Discordへ送らず、loopback transportでJSON、multipart、failureを比較する | 2 | 481 |
+| U14 | `0784 LINE送信`、`0785 LINE画像送信`。成功ではなく廃止エラーが互換結果であることをexpected error/exitとして証拠化する | 2 | 483 |
+| U15 | `0799 簡易HTTPサーバ起動時`〜`0804 簡易HTTPサーバ移動`。ephemeral port、実通信、response、callback完了、shutdown、trace-endを一体でcoverageへ接続する | 6 | 489 |
+| U16 | `0061 終`、`0268 ファイル名抽出`、`0269 パス抽出`、`0722 ファイル名抽出`、`0723 パス抽出`、`0745 終`。system/nodeのrouteをfixtureで分離し、P1の明示IDで同定する | 6 | 495 |
+| U17 | `plugin_datetime`明示routeのidentity基盤。明示importを`{catalogId, plugin, namespace, route}`として保持する。entry数は減らさない | 0（基盤） | 495 |
+| U18 | `0807 元号データ`、`0808 今`〜`0818 先月`。固定clock・Asia/Tokyo・global bindingを明示plugin routeで比較する | 12 | 507 |
+| U19 | `0819 曜日`、`0820 曜日番号取得`、`0821 UNIX時間変換`、`0822 UNIXTIME変換`、`0823 日時変換`。既存差分fixtureをexplicit routeへ分離する | 5 | 512 |
+| U20 | `0824 和暦変換`。explicit `plugin_datetime` routeで公式の`sys.__v0.元号データ is not iterable`境界を実測し、system版の成功を流用しない | 1 | 513 |
+| U21 | `0825 年数差`〜`0834 日時加算`。和暦エラーを含まない別explicit fixtureで10件の実routeを証拠化する | 10 | 523 |
+| U22 | `0051 JS実行`、`0052 JSオブジェクト取得`、`0053 JS関数実行`、`0056 JSメソッド実行`。QuickJS/compat-js専用traceをP3で追加する | 4 | 527 |
+
+U01〜U15は51件、U16は6件、U18〜U21は28件、U22は4件で合計89件となる。U17はU18〜U21の前提であり、二重計上しない。
+
+## 実行順序
+
+依存関係を固定し、各単位の完了ごとに証拠台帳を再生成する。
+
+```text
+P0 fixture policy / alternate oracle
+  ├─ U01, U02
+  ├─ U03
+  ├─ U06, U07
+  └─ U08～U15
+P2 global binding evidence
+  └─ U04, U05
+P1 explicit catalog identity
+  ├─ U16
+  └─ U17
+      ├─ U18
+      ├─ U19
+      ├─ U20
+      └─ U21
+P3 compat-js evidence
+  └─ U22
+```
+
+実装上は、まず一意名nativeの51件（438→489）、次に同名異pluginの34件（489→523）、最後にcompat-jsの4件（523→527）を目安にする。ただし、実際のcatalog ID・route・oracle差が確認できない場合は件数を減らさず、失敗理由をfixture policyまたは`docs/COMPATIBILITY_QUIRKS.md`へ残す。
+
+## 各単位の共通完了条件
+
+1. 公式oracleの種類と、必要なら公式source/generatedの差が明示されている。
+2. fixture source SHA-256が証拠へ固定されている。
+3. catalog IDが`unique-name`または`explicit-catalog-id`で確定している。
+4. Interpreterの同一site実行がtraceされている。
+5. AOT O0の同一site attempt/resultがtraceされている。
+6. compile manifestとruntime routeのcatalog ID・plugin・siteが一致している。
+7. selected oracleとlnakoのstdout、stderr、終了結果または期待エラーが一致している。
+8. evidence artifactがclean commit provenanceを指している。
+9. `node tools/sync_compat_evidence.mjs --check`が成功し、想定外の件数減少がない。
+10. dispatch/security checkerが成功している。
+11. 3正式OSで再現できない値はhost adapterまたはOS差の比較規則が明示されている。
+
+## 公式ドキュメントの説明不足・不具合候補の記録規則
+
+公式の命令一覧だけでは一致順、型、初期値、失敗時、event loop、plugin登録境界が読み取れない場合がある。固定v3.7.24の公式sourceと実測結果を照合し、次のように分離して記録する。
+
+- 公式command listへの固定commitリンクと、必要なsource行へのリンクを付ける。
+- 公式CLI、公式生成JavaScript、lnako Interpreter、純LLVM AOT O0〜O3のどの経路を実測したかを書く。
+- 公式の現在動作、lnakoの現在動作、意図的制限か未実装か、差分fixture ID、TODO識別子を同じ項目へ書く。
+- 仕様上の注意や不具合候補を、標準的に期待される挙動として修正しない。互換性を意図した再現と安全制限を明記する。
+- 未実測境界は「未確定」とし、`trace-confirmed`や`verified`へ昇格させない。
+
+現在のHTTPサーバのquery境界はこの規則の実例である。公式は`duplicate=first&duplicate=last`を後勝ち、値なしを`"undefined"`、`raw=a=b`を`"a"`、`empty=`を空文字として扱う。`docs/COMPATIBILITY_QUIRKS.md`と`plugin-httpserver-all`へこの実測を記録し、lnakoのInterpreter/AOT実装と16リクエスト差分へ反映する。不正percent、複数`?`、multipartの壊れた入力など未収録の境界は別TODOのまま残す。
+
+## 台帳・CI・リリースの扱い
+
+各単位のローカル検証順は次のとおりとする。
+
+```sh
+zig build fmt-check
+ZIG_GLOBAL_CACHE_DIR=/Users/sora/Repositories/soramikan/lnako/.zig-global-cache zig build test --summary all
+node tools/sync_compat_evidence.mjs --check
+node tools/check_compat_report.mjs --no-build
+node tools/check_dispatch_trace_security.mjs --no-build
+node tools/check_dispatch_attestation_security.mjs
+node tools/check_tracked_dispatch_attestation_security.mjs
+node tools/check_tracked_dispatch_attestation.mjs --offline
+```
+
+変更機能の公式差分と`check_dispatch_coverage.mjs`を追加し、artifactを再生成したときだけ台帳件数を更新する。CIは完了まで作業を停止しないが、次のpush前に直近完了runの失敗jobを確認し、失敗があれば原因を調査・修正してからpushする。
+
+現在のworkflowは3正式OSを含む45 test jobs＋1 attestation jobで、macOSは同時実行上限を考慮して1 runあたり5 jobsに固定している。job分割による壁時計短縮の効果は、待ち時間、wall-clock、runner合計、macOS queueを別々に記録し、検証経路を削減した短縮とは扱わない。
+
+89件が0になってもGoal完了ではない。3正式OSの単体・差分・AOT・QuickJS・fuzz回帰、benchmark JSON/Markdown、配布archive/checksum/SBOM、署名済み`v1.0.0`タグとGitHub Releaseがすべて揃うまで継続する。

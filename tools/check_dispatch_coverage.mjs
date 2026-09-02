@@ -74,6 +74,7 @@ const compiler = resolve(root, "zig-out/bin", process.platform === "win32" ? "ln
 const fixedHost = resolve(root, "tools/oracle/fixed_host.mjs");
 const normalizedDebugHost = resolve(root, "tools/oracle/normalize_debug_host.mjs");
 const maxBuffer = 32 * 1024 * 1024;
+const throwStatementOpcode = 0xffff;
 const fixtureStateMutationCommands = new Set([
   "保存",
   "SJISファイル保存",
@@ -161,7 +162,8 @@ async function loadSelectedFixtures() {
     { file: "supplemental-plugin-cases.json", selection: (testCase) => testCase.commands?.length > 0 && testCase.expectedFailure !== true },
     { file: "node-file-cases.json", selection: (testCase) => testCase.aot === true && testCase.commands?.length > 0 && testCase.expectError !== true },
     { file: "node-native-cases.json", selection: (testCase) => testCase.aot === true && testCase.commands?.length > 0 && testCase.expectError !== true },
-    { file: "native-cases.json", selection: (testCase) => testCase.id === "native-cut-commands" },
+    { file: "native-cases.json", selection: (testCase) =>
+      testCase.id === "native-cut-commands" || testCase.id === "native-system-error-raise" || testCase.id === "native-system-debug" },
   ];
   if (arguments_.includeNative) {
     specifications.push({
@@ -180,7 +182,7 @@ async function loadSelectedFixtures() {
       fixtures.push({ file: specification.file, ...testCase });
     }
   }
-  const expectedFixtureCount = arguments_.includeNative ? 200 : 30;
+  const expectedFixtureCount = arguments_.includeNative ? 200 : 32;
   if (fixtures.length !== expectedFixtureCount) throw new Error(`dispatch coverageのfixture数が想定外です: ${fixtures.length}`);
   return fixtures;
 }
@@ -200,6 +202,22 @@ function validateFixture(testCase, file) {
     throw new Error(`fixtureのsourceFileNameが不正です: ${file}/${testCase.id}`);
   }
   if (testCase.stdin !== undefined && typeof testCase.stdin !== "string") throw new Error(`fixtureのstdinが不正です: ${file}/${testCase.id}`);
+  if (testCase.dispatchExpectations !== undefined) {
+    if (!Array.isArray(testCase.dispatchExpectations) || testCase.dispatchExpectations.length === 0) {
+      throw new Error(`fixtureのdispatchExpectationsが不正です: ${file}/${testCase.id}`);
+    }
+    const expectedCommands = new Set();
+    for (const expectation of testCase.dispatchExpectations) {
+      if (expectation === null || typeof expectation !== "object" || Array.isArray(expectation) ||
+          Object.keys(expectation).some((key) => !new Set(["command", "result", "count"]).has(key)) ||
+          typeof expectation.command !== "string" || !testCase.commands.includes(expectation.command) ||
+          expectedCommands.has(expectation.command) || expectation.result !== "failure" ||
+          !Number.isSafeInteger(expectation.count) || expectation.count < 1) {
+        throw new Error(`fixtureのdispatchExpectationsが不正です: ${file}/${testCase.id}`);
+      }
+      expectedCommands.add(expectation.command);
+    }
+  }
   if (testCase.files !== undefined) {
     if (testCase.files === null || typeof testCase.files !== "object" || Array.isArray(testCase.files)) {
       throw new Error(`fixtureのfilesが不正です: ${file}/${testCase.id}`);
@@ -301,9 +319,9 @@ async function runFixture(fixture, index, temporary) {
   assertOfficialEquivalent(`${fixture.file}/${fixture.id} ${oracleRoute}/Interpreter`, oracleResult, interpreterWithoutTrace);
   assertOfficialEquivalent(`${fixture.file}/${fixture.id} ${oracleRoute}/AOT O0`, oracleResult, aotWithoutTrace);
 
-  const staticSuccessNames = new Set(coverage.staticSuccessNames);
+  const observedCommandNames = new Set(coverage.observedCommandNames);
   const associationWithoutDispatch = fixture.commands
-    .filter((name) => !staticSuccessNames.has(name))
+    .filter((name) => !observedCommandNames.has(name))
     .map((name) => ({ name, catalogIds: (catalogByName.get(name) ?? []).map((command) => command.id) }));
   return {
     report: {
@@ -312,7 +330,9 @@ async function runFixture(fixture, index, temporary) {
       sourceSha256,
       associatedCommandNames: [...fixture.commands],
       associationWithoutDispatch,
-      observedStaticCommandNames: [...staticSuccessNames].sort(),
+      observedStaticCommandNames: [...coverage.staticSuccessNames].sort(),
+      observedDispatchCommandNames: [...coverage.observedCommandNames].sort(),
+      dispatchExpectations: fixture.dispatchExpectations ?? [],
       officialComparison: {
         oracle: oracleRoute,
         routes: ["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0"],
@@ -332,6 +352,8 @@ async function runFixture(fixture, index, temporary) {
       interpreter: {
         dispatchEventCount: interpreterTrace.events.length,
         staticSuccessSiteCount: coverage.staticSuccessSiteCount,
+        expectedFailureSiteCount: coverage.expectedFailureSiteCount,
+        expectedFailureDispatchCount: coverage.expectedFailureDispatchCount,
         staticSiteWithoutAotManifestCount: coverage.interpreterSitesWithoutManifest.length,
         traceSha256: interpreterTrace.rawSha256,
       },
@@ -340,6 +362,8 @@ async function runFixture(fixture, index, temporary) {
         dispatchAttemptCount: aotTrace.attempts.length,
         dispatchResultCount: aotTrace.results.length,
         staticSuccessSiteCount: coverage.staticSuccessSiteCount,
+        expectedFailureSiteCount: coverage.expectedFailureSiteCount,
+        expectedFailureDispatchCount: coverage.expectedFailureDispatchCount,
         failedDispatchCount: aotTrace.results.filter((event) => event.success === false).length,
         traceSha256: aotTrace.rawSha256,
         compileManifestSha256: manifest.rawSha256,
@@ -524,7 +548,7 @@ async function readAotTrace(path, fixture, manifestEntries) {
     }
     if (attempt.siteId !== null) {
       const manifest = manifestBySite.get(attempt.siteId);
-      if (manifest === undefined || manifest.canonicalOpcode !== attempt.command || manifest.opcode !== attempt.opcode) {
+      if (manifest === undefined || manifest.canonicalOpcode !== attempt.command || manifest.route !== attempt.route || manifest.opcode !== attempt.opcode) {
         throw new Error(`${fixture.id} AOT traceとmanifestのdispatchが一致しません: ${JSON.stringify({ attempt, manifest })}`);
       }
     }
@@ -586,8 +610,13 @@ async function readCompileManifest(path, sourcePath, fixture) {
     throw new Error(`${fixture.id} AOT compile manifest header/completeが不正です`);
   }
   const siteIds = new Set();
+  const expectedFailureCommands = new Set((fixture.dispatchExpectations ?? []).map((expectation) => expectation.command));
   for (const entry of entries) {
-    if (entry.schema !== schema || entry.phase !== "pre-opt" || entry.kind !== "builtin-dispatch" ||
+    const isBuiltinDispatch = entry.kind === "builtin-dispatch";
+    const isThrowDispatch = entry.kind === "throw-dispatch" && entry.sourceName === "エラー発生" &&
+      entry.canonicalOpcode === "throw_statement" && entry.route === "throw" && entry.opcode === throwStatementOpcode &&
+      expectedFailureCommands.has(entry.sourceName);
+    if (entry.schema !== schema || entry.phase !== "pre-opt" || (!isBuiltinDispatch && !isThrowDispatch) ||
         ![entry.sourceName, entry.canonicalOpcode, entry.route, entry.function].every((value) => typeof value === "string" && value.length > 0) ||
         !Number.isInteger(entry.opcode) || entry.opcode < 0 || entry.opcode > 0xffff || typeof entry.siteId !== "string" ||
         !/^0x[0-9a-f]{16}$/.test(entry.siteId) || siteIds.has(entry.siteId)) {
@@ -611,14 +640,70 @@ function collectSites(fixture, interpreterEvents, aotTrace, manifestEntries) {
   const sites = [];
   const unresolvedSites = [];
   const staticSuccessNames = new Set();
+  const observedCommandNames = new Set();
+  const expectedFailureByCommand = new Map((fixture.dispatchExpectations ?? []).map((expectation) => [expectation.command, expectation]));
+  const expectedFailureCounts = new Map();
   let staticSuccessSiteCount = 0;
+  let expectedFailureSiteCount = 0;
+  let expectedFailureDispatchCount = 0;
   for (const entry of manifestEntries) {
+    const expectedFailure = expectedFailureByCommand.get(entry.sourceName);
+    if ((entry.kind === "throw-dispatch") !== (expectedFailure !== undefined)) {
+      throw new Error(`${fixture.id} throw-dispatchの期待失敗宣言が不一致です: ${entry.sourceName}/${entry.siteId}`);
+    }
+    if (expectedFailure !== undefined) {
+      const failedAot = aotTrace.results.filter((event) => event.siteId === entry.siteId && event.success === false);
+      const successfulAot = aotTrace.results.filter((event) => event.siteId === entry.siteId && event.success === true);
+      const failedInterpreter = interpreterEvents.filter((event) => event.siteId === entry.siteId && event.command === entry.sourceName && event.result === "failure");
+      const successfulInterpreter = interpreterEvents.filter((event) => event.siteId === entry.siteId && event.command === entry.sourceName && event.result === "success");
+      if (successfulAot.length > 0 || successfulInterpreter.length > 0) {
+        throw new Error(`${fixture.id} 明示した期待失敗siteに成功dispatchがあります: ${entry.sourceName}/${entry.siteId}`);
+      }
+      if (failedAot.length === 0 || failedInterpreter.length === 0 || failedAot.length !== failedInterpreter.length) {
+        throw new Error(`${fixture.id} 明示した期待失敗siteのInterpreter/AOT件数が一致しません: ${entry.sourceName}/${entry.siteId}`);
+      }
+      expectedFailureSiteCount += 1;
+      expectedFailureDispatchCount += failedAot.length;
+      expectedFailureCounts.set(entry.sourceName, (expectedFailureCounts.get(entry.sourceName) ?? 0) + failedAot.length);
+      observedCommandNames.add(entry.sourceName);
+      const routes = [...new Set(failedInterpreter.map((event) => event.route))].sort();
+      const common = {
+        fixtureId: fixture.id,
+        file: fixture.file,
+        siteId: entry.siteId,
+        sourceName: entry.sourceName,
+        canonicalOpcode: entry.canonicalOpcode,
+        opcode: entry.opcode,
+        route: entry.route,
+        runtimeRoutes: [...new Set(failedAot.map((event) => event.route))].sort(),
+        interpreterRoutes: routes,
+        interpreterCount: failedInterpreter.length,
+        aotCount: failedAot.length,
+        result: "failure",
+      };
+      const resolution = resolveCatalogCommand(entry.sourceName, entry.route);
+      if (resolution === null) {
+        unresolvedSites.push({ ...common, candidateCatalogIds: (catalogByName.get(entry.sourceName) ?? []).map((command) => command.id) });
+        continue;
+      }
+      sites.push({
+        ...common,
+        catalogId: resolution.command.id,
+        name: resolution.command.name,
+        plugin: resolution.command.plugin,
+        catalogStatus: resolution.command.status,
+        resolution: resolution.reason,
+        selectedOracleEquivalent: true,
+      });
+      continue;
+    }
     const successfulAot = aotTrace.results.filter((event) => event.siteId === entry.siteId && event.success === true);
     if (successfulAot.length === 0) continue;
     const successfulInterpreter = interpreterEvents.filter((event) => event.siteId === entry.siteId && event.command === entry.sourceName && event.result === "success");
     if (successfulInterpreter.length === 0) throw new Error(`${fixture.id} AOT成功siteに対応するInterpreter成功eventがありません`);
     staticSuccessSiteCount += 1;
     staticSuccessNames.add(entry.sourceName);
+    observedCommandNames.add(entry.sourceName);
     const routes = [...new Set(successfulInterpreter.map((event) => event.route))].sort();
     const resolution = resolveCatalogCommand(entry.sourceName, entry.route);
     const common = {
@@ -633,6 +718,7 @@ function collectSites(fixture, interpreterEvents, aotTrace, manifestEntries) {
       interpreterRoutes: routes,
       interpreterCount: successfulInterpreter.length,
       aotCount: successfulAot.length,
+      result: "success",
     };
     if (resolution === null) {
       unresolvedSites.push({ ...common, candidateCatalogIds: (catalogByName.get(entry.sourceName) ?? []).map((command) => command.id) });
@@ -648,7 +734,22 @@ function collectSites(fixture, interpreterEvents, aotTrace, manifestEntries) {
       selectedOracleEquivalent: true,
     });
   }
-  return { sites, unresolvedSites, staticSuccessNames, staticSuccessSiteCount, interpreterSitesWithoutManifest };
+  for (const expectation of fixture.dispatchExpectations ?? []) {
+    const observedCount = expectedFailureCounts.get(expectation.command) ?? 0;
+    if (observedCount !== expectation.count) {
+      throw new Error(`${fixture.id} 明示した期待失敗dispatch件数が一致しません: ${expectation.command} expected=${expectation.count} actual=${observedCount}`);
+    }
+  }
+  return {
+    sites,
+    unresolvedSites,
+    staticSuccessNames,
+    observedCommandNames,
+    staticSuccessSiteCount,
+    expectedFailureSiteCount,
+    expectedFailureDispatchCount,
+    interpreterSitesWithoutManifest,
+  };
 }
 
 function resolveCatalogCommand(name, route) {

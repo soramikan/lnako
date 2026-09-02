@@ -588,6 +588,9 @@
   },
   {
     "id": "native-system-error-raise",
+    "dispatchExpectations": [
+      {"command": "エラー発生", "result": "failure", "count": 4}
+    ],
     "commands": ["エラー発生"],
     "source": "エラー監視\nundefinedのエラー発生\nエラーならば\n(\"U:\"&エラーメッセージ)を表示\nここまで\nエラー監視\n123のエラー発生\nエラーならば\n(\"N:\"&エラーメッセージ)を表示\nここまで\nエラー監視\nはいのエラー発生\nエラーならば\n(\"B:\"&エラーメッセージ)を表示\nここまで\nエラー監視\nNULLのエラー発生\nエラーならば\n(\"Z:\"&エラーメッセージ)を表示\nここまで\n"
   },

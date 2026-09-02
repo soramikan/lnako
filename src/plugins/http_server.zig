@@ -304,7 +304,11 @@ fn parseQuery(runtime: *Runtime, target: []const u8) !Value {
         const equal = std.mem.indexOfScalar(u8, pair, '=');
         const key = try percentDecode(runtime.allocator(), if (equal) |index| pair[0..index] else pair, false);
         defer runtime.allocator().free(key);
-        const value = try percentDecode(runtime.allocator(), if (equal) |index| pair[index + 1 ..] else "undefined", false);
+        const value_source = if (equal) |index| blk: {
+            const rest = pair[index + 1 ..];
+            break :blk rest[0 .. std.mem.indexOfScalar(u8, rest, '=') orelse rest.len];
+        } else "undefined";
+        const value = try percentDecode(runtime.allocator(), value_source, false);
         defer runtime.allocator().free(value);
         try common.dictionarySetUtf8(runtime, result.dictionary, key, try runtime.stringUtf8(value));
     }
@@ -485,6 +489,27 @@ test "URLのクエリを公式互換で復号する" {
     try std.testing.expectEqualStrings("/a", url);
     try std.testing.expectEqualStrings("A B", x);
     try std.testing.expectEqualStrings("A+B", plus);
+}
+
+test "URLのクエリは重複キーと余分な区切りを公式splitどおり扱う" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var result = try parseQuery(&runtime, "/a?duplicate=first&duplicate=last&flag&raw=a=b&empty=");
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&result);
+    const duplicate = try dictionaryUtf8(&runtime, result.dictionary, "duplicate");
+    defer runtime.allocator().free(duplicate);
+    const flag = try dictionaryUtf8(&runtime, result.dictionary, "flag");
+    defer runtime.allocator().free(flag);
+    const raw = try dictionaryUtf8(&runtime, result.dictionary, "raw");
+    defer runtime.allocator().free(raw);
+    const empty = try dictionaryUtf8(&runtime, result.dictionary, "empty");
+    defer runtime.allocator().free(empty);
+    try std.testing.expectEqualStrings("last", duplicate);
+    try std.testing.expectEqualStrings("undefined", flag);
+    try std.testing.expectEqualStrings("a", raw);
+    try std.testing.expectEqualStrings("", empty);
 }
 
 fn dictionaryUtf8(runtime: *Runtime, dictionary: *value_mod.Dictionary, expected: []const u8) ![]const u8 {

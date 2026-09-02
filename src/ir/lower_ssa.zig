@@ -48,6 +48,7 @@ pub fn lower(backing_allocator: std.mem.Allocator, hir_program: hir.Program) !ir
 /// depend on absolute paths or allocator addresses.
 fn assignDispatchSiteIds(function: *ir.Function) !void {
     var ordinal: u64 = 0;
+    var throw_ordinal: u64 = 0;
     var global_ordinal: u64 = 0;
     var literal_ordinal: u64 = 0;
     for (function.blocks) |*block| {
@@ -67,6 +68,16 @@ fn assignDispatchSiteIds(function: *ir.Function) !void {
                 if (literal_ordinal > std.math.maxInt(u32)) return error.LiteralSiteIdOverflow;
                 instruction.literal_site_id = (@as(u64, function.id) << 32) | literal_ordinal;
             }
+        }
+        switch (block.terminator) {
+            .throw_value => |*throw_value| {
+                throw_ordinal += 1;
+                // The high bit of the low word separates throw sites from
+                // builtin-call sites while preserving the function prefix.
+                if (throw_ordinal > 0x7fff_ffff) return error.ThrowSiteIdOverflow;
+                throw_value.site_id = (@as(u64, function.id) << 32) | 0x8000_0000 | throw_ordinal;
+            },
+            else => {},
         }
     }
 }
@@ -374,6 +385,7 @@ const FunctionBuilder = struct {
         self.terminate(.{ .throw_value = .{
             .value = value,
             .target = if (self.exception_handlers.items.len > 0) self.exception_handlers.items[self.exception_handlers.items.len - 1] else null,
+            .span = node.span,
             .coerce_to_error_message = true,
         } });
         return value;
@@ -602,6 +614,8 @@ test "エラー発生を最内側の例外分岐先付きthrowへ変換する" {
             throw_count += 1;
             try std.testing.expect(throw_value.target != null);
             try std.testing.expect(throw_value.target.? < entry.blocks.len);
+            try std.testing.expect(throw_value.site_id != null);
+            try std.testing.expect((throw_value.site_id.? & 0x8000_0000) != 0);
             try std.testing.expect(throw_value.coerce_to_error_message);
         },
         else => {},
