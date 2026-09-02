@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -43,14 +44,32 @@ try {
 }
 
 function buildLnako() {
-  const result = spawnSync("zig", ["build"], {
+  const options = {
     cwd: root,
     encoding: "utf8",
     env: { ...process.env, ZIG_GLOBAL_CACHE_DIR: process.env.ZIG_GLOBAL_CACHE_DIR ?? resolve(root, ".zig-global-cache") },
     maxBuffer: 16 * 1024 * 1024,
-  });
-  if (result.status !== 0 || result.error) {
-    throw new Error(`lnakoのビルドに失敗しました:\n${describeProcessResult(result)}`);
+  };
+  const result = spawnSync("zig", ["build"], options);
+  if (result.status !== 0 || result.error) throw new Error(`lnakoのビルドに失敗しました:\n${describeProcessResult(result)}`);
+
+  const sanity = spawnSync(executable, ["--version"], options);
+  if (sanity.status === 0) return;
+  if (sanity.error?.code !== "ENOEXEC") {
+    throw new Error(`lnakoの生成compilerを実行できません:\n${describeProcessResult(sanity)}`);
+  }
+
+  // A cancelled or interrupted runner can leave a cache entry that lets Zig
+  // report a successful build while installing an unusable executable. Retry
+  // once from generated output and the shared build cache after detecting the
+  // precise invalid-format error; normal builds keep their cache fast path.
+  rmSync(resolve(root, "zig-out"), { recursive: true, force: true });
+  rmSync(resolve(root, ".zig-cache"), { recursive: true, force: true });
+  const retry = spawnSync("zig", ["build"], options);
+  if (retry.status !== 0 || retry.error) throw new Error(`lnakoのcache再構築に失敗しました:\n${describeProcessResult(retry)}`);
+  const retrySanity = spawnSync(executable, ["--version"], options);
+  if (retrySanity.status !== 0 || retrySanity.error) {
+    throw new Error(`lnakoのcache再構築後も生成compilerを実行できません:\n${describeProcessResult(retrySanity)}`);
   }
 }
 

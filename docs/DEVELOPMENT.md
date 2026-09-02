@@ -1,7 +1,7 @@
 # 開発手順
 
 GitHub Actionsのスイート分割、同一refの旧run取消、変更前後の所要時間は[`CI.md`](CI.md)に記録します。
-CI定義を変更した場合は `node tools/check_ci_workflow.mjs` で3正式OSそれぞれ15件、計45件のtest job、attestation job、全検証ステップの所属も確認します。macOSの同時実行上限は5件であるため、matrixを増やすだけで待機列が解消するとは扱わず、wall-clockとrunner合計を`docs/CI.md`へ実測記録します。
+CI定義を変更した場合は `node tools/check_ci_workflow.mjs` で49件のmatrix job（通常10件＋AOT 39件）、coverage shard検証job、attestation job、全検証ステップの所属も確認します。macOSのmatrixは同時実行上限5件に収まるよう5件のまま固定し、Linux／Windowsのdispatch coverageだけを3 shardへ分割しています。matrixを増やすだけで待機列が解消するとは扱わず、wall-clockとrunner合計を`docs/CI.md`へ実測記録します。
 
 ## 検証順序
 
@@ -53,6 +53,9 @@ node tools/check_node_archive_smoke.mjs
 node tools/compare_native_oracle.mjs
 node tools/check_dispatch_trace.mjs
 node tools/check_dispatch_coverage.mjs --no-build --output /absolute/path/dispatch-coverage.json
+# CIと同じ既定56 fixtureを重み付き3 shardの一つとして監査する場合
+node tools/check_dispatch_coverage.mjs --no-build --fixture-shard-index 0 --fixture-shard-count 3 --output /absolute/path/dispatch-coverage-0.json
+node tools/check_dispatch_coverage_shards.mjs --directory /absolute/path/coverage-artifacts --shard-count 3
 node tools/check_builtin_catalog.mjs
 node tools/sync_compat.mjs --check
 node tools/sync_compat_evidence.mjs --check

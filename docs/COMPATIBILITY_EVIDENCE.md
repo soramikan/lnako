@@ -279,8 +279,9 @@ node tools/check_compat_js_evidence.mjs --no-build
 ファイルを生成・変更するfixtureだけrouteごとの作業ディレクトリを分離し、カレントディレクトリや母艦パスを観測するfixtureは全routeで同じ作業ディレクトリとsource pathを使います。
 この拡張監査もcanonical evidenceや`verified`昇格の代わりではなく、出力JSONの`fixtureSelection`と`excludedFixtures`へ対象範囲を記録します。
 
-CIのAOT suiteは3正式OSごとにこのレポートを`lnako-dispatch-coverage-*` artifactへ保存します。artifactの保存は到達範囲の追跡用であり、
-現行のdispatch evidence attestationや`verified`昇格の入力ではありません。
+CIのAOT suiteはmacOSでは全件1 artifact、Linux／Windowsでは各3つの重み付きfixture shard artifactとしてこのレポートを
+`lnako-dispatch-coverage-*`へ保存します。`verify_dispatch_coverage` jobが7 artifactのfixture集合を照合し、重複・欠落を拒否します。
+artifactの保存とshard照合は到達範囲の追跡用であり、現行のdispatch evidence attestationや`verified`昇格の入力ではありません。
 
 ## AOT compile manifest
 

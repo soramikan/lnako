@@ -76,7 +76,8 @@ const generatedRouteUnavailableFixtures = new Map([
   ["plugin-route-cases.json/plugin-system-path-route", "公式生成JavaScriptのstandalone system-only compiler runtime bundleがなく、system plugin単独routeを実行できない"],
   ["plugin-route-cases.json/plugin-system-end-route", "公式生成JavaScriptのstandalone system-only compiler runtime bundleがなく、system plugin単独routeを実行できない"],
 ]);
-const selectedFixtures = await loadSelectedFixtures();
+const fixturePool = await loadSelectedFixtures();
+const selectedFixtures = selectFixtureShard(fixturePool, arguments_.fixtureShard);
 const compiler = resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
 const fixedHost = resolve(root, "tools/oracle/fixed_host.mjs");
 const systemOnlyRunner = resolve(root, "tools/oracle/system_only.mjs");
@@ -148,6 +149,8 @@ function parseArguments() {
   let includeNative = false;
   let output = null;
   let oracle = null;
+  let fixtureShardIndex = null;
+  let fixtureShardCount = null;
   for (let index = 0; index < process.argv.length - 2; index += 1) {
     const argument = process.argv[index + 2];
     if (argument === "--no-build") {
@@ -164,11 +167,59 @@ function parseArguments() {
       if (oracle !== null) throw new Error("--oracleは1回だけ指定してください");
       oracle = process.argv[++index + 2] ?? null;
       if (oracle === null || !isAbsolute(oracle)) throw new Error("--oracleには絶対パスを指定してください");
+    } else if (argument === "--fixture-shard-index") {
+      if (fixtureShardIndex !== null) throw new Error("--fixture-shard-indexは1回だけ指定してください");
+      fixtureShardIndex = parseShardInteger(argument, process.argv[++index + 2]);
+    } else if (argument === "--fixture-shard-count") {
+      if (fixtureShardCount !== null) throw new Error("--fixture-shard-countは1回だけ指定してください");
+      fixtureShardCount = parseShardInteger(argument, process.argv[++index + 2]);
     } else {
-      throw new Error("usage: node tools/check_dispatch_coverage.mjs [--no-build] [--include-native] [--output /absolute/path] [--oracle /absolute/path]");
+      throw new Error("usage: node tools/check_dispatch_coverage.mjs [--no-build] [--include-native] [--output /absolute/path] [--oracle /absolute/path] [--fixture-shard-index N --fixture-shard-count N]");
     }
   }
-  return { noBuild, includeNative, output, oracle };
+  if ((fixtureShardIndex === null) !== (fixtureShardCount === null)) {
+    throw new Error("--fixture-shard-indexと--fixture-shard-countは同時に指定してください");
+  }
+  if (fixtureShardCount !== null && (fixtureShardCount < 2 || fixtureShardIndex >= fixtureShardCount)) {
+    throw new Error("fixture shardのindex/countが不正です");
+  }
+  return {
+    noBuild,
+    includeNative,
+    output,
+    oracle,
+    fixtureShard: { index: fixtureShardIndex, count: fixtureShardCount ?? 1 },
+  };
+}
+
+function parseShardInteger(argument, value) {
+  if (value === undefined || !/^\d+$/.test(value)) throw new Error(`${argument}には0以上の整数を指定してください`);
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) throw new Error(`${argument}の値が大きすぎます`);
+  return parsed;
+}
+
+function selectFixtureShard(fixtures, shard) {
+  if (shard.index === null) return fixtures;
+  const bins = Array.from({ length: shard.count }, (_, index) => ({ index, weight: 0, fixtures: [] }));
+  const weightedFixtures = fixtures
+    .map((fixture, index) => ({ fixture, index, weight: fixtureWeight(fixture) }))
+    .sort((left, right) => right.weight - left.weight || left.index - right.index);
+  for (const item of weightedFixtures) {
+    const target = bins.reduce((left, right) =>
+      right.weight < left.weight || (right.weight === left.weight && right.index < left.index) ? right : left);
+    target.fixtures.push(item);
+    target.weight += item.weight;
+  }
+  return bins[shard.index].fixtures
+    .sort((left, right) => left.index - right.index)
+    .map((item) => item.fixture);
+}
+
+function fixtureWeight(fixture) {
+  const sourceWeight = fixture.source.length;
+  const commandWeight = (fixture.commands?.length ?? 0) * 8;
+  return Math.max(1, sourceWeight) + commandWeight;
 }
 
 async function loadSelectedFixtures() {
@@ -1245,7 +1296,9 @@ function createReport({ fixtureReports, sites, unresolvedSites, oracle, git }) {
   const associationWithoutDispatch = fixtureReports.flatMap((fixture) => fixture.associationWithoutDispatch.map((association) => ({ fixtureId: fixture.id, file: fixture.file, ...association })));
   return {
     schema: "lnako.dispatch-coverage.v1",
-    kind: "sampled-unattested-dispatch-audit",
+    kind: arguments_.fixtureShard.index === null
+      ? "sampled-unattested-dispatch-audit"
+      : "sampled-unattested-dispatch-audit-shard",
     baseline: { tag: baseline.tag, commit: baseline.commit },
     scope: {
       catalogEntries: catalog.commands.length,
@@ -1255,6 +1308,17 @@ function createReport({ fixtureReports, sites, unresolvedSites, oracle, git }) {
         ? "the default command-bearing selection plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, seven explicit plugin-route fixtures, and all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps"
         : "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, seven explicit plugin-route fixtures, and native-cut-commands, excluding explicit AOT gaps",
       fixtureCount: fixtureReports.length,
+      ...(arguments_.fixtureShard.index === null
+        ? {}
+        : {
+            fixtureShard: {
+              mode: "weighted-source-command",
+              index: arguments_.fixtureShard.index,
+              count: arguments_.fixtureShard.count,
+              totalFixtureCount: fixturePool.length,
+              selectedFixtureCount: fixtureReports.length,
+            },
+          }),
       excludedFixtures: [...excludedFixtures].map(([key, reason]) => ({ key, reason })),
       commandAssociationIsNotExecutionEvidence: true,
     },
