@@ -8,9 +8,9 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 401,
-    "nativeAot": 306,
-    "interpreter": 102,
+    "total": 402,
+    "nativeAot": 307,
+    "interpreter": 103,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
@@ -22,8 +22,8 @@
   },
   "executionEvidenceStates": {
     "verified": 0,
-    "trace-confirmed-unattested": 483,
-    "unverified": 44
+    "trace-confirmed-unattested": 489,
+    "unverified": 38
   },
   "entries": [
     {
@@ -23350,14 +23350,19 @@
       "plugin": "plugin_node",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-httpserver-dispatch",
         "plugin-node-exit-japanese-alias"
       ],
       "aotFixtureIds": [
-        "native-node-exit-japanese-alias"
+        "native-node-exit-japanese-alias",
+        "plugin-httpserver-dispatch"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-httpserver-dispatch": [
+            "fixture.commands"
+          ],
           "plugin-node-exit-japanese-alias": [
             "fixture.commands",
             "implemented.tests"
@@ -23367,6 +23372,9 @@
           "native-node-exit-japanese-alias": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-httpserver-dispatch": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
@@ -25984,10 +25992,12 @@
       "plugin": "plugin_httpserver",
       "status": "native",
       "interpreterFixtureIds": [
-        "plugin-httpserver-all"
+        "plugin-httpserver-all",
+        "plugin-httpserver-dispatch"
       ],
       "aotFixtureIds": [
-        "plugin-httpserver-all"
+        "plugin-httpserver-all",
+        "plugin-httpserver-dispatch"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -25995,21 +26005,39 @@
           "plugin-httpserver-all": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-httpserver-dispatch": [
+            "fixture.commands"
           ]
         },
         "aot": {
           "plugin-httpserver-all": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-httpserver-dispatch": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-httpserver-dispatch/0x0000000900000001"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
@@ -26018,10 +26046,12 @@
       "plugin": "plugin_httpserver",
       "status": "native",
       "interpreterFixtureIds": [
-        "plugin-httpserver-all"
+        "plugin-httpserver-all",
+        "plugin-httpserver-dispatch"
       ],
       "aotFixtureIds": [
-        "plugin-httpserver-all"
+        "plugin-httpserver-all",
+        "plugin-httpserver-dispatch"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -26029,21 +26059,39 @@
           "plugin-httpserver-all": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-httpserver-dispatch": [
+            "fixture.commands"
           ]
         },
         "aot": {
           "plugin-httpserver-all": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-httpserver-dispatch": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-httpserver-dispatch/0x0000000900000002"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
@@ -26052,10 +26100,12 @@
       "plugin": "plugin_httpserver",
       "status": "native",
       "interpreterFixtureIds": [
-        "plugin-httpserver-all"
+        "plugin-httpserver-all",
+        "plugin-httpserver-dispatch"
       ],
       "aotFixtureIds": [
-        "plugin-httpserver-all"
+        "plugin-httpserver-all",
+        "plugin-httpserver-dispatch"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -26063,21 +26113,46 @@
           "plugin-httpserver-all": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-httpserver-dispatch": [
+            "fixture.commands"
           ]
         },
         "aot": {
           "plugin-httpserver-all": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-httpserver-dispatch": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-httpserver-dispatch/0x0000000900000003",
+          "plugin-httpserver-dispatch/0x0000000900000004",
+          "plugin-httpserver-dispatch/0x0000000900000005",
+          "plugin-httpserver-dispatch/0x0000000900000006",
+          "plugin-httpserver-dispatch/0x0000000900000007",
+          "plugin-httpserver-dispatch/0x0000000900000008",
+          "plugin-httpserver-dispatch/0x0000000900000009",
+          "plugin-httpserver-dispatch/0x000000090000000a"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（8 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
@@ -26086,10 +26161,12 @@
       "plugin": "plugin_httpserver",
       "status": "native",
       "interpreterFixtureIds": [
-        "plugin-httpserver-all"
+        "plugin-httpserver-all",
+        "plugin-httpserver-dispatch"
       ],
       "aotFixtureIds": [
-        "plugin-httpserver-all"
+        "plugin-httpserver-all",
+        "plugin-httpserver-dispatch"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -26097,21 +26174,43 @@
           "plugin-httpserver-all": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-httpserver-dispatch": [
+            "fixture.commands"
           ]
         },
         "aot": {
           "plugin-httpserver-all": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-httpserver-dispatch": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-httpserver-dispatch/0x0000000100000002",
+          "plugin-httpserver-dispatch/0x0000000300000002",
+          "plugin-httpserver-dispatch/0x0000000600000001",
+          "plugin-httpserver-dispatch/0x0000000700000001",
+          "plugin-httpserver-dispatch/0x0000000800000001"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（5 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
@@ -26120,10 +26219,12 @@
       "plugin": "plugin_httpserver",
       "status": "native",
       "interpreterFixtureIds": [
-        "plugin-httpserver-all"
+        "plugin-httpserver-all",
+        "plugin-httpserver-dispatch"
       ],
       "aotFixtureIds": [
-        "plugin-httpserver-all"
+        "plugin-httpserver-all",
+        "plugin-httpserver-dispatch"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -26131,21 +26232,39 @@
           "plugin-httpserver-all": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-httpserver-dispatch": [
+            "fixture.commands"
           ]
         },
         "aot": {
           "plugin-httpserver-all": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-httpserver-dispatch": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-httpserver-dispatch/0x0000000300000001"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
@@ -26154,10 +26273,12 @@
       "plugin": "plugin_httpserver",
       "status": "native",
       "interpreterFixtureIds": [
-        "plugin-httpserver-all"
+        "plugin-httpserver-all",
+        "plugin-httpserver-dispatch"
       ],
       "aotFixtureIds": [
-        "plugin-httpserver-all"
+        "plugin-httpserver-all",
+        "plugin-httpserver-dispatch"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -26165,21 +26286,39 @@
           "plugin-httpserver-all": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-httpserver-dispatch": [
+            "fixture.commands"
           ]
         },
         "aot": {
           "plugin-httpserver-all": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-httpserver-dispatch": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-httpserver-dispatch/0x0000000400000001"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式cnako3との簡易HTTPサーバ実通信差分テストに成功"
     },
     {
