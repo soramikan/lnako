@@ -309,8 +309,8 @@ if (!workflow.includes("if: matrix.suite == 'core' || matrix.suite == 'mac-core-
   throw new Error("coreの証拠追従検査に必要なfull checkout条件がありません");
 }
 const coverageVerificationJob = workflow.match(/  verify_dispatch_coverage:[\s\S]*?(?=\n  attest-dispatch-evidence:)/)?.[0];
-if (!coverageVerificationJob || !coverageVerificationJob.includes("if: needs.aot.result == 'success'") ||
-    !coverageVerificationJob.includes("needs: [aot]") ||
+if (!coverageVerificationJob || !coverageVerificationJob.includes("if: needs.test.result == 'success' && needs.aot.result == 'success'") ||
+    !coverageVerificationJob.includes("needs: [test, aot]") ||
     !coverageVerificationJob.includes("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1") ||
     !coverageVerificationJob.includes("pattern: lnako-dispatch-coverage-*") ||
     !coverageVerificationJob.includes("merge-multiple: true") ||

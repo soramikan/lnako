@@ -51,7 +51,7 @@ O0〜O3の全routeを同じjobへ拘束しない構成です。macOSは同時実
 
 `aot-support`のHTTP、canonical dispatch evidence／security、coverage、ReleaseSafe build／smokeは、Linux／Windowsで目的別jobへ分けます。
 coverageだけは3つの重み付きfixture shardへ分け、各shardが公式source・生成JavaScript・Interpreter・AOT O0の全比較を担当します。
-追加の`verify_dispatch_coverage` jobが、macOSの全件coverageを基準にLinux／Windows各3 shardのfixture集合を照合し、重複・欠落を拒否します。
+追加の`verify_dispatch_coverage` jobが通常testとAOT matrixの両方の完了後、macOSの全件coverageを基準にLinux／Windows各3 shardのfixture集合を照合し、重複・欠落を拒否します。
 これにより検証範囲を削らず、長いcoverage監査の壁時計を短縮します。macOSではrunner上限5を超えないよう、supportを既存の2通常jobへ分散し、dispatch監査を早く開始する`mac-host-compat`へ移しています。
 dispatch evidenceとcoverageの全fixture・全site、HTTP serverの10命令・14リクエスト、tiny fixtureの全security不変条件は維持します。
 `tools/check_ci_workflow.mjs`はnative 27 job（Linux／Windows各12、macOS 3）、support 12 job（Linux／Windows各6）、通常10 job、

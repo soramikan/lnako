@@ -722,8 +722,8 @@ jobs:
 
   verify_dispatch_coverage:
     name: Verify dispatch coverage shards
-    if: needs.aot.result == 'success'
-    needs: [aot]
+    if: needs.test.result == 'success' && needs.aot.result == 'success'
+    needs: [test, aot]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
