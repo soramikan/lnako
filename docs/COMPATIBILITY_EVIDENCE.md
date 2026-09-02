@@ -172,7 +172,7 @@ attestationがない場合は`trace-confirmed-unattested`に留めます。
 
 `native-system-dictionary-inherited-enumeration`は、custom辞書prototype chainの列挙順・shadowing・対応値を公式CLI・公式生成JavaScript・`lnako run`・LLVM AOT O0〜O3で比較するfixtureです。TOMLの生成standalone差分fixtureを含む現行fixture inventoryは全405件（AOT 307件、Interpreter 106件、QuickJS 9件）です。
 
-`native-toml-commands`は表・配列テーブル・インライン表・文字列・数値の標準範囲を比較し、`native-toml-temporal-values`は日付、時刻、local datetime、offset datetimeのDate系値と、秒・ミリ秒・`T`への正規化を公式CLI・公式生成JavaScript・`lnako run`・LLVM AOT O0〜O3で比較します。公式マニュアルと命令説明からは依存ライブラリ由来の型と正規化を判断できないため、[`tests/fixtures/toml-temporal-probe.nako3`](../tests/fixtures/toml-temporal-probe.nako3)には正常系に加えて時刻単独のオフセット付き値を仕様調査用probeとして保存しています。後者は公式`smol-toml` v1.8.0が受理するものの`31T22:32:00.`という壊れたserializer結果になる不具合候補であり、正常な互換仕様や成功証拠へ混ぜません。`native-toml-temporal-values`のfixture実行はAOT dispatch証拠ではなく、外部署名のない現在の`evidence.json`へentryを自動昇格させません。Dateのメソッド、完全な`ToPrimitive`、異常入力の全範囲は`TODO: toml-temporal-values`として継続します。
+`native-toml-commands`は表・配列テーブル・インライン表・文字列・数値の標準範囲を比較し、`native-toml-temporal-values`は日付、時刻、local datetime、offset datetimeのDate系値と、秒・ミリ秒・`T`への正規化を公式CLI・`lnako run`・LLVM AOT O0〜O3で比較します。固定v3.7.24の公式生成JavaScriptはstandalone TOML plugin host登録不足で失敗するため、`native-toml-temporal-values`も`officialGeneratedAvailable: false`として理由付きで保持し、成功経路のoracleへ混ぜません。公式マニュアルと命令説明からは依存ライブラリ由来の型と正規化を判断できないため、[`tests/fixtures/toml-temporal-probe.nako3`](../tests/fixtures/toml-temporal-probe.nako3)には正常系に加えて時刻単独のオフセット付き値を仕様調査用probeとして保存しています。後者は公式`smol-toml` v1.8.0が受理するものの`31T22:32:00.`という壊れたserializer結果になる不具合候補であり、正常な互換仕様や成功証拠へ混ぜません。`native-toml-temporal-values`のfixture実行はAOT dispatch証拠ではなく、外部署名のない現在の`evidence.json`へentryを自動昇格させません。Dateのメソッド、完全な`ToPrimitive`、異常入力の全範囲は`TODO: toml-temporal-values`として継続します。
 
 `native-toml-default-generated-route`と`native-toml-imported-generated-route`は、公式CLI直接実行ではTOML命令が動作する一方、明示importの有無にかかわらず`--compile`で生成したstandalone JavaScriptが`TypeError: __self.__varslist[0].get(...) is not a function`で失敗することを固定します。これは「プラグインを取り込めば生成経路でも使える」と公式の短い説明から推測しないための回帰証拠であり、生成コード側の基本plugin登録不一致候補を`docs/COMPATIBILITY_QUIRKS.md`へ分離します。
 
@@ -271,7 +271,7 @@ node tools/check_compat_js_evidence.mjs --no-build
 ```
 
 既定の監査はCI時間を抑えるため46 fixtureを対象にします（Nodeプロセス／ファイルcallbackのAOT成功fixture、`エラー発生`の明示した期待失敗fixture、`ナデシコ`／`ナデシコ続`のdynamic-execute fixture、`ブラウザ起動`／`エクスプローラー起動`の安全なlauncher fixture、`plugin-node-native-archive-hermetic`のstored-ZIP helper fixture、`native-node-stdin-lines`／`native-node-stdin-callback`／`native-node-stdin-all`のstdin fixture、`native-node-network-addresses`のsynthetic-v1 network fixture、`plugin-node-http-callbacks`／`plugin-node-http-onerror`／`plugin-node-http-options-and-promises`／`plugin-node-http-async-values`／`plugin-node-http-discord`／`plugin-node-http-discord-file`／`plugin-node-http-discord-failure`のloopback HTTP fixtureを含みます）。標準命令の実行siteを広げて監査する場合は、
-`--include-native`を追加すると、既定選択へ`native-cases.json`のcommand-bearing fixtureを加え、合計210 fixtureを候補にします。
+`--include-native`を追加すると、既定選択へ`native-cases.json`のcommand-bearing fixtureを加え、重複を除いた合計225 fixtureを候補にします。
 このうちnative側の意図的なエラー・プロセス終了29件と、Nodeの外部host／圧縮toolを使うfixtureは`excludedFixtures`へ理由付きで残したまま成功経路から除外します。
 `native-cut-commands`は既定範囲に含まれるため、追加されるnative-cases fixtureとの重複は除いて検査します。
 ファイルを生成・変更するfixtureだけrouteごとの作業ディレクトリを分離し、カレントディレクトリや母艦パスを観測するfixtureは全routeで同じ作業ディレクトリとsource pathを使います。

@@ -67,6 +67,9 @@ const generatedRouteUnavailableFixtures = new Map([
   ["native-cases.json/native-kansuji-aot-generated-boundaries", "公式生成JavaScriptのstandalone kansuji plugin host登録が不足する"],
   ["native-cases.json/native-csv-commands", "公式生成JavaScriptのstandalone CSV plugin host登録が不足する"],
   ["native-cases.json/native-toml-commands", "公式生成JavaScriptのstandalone TOML plugin host登録が不足する"],
+  ["native-cases.json/native-toml-temporal-values", "公式生成JavaScriptのstandalone TOML plugin host登録が不足する"],
+  ["native-cases.json/native-toml-default-generated-route", "公式生成JavaScriptのstandalone TOML plugin host登録が不足する"],
+  ["native-cases.json/native-toml-imported-generated-route", "公式生成JavaScriptのstandalone TOML plugin host登録が不足する"],
   ["native-cases.json/native-markup-commands", "公式生成JavaScriptのstandalone markup plugin host登録が不足する"],
   ["native-cases.json/native-system-dynamic-execution", "公式生成JavaScriptのstandalone system async host登録が不足する"],
   ["http-server-dispatch-cases.json/plugin-httpserver-dispatch", "公式生成JavaScriptのstandalone plugin_node登録が不足し、shutdown補助命令『終了』を解決できない"],
@@ -180,16 +183,13 @@ async function loadSelectedFixtures() {
     { file: "http-server-dispatch-cases.json", selection: (testCase) => testCase.id === "plugin-httpserver-dispatch" },
     { file: "plugin-route-cases.json", selection: (testCase) => testCase.commands?.length > 0 },
     { file: "native-cases.json", selection: (testCase) =>
-      testCase.id === "native-cut-commands" || testCase.id === "native-system-error-raise" || testCase.id === "native-system-debug" || testCase.id === "native-system-dynamic-execution" ||
-      (!arguments_.includeNative && ["native-node-stdin-all", "native-node-stdin-lines", "native-node-stdin-callback", "native-node-network-addresses"].includes(testCase.id)) },
+      arguments_.includeNative
+        ? testCase.commands?.length > 0 && testCase.expectedFailure !== true
+        : testCase.id === "native-cut-commands" || testCase.id === "native-system-error-raise" || testCase.id === "native-system-debug" || testCase.id === "native-system-dynamic-execution" ||
+          ["native-node-stdin-all", "native-node-stdin-lines", "native-node-stdin-callback", "native-node-network-addresses"].includes(testCase.id) },
   ];
-  if (arguments_.includeNative) {
-    specifications.push({
-      file: "native-cases.json",
-      selection: (testCase) => testCase.commands?.length > 0 && testCase.expectedFailure !== true && testCase.id !== "native-cut-commands",
-    });
-  }
   const fixtures = [];
+  const fixtureKeys = new Set();
   for (const specification of specifications) {
     const path = resolve(root, "tests/oracle", specification.file);
     const parsed = JSON.parse(await readFile(path, "utf8"));
@@ -198,10 +198,13 @@ async function loadSelectedFixtures() {
     for (const testCase of cases.filter(specification.selection)) {
       validateFixture(testCase, specification.file);
       if (excludedFixtures.has(`${specification.file}/${testCase.id}`)) continue;
+      const fixtureKey = `${specification.file}/${testCase.id}`;
+      if (fixtureKeys.has(fixtureKey)) throw new Error(`dispatch coverageのfixtureが重複しています: ${fixtureKey}`);
+      fixtureKeys.add(fixtureKey);
       fixtures.push({ file: specification.file, ...testCase });
     }
   }
-  const expectedFixtureCount = arguments_.includeNative ? 220 : 56;
+  const expectedFixtureCount = arguments_.includeNative ? 225 : 56;
   if (fixtures.length !== expectedFixtureCount) throw new Error(`dispatch coverageのfixture数が想定外です: ${fixtures.length}`);
   return fixtures;
 }
