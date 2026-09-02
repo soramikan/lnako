@@ -50,6 +50,8 @@ U17〜U21では、`plugin_datetime`の同名命令を通常の`plugin_system` ro
 
 coverage artifactはcleanな`f92c76d6ed91bfc4738854be202bdbe48984d8c7`由来の56 fixture・1,917 site・391 native entry（492 unique names中389）で、fixture inventoryは410件（AOT 308、Interpreter 110、QuickJS 9）である。公式source import時の旧形式plugin警告はfixture宣言の`officialSourceStderrIncludes`だけを許容し、raw stderr hashを保持する。`和暦変換`は公式sourceの`sys.__v0.元号データ is not iterable`とgenerated routeの成功値を別route差として扱い、`日付加算`はplugin routeの`2024/02/29`とsystem routeの`2024/03/02`を区別する。これらは`trace-confirmed-unattested`であり、3正式OSの外部署名attestation後の`verified`ではない。
 
+U22完了後の現行監査では、`--include-native`を用いてcleanな`2874ff6`から225 fixture・4,464 site・426 native entry（492 unique names中424）を再実行し、未観測97 native entryを`unobservedNativeEntryIds`へ明示しました。同名命令はcatalog IDで解決し、公式generated routeが終了コード0でもstdoutだけ異なる場合は利用可能性とroute同値性を別metadataへ保存します。この拡張は初期89件の台帳状態（`trace-confirmed-unattested: 527`、`unverified: 0`）を変更せず、単一macOS環境のunattested sampled coverageを増やしたものとして扱います。3正式OSのAOT／QuickJS／fuzz実行、外部署名attestation、`verified`昇格は引き続き後続の完了条件です。
+
 ## 証拠基盤の柱
 
 89件を命令名だけで台帳へ付け替えない。次の4基盤を依存関係の柱として実装する。

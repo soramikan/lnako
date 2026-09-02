@@ -4,11 +4,13 @@
 
 現行HEADの`compat/v3.7.24/evidence.json`は、`verified: 0`、`trace-confirmed-unattested: 527`、`unverified: 0`です。U16で`終` 2 entryとpath alias 4 entryを、U17〜U21で`plugin_datetime`の明示route 28 entryを、U22でQuickJS／`compat-js`専用4 entryを、いずれも名前だけで同定せずcatalog ID付きの実行証拠へ接続しました。`verified: 0`は、3正式OSの外部署名attestationがまだないことを示します。
 
-`dispatch-coverage-evidence.json`は、compat-js trace追加後のclean HEADから再生成した56 fixture・1,917 site・391 native entry（492 unique names中389）です。fixture inventoryは全410件（AOT 308件、Interpreter 110件、QuickJS 9件）です。native dispatch、global binding、static constant、expected-exitの各artifactも同じ現行バイナリから再生成しています。system-onlyの公式生成JavaScriptはstandalone system plugin runtime bundleがないため実行不能として記録し、公式sourceを選択oracleにしています。
+`dispatch-evidence.json`はcleanな`9304e01`から再生成したcanonical fixtureのInterpreter 944 event、Node route 42 event、AOT manifest 946件・runtime 1,888 eventを記録します。`dispatch-coverage-evidence.json`は`--include-native`を含むcleanな監査生成物で、225 fixture・4,464 site・426 native entry（492 unique names中424）を記録し、97 native entryを`unobservedNativeEntryIds`へ残します。これは成功経路・明示した期待失敗／host gap・同名命令のcatalog IDを含むunattested sampled coverageであり、全527 entryの純LLVM AOT実行証明ではありません。fixture inventoryは全410件（AOT 308件、Interpreter 110件、QuickJS 9件）です。system-onlyの公式生成JavaScriptはstandalone system plugin runtime bundleがないため実行不能として記録し、公式sourceを選択oracleにしています。
 
 U17〜U21では、`plugin_datetime`の`command-0807`〜`command-0834`を通常の`plugin_system` routeから推測せず、4つの明示route fixtureと`native-datetime-plugin-era-data`のstatic global readへ分離しました。公式sourceのimport時に出る「古い形式なので正しく動作しない可能性があります。」というstderr警告は、fixtureが宣言した`officialSourceStderrIncludes`だけを検証時に許容し、raw stderr hashは引き続き保存します。`和暦変換`の公式sourceは`sys.__v0.元号データ is not iterable`をstdoutへ出す一方、公式generated routeはsystem pluginの成功値を返すため、source/generated差として記録しています。`日付加算`も、明示`plugin_datetime` routeでは`2024/02/29`、既定system routeでは`2024/03/02`となります。U22では4つのJS命令をnative dispatchへ混ぜず、別schemaのcompat-js実行証拠へ接続しました。
 
 この文書の後続段落にはU07〜U21の完了時点を記録した履歴値と、U22前のfixture inventory／execution evidenceの説明が含まれます。現行値はこのスナップショットと`compat/v3.7.24/evidence.json`、各証拠artifactを正本とし、履歴段落の旧件数を現在値として解釈しません。
+
+U22完了後の`--include-native`監査はcleanな`2874ff6`から225 fixture・4,464 site・426 native entry（492 unique names中424）を再実行し、未観測97 native entryを`unobservedNativeEntryIds`へ明示しました。`native-caniuse-agents`のように公式generated routeが終了コード0でもstdoutだけ異なる場合は、`officialGeneratedAvailable: true`と`officialRoutesEquivalent: false`を分離して記録します。この拡張はcatalog evidenceの`trace-confirmed-unattested`状態を補強するものであり、3正式OSの外部署名attestationや`verified`昇格ではありません。
 
 ## U07〜U15完了時点の履歴
 
@@ -83,7 +85,7 @@ node tools/verify_dispatch_attestation.mjs --directory /absolute/path/dispatch-e
 - `compat/v3.7.24/implemented.json`（実装台帳）
 - `tests/oracle/*.json`（fixtureの明示`commands`と実在ID）
 - `compat/v3.7.24/dispatch-evidence.json`（checkerが生成した同一fixture/siteの実行証拠）
-- `compat/v3.7.24/dispatch-coverage-evidence.json`（56 fixture・1,917 siteのサンプルdispatch監査。catalogへ接続する391 native entry（492 unique names中389）を含む。U06のarchive helper、U08のstdin fixture、U09のnetwork topology fixture、U10/U11/U12/U13のloopback HTTP fixture、U15のHTTP server dispatch fixture、U16のsystem／Node route fixture、U17〜U21の`plugin_datetime` route fixtureを含む）
+- `compat/v3.7.24/dispatch-coverage-evidence.json`（`--include-native`を含む225 fixture・4,464 siteの拡張dispatch監査。catalogへunambiguousに接続する426 native entry（492 unique names中424）と未観測97 entryを含む。U06のarchive helper、U08のstdin fixture、U09のnetwork topology fixture、U10/U11/U12/U13のloopback HTTP fixture、U15のHTTP server dispatch fixture、U16のsystem／Node route fixture、U17〜U21の`plugin_datetime` route fixtureを含む。`kind`は`sampled-unattested-dispatch-audit`で、`verified`の代替ではない）
 - `compat/v3.7.24/compat-js-evidence.json`（`lnako.compat-js-evidence.v1`。QuickJS／`compat-js`の4 entry、9ケース、24直接siteのmetadata-only実行証拠）
 - `compat/v3.7.24/expected-exit-evidence.json`（U07の`プロセス終`・`強制終了時`・`終了`、公式7経路、Interpreter/AOT terminal trace、O0 manifestの終了site）
 - `compat/v3.7.24/static-constant-evidence.json`（`native-scalar-system-constants`のglobal read 17件＋typed literal 7件の実行証拠）

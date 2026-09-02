@@ -18365,6 +18365,10 @@
         "proofSchema": "lnako.dispatch-coverage.v1",
         "fixtureId": "dispatch-coverage",
         "siteIds": [
+          "native-toml-commands/0x0000000000000001",
+          "native-toml-default-generated-route/0x0000000000000001",
+          "native-toml-imported-generated-route/0x0000000000000001",
+          "native-toml-temporal-values/0x0000000000000001",
           "plugin-toml-all/0x0000000000000001"
         ],
         "officialComparison": [
@@ -18374,7 +18378,7 @@
         ],
         "state": "trace-confirmed-unattested"
       },
-      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（5 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Zig製TOMLプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
@@ -18419,6 +18423,9 @@
         "proofSchema": "lnako.dispatch-coverage.v1",
         "fixtureId": "dispatch-coverage",
         "siteIds": [
+          "native-toml-commands/0x0000000000000004",
+          "native-toml-imported-generated-route/0x0000000000000004",
+          "native-toml-temporal-values/0x0000000000000004",
           "plugin-toml-all/0x0000000000000004"
         ],
         "officialComparison": [
@@ -18428,7 +18435,7 @@
         ],
         "state": "trace-confirmed-unattested"
       },
-      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（4 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Zig製TOMLプラグインと純LLVM AOT dispatchを実装し、公式CLI・lnako run・LLVM O0〜O3の差分テストに成功"
     },
     {
@@ -24549,6 +24556,7 @@
         "proofSchema": "lnako.dispatch-coverage.v1",
         "fixtureId": "dispatch-coverage",
         "siteIds": [
+          "native-node-http-onerror-set/0x0000000100000001",
           "plugin-node-http-onerror/0x0000000200000001"
         ],
         "officialComparison": [
@@ -24558,7 +24566,7 @@
         ],
         "state": "trace-confirmed-unattested"
       },
-      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（2 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式7経路のAJAX失敗時設定差分テストに成功"
     },
     {
@@ -26649,6 +26657,7 @@
         "proofSchema": "lnako.dispatch-coverage.v1",
         "fixtureId": "dispatch-coverage",
         "siteIds": [
+          "native-markup-commands/0x0000000000000001",
           "plugin-markup-all/0x0000000000000001",
           "plugin-markup-all/0x0000000000000004",
           "plugin-markup-all/0x0000000000000007",
@@ -26665,7 +26674,7 @@
         ],
         "state": "trace-confirmed-unattested"
       },
-      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（8 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（9 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "固定した公式プラグインとの差分テストと純LLVM AOT dispatchの公式7経路差分テストに成功"
     },
     {
@@ -26702,6 +26711,7 @@
         "proofSchema": "lnako.dispatch-coverage.v1",
         "fixtureId": "dispatch-coverage",
         "siteIds": [
+          "native-markup-commands/0x0000000000000004",
           "plugin-markup-all/0x0000000000000019",
           "plugin-markup-all/0x000000000000001c",
           "plugin-markup-all/0x000000000000001f",
@@ -26715,7 +26725,7 @@
         ],
         "state": "trace-confirmed-unattested"
       },
-      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（5 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（6 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "固定した公式プラグインとの差分テストと純LLVM AOT dispatchの公式7経路差分テストに成功"
     },
     {
@@ -28200,6 +28210,9 @@
         "proofSchema": "lnako.dispatch-coverage.v1",
         "fixtureId": "dispatch-coverage",
         "siteIds": [
+          "native-caniuse-browsers/0x0000000000000001",
+          "native-caniuse-browsers/0x0000000000000004",
+          "native-caniuse-browsers/0x0000000000000005",
           "plugin-caniuse-all/0x0000000000000003"
         ],
         "officialComparison": [
@@ -28209,7 +28222,7 @@
         ],
         "state": "trace-confirmed-unattested"
       },
-      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（4 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "固定した公式プラグインとの差分テストと純LLVM AOT dispatchの差分テストに成功"
     },
     {
@@ -28250,6 +28263,28 @@
         "proofSchema": "lnako.dispatch-coverage.v1",
         "fixtureId": "dispatch-coverage",
         "siteIds": [
+          "native-kansuji-aot-generated-boundaries/0x0000000000000001",
+          "native-kansuji-aot-generated-boundaries/0x0000000000000003",
+          "native-kansuji-aot-generated-boundaries/0x0000000000000005",
+          "native-kansuji-aot-generated-boundaries/0x0000000000000007",
+          "native-kansuji-aot-generated-boundaries/0x0000000000000009",
+          "native-kansuji-aot-generated-boundaries/0x000000000000000b",
+          "native-kansuji-aot-generated-boundaries/0x000000000000000d",
+          "native-kansuji-aot-generated-boundaries/0x000000000000000f",
+          "native-kansuji-aot-generated-boundaries/0x0000000000000011",
+          "native-kansuji-aot-generated-boundaries/0x0000000000000013",
+          "native-kansuji-aot-generated-boundaries/0x0000000000000015",
+          "native-kansuji-aot-generated-boundaries/0x0000000000000017",
+          "native-kansuji-aot-generated-boundaries/0x0000000000000019",
+          "native-kansuji-aot-generated-boundaries/0x000000000000001b",
+          "native-kansuji-aot-generated-boundaries/0x000000000000001d",
+          "native-kansuji-aot-generated-boundaries/0x000000000000001f",
+          "native-kansuji-commands/0x0000000000000001",
+          "native-kansuji-commands/0x0000000000000003",
+          "native-kansuji-commands/0x0000000000000005",
+          "native-kansuji-commands/0x0000000000000007",
+          "native-kansuji-commands/0x0000000000000009",
+          "native-kansuji-commands/0x000000000000000b",
           "plugin-kansuji-all/0x0000000000000001",
           "plugin-kansuji-all/0x0000000000000003",
           "plugin-kansuji-all/0x0000000000000005",
@@ -28264,7 +28299,7 @@
         ],
         "state": "trace-confirmed-unattested"
       },
-      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（6 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（28 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "固定した公式プラグインとの差分テストと純LLVM AOT dispatchの公式7経路差分テストに成功"
     },
     {
@@ -28305,6 +28340,16 @@
         "proofSchema": "lnako.dispatch-coverage.v1",
         "fixtureId": "dispatch-coverage",
         "siteIds": [
+          "native-kansuji-aot-generated-boundaries/0x0000000000000021",
+          "native-kansuji-aot-generated-boundaries/0x0000000000000023",
+          "native-kansuji-aot-generated-boundaries/0x0000000000000025",
+          "native-kansuji-aot-generated-boundaries/0x0000000000000027",
+          "native-kansuji-aot-generated-boundaries/0x0000000000000029",
+          "native-kansuji-commands/0x000000000000000d",
+          "native-kansuji-commands/0x000000000000000f",
+          "native-kansuji-commands/0x0000000000000011",
+          "native-kansuji-commands/0x0000000000000013",
+          "native-kansuji-commands/0x0000000000000015",
           "plugin-kansuji-all/0x000000000000000d",
           "plugin-kansuji-all/0x000000000000000f",
           "plugin-kansuji-all/0x0000000000000011",
@@ -28318,7 +28363,7 @@
         ],
         "state": "trace-confirmed-unattested"
       },
-      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（5 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（15 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "固定した公式プラグインとの差分テストと純LLVM AOT dispatchの公式7経路差分テストに成功"
     }
   ]
