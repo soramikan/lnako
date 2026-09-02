@@ -163,21 +163,21 @@ for (const [name, suite] of stepSuites) {
 const testJob = workflow.match(/  test:[\s\S]*?(?=\n  aot:)/)?.[0];
 if (!testJob) throw new Error("通常test jobがありません");
 const macSupportSteps = new Map([
-  ["Build macOS AOT verification compiler", "run: zig build"],
-  ["macOS AOT HTTP server oracle", "node tools/compare_http_server_aot_oracle.mjs --no-build"],
-  ["macOS dispatch evidence/coverage audit", "node tools/check_dispatch_audits_parallel.mjs"],
-  ["macOS dispatch trace security audit", "node tools/check_dispatch_trace_security.mjs --no-build"],
-  ["Upload macOS native dispatch evidence", "name: lnako-dispatch-evidence-macos-15"],
-  ["Upload macOS native dispatch coverage audit", "name: lnako-dispatch-coverage-macos-15"],
-  ["Build macOS ReleaseSafe compiler", "run: zig build -Doptimize=ReleaseSafe"],
-  ["macOS normal smoke test", "./zig-out/bin/lnako test tests/fixtures/run-tests.nako3"],
+  ["Build macOS AOT verification compiler", ["matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat'", "run: zig build"]],
+  ["macOS AOT HTTP server oracle", ["matrix.suite == 'mac-core-standard-support'", "node tools/compare_http_server_aot_oracle.mjs --no-build"]],
+  ["macOS dispatch evidence/coverage audit", ["matrix.suite == 'mac-host-compat'", "node tools/check_dispatch_audits_parallel.mjs"]],
+  ["macOS dispatch trace security audit", ["matrix.suite == 'mac-host-compat'", "node tools/check_dispatch_trace_security.mjs --no-build"]],
+  ["Upload macOS native dispatch evidence", ["matrix.suite == 'mac-host-compat' && always()", "name: lnako-dispatch-evidence-macos-15"]],
+  ["Upload macOS native dispatch coverage audit", ["matrix.suite == 'mac-host-compat' && always()", "name: lnako-dispatch-coverage-macos-15"]],
+  ["Build macOS ReleaseSafe compiler", ["matrix.suite == 'mac-core-standard-support'", "run: zig build -Doptimize=ReleaseSafe"]],
+  ["macOS normal smoke test", ["matrix.suite == 'mac-core-standard-support'", "./zig-out/bin/lnako test tests/fixtures/run-tests.nako3"]],
 ]);
-for (const [name, required] of macSupportSteps) {
+for (const [name, [condition, required]] of macSupportSteps) {
   const marker = "      - name: " + name;
   const start = testJob.indexOf(marker);
   const next = testJob.indexOf("\n      - name:", start + marker.length);
   const block = start < 0 ? null : testJob.slice(start, next < 0 ? testJob.length : next);
-  if (!block || !block.includes("if: matrix.suite == 'mac-core-standard-support'") || !block.includes(required)) {
+  if (!block || !block.includes(`if: ${condition}`) || !block.includes(required)) {
     throw new Error(`macOS分割jobの${name}が不完全です`);
   }
 }
@@ -279,8 +279,8 @@ if (!coverageUploadBlock || !coverageUploadBlock.includes("if: matrix.task == 's
     !coverageUploadBlock.includes("if-no-files-found: ignore")) {
   throw new Error("OS別dispatch coverage artifactの設定が不正です");
 }
-if (!workflow.includes("if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'\n        with:\n          fetch-depth: 0") ||
-    !workflow.includes("if: matrix.suite != 'core' && matrix.suite != 'mac-core-standard-support'\n      - uses: mlugg/setup-zig")) {
+if (!workflow.includes("if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat'\n        with:\n          fetch-depth: 0") ||
+    !workflow.includes("if: matrix.suite != 'core' && matrix.suite != 'mac-core-standard-support' && matrix.suite != 'mac-host-compat'\n      - uses: mlugg/setup-zig")) {
   throw new Error("coreの証拠追従検査に必要なfull checkout条件がありません");
 }
 const attestJob = workflow.match(/  attest-dispatch-evidence:[\s\S]*$/)?.[0];

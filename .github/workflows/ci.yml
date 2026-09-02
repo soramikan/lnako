@@ -32,9 +32,9 @@ jobs:
           - name: Linux x86_64
             os: ubuntu-24.04
             suite: compat-aot
-          # macOS-hosted runners admit at most five concurrent jobs. Split the
-          # regular suites into two jobs and fold AOT support into the first so
-          # the three native route jobs still fit exactly within five slots.
+          # macOS-hosted runners admit at most five concurrent jobs. Keep the
+          # two regular jobs and three native route jobs at exactly five slots;
+          # dispatch support is assigned to the early host/compat job below.
           - name: macOS arm64
             os: macos-15
             suite: mac-core-standard-support
@@ -57,11 +57,11 @@ jobs:
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat'
         with:
           fetch-depth: 0
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        if: matrix.suite != 'core' && matrix.suite != 'mac-core-standard-support'
+        if: matrix.suite != 'core' && matrix.suite != 'mac-core-standard-support' && matrix.suite != 'mac-host-compat'
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
@@ -187,22 +187,22 @@ jobs:
         shell: bash
         run: ./zig-out/bin/lnako run tests/fixtures/compat-js-basic.nako3 --compat-js
       - name: Build macOS AOT verification compiler
-        if: matrix.suite == 'mac-core-standard-support'
+        if: matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat'
         run: zig build
       - name: macOS AOT HTTP server oracle
         if: matrix.suite == 'mac-core-standard-support'
         run: node tools/compare_http_server_aot_oracle.mjs --no-build
       - name: macOS dispatch evidence/coverage audit
-        if: matrix.suite == 'mac-core-standard-support'
+        if: matrix.suite == 'mac-host-compat'
         run: >
           node tools/check_dispatch_audits_parallel.mjs
           --evidence-output "${{ runner.temp }}/dispatch-evidence-macos-15.json"
           --coverage-output "${{ runner.temp }}/dispatch-coverage-macos-15.json"
       - name: macOS dispatch trace security audit
-        if: matrix.suite == 'mac-core-standard-support'
+        if: matrix.suite == 'mac-host-compat'
         run: node tools/check_dispatch_trace_security.mjs --no-build
       - name: Upload macOS native dispatch evidence
-        if: matrix.suite == 'mac-core-standard-support' && always()
+        if: matrix.suite == 'mac-host-compat' && always()
         continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -211,7 +211,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
       - name: Upload macOS native dispatch coverage audit
-        if: matrix.suite == 'mac-core-standard-support' && always()
+        if: matrix.suite == 'mac-host-compat' && always()
         continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
