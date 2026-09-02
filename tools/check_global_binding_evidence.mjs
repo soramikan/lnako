@@ -30,9 +30,9 @@ const profiles = {
     schema: "lnako.global-binding-evidence.v2",
     fixtureId: "native-node-directory-values",
     bindings: [
-      { catalogId: "command-0731", name: "デスクトップ", plugin: "plugin_node" },
-      { catalogId: "command-0732", name: "マイドキュメント", plugin: "plugin_node" },
-      { catalogId: "command-0735", name: "テンポラリフォルダ", plugin: "plugin_node" },
+      { catalogId: "command-0731", name: "デスクトップ", plugin: "plugin_node", type: "関数" },
+      { catalogId: "command-0732", name: "マイドキュメント", plugin: "plugin_node", type: "関数" },
+      { catalogId: "command-0735", name: "テンポラリフォルダ", plugin: "plugin_node", type: "関数" },
     ],
     accesses: [
       { catalogId: "command-0731", name: "デスクトップ", plugin: "plugin_node", kind: "global-load", phase: "global-read" },
@@ -66,7 +66,7 @@ if (fixture === undefined || !Array.isArray(fixture.commands) || !profile.bindin
   throw new Error(`global binding fixtureが不正です: ${fixtureId}`);
 }
 const commands = profile.bindings.map((binding) => catalog.commands.find((candidate) => candidate.id === binding.catalogId));
-if (commands.some((command, index) => command === undefined || command.name !== profile.bindings[index].name || command.plugin !== profile.bindings[index].plugin || command.status !== "native" || command.type !== "変数")) {
+if (commands.some((command, index) => command === undefined || command.name !== profile.bindings[index].name || command.plugin !== profile.bindings[index].plugin || command.status !== "native" || command.type !== (profile.bindings[index].type ?? "変数"))) {
   throw new Error("global bindingのcatalog identityが不正です");
 }
 
@@ -130,7 +130,9 @@ try {
   const bindingRecords = profile.bindings.map((binding) => {
     const sites = manifestSites.filter((site) => site.catalogId === binding.catalogId);
     return {
-      ...binding,
+      catalogId: binding.catalogId,
+      name: binding.name,
+      plugin: binding.plugin,
       accessSequence: sites.map((site) => site.kind),
       sites,
     };

@@ -27,9 +27,9 @@ const globalBindingEvidenceInputs = [
     schema: "lnako.global-binding-evidence.v2",
     fixtureId: "native-node-directory-values",
     bindings: [
-      { catalogId: "command-0731", name: "デスクトップ", plugin: "plugin_node" },
-      { catalogId: "command-0732", name: "マイドキュメント", plugin: "plugin_node" },
-      { catalogId: "command-0735", name: "テンポラリフォルダ", plugin: "plugin_node" },
+      { catalogId: "command-0731", name: "デスクトップ", plugin: "plugin_node", type: "関数" },
+      { catalogId: "command-0732", name: "マイドキュメント", plugin: "plugin_node", type: "関数" },
+      { catalogId: "command-0735", name: "テンポラリフォルダ", plugin: "plugin_node", type: "関数" },
     ],
     accesses: [
       { catalogId: "command-0731", name: "デスクトップ", plugin: "plugin_node", kind: "global-load", phase: "global-read" },
@@ -1229,7 +1229,7 @@ function validateGlobalBindingEvidence(evidence, lock, standard, records, defini
 
   for (const expectedBinding of expectedBindings) {
     const command = standard.commands.find((candidate) => candidate.id === expectedBinding.catalogId);
-    if (command === undefined || command.name !== expectedBinding.name || command.plugin !== expectedBinding.plugin || command.status !== "native" || command.type !== "変数") {
+    if (command === undefined || command.name !== expectedBinding.name || command.plugin !== expectedBinding.plugin || command.status !== "native" || command.type !== (expectedBinding.type ?? "変数")) {
       throw new Error("global binding証拠のcatalog identityが標準カタログと一致しません");
     }
   }
