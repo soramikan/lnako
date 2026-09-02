@@ -256,9 +256,9 @@ pub fn completeBuiltinManifest(io: std.Io, manifest_path: []const u8, entry_coun
     try file_writer.interface.flush();
 }
 
-/// Writes a separate JSONL manifest for statically lowered global reads. It is
-/// intentionally not part of the builtin manifest because a constant lookup
-/// is a load, not a builtin dispatch call.
+/// Writes a separate JSONL manifest for statically lowered global accesses. It
+/// is intentionally not part of the builtin manifest because a global load or
+/// store is not a builtin dispatch call.
 pub fn writeGlobalManifest(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, source_path: []const u8, manifest_path: []const u8) !usize {
     if (!std.fs.path.isAbsolute(manifest_path)) return error.ManifestPathMustBeAbsolute;
 
@@ -284,7 +284,7 @@ pub fn writeGlobalManifest(allocator: std.mem.Allocator, io: std.Io, program: ir
     for (program.functions) |function| {
         for (function.blocks) |block| {
             for (block.instructions) |instruction| {
-                if (instruction.opcode != .load_global) continue;
+                if (instruction.opcode != .load_global and instruction.opcode != .store_global) continue;
                 const site_id = instruction.global_site_id orelse return error.MissingGlobalSiteId;
                 if (seen_site_ids.contains(site_id)) return error.ManifestSiteIdCollision;
                 try seen_site_ids.put(allocator, site_id, {});
@@ -293,7 +293,7 @@ pub fn writeGlobalManifest(allocator: std.mem.Allocator, io: std.Io, program: ir
                 try writeManifestLine(writer, GlobalManifestEntry{
                     .schema = global_manifest_schema,
                     .phase = "pre-opt",
-                    .kind = "global-load",
+                    .kind = if (instruction.opcode == .load_global) "global-load" else "global-store",
                     .name = instruction.name,
                     .siteId = formatSiteId(&site_id_text, site_id),
                     .function = function.name,
@@ -616,6 +616,7 @@ const Emitter = struct {
                 "declare i64 @lnako_aot_dispatch_display_begin_with_epoch(i64, ptr)\n" ++
                 "declare void @lnako_aot_dispatch_result(i64, i64, i64)\n" ++
                 "declare void @lnako_aot_global_read_site(i64)\n" ++
+                "declare void @lnako_aot_global_write_site(i64)\n" ++
                 "declare void @lnako_aot_literal_site(i64)\n" ++
                 "declare i32 @printf(ptr, ...)\n" ++
                 "declare i32 @puts(ptr)\n" ++
@@ -1072,6 +1073,9 @@ const Emitter = struct {
             },
             .store_global => {
                 const index = self.globalIndex(instruction.name) orelse return error.UnknownGlobal;
+                const site_id = instruction.global_site_id orelse return error.MissingGlobalSiteId;
+                try self.output.writer.print("  call void @lnako_aot_global_write_site(i64 {d})", .{site_id});
+                try self.debugSuffix(instruction.span, scope);
                 try self.output.writer.print("  store %lnako.Value ", .{});
                 try self.writeValueRef(function, instruction.operands[0]);
                 try self.output.writer.print(", ptr @lnako.global.{d}", .{index});
@@ -2950,6 +2954,26 @@ test "global loadを専用AOT trace ABIへ出力する" {
     defer module.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_global_read_site(i64)\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_global_read_site(i64 1)") != null);
+}
+
+test "global storeを専用AOT trace ABIへ出力する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    const source = "ファイルコピーデフォルト動作を表示\nファイルコピーデフォルト動作=\"上書\"\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "global-store-trace.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "global-store-trace.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "global-store-trace.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    var module = try generate(std.testing.allocator, program, "global-store-trace.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_global_write_site(i64)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_global_write_site(i64 2)") != null);
 }
 
 test "catalog literalを専用AOT trace ABIへ出力する" {

@@ -221,14 +221,22 @@ const GlobalTrace = struct {
     }
 
     fn record(self: *GlobalTrace, site_id: u64) void {
+        self.recordPhase(site_id, "global-read");
+    }
+
+    fn recordWrite(self: *GlobalTrace, site_id: u64) void {
+        self.recordPhase(site_id, "global-write");
+    }
+
+    fn recordPhase(self: *GlobalTrace, site_id: u64, phase: []const u8) void {
         self.lock();
         defer self.unlock();
         const file = self.ensureFile() orelse return;
         var line: [256]u8 = undefined;
         const rendered = std.fmt.bufPrint(
             &line,
-            "{{\"schema\":1,\"engine\":\"aot\",\"phase\":\"global-read\",\"seq\":{d},\"siteId\":\"0x{x:0>16}\",\"success\":true}}\n",
-            .{ self.sequence, site_id },
+            "{{\"schema\":1,\"engine\":\"aot\",\"phase\":\"{s}\",\"seq\":{d},\"siteId\":\"0x{x:0>16}\",\"success\":true}}\n",
+            .{ phase, self.sequence, site_id },
         ) catch {
             self.disabled = true;
             return;
@@ -6644,6 +6652,13 @@ pub export fn lnako_aot_runtime_init() callconv(.c) c_int {
 pub export fn lnako_aot_global_read_site(site_id: u64) callconv(.c) void {
     const runtime = if (active_runtime) |*active| active else return;
     runtime.global_trace.record(site_id);
+}
+
+/// Records execution of one statically identified global store. The generated
+/// module supplies the ID from its pre-optimization global manifest.
+pub export fn lnako_aot_global_write_site(site_id: u64) callconv(.c) void {
+    const runtime = if (active_runtime) |*active| active else return;
+    runtime.global_trace.recordWrite(site_id);
 }
 
 /// Records execution of one statically identified typed literal. The

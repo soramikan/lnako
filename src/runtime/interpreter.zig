@@ -152,6 +152,33 @@ const GlobalTrace = struct {
         self.sequence += 1;
     }
 
+    fn emitWrite(self: *GlobalTrace, name: []const u8, site_id: ?u64) void {
+        self.lock();
+        defer self.unlock();
+        if (self.disabled) return;
+        const path = self.path orelse return;
+        const writeFn = self.writeFn orelse return;
+        const context = self.context orelse return;
+        var line: [1024]u8 = undefined;
+        const rendered = (if (site_id) |id| std.fmt.bufPrint(
+            &line,
+            "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"global-write\",\"seq\":{d},\"siteId\":\"0x{x:0>16}\",\"name\":\"{s}\"}}\n",
+            .{ self.sequence, id, name },
+        ) else std.fmt.bufPrint(
+            &line,
+            "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"global-write\",\"seq\":{d},\"siteId\":null,\"name\":\"{s}\"}}\n",
+            .{ self.sequence, name },
+        )) catch {
+            self.disabled = true;
+            return;
+        };
+        writeFn(context, path, rendered) catch {
+            self.disabled = true;
+            return;
+        };
+        self.sequence += 1;
+    }
+
     fn finish(self: *GlobalTrace) void {
         self.lock();
         defer self.unlock();
@@ -852,7 +879,13 @@ pub const Interpreter = struct {
                 }
             },
             .load_local => result = localValue(frame, instruction.name) orelse self.globals.get(instruction.name) orelse .undefined,
-            .store_global => try self.setGlobal(instruction.name, self.operand(frame, instruction, 0)),
+            .store_global => {
+                try self.setGlobal(instruction.name, self.operand(frame, instruction, 0));
+                if (instruction.global_site_id != null) {
+                    const site_id = if (frame.owner_program == &self.root_program) instruction.global_site_id else null;
+                    self.global_trace.emitWrite(traceBuiltinName(instruction.name), site_id);
+                }
+            },
             .store_local => try self.storeLocal(frame, instruction.name, self.operand(frame, instruction, 0)),
             .destructure_store => try self.executeDestructure(frame, instruction),
             .binary => result = try self.executeBinary(frame, instruction),
@@ -2812,6 +2845,32 @@ test "global read traceはbuiltin dispatch traceと分離される" {
     try std.testing.expect(std.mem.indexOf(u8, host.global_trace.items, "\"phase\":\"global-read\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, host.global_trace.items, "\"name\":\"PI\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, host.global_trace.items, "\"name\":\"永遠\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, host.global_trace.items, "\"phase\":\"dispatch-result\"") == null);
+}
+
+test "global read/write traceは実行順とbuiltin dispatch traceから分離される" {
+    const source = "ファイルコピーデフォルト動作を表示\nファイルコピーデフォルト動作=\"上書\"\nファイルコピーデフォルト動作を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var runtime_host = host.host();
+    runtime_host.global_trace_path = "global-binding-trace.jsonl";
+    runtime_host.global_trace_writeFn = BufferHost.writeGlobalTrace;
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, runtime_host);
+    defer interpreter.deinit();
+    _ = try interpreter.run();
+    const first_read = std.mem.indexOf(u8, host.global_trace.items, "\"phase\":\"global-read\"").?;
+    const write = std.mem.indexOf(u8, host.global_trace.items, "\"phase\":\"global-write\"").?;
+    const second_read = std.mem.indexOfPos(u8, host.global_trace.items, write + 1, "\"phase\":\"global-read\"").?;
+    try std.testing.expect(first_read < write);
+    try std.testing.expect(write < second_read);
+    try std.testing.expect(std.mem.indexOf(u8, host.global_trace.items, "\"name\":\"ファイルコピーデフォルト動作\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, host.global_trace.items, "\"phase\":\"dispatch-result\"") == null);
 }
 

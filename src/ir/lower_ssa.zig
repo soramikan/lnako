@@ -58,7 +58,7 @@ fn assignDispatchSiteIds(function: *ir.Function) !void {
                 if (ordinal > std.math.maxInt(u32)) return error.DispatchSiteIdOverflow;
                 instruction.site_id = (@as(u64, function.id) << 32) | ordinal;
             }
-            if (instruction.opcode == .load_global) {
+            if (instruction.opcode == .load_global or instruction.opcode == .store_global) {
                 global_ordinal += 1;
                 if (global_ordinal > std.math.maxInt(u32)) return error.GlobalSiteIdOverflow;
                 instruction.global_site_id = (@as(u64, function.id) << 32) | global_ordinal;
@@ -785,6 +785,33 @@ test "builtin dispatchとglobal readのsite IDを別namespaceで安定化する"
     try std.testing.expectEqual(@as(u64, 2), dispatch_sites[1]);
     try std.testing.expectEqual(@as(u64, 1), global_sites[0]);
     try std.testing.expectEqual(@as(u64, 2), global_sites[1]);
+}
+
+test "global read/writeのsite IDを同じaccess namespaceで安定化する" {
+    const parser = @import("../frontend/parser.zig");
+    const semantic = @import("../semantic/analyzer.zig");
+    const source = "ファイルコピーデフォルト動作を表示\nファイルコピーデフォルト動作=\"上書\"\nファイルコピーデフォルト動作を表示\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "global-binding-sites.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "global-binding-sites.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "global-binding-sites.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+
+    const entry = program.findFunction("main__$entry").?;
+    const expected_opcodes = [_]ir.Opcode{ .load_global, .store_global, .load_global };
+    var access_count: usize = 0;
+    for (entry.blocks) |block| for (block.instructions) |instruction| {
+        if (instruction.global_site_id) |site_id| {
+            try std.testing.expect(access_count < expected_opcodes.len);
+            try std.testing.expectEqual(expected_opcodes[access_count], instruction.opcode);
+            try std.testing.expectEqual(@as(u64, access_count + 1), site_id);
+            access_count += 1;
+        }
+    };
+    try std.testing.expectEqual(expected_opcodes.len, access_count);
 }
 
 test "catalog literalのsite IDをglobal readと別namespaceで付与する" {

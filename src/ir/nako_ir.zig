@@ -57,9 +57,9 @@ pub const Instruction = struct {
     /// while lowering, before optimization, and is intentionally independent
     /// of source paths so it can join compile and runtime traces.
     site_id: ?u64 = null,
-    /// Stable identity for a statically named global read. Global reads use a
-    /// separate namespace from builtin dispatch sites so adding this evidence
-    /// never changes existing dispatch trace identities.
+    /// Stable identity for a statically named global access. Global accesses
+    /// use a separate namespace from builtin dispatch sites so adding read or
+    /// write evidence never changes existing dispatch trace identities.
     global_site_id: ?u64 = null,
     /// Stable identity for a catalog constant that the parser lowers directly
     /// to a typed literal. Literal constants use a third namespace so their
