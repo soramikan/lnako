@@ -16,6 +16,14 @@
 
 U22完了時点の正本は、`compat/v3.7.24/evidence.json`、`compat/v3.7.24/compat-js-evidence.json`、`compat/v3.7.24/dispatch-evidence.json`、`compat/v3.7.24/dispatch-coverage-evidence.json`である。compat-js artifactは9ケース（成功6、期待失敗3）と4 entryの24 direct root siteを記録し、native dispatch証拠とは別schema・別namespaceで扱う。成功ケースは公式sourceと`lnako run --compat-js`の正規化stdout・終了状態・signalを比較し、stderrはhashだけを保存する。期待失敗は失敗相当の確認だけを行い、partial traceをproof siteへ選択しない。
 
+### U22以降の現行更新
+
+現行HEADは署名済み`b6b897d636b47a1ee6d99fff6594811df697e24b`である。`compat/v3.7.24/evidence.json`は`verified 0 / trace-confirmed-unattested 527 / unverified 0`を維持しており、`compat/v3.7.24/dispatch-coverage-evidence.json`はcleanな`f753d32`由来の225 fixture・4,464 site・426/523 native entry・424/492 unique nameを、純LLVM AOTの全件証明とは分けたunattested sampled coverageとして記録する。ベンチマークは`benchmarks/results/latest.json`／`latest.md`へmacOS arm64・Zig 0.16.0・LLVM 22.1.8のInterpreter／AOT compile／AOT run結果を保存済みである。
+
+CIはjob増加とmacOS同時実行上限を考慮し、通常10 job、native AOT 27 job、Linux/Windows support AOT 12 jobの合計49 matrix job、coverage shard検証job、attestation jobへ分割した。macOSは1 runあたり5 jobを維持し、Linux/Windowsのdispatch coverageだけを3 weighted shardへ分ける。直近pushのrun `33682461669`は記録時点でpendingであり、壁時計・runner合計の改善値は完了runで測定するまで未確定とする。
+
+公式HTTPサーバqueryの異常系を、固定`plugin_httpserver.mts`の`decodeURIComponent`／`uri.split('?')`へ合わせた。`%`欠落・非16進・不正UTF-8は`URI malformed`、2個目以降の`?`は無視する。Interpreter/AOT単体テストと既存の公式HTTP差分を通過し、詳細は`docs/COMPATIBILITY_QUIRKS.md`へ記録した。この単位は`httpserver-query-parser-error`の未実装TODOを解消したもので、POSTフォームの`URLSearchParams`寛容性は変更していない。
+
 U01（`エラー発生`、`__DEBUG`）は完了した。cleanな`7eb6a96d9d44909d7051a2017d7c35f525a70739`で再生成したdispatch coverageは32 fixture・1,698 site・311 native entryを含み、`native-system-error-raise`の4 throw failure siteと`native-system-debug`の1 success siteを、それぞれ明示catalog ID付きでInterpreter trace・AOT manifest/runtime traceへ接続している。`エラー発生`は通常のbuiltin opcodeではなくSSA throw terminatorの監査専用routeであり、期待失敗を成功siteとして数えない。
 
 同じclean HEADで10件のstatic constant artifactも再生成し、U01時点の`sync_compat_evidence.mjs --generate`の結果は`verified 0 / trace-confirmed-unattested 440 / unverified 87`となった。U02（`ナデシコ`、`ナデシコ続`）も完了した。cleanな`eb9949499c6f55329da3c5199543fb334cd41817`で再生成した33-fixture dispatch coverageは1,703 site・313 native entryを含み、`native-system-dynamic-execution`の`ナデシコ` 2 site（`command-0057`）と`ナデシコ続` 2 site（`command-0058`）を公式source・Interpreter・AOT O0の同一結果、compile manifest、runtime traceへ接続した。公式生成JavaScript単体の終了コード1は既存のstandalone system host登録差であり、P0の既知route差として記録する。
@@ -190,7 +198,7 @@ P3 compat-js evidence
 - 仕様上の注意や不具合候補を、標準的に期待される挙動として修正しない。互換性を意図した再現と安全制限を明記する。
 - 未実測境界は「未確定」とし、`trace-confirmed`や`verified`へ昇格させない。
 
-現在のHTTPサーバのquery境界はこの規則の実例である。公式は`duplicate=first&duplicate=last`を後勝ち、値なしを`"undefined"`、`raw=a=b`を`"a"`、`empty=`を空文字として扱う。`docs/COMPATIBILITY_QUIRKS.md`と`plugin-httpserver-all`へこの実測を記録し、lnakoのInterpreter/AOT実装と16リクエスト差分へ反映する。不正percent、複数`?`、multipartの壊れた入力など未収録の境界は別TODOのまま残す。
+現在のHTTPサーバのquery境界はこの規則の実例である。公式は`duplicate=first&duplicate=last`を後勝ち、値なしを`"undefined"`、`raw=a=b`を`"a"`、`empty=`を空文字として扱い、2個目以降の`?`を`uri.split('?')`の2番目の要素だけへ含める。不正なpercent escapeやdecode後の不正UTF-8は`URIError: URI malformed`になる。`docs/COMPATIBILITY_QUIRKS.md`、Interpreter/AOT単体テスト、`plugin-httpserver-all`の正常系16リクエストへこの境界を記録・反映した。multipartの壊れた入力、外部endpoint、3正式OSのHTTP attestationは未確定の別境界として残す。
 
 ## 台帳・CI・リリースの扱い
 
@@ -209,6 +217,6 @@ node tools/check_tracked_dispatch_attestation.mjs --offline
 
 変更機能の公式差分と`check_dispatch_coverage.mjs`を追加し、artifactを再生成したときだけ台帳件数を更新する。CIは完了まで作業を停止しないが、次のpush前に直近完了runの失敗jobを確認し、失敗があれば原因を調査・修正してからpushする。U22のcompat-js checkerはこの台帳とは別artifactを検査し、nativeのAOT件数を水増ししない。
 
-現在のworkflowは3正式OSを含む45 test jobs＋1 attestation jobで、macOSは同時実行上限を考慮して1 runあたり5 jobsに固定している。job分割による壁時計短縮の効果は、待ち時間、wall-clock、runner合計、macOS queueを別々に記録し、検証経路を削減した短縮とは扱わない。
+現在のworkflowは3正式OSを含む49 matrix test jobs＋coverage shard検証job＋1 attestation jobで、macOSは同時実行上限を考慮して1 runあたり5 jobsに固定している。Linux/Windowsのsupport dispatch coverageだけを各3 weighted shardへ分割し、macOSは全件full artifactを生成する。job分割による壁時計短縮の効果は、待ち時間、wall-clock、runner合計、macOS queueを別々に記録し、検証経路を削減した短縮とは扱わない。次のpush前には直近完了runの失敗jobを確認し、実行中runの完了は待たずに作業を継続する。
 
 89件が0になってもGoal完了ではない。3正式OSの単体・差分・AOT・QuickJS・fuzz回帰、benchmark JSON/Markdown、配布archive/checksum/SBOM、署名済み`v1.0.0`タグとGitHub Releaseがすべて揃うまで継続する。
