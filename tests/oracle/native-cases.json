@@ -1429,13 +1429,13 @@
   {
     "id": "native-node-stdin-lines",
     "commands": ["尋", "文字尋", "標準入力全取得"],
-    "stdin": "abc\r\n41\nrest\n",
+    "stdin": "abc\r\n41\nrest",
     "source": "文字尋(\"P>\")を表示\n(尋(\"\")+1)を表示\n標準入力全取得()を表示\n"
   },
   {
     "id": "native-node-stdin-callback",
     "commands": ["標準入力取得時"],
-    "stdin": "A\r\nB\n",
+    "stdin": "A\r\nB",
     "source": "C=\"\"\nF=関数(S)それはC=C&S;ここまで\nFを標準入力取得時\nCを表示\n"
   },
   {

@@ -593,7 +593,7 @@ function validateDispatchCoverageEvidence(evidence, lock, standard, records, aud
 
   assertKnownObjectKeys(evidence.scope, ["catalogEntries", "nativeEntries", "nativeUniqueNames", "fixtureSelection", "fixtureCount", "excludedFixtures", "commandAssociationIsNotExecutionEvidence"], "dispatch-coverage-evidence.scope");
   if (evidence.scope.catalogEntries !== 527 || evidence.scope.nativeEntries !== 523 || evidence.scope.nativeUniqueNames !== 492 ||
-      typeof evidence.scope.fixtureSelection !== "string" || evidence.scope.fixtureCount !== 35 ||
+      typeof evidence.scope.fixtureSelection !== "string" || evidence.scope.fixtureCount !== 38 ||
       !Array.isArray(evidence.scope.excludedFixtures) || evidence.scope.commandAssociationIsNotExecutionEvidence !== true) {
     throw new Error("dispatch coverage証拠のscopeが標準527 entryと一致しません");
   }
