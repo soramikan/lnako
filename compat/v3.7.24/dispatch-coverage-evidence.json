@@ -10,7 +10,7 @@
     "nativeEntries": 523,
     "nativeUniqueNames": 492,
     "fixtureSelection": "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus native-cut-commands, excluding explicit AOT gaps",
-    "fixtureCount": 35,
+    "fixtureCount": 38,
     "excludedFixtures": [
       {
         "key": "system-runtime-cases.json/system-runtime-execution-and-debug",
@@ -155,16 +155,16 @@
     },
     "lnako": {
       "binarySha256": "8f67bed8458cd81cf46da66cfd8da31905b9340639b65c2190a869d173d987d4",
-      "commit": "07a980c8101ee09beb1918bc87ac203f0b9f30b2",
+      "commit": "445e1b65ad94e767201979e0f853e09109c1d11d",
       "dirty": false
     },
-    "auditScriptSha256": "47e2f39d0e949e2e963e2b5ad61835d94c3e45510ce9104883cd1329ed12125d"
+    "auditScriptSha256": "0bfcb0d6b16ee8c55815dc4cfbc279e518829ec0180cb73a3df37b19481b66e0"
   },
   "coverage": {
-    "unambiguousObservedNativeEntries": 322,
-    "unambiguousObservedNativeUniqueNames": 322,
-    "unambiguousObservedNativeEntryRatio": 0.615678776290631,
-    "unambiguousObservedNativeUniqueNameRatio": 0.6544715447154471,
+    "unambiguousObservedNativeEntries": 326,
+    "unambiguousObservedNativeUniqueNames": 326,
+    "unambiguousObservedNativeEntryRatio": 0.6233269598470363,
+    "unambiguousObservedNativeUniqueNameRatio": 0.6626016260162602,
     "unobservedNativeEntryIds": [
       "command-0001",
       "command-0002",
@@ -288,10 +288,6 @@
       "command-0751",
       "command-0752",
       "command-0753",
-      "command-0754",
-      "command-0755",
-      "command-0756",
-      "command-0757",
       "command-0758",
       "command-0759",
       "command-0760",
@@ -488,10 +484,6 @@
       "コマンドライン",
       "ナデシコランタイム",
       "ナデシコランタイムパス",
-      "標準入力取得時",
-      "尋",
-      "文字尋",
-      "標準入力全取得",
       "ASSERT等",
       "自分IPアドレス取得",
       "自分IPV6アドレス取得",
@@ -1948,7 +1940,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "afee4f41c41576bc6fb9b3d037ed6b33f6dcef6db8a4682c81156c9d471e4cdd",
-        "compileManifestSha256": "4318db312065cf0dde2957c84acebeafc87be1f8916a19b8bdb0e90edb5ad55d"
+        "compileManifestSha256": "1d04c325bea80ffdee25c6a0483f2c3c7574336483a86f95fab06c1047b2ce5c"
       }
     },
     {
@@ -2134,7 +2126,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "6525dfb6ebe3e4bd985833eaac16b849dcfb3a6aea849bb90aabfcb97d9e9e50",
-        "compileManifestSha256": "9d2fe1f63c4a25f0736f285ad870e466456559f07837df141c019689444400bc"
+        "compileManifestSha256": "3bd1b3c70230aa8485a5b18eea601fb79d424f0d7e3a08a23a4389a7214dcbc8"
       }
     },
     {
@@ -2258,7 +2250,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "f09626ad2300ca2c1321230b991043293329ac37661326cc0e4de17046bfaba0",
-        "compileManifestSha256": "a778b962a51e63236802ab5d5a3115dbf8e853ce4d2c9f3db10db7f7ea72c9ec"
+        "compileManifestSha256": "c22a1abe4d269acdc4967fbe8da510b200542bd6755e49729ac0025ca90287f3"
       }
     },
     {
@@ -2414,7 +2406,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "f6b3c818a5b73f08526a9579ee06d7d432ee4bfd85bff7f1beb3249d3ceeb735",
-        "compileManifestSha256": "4d9312434303233ac205c932cd66541ab5441bf247b6e199655890216fe16c68"
+        "compileManifestSha256": "a0647cb3b9ae666d99359090f85e5bb06b9d11e008c3fcf94579d57295e7fbf9"
       }
     },
     {
@@ -2596,7 +2588,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "05be6dcb6bcd0e121d417f18db8e9acec202b21150ad7448cfa11f748e699b95",
-        "compileManifestSha256": "79e4b0393ab16418d1fdfa7ce6de9a050607d87412d869d85e0f08996b6df065"
+        "compileManifestSha256": "974366d288ca2956483fd12d924a0017a7ac63c17f7ecb6eecb6678464d27b55"
       }
     },
     {
@@ -2690,7 +2682,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "3c9bc1528ccc913e725564f1465eaeb77934b8fa3bfb92a4add9136ed4f35a9a",
-        "compileManifestSha256": "b0b0b6539decc4c828ea9f69d89b53cd4ca8381de835b63f987c5f636154afd5"
+        "compileManifestSha256": "b4cceabe34cab8ff67c7591bfedd199b8ad92faba89d0e3dec1b69910f465a4c"
       }
     },
     {
@@ -2774,7 +2766,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 1,
         "traceSha256": "d9c83bcb47f90a848384c93c978da261450c49e00e2eb87cc635e2fa9dabc042",
-        "compileManifestSha256": "76a59a86683988c37d41f822d5ba90bc7ab709538c306098d110c1bfc74047cb"
+        "compileManifestSha256": "2320834bc479d7309e9b36f0dad7091ad22464c475e5ad5a2bafa44137465760"
       }
     },
     {
@@ -2869,7 +2861,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "2e550db8e67850bdb9c0a48b7640e79c6075418e83ef7fdcb78e430f2a0eeb8a",
-        "compileManifestSha256": "655387839eaa1d0aeb13182c2413a130553fcb1ec458b4f5f64cb69b6858966a"
+        "compileManifestSha256": "4e58136b58544e86d96fbef8221c8f83231e5900f070f4835d79a813f02c0a19"
       }
     },
     {
@@ -3010,7 +3002,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "f1f47b480cd689c836bd1d923c285889411e2280e7cc1ffefc0a5bdb73d23a73",
-        "compileManifestSha256": "23f666f5d006bce0c4fb75d35d7572534a64dc998baf15249dc51fe92d19b1ad"
+        "compileManifestSha256": "dc8b24a0211df93975af14e4d1efae8af272e04376ae6d5aa5785551b2d39584"
       }
     },
     {
@@ -3109,7 +3101,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "0ef661754051b020f4a6656f0a92669d0e333e9283c051989bf2ce73f554e92a",
-        "compileManifestSha256": "a4aa714d5c4fb654c2899e35bd3db18078cce8f60c4a2f06289737be850f384b"
+        "compileManifestSha256": "6590eabaf27f41f87cee24db43997846ec6cda759823056ea0d3824db20ba9b1"
       }
     },
     {
@@ -3198,7 +3190,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "279aa08fd2283a5c86c9dd78d98d1fb9372301b32c3cacc9f8376ea6a6440f29",
-        "compileManifestSha256": "f1f9e0527bb8d07dd7f63ea174aeeefc6363c81a7b7d50540eb87cad06a9e1ed"
+        "compileManifestSha256": "2bd6272f2d55962bddd330c3568b987876abed4634f506a95218a0cbc258297e"
       }
     },
     {
@@ -3325,7 +3317,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "7332b6b140b7d75a8d9155cbb029de4918fe691773e30c789fec945a0de0e40b",
-        "compileManifestSha256": "82eb6c5813f1b37470ab03bfbb4d00e03afbd9522a5ac1cd4c4cb68d835bb1f7"
+        "compileManifestSha256": "35f2c774d0f82431129c09496a7329f55b4d33d293f8103ff478e848dc064194"
       }
     },
     {
@@ -3421,7 +3413,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "b6d08bfa8c78f53c68a0fddc6f782a7b5d94a25ff6aae1c026a8ab2c0ecb7246",
-        "compileManifestSha256": "1ab524d43de0d1109632a7fe638058da226f72e3f3d4560af871bbed5be6516f"
+        "compileManifestSha256": "f84218cbd348869e2d4ddeb367e7cebc4ca44b552189d0ab99922795d85fa394"
       }
     },
     {
@@ -3595,7 +3587,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "0338bbd4764f7e09133eb2a7f0f9cc7c3dac9c1b7b86fcca42944a3417933677",
-        "compileManifestSha256": "d505211cf58d5584e5ae6c063b768c8b0a0d9ec3dc084be080ccdf6481a71347"
+        "compileManifestSha256": "57f231b23eb27e3e2398c47356208053941ce19962f472c1185ec83d6046f1f2"
       }
     },
     {
@@ -3700,7 +3692,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "579cbc15cfd6fe892fc7e5eb976a131f0e192a0905ed9ffc6638fda6737efa4d",
-        "compileManifestSha256": "88841734233b0fb9cbf757aa4d9923715469d743fd2c5deec3f899514cdf9ca8"
+        "compileManifestSha256": "55f0d0219c40c03ed5a8a84948a0d2a8dc5ae6894ebbb5f8280bfd6675ce1fe9"
       }
     },
     {
@@ -3802,7 +3794,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "45de4bdfb8df5dc38743799f977b297fb8d5d27ce6ddf7f4a818fe5f2570053f",
-        "compileManifestSha256": "56ac6f0f4b38113f1a5aa1c4a7f6b28a632a4b46554bfe5914f7363d14e8011a"
+        "compileManifestSha256": "1c5a9a72271911013a4f89ac7d1befdbab150fb864f60264cc5744026e1d62f4"
       }
     },
     {
@@ -3893,7 +3885,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "4ee8fb98e3531b5adc89dd5e349ebe1d33f24231318e2d32ac59e6e5dba93447",
-        "compileManifestSha256": "7253da902d655deb0385897ddfc17455ea445f1438e0da09793b406a4f49e38a"
+        "compileManifestSha256": "c51a04b550e97eed771f4eeb69a43c016e1a74cfec75efea134430ebe89be24e"
       }
     },
     {
@@ -4034,7 +4026,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "08f4b00af6dc904cd82a78120593fb45bd519a63df0e3b87790c9f2b22cea0fb",
-        "compileManifestSha256": "cced706cac0c2a5586a0ee2bb4ae6bf1123220b5083903501044aac4183ff960"
+        "compileManifestSha256": "a29a24a7c821ba0cf6ff1fd4f4fecd87fb16490afbb01c1a4bdee5c220f0e571"
       }
     },
     {
@@ -4221,7 +4213,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "482d1a31c600d3a2e1869110a151471f0b32133736021a5938753c8635a77fe7",
-        "compileManifestSha256": "bf89392f6e6aae624711a920f9fc88ba2a95b761db5700b5a5d6f0c6b7ea2b79"
+        "compileManifestSha256": "ea230a1d9468c6b73171407ede0bf5739f9695f9530f9b3aab005f721015c85b"
       }
     },
     {
@@ -4317,7 +4309,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "6b8731ef33694c65906d6390d690b61a387fd88ebf1346b0788320edc0f90d5f",
-        "compileManifestSha256": "e78c46c2547274ccad9ec967a21d8caf6f7fcde9c4e66e1807413b9b06cd1bcd"
+        "compileManifestSha256": "17fdd505ff0a914a3d33415a3b2805daca8a0af86a61cd91ba86c664f28c7084"
       }
     },
     {
@@ -4365,7 +4357,7 @@
             "status": 1,
             "signal": null,
             "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "stderrSha256": "9a8244d557bbf405310418282fb88c41fab97efcdeaf01de21b0d15f7e5f9669"
+            "stderrSha256": "4bfbbf81d777755434b286e07535b2108efed40d261f9ad9e012d5b9cbe107ec"
           },
           "lnakoRun": {
             "status": 0,
@@ -4398,7 +4390,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "243cfc20cf6cba6625fa1f40b87e43b8ff2fb9a2bfbd283f6f4c5335c9d9dbda",
-        "compileManifestSha256": "d839770acdbdc2894be656289e2ba959f309030966067bfc2c397a25ab02dbce"
+        "compileManifestSha256": "64aeafae6d1dbf7aa6a16da89549b1dd4be5566cd89c5d6245abbdc0fe00b6df"
       }
     },
     {
@@ -4482,7 +4474,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "47fe3fb33afd6dadfc6b9f4f12af28ef441fb1e752503c79cd07300356f77558",
-        "compileManifestSha256": "9490b7713ffac1ceb2d47f9d8f97e018847bdc2d9bb8b4f76531ed71ae256b95"
+        "compileManifestSha256": "06c3868100324cfa6d51005cfddafda195bd63438eef8c89f8b962719ebafcf8"
       }
     },
     {
@@ -4530,7 +4522,7 @@
             "status": 1,
             "signal": null,
             "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "stderrSha256": "841eb4591742ef0bac7760ec1430fcd930ef2c2f69371acf2ff636c4b4535b8b"
+            "stderrSha256": "fe5ac6777c068464fc866180d93db2f74fdbef369e59f90ab2a88cc26becda49"
           },
           "lnakoRun": {
             "status": 0,
@@ -4563,7 +4555,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "f7812d6e7672c3fe7f8731f6fad601dae016d855d19ac53d3513e41b219d415d",
-        "compileManifestSha256": "414eef422986757eb4424ae9c8a2cbad62a325331009c5caab0913b2e47b050a"
+        "compileManifestSha256": "f12b28b89cb8a24d9637224dc94987c80b98fbe65bc00184b3635be24f93c401"
       }
     },
     {
@@ -4609,7 +4601,7 @@
             "status": 1,
             "signal": null,
             "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "stderrSha256": "cdfd9f859fbe6e36767ec6ca39ced3c657f4ee2f6cc0ae1b873b548232cb25be"
+            "stderrSha256": "dd3970ea6f24ad7403f73fdc187da5e06fb6c7d08752c57c4a57ffedd69c2177"
           },
           "lnakoRun": {
             "status": 0,
@@ -4642,7 +4634,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "0c0f15785a5242f591d25e117533009244194ff33de9877d061ddf59b7f3f263",
-        "compileManifestSha256": "eb491f022eb6a747d1cf7861f557114e00eed450a6fef1c728d700c7c75e2cf5"
+        "compileManifestSha256": "d8d5f16438dd657bd360e7404f427f7cef68b44add5dc4f48bb4894768882179"
       }
     },
     {
@@ -4695,7 +4687,7 @@
             "status": 1,
             "signal": null,
             "stdoutSha256": "770c2d18aa4ec3159f46da461ef452972949942ff4f6a9771044485faa146398",
-            "stderrSha256": "d0f9e80979970ee8d0bc16362658be0d59897068adf8083145496e52fd30d170"
+            "stderrSha256": "a9c0c07a94dc7b294f458dc1a48543d501a80fd13bccd6709a28d53768f7f963"
           },
           "lnakoRun": {
             "status": 0,
@@ -4728,7 +4720,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "e369c2a63d74e16725bc1c4e69635d85ae3f1a67d204a9a58b7ee0fbd9a7f592",
-        "compileManifestSha256": "299654b9e8de4abba39985072bab72931f34002cadf8e9624b16628cae1f94a0"
+        "compileManifestSha256": "546f2b0d34efc3480899dddbf583afb3585482842c6e94baace426ea3795cf68"
       }
     },
     {
@@ -4825,7 +4817,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "afe1f940e621ff38ddff46ec4291c1a0efd3e7f8bc866e45714dc8e91da08513",
-        "compileManifestSha256": "c7e1c7d35437e95d7a5a5976b41f81caaab989cd1546084e4b19e83e377dfb26"
+        "compileManifestSha256": "c6c0b8699da0ef27fe344bba92c16a4fc754646519084339eb4515979361d820"
       }
     },
     {
@@ -4901,7 +4893,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "322f24689e27810857231659a12d16b0b475a387ceb148b0992549ca6e97ec47",
-        "compileManifestSha256": "cfbb8ea52548839f37f6956ab1dbd58b5f001a01906f71d5ef36ad0a32a03946"
+        "compileManifestSha256": "7e64621255c4fef3b0b2e2ee47c1feb7c40a9a3e2df85c6abd5259135d5b824d"
       }
     },
     {
@@ -4983,7 +4975,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "abc039d4bec6720461a912e9a30c2c43366a1b9e6b7b298e0ba705ac3a0a01d3",
-        "compileManifestSha256": "2e1d914e761e58529938881912dc2cddc6b8383d5589eed6d2e9d3ae444f03cd"
+        "compileManifestSha256": "5673877e9bfb2c5eceff3e40dfe283509bf1d1366516c0933201bdc7470dbee5"
       }
     },
     {
@@ -5093,7 +5085,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "2d70a5a3227e8f32d3bf1b6e2f6e184c225ca37564a44f73063fb4934a68b704",
-        "compileManifestSha256": "f75ed616f5ff141a5c0b48966c81beefe9bb8075dcb2743ba2877aefc26e7310"
+        "compileManifestSha256": "f9ad619e029369447ddaa18f71b4adefdaf920ce428364c1f9a1e9c6d77b0bc2"
       }
     },
     {
@@ -5181,7 +5173,7 @@
         "expectedFailureDispatchCount": 1,
         "failedDispatchCount": 1,
         "traceSha256": "d11fdde706284a745c0bc94c3c9bd34621da77a5357771bc5dd76b89b82b7790",
-        "compileManifestSha256": "8896cfb262df7cb4e53be8fd4608a1e26774b0bb4bd286f01bd942259ee97b1c"
+        "compileManifestSha256": "79142d0dbe3e5ff904f878fc61cc7e34dc54962c024dd67ef309a2cc5f57ef68"
       }
     },
     {
@@ -5280,7 +5272,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "9e39e06188aeacaf8f0476529b9ee8827bb727d78cbfa5110a6b1f01ad977bd5",
-        "compileManifestSha256": "9b9fe2905110301fdea325b8a6bcef6d4b2757bdf882f57832cbb1efd1c7b9db"
+        "compileManifestSha256": "c748fbd2f9c8bc88ab0721b0b6aff7492fa2c55c75263a68edc8369c61cd5116"
       }
     },
     {
@@ -5361,7 +5353,7 @@
         "expectedFailureDispatchCount": 4,
         "failedDispatchCount": 4,
         "traceSha256": "8b917d7f1d62eb46f007bff18c47c6e2a9e5e45239a74df19f2afbf30321199f",
-        "compileManifestSha256": "2f6f81dbe8fe86694f48945730757521eafef8048554078aa8e3e6ce0f447186"
+        "compileManifestSha256": "86b28bfaaea666fddb3f80b6a61cae19e58a396c2bdc01ba6d42610a3949fa64"
       }
     },
     {
@@ -6205,25 +6197,25 @@
           "officialSource": {
             "status": 0,
             "signal": null,
-            "stdoutSha256": "202ef95a5f90f7a1e52b4c9d49316298efa728c9b018a0d512ef7281095c71a0",
+            "stdoutSha256": "5134e13896f807547ca34c3c569cce61d93eaf9ef28cbd2cba62939cd703d1e0",
             "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
           },
           "officialGenerated": {
             "status": 0,
             "signal": null,
-            "stdoutSha256": "202ef95a5f90f7a1e52b4c9d49316298efa728c9b018a0d512ef7281095c71a0",
+            "stdoutSha256": "5134e13896f807547ca34c3c569cce61d93eaf9ef28cbd2cba62939cd703d1e0",
             "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
           },
           "lnakoRun": {
             "status": 0,
             "signal": null,
-            "stdoutSha256": "202ef95a5f90f7a1e52b4c9d49316298efa728c9b018a0d512ef7281095c71a0",
+            "stdoutSha256": "5134e13896f807547ca34c3c569cce61d93eaf9ef28cbd2cba62939cd703d1e0",
             "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
           },
           "lnakoNativeO0": {
             "status": 0,
             "signal": null,
-            "stdoutSha256": "202ef95a5f90f7a1e52b4c9d49316298efa728c9b018a0d512ef7281095c71a0",
+            "stdoutSha256": "5134e13896f807547ca34c3c569cce61d93eaf9ef28cbd2cba62939cd703d1e0",
             "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
           }
         }
@@ -6245,7 +6237,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 4,
         "traceSha256": "45cc99f18b8242ebde48ee527669333329b378007ad95681bf445939cfccfd07",
-        "compileManifestSha256": "95fdabed609e7158fc39bb516ccef70517e4060f57642249d605e1c1086793b0"
+        "compileManifestSha256": "bf4af9c0d65ea148999b386f616a26a0ca76a99852519ca17806f74533654ed2"
       }
     },
     {
@@ -6321,7 +6313,241 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "252b1aa5c2cc4770e956e51179a8a4efb3572cc23aa986b27624e617238c7205",
-        "compileManifestSha256": "561c8e91be8e7417b33606fea4adb23231108ed96aa30ad2d6edc0532558147f"
+        "compileManifestSha256": "827bc710c7cbe0d1e133d67d407afecf6fe78e5a6f857a165e5486b7e837f206"
+      }
+    },
+    {
+      "id": "native-node-stdin-all",
+      "file": "native-cases.json",
+      "sourceSha256": "345812b1668cceb40528991673ddaac0764b4cc6f4ad26908f92a2da60347cbb",
+      "associatedCommandNames": [
+        "標準入力全取得"
+      ],
+      "associationWithoutDispatch": [],
+      "observedStaticCommandNames": [
+        "標準入力全取得",
+        "表示"
+      ],
+      "observedDispatchCommandNames": [
+        "標準入力全取得",
+        "表示"
+      ],
+      "dispatchExpectations": [],
+      "officialComparison": {
+        "oracle": "officialSource",
+        "routes": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "selectedOracleEquivalent": true,
+        "officialGeneratedAvailable": true,
+        "officialGeneratedRouteUnavailableReason": null,
+        "officialRoutesEquivalent": true,
+        "results": {
+          "officialSource": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "d67eb07715bd30a4d1216b50cf27727d36bfb5ed2aa1c3dcc3a4cbbfe21a2af0",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "officialGenerated": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "d67eb07715bd30a4d1216b50cf27727d36bfb5ed2aa1c3dcc3a4cbbfe21a2af0",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoRun": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "d67eb07715bd30a4d1216b50cf27727d36bfb5ed2aa1c3dcc3a4cbbfe21a2af0",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO0": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "d67eb07715bd30a4d1216b50cf27727d36bfb5ed2aa1c3dcc3a4cbbfe21a2af0",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      },
+      "interpreter": {
+        "dispatchEventCount": 2,
+        "staticSuccessSiteCount": 2,
+        "expectedFailureSiteCount": 0,
+        "expectedFailureDispatchCount": 0,
+        "staticSiteWithoutAotManifestCount": 0,
+        "traceSha256": "bbfcdbf1f49265f7840195900776e82335cfacf38a56b7dc9066d12908f6d846"
+      },
+      "aot": {
+        "manifestEntryCount": 2,
+        "dispatchAttemptCount": 2,
+        "dispatchResultCount": 2,
+        "staticSuccessSiteCount": 2,
+        "expectedFailureSiteCount": 0,
+        "expectedFailureDispatchCount": 0,
+        "failedDispatchCount": 0,
+        "traceSha256": "f76981ee62e2c3d3799d3daa760d2d7036a285c7151b9a3bbd46c137c70dd328",
+        "compileManifestSha256": "23d16fec9cfa0dafb37337ee0955be482c9a8942258df8d62a74064eaec97d3f"
+      }
+    },
+    {
+      "id": "native-node-stdin-lines",
+      "file": "native-cases.json",
+      "sourceSha256": "92758bb555b13203084455fd1e50b9f8fd026798fffd74c4d5d94ed52e366e69",
+      "associatedCommandNames": [
+        "尋",
+        "文字尋",
+        "標準入力全取得"
+      ],
+      "associationWithoutDispatch": [],
+      "observedStaticCommandNames": [
+        "尋",
+        "文字尋",
+        "標準入力全取得",
+        "表示"
+      ],
+      "observedDispatchCommandNames": [
+        "尋",
+        "文字尋",
+        "標準入力全取得",
+        "表示"
+      ],
+      "dispatchExpectations": [],
+      "officialComparison": {
+        "oracle": "officialSource",
+        "routes": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "selectedOracleEquivalent": true,
+        "officialGeneratedAvailable": true,
+        "officialGeneratedRouteUnavailableReason": null,
+        "officialRoutesEquivalent": true,
+        "results": {
+          "officialSource": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "139e23f292ad4d8196f900046b9492922d7a0660b58f408e3bd965bca97ef6c7",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "officialGenerated": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "139e23f292ad4d8196f900046b9492922d7a0660b58f408e3bd965bca97ef6c7",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoRun": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "139e23f292ad4d8196f900046b9492922d7a0660b58f408e3bd965bca97ef6c7",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO0": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "139e23f292ad4d8196f900046b9492922d7a0660b58f408e3bd965bca97ef6c7",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      },
+      "interpreter": {
+        "dispatchEventCount": 6,
+        "staticSuccessSiteCount": 6,
+        "expectedFailureSiteCount": 0,
+        "expectedFailureDispatchCount": 0,
+        "staticSiteWithoutAotManifestCount": 0,
+        "traceSha256": "c125ddad9aa98494817af0a51ae122ae135d7d9a5b59e0dfdd1d28c7d1c9394f"
+      },
+      "aot": {
+        "manifestEntryCount": 6,
+        "dispatchAttemptCount": 6,
+        "dispatchResultCount": 6,
+        "staticSuccessSiteCount": 6,
+        "expectedFailureSiteCount": 0,
+        "expectedFailureDispatchCount": 0,
+        "failedDispatchCount": 0,
+        "traceSha256": "ca007b02e4e7425bd38447c53549281adf2a4f2efd3dd035cf52c83d9c6e88df",
+        "compileManifestSha256": "f4071df27ce3dae8a247c82191300383be980490c3a148504708d90acc11489e"
+      }
+    },
+    {
+      "id": "native-node-stdin-callback",
+      "file": "native-cases.json",
+      "sourceSha256": "eeb7ea2dead67882aca8c54f5511dfa17d8e658d37f6048b7fe3bbdffa538da6",
+      "associatedCommandNames": [
+        "標準入力取得時"
+      ],
+      "associationWithoutDispatch": [],
+      "observedStaticCommandNames": [
+        "標準入力取得時",
+        "表示"
+      ],
+      "observedDispatchCommandNames": [
+        "標準入力取得時",
+        "表示"
+      ],
+      "dispatchExpectations": [],
+      "officialComparison": {
+        "oracle": "officialSource",
+        "routes": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "selectedOracleEquivalent": true,
+        "officialGeneratedAvailable": true,
+        "officialGeneratedRouteUnavailableReason": null,
+        "officialRoutesEquivalent": true,
+        "results": {
+          "officialSource": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "officialGenerated": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoRun": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO0": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      },
+      "interpreter": {
+        "dispatchEventCount": 2,
+        "staticSuccessSiteCount": 2,
+        "expectedFailureSiteCount": 0,
+        "expectedFailureDispatchCount": 0,
+        "staticSiteWithoutAotManifestCount": 0,
+        "traceSha256": "72fa2780aaa0b6dfe53e30f8f39a6068c312ee512026cf0dc7edc79d9c0024cf"
+      },
+      "aot": {
+        "manifestEntryCount": 2,
+        "dispatchAttemptCount": 2,
+        "dispatchResultCount": 2,
+        "staticSuccessSiteCount": 2,
+        "expectedFailureSiteCount": 0,
+        "expectedFailureDispatchCount": 0,
+        "failedDispatchCount": 0,
+        "traceSha256": "cf41a5cb096b6e97ab8fa3b31c65e438a35401fe8a7034548c0b9a2ad1ab76e5",
+        "compileManifestSha256": "d489fabac61b514066d09b322335ebcc2b3efdc0ec4cde7ebc6533494e4791eb"
       }
     },
     {
@@ -6367,7 +6593,7 @@
             "status": 1,
             "signal": null,
             "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "stderrSha256": "0cea5c6b6bee13109a1250982487ee6692fb58596e37bce05aedb73474e2fe6c"
+            "stderrSha256": "de17c6019abc094e64d313bbbd0e0f13a216f8f36dbe20ac8c2eddd33677cfd3"
           },
           "lnakoRun": {
             "status": 0,
@@ -6400,7 +6626,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "62d9616b1a068b613f63222e8c0be86eec49f47270c0ba7c4f989f287fabdac5",
-        "compileManifestSha256": "6689e05d94b3c40ce1451bc7469cf32c0b35e3a40256403f960e538bd163f517"
+        "compileManifestSha256": "c601a28b9fde23978c1cab37e92df4b2accb39696a8c270e80bfdf7528f73ef3"
       }
     }
   ],
@@ -24881,6 +25107,246 @@
       "catalogId": "command-0375",
       "name": "終了時",
       "plugin": "plugin_promise",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-node-stdin-all",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000001",
+      "sourceName": "標準入力全取得",
+      "canonicalOpcode": "node_stdin_all",
+      "opcode": 286,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_node"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0757",
+      "name": "標準入力全取得",
+      "plugin": "plugin_node",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-node-stdin-all",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000002",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-node-stdin-callback",
+      "file": "native-cases.json",
+      "siteId": "0x0000000100000001",
+      "sourceName": "標準入力取得時",
+      "canonicalOpcode": "node_stdin_callback",
+      "opcode": 330,
+      "route": "node-stdin-lines",
+      "runtimeRoutes": [
+        "node-stdin-lines"
+      ],
+      "interpreterRoutes": [
+        "plugin_node"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0754",
+      "name": "標準入力取得時",
+      "plugin": "plugin_node",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-node-stdin-callback",
+      "file": "native-cases.json",
+      "siteId": "0x0000000100000002",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-node-stdin-lines",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000001",
+      "sourceName": "文字尋",
+      "canonicalOpcode": "node_stdin_character",
+      "opcode": 329,
+      "route": "node-stdin-lines",
+      "runtimeRoutes": [
+        "node-stdin-lines"
+      ],
+      "interpreterRoutes": [
+        "plugin_node"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0756",
+      "name": "文字尋",
+      "plugin": "plugin_node",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-node-stdin-lines",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000002",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-node-stdin-lines",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000003",
+      "sourceName": "尋",
+      "canonicalOpcode": "node_stdin_line",
+      "opcode": 328,
+      "route": "node-stdin-lines",
+      "runtimeRoutes": [
+        "node-stdin-lines"
+      ],
+      "interpreterRoutes": [
+        "plugin_node"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0755",
+      "name": "尋",
+      "plugin": "plugin_node",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-node-stdin-lines",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000004",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-node-stdin-lines",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000005",
+      "sourceName": "標準入力全取得",
+      "canonicalOpcode": "node_stdin_all",
+      "opcode": 286,
+      "route": "builtin",
+      "runtimeRoutes": [
+        "builtin"
+      ],
+      "interpreterRoutes": [
+        "plugin_node"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0757",
+      "name": "標準入力全取得",
+      "plugin": "plugin_node",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "native-node-stdin-lines",
+      "file": "native-cases.json",
+      "siteId": "0x0000000000000006",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
       "catalogStatus": "native",
       "resolution": "unique-name",
       "selectedOracleEquivalent": true
