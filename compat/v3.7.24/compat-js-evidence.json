@@ -1,0 +1,948 @@
+{
+  "schema": "lnako.compat-js-evidence.v1",
+  "generator": "tools/check_compat_js_evidence.mjs",
+  "baseline": {
+    "tag": "3.7.24",
+    "commit": "aa18c7e640523938c680958fe731418cc6f7a58f"
+  },
+  "scope": {
+    "catalogEntries": 4,
+    "operations": [
+      "eval",
+      "lookup",
+      "call",
+      "method-call"
+    ],
+    "fixtureSelection": "all compat-js-cases.json cases; only successful direct root sites select catalog evidence",
+    "caseCount": 9,
+    "successCaseCount": 6,
+    "expectedFailureCaseCount": 3,
+    "selectedProofCaseIds": [
+      "compat-js-basic",
+      "compat-js-host",
+      "compat-js-find-quirks",
+      "compat-js-mutation"
+    ],
+    "commandNames": [
+      "JSオブジェクト取得",
+      "JSメソッド実行",
+      "JS実行",
+      "JS関数実行"
+    ],
+    "nativeDispatchEvidenceSeparate": true
+  },
+  "officialComparison": {
+    "oracle": "official-source",
+    "routes": [
+      "officialSource",
+      "lnakoCompatJs"
+    ],
+    "equivalent": true,
+    "comparisonRule": "success cases compare normalized stdout, exit status, and signal; stderr is retained only as SHA-256",
+    "cases": [
+      {
+        "id": "compat-js-basic",
+        "fixture": {
+          "file": "compat-js-basic.nako3",
+          "sourceSha256": "f66afb9085dae7f24d1c2871c90b862a46a262927151de8800060f44050d3846"
+        },
+        "expectedFailure": false,
+        "equivalent": true,
+        "results": {
+          "officialSource": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "c541d7546ee44d6644c6e08b537450ce364f526d7dff2ede6bfbe22a24d7bf6a",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "failed": false
+          },
+          "lnakoCompatJs": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "c541d7546ee44d6644c6e08b537450ce364f526d7dff2ede6bfbe22a24d7bf6a",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "failed": false
+          }
+        },
+        "trace": {
+          "schema": 1,
+          "eventCount": 19,
+          "operations": [
+            {
+              "siteId": "0x0000000100000001",
+              "command": "JS実行",
+              "operation": "eval",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            },
+            {
+              "siteId": "0x0000000100000003",
+              "command": "JS実行",
+              "operation": "eval",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            },
+            {
+              "siteId": "0x0000000100000006",
+              "command": "JS関数実行",
+              "operation": "call",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            },
+            {
+              "siteId": "0x0000000100000008",
+              "command": "JS実行",
+              "operation": "eval",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            },
+            {
+              "siteId": "0x0000000100000009",
+              "command": "JSメソッド実行",
+              "operation": "method-call",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            },
+            {
+              "siteId": "0x000000010000000b",
+              "command": "JSオブジェクト取得",
+              "operation": "lookup",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            },
+            {
+              "siteId": "0x000000010000000d",
+              "command": "JSオブジェクト取得",
+              "operation": "lookup",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            },
+            {
+              "siteId": "0x000000010000000e",
+              "command": "JS関数実行",
+              "operation": "call",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            },
+            {
+              "siteId": "0x0000000100000010",
+              "command": "JS実行",
+              "operation": "eval",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            }
+          ]
+        }
+      },
+      {
+        "id": "compat-js-host",
+        "fixture": {
+          "file": "compat-js-host.nako3",
+          "sourceSha256": "c2144d306e58cdfb03a426f9f3383086b3670d0d0a88bbb6dba458e3e4df7a5e"
+        },
+        "expectedFailure": false,
+        "equivalent": true,
+        "results": {
+          "officialSource": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "26417bd76e34a357486aee39b975a96f5196ac932eda617d8f32848430112007",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "failed": false
+          },
+          "lnakoCompatJs": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "26417bd76e34a357486aee39b975a96f5196ac932eda617d8f32848430112007",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "failed": false
+          }
+        },
+        "trace": {
+          "schema": 1,
+          "eventCount": 11,
+          "operations": [
+            {
+              "siteId": "0x0000000100000001",
+              "command": "JS実行",
+              "operation": "eval",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            },
+            {
+              "siteId": "0x0000000100000003",
+              "command": "JS実行",
+              "operation": "eval",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            },
+            {
+              "siteId": "0x0000000100000005",
+              "command": "JS実行",
+              "operation": "eval",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            },
+            {
+              "siteId": "0x0000000100000007",
+              "command": "JS実行",
+              "operation": "eval",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            },
+            {
+              "siteId": "0x0000000100000009",
+              "command": "JS実行",
+              "operation": "eval",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            }
+          ]
+        }
+      },
+      {
+        "id": "compat-js-hatena",
+        "fixture": {
+          "file": "compat-js-hatena.nako3",
+          "sourceSha256": "b6ad71ea52d088806fa88e2c1d7d2c322881ddaf141a7966701bed0bf4a07c61"
+        },
+        "expectedFailure": false,
+        "equivalent": true,
+        "results": {
+          "officialSource": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "6c921ab3a1c12f6f2990d84f5522304231b1059b12d6749f16f181052e2df45e",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "failed": false
+          },
+          "lnakoCompatJs": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "6c921ab3a1c12f6f2990d84f5522304231b1059b12d6749f16f181052e2df45e",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "failed": false
+          }
+        },
+        "trace": {
+          "schema": 1,
+          "eventCount": 3,
+          "operations": []
+        }
+      },
+      {
+        "id": "compat-js-find-quirks",
+        "fixture": {
+          "file": "compat-js-find-quirks.nako3",
+          "sourceSha256": "72e4eda860761fd010303cf46eb1a62c169d5756312cb6038409fc451e9df9bd"
+        },
+        "expectedFailure": false,
+        "equivalent": true,
+        "results": {
+          "officialSource": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "ab9d1320e752892589a4d5e91738fbf53961684b3b184d1e26fd0d72f93efc2a",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "failed": false
+          },
+          "lnakoCompatJs": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "ab9d1320e752892589a4d5e91738fbf53961684b3b184d1e26fd0d72f93efc2a",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "failed": false
+          }
+        },
+        "trace": {
+          "schema": 1,
+          "eventCount": 11,
+          "operations": [
+            {
+              "siteId": "0x0000000000000001",
+              "command": "JSオブジェクト取得",
+              "operation": "lookup",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            },
+            {
+              "siteId": "0x0000000000000004",
+              "command": "JSオブジェクト取得",
+              "operation": "lookup",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            },
+            {
+              "siteId": "0x0000000000000007",
+              "command": "JSオブジェクト取得",
+              "operation": "lookup",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            },
+            {
+              "siteId": "0x000000000000000a",
+              "command": "JSオブジェクト取得",
+              "operation": "lookup",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            },
+            {
+              "siteId": "0x000000000000000d",
+              "command": "JSオブジェクト取得",
+              "operation": "lookup",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            }
+          ]
+        }
+      },
+      {
+        "id": "compat-js-mutation",
+        "fixture": {
+          "file": "compat-js-mutation.nako3",
+          "sourceSha256": "838c8cc2da07751735e13b0e5d7b1ab3084cd046485015bcc3b8cd8803204ff4"
+        },
+        "expectedFailure": false,
+        "equivalent": true,
+        "results": {
+          "officialSource": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "a81b5ab14e087dc7b63b3b85acb27ee9322536a7d8809533176d2ba7df17dca8",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "failed": false
+          },
+          "lnakoCompatJs": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "a81b5ab14e087dc7b63b3b85acb27ee9322536a7d8809533176d2ba7df17dca8",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "failed": false
+          }
+        },
+        "trace": {
+          "schema": 1,
+          "eventCount": 11,
+          "operations": [
+            {
+              "siteId": "0x0000000000000001",
+              "command": "JS実行",
+              "operation": "eval",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            },
+            {
+              "siteId": "0x0000000000000002",
+              "command": "JSメソッド実行",
+              "operation": "method-call",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            },
+            {
+              "siteId": "0x0000000000000006",
+              "command": "JSメソッド実行",
+              "operation": "method-call",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            },
+            {
+              "siteId": "0x0000000000000008",
+              "command": "JS実行",
+              "operation": "eval",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            },
+            {
+              "siteId": "0x0000000000000009",
+              "command": "JSメソッド実行",
+              "operation": "method-call",
+              "attemptCount": 1,
+              "resultCount": 1,
+              "result": "success"
+            }
+          ]
+        }
+      },
+      {
+        "id": "compat-js-plugin-imports",
+        "fixture": {
+          "file": "compat-js-plugin-imports.nako3",
+          "sourceSha256": "dd1bafe0db01490b9679bc36beaf2f22d1220a65cdf143524f665d83b916166e"
+        },
+        "expectedFailure": false,
+        "equivalent": true,
+        "results": {
+          "officialSource": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "fc670669c134e95c1ee779f46ebbcdd8512256f5eee9dc48e2c563ba257c62a5",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "failed": false
+          },
+          "lnakoCompatJs": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "fc670669c134e95c1ee779f46ebbcdd8512256f5eee9dc48e2c563ba257c62a5",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "failed": false
+          }
+        },
+        "trace": {
+          "schema": 1,
+          "eventCount": 1,
+          "operations": []
+        }
+      },
+      {
+        "id": "compat-js-error-eval",
+        "fixture": {
+          "file": "compat-js-error-eval.nako3",
+          "sourceSha256": "6ddab0513a0d7887d42a9f813ba512c3ede7795bd181752281a534ea6909df80"
+        },
+        "expectedFailure": true,
+        "equivalent": true,
+        "results": {
+          "officialSource": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "38e0b9de817f645c4bec37c0d4a3e58baecccb040f5718dc069a72c7385a0bed",
+            "stderrSha256": "2cd4284dcad4175bcf2ec2ec9f0586d27da52ade4427413c973e6d95b47cf0b7",
+            "failed": true
+          },
+          "lnakoCompatJs": {
+            "status": 1,
+            "signal": null,
+            "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderrSha256": "fcba17c59f26ece3dcbb11a757c1196070bc66ea36843ea9f08ee6bc4e6387ff",
+            "failed": true
+          }
+        },
+        "trace": null
+      },
+      {
+        "id": "compat-js-error-function",
+        "fixture": {
+          "file": "compat-js-error-function.nako3",
+          "sourceSha256": "7136f75891ea15b1ca52d1e64eb25293612e9766d57f7ab9bf148150220d341f"
+        },
+        "expectedFailure": true,
+        "equivalent": true,
+        "results": {
+          "officialSource": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "8871b018e1d417766027cb6adbac9a451438f6ca4e40ba99404f37ec64767578",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "failed": true
+          },
+          "lnakoCompatJs": {
+            "status": 1,
+            "signal": null,
+            "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderrSha256": "1fc3016d01955e2cf96b1aedd6b26f40089e2ecfd399a1f8c8bd185200728b91",
+            "failed": true
+          }
+        },
+        "trace": null
+      },
+      {
+        "id": "compat-js-error-method",
+        "fixture": {
+          "file": "compat-js-error-method.nako3",
+          "sourceSha256": "82d77b038cb558cd6c9dcb1c85d48f7fea99c885b0921cd39c53297046ed3f6d"
+        },
+        "expectedFailure": true,
+        "equivalent": true,
+        "results": {
+          "officialSource": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "9d9aaa526d99fe88dd1e7d0f86e9cc7470775b9113da3aa1ffad203cda609c7c",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "failed": true
+          },
+          "lnakoCompatJs": {
+            "status": 1,
+            "signal": null,
+            "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderrSha256": "1c1c5679bf0a86110a65873dffdbd1de86088fec50816af03473f2bc727c82e0",
+            "failed": true
+          }
+        },
+        "trace": null
+      }
+    ]
+  },
+  "attestation": null,
+  "provenance": {
+    "environment": {
+      "platform": "darwin",
+      "arch": "arm64",
+      "node": "v24.19.0"
+    },
+    "oracle": {
+      "build": 4,
+      "archiveSha256": "c3bedbf101118a261f631d331127ae441657fec091c712b07d237c4336eb0011",
+      "cliSha256": "65e32f1d7de0b2da18edf3f4c49565c37d31aa474d31ee08426f2f6a0c0d6c81",
+      "markerSha256": "e9444955298c3bb22164a219c0f342ee32301e901ec967d648cae9a25d8bf531",
+      "treeHashAlgorithm": "sha256-json-records-v3",
+      "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
+    },
+    "lnako": {
+      "binarySha256": "3afcef24a91cbcb1669e56959ceca0c9ecf7b87440ef803512c4f5b6539c0ec7",
+      "commit": "150238b1c539a17a595e111de7cb0afa5d83ba95",
+      "dirty": false
+    },
+    "raw": {
+      "traceSha256ByCase": {
+        "compat-js-basic": "b23a0a28774bc6a6878de66c01ad7e3c1dc3e50fffa36070a2885e6f9a2a4bf5",
+        "compat-js-host": "1ab24e78cb7e886bc354d1d944a9ab21ac79049dbd8324405eec3db92a846ff7",
+        "compat-js-hatena": "0e15d2293c7fe42c04721304a026498e4b0b834b4a3c99cdbd487e9bf5453448",
+        "compat-js-find-quirks": "316687e795322172b1073309c47295603dcd423aaf585c2dfcba84f667c84f18",
+        "compat-js-mutation": "1e3cc9cb949f1ebcec243cde6c0ca2ab1a446fb7eb9ab8a481902f78e874b975",
+        "compat-js-plugin-imports": "d1a240ca85bb6425f4ad3e15b23d56a4366b64e8631f58b1af10c96a38b65232"
+      }
+    }
+  },
+  "entries": [
+    {
+      "catalogId": "command-0051",
+      "name": "JS実行",
+      "plugin": "plugin_system",
+      "operation": "eval",
+      "fixtureIds": [
+        "compat-js-basic",
+        "compat-js-host",
+        "compat-js-mutation"
+      ],
+      "sites": [
+        {
+          "fixtureId": "compat-js-basic",
+          "siteId": "0x0000000100000001",
+          "command": "JS実行",
+          "operation": "eval",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        },
+        {
+          "fixtureId": "compat-js-basic",
+          "siteId": "0x0000000100000003",
+          "command": "JS実行",
+          "operation": "eval",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        },
+        {
+          "fixtureId": "compat-js-basic",
+          "siteId": "0x0000000100000008",
+          "command": "JS実行",
+          "operation": "eval",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        },
+        {
+          "fixtureId": "compat-js-basic",
+          "siteId": "0x0000000100000010",
+          "command": "JS実行",
+          "operation": "eval",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        },
+        {
+          "fixtureId": "compat-js-host",
+          "siteId": "0x0000000100000001",
+          "command": "JS実行",
+          "operation": "eval",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        },
+        {
+          "fixtureId": "compat-js-host",
+          "siteId": "0x0000000100000003",
+          "command": "JS実行",
+          "operation": "eval",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        },
+        {
+          "fixtureId": "compat-js-host",
+          "siteId": "0x0000000100000005",
+          "command": "JS実行",
+          "operation": "eval",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        },
+        {
+          "fixtureId": "compat-js-host",
+          "siteId": "0x0000000100000007",
+          "command": "JS実行",
+          "operation": "eval",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        },
+        {
+          "fixtureId": "compat-js-host",
+          "siteId": "0x0000000100000009",
+          "command": "JS実行",
+          "operation": "eval",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        },
+        {
+          "fixtureId": "compat-js-mutation",
+          "siteId": "0x0000000000000001",
+          "command": "JS実行",
+          "operation": "eval",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        },
+        {
+          "fixtureId": "compat-js-mutation",
+          "siteId": "0x0000000000000008",
+          "command": "JS実行",
+          "operation": "eval",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        }
+      ],
+      "runtime": {
+        "interpreter": {
+          "attemptCount": 11,
+          "resultCount": 11,
+          "success": true
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0052",
+      "name": "JSオブジェクト取得",
+      "plugin": "plugin_system",
+      "operation": "lookup",
+      "fixtureIds": [
+        "compat-js-basic",
+        "compat-js-find-quirks"
+      ],
+      "sites": [
+        {
+          "fixtureId": "compat-js-basic",
+          "siteId": "0x000000010000000b",
+          "command": "JSオブジェクト取得",
+          "operation": "lookup",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        },
+        {
+          "fixtureId": "compat-js-basic",
+          "siteId": "0x000000010000000d",
+          "command": "JSオブジェクト取得",
+          "operation": "lookup",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        },
+        {
+          "fixtureId": "compat-js-find-quirks",
+          "siteId": "0x0000000000000001",
+          "command": "JSオブジェクト取得",
+          "operation": "lookup",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        },
+        {
+          "fixtureId": "compat-js-find-quirks",
+          "siteId": "0x0000000000000004",
+          "command": "JSオブジェクト取得",
+          "operation": "lookup",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        },
+        {
+          "fixtureId": "compat-js-find-quirks",
+          "siteId": "0x0000000000000007",
+          "command": "JSオブジェクト取得",
+          "operation": "lookup",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        },
+        {
+          "fixtureId": "compat-js-find-quirks",
+          "siteId": "0x000000000000000a",
+          "command": "JSオブジェクト取得",
+          "operation": "lookup",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        },
+        {
+          "fixtureId": "compat-js-find-quirks",
+          "siteId": "0x000000000000000d",
+          "command": "JSオブジェクト取得",
+          "operation": "lookup",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        }
+      ],
+      "runtime": {
+        "interpreter": {
+          "attemptCount": 7,
+          "resultCount": 7,
+          "success": true
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0053",
+      "name": "JS関数実行",
+      "plugin": "plugin_system",
+      "operation": "call",
+      "fixtureIds": [
+        "compat-js-basic"
+      ],
+      "sites": [
+        {
+          "fixtureId": "compat-js-basic",
+          "siteId": "0x0000000100000006",
+          "command": "JS関数実行",
+          "operation": "call",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        },
+        {
+          "fixtureId": "compat-js-basic",
+          "siteId": "0x000000010000000e",
+          "command": "JS関数実行",
+          "operation": "call",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        }
+      ],
+      "runtime": {
+        "interpreter": {
+          "attemptCount": 2,
+          "resultCount": 2,
+          "success": true
+        }
+      },
+      "officialEquivalent": true
+    },
+    {
+      "catalogId": "command-0056",
+      "name": "JSメソッド実行",
+      "plugin": "plugin_system",
+      "operation": "method-call",
+      "fixtureIds": [
+        "compat-js-basic",
+        "compat-js-mutation"
+      ],
+      "sites": [
+        {
+          "fixtureId": "compat-js-basic",
+          "siteId": "0x0000000100000009",
+          "command": "JSメソッド実行",
+          "operation": "method-call",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        },
+        {
+          "fixtureId": "compat-js-mutation",
+          "siteId": "0x0000000000000002",
+          "command": "JSメソッド実行",
+          "operation": "method-call",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        },
+        {
+          "fixtureId": "compat-js-mutation",
+          "siteId": "0x0000000000000006",
+          "command": "JSメソッド実行",
+          "operation": "method-call",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        },
+        {
+          "fixtureId": "compat-js-mutation",
+          "siteId": "0x0000000000000009",
+          "command": "JSメソッド実行",
+          "operation": "method-call",
+          "runtime": {
+            "interpreter": {
+              "attemptCount": 1,
+              "resultCount": 1,
+              "success": true
+            }
+          },
+          "officialEquivalent": true
+        }
+      ],
+      "runtime": {
+        "interpreter": {
+          "attemptCount": 4,
+          "resultCount": 4,
+          "success": true
+        }
+      },
+      "officialEquivalent": true
+    }
+  ]
+}
