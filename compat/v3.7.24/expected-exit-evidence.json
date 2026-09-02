@@ -25,6 +25,12 @@
         "sourceSha256": "3e066d3737a052cd567efc61d6e524abc2aefdee0c5f0242fbbd336bf054acd9"
       },
       {
+        "id": "plugin-node-exit-alias",
+        "command": "終",
+        "catalogId": "command-0745",
+        "sourceSha256": "d02a2aac4c71467686c6a3f8953cea5f4aa83c736a8708e5b4ea3a797be92676"
+      },
+      {
         "id": "plugin-node-exit-japanese-alias",
         "command": "終了",
         "catalogId": "command-0748",
@@ -59,8 +65,8 @@
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
     "lnako": {
-      "binarySha256": "63793a93950ea5320311d852dbef90a8c39b8ec89eb3c0b72fb830889519c6c8",
-      "commit": "53b0f1efedc4c4dd158ecd1a1f8c3b55717e9a8a",
+      "binarySha256": "2fbe79ca1bcf4cb5954916dbeddf03b7904f142ccaeba731b440dd6b9eb2c7d4",
+      "commit": "401af96726488588a31a252bbe1185de9298435d",
       "dirty": false
     },
     "raw": {
@@ -81,6 +87,15 @@
             "O1": "156dca532679f3253dfa33680188934f81444f51d733e25b84e334ea88b6eaea",
             "O2": "156dca532679f3253dfa33680188934f81444f51d733e25b84e334ea88b6eaea",
             "O3": "156dca532679f3253dfa33680188934f81444f51d733e25b84e334ea88b6eaea"
+          }
+        },
+        "plugin-node-exit-alias": {
+          "interpreter": "d0829366de423f6e60e79e26f5ce66dc0a54a86ee6910d7a4676b6059ccd5715",
+          "aot": {
+            "O0": "b911b7e3e6f9b94ccabbcb47c5c391163e699aad384f4b4f0af894843632ca9a",
+            "O1": "b911b7e3e6f9b94ccabbcb47c5c391163e699aad384f4b4f0af894843632ca9a",
+            "O2": "b911b7e3e6f9b94ccabbcb47c5c391163e699aad384f4b4f0af894843632ca9a",
+            "O3": "b911b7e3e6f9b94ccabbcb47c5c391163e699aad384f4b4f0af894843632ca9a"
           }
         },
         "plugin-node-exit-japanese-alias": {
@@ -282,7 +297,7 @@
               "siteId": "0x0000000000000003"
             }
           ],
-          "rawSha256": "a7978067336351a9937c696e37fa73c91f5287fbe6a91c606f8fd12a5b444edc"
+          "rawSha256": "fbd90415970eba3d6a3ba52d0feb101ce7d17dfbcb36d88c377cf3711c5a259c"
         }
       },
       "compileStatuses": {
@@ -485,7 +500,203 @@
               "siteId": "0x0000000100000004"
             }
           ],
-          "rawSha256": "8337a18c6299ae0c7e18f88d506e157fbf8ceffcf422e37145be50894b690e40"
+          "rawSha256": "a181b8c5288901823e0ec9362c14dbdfbdb9c421a6fc667a5b3155bd86d60a59"
+        }
+      },
+      "compileStatuses": {
+        "O0": 0,
+        "O1": 0,
+        "O2": 0,
+        "O3": 0
+      }
+    },
+    {
+      "caseId": "plugin-node-exit-alias",
+      "catalogId": "command-0745",
+      "name": "終",
+      "plugin": "plugin_node",
+      "sourceSha256": "d02a2aac4c71467686c6a3f8953cea5f4aa83c736a8708e5b4ea3a797be92676",
+      "expectedExitCode": 0,
+      "terminalReason": "process-exit",
+      "officialComparison": {
+        "oracle": "official-source",
+        "routes": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0",
+          "lnakoNativeO1",
+          "lnakoNativeO2",
+          "lnakoNativeO3"
+        ],
+        "equivalent": true,
+        "results": {
+          "officialSource": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "be9351741a8155d01fd028d158546f1005e73ceeb0bb2d093335feac4144e450",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "officialGenerated": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "be9351741a8155d01fd028d158546f1005e73ceeb0bb2d093335feac4144e450",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoRun": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "be9351741a8155d01fd028d158546f1005e73ceeb0bb2d093335feac4144e450",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO0": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "be9351741a8155d01fd028d158546f1005e73ceeb0bb2d093335feac4144e450",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO1": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "be9351741a8155d01fd028d158546f1005e73ceeb0bb2d093335feac4144e450",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO2": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "be9351741a8155d01fd028d158546f1005e73ceeb0bb2d093335feac4144e450",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO3": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "be9351741a8155d01fd028d158546f1005e73ceeb0bb2d093335feac4144e450",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      },
+      "site": {
+        "siteId": "0x0000000000000002",
+        "sourceName": "終",
+        "canonicalOpcode": "node_exit",
+        "opcode": 270,
+        "route": "builtin"
+      },
+      "trace": {
+        "interpreter": {
+          "eventCount": 2,
+          "terminalReason": "process-exit",
+          "exitCode": 0,
+          "signal": null,
+          "target": {
+            "siteId": "0x0000000000000002",
+            "sourceName": "終",
+            "route": "plugin_node",
+            "result": "success",
+            "count": 1
+          },
+          "traceSha256": "d0829366de423f6e60e79e26f5ce66dc0a54a86ee6910d7a4676b6059ccd5715"
+        },
+        "aot": {
+          "O0": {
+            "eventCount": 4,
+            "terminalReason": "process-exit",
+            "exitCode": 0,
+            "signal": null,
+            "target": {
+              "siteId": "0x0000000000000002",
+              "sourceName": "終",
+              "canonicalOpcode": "node_exit",
+              "opcode": 270,
+              "route": "builtin",
+              "result": true,
+              "callId": 1,
+              "count": 1,
+              "unmatchedCallCount": 0
+            },
+            "traceSha256": "b911b7e3e6f9b94ccabbcb47c5c391163e699aad384f4b4f0af894843632ca9a"
+          },
+          "O1": {
+            "eventCount": 4,
+            "terminalReason": "process-exit",
+            "exitCode": 0,
+            "signal": null,
+            "target": {
+              "siteId": "0x0000000000000002",
+              "sourceName": "終",
+              "canonicalOpcode": "node_exit",
+              "opcode": 270,
+              "route": "builtin",
+              "result": true,
+              "callId": 1,
+              "count": 1,
+              "unmatchedCallCount": 0
+            },
+            "traceSha256": "b911b7e3e6f9b94ccabbcb47c5c391163e699aad384f4b4f0af894843632ca9a"
+          },
+          "O2": {
+            "eventCount": 4,
+            "terminalReason": "process-exit",
+            "exitCode": 0,
+            "signal": null,
+            "target": {
+              "siteId": "0x0000000000000002",
+              "sourceName": "終",
+              "canonicalOpcode": "node_exit",
+              "opcode": 270,
+              "route": "builtin",
+              "result": true,
+              "callId": 1,
+              "count": 1,
+              "unmatchedCallCount": 0
+            },
+            "traceSha256": "b911b7e3e6f9b94ccabbcb47c5c391163e699aad384f4b4f0af894843632ca9a"
+          },
+          "O3": {
+            "eventCount": 4,
+            "terminalReason": "process-exit",
+            "exitCode": 0,
+            "signal": null,
+            "target": {
+              "siteId": "0x0000000000000002",
+              "sourceName": "終",
+              "canonicalOpcode": "node_exit",
+              "opcode": 270,
+              "route": "builtin",
+              "result": true,
+              "callId": 1,
+              "count": 1,
+              "unmatchedCallCount": 0
+            },
+            "traceSha256": "b911b7e3e6f9b94ccabbcb47c5c391163e699aad384f4b4f0af894843632ca9a"
+          }
+        },
+        "compileManifest": {
+          "complete": true,
+          "entries": [
+            {
+              "sourceName": "表示",
+              "canonicalOpcode": "display",
+              "opcode": 0,
+              "route": "direct-display",
+              "siteId": "0x0000000000000001"
+            },
+            {
+              "sourceName": "終",
+              "canonicalOpcode": "node_exit",
+              "opcode": 270,
+              "route": "builtin",
+              "siteId": "0x0000000000000002"
+            },
+            {
+              "sourceName": "表示",
+              "canonicalOpcode": "display",
+              "opcode": 0,
+              "route": "direct-display",
+              "siteId": "0x0000000000000003"
+            }
+          ],
+          "rawSha256": "3814c964a18dcd3a38614a66ce87230bea1035a656e3313e22f657e1f212ce5f"
         }
       },
       "compileStatuses": {
@@ -681,7 +892,7 @@
               "siteId": "0x0000000000000003"
             }
           ],
-          "rawSha256": "875ca1c4ecc08f8084eb18a91c0233e45a11205cd2709ba9f1856add3e48f771"
+          "rawSha256": "d7a1294efa169339e0003a8e3592ddc39dcd616463039688a0a96f3c4aaa4dea"
         }
       },
       "compileStatuses": {

@@ -1,14 +1,14 @@
-# `unverified` 89件の証拠化計画（U15完了時点）
+# `unverified` 89件の証拠化計画（U16完了時点）
 
 ## 目的と基準
 
-この文書は、なでしこ3 v3.7.24（upstream `aa18c7e640523938c680958fe731418cc6f7a58f`）の標準cnako 527 entryについて、実装済み機能を過大評価せず、`compat/v3.7.24/evidence.json`の`unverified`を実行証拠へ接続するための計画である。89件の初期残件をU01〜U22へ分解し、2026-09-02のU15完了後は次の状態にある。
+この文書は、なでしこ3 v3.7.24（upstream `aa18c7e640523938c680958fe731418cc6f7a58f`）の標準cnako 527 entryについて、実装済み機能を過大評価せず、`compat/v3.7.24/evidence.json`の`unverified`を実行証拠へ接続するための計画である。89件の初期残件をU01〜U22へ分解し、2026-09-02のU16完了後は次の状態にある。
 
 | 状態 | entry数 | 意味 |
 |---|---:|---|
 | `verified` | 0 | 3正式OSの署名付きattestationまで揃った現在HEADの証拠 |
-| `trace-confirmed-unattested` | 489 | 公式差分、Interpreter/AOT trace、compile manifest等は揃うが、外部署名attestation前 |
-| `unverified` | 38 | 実装・fixtureの存在だけではcatalog ID単位の実行証拠にならない残件 |
+| `trace-confirmed-unattested` | 495 | 公式差分、Interpreter/AOT trace、compile manifest等は揃うが、外部署名attestation前 |
+| `unverified` | 32 | 実装・fixtureの存在だけではcatalog ID単位の実行証拠にならない残件 |
 
 `native: 523`という分類、fixtureの存在、Interpreterだけの成功、artifactの生成は、AOT verifiedや`trace-confirmed-unattested`を意味しない。各単位を完了扱いにするのは、この文書の共通完了条件と台帳検査が同時に通った場合だけとする。最終的な目標は、まず`trace-confirmed-unattested 527 / unverified 0`、その後に3正式OSの外部署名attestationを含む`verified`へ進むことである。
 
@@ -39,6 +39,8 @@ U13では`plugin-node-http-discord`、`plugin-node-http-discord-file`、`plugin-
 U14では`LINE送信`と`LINE画像送信`を、公式固定ソースの命令固有廃止メッセージへ合わせた。AOTの既存`line_notify_discontinued` opcodeは値を維持し、`LINE画像送信`には末尾追加の専用opcodeを割り当てて、2命令の失敗dispatchを別catalog IDへ安全に接続した。`plugin-node-http-line-message-discontinued-captured`と`plugin-node-http-line-image-discontinued-captured`は`エラー監視`で例外を捕捉し、公式source・公式生成JavaScript・lnako Interpreter・LLVM AOT O0の失敗dispatch 1 siteと本文を比較する。`c539af2`で実装・fixture・台帳を固定し、`0a2cb47`でcleanな48 fixture・1,830 site・352 native entryのcoverageを再生成した。別のNode HTTP差分テストは13ケース・27命令、AOT O0〜O3の9ケースに成功した。LINE APIへは接続しておらず、これはAPI廃止に対する意図的な制限であり、QuickJS標準命令証拠と3正式OSの外部署名attestationは未完了である。
 
 U15では`http-server-dispatch-cases.json`を追加し、`簡易HTTPサーバ起動時`、`簡易HTTPサーバ静的パス指定`、`簡易HTTPサーバ受信時`、`簡易HTTPサーバ出力`、`簡易HTTPサーバヘッダ出力`、`簡易HTTPサーバ移動`の6 entryを、ephemeral portへの外部loopback 7 requestへ接続した。`終了`はU07の既存expected-exit証拠をflushする補助命令として同じfixtureへ含めるが、新規6件には数えない。公式source・lnako Interpreter・LLVM AOT O0のHTTP response status/header/body hash、Interpreter/AOT trace、O0 compile manifestを比較し、coverageを49 fixture・1,849 site・359 native entryへ更新する。公式生成JavaScriptはshutdown補助命令`終了`をstandalone pluginへ登録できず、`TypeError: __self.__varslist[0].get(...) is not a function`になるため、公式sourceを選択oracleとする既知route差として記録する。同一プロセス内self-HTTPを避ける外部clientは、Interpreterのイベントポーリング順序によるdeadlockを避けるfixture設計であり、製品HTTP仕様の差ではない。これはmacOS arm64のdispatch証拠で、既存AOT O0〜O3差分、QuickJS、外部endpoint、3正式OS attestationを証明しない。`TODO: node-http-cross-os-attestation`は継続する。
+
+U16では、公式の同名登録経路を名前だけで混同しないため、`tests/oracle/plugin-route-cases.json`へsystem-onlyの`plugin-system-path-route`／`plugin-system-end-route`とNode-onlyの`plugin-node-path-route`を追加した。`終`（`command-0061`）、system側の`ファイル名抽出`／`パス抽出`（`command-0268`／`command-0269`）、Node側の同名path命令（`command-0722`／`command-0723`）、Node側`終` alias（`command-0745`）の6 entryを、fixtureの`catalogIds`、semantic binding、Interpreter trace、AOT compile manifest/runtime traceの一致で明示同定した。system-onlyの公式生成JavaScriptはstandalone system plugin runtime bundleがないため実行不能として記録し、公式sourceを選択oracleとした。system routeでは`/a/b`のbasename／dirnameが`b`／`/a`、`a/`が空文字／`a`となり、`終`は`__終わる__`を`エラー監視`へ渡す。Node routeの`a/b.txt`は`b.txt`／`a`となる。cleanな`401af96726488588a31a252bbe1185de9298435d`から再生成したdispatch coverageは52 fixture・1,863 site・364 native entry（362 unique names）で、同期後の台帳は`verified 0 / trace-confirmed-unattested 495 / unverified 32`となった。これはmacOS arm64のclean実測であり、3正式OSの外部署名attestation、QuickJS、全527 entryの純LLVM AOT実行を意味しない。
 
 ## 証拠基盤の柱
 
@@ -149,7 +151,7 @@ P3 compat-js evidence
   └─ U22
 ```
 
-実装上は、まず一意名nativeの残り15件（474→489）、次に同名異pluginの34件（489→523）、最後にcompat-jsの4件（523→527）を目安にする。ただし、実際のcatalog ID・route・oracle差が確認できない場合は件数を減らさず、失敗理由をfixture policyまたは`docs/COMPATIBILITY_QUIRKS.md`へ残す。
+実装上は、U01〜U15で一意名nativeの残り15件（474→489）を接続し、U16で同名異pluginの6件（489→495）を明示catalog IDへ接続した。次にU17〜U21で残る`plugin_datetime` 28件、最後にU22でcompat-jsの4件（523→527）を扱う。ただし、実際のcatalog ID・route・oracle差が確認できない場合は件数を減らさず、失敗理由をfixture policyまたは`docs/COMPATIBILITY_QUIRKS.md`へ残す。
 
 ## 各単位の共通完了条件
 

@@ -8,9 +8,9 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 402,
+    "total": 405,
     "nativeAot": 307,
-    "interpreter": 103,
+    "interpreter": 106,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
@@ -22,8 +22,8 @@
   },
   "executionEvidenceStates": {
     "verified": 0,
-    "trace-confirmed-unattested": 489,
-    "unverified": 38
+    "trace-confirmed-unattested": 495,
+    "unverified": 32
   },
   "entries": [
     {
@@ -2867,7 +2867,8 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
-        "plugin-node-exit-alias"
+        "plugin-node-exit-alias",
+        "plugin-system-end-route"
       ],
       "aotFixtureIds": [
         "native-node-exit-alias"
@@ -2878,6 +2879,9 @@
           "plugin-node-exit-alias": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-system-end-route": [
+            "fixture.commands"
           ]
         },
         "aot": {
@@ -2889,10 +2893,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-system-end-route/0x0000000000000001"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分と明示した期待失敗結果を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式7経路の終了処理差分テストに成功"
     },
     {
@@ -13830,7 +13846,9 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
-        "plugin-node-path-host"
+        "plugin-node-path-host",
+        "plugin-node-path-route",
+        "plugin-system-path-route"
       ],
       "aotFixtureIds": [
         "native-node-path-components",
@@ -13842,6 +13860,12 @@
           "plugin-node-path-host": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-node-path-route": [
+            "fixture.commands"
+          ],
+          "plugin-system-path-route": [
+            "fixture.commands"
           ]
         },
         "aot": {
@@ -13855,10 +13879,23 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-system-path-route/0x0000000000000001",
+          "plugin-system-path-route/0x0000000000000005"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（2 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
@@ -13867,7 +13904,9 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
-        "plugin-node-path-host"
+        "plugin-node-path-host",
+        "plugin-node-path-route",
+        "plugin-system-path-route"
       ],
       "aotFixtureIds": [
         "native-node-path-components",
@@ -13879,6 +13918,12 @@
           "plugin-node-path-host": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-node-path-route": [
+            "fixture.commands"
+          ],
+          "plugin-system-path-route": [
+            "fixture.commands"
           ]
         },
         "aot": {
@@ -13892,10 +13937,23 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-system-path-route/0x0000000000000003",
+          "plugin-system-path-route/0x0000000000000007"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（2 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
@@ -22097,7 +22155,9 @@
       "plugin": "plugin_node",
       "status": "native",
       "interpreterFixtureIds": [
-        "plugin-node-path-host"
+        "plugin-node-path-host",
+        "plugin-node-path-route",
+        "plugin-system-path-route"
       ],
       "aotFixtureIds": [
         "native-node-path-components",
@@ -22109,6 +22169,12 @@
           "plugin-node-path-host": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-node-path-route": [
+            "fixture.commands"
+          ],
+          "plugin-system-path-route": [
+            "fixture.commands"
           ]
         },
         "aot": {
@@ -22122,10 +22188,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-node-path-route/0x0000000000000001"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
@@ -22134,7 +22212,9 @@
       "plugin": "plugin_node",
       "status": "native",
       "interpreterFixtureIds": [
-        "plugin-node-path-host"
+        "plugin-node-path-host",
+        "plugin-node-path-route",
+        "plugin-system-path-route"
       ],
       "aotFixtureIds": [
         "native-node-path-components",
@@ -22146,6 +22226,12 @@
           "plugin-node-path-host": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-node-path-route": [
+            "fixture.commands"
+          ],
+          "plugin-system-path-route": [
+            "fixture.commands"
           ]
         },
         "aot": {
@@ -22159,10 +22245,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 2件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-node-path-route/0x0000000000000003"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式cnako3とのNodeホスト差分テストに成功"
     },
     {
@@ -23216,7 +23314,8 @@
       "plugin": "plugin_node",
       "status": "native",
       "interpreterFixtureIds": [
-        "plugin-node-exit-alias"
+        "plugin-node-exit-alias",
+        "plugin-system-end-route"
       ],
       "aotFixtureIds": [
         "native-node-exit-alias"
@@ -23227,6 +23326,9 @@
           "plugin-node-exit-alias": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-system-end-route": [
+            "fixture.commands"
           ]
         },
         "aot": {
@@ -23238,10 +23340,26 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.expected-exit-evidence.v1",
+        "fixtureId": "node-exit-evidence",
+        "siteIds": [
+          "0x0000000000000002"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0",
+          "lnakoNativeO1",
+          "lnakoNativeO2",
+          "lnakoNativeO3"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 明示catalog ID・終了site IDについて、公式source/generated、Interpreter、AOT O0〜O3の終了結果、terminal reason、trace-end、compile manifestを機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式7経路の終了処理差分テストに成功"
     },
     {

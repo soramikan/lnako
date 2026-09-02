@@ -1,5 +1,15 @@
 # 命令カタログ証拠レイヤー
 
+## 現行スナップショット（2026-09-02）
+
+現行HEADの`compat/v3.7.24/evidence.json`は、`verified: 0`、`trace-confirmed-unattested: 495`、`unverified: 32`です。U16で`plugin-route-cases.json`にsystem-only 2 fixtureとNode route 1 fixtureを追加し、`終` 2 entryとpath alias 4 entryの計6 entryを、明示`catalogIds`付きのInterpreter／LLVM AOT同一siteへ接続しました。
+
+`dispatch-coverage-evidence.json`は、cleanな`401af96726488588a31a252bbe1185de9298435d`から生成した52 fixture・1,863 site・364 native entry（492 unique names中362）です。fixture inventoryは全405件（AOT 307件、Interpreter 106件、QuickJS 9件）です。system-onlyの公式生成JavaScriptはstandalone system plugin runtime bundleがないため実行不能として記録し、公式sourceを選択oracleにしています。
+
+この文書の後続段落にはU07〜U15の完了時点を記録した履歴値が含まれます。現行値はこのスナップショットと`compat/v3.7.24/evidence.json`、`dispatch-coverage-evidence.json`を正本とし、履歴段落の旧件数を現在値として解釈しません。
+
+## U07〜U15完了時点の履歴
+
 U07では`plugin-node-exit-code`、`plugin-node-interrupt`、`plugin-node-exit-japanese-alias`を追加し、`プロセス終`・`強制終了時`・`終了`の3 entryを`compat/v3.7.24/expected-exit-evidence.json`へ分離して記録した。公式source・公式生成JavaScript・lnako Interpreter・LLVM AOT O0〜O3の終了コードと出力hashを比較し、終了直前のdispatch result、AOT attempt/result、`terminalReason`、`trace-end`、O0 compile manifestのsiteを同一catalog IDで検証する。`プロセス終`は終了コード7、`終了`は0、`強制終了時`はPOSIXの実SIGINT callback後に0である。SIGINTは非同期timerのin-flight dispatchを最大1件残し得るため、その境界をartifact checkerが明示的に許容する。現行artifactはmacOS arm64のclean実測で、Windowsの実コンソール制御イベント発生と3正式OSattestationは証明しない。Windows回帰は`TODO: node-interrupt-windows-console-test`として残す。
 
 `compat/v3.7.24/evidence.json`は、標準cnako 527 entryをカタログID単位で
@@ -28,7 +38,7 @@ Actions artifactの保持期限後も外部検証できるよう、run `32983175
 historical catalogのdigestとworkflow identityを固定し、`node tools/check_tracked_dispatch_attestation.mjs`が禁止field、対象commit、bundleの
 in-toto subject、SLSA predicate、GitHub Actions workflow identityを検査する。bundleの署名を暗号学的に再検証する場合は、保存したbundleを
 公式`gh attestation verify`へ同じ厳格なidentity引数で渡す。固定されたhistorical catalogの`verified: 4`は現在commitの台帳へ自動反映せず、
-追跡中の`compat/v3.7.24/evidence.json`は`verified: 0`、`trace-confirmed-unattested: 481`、`unverified: 46`を記録する。catalog再生成時の`--historical-commit`は
+追跡中の`compat/v3.7.24/evidence.json`は`verified: 0`、`trace-confirmed-unattested: 495`、`unverified: 32`を記録する。catalog再生成時の`--historical-commit`は
 この明示的な履歴検査でだけ対象commitとの差異を許可し、明示的な非canonical outputを必須にする（通常のsync検査は、証拠生成元のfixture/source commitとの一致、またはその祖先から証拠・台帳・文書・CIとdispatch生成器以外の検証器だけを記録した後続commitを要求し、canonical output保護は緩めない）。target commitとこの履歴固定を追加する後続commitを混同しない。
 
 ### 証拠記録commitの追従
@@ -69,7 +79,7 @@ node tools/verify_dispatch_attestation.mjs --directory /absolute/path/dispatch-e
 - `compat/v3.7.24/implemented.json`（実装台帳）
 - `tests/oracle/*.json`（fixtureの明示`commands`と実在ID）
 - `compat/v3.7.24/dispatch-evidence.json`（checkerが生成した同一fixture/siteの実行証拠）
-- `compat/v3.7.24/dispatch-coverage-evidence.json`（49 fixture・1,849 siteのサンプルdispatch監査。catalogへ接続する359 native entryを含む。U06のarchive helper、U08のstdin fixture、U09のnetwork topology fixture、U10/U11/U12/U13のloopback HTTP fixture、U15のHTTP server dispatch fixtureを含む）
+- `compat/v3.7.24/dispatch-coverage-evidence.json`（52 fixture・1,863 siteのサンプルdispatch監査。catalogへ接続する364 native entry（492 unique names中362）を含む。U06のarchive helper、U08のstdin fixture、U09のnetwork topology fixture、U10/U11/U12/U13のloopback HTTP fixture、U15のHTTP server dispatch fixture、U16のsystem／Node route fixtureを含む）
 - `compat/v3.7.24/expected-exit-evidence.json`（U07の`プロセス終`・`強制終了時`・`終了`、公式7経路、Interpreter/AOT terminal trace、O0 manifestの終了site）
 - `compat/v3.7.24/static-constant-evidence.json`（`native-scalar-system-constants`のglobal read 17件＋typed literal 7件の実行証拠）
 - `compat/v3.7.24/static-string-constant-evidence.json`（`native-string-system-constants`のglobal read 24件の実行証拠）
@@ -136,7 +146,7 @@ Node Bufferのenumerable prototype property 95件の順序・`parent`・`offset`
 疎な最上位表のhole・nullish行に対する`length` property read診断は`native-system-table-sparse-length-errors`で`表列数`・`表行列交換`・`表右回転`を比較します。
 同一ユーザー関数の`prototype` object identityと、そのown `constructor` back-referenceは`native-system-table-inherited-properties`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較します。
 `interpreter-only` 0 entryです。execution evidenceは`verified` 0、
-`trace-confirmed-unattested` 489、`unverified` 38です。
+`trace-confirmed-unattested` 495、`unverified` 32です。
 fixtureの関連付けを変更した場合は、次で派生台帳の生成と検査を行います。
 
 ```sh
@@ -154,7 +164,7 @@ attestationがない場合は`trace-confirmed-unattested`に留めます。
 
 可変長lookbehindの貪欲・非貪欲量指定は後ろ側のatomから逆向きに評価され、captureの結果と複数一致時の探索順へ影響します。`native-system-regexp-lookbehind-capture-order`で公式CLI・生成JavaScript・Interpreter・LLVM AOT O0〜O3を比較し、lookbehind内部のbackreferenceでは、逆向き評価時点で未確定のcaptureを空文字として扱う規則も含めて比較します。さらに複雑なcapture副作用順序は`TODO: regexp-backtracking-edge`として未検証のまま分離します。
 
-`native-system-dictionary-inherited-enumeration`は、custom辞書prototype chainの列挙順・shadowing・対応値を公式CLI・公式生成JavaScript・`lnako run`・LLVM AOT O0〜O3で比較するfixtureです。TOMLの生成standalone差分fixtureを含む現行fixture inventoryは全399件（AOT 304件、Interpreter 100件、QuickJS 9件）です。
+`native-system-dictionary-inherited-enumeration`は、custom辞書prototype chainの列挙順・shadowing・対応値を公式CLI・公式生成JavaScript・`lnako run`・LLVM AOT O0〜O3で比較するfixtureです。TOMLの生成standalone差分fixtureを含む現行fixture inventoryは全405件（AOT 307件、Interpreter 106件、QuickJS 9件）です。
 
 `native-toml-commands`は表・配列テーブル・インライン表・文字列・数値の標準範囲を比較し、`native-toml-temporal-values`は日付、時刻、local datetime、offset datetimeのDate系値と、秒・ミリ秒・`T`への正規化を公式CLI・公式生成JavaScript・`lnako run`・LLVM AOT O0〜O3で比較します。公式マニュアルと命令説明からは依存ライブラリ由来の型と正規化を判断できないため、[`tests/fixtures/toml-temporal-probe.nako3`](../tests/fixtures/toml-temporal-probe.nako3)には正常系に加えて時刻単独のオフセット付き値を仕様調査用probeとして保存しています。後者は公式`smol-toml` v1.8.0が受理するものの`31T22:32:00.`という壊れたserializer結果になる不具合候補であり、正常な互換仕様や成功証拠へ混ぜません。`native-toml-temporal-values`のfixture実行はAOT dispatch証拠ではなく、外部署名のない現在の`evidence.json`へentryを自動昇格させません。Dateのメソッド、完全な`ToPrimitive`、異常入力の全範囲は`TODO: toml-temporal-values`として継続します。
 
@@ -172,9 +182,9 @@ U06の`plugin-node-native-archive-hermetic`は、固定upstreamの[`plugin_node.
 
 正規表現の構文エラー文言は、`native-system-regexp-js-error-text`でUnicode時の単独量指定括弧、vフラグの集合演算子右辺欠落、クラス内の不正property・named escape、連続集合演算子を公式CLI・生成JavaScript・Interpreter・LLVM AOT O0〜O3で比較します。Unicode modeの多桁decimal backreferenceの成功と、capture数を超えた場合の`Invalid escape`は`native-system-regexp-unicode-decimal-backreferences`と`native-system-regexp-unicode-decimal-backreference-error`で同じ7経路を比較します。別構文の未検証なJavaScriptエラー文言は`TODO: regexp-js-error-text`として残します。
 
-同名異pluginの31組62 entryのうち、34 entryは`identityResolution: "explicit-catalog-id"`です。
-内訳は、静的定数fixtureで固定した`元号データ`の`plugin_system`側1 entryと、canonical dispatch fixtureで固定した`plugin_system`側日時27 entry、残る一意名として解決できない28 entryは`identityResolution: "ambiguous-name"`です。
-canonical fixtureの明示IDは、公式cnako3の既定登録経路で実行される`command-0228`〜`command-0256`の該当27 entryに限ります。`plugin_datetime`側の同名entryは同じ命令名のtraceから推測せず、別の明示import経路のfixtureができるまで未証拠のままです。
+同名異pluginの31組62 entryのうち、40 entryは`identityResolution: "explicit-catalog-id"`です。
+内訳は、静的定数fixtureで固定した`元号データ`の`plugin_system`側1 entry、canonical dispatch fixtureで固定した`plugin_system`側日時27 entry、U16のsystem／Node route fixtureで固定した6 entryで、残る22 entryは`identityResolution: "ambiguous-name"`です。
+canonical fixtureの明示IDは、公式cnako3の既定登録経路で実行される`plugin_system`側日時27 entryに限らず、`plugin-route-cases.json`のsystem-only／Node routeでもfixtureの`catalogIds`をそのままsemantic binding・Interpreter trace・AOT manifest/runtime traceと照合します。`plugin_datetime`側の28 entryは同じ命令名のtraceから推測せず、別の明示import経路のfixtureができるまで未証拠のままです。
 
 `native-datetime-explicit-plugin-route`は、この同名境界を別namespaceで観測するAOT fixtureです。固定v3.7.24の命令一覧が`plugin_datetime`として掲載する28 entryを明示importし、公式CLI sourceでは`和暦変換`の`sys.__v0.元号データ is not iterable`が標準出力内の実行時エラーになる一方、公式`--compile` standaloneはimport済みpluginを登録せず`plugin_system`相当の出力になることを確認します。比較のoracleは成功する公式生成JavaScriptに固定し、source routeの既知エラーはfixtureの`officialSourceStdoutIncludes`で別途検査します。このfixtureは`commands`を持たないため、同じ命令名だけで`command-0807`〜`command-0834`へ実行証拠を関連付けず、カタログidentityの解決が完了するまで`unverified`を維持します。
 
@@ -299,4 +309,4 @@ attestationはまだ付いていないため、
 global readとliteralを別証拠へ分ける設計上の境界です。literal専用manifest／traceはあるものの、
 外部署名attestationはまだなく、全527 entryの実行証拠を完了扱いにはしません。
 
-`native-system-reference-byte-buffer-properties`は、Buffer/Uint8Arrayの数値添字・`length`・`buffer`と、`buffer`から得たArrayBufferの`byteLength`・欠損添字を`参照`/`配列参照`で読む境界について、公式CLI・生成JavaScript・`lnako run`・LLVM AOT O0〜O3を比較します。fixture inventoryは全399件（AOT 304件、Interpreter 100件、QuickJS 9件）へ更新しています。
+`native-system-reference-byte-buffer-properties`は、Buffer/Uint8Arrayの数値添字・`length`・`buffer`と、`buffer`から得たArrayBufferの`byteLength`・欠損添字を`参照`/`配列参照`で読む境界について、公式CLI・生成JavaScript・`lnako run`・LLVM AOT O0〜O3を比較します。fixture inventoryは全405件（AOT 307件、Interpreter 106件、QuickJS 9件）へ更新しています。
