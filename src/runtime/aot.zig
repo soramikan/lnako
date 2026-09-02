@@ -9734,6 +9734,11 @@ fn currentTimeMilliseconds(runtime: *Runtime) i64 {
     return hostWallClockMilliseconds();
 }
 
+fn datetimePluginRouteEnabled() bool {
+    const route = std.c.getenv("LNAKO_PLUGIN_ROUTE") orelse return false;
+    return std.mem.eql(u8, std.mem.span(route), "plugin_datetime");
+}
+
 fn hostWallClockMilliseconds() i64 {
     const seconds = time(null);
     return std.math.mul(i64, seconds, datetime_milliseconds_per_second) catch if (seconds < 0) std.math.minInt(i64) else std.math.maxInt(i64);
@@ -10105,13 +10110,52 @@ fn datetimeAddDateText(runtime: *Runtime, source: Value, addition: []const u8, n
     const parts = try datetimeParseDelimited(text, '/');
     const original = try datetimeParseDate(runtime, source, now);
     if (!std.math.isFinite(original)) return error.InvalidDate;
-    var fields = datetimeFieldsFromEpoch(datetimeFloatToEpoch(original));
+    const original_epoch = datetimeFloatToEpoch(original);
+    const epoch = if (datetimePluginRouteEnabled())
+        datetimeAddDatePluginEpoch(original_epoch, parts, sign)
+    else
+        datetimeAddDateSystemEpoch(original_epoch, parts, sign);
+    return datetimeFormatDateTimeFor(runtime, datetimeFieldsFromEpoch(epoch), try datetimeOutputShape(runtime, source));
+}
+
+fn datetimeAddDateSystemEpoch(original: i64, parts: [3]i64, sign: i64) i64 {
+    var fields = datetimeFieldsFromEpoch(original);
     var epoch = datetimeConstructLocal(fields.year + parts[0] * sign, fields.month - 1, fields.day, fields.hour, fields.minute, fields.second, fields.millisecond, false);
     fields = datetimeFieldsFromEpoch(epoch);
     epoch = datetimeConstructLocal(fields.year, fields.month - 1 + parts[1] * sign, fields.day, fields.hour, fields.minute, fields.second, fields.millisecond, false);
     fields = datetimeFieldsFromEpoch(epoch);
-    epoch = datetimeConstructLocal(fields.year, fields.month - 1, fields.day + parts[2] * sign, fields.hour, fields.minute, fields.second, fields.millisecond, false);
-    return datetimeFormatDateTimeFor(runtime, datetimeFieldsFromEpoch(epoch), try datetimeOutputShape(runtime, source));
+    return datetimeConstructLocal(fields.year, fields.month - 1, fields.day + parts[2] * sign, fields.hour, fields.minute, fields.second, fields.millisecond, false);
+}
+
+/// The old-format `plugin_datetime` implementation delegates each component
+/// to dayjs.  Calendar-unit additions therefore clamp to the last day of the
+/// target month, unlike the system plugin's JavaScript Date overflow.
+fn datetimeAddDatePluginEpoch(original: i64, parts: [3]i64, sign: i64) i64 {
+    var fields = datetimeFieldsFromEpoch(original);
+    var epoch = datetimeAddCalendarClamped(fields, parts[0] * sign, 0);
+    fields = datetimeFieldsFromEpoch(epoch);
+    epoch = datetimeAddCalendarClamped(fields, 0, parts[1] * sign);
+    return epoch + parts[2] * sign * datetime_milliseconds_per_day;
+}
+
+fn datetimeAddCalendarClamped(fields: AotDateFields, year_delta: i64, month_delta: i64) i64 {
+    const month_zero = fields.month - 1 + month_delta;
+    const year = fields.year + year_delta + @divFloor(month_zero, 12);
+    const normalized_month_zero = @mod(month_zero, 12);
+    const day = @min(fields.day, datetimeDaysInMonth(year, normalized_month_zero + 1));
+    return datetimeConstructLocal(year, normalized_month_zero, day, fields.hour, fields.minute, fields.second, fields.millisecond, false);
+}
+
+fn datetimeDaysInMonth(year: i64, month: i64) i64 {
+    return switch (month) {
+        2 => if (datetimeIsLeapYear(year)) 29 else 28,
+        4, 6, 9, 11 => 30,
+        else => 31,
+    };
+}
+
+fn datetimeIsLeapYear(year: i64) bool {
+    return @mod(year, 4) == 0 and (@mod(year, 100) != 0 or @mod(year, 400) == 0);
 }
 
 fn datetimeAddDateTimeBuiltin(runtime: *Runtime, arguments: []const Value, now: i64) !Value {
@@ -19139,6 +19183,20 @@ test "AOT日時書式差分加算と単調時計を処理する" {
     try expectUtf16String(&runtime, roots[15], "2024/03/02");
 
     try std.testing.expectEqual(@as(f64, 123.5), @as(f64, @bitCast((try datetimeBuiltin(&runtime, .datetime_monotonic_milliseconds, &.{})).payload)));
+}
+
+test "AOT旧形式plugin_datetimeの日付加算は月末をdayjs互換で丸める" {
+    const original = datetimeConstructLocal(2024, 0, 31, 0, 0, 0, 0, false);
+    const parts = [_]i64{ 0, 1, 0 };
+    const plugin_fields = datetimeFieldsFromEpoch(datetimeAddDatePluginEpoch(original, parts, 1));
+    try std.testing.expectEqual(@as(i64, 2024), plugin_fields.year);
+    try std.testing.expectEqual(@as(i64, 2), plugin_fields.month);
+    try std.testing.expectEqual(@as(i64, 29), plugin_fields.day);
+
+    const system_fields = datetimeFieldsFromEpoch(datetimeAddDateSystemEpoch(original, parts, 1));
+    try std.testing.expectEqual(@as(i64, 2024), system_fields.year);
+    try std.testing.expectEqual(@as(i64, 3), system_fields.month);
+    try std.testing.expectEqual(@as(i64, 2), system_fields.day);
 }
 
 test "AOT URLとBase64命令はUTF-16文字列と配列を処理する" {

@@ -353,13 +353,57 @@ fn addDate(runtime: *Runtime, source: Value, addition: Value, now: i64) !Value {
     const parts = try parseDelimited(text, '/');
     const original = try parseDate(runtime, source, now);
     if (!std.math.isFinite(original)) return error.InvalidDate;
-    var fields = fieldsFromEpoch(floatToEpoch(original));
+    const original_epoch = floatToEpoch(original);
+    const epoch = if (datetimePluginRouteEnabled())
+        addDatePluginEpoch(original_epoch, parts, sign)
+    else
+        addDateSystemEpoch(original_epoch, parts, sign);
+    return formatDateTimeFor(runtime, fieldsFromEpoch(epoch), try outputShape(runtime, source));
+}
+
+fn addDateSystemEpoch(original: i64, parts: [3]i64, sign: i64) i64 {
+    var fields = fieldsFromEpoch(original);
     var epoch = constructLocal(fields.year + parts[0] * sign, fields.month - 1, fields.day, fields.hour, fields.minute, fields.second, fields.millisecond, false);
     fields = fieldsFromEpoch(epoch);
     epoch = constructLocal(fields.year, fields.month - 1 + parts[1] * sign, fields.day, fields.hour, fields.minute, fields.second, fields.millisecond, false);
     fields = fieldsFromEpoch(epoch);
-    epoch = constructLocal(fields.year, fields.month - 1, fields.day + parts[2] * sign, fields.hour, fields.minute, fields.second, fields.millisecond, false);
-    return formatDateTimeFor(runtime, fieldsFromEpoch(epoch), try outputShape(runtime, source));
+    return constructLocal(fields.year, fields.month - 1, fields.day + parts[2] * sign, fields.hour, fields.minute, fields.second, fields.millisecond, false);
+}
+
+/// The old-format `plugin_datetime` implementation delegates each component
+/// to dayjs.  Calendar-unit additions therefore clamp to the last day of the
+/// target month, unlike the system plugin's JavaScript Date overflow.
+fn addDatePluginEpoch(original: i64, parts: [3]i64, sign: i64) i64 {
+    var fields = fieldsFromEpoch(original);
+    var epoch = addCalendarClamped(fields, parts[0] * sign, 0);
+    fields = fieldsFromEpoch(epoch);
+    epoch = addCalendarClamped(fields, 0, parts[1] * sign);
+    return epoch + parts[2] * sign * milliseconds_per_day;
+}
+
+fn addCalendarClamped(fields: Fields, year_delta: i64, month_delta: i64) i64 {
+    const month_zero = fields.month - 1 + month_delta;
+    const year = fields.year + year_delta + @divFloor(month_zero, 12);
+    const normalized_month_zero = @mod(month_zero, 12);
+    const day = @min(fields.day, daysInMonth(year, normalized_month_zero + 1));
+    return constructLocal(year, normalized_month_zero, day, fields.hour, fields.minute, fields.second, fields.millisecond, false);
+}
+
+fn daysInMonth(year: i64, month: i64) i64 {
+    return switch (month) {
+        2 => if (isLeapYear(year)) 29 else 28,
+        4, 6, 9, 11 => 30,
+        else => 31,
+    };
+}
+
+fn isLeapYear(year: i64) bool {
+    return @mod(year, 4) == 0 and (@mod(year, 100) != 0 or @mod(year, 400) == 0);
+}
+
+fn datetimePluginRouteEnabled() bool {
+    const route = std.c.getenv("LNAKO_PLUGIN_ROUTE") orelse return false;
+    return std.mem.eql(u8, std.mem.span(route), "plugin_datetime");
 }
 
 fn addDateTime(runtime: *Runtime, source: Value, addition: Value, now: i64) !Value {
@@ -500,4 +544,18 @@ test "Asia/Tokyoの日時変換・書式・加算を固定時計で処理する"
     const formatted_utf8 = try formatted.string.toUtf8Lossy(std.testing.allocator);
     defer std.testing.allocator.free(formatted_utf8);
     try std.testing.expectEqualStrings("2024-02-29 Thu 03:04:05", formatted_utf8);
+}
+
+test "旧形式plugin_datetimeの日付加算は月末をdayjs互換で丸める" {
+    const original = constructLocal(2024, 0, 31, 0, 0, 0, 0, false);
+    const parts = [_]i64{ 0, 1, 0 };
+    const plugin_fields = fieldsFromEpoch(addDatePluginEpoch(original, parts, 1));
+    try std.testing.expectEqual(@as(i64, 2024), plugin_fields.year);
+    try std.testing.expectEqual(@as(i64, 2), plugin_fields.month);
+    try std.testing.expectEqual(@as(i64, 29), plugin_fields.day);
+
+    const system_fields = fieldsFromEpoch(addDateSystemEpoch(original, parts, 1));
+    try std.testing.expectEqual(@as(i64, 2024), system_fields.year);
+    try std.testing.expectEqual(@as(i64, 3), system_fields.month);
+    try std.testing.expectEqual(@as(i64, 2), system_fields.day);
 }

@@ -41,6 +41,18 @@ const staticConstantFixtureDefinitions = {
     literalNames: new Set(),
     plugin: "plugin_system",
   },
+  "native-datetime-plugin-era-data": {
+    catalogIds: new Map([["元号データ", "command-0807"]]),
+    globalReadCount: 1,
+    globalTraceCount: 3,
+    manifestGlobalReadNames: ["元号データ", "元号データ", "元号データ"],
+    manifestExtraGlobalReadNames: ["scalar-constants__A"],
+    literalNames: new Set(),
+    plugin: "plugin_datetime",
+    sourceReplacements: {
+      "${PLUGIN_DATETIME}": (temporary) => relative(temporary, resolve(oracleRoot, "src/plugin_datetime.mjs")).replaceAll("\\", "/"),
+    },
+  },
   "native-node-archive-constant": {
     globalReadCount: 1,
     literalNames: new Set(),

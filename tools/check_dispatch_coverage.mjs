@@ -49,6 +49,7 @@ const nativeDispatchCoverageExclusions = new Map([
   ["native-cases.json/native-system-table-numeric-sort-mixed-bigint-error", "公式CLI・生成JavaScriptが意図的なBigInt型混在エラーで終了するため、成功経路のdispatch監査から除外する"],
   ["native-cases.json/native-system-table-sparse-unique", "公式CLI・生成JavaScriptが意図的な疎配列holeエラーで終了するため、成功経路のdispatch監査から除外する"],
   ["native-cases.json/native-system-table-regexp-sparse-hole", "公式CLI・生成JavaScriptが意図的な疎配列holeエラーで終了するため、成功経路のdispatch監査から除外する"],
+  ["native-cases.json/native-datetime-plugin-era-data", "plugin_datetimeの元号データはdispatchではなく静的定数証拠へ分離する"],
 ]);
 const excludedFixtures = new Map([
   ["system-runtime-cases.json/system-runtime-execution-and-debug", "公式sourceとAOT O0の実行結果が一致せず、動的実行・非同期host境界は別の未実装証拠として扱う"],
@@ -200,7 +201,7 @@ async function loadSelectedFixtures() {
       fixtures.push({ file: specification.file, ...testCase });
     }
   }
-  const expectedFixtureCount = arguments_.includeNative ? 216 : 52;
+  const expectedFixtureCount = arguments_.includeNative ? 220 : 56;
   if (fixtures.length !== expectedFixtureCount) throw new Error(`dispatch coverageのfixture数が想定外です: ${fixtures.length}`);
   return fixtures;
 }
@@ -235,8 +236,16 @@ function validateFixture(testCase, file) {
   if (testCase.httpServer === true && testCase.aot !== true) {
     throw new Error(`httpServer fixtureはAOT対象である必要があります: ${file}/${testCase.id}`);
   }
-  if (testCase.pluginRoute !== undefined && !["plugin_system", "plugin_node"].includes(testCase.pluginRoute)) {
+  if (testCase.pluginRoute !== undefined && !["plugin_system", "plugin_node", "plugin_datetime"].includes(testCase.pluginRoute)) {
     throw new Error(`fixtureのpluginRouteが不正です: ${file}/${testCase.id}`);
+  }
+  if (testCase.expectedDispatchRoute !== undefined &&
+      (typeof testCase.expectedDispatchRoute !== "string" || testCase.expectedDispatchRoute !== "plugin_datetime" || testCase.pluginRoute !== "plugin_datetime")) {
+    throw new Error(`fixtureのexpectedDispatchRouteが不正です: ${file}/${testCase.id}`);
+  }
+  if (testCase.officialSourceStdoutIncludes !== undefined &&
+      (testCase.oracle !== "official-generated" || typeof testCase.officialSourceStdoutIncludes !== "string" || testCase.officialSourceStdoutIncludes.length === 0)) {
+    throw new Error(`officialSourceStdoutIncludesはoracle=official-generatedの空でない文字列で指定してください: ${file}/${testCase.id}`);
   }
   if (testCase.catalogIds !== undefined) {
     if (testCase.catalogIds === null || typeof testCase.catalogIds !== "object" || Array.isArray(testCase.catalogIds)) {
@@ -337,6 +346,9 @@ async function runFixture(fixture, index, temporary, loopbackBase) {
   const officialCli = fixture.pluginRoute === "plugin_system" ? systemOnlyRunner : resolve(oracleRoot, "src/cnako3.mjs");
   const officialSource = run(process.execPath, [...oracleHostArguments, officialCli, officialSourcePath], baseEnvironment, officialSourceDirectory, runOptions);
   assertSuccess(`${fixture.file}/${fixture.id} 公式source`, officialSource);
+  if (fixture.officialSourceStdoutIncludes !== undefined && !officialSource.stdout.includes(fixture.officialSourceStdoutIncludes)) {
+    throw new Error(`${fixture.file}/${fixture.id} 公式CLI sourceの既知エラー出力が見つかりません: ${fixture.officialSourceStdoutIncludes}`);
+  }
   const officialCompile = run(
     process.execPath,
     [...oracleHostArguments, officialCli, "--compile", "--silent", "--output", generatedPath, officialGeneratedSourcePath],
@@ -386,6 +398,9 @@ async function runFixture(fixture, index, temporary, loopbackBase) {
   const associationWithoutDispatch = fixture.commands
     .filter((name) => !observedCommandNames.has(name))
     .map((name) => ({ name, catalogIds: (catalogByName.get(name) ?? []).map((command) => command.id) }));
+  if (fixture.expectedDispatchRoute !== undefined && associationWithoutDispatch.length > 0) {
+    throw new Error(`${fixture.file}/${fixture.id} expectedDispatchRoute対象命令がdispatchされていません: ${JSON.stringify(associationWithoutDispatch)}`);
+  }
   return {
     report: {
       id: fixture.id,
@@ -783,6 +798,7 @@ function replacePluginPlaceholders(source, fixtureDirectory, loopbackBase, fixtu
     "${PLUGIN_MARKUP}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_markup.mjs")).replaceAll("\\", "/"),
     "${PLUGIN_CSV}": relative(fixtureDirectory, resolve(oracleRoot, "core/src/plugin_csv.mjs")).replaceAll("\\", "/"),
     "${PLUGIN_TOML}": relative(fixtureDirectory, resolve(oracleRoot, "core/src/plugin_toml.mjs")).replaceAll("\\", "/"),
+    "${PLUGIN_DATETIME}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_datetime.mjs")).replaceAll("\\", "/"),
     "${PLUGIN}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_httpserver.mjs")).replaceAll("\\", "/"),
   };
   let replaced = Object.entries(replacements).reduce((result, [placeholder, path]) => result.replaceAll(placeholder, path), source);
@@ -1095,6 +1111,7 @@ function collectSites(fixture, interpreterEvents, aotTrace, manifestEntries) {
         aotCount: failedAot.length,
         result: "failure",
       };
+      assertExpectedDispatchRoute(fixture, common);
       const resolution = resolveCatalogCommand(fixture, entry.sourceName);
       if (resolution === null) {
         unresolvedSites.push({ ...common, candidateCatalogIds: (catalogByName.get(entry.sourceName) ?? []).map((command) => command.id) });
@@ -1134,6 +1151,7 @@ function collectSites(fixture, interpreterEvents, aotTrace, manifestEntries) {
       aotCount: successfulAot.length,
       result: "success",
     };
+    assertExpectedDispatchRoute(fixture, common);
     if (resolution === null) {
       unresolvedSites.push({ ...common, candidateCatalogIds: (catalogByName.get(entry.sourceName) ?? []).map((command) => command.id) });
       continue;
@@ -1164,6 +1182,21 @@ function collectSites(fixture, interpreterEvents, aotTrace, manifestEntries) {
     expectedFailureDispatchCount,
     interpreterSitesWithoutManifest,
   };
+}
+
+function assertExpectedDispatchRoute(fixture, site) {
+  if (fixture.expectedDispatchRoute === undefined || !fixture.commands.includes(site.sourceName)) return;
+  const expected = fixture.expectedDispatchRoute;
+  if (site.route !== expected || JSON.stringify(site.runtimeRoutes) !== JSON.stringify([expected]) ||
+      JSON.stringify(site.interpreterRoutes) !== JSON.stringify([expected])) {
+    throw new Error(`${fixture.id}のdispatch route identityが不一致です: ${JSON.stringify({
+      sourceName: site.sourceName,
+      expected,
+      route: site.route,
+      runtimeRoutes: site.runtimeRoutes,
+      interpreterRoutes: site.interpreterRoutes,
+    })}`);
+  }
 }
 
 function activeDispatchExpectations(fixture, platform = process.platform) {
@@ -1207,8 +1240,8 @@ function createReport({ fixtureReports, sites, unresolvedSites, oracle, git }) {
       nativeEntries: nativeCommands.length,
       nativeUniqueNames: nativeNames.size,
       fixtureSelection: arguments_.includeNative
-        ? "the default command-bearing selection plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, three explicit plugin-route fixtures, and all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps"
-        : "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, three explicit plugin-route fixtures, and native-cut-commands, excluding explicit AOT gaps",
+        ? "the default command-bearing selection plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, seven explicit plugin-route fixtures, and all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps"
+        : "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, seven explicit plugin-route fixtures, and native-cut-commands, excluding explicit AOT gaps",
       fixtureCount: fixtureReports.length,
       excludedFixtures: [...excludedFixtures].map(([key, reason]) => ({ key, reason })),
       commandAssociationIsNotExecutionEvidence: true,

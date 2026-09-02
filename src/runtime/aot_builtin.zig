@@ -405,11 +405,45 @@ pub fn canonicalOpcodeName(command: Command) []const u8 {
     return @tagName(command);
 }
 
-/// Returns the stable route name shared by the LLVM manifest and the AOT
-/// runtime trace. Keeping this mapping next to the opcode enum prevents a
-/// generic ABI call from being reported as `builtin` when the emitter has
-/// assigned it to a specialized native route.
-pub fn dispatchRoute(command: Command) []const u8 {
+/// The old-format official `plugin_datetime` module contains only this
+/// subset of the datetime names.  The other datetime opcodes are provided by
+/// the system plugin and must not be attributed to the duplicate catalog
+/// entries in `plugin_datetime`.
+fn isDatetimePluginCommand(command: Command) bool {
+    return switch (command) {
+        .datetime_now,
+        .datetime_system_time,
+        .datetime_today,
+        .datetime_tomorrow,
+        .datetime_yesterday,
+        .datetime_current_year,
+        .datetime_next_year,
+        .datetime_last_year,
+        .datetime_current_month,
+        .datetime_next_month,
+        .datetime_previous_month,
+        .datetime_weekday,
+        .datetime_weekday_number,
+        .datetime_unix_time,
+        .datetime_date_time,
+        .datetime_era,
+        .datetime_year_difference,
+        .datetime_month_difference,
+        .datetime_day_difference,
+        .datetime_hour_difference,
+        .datetime_minute_difference,
+        .datetime_second_difference,
+        .datetime_difference,
+        .datetime_add_time,
+        .datetime_add_date,
+        .datetime_add_datetime,
+        => true,
+        else => false,
+    };
+}
+
+fn dispatchRouteFor(command: Command, datetime_plugin_route: bool) []const u8 {
+    if (datetime_plugin_route and isDatetimePluginCommand(command)) return "plugin_datetime";
     return switch (command) {
         .cut, .cut_range => "cut",
         .regexp_match, .regexp_extract, .regexp_replace, .regexp_split => "regexp",
@@ -438,6 +472,14 @@ pub fn dispatchRoute(command: Command) []const u8 {
         .node_ajax_send_callback, .node_ajax_receive_callback, .node_get_send_callback, .node_post_send_callback, .node_post_form_send_callback, .node_ajax_response_promise, .node_http_response_promise, .node_get_response_promise, .node_post_response_promise, .node_post_form_response_promise, .node_ajax_content_get, .node_ajax_receive, .node_post_send, .node_post_form_send, .node_ajax_text_get, .node_ajax_json_get, .node_ajax_binary_get, .node_discord_send, .node_discord_file_send => "node-http",
         else => "builtin",
     };
+}
+
+/// Returns the stable route name shared by the LLVM manifest and the AOT
+/// runtime trace. Keeping this mapping next to the opcode enum prevents a
+/// generic ABI call from being reported as `builtin` when the emitter has
+/// assigned it to a specialized native route.
+pub fn dispatchRoute(command: Command) []const u8 {
+    return dispatchRouteFor(command, datetimePluginRouteEnabled());
 }
 
 pub fn lookup(name: []const u8) ?Command {
@@ -830,6 +872,47 @@ fn routeSpecificCommand(name: []const u8, system_route: bool) ?Command {
 fn systemRouteEnabled() bool {
     const route = std.c.getenv("LNAKO_PLUGIN_ROUTE") orelse return false;
     return std.mem.eql(u8, std.mem.span(route), "plugin_system");
+}
+
+fn datetimePluginRouteEnabled() bool {
+    const route = std.c.getenv("LNAKO_PLUGIN_ROUTE") orelse return false;
+    return std.mem.eql(u8, std.mem.span(route), "plugin_datetime");
+}
+
+test "plugin_datetime routeは旧形式pluginの27命令だけを識別する" {
+    const datetime_commands = [_]Command{
+        .datetime_now,
+        .datetime_system_time,
+        .datetime_today,
+        .datetime_tomorrow,
+        .datetime_yesterday,
+        .datetime_current_year,
+        .datetime_next_year,
+        .datetime_last_year,
+        .datetime_current_month,
+        .datetime_next_month,
+        .datetime_previous_month,
+        .datetime_weekday,
+        .datetime_weekday_number,
+        .datetime_unix_time,
+        .datetime_date_time,
+        .datetime_era,
+        .datetime_year_difference,
+        .datetime_month_difference,
+        .datetime_day_difference,
+        .datetime_hour_difference,
+        .datetime_minute_difference,
+        .datetime_second_difference,
+        .datetime_difference,
+        .datetime_add_time,
+        .datetime_add_date,
+        .datetime_add_datetime,
+    };
+    for (datetime_commands) |command| try std.testing.expectEqualStrings("plugin_datetime", dispatchRouteFor(command, true));
+    try std.testing.expectEqualStrings("builtin", dispatchRouteFor(.datetime_now, false));
+    try std.testing.expectEqualStrings("builtin", dispatchRouteFor(.datetime_system_time_milliseconds, true));
+    try std.testing.expectEqualStrings("builtin", dispatchRouteFor(.datetime_format, true));
+    try std.testing.expectEqualStrings("builtin", dispatchRouteFor(.datetime_monotonic_milliseconds, true));
 }
 
 test "同名pathと終命令はrouteごとのAOT opcodeへ分離する" {

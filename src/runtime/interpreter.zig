@@ -1303,10 +1303,49 @@ pub const Interpreter = struct {
         if (try quickjs.call(self.runtime, &self.quickjs_state, self.quickJsEffects(), name, arguments)) |value| return value;
         self.setDispatchRoute("plugin_encoding");
         if (try plugin_encoding.call(self.runtime, name, arguments)) |value| return value;
-        self.setDispatchRoute("plugin_system");
+        self.setDispatchRoute(if (datetimePluginRouteEnabled() and isDatetimePluginCommandName(name)) "plugin_datetime" else "plugin_system");
         if (try plugin_system.callWithContext(self.runtime, name, arguments, plugin_context)) |value| return value;
         self.setDispatchRoute("unknown");
         return error.UnknownCommand;
+    }
+
+    fn isDatetimePluginCommandName(name: []const u8) bool {
+        const names = [_][]const u8{
+            "今",
+            "システム時間",
+            "今日",
+            "明日",
+            "昨日",
+            "今年",
+            "来年",
+            "去年",
+            "今月",
+            "来月",
+            "先月",
+            "曜日",
+            "曜日番号取得",
+            "UNIX時間変換",
+            "UNIXTIME変換",
+            "日時変換",
+            "和暦変換",
+            "年数差",
+            "月数差",
+            "日数差",
+            "日時差",
+            "時間差",
+            "分差",
+            "秒差",
+            "時間加算",
+            "日付加算",
+            "日時加算",
+        };
+        for (names) |candidate| if (std.mem.eql(u8, name, candidate)) return true;
+        return false;
+    }
+
+    fn datetimePluginRouteEnabled() bool {
+        const route = std.c.getenv("LNAKO_PLUGIN_ROUTE") orelse return false;
+        return std.mem.eql(u8, std.mem.span(route), "plugin_datetime");
     }
 
     fn initializeSystem(self: *Interpreter) !void {

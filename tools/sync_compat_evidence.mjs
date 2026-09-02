@@ -73,6 +73,17 @@ const staticConstantEvidenceInputs = [
     plugin: "plugin_system",
   },
   {
+    path: resolve(root, "compat/v3.7.24/static-datetime-plugin-era-constant-evidence.json"),
+    fixtureId: "native-datetime-plugin-era-data",
+    catalogIds: new Map([["元号データ", "command-0807"]]),
+    globalReadCount: 1,
+    globalTraceCount: 3,
+    manifestGlobalReadNames: ["元号データ", "元号データ", "元号データ"],
+    manifestExtraGlobalReadNames: ["scalar-constants__A"],
+    literalNames: new Set(),
+    plugin: "plugin_datetime",
+  },
+  {
     path: resolve(root, "compat/v3.7.24/static-node-archive-constant-evidence.json"),
     fixtureId: "native-node-archive-constant",
     globalReadCount: 1,
@@ -168,6 +179,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "compat/v3.7.24/static-string-constant-evidence.json",
   "compat/v3.7.24/static-array-constant-evidence.json",
   "compat/v3.7.24/static-datetime-era-constant-evidence.json",
+  "compat/v3.7.24/static-datetime-plugin-era-constant-evidence.json",
   "compat/v3.7.24/static-node-archive-constant-evidence.json",
   "compat/v3.7.24/static-node-command-line-constant-evidence.json",
   "compat/v3.7.24/static-node-mother-path-constant-evidence.json",
@@ -486,6 +498,7 @@ async function readFixtureRecords() {
         aot: file === "native-cases.json" || fixture.aot === true,
         sourceSha256: typeof fixture.source === "string" ? createHash("sha256").update(fixture.source).digest("hex") : null,
         catalogIds: readFixtureCatalogIds(fixture, file),
+        expectedDispatchRoute: fixture.expectedDispatchRoute ?? null,
         commandNames: new Set(),
         associationOrigins: new Map(),
         dispatchExpectations: Array.isArray(fixture.dispatchExpectations) ? fixture.dispatchExpectations : [],
@@ -616,12 +629,12 @@ function validateDispatchCoverageEvidence(evidence, lock, standard, records, aud
   }
 
   assertKnownObjectKeys(evidence.scope, ["catalogEntries", "nativeEntries", "nativeUniqueNames", "fixtureSelection", "fixtureCount", "excludedFixtures", "commandAssociationIsNotExecutionEvidence"], "dispatch-coverage-evidence.scope");
-  const defaultDispatchCoverageSelection = "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, three explicit plugin-route fixtures, and native-cut-commands, excluding explicit AOT gaps";
-  const fullDispatchCoverageSelection = "the default command-bearing selection plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, three explicit plugin-route fixtures, and all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps";
+  const defaultDispatchCoverageSelection = "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, seven explicit plugin-route fixtures, and native-cut-commands, excluding explicit AOT gaps";
+  const fullDispatchCoverageSelection = "the default command-bearing selection plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, seven explicit plugin-route fixtures, and all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps";
   const expectedFixtureCount = evidence.scope.fixtureSelection === defaultDispatchCoverageSelection
-    ? 52
+    ? 56
     : evidence.scope.fixtureSelection === fullDispatchCoverageSelection
-      ? 216
+      ? 220
       : null;
   if (evidence.scope.catalogEntries !== 527 || evidence.scope.nativeEntries !== 523 || evidence.scope.nativeUniqueNames !== 492 ||
       expectedFixtureCount === null || evidence.scope.fixtureCount !== expectedFixtureCount ||
@@ -767,6 +780,7 @@ function validateDispatchCoverageEvidence(evidence, lock, standard, records, aud
     sitesByFixture.set(fixtureKey, fixtureSites);
   }
   for (const [fixtureKey, report] of fixtureReports) {
+    const fixtureRecord = recordByKey.get(fixtureKey);
     const unresolvedSites = unresolvedSitesByFixture.get(fixtureKey) ?? [];
     const allObservedSites = [...(sitesByFixture.get(fixtureKey) ?? []), ...unresolvedSites];
     const observedDispatchNames = [...new Set(allObservedSites.map((site) => site.name ?? site.sourceName))].sort();
@@ -775,6 +789,16 @@ function validateDispatchCoverageEvidence(evidence, lock, standard, records, aud
         JSON.stringify([...report.observedStaticCommandNames].sort()) !== JSON.stringify(observedStaticNames) ||
         report.observedStaticCommandNames.some((name) => !report.observedDispatchCommandNames.includes(name))) {
       throw new Error(`dispatch coverage証拠のfixture command集計がsite集合と一致しません: ${fixtureKey}`);
+    }
+    if (fixtureRecord?.expectedDispatchRoute !== null) {
+      const expectedNames = fixtureRecord.commandNames;
+      const expectedSites = allObservedSites.filter((site) => expectedNames.has(site.name ?? site.sourceName));
+      const missingNames = [...expectedNames].filter((name) => !expectedSites.some((site) => (site.name ?? site.sourceName) === name));
+      if (missingNames.length > 0 || expectedSites.some((site) => site.route !== fixtureRecord.expectedDispatchRoute ||
+          JSON.stringify(site.runtimeRoutes) !== JSON.stringify([fixtureRecord.expectedDispatchRoute]) ||
+          JSON.stringify(site.interpreterRoutes) !== JSON.stringify([fixtureRecord.expectedDispatchRoute]))) {
+        throw new Error(`dispatch coverage証拠のexpectedDispatchRouteが不一致です: ${fixtureKey}`);
+      }
     }
     const fixtureSites = allObservedSites;
     const expectedFailureSites = fixtureSites.filter((site) => site.result === "failure");
@@ -815,7 +839,7 @@ function validateDispatchCoverageEvidence(evidence, lock, standard, records, aud
 function validateCoverageComparison(comparison, hashPattern, fixtureKey) {
   assertKnownObjectKeys(comparison, ["oracle", "routes", "selectedOracleEquivalent", "officialGeneratedAvailable", "officialGeneratedRouteUnavailableReason", "officialRoutesEquivalent", "results"], `${fixtureKey}.officialComparison`);
   const expectedRoutes = ["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0"];
-  if (comparison.oracle !== "officialSource" || JSON.stringify(comparison.routes) !== JSON.stringify(expectedRoutes) || comparison.selectedOracleEquivalent !== true ||
+  if (!new Set(["officialSource", "officialGenerated"]).has(comparison.oracle) || JSON.stringify(comparison.routes) !== JSON.stringify(expectedRoutes) || comparison.selectedOracleEquivalent !== true ||
       typeof comparison.officialGeneratedAvailable !== "boolean" || (comparison.officialGeneratedAvailable && comparison.officialGeneratedRouteUnavailableReason !== null) ||
       (!comparison.officialGeneratedAvailable && typeof comparison.officialGeneratedRouteUnavailableReason !== "string") ||
       typeof comparison.officialRoutesEquivalent !== "boolean") {
@@ -823,6 +847,7 @@ function validateCoverageComparison(comparison, hashPattern, fixtureKey) {
   }
   assertKnownObjectKeys(comparison.results, expectedRoutes, `${fixtureKey}.officialComparison.results`);
   const source = comparison.results.officialSource;
+  const selected = comparison.results[comparison.oracle];
   const httpServerComparison = fixtureKey === "http-server-dispatch-cases.json/plugin-httpserver-dispatch";
   for (const route of expectedRoutes) {
     const result = comparison.results[route];
@@ -843,9 +868,9 @@ function validateCoverageComparison(comparison, hashPattern, fixtureKey) {
       }
     }
   } else {
-    for (const route of ["officialSource", "lnakoRun", "lnakoNativeO0"]) {
+    for (const route of [comparison.oracle, "lnakoRun", "lnakoNativeO0"]) {
       const result = comparison.results[route];
-      if (result.status !== 0 || result.signal !== null || result.stdoutSha256 !== source.stdoutSha256 || result.stderrSha256 !== source.stderrSha256) {
+      if (result.status !== 0 || result.signal !== null || result.stdoutSha256 !== selected.stdoutSha256 || result.stderrSha256 !== selected.stderrSha256) {
         throw new Error(`dispatch coverage証拠のsource差分結果が不一致です: ${fixtureKey}/${route}`);
       }
     }

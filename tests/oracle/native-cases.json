@@ -443,6 +443,12 @@
     "source": "JSON変換(元号データ)を表示\nA=元号データ\n(A===元号データ)を表示\n"
   },
   {
+    "id": "native-datetime-plugin-era-data",
+    "oracle": "official-generated",
+    "commands": ["元号データ"],
+    "source": "!「${PLUGIN_DATETIME}」を取り込む\nJSON変換(元号データ)を表示\nA=元号データ\n(A===元号データ)を表示\n"
+  },
+  {
     "id": "native-datetime-weekday",
     "commands": ["曜日", "曜日番号取得"],
     "source": "曜日(\"2024/02/29\")を表示\n曜日番号取得(\"2024/02/29\")を表示\n曜日(\"2024/02/30\")を表示\n"
