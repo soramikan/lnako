@@ -1,0 +1,134 @@
+{
+  "schema": "lnako.global-binding-evidence.v1",
+  "generator": "tools/check_global_binding_evidence.mjs",
+  "baseline": {
+    "tag": "3.7.24",
+    "commit": "aa18c7e640523938c680958fe731418cc6f7a58f"
+  },
+  "fixture": {
+    "id": "native-node-file-copy-default",
+    "file": "native-cases.json",
+    "sourceSha256": "290663dd812ceae5b5645f6968da5cdb8ab60d9c7bd1a2abd568c72ac95fa835"
+  },
+  "binding": {
+    "catalogId": "command-0709",
+    "name": "ファイルコピーデフォルト動作",
+    "plugin": "plugin_node",
+    "accessSequence": [
+      "global-load",
+      "global-store",
+      "global-load",
+      "global-store",
+      "global-load"
+    ],
+    "sites": [
+      {
+        "catalogId": "command-0709",
+        "name": "ファイルコピーデフォルト動作",
+        "plugin": "plugin_node",
+        "kind": "global-load",
+        "siteId": "0x0000000000000001"
+      },
+      {
+        "catalogId": "command-0709",
+        "name": "ファイルコピーデフォルト動作",
+        "plugin": "plugin_node",
+        "kind": "global-store",
+        "siteId": "0x0000000000000002"
+      },
+      {
+        "catalogId": "command-0709",
+        "name": "ファイルコピーデフォルト動作",
+        "plugin": "plugin_node",
+        "kind": "global-load",
+        "siteId": "0x0000000000000003"
+      },
+      {
+        "catalogId": "command-0709",
+        "name": "ファイルコピーデフォルト動作",
+        "plugin": "plugin_node",
+        "kind": "global-store",
+        "siteId": "0x0000000000000004"
+      },
+      {
+        "catalogId": "command-0709",
+        "name": "ファイルコピーデフォルト動作",
+        "plugin": "plugin_node",
+        "kind": "global-load",
+        "siteId": "0x0000000000000005"
+      }
+    ]
+  },
+  "officialComparison": {
+    "oracle": "official-source",
+    "routes": [
+      "officialSource",
+      "officialGenerated",
+      "lnakoRun",
+      "lnakoNativeO0"
+    ],
+    "equivalent": true,
+    "results": {
+      "officialSource": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "be8216c0859d1d818f40e370433957aada71a30d2b45a18c165bbb47bf4c2fcc",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "officialGenerated": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "be8216c0859d1d818f40e370433957aada71a30d2b45a18c165bbb47bf4c2fcc",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "lnakoRun": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "be8216c0859d1d818f40e370433957aada71a30d2b45a18c165bbb47bf4c2fcc",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "lnakoNativeO0": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "be8216c0859d1d818f40e370433957aada71a30d2b45a18c165bbb47bf4c2fcc",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  },
+  "attestation": null,
+  "provenance": {
+    "environment": {
+      "platform": "darwin",
+      "arch": "arm64",
+      "node": "v24.19.0"
+    },
+    "oracle": {
+      "build": 4,
+      "archiveSha256": "c3bedbf101118a261f631d331127ae441657fec091c712b07d237c4336eb0011",
+      "cliSha256": "65e32f1d7de0b2da18edf3f4c49565c37d31aa474d31ee08426f2f6a0c0d6c81",
+      "markerSha256": "e9444955298c3bb22164a219c0f342ee32301e901ec967d648cae9a25d8bf531",
+      "treeHashAlgorithm": "sha256-json-records-v3",
+      "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
+    },
+    "lnako": {
+      "binarySha256": "2cac4bdc7068c1d6dce5c8123a49695eac69decd801d2e111f79bcb2fc026405",
+      "commit": "df544a2895a6f864307512036cffeb0818314e03",
+      "dirty": false
+    },
+    "raw": {
+      "interpreterTraceSha256": "699eaa0629ccf1fdbc9f8c9045ff30874901343ec9ad13d2c146aa90b4de4933",
+      "aotTraceSha256": "c8dcd41352d8ed314224f7848b084affda8e40b2b8c9baba610497a05912f974",
+      "globalManifestSha256": "e5e73de872ffd8534a1e8815b9ca0e69414d70b6cffab886c5ea8b492b4afcad"
+    }
+  },
+  "trace": {
+    "interpreter": {
+      "schema": 1,
+      "eventCount": 5
+    },
+    "aot": {
+      "schema": 1,
+      "eventCount": 5
+    }
+  }
+}
