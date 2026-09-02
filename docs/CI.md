@@ -73,6 +73,8 @@ AOT native 3 route jobへ割り当てる。dispatch supportは早く開始する
 
 2026-09-02の[run 33601966683](https://github.com/soramikan/lnako/actions/runs/33601966683)（`fecd831`）は、45 test job＋1 attestation jobを成功させ、表示上の壁時計は19分36秒だった。公開job時刻ではmacOSの5 jobは、`mac-host-compat` 6分24秒、AOT native O0+O1 11分27秒、O2 9分44秒、O3 9分11秒、`mac-core-standard-support` 15分43秒で、後者はrunner枠の影響でrun開始から3分17秒後に開始した。統合job内ではdispatch evidence／coverage監査が約8分24秒を占めたため、今回のworkflowではその監査とAOT buildを既に早く開始する`mac-host-compat`へ移し、5つのmacOS job数を維持する。検証経路、O0〜O3、全artifact、attestation条件は削減していない。次の完了済みrunで、macOS queue、壁時計、runner合計、各job時間をこの変更前の測定と比較する。
 
+直近の[run 33606373377](https://github.com/soramikan/lnako/actions/runs/33606373377)（`c00f22c`、CI #459）は12分45秒後に`cancel-in-progress`で取消された。公開注記は、同じ`ci-CI-refs/heads/main` concurrency groupに高優先度の後続待機runが存在したためであり、検証stepの失敗ではない。取消時点でAOT 35 jobと通常test 10 jobが完了し、attestationは未実行だった。このrunは失敗原因や性能値として扱わず、後続runの完了結果で3正式OSの成功、macOS 5枠、wall-clock、runner合計、各job時間を確認する。
+
 ## AOT検証の共通buildとjob分割
 
 各AOT jobは自身のrunner上でcompilerを一度だけbuildし、`--no-build`の検査へ渡します。native jobは`LNAKO_NATIVE_ORACLE_JOBS=1`

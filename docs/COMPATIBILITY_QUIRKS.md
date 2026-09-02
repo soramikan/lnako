@@ -572,6 +572,20 @@ U09の`native-node-network-addresses`では、公式Node・公式生成JavaScrip
 
 lnakoのproduction経路は、Interpreterではhost Context、純LLVM AOTではPOSIXの`getifaddrs`またはWindowsの`GetAdaptersAddresses`を使い、UP/RUNNINGなどのOS条件を確認してアドレス文字列へ変換する。`synthetic-v1`はこの比較fixtureの再現性のためだけに評価する環境markerで、通常実行のOS列挙を変更しない。したがって今回証明したのは決定的topologyに対する公式source／生成JavaScript／Interpreter／AOTの同値性であり、各正式OSの実ネットワーク列挙順と外部署名attestationではない。差分テストIDは`plugin-node-network-addresses`、`native-node-network-addresses`、追跡TODOは`TODO: node-network-cross-os-attestation`とする。
 
+## Node HTTP callback命令の成否と生成経路差
+
+公式の[plugin_node命令一覧](https://nadesi.com/v3/doc/index.php?plugin_node=&show=)はHTTP命令の名前、引数、callback用途を短く説明するが、既定method、`対象`の更新条件、callbackの完了順、失敗時のglobal、FormDataのheader、公式sourceと公式生成JavaScriptのroute差までは説明していない。固定v3.7.24の[`src/plugin_node.mts`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/src/plugin_node.mts#L1222-L1320)を公式sourceとして実測し、次の境界を回帰対象にする。
+
+| 境界 | 公式処理系の実測結果 | lnakoの現在の動作 | 対象経路 / 差分テストID / TODO |
+|---|---|---|---|
+| `AJAX送信時`の既定methodと`対象` | `AJAXオプション`が空文字なら`fetch`へ`GET`を渡し、レスポンス本文を取得してから`対象`へ設定し、渡された関数値をcallbackする。`AJAX受信時`と`GET送信時`はこの処理へ委譲する | 純ZigのHTTP client ABIでloopback responseを受け、2xxの本文だけを`対象`へ設定してevent drainから関数値callbackを呼ぶ。文字列callbackは名前解決しない | Interpreter / LLVM AOT O0（U10ではO1〜O3未attested）; `plugin-node-http-callbacks`; `TODO: node-http-cross-os-attestation` |
+| `POST送信時`のbodyと失敗 | 辞書を挿入順に`encodeURIComponent`し、`application/x-www-form-urlencoded`で送る。失敗時は`AJAX:ONERROR`へエラー文字列を渡す | 同じ辞書順・UTF-8 percent encode・failure callbackを純Zigのrequest preparationとevent queueで再現する | Interpreter / LLVM AOT; `plugin-node-http-callbacks`, `plugin-node-http-onerror`; `TODO: node-http-cross-os-attestation` |
+| `POSTフォーム送信時`のheader | `FormData`本文にはboundaryがあるが、固定sourceは`Content-Type: multipart/form-data`を手動設定し、boundary引数を付けない。multipart送信が受信側で失敗し得る実装上の不具合候補である | この命令の欠落headerを互換境界として保持し、他のmultipart命令の正しいboundaryと混同しない。loopback fixtureはbodyの意味結果とcallbackを比較する | Interpreter / LLVM AOT O0; `plugin-node-http-callbacks`; 公式source/生成route差はartifactの`officialRoutesEquivalent`へ記録; `TODO: node-http-form-boundary-interoperability` |
+| `AJAX失敗時`の状態 | 関数値を`AJAX:ONERROR`へそのまま代入するglobal setterで、登録自体は値を返さない。後続callbackの通信失敗時にだけ呼ばれる | GC管理のglobalへ関数値を保持し、client taskのfailureをevent drainで`AJAX:ONERROR`へ渡す。Promise系の失敗は別にrejectする | Interpreter / LLVM AOT; `plugin-node-http-onerror`; `TODO: node-http-cross-os-attestation` |
+| 公式sourceと生成JavaScript | `plugin-node-http-callbacks`のU10 artifactでは公式sourceと公式生成JavaScriptのroute結果が一致せず、`officialRoutesEquivalent: false`となった。これはlnakoの結果を成功扱いにする根拠ではないため、公式sourceを選択oracleとして保持する | 公式sourceとの差分を隠さずartifactへ保存し、lnakoの純Zig routeは公式sourceとの比較で判定する。外部HTTP endpointや生成route差の原因確定は未完了 | 公式source / 公式生成JavaScript / Interpreter / LLVM AOT O0; `plugin-node-http-callbacks`, `plugin-node-http-onerror`; `TODO: node-http-generated-route-diagnosis` |
+
+U10のfixtureは`tests/oracle/node-http-cases.json`の`plugin-node-http-callbacks`と`plugin-node-http-onerror`で、cleanな`b6b48f1c1ab7a9e5dde68ec20440ed82b9ce21cf`から生成した`compat/v3.7.24/dispatch-coverage-evidence.json`へcatalog ID付き6 entryを接続した。監査は41 fixture・1,760 site・334 native entryで、対象6 entryはInterpreter trace、AOT manifest/runtime trace、公式sourceとの差分へ接続済みである。ただしこれは`trace-confirmed-unattested`であり、3正式OSの外部署名attestation、外部endpoint、U10の全O0〜O3証拠を意味しない。対象はInterpreter／純LLVM AOTで、QuickJSは標準命令の証拠対象外である。
+
 ## 更新規則
 
 - 説明文と実装が食い違う場合は、固定した公式v3.7.24の実行結果を優先する。
