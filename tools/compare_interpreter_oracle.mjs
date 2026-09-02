@@ -49,14 +49,36 @@ function buildLnako() {
     env: { ...process.env, ZIG_GLOBAL_CACHE_DIR: process.env.ZIG_GLOBAL_CACHE_DIR ?? resolve(root, ".zig-global-cache") },
     maxBuffer: 16 * 1024 * 1024,
   });
-  if (result.status !== 0) throw new Error(`lnakoのビルドに失敗しました:\n${result.stderr}`);
+  if (result.status !== 0 || result.error) {
+    throw new Error(`lnakoのビルドに失敗しました:\n${describeProcessResult(result)}`);
+  }
 }
 
 function normalize(result) {
   return {
-    stdout: result.stdout.replaceAll("\r\n", "\n"),
+    stdout: normalizeOutput(result.stdout),
     stderrClass: result.status === 0 ? "success" : "runtime-error",
-    exitCode: result.status,
-    signal: result.signal,
+    exitCode: result.status ?? null,
+    signal: result.signal ?? null,
+    spawnError: result.error ? describeSpawnError(result.error) : null,
   };
+}
+
+function normalizeOutput(output) {
+  return String(output ?? "").replaceAll("\r\n", "\n");
+}
+
+function describeProcessResult(result) {
+  const details = [];
+  if (result.error) details.push(describeSpawnError(result.error));
+  if (result.signal) details.push(`signal=${result.signal}`);
+  if (result.status !== null && result.status !== undefined) details.push(`exitCode=${result.status}`);
+  const stderr = normalizeOutput(result.stderr);
+  if (stderr.length > 0) details.push(`stderr=${stderr}`);
+  return details.length > 0 ? details.join(", ") : "プロセスが終了状態を返しませんでした";
+}
+
+function describeSpawnError(error) {
+  const code = error.code ?? error.name ?? "spawn-error";
+  return `${code}: ${error.message}`;
 }

@@ -658,3 +658,5 @@ macOS 5 jobのZig tarball、Zig build、LLVM／QuickJS、公式oracle cacheは�
 [run 33655328680](https://github.com/soramikan/lnako/actions/runs/33655328680)（`0f19894`）は、macOS `mac-core-standard-support`とLinux `core`の2 jobが、`evidence.json`更新後の`interpreter-only-classification.json`未再生成を検出して失敗した。これは製品実装やAOT／QuickJS経路の失敗ではなく、台帳から生成する派生artifactの同期漏れである。現行作業では`node tools/check_interpreter_only_classification.mjs --generate`後の`--check`を通し、U22の`compat-js-evidence.json`とともに派生artifactを同じ単位で更新する。
 
 両runとも他の検証jobはこの原因で停止した範囲を除き成功しており、Node 20移行警告は失敗原因ではない。次回以降もpush前に最新完了runの失敗jobと`gh run view --log-failed`を確認し、進行中runの完了は待たずに実装を継続する。macOSは5 job上限を維持し、job追加で6件目のqueueを作らない。
+
+[run 33665261243](https://github.com/soramikan/lnako/actions/runs/33665261243)（`1bf3e01`）は、macOS `mac-core-standard-support`の`Differential interpreter test`で失敗した。`compare_interpreter_oracle.mjs`が公式／lnakoの`spawnSync`結果を比較する際、プロセス起動失敗またはOS側終了でstdoutが未定義になったケースを診断せず、`replaceAll`を直接呼び出して二次的な`TypeError`を発生させていた。前段の構文、fuzz（1,033件）、診断、意味、動的値の差分は成功しており、命令実装の差分ではない。チェッカーは欠落したstdoutを安全に正規化し、exit code・signal・spawn errorを結果へ含めるよう修正したため、再発時も本来のプロセス原因を表示できる。ローカルでは公式cnako3との差分31件が成功した。
