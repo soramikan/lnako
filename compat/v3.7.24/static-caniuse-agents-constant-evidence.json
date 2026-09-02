@@ -66,17 +66,17 @@
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
     "lnako": {
-      "binarySha256": "6d0b75ac51dbc747227e8e3ad5a872250009e83ca0e1696b6c86df1d5cdf7d75",
-      "commit": "22f8d142d20356acd05561f25f46a2b2fb5bc753",
+      "binarySha256": "2cac4bdc7068c1d6dce5c8123a49695eac69decd801d2e111f79bcb2fc026405",
+      "commit": "d0bd23dbbcad709c6de04f1b8844fbfc9445b574",
       "dirty": false
     },
     "raw": {
-      "interpreterTraceSha256": "b03f49d6e7fd26c73bd620ae20a70022b8ef9796a2bb19c86fb68419e7fbea54",
-      "aotTraceSha256": "24592e862083cbc64cf19442216d831d165670a6dd41543ce236b21a75fca936",
-      "globalManifestSha256": "6709c7b6dd5834182ec9e6053c62976358ef19c7dde52374f93a3679a95d93d7",
+      "interpreterTraceSha256": "63d22a8311ad3dfd50ecb9f80bb53486b7d1661e9b7a857d4b74beeadde7861c",
+      "aotTraceSha256": "b5e49f5149d069215d0b4e1111e565bbb5a1d2fc36deb974798777bdc0f6150b",
+      "globalManifestSha256": "78fa537a36f44b47ef83f2b375d6b075a9572604f4b041b614872fd1f0a9c4c7",
       "literalInterpreterTraceSha256": "d1a240ca85bb6425f4ad3e15b23d56a4366b64e8631f58b1af10c96a38b65232",
       "literalAotTraceSha256": "b503b7eae644c3b3cc2fbe7504669a86aa68f5db0642b31b5d61cde895e2a1ea",
-      "literalManifestSha256": "8916e4888a8ad2530a68525eaffd5dcfa80dcdd70b699d452db2ccdba39b0b34"
+      "literalManifestSha256": "78b7773913572d07d2ec6e35846c49e9502cb21ca7e2f4aef2c8276ca0433dbc"
     }
   },
   "trace": {
@@ -107,7 +107,7 @@
       "name": "ブラウザ名変換表",
       "plugin": "plugin_caniuse",
       "kind": "global-read",
-      "siteId": "0x0000000000000003",
+      "siteId": "0x0000000000000004",
       "runtime": {
         "interpreter": {
           "success": true,

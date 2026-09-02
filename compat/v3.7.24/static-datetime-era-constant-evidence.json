@@ -66,17 +66,17 @@
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
     "lnako": {
-      "binarySha256": "6d0b75ac51dbc747227e8e3ad5a872250009e83ca0e1696b6c86df1d5cdf7d75",
-      "commit": "22f8d142d20356acd05561f25f46a2b2fb5bc753",
+      "binarySha256": "2cac4bdc7068c1d6dce5c8123a49695eac69decd801d2e111f79bcb2fc026405",
+      "commit": "d0bd23dbbcad709c6de04f1b8844fbfc9445b574",
       "dirty": false
     },
     "raw": {
-      "interpreterTraceSha256": "7c19b1834198213419db9148d53b3cbdf7ebca3ee9d279a3ba668a19bb7d650a",
-      "aotTraceSha256": "0a19cbcaa887312b53f00ef132735fdfbfc742c19da2438014a1fbb00f4d56f5",
-      "globalManifestSha256": "ea2d8458be735bdbee2d7519ad47fd13267adc1239495dfafec88d98326c3e5b",
+      "interpreterTraceSha256": "4cffa2464ad6f612591a35bc5240822807fb0395919b1f99d5d926c09562717b",
+      "aotTraceSha256": "97b20225abc19943eab7359100c62fc7bbd8ff6ededdbc02d01185263ca50fa5",
+      "globalManifestSha256": "ffc55bda7ecf7560105a73270506f25247a03902b9126fb0329edad3754c7226",
       "literalInterpreterTraceSha256": "d1a240ca85bb6425f4ad3e15b23d56a4366b64e8631f58b1af10c96a38b65232",
       "literalAotTraceSha256": "b503b7eae644c3b3cc2fbe7504669a86aa68f5db0642b31b5d61cde895e2a1ea",
-      "literalManifestSha256": "ef73e455f10565c6217c7abb5ee5fe3141f226e7d71b3265e58d6567296f80c5"
+      "literalManifestSha256": "8ec2ed732751664b7c6265f9cfbb9a676b7892a1f9641ad9e9d053c35f29dab6"
     }
   },
   "trace": {
@@ -107,7 +107,7 @@
       "name": "元号データ",
       "plugin": "plugin_system",
       "kind": "global-read",
-      "siteId": "0x0000000000000004",
+      "siteId": "0x0000000000000005",
       "runtime": {
         "interpreter": {
           "success": true,

@@ -504,7 +504,9 @@ function evidenceReason(status, coverage, identityResolution, interpreterFixture
       ? "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。"
       : identityResolution === "explicit-catalog-id"
         ? "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。"
-      : "catalog IDに対する実行dispatch接続はまだ追跡していない。";
+      : executionEvidenceState === "unverified"
+        ? "catalog IDに対する実行dispatch接続はまだ追跡していない。"
+        : "一意な命令名からcatalog IDを解決した。";
   const proofDescription = proofKind === "static-constant"
     ? "明示catalog ID・global/literal site IDについて、同一fixtureのInterpreter/AOT trace、対応manifest、公式差分の成功を機械検証した"
     : proofKind === "global-binding"
