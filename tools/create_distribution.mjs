@@ -435,7 +435,9 @@ function readProjectVersion() {
 
 function gitState() {
   const commit = capture("git", ["rev-parse", "HEAD"]).trim();
-  const dirty = spawnSync("git", ["diff", "--quiet"], { cwd: root }).status !== 0;
+  const status = spawnSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], { cwd: root, encoding: "utf8" });
+  if (status.status !== 0) throw new Error("git statusで配布source状態を確認できません");
+  const dirty = status.stdout.length !== 0;
   return { commit, dirty };
 }
 
