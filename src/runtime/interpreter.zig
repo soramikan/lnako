@@ -104,6 +104,24 @@ const DispatchTrace = struct {
         self.sequence += 1;
         self.disabled = true;
     }
+
+    fn finishTerminal(self: *DispatchTrace, reason: []const u8, exit_code: u8) void {
+        self.lock();
+        defer self.unlock();
+        if (self.disabled) return;
+        const path = self.path orelse return;
+        const writeFn = self.writeFn orelse return;
+        const context = self.context orelse return;
+        var line: [256]u8 = undefined;
+        const rendered = std.fmt.bufPrint(
+            &line,
+            "{{\"schema\":2,\"engine\":\"interpreter\",\"phase\":\"trace-end\",\"seq\":{d},\"dropped\":0,\"terminalReason\":\"{s}\",\"exitCode\":{d},\"signal\":null}}\n",
+            .{ self.sequence, reason, exit_code },
+        ) catch return;
+        writeFn(context, path, rendered) catch return;
+        self.sequence += 1;
+        self.disabled = true;
+    }
 };
 
 /// Global-read tracing is deliberately separate from builtin dispatch
@@ -517,6 +535,7 @@ pub const Interpreter = struct {
     debug_enabled: bool = false,
     system_initialized: bool = false,
     external_root_provider: bool = false,
+    process_exit_reason: []const u8 = "process-exit",
     dispatch_trace: DispatchTrace = .{},
     global_trace: GlobalTrace = .{},
     literal_trace: LiteralTrace = .{},
@@ -1072,7 +1091,8 @@ pub const Interpreter = struct {
         self.beginDispatchRoute();
         const result = self.callBuiltinImpl(name, arguments) catch |failure| {
             const route = self.endDispatchRoute();
-            self.dispatch_trace.emit(traceBuiltinName(name), route, "failure", site_id);
+            const result_kind = if (failure == error.ProcessExitRequested) "success" else "failure";
+            self.dispatch_trace.emit(traceBuiltinName(name), route, result_kind, site_id);
             return failure;
         };
         const route = self.endDispatchRoute();
@@ -1617,6 +1637,10 @@ pub const Interpreter = struct {
         return self.node_state.requested_exit_code;
     }
 
+    pub fn finishProcessExitTrace(self: *Interpreter) void {
+        self.dispatch_trace.finishTerminal(self.process_exit_reason, self.requestedExitCode() orelse 0);
+    }
+
     fn nodeEffects(self: *Interpreter) plugin_node.Effects {
         return .{
             .context = self,
@@ -1677,6 +1701,7 @@ pub const Interpreter = struct {
         const result = try self.callFunctionValue(self.node_state.interrupt_callback.function, &.{.undefined});
         if (result.toBoolean()) {
             self.node_state.requested_exit_code = 0;
+            self.process_exit_reason = "interrupt-callback";
             return error.ProcessExitRequested;
         }
     }

@@ -56,6 +56,7 @@ pub fn main(init: std.process.Init) !void {
         defer interpreter.deinit();
         _ = interpreter.run() catch |err| {
             if (err == error.ProcessExitRequested) {
+                interpreter.finishProcessExitTrace();
                 try stdout.flush();
                 try stderr.flush();
                 std.process.exit(interpreter.requestedExitCode() orelse 0);
@@ -178,6 +179,7 @@ pub fn main(init: std.process.Init) !void {
             defer interpreter.deinit();
             _ = interpreter.run() catch |err| {
                 if (err == error.ProcessExitRequested) {
+                    interpreter.finishProcessExitTrace();
                     try stdout.flush();
                     try stderr.flush();
                     std.process.exit(interpreter.requestedExitCode() orelse 0);

@@ -13,6 +13,7 @@ const implementationPath = resolve(root, "compat/v3.7.24/implemented.json");
 const evidencePath = resolve(root, "compat/v3.7.24/evidence.json");
 const dispatchEvidencePath = resolve(root, "compat/v3.7.24/dispatch-evidence.json");
 const dispatchCoverageEvidencePath = resolve(root, "compat/v3.7.24/dispatch-coverage-evidence.json");
+const expectedExitEvidencePath = resolve(root, "compat/v3.7.24/expected-exit-evidence.json");
 const globalBindingEvidenceInputs = [
   {
     path: resolve(root, "compat/v3.7.24/global-binding-evidence.json"),
@@ -128,6 +129,8 @@ const staticConstantEvidenceInputs = [
 const staticConstantFixtureIds = new Set(staticConstantEvidenceInputs.map((input) => input.fixtureId));
 const oracleDirectory = resolve(root, "tests/oracle");
 const forbiddenEvidenceFields = new Set(["source", "sourceText", "sourcePath", "args", "arguments", "stdout", "stderr", "value", "values", "pointer", "address"]);
+const hashPattern = /^[0-9a-f]{64}$/;
+const siteIdPattern = /^0x[0-9a-f]{16}$/;
 const throwStatementOpcode = 0xffff;
 const runtimeFixtureFiles = new Set([
   "compat-js-cases.json",
@@ -156,6 +159,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "benchmarks/results/latest.md",
   "compat/v3.7.24/dispatch-evidence.json",
   "compat/v3.7.24/dispatch-coverage-evidence.json",
+  "compat/v3.7.24/expected-exit-evidence.json",
   "compat/v3.7.24/global-binding-evidence.json",
   "compat/v3.7.24/directory-binding-evidence.json",
   "compat/v3.7.24/static-constant-evidence.json",
@@ -168,10 +172,13 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "compat/v3.7.24/static-promise-reject-constant-evidence.json",
   "compat/v3.7.24/static-caniuse-agents-constant-evidence.json",
   "compat/v3.7.24/static-node-http-initial-constant-evidence.json",
+  "compat/v3.7.24/matrix.json",
+  "compat/v3.7.24/standard-cnako.json",
   "compat/v3.7.24/evidence.json",
   "compat/v3.7.24/interpreter-only-classification.json",
   "docs/COMPATIBILITY_EVIDENCE.md",
   "docs/COMPATIBILITY_QUIRKS.md",
+  "docs/ARCHITECTURE.md",
   "docs/CI.md",
   "docs/DEVELOPMENT.md",
   "tools/check_ci_workflow.mjs",
@@ -180,6 +187,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "tools/compare_native_oracle.mjs",
   "tools/check_static_constant_evidence.mjs",
   "tools/check_global_binding_evidence.mjs",
+  "tools/check_node_exit_evidence.mjs",
   "docs/UNVERIFIED_EVIDENCE_PLAN.md",
   "tools/sync_compat_evidence.mjs",
 ]);
@@ -240,6 +248,8 @@ const dispatchEvidenceBase = JSON.parse(dispatchEvidenceBytes.toString("utf8"));
 const dispatchEvidenceInputSha256 = createHash("sha256").update(dispatchEvidenceBytes).digest("hex");
 const dispatchCoverageEvidenceBytes = await readFile(dispatchCoverageEvidencePath);
 const dispatchCoverageEvidence = JSON.parse(dispatchCoverageEvidenceBytes.toString("utf8"));
+const expectedExitEvidenceBytes = await readFile(expectedExitEvidencePath);
+const expectedExitEvidence = JSON.parse(expectedExitEvidenceBytes.toString("utf8"));
 const dispatchCoverageAuditScriptSha256 = createHash("sha256")
   .update(await readFile(resolve(root, "tools/check_dispatch_coverage.mjs")))
   .digest("hex");
@@ -258,6 +268,7 @@ const dispatchEvidence = suppliedAttestation === null
   : { ...dispatchEvidenceBase, attestation: suppliedAttestation };
 validateDispatchEvidence(dispatchEvidence, lock, standard, records, dispatchEvidenceInputSha256, dispatchEvidenceInputPath, attestationBundlePath, attestationBundleBytes, historicalCommit);
 validateDispatchCoverageEvidence(dispatchCoverageEvidence, lock, standard, records, dispatchCoverageAuditScriptSha256);
+validateExpectedExitEvidence(expectedExitEvidence, lock, standard, records);
 for (const input of staticConstantEvidenceRecords) validateStaticConstantEvidence(input.evidence, lock, standard, records, input);
 for (const input of globalBindingEvidenceRecords) validateGlobalBindingEvidence(input.evidence, lock, standard, records, input);
 const dispatchEvidenceByCatalogId = new Map();
@@ -271,6 +282,11 @@ for (const site of dispatchCoverageEvidence.sites) {
   const sites = dispatchCoverageEvidenceByCatalogId.get(site.catalogId) ?? [];
   sites.push(site);
   dispatchCoverageEvidenceByCatalogId.set(site.catalogId, sites);
+}
+const expectedExitEvidenceByCatalogId = new Map();
+for (const entry of expectedExitEvidence.entries) {
+  if (expectedExitEvidenceByCatalogId.has(entry.catalogId)) throw new Error(`expected-exit証拠のcatalog IDが重複しています: ${entry.catalogId}`);
+  expectedExitEvidenceByCatalogId.set(entry.catalogId, entry);
 }
 const dispatchFixtureRecord = records.find((record) => record.id === "native-dispatch-commands");
 const dispatchCatalogIds = dispatchFixtureRecord?.catalogIds ?? new Map();
@@ -342,16 +358,19 @@ const entries = standard.commands.map((command) => {
   const staticConstantSites = staticConstantEvidenceByCatalogId.get(command.id) ?? [];
   const globalBindingSites = globalBindingEvidenceByCatalogId.get(command.id) ?? [];
   const explicitlyMappedDispatch = dispatchCatalogIds.get(command.name) === command.id;
+  const expectedExitProof = expectedExitEvidenceByCatalogId.get(command.id) ?? null;
   const identityResolution = duplicateNames.has(command.name)
-    ? staticConstantSites.length > 0 || globalBindingSites.length > 0 || explicitlyMappedDispatch ? "explicit-catalog-id" : "ambiguous-name"
+    ? staticConstantSites.length > 0 || globalBindingSites.length > 0 || expectedExitProof !== null || explicitlyMappedDispatch ? "explicit-catalog-id" : "ambiguous-name"
     : "unique-name";
   const selectedProof = new Set(["unique-name", "explicit-catalog-id"]).has(identityResolution) && dispatchSites.length > 0
     ? { kind: "dispatch", schema: dispatchEvidence.schema, fixture: dispatchEvidence.fixture, officialComparison: dispatchEvidence.officialComparison, sites: dispatchSites }
     : staticConstantSites.length > 0
       ? { kind: "static-constant", ...staticConstantProofByCatalogId.get(command.id), sites: staticConstantSites }
-      : globalBindingSites.length > 0
-        ? { kind: "global-binding", ...globalBindingProofByCatalogId.get(command.id), sites: globalBindingSites }
-        : dispatchCoverageSites.length > 0
+        : globalBindingSites.length > 0
+          ? { kind: "global-binding", ...globalBindingProofByCatalogId.get(command.id), sites: globalBindingSites }
+          : expectedExitProof !== null
+            ? { kind: "expected-exit", schema: expectedExitEvidence.schema, fixture: expectedExitEvidence.fixture, officialComparison: expectedExitProof.officialComparison, sites: [expectedExitProof.site] }
+          : dispatchCoverageSites.length > 0
           ? {
               kind: "coverage",
               schema: dispatchCoverageEvidence.schema,
@@ -437,7 +456,7 @@ if (mode === "--generate") {
 } else {
   const actual = await readFile(evidenceOutputPath, "utf8");
   if (actual !== expected) throw new Error(`カタログ証拠レイヤーが最新ではありません: ${evidenceOutputPath}`);
-  validateEvidence(JSON.parse(actual), lock, catalogSourceSha256, nativeFixtureIds, aotFixtureIds, compatJsFixtureIds, standard, matrix, dispatchEvidenceByCatalogId, dispatchCoverageEvidenceByCatalogId, staticConstantEvidenceByCatalogId, globalBindingEvidenceByCatalogId, globalBindingProofByCatalogId);
+  validateEvidence(JSON.parse(actual), lock, catalogSourceSha256, nativeFixtureIds, aotFixtureIds, compatJsFixtureIds, standard, matrix, dispatchEvidenceByCatalogId, dispatchCoverageEvidenceByCatalogId, staticConstantEvidenceByCatalogId, globalBindingEvidenceByCatalogId, globalBindingProofByCatalogId, expectedExitEvidenceByCatalogId);
   console.log(`カタログ証拠レイヤーを検証しました: ${entries.length}件（同名異plugin ${evidence.duplicateNameCount * 2} entry、verified ${evidence.executionEvidenceStates.verified}件 / trace-confirmed-unattested ${evidence.executionEvidenceStates["trace-confirmed-unattested"]}件 / unverified ${evidence.executionEvidenceStates.unverified}件）`);
 }
 
@@ -531,6 +550,8 @@ function evidenceReason(status, coverage, identityResolution, interpreterFixture
     ? "明示catalog ID・global/literal site IDについて、同一fixtureのInterpreter/AOT trace、対応manifest、公式差分の成功を機械検証した"
     : proofKind === "global-binding"
       ? "明示catalog ID・global read/write site IDについて、同一fixtureのInterpreter/AOT trace、対応manifest、公式差分の成功を機械検証した"
+      : proofKind === "expected-exit"
+        ? "明示catalog ID・終了site IDについて、公式source/generated、Interpreter、AOT O0〜O3の終了結果、terminal reason、trace-end、compile manifestを機械検証した"
       : proofKind === "coverage"
         ? executionSites.some((site) => site.result === "failure")
           ? "dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分と明示した期待失敗結果を機械検証した"
@@ -1310,7 +1331,93 @@ function validateGlobalBindingEvidence(evidence, lock, standard, records, defini
   }
 }
 
-function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, aotFixtureIds, compatJsFixtureIds, standard, matrix, dispatchEvidenceByCatalogId, dispatchCoverageEvidenceByCatalogId, staticConstantEvidenceByCatalogId, globalBindingEvidenceByCatalogId, globalBindingProofByCatalogId) {
+function validateExpectedExitEvidence(evidence, lock, standard, records) {
+  rejectForbiddenEvidenceFields(evidence, "expected-exit-evidence");
+  assertKnownObjectKeys(evidence, ["schema", "generator", "baseline", "fixture", "officialComparison", "provenance", "entries"], "expected-exit-evidence");
+  if (evidence.schema !== "lnako.expected-exit-evidence.v1" || evidence.generator !== "tools/check_node_exit_evidence.mjs") throw new Error("expected-exit証拠のschemaまたは生成元が不正です");
+  assertKnownObjectKeys(evidence.baseline, ["tag", "commit"], "expected-exit-evidence.baseline");
+  if (evidence.baseline.tag !== lock.nadesiko3.tag || evidence.baseline.commit !== lock.nadesiko3.commit) throw new Error("expected-exit証拠のbaselineがupstream.lock.jsonと一致しません");
+  assertKnownObjectKeys(evidence.fixture, ["id", "files", "cases"], "expected-exit-evidence.fixture");
+  if (evidence.fixture.id !== "node-exit-evidence" || JSON.stringify(evidence.fixture.files) !== JSON.stringify(["tests/oracle/node-exit-cases.json", "tests/oracle/node-interrupt-case.json"]) || !Array.isArray(evidence.fixture.cases) || evidence.fixture.cases.length !== 3) throw new Error("expected-exit証拠のfixture identityが不正です");
+  assertKnownObjectKeys(evidence.officialComparison, ["routes", "equivalent"], "expected-exit-evidence.officialComparison");
+  const expectedRoutes = ["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0", "lnakoNativeO1", "lnakoNativeO2", "lnakoNativeO3"];
+  if (JSON.stringify(evidence.officialComparison.routes) !== JSON.stringify(expectedRoutes) || evidence.officialComparison.equivalent !== true) throw new Error("expected-exit証拠のroute集合が不正です");
+  assertKnownObjectKeys(evidence.provenance, ["environment", "oracle", "lnako", "raw"], "expected-exit-evidence.provenance");
+  assertKnownObjectKeys(evidence.provenance.environment, ["platform", "arch", "node"], "expected-exit-evidence.provenance.environment");
+  assertKnownObjectKeys(evidence.provenance.oracle, ["build", "archiveSha256", "cliSha256", "markerSha256", "treeHashAlgorithm", "treeSha256"], "expected-exit-evidence.provenance.oracle");
+  assertKnownObjectKeys(evidence.provenance.lnako, ["binarySha256", "commit", "dirty"], "expected-exit-evidence.provenance.lnako");
+  assertKnownObjectKeys(evidence.provenance.raw, ["traceSha256"], "expected-exit-evidence.provenance.raw");
+  const environment = evidence.provenance.environment;
+  const oracle = evidence.provenance.oracle;
+  const lnako = evidence.provenance.lnako;
+  const platformKey = `${environment.platform}-${environment.arch}`;
+  if (![environment.platform, environment.arch, environment.node].every((value) => typeof value === "string" && value.length > 0) ||
+      !Number.isSafeInteger(oracle.build) || oracle.build < 1 || oracle.build !== lock.nadesiko3.oracleIdentity?.build ||
+      oracle.archiveSha256 !== lock.nadesiko3.archive.sha256 || oracle.cliSha256 !== lock.nadesiko3.oracleIdentity?.cliSha256 ||
+      oracle.markerSha256 !== lock.nadesiko3.oracleIdentity?.markerSha256 || oracle.treeHashAlgorithm !== lock.nadesiko3.oracleIdentity?.treeHashAlgorithm ||
+      oracle.treeSha256 !== lock.nadesiko3.oracleIdentity?.treeSha256ByPlatform?.[platformKey] ||
+      !hashPattern.test(oracle.archiveSha256) || !hashPattern.test(oracle.cliSha256) || !hashPattern.test(oracle.markerSha256) || !hashPattern.test(oracle.treeSha256) ||
+      !hashPattern.test(lnako.binarySha256) || !/^[0-9a-f]{40}$/i.test(lnako.commit) || lnako.dirty !== false) {
+    throw new Error("expected-exit証拠のprovenanceが不正です");
+  }
+  const currentGit = readGitState();
+  if (lnako.commit !== currentGit.commit && !isAllowedDispatchEvidenceFollowUp(lnako.commit, currentGit.commit)) throw new Error("cleanなexpected-exit証拠のlnako commitが現行HEADと一致しません");
+  const standardById = new Map(standard.commands.map((command) => [command.id, command]));
+  const recordById = new Map(records.map((record) => [record.id, record]));
+  const casesById = new Map();
+  for (const item of evidence.fixture.cases) {
+    assertKnownObjectKeys(item, ["id", "command", "catalogId", "sourceSha256"], "expected-exit-evidence.fixture.case");
+    if (casesById.has(item.id) || !hashPattern.test(item.sourceSha256)) throw new Error(`expected-exit証拠のfixture caseが不正です: ${item.id}`);
+    const record = recordById.get(item.id);
+    const command = standardById.get(item.catalogId);
+    if (record === undefined || record.sourceSha256 !== item.sourceSha256 || command === undefined || command.name !== item.command || command.plugin !== "plugin_node" || command.status !== "native") throw new Error(`expected-exit証拠のfixture caseがcatalog/fixtureと不一致です: ${item.id}`);
+    casesById.set(item.id, item);
+  }
+  if (evidence.entries.length !== casesById.size) throw new Error("expected-exit証拠のentry数がfixture case数と一致しません");
+  for (const entry of evidence.entries) {
+    assertKnownObjectKeys(entry, ["caseId", "catalogId", "name", "plugin", "sourceSha256", "expectedExitCode", "terminalReason", "officialComparison", "site", "trace", "compileStatuses"], "expected-exit-evidence.entry");
+    const fixtureCase = casesById.get(entry.caseId);
+    const command = standardById.get(entry.catalogId);
+    if (fixtureCase === undefined || command === undefined || entry.catalogId !== fixtureCase.catalogId || entry.name !== fixtureCase.command || entry.plugin !== "plugin_node" || entry.sourceSha256 !== fixtureCase.sourceSha256 || ![0, 7].includes(entry.expectedExitCode) || !["process-exit", "interrupt-callback"].includes(entry.terminalReason)) throw new Error(`expected-exit証拠entryのidentityが不正です: ${entry.caseId}`);
+    assertKnownObjectKeys(entry.officialComparison, ["oracle", "routes", "equivalent", "results"], `expected-exit-evidence.entry(${entry.caseId}).officialComparison`);
+    if (entry.officialComparison.oracle !== "official-source" || JSON.stringify(entry.officialComparison.routes) !== JSON.stringify(expectedRoutes) || entry.officialComparison.equivalent !== true) throw new Error(`expected-exit証拠entryの公式比較が不正です: ${entry.caseId}`);
+    assertKnownObjectKeys(entry.officialComparison.results, expectedRoutes, `expected-exit-evidence.entry(${entry.caseId}).results`);
+    const oracleResult = entry.officialComparison.results.officialSource;
+    for (const route of expectedRoutes) {
+      const result = entry.officialComparison.results[route];
+      assertKnownObjectKeys(result, ["status", "signal", "stdoutSha256", "stderrSha256"], `expected-exit-evidence.entry(${entry.caseId}).result.${route}`);
+      if (result.status !== entry.expectedExitCode || result.signal !== null || !hashPattern.test(result.stdoutSha256) || !hashPattern.test(result.stderrSha256) || result.stdoutSha256 !== oracleResult.stdoutSha256 || result.stderrSha256 !== oracleResult.stderrSha256) throw new Error(`expected-exit証拠entryのroute結果が不一致です: ${entry.caseId}/${route}`);
+    }
+    assertKnownObjectKeys(entry.site, ["siteId", "sourceName", "canonicalOpcode", "opcode", "route"], `expected-exit-evidence.entry(${entry.caseId}).site`);
+    if (!siteIdPattern.test(entry.site.siteId) || entry.site.sourceName !== entry.name || entry.site.canonicalOpcode !== (entry.terminalReason === "interrupt-callback" ? "node_interrupt_callback" : entry.expectedExitCode === 7 ? "node_process_exit" : "node_exit") || !Number.isInteger(entry.site.opcode) || entry.site.opcode < 0 || entry.site.opcode > 0xffff || (entry.terminalReason === "interrupt-callback" ? entry.site.route !== "node-interrupt" : entry.site.route !== "builtin") || entry.site.siteId.length !== 18) throw new Error(`expected-exit証拠entryのsiteが不正です: ${entry.caseId}`);
+    assertKnownObjectKeys(entry.trace, ["interpreter", "aot", "compileManifest"], `expected-exit-evidence.entry(${entry.caseId}).trace`);
+    validateExpectedExitTraceSummary(entry.trace.interpreter, entry, "interpreter");
+    for (const optimization of ["O0", "O1", "O2", "O3"]) validateExpectedExitTraceSummary(entry.trace.aot[optimization], entry, `aot-${optimization}`);
+    assertKnownObjectKeys(entry.trace.compileManifest, ["complete", "entries", "rawSha256"], `expected-exit-evidence.entry(${entry.caseId}).compileManifest`);
+    if (entry.trace.compileManifest.complete !== true || !Array.isArray(entry.trace.compileManifest.entries) || !hashPattern.test(entry.trace.compileManifest.rawSha256)) throw new Error(`expected-exit証拠entryのmanifestが不正です: ${entry.caseId}`);
+    const manifestTarget = entry.trace.compileManifest.entries.find((candidate) => candidate.sourceName === entry.name);
+    if (manifestTarget === undefined || manifestTarget.siteId !== entry.site.siteId || manifestTarget.sourceName !== entry.site.sourceName || manifestTarget.canonicalOpcode !== entry.site.canonicalOpcode || manifestTarget.opcode !== entry.site.opcode || manifestTarget.route !== entry.site.route) throw new Error(`expected-exit証拠entryのmanifest targetがsiteと不一致です: ${entry.caseId}`);
+    const compileStatuses = entry.compileStatuses;
+    assertKnownObjectKeys(compileStatuses, ["O0", "O1", "O2", "O3"], `expected-exit-evidence.entry(${entry.caseId}).compileStatuses`);
+    if (Object.values(compileStatuses).some((status) => status !== 0)) throw new Error(`expected-exit証拠entryのcompile statusが不正です: ${entry.caseId}`);
+  }
+  if (new Set(evidence.entries.map((entry) => entry.catalogId)).size !== evidence.entries.length) throw new Error("expected-exit証拠のcatalog IDが重複しています");
+  return casesById;
+}
+
+function validateExpectedExitTraceSummary(trace, entry, label) {
+  assertKnownObjectKeys(trace, ["eventCount", "terminalReason", "exitCode", "signal", "target", "traceSha256"], `expected-exit-evidence.${label}`);
+  if (!Number.isSafeInteger(trace.eventCount) || trace.eventCount < 1 || trace.terminalReason !== entry.terminalReason || trace.exitCode !== entry.expectedExitCode || trace.signal !== null || !hashPattern.test(trace.traceSha256)) throw new Error(`expected-exit証拠のtrace終端が不正です: ${entry.caseId}/${label}`);
+  if (label === "interpreter") {
+    assertKnownObjectKeys(trace.target, ["siteId", "sourceName", "route", "result", "count"], `expected-exit-evidence.${entry.caseId}.interpreter.target`);
+    if (trace.target.siteId !== entry.site.siteId || trace.target.sourceName !== entry.name || trace.target.result !== "success" || !Number.isSafeInteger(trace.target.count) || trace.target.count < 1) throw new Error(`expected-exit証拠のInterpreter targetが不正です: ${entry.caseId}`);
+  } else {
+    assertKnownObjectKeys(trace.target, ["siteId", "sourceName", "canonicalOpcode", "opcode", "route", "result", "callId", "count", "unmatchedCallCount"], `expected-exit-evidence.${entry.caseId}.${label}.target`);
+    if (trace.target.siteId !== entry.site.siteId || trace.target.sourceName !== entry.name || trace.target.canonicalOpcode !== entry.site.canonicalOpcode || trace.target.opcode !== entry.site.opcode || trace.target.route !== entry.site.route || trace.target.result !== true || !Number.isSafeInteger(trace.target.callId) || !Number.isSafeInteger(trace.target.count) || trace.target.count < 1 || !Number.isSafeInteger(trace.target.unmatchedCallCount) || trace.target.unmatchedCallCount < 0 || (entry.terminalReason === "process-exit" && trace.target.unmatchedCallCount !== 0)) throw new Error(`expected-exit証拠のAOT targetが不正です: ${entry.caseId}/${label}`);
+  }
+}
+
+function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, aotFixtureIds, compatJsFixtureIds, standard, matrix, dispatchEvidenceByCatalogId, dispatchCoverageEvidenceByCatalogId, staticConstantEvidenceByCatalogId, globalBindingEvidenceByCatalogId, globalBindingProofByCatalogId, expectedExitEvidenceByCatalogId) {
   rejectForbiddenEvidenceFields(actual);
   assertKnownObjectKeys(actual, ["schemaVersion", "baseline", "sourceSha256", "commandCount", "duplicateNameCount", "fixtureInventory", "fixtureCoverageStates", "executionEvidenceStates", "entries"], "evidence");
   assertKnownObjectKeys(actual.baseline, ["tag", "commit"], "evidence.baseline");
@@ -1336,8 +1443,9 @@ function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, a
     const hasStaticConstantProof = (staticConstantEvidenceByCatalogId.get(entry.id) ?? []).length > 0;
     const hasDispatchProof = (dispatchEvidenceByCatalogId.get(entry.id) ?? []).length > 0 || (dispatchCoverageEvidenceByCatalogId.get(entry.id) ?? []).length > 0;
     const hasGlobalBindingProof = (globalBindingEvidenceByCatalogId.get(entry.id) ?? []).length > 0;
+    const hasExpectedExitProof = expectedExitEvidenceByCatalogId.has(entry.id);
     const expectedIdentity = duplicateNames.has(entry.name)
-      ? hasStaticConstantProof || hasDispatchProof || hasGlobalBindingProof ? "explicit-catalog-id" : "ambiguous-name"
+      ? hasStaticConstantProof || hasDispatchProof || hasGlobalBindingProof || hasExpectedExitProof ? "explicit-catalog-id" : "ambiguous-name"
       : "unique-name";
     if (entry.identityResolution !== expectedIdentity) throw new Error(`identityResolutionが不一致です: ${entry.id}`);
     if (entry.interpreterFixtureIds.some((id) => nativeFixtureIds.has(id) || compatJsFixtureIds.has(id))) throw new Error(`interpreterFixtureIdsにAOTまたはcompat-js IDがあります: ${entry.id}`);
@@ -1358,6 +1466,7 @@ function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, a
       const isDispatchCoverageProof = proof?.proofSchema === "lnako.dispatch-coverage.v1";
       const isStaticConstantProof = proof?.proofSchema === "lnako.static-constant-evidence.v2";
       const isGlobalBindingProof = proof?.proofSchema === "lnako.global-binding-evidence.v1" || proof?.proofSchema === "lnako.global-binding-evidence.v2";
+      const isExpectedExitProof = proof?.proofSchema === "lnako.expected-exit-evidence.v1";
       const proofSites = isDispatchProof
         ? dispatchEvidenceByCatalogId.get(entry.id) ?? []
         : isDispatchCoverageProof
@@ -1366,21 +1475,26 @@ function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, a
           ? staticConstantEvidenceByCatalogId.get(entry.id) ?? []
         : isGlobalBindingProof
           ? globalBindingEvidenceByCatalogId.get(entry.id) ?? []
+        : isExpectedExitProof
+          ? expectedExitEvidenceByCatalogId.has(entry.id) ? [expectedExitEvidenceByCatalogId.get(entry.id).site] : []
           : [];
       const expectedSiteIds = proofSites.map((site) => isDispatchCoverageProof ? coverageSiteKey(site) : site.siteId).sort();
       const validStaticState = isStaticConstantProof && entry.executionEvidenceState === "trace-confirmed-unattested" && entry.status === "native" && matrix.entries.find((candidate) => candidate.id === entry.id)?.type === "定数";
       const validGlobalBindingState = isGlobalBindingProof && entry.executionEvidenceState === "trace-confirmed-unattested" && entry.status === "native" && hasGlobalBindingProof;
+      const validExpectedExitState = isExpectedExitProof && entry.executionEvidenceState === "trace-confirmed-unattested" && entry.status === "native" && hasExpectedExitProof;
       const validDispatchState = isDispatchProof && ["verified", "trace-confirmed-unattested"].includes(entry.executionEvidenceState);
       const validDispatchCoverageState = isDispatchCoverageProof && entry.executionEvidenceState === "trace-confirmed-unattested" && entry.status === "native";
-      if (!new Set(["unique-name", "explicit-catalog-id"]).has(entry.identityResolution) || (!validDispatchState && !validDispatchCoverageState && !validStaticState && !validGlobalBindingState) ||
+      if (!new Set(["unique-name", "explicit-catalog-id"]).has(entry.identityResolution) || (!validDispatchState && !validDispatchCoverageState && !validStaticState && !validGlobalBindingState && !validExpectedExitState) ||
           (isDispatchProof && proof.fixtureId !== "native-dispatch-commands") ||
           (isDispatchCoverageProof && proof.fixtureId !== "dispatch-coverage") ||
           (isStaticConstantProof && !staticConstantFixtureIds.has(proof.fixtureId)) ||
           (isGlobalBindingProof && proof.fixtureId !== globalBindingProofByCatalogId.get(entry.id)?.fixture.id) ||
+          (isExpectedExitProof && proof.fixtureId !== "node-exit-evidence") ||
           proof.state !== entry.executionEvidenceState || !Array.isArray(proof.siteIds) || proof.siteIds.length === 0 || JSON.stringify(proof.siteIds) !== JSON.stringify(expectedSiteIds) ||
           !Array.isArray(proof.officialComparison) || proof.officialComparison.length === 0 ||
           (isDispatchCoverageProof && JSON.stringify(proof.officialComparison) !== JSON.stringify(["officialSource", "lnakoRun", "lnakoNativeO0"])) ||
-          (isGlobalBindingProof && JSON.stringify(proof.officialComparison) !== JSON.stringify(["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0"]))) {
+          (isGlobalBindingProof && JSON.stringify(proof.officialComparison) !== JSON.stringify(["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0"])) ||
+          (isExpectedExitProof && JSON.stringify(proof.officialComparison) !== JSON.stringify(["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0", "lnakoNativeO1", "lnakoNativeO2", "lnakoNativeO3"]))) {
         throw new Error(`dispatch証拠付きentryが不正です: ${entry.id}`);
       }
     } else if (entry.executionEvidence !== null) {

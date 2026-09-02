@@ -167,6 +167,29 @@ const DispatchTrace = struct {
         ) catch return;
         if (self.writeLine(file, rendered)) self.disabled = true;
     }
+
+    fn finishTerminal(self: *DispatchTrace, reason: []const u8, exit_code: u8) void {
+        self.lock();
+        defer self.unlock();
+        if (self.disabled) return;
+        if (!self.initialized) {
+            self.initialized = true;
+            const path = std.c.getenv("LNAKO_DISPATCH_TRACE") orelse return;
+            if (path[0] == 0) return;
+            self.file = std.c.fopen(path, "wbx") orelse {
+                self.disabled = true;
+                return;
+            };
+        }
+        const file = self.ensureFile() orelse return;
+        var line: [256]u8 = undefined;
+        const rendered = std.fmt.bufPrint(
+            &line,
+            "{{\"schema\":2,\"engine\":\"aot\",\"phase\":\"trace-end\",\"seq\":{d},\"dropped\":0,\"terminalReason\":\"{s}\",\"exitCode\":{d},\"signal\":null}}\n",
+            .{ self.sequence, reason, exit_code },
+        ) catch return;
+        if (self.writeLine(file, rendered)) self.disabled = true;
+    }
 };
 
 /// Global-read tracing is a separate opt-in channel from builtin dispatch
@@ -6642,6 +6665,7 @@ fn pollAotInterrupt(runtime: *Runtime) !void {
     var undefined_value = Value{};
     const result = try invokeAotCallback(runtime, runtime.interrupt_callback, @ptrCast(&undefined_value), 1);
     if (valueTruthy(result)) {
+        runtime.dispatch_trace.finishTerminal("interrupt-callback", 0);
         _ = fflush(null);
         std.process.exit(0);
     }
@@ -8299,6 +8323,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 return;
             } else 0;
             runtime.dispatch_trace.result(call_id, command_name, opcode, "builtin", site_id, true);
+            runtime.dispatch_trace.finishTerminal("process-exit", exit_code);
             _ = fflush(null);
             std.process.exit(exit_code);
         },
