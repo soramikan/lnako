@@ -18,8 +18,8 @@
   {
     "id": "plugin-node-http-options-and-promises",
     "aot": true,
-    "commands": ["AJAXオプション", "AJAXオプション設定", "AJAX保障送信", "HTTP保障取得", "GET保障送信", "POST保障送信", "POSTフォーム保障送信", "AJAX内容取得"],
-    "source": "AJAXオプション設定({\"method\":\"PUT\",\"headers\":{\"X-Lnako\":\"yes\"},\"body\":\"payload\"})\nP=AJAX保障送信(\"${BASE}/options\")\nPの成功した時には\nR=対象\nRを表示\nJSON変換(R)を表示\nAJAX内容取得(R,\"TEXT\")の成功した時には\n対象を表示\nここまで\nここまで\n0.15秒待\nAJAXオプション設定(\"\")\nP2=HTTP保障取得(\"${BASE}/text?q=http\")\nP2の成功した時には\nAJAX内容取得(対象,\"テキスト\")の成功した時には\n対象を表示\nここまで\nここまで\n0.15秒待\nP3=GET保障送信(\"${BASE}/text?q=get-promise\")\nP3の成功した時には\nAJAX内容取得(対象,\"TEXT\")の成功した時には\n対象を表示\nここまで\nここまで\n0.15秒待\nP4=POST保障送信(\"${BASE}/post\",{\"a\":\"A\",\"日本\":\"B\"})\nP4の成功した時には\nAJAX内容取得(対象,\"TEXT\")の成功した時には\n対象を表示\nここまで\nここまで\n0.15秒待\nP5=POSTフォーム保障送信(\"${BASE}/post\",{\"a\":\"A\",\"日本\":\"B\"})\nP5の成功した時には\nAJAX内容取得(対象,\"TEXT\")の成功した時には\n対象を表示\nここまで\nここまで\n0.15秒待\n"
+    "commands": ["AJAXオプション", "AJAXオプション設定", "AJAX保障送信", "HTTP保障取得", "GET保障送信", "POST保障送信", "POSTフォーム保障送信", "AJAX内容取得", "AJAX受信"],
+    "source": "AJAXオプション設定({\"method\":\"PUT\",\"headers\":{\"X-Lnako\":\"yes\"},\"body\":\"payload\"})\nP=AJAX保障送信(\"${BASE}/options\")\nPの成功した時には\nR=対象\nRを表示\nJSON変換(R)を表示\nAJAX内容取得(R,\"TEXT\")の成功した時には\n対象を表示\nここまで\nここまで\n0.15秒待\nAJAXオプション設定(\"\")\nP2=HTTP保障取得(\"${BASE}/text?q=http\")\nP2の成功した時には\nAJAX内容取得(対象,\"テキスト\")の成功した時には\n対象を表示\nここまで\nここまで\n0.15秒待\nP3=GET保障送信(\"${BASE}/text?q=get-promise\")\nP3の成功した時には\nAJAX内容取得(対象,\"TEXT\")の成功した時には\n対象を表示\nここまで\nここまで\n0.15秒待\nP4=POST保障送信(\"${BASE}/post\",{\"a\":\"A\",\"日本\":\"B\"})\nP4の成功した時には\nAJAX内容取得(対象,\"TEXT\")の成功した時には\n対象を表示\nここまで\nここまで\n0.15秒待\nP5=POSTフォーム保障送信(\"${BASE}/post\",{\"a\":\"A\",\"日本\":\"B\"})\nP5の成功した時には\nAJAX内容取得(対象,\"TEXT\")の成功した時には\n対象を表示\nここまで\nここまで\n0.15秒待\nAJAX受信(\"${BASE}/text?q=receive-value\")\n0.15秒待\n対象を表示\n"
   },
   {
     "id": "plugin-node-http-async-values",
