@@ -199,6 +199,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "docs/CI.md",
   "docs/DEVELOPMENT.md",
   "tools/check_ci_workflow.mjs",
+  "tools/check_dispatch_coverage_shards.mjs",
   "tools/check_aot_suite_parallel.mjs",
   "tools/check_dispatch_coverage.mjs",
   "tools/oracle/system_only.mjs",
