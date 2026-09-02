@@ -151,6 +151,7 @@ jobs:
         run: |
           node tools/check_compat_js_coverage.mjs
           node tools/compare_compat_js_oracle.mjs
+          node tools/check_compat_js_evidence.mjs --no-build
       - name: Native plugin ABI test
         if: matrix.suite == 'host' || matrix.suite == 'mac-host-compat'
         run: node tools/check_native_plugin_abi.mjs --release-safe

@@ -649,11 +649,13 @@ const CliHost = struct {
     held_http_connections: std.ArrayList(std.Io.net.Stream) = .empty,
     upload_sequence: u64 = 1,
     dispatch_trace_file: ?std.Io.File = null,
+    compat_js_trace_file: ?std.Io.File = null,
     global_trace_file: ?std.Io.File = null,
     literal_trace_file: ?std.Io.File = null,
 
     fn deinit(self: *CliHost) void {
         if (self.dispatch_trace_file) |file| file.close(self.io);
+        if (self.compat_js_trace_file) |file| file.close(self.io);
         if (self.global_trace_file) |file| file.close(self.io);
         if (self.literal_trace_file) |file| file.close(self.io);
         if (self.http_connection) |stream| stream.close(self.io);
@@ -670,6 +672,8 @@ const CliHost = struct {
             .writeFn = write,
             .dispatch_trace_path = self.environmentValue("LNAKO_DISPATCH_TRACE"),
             .dispatch_trace_writeFn = writeDispatchTrace,
+            .compat_js_trace_path = self.environmentValue("LNAKO_COMPAT_JS_TRACE"),
+            .compat_js_trace_writeFn = writeCompatJsTrace,
             .global_trace_path = self.environmentValue("LNAKO_GLOBAL_TRACE"),
             .global_trace_writeFn = writeGlobalTrace,
             .literal_trace_path = self.environmentValue("LNAKO_LITERAL_TRACE"),
@@ -763,6 +767,17 @@ const CliHost = struct {
                 try std.Io.Dir.cwd().createFile(self.io, path, .{ .exclusive = true });
         }
         try self.global_trace_file.?.writeStreamingAll(self.io, bytes);
+    }
+
+    fn writeCompatJsTrace(context: *anyopaque, path: []const u8, bytes: []const u8) !void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        if (self.compat_js_trace_file == null) {
+            self.compat_js_trace_file = if (std.fs.path.isAbsolute(path))
+                try std.Io.Dir.createFileAbsolute(self.io, path, .{ .exclusive = true })
+            else
+                try std.Io.Dir.cwd().createFile(self.io, path, .{ .exclusive = true });
+        }
+        try self.compat_js_trace_file.?.writeStreamingAll(self.io, bytes);
     }
 
     fn writeLiteralTrace(context: *anyopaque, path: []const u8, bytes: []const u8) !void {

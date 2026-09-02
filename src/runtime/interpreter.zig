@@ -125,6 +125,101 @@ const DispatchTrace = struct {
     }
 };
 
+/// Compat-JS tracing is intentionally a separate metadata-only channel. It
+/// records the four catalog operations that cross the explicit QuickJS
+/// boundary, but never records JavaScript source, arguments, values, or raw
+/// engine pointers. Site IDs come from the same root IR call sites as native
+/// dispatch tracing, so a fixture can compare the operation identity without
+/// relying on execution order.
+const CompatJsTrace = struct {
+    path: ?[]const u8 = null,
+    context: ?*anyopaque = null,
+    writeFn: ?DispatchTraceWriteFn = null,
+    disabled: bool = false,
+    sequence: u64 = 0,
+    locked: std.atomic.Value(bool) = .init(false),
+
+    fn lock(self: *CompatJsTrace) void {
+        while (self.locked.swap(true, .acquire)) std.atomic.spinLoopHint();
+    }
+
+    fn unlock(self: *CompatJsTrace) void {
+        self.locked.store(false, .release);
+    }
+
+    fn emit(self: *CompatJsTrace, command: []const u8, operation: []const u8, phase: []const u8, result: ?[]const u8, site_id: ?u64) void {
+        self.lock();
+        defer self.unlock();
+        if (self.disabled) return;
+        const path = self.path orelse return;
+        const writeFn = self.writeFn orelse return;
+        const context = self.context orelse return;
+        var line: [512]u8 = undefined;
+        const rendered = if (site_id) |id|
+            if (result) |result_name| std.fmt.bufPrint(
+                &line,
+                "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"{s}\",\"seq\":{d},\"siteId\":\"0x{x:0>16}\",\"command\":\"{s}\",\"operation\":\"{s}\",\"result\":\"{s}\"}}\n",
+                .{ phase, self.sequence, id, command, operation, result_name },
+            ) catch {
+                self.disabled = true;
+                return;
+            } else std.fmt.bufPrint(
+                &line,
+                "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"{s}\",\"seq\":{d},\"siteId\":\"0x{x:0>16}\",\"command\":\"{s}\",\"operation\":\"{s}\"}}\n",
+                .{ phase, self.sequence, id, command, operation },
+            ) catch {
+                self.disabled = true;
+                return;
+            }
+        else if (result) |result_name| std.fmt.bufPrint(
+            &line,
+            "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"{s}\",\"seq\":{d},\"siteId\":null,\"command\":\"{s}\",\"operation\":\"{s}\",\"result\":\"{s}\"}}\n",
+            .{ phase, self.sequence, command, operation, result_name },
+        ) catch {
+            self.disabled = true;
+            return;
+        } else std.fmt.bufPrint(
+            &line,
+            "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"{s}\",\"seq\":{d},\"siteId\":null,\"command\":\"{s}\",\"operation\":\"{s}\"}}\n",
+            .{ phase, self.sequence, command, operation },
+        ) catch {
+            self.disabled = true;
+            return;
+        };
+        writeFn(context, path, rendered) catch {
+            self.disabled = true;
+            return;
+        };
+        self.sequence += 1;
+    }
+
+    fn finish(self: *CompatJsTrace) void {
+        self.lock();
+        defer self.unlock();
+        if (self.disabled) return;
+        const path = self.path orelse return;
+        const writeFn = self.writeFn orelse return;
+        const context = self.context orelse return;
+        var line: [160]u8 = undefined;
+        const rendered = std.fmt.bufPrint(
+            &line,
+            "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"trace-end\",\"seq\":{d},\"dropped\":0}}\n",
+            .{self.sequence},
+        ) catch return;
+        writeFn(context, path, rendered) catch return;
+        self.sequence += 1;
+        self.disabled = true;
+    }
+};
+
+fn compatJsOperation(name: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, name, "JS実行")) return "eval";
+    if (std.mem.eql(u8, name, "JSオブジェクト取得")) return "lookup";
+    if (std.mem.eql(u8, name, "JS関数実行")) return "call";
+    if (std.mem.eql(u8, name, "JSメソッド実行")) return "method-call";
+    return null;
+}
+
 /// Global-read tracing is deliberately separate from builtin dispatch
 /// tracing. A bare constant reference is a `load_global`, not a function
 /// call, so it must not be promoted by the builtin evidence checker.
@@ -297,6 +392,8 @@ pub const Host = struct {
     writeFn: *const fn (context: *anyopaque, bytes: []const u8) anyerror!void,
     dispatch_trace_path: ?[]const u8 = null,
     dispatch_trace_writeFn: ?DispatchTraceWriteFn = null,
+    compat_js_trace_path: ?[]const u8 = null,
+    compat_js_trace_writeFn: ?DispatchTraceWriteFn = null,
     global_trace_path: ?[]const u8 = null,
     global_trace_writeFn: ?DispatchTraceWriteFn = null,
     literal_trace_path: ?[]const u8 = null,
@@ -339,6 +436,7 @@ pub const BufferHost = struct {
     allocator: std.mem.Allocator,
     output: std.ArrayList(u8) = .empty,
     dispatch_trace: std.ArrayList(u8) = .empty,
+    compat_js_trace: std.ArrayList(u8) = .empty,
     global_trace: std.ArrayList(u8) = .empty,
     literal_trace: std.ArrayList(u8) = .empty,
     elapsed_milliseconds: u64 = 0,
@@ -348,6 +446,7 @@ pub const BufferHost = struct {
     pub fn deinit(self: *BufferHost) void {
         self.output.deinit(self.allocator);
         self.dispatch_trace.deinit(self.allocator);
+        self.compat_js_trace.deinit(self.allocator);
         self.global_trace.deinit(self.allocator);
         self.literal_trace.deinit(self.allocator);
         self.* = undefined;
@@ -357,6 +456,7 @@ pub const BufferHost = struct {
         return .{
             .context = self,
             .writeFn = write,
+            .compat_js_trace_writeFn = BufferHost.writeCompatJsTrace,
             .sleepMillisecondsFn = sleepMilliseconds,
             .nowMillisecondsFn = nowMilliseconds,
             .monotonicMillisecondsFn = monotonicMilliseconds,
@@ -376,6 +476,11 @@ pub const BufferHost = struct {
     fn writeDispatchTrace(context: *anyopaque, _: []const u8, bytes: []const u8) !void {
         const self: *BufferHost = @ptrCast(@alignCast(context));
         try self.dispatch_trace.appendSlice(self.allocator, bytes);
+    }
+
+    fn writeCompatJsTrace(context: *anyopaque, _: []const u8, bytes: []const u8) !void {
+        const self: *BufferHost = @ptrCast(@alignCast(context));
+        try self.compat_js_trace.appendSlice(self.allocator, bytes);
     }
 
     fn writeGlobalTrace(context: *anyopaque, _: []const u8, bytes: []const u8) !void {
@@ -538,6 +643,7 @@ pub const Interpreter = struct {
     external_root_provider: bool = false,
     process_exit_reason: []const u8 = "process-exit",
     dispatch_trace: DispatchTrace = .{},
+    compat_js_trace: CompatJsTrace = .{},
     global_trace: GlobalTrace = .{},
     literal_trace: LiteralTrace = .{},
     dispatch_route_stack: [64][]const u8 = undefined,
@@ -547,13 +653,14 @@ pub const Interpreter = struct {
     active_program_owner: ?*const ir.Program = null,
 
     pub fn init(allocator: std.mem.Allocator, runtime: *Runtime, program: ir.Program, host: Host) Interpreter {
-        return .{ .allocator = allocator, .runtime = runtime, .program = program, .root_program = program, .host = host, .dispatch_trace = .{ .path = host.dispatch_trace_path, .context = host.context, .writeFn = host.dispatch_trace_writeFn }, .global_trace = .{ .path = host.global_trace_path, .context = host.context, .writeFn = host.global_trace_writeFn }, .literal_trace = .{ .path = host.literal_trace_path, .context = host.context, .writeFn = host.literal_trace_writeFn }, .csv_state = plugin_csv.State.init(allocator), .quickjs_state = quickjs.State.init(program.compat_js), .native_plugin_state = plugin_native.State.init() };
+        return .{ .allocator = allocator, .runtime = runtime, .program = program, .root_program = program, .host = host, .dispatch_trace = .{ .path = host.dispatch_trace_path, .context = host.context, .writeFn = host.dispatch_trace_writeFn }, .compat_js_trace = .{ .path = host.compat_js_trace_path, .context = host.context, .writeFn = host.compat_js_trace_writeFn }, .global_trace = .{ .path = host.global_trace_path, .context = host.context, .writeFn = host.global_trace_writeFn }, .literal_trace = .{ .path = host.literal_trace_path, .context = host.context, .writeFn = host.literal_trace_writeFn }, .csv_state = plugin_csv.State.init(allocator), .quickjs_state = quickjs.State.init(program.compat_js), .native_plugin_state = plugin_native.State.init() };
     }
 
     pub fn deinit(self: *Interpreter) void {
         self.deactivateExternalRuntime();
         self.runtime.clearPrimitiveHook(self);
         self.dispatch_trace.finish();
+        self.compat_js_trace.finish();
         self.global_trace.finish();
         self.literal_trace.finish();
         // Native plugins may retain host handles and stop worker threads from
@@ -1090,14 +1197,18 @@ pub const Interpreter = struct {
 
     fn callBuiltin(self: *Interpreter, name: []const u8, arguments: []const Value, site_id: ?u64) !Value {
         self.beginDispatchRoute();
+        const compat_operation = compatJsOperation(name);
+        if (compat_operation) |operation| self.compat_js_trace.emit(name, operation, "compat-js-attempt", null, site_id);
         const result = self.callBuiltinImpl(name, arguments) catch |failure| {
             const route = self.endDispatchRoute();
             const result_kind = if (failure == error.ProcessExitRequested) "success" else "failure";
             self.dispatch_trace.emit(traceBuiltinName(name), route, result_kind, site_id);
+            if (compat_operation) |operation| self.compat_js_trace.emit(name, operation, "compat-js-result", if (failure == error.ProcessExitRequested) "success" else "failure", site_id);
             return failure;
         };
         const route = self.endDispatchRoute();
         self.dispatch_trace.emit(traceBuiltinName(name), route, "success", site_id);
+        if (compat_operation) |operation| self.compat_js_trace.emit(name, operation, "compat-js-result", "success", site_id);
         return result;
     }
 
@@ -2915,6 +3026,32 @@ test "global read traceはbuiltin dispatch traceと分離される" {
     try std.testing.expect(std.mem.indexOf(u8, host.global_trace.items, "\"name\":\"PI\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, host.global_trace.items, "\"name\":\"永遠\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, host.global_trace.items, "\"phase\":\"dispatch-result\"") == null);
+}
+
+test "compat-js traceは4命令をoperation別metadataとして記録する" {
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var trace = CompatJsTrace{
+        .path = "compat-js-trace.jsonl",
+        .context = &host,
+        .writeFn = BufferHost.writeCompatJsTrace,
+    };
+    trace.emit("JS実行", "eval", "compat-js-attempt", null, 0x0000000100000001);
+    trace.emit("JS実行", "eval", "compat-js-result", "success", 0x0000000100000001);
+    trace.emit("JSオブジェクト取得", "lookup", "compat-js-attempt", null, 0x0000000100000003);
+    trace.emit("JSオブジェクト取得", "lookup", "compat-js-result", "success", 0x0000000100000003);
+    trace.emit("JS関数実行", "call", "compat-js-attempt", null, 0x0000000100000006);
+    trace.emit("JS関数実行", "call", "compat-js-result", "success", 0x0000000100000006);
+    trace.emit("JSメソッド実行", "method-call", "compat-js-attempt", null, 0x0000000100000008);
+    trace.emit("JSメソッド実行", "method-call", "compat-js-result", "success", 0x0000000100000008);
+    trace.finish();
+    try std.testing.expect(std.mem.indexOf(u8, host.compat_js_trace.items, "\"operation\":\"eval\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, host.compat_js_trace.items, "\"operation\":\"lookup\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, host.compat_js_trace.items, "\"operation\":\"call\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, host.compat_js_trace.items, "\"operation\":\"method-call\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, host.compat_js_trace.items, "\"phase\":\"trace-end\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, host.compat_js_trace.items, "\"source\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, host.compat_js_trace.items, "\"args\"") == null);
 }
 
 test "global read/write traceは実行順とbuiltin dispatch traceから分離される" {

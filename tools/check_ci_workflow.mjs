@@ -15,6 +15,7 @@ const dispatchSecurityScript = await readFile(resolve(root, "tools/check_dispatc
 const dispatchAuditsScript = await readFile(resolve(root, "tools/check_dispatch_audits_parallel.mjs"), "utf8");
 const aotSuiteScript = await readFile(resolve(root, "tools/check_aot_suite_parallel.mjs"), "utf8");
 const nativeOracleScript = await readFile(resolve(root, "tools/compare_native_oracle.mjs"), "utf8");
+const compatJsEvidenceScript = await readFile(resolve(root, "tools/check_compat_js_evidence.mjs"), "utf8");
 const trackedAttestationChecker = await readFile(resolve(root, "tools/check_tracked_dispatch_attestation.mjs"), "utf8");
 const syncEvidence = await readFile(resolve(root, "tools/sync_compat_evidence.mjs"), "utf8");
 const verifyAttestation = await readFile(resolve(root, "tools/verify_dispatch_attestation.mjs"), "utf8");
@@ -241,6 +242,12 @@ if (!httpAotScript.includes("if (!noBuild) buildLnako();") || !httpAotScript.inc
 if (!dispatchSecurityScript.includes("tests/fixtures/dispatch-security.nako3") || !dispatchSecurityScript.includes("assertExistingManifestPreserved") ||
     !dispatchSecurityScript.includes("assertFailedManifestRemoved") || !dispatchSecurityScript.includes("assertRepeatedSite")) {
   throw new Error("AOT dispatch securityのtiny fixture実装または不変条件検査が不完全です");
+}
+if (!compatJsEvidenceScript.includes('schema: "lnako.compat-js-evidence.v1"') ||
+    !compatJsEvidenceScript.includes("only successful direct root sites select catalog evidence") ||
+    !compatJsEvidenceScript.includes("--evidence-output") ||
+    !workflow.includes("node tools/check_compat_js_evidence.mjs --no-build")) {
+  throw new Error("compat-js専用実行証拠のschema、direct site選択、またはCI検査が不完全です");
 }
 if (!dispatchAuditsScript.includes('"check_dispatch_trace.mjs"') || !dispatchAuditsScript.includes('"check_dispatch_coverage.mjs"') ||
     !dispatchAuditsScript.includes('"--no-build"') || !dispatchAuditsScript.includes("Promise.all") ||

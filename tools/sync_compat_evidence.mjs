@@ -14,6 +14,8 @@ const evidencePath = resolve(root, "compat/v3.7.24/evidence.json");
 const dispatchEvidencePath = resolve(root, "compat/v3.7.24/dispatch-evidence.json");
 const dispatchCoverageEvidencePath = resolve(root, "compat/v3.7.24/dispatch-coverage-evidence.json");
 const expectedExitEvidencePath = resolve(root, "compat/v3.7.24/expected-exit-evidence.json");
+const compatJsCasesPath = resolve(root, "tests/oracle/compat-js-cases.json");
+const compatJsEvidencePath = resolve(root, "compat/v3.7.24/compat-js-evidence.json");
 const globalBindingEvidenceInputs = [
   {
     path: resolve(root, "compat/v3.7.24/global-binding-evidence.json"),
@@ -186,6 +188,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "compat/v3.7.24/static-promise-reject-constant-evidence.json",
   "compat/v3.7.24/static-caniuse-agents-constant-evidence.json",
   "compat/v3.7.24/static-node-http-initial-constant-evidence.json",
+  "compat/v3.7.24/compat-js-evidence.json",
   "compat/v3.7.24/matrix.json",
   "compat/v3.7.24/standard-cnako.json",
   "compat/v3.7.24/evidence.json",
@@ -203,6 +206,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "tools/check_static_constant_evidence.mjs",
   "tools/check_global_binding_evidence.mjs",
   "tools/check_node_exit_evidence.mjs",
+  "tools/check_compat_js_evidence.mjs",
   "docs/UNVERIFIED_EVIDENCE_PLAN.md",
   "tools/sync_compat_evidence.mjs",
 ]);
@@ -240,12 +244,13 @@ if (historicalCommit !== null && (!arguments_.includes("--dispatch-evidence") ||
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
 
-const [lock, catalog, matrix, standard, implemented] = await Promise.all([
+const [lock, catalog, matrix, standard, implemented, compatJsCases] = await Promise.all([
   readJson(lockPath),
   readJson(catalogPath),
   readJson(matrixPath),
   readJson(standardPath),
   readJson(implementationPath),
+  readJson(compatJsCasesPath),
 ]);
 const catalogSourceSha256 = createHash("sha256").update(await readFile(catalogPath)).digest("hex");
 
@@ -265,6 +270,8 @@ const dispatchCoverageEvidenceBytes = await readFile(dispatchCoverageEvidencePat
 const dispatchCoverageEvidence = JSON.parse(dispatchCoverageEvidenceBytes.toString("utf8"));
 const expectedExitEvidenceBytes = await readFile(expectedExitEvidencePath);
 const expectedExitEvidence = JSON.parse(expectedExitEvidenceBytes.toString("utf8"));
+const compatJsEvidenceBytes = await readFile(compatJsEvidencePath);
+const compatJsEvidence = JSON.parse(compatJsEvidenceBytes.toString("utf8"));
 const dispatchCoverageAuditScriptSha256 = createHash("sha256")
   .update(await readFile(resolve(root, "tools/check_dispatch_coverage.mjs")))
   .digest("hex");
@@ -284,6 +291,7 @@ const dispatchEvidence = suppliedAttestation === null
 validateDispatchEvidence(dispatchEvidence, lock, standard, records, dispatchEvidenceInputSha256, dispatchEvidenceInputPath, attestationBundlePath, attestationBundleBytes, historicalCommit);
 validateDispatchCoverageEvidence(dispatchCoverageEvidence, lock, standard, records, dispatchCoverageAuditScriptSha256);
 validateExpectedExitEvidence(expectedExitEvidence, lock, standard, records);
+validateCompatJsEvidence(compatJsEvidence, lock, standard, compatJsCases, records);
 for (const input of staticConstantEvidenceRecords) validateStaticConstantEvidence(input.evidence, lock, standard, records, input);
 for (const input of globalBindingEvidenceRecords) validateGlobalBindingEvidence(input.evidence, lock, standard, records, input);
 const dispatchEvidenceByCatalogId = new Map();
@@ -302,6 +310,17 @@ const expectedExitEvidenceByCatalogId = new Map();
 for (const entry of expectedExitEvidence.entries) {
   if (expectedExitEvidenceByCatalogId.has(entry.catalogId)) throw new Error(`expected-exit証拠のcatalog IDが重複しています: ${entry.catalogId}`);
   expectedExitEvidenceByCatalogId.set(entry.catalogId, entry);
+}
+const compatJsEvidenceByCatalogId = new Map();
+const compatJsProofByCatalogId = new Map();
+for (const entry of compatJsEvidence.entries) {
+  if (compatJsEvidenceByCatalogId.has(entry.catalogId)) throw new Error(`compat-js証拠のcatalog IDが重複しています: ${entry.catalogId}`);
+  compatJsEvidenceByCatalogId.set(entry.catalogId, entry);
+  compatJsProofByCatalogId.set(entry.catalogId, {
+    schema: compatJsEvidence.schema,
+    fixture: { id: "compat-js-evidence", file: "compat/v3.7.24/compat-js-evidence.json" },
+    officialComparison: compatJsEvidence.officialComparison,
+  });
 }
 const dispatchFixtureRecord = records.find((record) => record.id === "native-dispatch-commands");
 const dispatchCatalogIds = dispatchFixtureRecord?.catalogIds ?? new Map();
@@ -372,11 +391,12 @@ const entries = standard.commands.map((command) => {
   const dispatchCoverageSites = dispatchCoverageEvidenceByCatalogId.get(command.id) ?? [];
   const staticConstantSites = staticConstantEvidenceByCatalogId.get(command.id) ?? [];
   const globalBindingSites = globalBindingEvidenceByCatalogId.get(command.id) ?? [];
+  const compatJsSites = compatJsEvidenceByCatalogId.get(command.id)?.sites ?? [];
   const explicitlyMappedDispatch = dispatchCatalogIds.get(command.name) === command.id ||
     dispatchCoverageSites.some((site) => site.resolution === "explicit-catalog-id");
   const expectedExitProof = expectedExitEvidenceByCatalogId.get(command.id) ?? null;
   const identityResolution = duplicateNames.has(command.name)
-    ? staticConstantSites.length > 0 || globalBindingSites.length > 0 || expectedExitProof !== null || explicitlyMappedDispatch ? "explicit-catalog-id" : "ambiguous-name"
+    ? staticConstantSites.length > 0 || globalBindingSites.length > 0 || expectedExitProof !== null || compatJsSites.length > 0 || explicitlyMappedDispatch ? "explicit-catalog-id" : "ambiguous-name"
     : "unique-name";
   const selectedProof = new Set(["unique-name", "explicit-catalog-id"]).has(identityResolution) && dispatchSites.length > 0
     ? { kind: "dispatch", schema: dispatchEvidence.schema, fixture: dispatchEvidence.fixture, officialComparison: dispatchEvidence.officialComparison, sites: dispatchSites }
@@ -394,6 +414,8 @@ const entries = standard.commands.map((command) => {
               officialComparison: { routes: ["officialSource", "lnakoRun", "lnakoNativeO0"] },
               sites: dispatchCoverageSites,
             }
+          : compatJsSites.length > 0
+            ? { kind: "compat-js", ...compatJsProofByCatalogId.get(command.id), sites: compatJsSites }
           : null;
   const executionSites = selectedProof?.sites ?? [];
   const executionEvidenceState = selectedProof === null
@@ -433,7 +455,7 @@ const entries = standard.commands.map((command) => {
       ? {
           proofSchema: selectedProof.schema,
           fixtureId: selectedProof.fixture.id,
-          siteIds: executionSites.map((site) => selectedProof.kind === "coverage" ? coverageSiteKey(site) : site.siteId).sort(),
+          siteIds: executionSites.map((site) => selectedProof.kind === "coverage" ? coverageSiteKey(site) : selectedProof.kind === "compat-js" ? `${site.fixtureId}/${site.siteId}` : site.siteId).sort(),
           officialComparison: selectedProof.officialComparison.routes,
           state: executionEvidenceState,
         }
@@ -472,7 +494,7 @@ if (mode === "--generate") {
 } else {
   const actual = await readFile(evidenceOutputPath, "utf8");
   if (actual !== expected) throw new Error(`カタログ証拠レイヤーが最新ではありません: ${evidenceOutputPath}`);
-  validateEvidence(JSON.parse(actual), lock, catalogSourceSha256, nativeFixtureIds, aotFixtureIds, compatJsFixtureIds, standard, matrix, dispatchEvidenceByCatalogId, dispatchCoverageEvidenceByCatalogId, staticConstantEvidenceByCatalogId, globalBindingEvidenceByCatalogId, globalBindingProofByCatalogId, expectedExitEvidenceByCatalogId);
+  validateEvidence(JSON.parse(actual), lock, catalogSourceSha256, nativeFixtureIds, aotFixtureIds, compatJsFixtureIds, standard, matrix, dispatchEvidenceByCatalogId, dispatchCoverageEvidenceByCatalogId, staticConstantEvidenceByCatalogId, globalBindingEvidenceByCatalogId, globalBindingProofByCatalogId, expectedExitEvidenceByCatalogId, compatJsEvidenceByCatalogId);
   console.log(`カタログ証拠レイヤーを検証しました: ${entries.length}件（同名異plugin ${evidence.duplicateNameCount * 2} entry、verified ${evidence.executionEvidenceStates.verified}件 / trace-confirmed-unattested ${evidence.executionEvidenceStates["trace-confirmed-unattested"]}件 / unverified ${evidence.executionEvidenceStates.unverified}件）`);
 }
 
@@ -492,11 +514,16 @@ async function readFixtureRecords() {
             : [];
     for (const fixture of fixtures) {
       if (typeof fixture?.id !== "string" || fixture.id.length === 0) continue;
+      const sourceSha256 = typeof fixture.source === "string"
+        ? createHash("sha256").update(fixture.source).digest("hex")
+        : file === "compat-js-cases.json" && typeof fixture.fixture === "string"
+          ? createHash("sha256").update(await readFile(resolve(root, "tests/fixtures", fixture.fixture))).digest("hex")
+          : null;
       const record = {
         id: fixture.id,
         file,
         aot: file === "native-cases.json" || fixture.aot === true,
-        sourceSha256: typeof fixture.source === "string" ? createHash("sha256").update(fixture.source).digest("hex") : null,
+        sourceSha256,
         catalogIds: readFixtureCatalogIds(fixture, file),
         expectedDispatchRoute: fixture.expectedDispatchRoute ?? null,
         officialSourceStderrIncludes: fixture.officialSourceStderrIncludes ?? null,
@@ -1500,7 +1527,110 @@ function validateExpectedExitTraceSummary(trace, entry, label) {
   }
 }
 
-function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, aotFixtureIds, compatJsFixtureIds, standard, matrix, dispatchEvidenceByCatalogId, dispatchCoverageEvidenceByCatalogId, staticConstantEvidenceByCatalogId, globalBindingEvidenceByCatalogId, globalBindingProofByCatalogId, expectedExitEvidenceByCatalogId) {
+function validateCompatJsEvidence(evidence, lock, standard, cases, records) {
+  rejectForbiddenEvidenceFields(evidence, "compat-js-evidence");
+  assertKnownObjectKeys(evidence, ["schema", "generator", "baseline", "scope", "officialComparison", "attestation", "provenance", "entries"], "compat-js-evidence");
+  if (evidence.schema !== "lnako.compat-js-evidence.v1" || evidence.generator !== "tools/check_compat_js_evidence.mjs") throw new Error("compat-js証拠のschemaまたは生成元が不正です");
+  assertKnownObjectKeys(evidence.baseline, ["tag", "commit"], "compat-js-evidence.baseline");
+  if (evidence.baseline.tag !== lock.nadesiko3.tag || evidence.baseline.commit !== lock.nadesiko3.commit) throw new Error("compat-js証拠のbaselineがupstream.lock.jsonと一致しません");
+
+  const operationByName = new Map([
+    ["JS実行", "eval"],
+    ["JSオブジェクト取得", "lookup"],
+    ["JS関数実行", "call"],
+    ["JSメソッド実行", "method-call"],
+  ]);
+  const expectedCommands = standard.commands.filter((command) => command.plannedMode === "compat-js");
+  const expectedNames = expectedCommands.map((command) => command.name).sort();
+  assertKnownObjectKeys(evidence.scope, ["catalogEntries", "operations", "fixtureSelection", "caseCount", "successCaseCount", "expectedFailureCaseCount", "selectedProofCaseIds", "commandNames", "nativeDispatchEvidenceSeparate"], "compat-js-evidence.scope");
+  if (evidence.scope.catalogEntries !== expectedCommands.length || JSON.stringify(evidence.scope.operations) !== JSON.stringify(["eval", "lookup", "call", "method-call"]) || JSON.stringify(evidence.scope.commandNames) !== JSON.stringify(expectedNames) || evidence.scope.caseCount !== cases.length || evidence.scope.successCaseCount + evidence.scope.expectedFailureCaseCount !== cases.length || !Array.isArray(evidence.scope.selectedProofCaseIds) || evidence.scope.nativeDispatchEvidenceSeparate !== true) throw new Error("compat-js証拠のscopeが不正です");
+  if (evidence.attestation !== null) throw new Error("compat-js証拠のattestationは未対応です");
+
+  const recordById = new Map(records.filter((record) => record.file === "compat-js-cases.json").map((record) => [record.id, record]));
+  const caseById = new Map(cases.map((testCase) => [testCase.id, testCase]));
+  const comparison = evidence.officialComparison;
+  assertKnownObjectKeys(comparison, ["oracle", "routes", "equivalent", "comparisonRule", "cases"], "compat-js-evidence.officialComparison");
+  if (comparison.oracle !== "official-source" || JSON.stringify(comparison.routes) !== JSON.stringify(["officialSource", "lnakoCompatJs"]) || comparison.equivalent !== true || typeof comparison.comparisonRule !== "string" || !Array.isArray(comparison.cases) || comparison.cases.length !== cases.length) throw new Error("compat-js公式比較のrouteまたはcase数が不正です");
+  const comparisonIds = new Set();
+  const proofCaseIds = [];
+  for (const item of comparison.cases) {
+    assertKnownObjectKeys(item, ["id", "fixture", "expectedFailure", "equivalent", "results", "trace"], "compat-js-evidence.case");
+    const expected = caseById.get(item.id);
+    const record = recordById.get(item.id);
+    if (expected === undefined || record === undefined || comparisonIds.has(item.id) || item.fixture.file !== expected.fixture || item.fixture.sourceSha256 !== record.sourceSha256 || item.expectedFailure !== (expected.expectedFailure === true) || item.equivalent !== true) throw new Error(`compat-js証拠caseのidentityが不正です: ${item.id}`);
+    comparisonIds.add(item.id);
+    if (!hashPattern.test(item.fixture.sourceSha256)) throw new Error(`compat-js証拠caseのsource SHA-256が不正です: ${item.id}`);
+    validateCompatJsRouteResults(item.results, item.expectedFailure, item.id);
+    if (item.expectedFailure) {
+      if (item.trace !== null) throw new Error(`compat-js期待失敗caseにtraceがあります: ${item.id}`);
+    } else {
+      validateCompatJsTraceSummary(item.trace, item.id, operationByName);
+      if (item.trace.operations.length > 0) proofCaseIds.push(item.id);
+    }
+  }
+  if (comparisonIds.size !== cases.length || JSON.stringify(evidence.scope.selectedProofCaseIds) !== JSON.stringify(proofCaseIds)) throw new Error("compat-js証拠case集合またはselected proofが不一致です");
+
+  assertKnownObjectKeys(evidence.provenance, ["environment", "oracle", "lnako", "raw"], "compat-js-evidence.provenance");
+  assertKnownObjectKeys(evidence.provenance.environment, ["platform", "arch", "node"], "compat-js-evidence.provenance.environment");
+  assertKnownObjectKeys(evidence.provenance.oracle, ["build", "archiveSha256", "cliSha256", "markerSha256", "treeHashAlgorithm", "treeSha256"], "compat-js-evidence.provenance.oracle");
+  assertKnownObjectKeys(evidence.provenance.lnako, ["binarySha256", "commit", "dirty"], "compat-js-evidence.provenance.lnako");
+  assertKnownObjectKeys(evidence.provenance.raw, ["traceSha256ByCase"], "compat-js-evidence.provenance.raw");
+  const environment = evidence.provenance.environment;
+  const oracle = evidence.provenance.oracle;
+  const lnako = evidence.provenance.lnako;
+  const platformKey = `${environment.platform}-${environment.arch}`;
+  if (![environment.platform, environment.arch, environment.node].every((value) => typeof value === "string" && value.length > 0) || !Number.isSafeInteger(oracle.build) || oracle.build !== lock.nadesiko3.oracleIdentity?.build || oracle.archiveSha256 !== lock.nadesiko3.archive.sha256 || oracle.cliSha256 !== lock.nadesiko3.oracleIdentity?.cliSha256 || oracle.markerSha256 !== lock.nadesiko3.oracleIdentity?.markerSha256 || oracle.treeHashAlgorithm !== lock.nadesiko3.oracleIdentity?.treeHashAlgorithm || oracle.treeSha256 !== lock.nadesiko3.oracleIdentity?.treeSha256ByPlatform?.[platformKey] || !hashPattern.test(oracle.archiveSha256) || !hashPattern.test(oracle.cliSha256) || !hashPattern.test(oracle.markerSha256) || !hashPattern.test(oracle.treeSha256) || !hashPattern.test(lnako.binarySha256) || !/^[0-9a-f]{40}$/i.test(lnako.commit) || lnako.dirty !== false) throw new Error("compat-js証拠のprovenanceが不正です");
+  const expectedTraceCaseIds = cases.filter((testCase) => testCase.expectedFailure !== true).map((testCase) => testCase.id).sort();
+  const actualTraceCaseIds = Object.keys(evidence.provenance.raw.traceSha256ByCase).sort();
+  if (JSON.stringify(expectedTraceCaseIds) !== JSON.stringify(actualTraceCaseIds) || Object.values(evidence.provenance.raw.traceSha256ByCase).some((hash) => !hashPattern.test(hash))) throw new Error("compat-js証拠のraw trace SHA-256集合が不正です");
+  const currentGit = readGitState();
+  if (lnako.commit !== currentGit.commit && !isAllowedDispatchEvidenceFollowUp(lnako.commit, currentGit.commit)) throw new Error("cleanなcompat-js証拠のlnako commitが現行HEADと一致しません");
+
+  const commandById = new Map(expectedCommands.map((command) => [command.id, command]));
+  if (!Array.isArray(evidence.entries) || evidence.entries.length !== expectedCommands.length) throw new Error("compat-js証拠のentry数が不正です");
+  const entryIds = new Set();
+  for (const entry of evidence.entries) {
+    assertKnownObjectKeys(entry, ["catalogId", "name", "plugin", "operation", "fixtureIds", "sites", "runtime", "officialEquivalent"], "compat-js-evidence.entry");
+    const command = commandById.get(entry.catalogId);
+    if (command === undefined || entry.name !== command.name || entry.plugin !== command.plugin || entry.operation !== operationByName.get(command.name) || entryIds.has(entry.catalogId) || entry.officialEquivalent !== true || !Array.isArray(entry.fixtureIds) || !Array.isArray(entry.sites) || entry.sites.length === 0) throw new Error(`compat-js証拠entryのidentityが不正です: ${entry.catalogId}`);
+    entryIds.add(entry.catalogId);
+    assertKnownObjectKeys(entry.runtime, ["interpreter"], "compat-js-evidence.entry.runtime");
+    assertKnownObjectKeys(entry.runtime.interpreter, ["attemptCount", "resultCount", "success"], "compat-js-evidence.entry.runtime.interpreter");
+    if (entry.runtime.interpreter.attemptCount !== entry.sites.length || entry.runtime.interpreter.resultCount !== entry.sites.length || entry.runtime.interpreter.success !== true || JSON.stringify(entry.fixtureIds) !== JSON.stringify([...new Set(entry.sites.map((site) => site.fixtureId))].sort())) throw new Error(`compat-js証拠entryのruntimeが不正です: ${entry.catalogId}`);
+    const siteKeys = new Set();
+    for (const site of entry.sites) {
+      assertKnownObjectKeys(site, ["fixtureId", "siteId", "command", "operation", "runtime", "officialEquivalent"], "compat-js-evidence.site");
+      assertKnownObjectKeys(site.runtime, ["interpreter"], "compat-js-evidence.site.runtime");
+      assertKnownObjectKeys(site.runtime.interpreter, ["attemptCount", "resultCount", "success"], "compat-js-evidence.site.runtime.interpreter");
+      const key = `${site.fixtureId}/${site.siteId}`;
+      if (!caseById.has(site.fixtureId) || !siteIdPattern.test(site.siteId) || site.command !== entry.name || site.operation !== entry.operation || siteKeys.has(key) || site.officialEquivalent !== true || site.runtime.interpreter.attemptCount !== 1 || site.runtime.interpreter.resultCount !== 1 || site.runtime.interpreter.success !== true) throw new Error(`compat-js証拠siteが不正です: ${entry.catalogId}/${key}`);
+      siteKeys.add(key);
+    }
+  }
+  if (entryIds.size !== expectedCommands.length) throw new Error("compat-js証拠のentry集合が不一致です");
+}
+
+function validateCompatJsRouteResults(results, expectedFailure, caseId) {
+  assertKnownObjectKeys(results, ["officialSource", "lnakoCompatJs"], `compat-js-evidence.case.${caseId}.results`);
+  for (const [route, result] of Object.entries(results)) {
+    assertKnownObjectKeys(result, ["status", "signal", "stdoutSha256", "stderrSha256", "failed"], `compat-js-evidence.case.${caseId}.results.${route}`);
+    if ((typeof result.status !== "number" && result.status !== null) || (result.signal !== null && typeof result.signal !== "string") || !hashPattern.test(result.stdoutSha256) || !hashPattern.test(result.stderrSha256) || result.failed !== expectedFailure) throw new Error(`compat-js証拠のresultが不正です: ${caseId}/${route}`);
+  }
+  const official = results.officialSource;
+  const actual = results.lnakoCompatJs;
+  if (!expectedFailure && (official.status !== 0 || actual.status !== 0 || official.signal !== null || actual.signal !== null || official.stdoutSha256 !== actual.stdoutSha256)) throw new Error(`compat-js証拠の公式比較が不一致です: ${caseId}`);
+}
+
+function validateCompatJsTraceSummary(trace, caseId, operationByName) {
+  assertKnownObjectKeys(trace, ["schema", "eventCount", "operations"], `compat-js-evidence.case.${caseId}.trace`);
+  if (trace.schema !== 1 || !Number.isSafeInteger(trace.eventCount) || trace.eventCount < 1 || !Array.isArray(trace.operations)) throw new Error(`compat-js証拠のtrace summaryが不正です: ${caseId}`);
+  for (const operation of trace.operations) {
+    assertKnownObjectKeys(operation, ["siteId", "command", "operation", "attemptCount", "resultCount", "result"], `compat-js-evidence.case.${caseId}.operation`);
+    if (!siteIdPattern.test(operation.siteId) || !operationByName.has(operation.command) || operationByName.get(operation.command) !== operation.operation || operation.attemptCount !== 1 || operation.resultCount !== 1 || operation.result !== "success") throw new Error(`compat-js証拠のtrace operationが不正です: ${caseId}/${operation.siteId}`);
+  }
+}
+
+function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, aotFixtureIds, compatJsFixtureIds, standard, matrix, dispatchEvidenceByCatalogId, dispatchCoverageEvidenceByCatalogId, staticConstantEvidenceByCatalogId, globalBindingEvidenceByCatalogId, globalBindingProofByCatalogId, expectedExitEvidenceByCatalogId, compatJsEvidenceByCatalogId) {
   rejectForbiddenEvidenceFields(actual);
   assertKnownObjectKeys(actual, ["schemaVersion", "baseline", "sourceSha256", "commandCount", "duplicateNameCount", "fixtureInventory", "fixtureCoverageStates", "executionEvidenceStates", "entries"], "evidence");
   assertKnownObjectKeys(actual.baseline, ["tag", "commit"], "evidence.baseline");
@@ -1527,8 +1657,9 @@ function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, a
     const hasDispatchProof = (dispatchEvidenceByCatalogId.get(entry.id) ?? []).length > 0 || (dispatchCoverageEvidenceByCatalogId.get(entry.id) ?? []).length > 0;
     const hasGlobalBindingProof = (globalBindingEvidenceByCatalogId.get(entry.id) ?? []).length > 0;
     const hasExpectedExitProof = expectedExitEvidenceByCatalogId.has(entry.id);
+    const hasCompatJsProof = (compatJsEvidenceByCatalogId.get(entry.id)?.sites ?? []).length > 0;
     const expectedIdentity = duplicateNames.has(entry.name)
-      ? hasStaticConstantProof || hasDispatchProof || hasGlobalBindingProof || hasExpectedExitProof ? "explicit-catalog-id" : "ambiguous-name"
+      ? hasStaticConstantProof || hasDispatchProof || hasGlobalBindingProof || hasExpectedExitProof || hasCompatJsProof ? "explicit-catalog-id" : "ambiguous-name"
       : "unique-name";
     if (entry.identityResolution !== expectedIdentity) throw new Error(`identityResolutionが不一致です: ${entry.id}`);
     if (entry.interpreterFixtureIds.some((id) => nativeFixtureIds.has(id) || compatJsFixtureIds.has(id))) throw new Error(`interpreterFixtureIdsにAOTまたはcompat-js IDがあります: ${entry.id}`);
@@ -1550,6 +1681,7 @@ function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, a
       const isStaticConstantProof = proof?.proofSchema === "lnako.static-constant-evidence.v2";
       const isGlobalBindingProof = proof?.proofSchema === "lnako.global-binding-evidence.v1" || proof?.proofSchema === "lnako.global-binding-evidence.v2";
       const isExpectedExitProof = proof?.proofSchema === "lnako.expected-exit-evidence.v1";
+      const isCompatJsProof = proof?.proofSchema === "lnako.compat-js-evidence.v1";
       const proofSites = isDispatchProof
         ? dispatchEvidenceByCatalogId.get(entry.id) ?? []
         : isDispatchCoverageProof
@@ -1560,25 +1692,30 @@ function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, a
           ? globalBindingEvidenceByCatalogId.get(entry.id) ?? []
         : isExpectedExitProof
           ? expectedExitEvidenceByCatalogId.has(entry.id) ? [expectedExitEvidenceByCatalogId.get(entry.id).site] : []
+        : isCompatJsProof
+          ? compatJsEvidenceByCatalogId.get(entry.id)?.sites ?? []
           : [];
-      const expectedSiteIds = proofSites.map((site) => isDispatchCoverageProof ? coverageSiteKey(site) : site.siteId).sort();
+      const expectedSiteIds = proofSites.map((site) => isDispatchCoverageProof ? coverageSiteKey(site) : isCompatJsProof ? `${site.fixtureId}/${site.siteId}` : site.siteId).sort();
       const validStaticState = isStaticConstantProof && entry.executionEvidenceState === "trace-confirmed-unattested" && entry.status === "native" && matrix.entries.find((candidate) => candidate.id === entry.id)?.type === "定数";
       const validGlobalBindingState = isGlobalBindingProof && entry.executionEvidenceState === "trace-confirmed-unattested" && entry.status === "native" && hasGlobalBindingProof;
       const validExpectedExitState = isExpectedExitProof && entry.executionEvidenceState === "trace-confirmed-unattested" && entry.status === "native" && hasExpectedExitProof;
+      const validCompatJsState = isCompatJsProof && entry.executionEvidenceState === "trace-confirmed-unattested" && entry.status === "compat-js" && hasCompatJsProof;
       const validDispatchState = isDispatchProof && ["verified", "trace-confirmed-unattested"].includes(entry.executionEvidenceState);
       const validDispatchCoverageState = isDispatchCoverageProof && entry.executionEvidenceState === "trace-confirmed-unattested" && entry.status === "native";
-      if (!new Set(["unique-name", "explicit-catalog-id"]).has(entry.identityResolution) || (!validDispatchState && !validDispatchCoverageState && !validStaticState && !validGlobalBindingState && !validExpectedExitState) ||
+      if (!new Set(["unique-name", "explicit-catalog-id"]).has(entry.identityResolution) || (!validDispatchState && !validDispatchCoverageState && !validStaticState && !validGlobalBindingState && !validExpectedExitState && !validCompatJsState) ||
           (isDispatchProof && proof.fixtureId !== "native-dispatch-commands") ||
           (isDispatchCoverageProof && proof.fixtureId !== "dispatch-coverage") ||
           (isStaticConstantProof && !staticConstantFixtureIds.has(proof.fixtureId)) ||
           (isGlobalBindingProof && proof.fixtureId !== globalBindingProofByCatalogId.get(entry.id)?.fixture.id) ||
           (isExpectedExitProof && proof.fixtureId !== "node-exit-evidence") ||
+          (isCompatJsProof && proof.fixtureId !== "compat-js-evidence") ||
           proof.state !== entry.executionEvidenceState || !Array.isArray(proof.siteIds) || proof.siteIds.length === 0 || JSON.stringify(proof.siteIds) !== JSON.stringify(expectedSiteIds) ||
           !Array.isArray(proof.officialComparison) || proof.officialComparison.length === 0 ||
           (isDispatchCoverageProof && JSON.stringify(proof.officialComparison) !== JSON.stringify(["officialSource", "lnakoRun", "lnakoNativeO0"])) ||
           (isGlobalBindingProof && JSON.stringify(proof.officialComparison) !== JSON.stringify(["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0"])) ||
-          (isExpectedExitProof && JSON.stringify(proof.officialComparison) !== JSON.stringify(["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0", "lnakoNativeO1", "lnakoNativeO2", "lnakoNativeO3"]))) {
-        throw new Error(`dispatch証拠付きentryが不正です: ${entry.id}`);
+          (isExpectedExitProof && JSON.stringify(proof.officialComparison) !== JSON.stringify(["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0", "lnakoNativeO1", "lnakoNativeO2", "lnakoNativeO3"])) ||
+          (isCompatJsProof && JSON.stringify(proof.officialComparison) !== JSON.stringify(["officialSource", "lnakoCompatJs"]))) {
+        throw new Error(`実行証拠付きentryが不正です: ${entry.id}`);
       }
     } else if (entry.executionEvidence !== null) {
       throw new Error(`unverified entryにdispatch証拠があります: ${entry.id}`);
