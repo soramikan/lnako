@@ -299,16 +299,18 @@ fn parseQuery(runtime: *Runtime, target: []const u8) !Value {
     try roots.protect(&result);
     try common.dictionarySetUtf8(runtime, result.dictionary, "?URL", try runtime.stringUtf8(pathOnly(target)));
     const marker = std.mem.indexOfScalar(u8, target, '?') orelse return result;
-    var pairs = std.mem.splitScalar(u8, target[marker + 1 ..], '&');
+    const query_source = target[marker + 1 ..];
+    const query_end = std.mem.indexOfScalar(u8, query_source, '?') orelse query_source.len;
+    var pairs = std.mem.splitScalar(u8, query_source[0..query_end], '&');
     while (pairs.next()) |pair| {
         const equal = std.mem.indexOfScalar(u8, pair, '=');
-        const key = try percentDecode(runtime.allocator(), if (equal) |index| pair[0..index] else pair, false);
+        const key = try percentDecode(runtime.allocator(), if (equal) |index| pair[0..index] else pair, false, true);
         defer runtime.allocator().free(key);
         const value_source = if (equal) |index| blk: {
             const rest = pair[index + 1 ..];
             break :blk rest[0 .. std.mem.indexOfScalar(u8, rest, '=') orelse rest.len];
         } else "undefined";
-        const value = try percentDecode(runtime.allocator(), value_source, false);
+        const value = try percentDecode(runtime.allocator(), value_source, false, true);
         defer runtime.allocator().free(value);
         try common.dictionarySetUtf8(runtime, result.dictionary, key, try runtime.stringUtf8(value));
     }
@@ -338,9 +340,9 @@ fn parseUrlEncoded(runtime: *Runtime, body: []const u8) !Value {
     var pairs = std.mem.splitScalar(u8, body, '&');
     while (pairs.next()) |pair| {
         const equal = std.mem.indexOfScalar(u8, pair, '=');
-        const key = try percentDecode(runtime.allocator(), if (equal) |index| pair[0..index] else pair, true);
+        const key = try percentDecode(runtime.allocator(), if (equal) |index| pair[0..index] else pair, true, false);
         defer runtime.allocator().free(key);
-        const value = try percentDecode(runtime.allocator(), if (equal) |index| pair[index + 1 ..] else "", true);
+        const value = try percentDecode(runtime.allocator(), if (equal) |index| pair[index + 1 ..] else "", true, false);
         defer runtime.allocator().free(value);
         try common.dictionarySetUtf8(runtime, result.dictionary, key, try runtime.stringUtf8Lossy(value));
     }
@@ -404,13 +406,14 @@ fn dispositionParameter(disposition: []const u8, expected: []const u8) ?[]const 
     return null;
 }
 
-fn percentDecode(allocator: std.mem.Allocator, source: []const u8, plus_as_space: bool) ![]u8 {
+fn percentDecode(allocator: std.mem.Allocator, source: []const u8, plus_as_space: bool, strict: bool) ![]u8 {
     var result: std.ArrayList(u8) = .empty;
     errdefer result.deinit(allocator);
     var index: usize = 0;
     while (index < source.len) {
         if (source[index] == '%' and index + 2 < source.len) {
             const byte = std.fmt.parseInt(u8, source[index + 1 .. index + 3], 16) catch {
+                if (strict) return error.InvalidHttpQueryEncoding;
                 try result.append(allocator, source[index]);
                 index += 1;
                 continue;
@@ -418,11 +421,17 @@ fn percentDecode(allocator: std.mem.Allocator, source: []const u8, plus_as_space
             try result.append(allocator, byte);
             index += 3;
         } else {
+            if (strict and source[index] == '%') return error.InvalidHttpQueryEncoding;
             try result.append(allocator, if (plus_as_space and source[index] == '+') ' ' else source[index]);
             index += 1;
         }
     }
-    return result.toOwnedSlice(allocator);
+    const decoded = try result.toOwnedSlice(allocator);
+    if (strict and !std.unicode.utf8ValidateSlice(decoded)) {
+        allocator.free(decoded);
+        return error.InvalidHttpQueryEncoding;
+    }
+    return decoded;
 }
 
 fn serveStatic(runtime: *Runtime, context: Context, route: Route, path: []const u8) !void {
@@ -510,6 +519,28 @@ test "URLのクエリは重複キーと余分な区切りを公式splitどおり
     try std.testing.expectEqualStrings("undefined", flag);
     try std.testing.expectEqualStrings("a", raw);
     try std.testing.expectEqualStrings("", empty);
+}
+
+test "URLのクエリは2個目以降の疑問符を公式splitどおり無視する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var result = try parseQuery(&runtime, "/a?x=1?ignored=2");
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&result);
+    const x = try dictionaryUtf8(&runtime, result.dictionary, "x");
+    defer runtime.allocator().free(x);
+    try std.testing.expectEqualStrings("1", x);
+    try std.testing.expectError(error.MissingDictionaryKey, dictionaryUtf8(&runtime, result.dictionary, "ignored"));
+}
+
+test "URLのクエリの不正percent encodingはURI malformedへ変換する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    for ([_][]const u8{ "/a?x=%", "/a?x=%2", "/a?x=%GG", "/a?x=%FF", "/a?x=%C3%28" }) |target| {
+        try std.testing.expectError(error.InvalidHttpQueryEncoding, parseQuery(&runtime, target));
+        runtime.clearFailureMessage();
+    }
 }
 
 fn dictionaryUtf8(runtime: *Runtime, dictionary: *value_mod.Dictionary, expected: []const u8) ![]const u8 {

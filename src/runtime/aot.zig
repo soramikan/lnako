@@ -6387,16 +6387,18 @@ fn aotHttpParseQuery(runtime: *Runtime, target: []const u8) !Value {
     defer runtime.popRoots(&frame);
     try aotHttpDictionarySetUtf8(runtime, roots[0], "?URL", try runtimeUtf8String(runtime, aotHttpPathOnly(target)));
     const marker = std.mem.indexOfScalar(u8, target, '?') orelse return roots[0];
-    var pairs = std.mem.splitScalar(u8, target[marker + 1 ..], '&');
+    const query_source = target[marker + 1 ..];
+    const query_end = std.mem.indexOfScalar(u8, query_source, '?') orelse query_source.len;
+    var pairs = std.mem.splitScalar(u8, query_source[0..query_end], '&');
     while (pairs.next()) |pair| {
         const equal = std.mem.indexOfScalar(u8, pair, '=');
-        const key = try aotHttpPercentDecode(runtime.allocator, if (equal) |index| pair[0..index] else pair, false);
+        const key = try aotHttpPercentDecode(runtime.allocator, if (equal) |index| pair[0..index] else pair, false, true);
         defer runtime.allocator.free(key);
         const value_source = if (equal) |index| blk: {
             const rest = pair[index + 1 ..];
             break :blk rest[0 .. std.mem.indexOfScalar(u8, rest, '=') orelse rest.len];
         } else "undefined";
-        const decoded_value = try aotHttpPercentDecode(runtime.allocator, value_source, false);
+        const decoded_value = try aotHttpPercentDecode(runtime.allocator, value_source, false, true);
         defer runtime.allocator.free(decoded_value);
         roots[1] = try runtimeUtf8StringLossy(runtime, key);
         roots[2] = try runtimeUtf8StringLossy(runtime, decoded_value);
@@ -6431,9 +6433,9 @@ fn aotHttpParseUrlEncoded(runtime: *Runtime, body: []const u8) !Value {
     var pairs = std.mem.splitScalar(u8, body, '&');
     while (pairs.next()) |pair| {
         const equal = std.mem.indexOfScalar(u8, pair, '=');
-        const key = try aotHttpPercentDecode(runtime.allocator, if (equal) |index| pair[0..index] else pair, true);
+        const key = try aotHttpPercentDecode(runtime.allocator, if (equal) |index| pair[0..index] else pair, true, false);
         defer runtime.allocator.free(key);
-        const decoded_value = try aotHttpPercentDecode(runtime.allocator, if (equal) |index| pair[index + 1 ..] else "", true);
+        const decoded_value = try aotHttpPercentDecode(runtime.allocator, if (equal) |index| pair[index + 1 ..] else "", true, false);
         defer runtime.allocator.free(decoded_value);
         roots[1] = try runtimeUtf8StringLossy(runtime, key);
         roots[2] = try runtimeUtf8StringLossy(runtime, decoded_value);
@@ -6500,13 +6502,14 @@ fn aotHttpDispositionParameter(disposition: []const u8, expected: []const u8) ?[
     return null;
 }
 
-fn aotHttpPercentDecode(allocator: std.mem.Allocator, source: []const u8, plus_as_space: bool) ![]u8 {
+fn aotHttpPercentDecode(allocator: std.mem.Allocator, source: []const u8, plus_as_space: bool, strict: bool) ![]u8 {
     var result: std.ArrayList(u8) = .empty;
     errdefer result.deinit(allocator);
     var index: usize = 0;
     while (index < source.len) {
         if (source[index] == '%' and index + 2 < source.len) {
             const byte = std.fmt.parseInt(u8, source[index + 1 .. index + 3], 16) catch {
+                if (strict) return error.InvalidHttpQueryEncoding;
                 try result.append(allocator, source[index]);
                 index += 1;
                 continue;
@@ -6514,11 +6517,17 @@ fn aotHttpPercentDecode(allocator: std.mem.Allocator, source: []const u8, plus_a
             try result.append(allocator, byte);
             index += 3;
         } else {
+            if (strict and source[index] == '%') return error.InvalidHttpQueryEncoding;
             try result.append(allocator, if (plus_as_space and source[index] == '+') ' ' else source[index]);
             index += 1;
         }
     }
-    return result.toOwnedSlice(allocator);
+    const decoded = try result.toOwnedSlice(allocator);
+    if (strict and !std.unicode.utf8ValidateSlice(decoded)) {
+        allocator.free(decoded);
+        return error.InvalidHttpQueryEncoding;
+    }
+    return decoded;
 }
 
 fn aotHttpServeStatic(runtime: *Runtime, route: AotHttpRoute, path: []const u8) !void {
@@ -24169,6 +24178,29 @@ test "AOT HTTPのqueryは重複キーと余分な区切りを公式splitどお�
     try std.testing.expectEqualStrings("undefined", flag);
     try std.testing.expectEqualStrings("a", raw);
     try std.testing.expectEqualStrings("", empty);
+}
+
+test "AOT HTTPのqueryは2個目以降の疑問符を公式splitどおり無視する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const result = try aotHttpParseQuery(&runtime, "/a?x=1?ignored=2");
+    var roots = [_]Value{result};
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    const x = try valueUtf8LossyAlloc(&runtime, runtime.indexGet(result, staticStringValue("x")));
+    defer runtime.allocator.free(x);
+    try std.testing.expectEqualStrings("1", x);
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(runtime.indexGet(result, staticStringValue("ignored")).tag)));
+}
+
+test "AOT HTTPのqueryの不正percent encodingはURI malformedへ変換する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    for ([_][]const u8{ "/a?x=%", "/a?x=%2", "/a?x=%GG", "/a?x=%FF", "/a?x=%C3%28" }) |target| {
+        try std.testing.expectError(error.InvalidHttpQueryEncoding, aotHttpParseQuery(&runtime, target));
+    }
 }
 
 test "AOT HTTP routeと静的配信の補助判定は公式境界を保つ" {

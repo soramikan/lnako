@@ -53,6 +53,7 @@ pub fn forFailure(failure: anyerror) []const u8 {
         error.ArrayFillSizeLimit => "Array fill size exceeds safety limit",
         error.ArraySparseLengthLimit => "Sparse array length exceeds safety limit",
         error.StringPadWidthUnbounded => "String padding width is unbounded",
+        error.InvalidHttpQueryEncoding => "URI malformed",
         else => @errorName(failure),
     };
 }
@@ -107,4 +108,5 @@ test "BigInt実行時エラーを公式JavaScriptの文言へ変換する" {
     try std.testing.expectEqualStrings("Array fill size exceeds safety limit", forFailure(error.ArrayFillSizeLimit));
     try std.testing.expectEqualStrings("Sparse array length exceeds safety limit", forFailure(error.ArraySparseLengthLimit));
     try std.testing.expectEqualStrings("String padding width is unbounded", forFailure(error.StringPadWidthUnbounded));
+    try std.testing.expectEqualStrings("URI malformed", forFailure(error.InvalidHttpQueryEncoding));
 }
