@@ -3433,7 +3433,8 @@
     "status": "native",
     "tests": [
       "plugin-node-http-line-message-discontinued",
-      "native-node-line-message-discontinued"
+      "native-node-line-message-discontinued",
+      "plugin-node-http-line-message-discontinued-captured"
     ],
     "reason": "公式生成JavaScript・lnako Interpreter/AOTの廃止エラー差分テストに成功（公式CLIは既知の経路差）"
   },
@@ -3441,7 +3442,8 @@
     "status": "native",
     "tests": [
       "plugin-node-http-line-image-discontinued",
-      "native-node-line-image-discontinued"
+      "native-node-line-image-discontinued",
+      "plugin-node-http-line-image-discontinued-captured"
     ],
     "reason": "公式生成JavaScript・lnako Interpreter/AOTの廃止エラー差分テストに成功（公式CLIは既知の経路差）"
   },

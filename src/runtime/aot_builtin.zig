@@ -377,6 +377,10 @@ pub const Command = enum(u16) {
     node_discord_file_send,
     system_nadesiko,
     system_nadesiko_continue,
+    // Keep this after the existing commands so the opcode values already
+    // emitted into manifests remain stable.  The official implementation
+    // uses a command-specific error message for this alias.
+    line_image_notify_discontinued,
 };
 
 /// `エラー発生` is lowered to an IR throw terminator, not to the generic
@@ -739,7 +743,8 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "配列関数適用")) return .array_function_apply;
     if (std.mem.eql(u8, name, "配列マップ")) return .array_map;
     if (std.mem.eql(u8, name, "配列フィルタ")) return .array_filter;
-    if (std.mem.eql(u8, name, "LINE送信") or std.mem.eql(u8, name, "LINE画像送信")) return .line_notify_discontinued;
+    if (std.mem.eql(u8, name, "LINE送信")) return .line_notify_discontinued;
+    if (std.mem.eql(u8, name, "LINE画像送信")) return .line_image_notify_discontinued;
     if (std.mem.eql(u8, name, "終") or std.mem.eql(u8, name, "終了")) return .node_exit;
     if (std.mem.eql(u8, name, "プロセス終")) return .node_process_exit;
     if (std.mem.eql(u8, name, "存在")) return .node_file_exists;
@@ -1052,7 +1057,7 @@ test "AOT標準命令の正式名と別名を同じIDへ解決する" {
     try std.testing.expectEqual(Command.array_map, lookup("配列マップ").?);
     try std.testing.expectEqual(Command.array_filter, lookup("配列フィルタ").?);
     try std.testing.expectEqual(Command.line_notify_discontinued, lookup("LINE送信").?);
-    try std.testing.expectEqual(Command.line_notify_discontinued, lookup("LINE画像送信").?);
+    try std.testing.expectEqual(Command.line_image_notify_discontinued, lookup("LINE画像送信").?);
     try std.testing.expectEqual(Command.node_exit, lookup("終").?);
     try std.testing.expectEqual(Command.node_exit, lookup("終了").?);
     try std.testing.expectEqual(Command.node_process_exit, lookup("プロセス終").?);

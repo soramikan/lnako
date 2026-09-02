@@ -64,5 +64,19 @@
     "commands": ["LINE画像送信"],
     "expectError": true,
     "source": "LINE画像送信(\"token\",\"image.png\",\"message\")\n"
+  },
+  {
+    "id": "plugin-node-http-line-message-discontinued-captured",
+    "aot": true,
+    "commands": ["LINE送信"],
+    "dispatchExpectations": [{"command": "LINE送信", "result": "failure", "count": 1}],
+    "source": "エラー監視\nLINE送信(\"token\",\"message\")\nエラーならば\n(\"LINE_ERROR:\"&エラーメッセージ)を表示\nここまで\n"
+  },
+  {
+    "id": "plugin-node-http-line-image-discontinued-captured",
+    "aot": true,
+    "commands": ["LINE画像送信"],
+    "dispatchExpectations": [{"command": "LINE画像送信", "result": "failure", "count": 1}],
+    "source": "エラー監視\nLINE画像送信(\"token\",\"image.png\",\"message\")\nエラーならば\n(\"LINE_ERROR:\"&エラーメッセージ)を表示\nここまで\n"
   }
 ]

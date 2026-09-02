@@ -667,7 +667,16 @@ fn callHttp(runtime: *Runtime, state: *State, context: Context, effects_optional
         try actual.setGlobal("AJAX:ONERROR", common.argument(arguments, 0));
         return @as(?Value, .undefined);
     }
-    if (std.mem.eql(u8, name, "LINE送信") or std.mem.eql(u8, name, "LINE画像送信")) return error.LineNotifyDiscontinued;
+    if (std.mem.eql(u8, name, "LINE送信") or std.mem.eql(u8, name, "LINE画像送信")) {
+        const message = try std.fmt.allocPrint(
+            runtime.allocator(),
+            "『{s}』は2025年4月で使えなくなりました。[詳細URL] https://nadesi.com/v3/doc/go.php?4670",
+            .{name},
+        );
+        defer runtime.allocator().free(message);
+        try runtime.setFailureMessage(message);
+        return error.LineNotifyDiscontinued;
+    }
     if (std.mem.eql(u8, name, "AJAX内容取得")) {
         const response = common.argument(arguments, 0);
         const kind_text = try valueUtf8(runtime, common.argument(arguments, 1));

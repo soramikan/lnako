@@ -12567,7 +12567,8 @@
       "status": "native",
       "tests": [
         "plugin-node-http-line-message-discontinued",
-        "native-node-line-message-discontinued"
+        "native-node-line-message-discontinued",
+        "plugin-node-http-line-message-discontinued-captured"
       ],
       "platforms": [
         "macos-aarch64",
@@ -12593,7 +12594,8 @@
       "status": "native",
       "tests": [
         "plugin-node-http-line-image-discontinued",
-        "native-node-line-image-discontinued"
+        "native-node-line-image-discontinued",
+        "plugin-node-http-line-image-discontinued-captured"
       ],
       "platforms": [
         "macos-aarch64",

@@ -168,7 +168,7 @@ async function loadSelectedFixtures() {
     { file: "supplemental-plugin-cases.json", selection: (testCase) => testCase.commands?.length > 0 && testCase.expectedFailure !== true },
     { file: "node-file-cases.json", selection: (testCase) => testCase.aot === true && testCase.commands?.length > 0 && testCase.expectError !== true },
     { file: "node-native-cases.json", selection: (testCase) => testCase.aot === true && testCase.commands?.length > 0 && testCase.expectError !== true },
-    { file: "node-http-cases.json", selection: (testCase) => ["plugin-node-http-callbacks", "plugin-node-http-onerror", "plugin-node-http-options-and-promises", "plugin-node-http-async-values", "plugin-node-http-discord", "plugin-node-http-discord-file", "plugin-node-http-discord-failure"].includes(testCase.id) },
+    { file: "node-http-cases.json", selection: (testCase) => ["plugin-node-http-callbacks", "plugin-node-http-onerror", "plugin-node-http-options-and-promises", "plugin-node-http-async-values", "plugin-node-http-discord", "plugin-node-http-discord-file", "plugin-node-http-discord-failure", "plugin-node-http-line-message-discontinued-captured", "plugin-node-http-line-image-discontinued-captured"].includes(testCase.id) },
     { file: "native-cases.json", selection: (testCase) =>
       testCase.id === "native-cut-commands" || testCase.id === "native-system-error-raise" || testCase.id === "native-system-debug" || testCase.id === "native-system-dynamic-execution" ||
       (!arguments_.includeNative && ["native-node-stdin-all", "native-node-stdin-lines", "native-node-stdin-callback", "native-node-network-addresses"].includes(testCase.id)) },
@@ -190,7 +190,7 @@ async function loadSelectedFixtures() {
       fixtures.push({ file: specification.file, ...testCase });
     }
   }
-  const expectedFixtureCount = arguments_.includeNative ? 210 : 46;
+  const expectedFixtureCount = arguments_.includeNative ? 212 : 48;
   if (fixtures.length !== expectedFixtureCount) throw new Error(`dispatch coverageのfixture数が想定外です: ${fixtures.length}`);
   return fixtures;
 }
@@ -863,8 +863,8 @@ function createReport({ fixtureReports, sites, unresolvedSites, oracle, git }) {
       nativeEntries: nativeCommands.length,
       nativeUniqueNames: nativeNames.size,
       fixtureSelection: arguments_.includeNative
-        ? "the default command-bearing selection plus the seven node-http callback/Promise/value/Discord fixtures and all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps"
-        : "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus the seven node-http callback/Promise/value/Discord fixtures and native-cut-commands, excluding explicit AOT gaps",
+        ? "the default command-bearing selection plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures and all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps"
+        : "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures and native-cut-commands, excluding explicit AOT gaps",
       fixtureCount: fixtureReports.length,
       excludedFixtures: [...excludedFixtures].map(([key, reason]) => ({ key, reason })),
       commandAssociationIsNotExecutionEvidence: true,
