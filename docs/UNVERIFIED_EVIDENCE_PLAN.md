@@ -1,14 +1,14 @@
-# `unverified` 89件の証拠化計画（U08完了時点）
+# `unverified` 89件の証拠化計画（U09完了時点）
 
 ## 目的と基準
 
-この文書は、なでしこ3 v3.7.24（upstream `aa18c7e640523938c680958fe731418cc6f7a58f`）の標準cnako 527 entryについて、実装済み機能を過大評価せず、`compat/v3.7.24/evidence.json`の`unverified`を実行証拠へ接続するための計画である。89件の初期残件をU01〜U22へ分解し、2026-09-02のU08完了後は次の状態にある。
+この文書は、なでしこ3 v3.7.24（upstream `aa18c7e640523938c680958fe731418cc6f7a58f`）の標準cnako 527 entryについて、実装済み機能を過大評価せず、`compat/v3.7.24/evidence.json`の`unverified`を実行証拠へ接続するための計画である。89件の初期残件をU01〜U22へ分解し、2026-09-02のU09完了後は次の状態にある。
 
 | 状態 | entry数 | 意味 |
 |---|---:|---|
 | `verified` | 0 | 3正式OSの署名付きattestationまで揃った現在HEADの証拠 |
-| `trace-confirmed-unattested` | 459 | 公式差分、Interpreter/AOT trace、compile manifest等は揃うが、外部署名attestation前 |
-| `unverified` | 68 | 実装・fixtureの存在だけではcatalog ID単位の実行証拠にならない残件 |
+| `trace-confirmed-unattested` | 461 | 公式差分、Interpreter/AOT trace、compile manifest等は揃うが、外部署名attestation前 |
+| `unverified` | 66 | 実装・fixtureの存在だけではcatalog ID単位の実行証拠にならない残件 |
 
 `native: 523`という分類、fixtureの存在、Interpreterだけの成功、artifactの生成は、AOT verifiedや`trace-confirmed-unattested`を意味しない。各単位を完了扱いにするのは、この文書の共通完了条件と台帳検査が同時に通った場合だけとする。最終的な目標は、まず`trace-confirmed-unattested 527 / unverified 0`、その後に3正式OSの外部署名attestationを含む`verified`へ進むことである。
 
@@ -25,6 +25,8 @@ U06では`plugin-node-native-archive-hermetic`を追加し、`解凍`・`解凍�
 U07では`plugin-node-exit-code`、`plugin-node-interrupt`、`plugin-node-exit-japanese-alias`を追加し、`プロセス終`・`強制終了時`・`終了`の3 entryを`compat/v3.7.24/expected-exit-evidence.json`へ分離して記録した。公式source・公式生成JavaScript・lnako Interpreter・LLVM AOT O0〜O3の終了コードと出力hashを比較し、終了直前のdispatch result、AOT attempt/result、`terminalReason`、`trace-end`、O0 compile manifestのsiteを同一catalog IDで検証する。`プロセス終`は終了コード7、`終了`は0、`強制終了時`はPOSIXの実SIGINT callback後に0である。SIGINTは非同期timerのin-flight dispatchを最大1件残し得るため、その境界をartifact checkerが明示的に許容する。現行artifactはmacOS arm64のclean実測で、Windowsの実コンソール制御イベント発生と3正式OSattestationは証明しない。Windows回帰は`TODO: node-interrupt-windows-console-test`として残し、`sync_compat_evidence.mjs --generate`は実測で`verified 0 / trace-confirmed-unattested 455 / unverified 72`を返した。
 
 U08では`plugin-node-stdin`と`plugin-node-stdin-callback`を追加し、`標準入力取得時`・`尋`・`文字尋`・`標準入力全取得`の4 entryを、標準入力のraw取得、CRLF、EOF時の末尾改行なし部分行、同期callback drainという同一の実行境界で比較した。`native-node-stdin-lines`、`native-node-stdin-callback`、`native-node-stdin-all`をcleanなmacOS arm64で実行し、公式source・公式生成JavaScript・lnako Interpreter・LLVM AOT O0〜O3のstdout/stderr・終了結果を一致させ、`dispatch-coverage-evidence.json`へ38 fixture・1,737 site・326 native entryの監査結果を記録した。`native-node-stdin-all`は`A\n日本語\n`、行命令は末尾改行のない`abc\r\n41\nrest`、callbackは`A\r\nB`を使い、EOFで残る部分行も比較している。行fixtureの`標準入力全取得`でも末尾改行なしraw入力を確認する。現行artifactは3正式OSの外部署名attestationを含まず、QuickJSは対象外である。`sync_compat_evidence.mjs --generate`は実測で`verified 0 / trace-confirmed-unattested 459 / unverified 68`を返した。
+
+U09では`plugin_node`の`自分IPアドレス取得`（`command-0759`）と`自分IPV6アドレス取得`（`command-0760`）を追加し、公式Nodeの[命令一覧](https://nadesi.com/v3/doc/index.php?plugin_node=&show=)と固定upstreamの[`plugin_node.mts`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/src/plugin_node.mts#L1180-L1219)が利用する`os.networkInterfaces()`の形状を、`synthetic-v1` topologyとして公式source・公式生成JavaScript・lnako Interpreter・LLVM AOT O0へ同じ順序で供給した。内部アドレスとIPv6の`scopeid`を含めて公式Nodeのネットワーク表を再現するが、命令の結果はアドレス文字列だけに射影する。IPv4は`127.0.0.1`→`192.0.2.10`、IPv6は`::1`→`fe80::1234`→`2001:db8::10`となり、cleanな`54155f6191baa95dcc1c9a73b7ef32c9a95e54f9`でfocused native shardのO0〜O3とdispatch coverageの同一siteを確認した。coverageは39 fixture・1,743 site・328 native entryへ更新され、`sync_compat_evidence.mjs --generate`は`verified 0 / trace-confirmed-unattested 461 / unverified 66`を返す。fixtureの決定性は確認済みだが、実OSの列挙順、3正式OSの外部署名attestationは未完了であり、`TODO: node-network-cross-os-attestation`として残す。
 
 ## 証拠基盤の柱
 
@@ -95,7 +97,7 @@ fixture.catalogIds[name]
 | U06 | `0741 解凍`、`0742 解凍時`、`0743 圧縮`、`0744 圧縮時`。hermeticな7z互換helperで本体とcallbackを実行し、ZIPの意味結果を比較する（完了） | 4 | 452 |
 | U07 | `0746 プロセス終`、`0747 強制終了時`、`0748 終了`。終了直前のdispatch-result、terminal reason、`trace-end`をflushし、expected exitを証拠化する（完了） | 3 | 455 |
 | U08 | `0754 標準入力取得時`、`0755 尋`、`0756 文字尋`、`0757 標準入力全取得`。固定stdin、EOF、callback drainを同じsiteで比較する（完了） | 4 | 459 |
-| U09 | `0759 自分IPアドレス取得`、`0760 自分IPV6アドレス取得`。公式Nodeとlnakoへ同じnetwork topologyを供給し、順序・internal・IPv6 scopeを比較する | 2 | 461 |
+| U09 | `0759 自分IPアドレス取得`、`0760 自分IPV6アドレス取得`。公式Nodeとlnakoへ同じnetwork topologyを供給し、順序・internal・IPv6 scopeを比較する（完了） | 2 | 461 |
 | U10 | `0761 AJAX送信時`、`0762 AJAX受信時`、`0763 GET送信時`、`0764 POST送信時`、`0765 POSTフォーム送信時`、`0766 AJAX失敗時`。loopbackでsuccess/failure/callback orderを証拠化する | 6 | 467 |
 | U11 | `0769 AJAX保障送信`〜`0775 AJAX受信`のPromise/保障系7件。resolve/rejectとevent drain完了後にtraceを閉じる | 7 | 474 |
 | U12 | `0777 POST送信`〜`0781 AJAXバイナリ取得`のasync値5件。text、JSON、binary、formをloopbackで比較し、AOT byte buffer種別まで確認する | 5 | 479 |
@@ -135,7 +137,7 @@ P3 compat-js evidence
   └─ U22
 ```
 
-実装上は、まず一意名nativeの残り30件（459→489）、次に同名異pluginの34件（489→523）、最後にcompat-jsの4件（523→527）を目安にする。ただし、実際のcatalog ID・route・oracle差が確認できない場合は件数を減らさず、失敗理由をfixture policyまたは`docs/COMPATIBILITY_QUIRKS.md`へ残す。
+実装上は、まず一意名nativeの残り28件（461→489）、次に同名異pluginの34件（489→523）、最後にcompat-jsの4件（523→527）を目安にする。ただし、実際のcatalog ID・route・oracle差が確認できない場合は件数を減らさず、失敗理由をfixture policyまたは`docs/COMPATIBILITY_QUIRKS.md`へ残す。
 
 ## 各単位の共通完了条件
 

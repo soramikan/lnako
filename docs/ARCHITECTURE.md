@@ -81,6 +81,12 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
 - JS固有命令は `--compat-js` 指定時だけQuickJSへ接続する。
 - 対応していない機能を暗黙に代替せず、互換表と診断に理由を出す。
 
+## Node hostのネットワークアドレス境界
+
+`自分IPアドレス取得`と`自分IPV6アドレス取得`は、公式の[plugin_node命令一覧](https://nadesi.com/v3/doc/index.php?plugin_node=&show=)だけではインターフェースの列挙順、内部アドレス、IPv6のscope情報の扱いが分からない。固定v3.7.24の[`plugin_node.mts`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/src/plugin_node.mts#L1180-L1219)は`os.networkInterfaces()`の各詳細を走査し、familyがIPv4/IPv6のものの`address`だけを結果配列へ追加する。したがって`internal`や`scopeid`は入力形状には存在しても、命令の戻り値には現れない。
+
+通常のInterpreterはhost ContextからOSのネットワークAPIへ接続し、純LLVM AOTはPOSIXで`getifaddrs`、Windowsで`GetAdaptersAddresses`を使う。IPv6のinterface scopeはアドレス文字列へ付加せず、公式の戻り値形状に合わせる。決定的な比較fixtureでは`LNAKO_TEST_NETWORK_TOPOLOGY=synthetic-v1`を明示した場合だけ、公式Nodeへ`lo0`／`en0`相当のIPv4 2件とIPv6 3件（loopback、link-local、global）を供給する。このmarkerはproductionのOS列挙を変更せず、実OSの列挙順や3正式OSの外部署名attestationを代替しない。詳細な実測、差分テストID、未完了境界は`docs/COMPATIBILITY_QUIRKS.md`と`docs/UNVERIFIED_EVIDENCE_PLAN.md`へ記録する。
+
 ## QuickJS互換境界
 
 - `-Dcompat-js=true`のコンパイラだけが固定QuickJSを静的リンクし、通常ビルドは同じC ABIのstubへ接続する。
