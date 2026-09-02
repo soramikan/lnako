@@ -10,15 +10,11 @@
     "nativeEntries": 523,
     "nativeUniqueNames": 492,
     "fixtureSelection": "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus native-cut-commands, excluding explicit AOT gaps",
-    "fixtureCount": 33,
+    "fixtureCount": 34,
     "excludedFixtures": [
       {
         "key": "system-runtime-cases.json/system-runtime-execution-and-debug",
         "reason": "公式sourceとAOT O0の実行結果が一致せず、動的実行・非同期host境界は別の未実装証拠として扱う"
-      },
-      {
-        "key": "node-file-cases.json/plugin-node-host-open-external",
-        "reason": "外部アプリケーション起動を伴うため、dispatch監査では実行せずNodeホスト差分テストへ分離する"
       },
       {
         "key": "node-native-cases.json/plugin-node-native-archive",
@@ -147,7 +143,7 @@
     "environment": {
       "platform": "darwin",
       "arch": "arm64",
-      "node": "v24.15.0"
+      "node": "v24.19.0"
     },
     "oracle": {
       "build": 4,
@@ -158,17 +154,17 @@
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
     "lnako": {
-      "binarySha256": "c7f03d3e4961812dd3abdc03e1c30723082d94d365c14683263112d83e1d5c66",
-      "commit": "eb9949499c6f55329da3c5199543fb334cd41817",
+      "binarySha256": "6d0b75ac51dbc747227e8e3ad5a872250009e83ca0e1696b6c86df1d5cdf7d75",
+      "commit": "c7c6501ebaf920450cec8605ad3ba7e1d832756f",
       "dirty": false
     },
-    "auditScriptSha256": "e7b3346594a2ec5376d19e698ac5c3e7827f3840042f872bbcdb87a3397c3ed1"
+    "auditScriptSha256": "26494289148f229fc4e98723eea90046107ce0e9829ed6772d272b413a722c7d"
   },
   "coverage": {
-    "unambiguousObservedNativeEntries": 313,
-    "unambiguousObservedNativeUniqueNames": 313,
-    "unambiguousObservedNativeEntryRatio": 0.5984703632887189,
-    "unambiguousObservedNativeUniqueNameRatio": 0.6361788617886179,
+    "unambiguousObservedNativeEntries": 315,
+    "unambiguousObservedNativeUniqueNames": 315,
+    "unambiguousObservedNativeEntryRatio": 0.6022944550669216,
+    "unambiguousObservedNativeUniqueNameRatio": 0.6402439024390244,
     "unobservedNativeEntryIds": [
       "command-0001",
       "command-0002",
@@ -259,8 +255,6 @@
       "command-0693",
       "command-0694",
       "command-0695",
-      "command-0702",
-      "command-0703",
       "command-0704",
       "command-0707",
       "command-0709",
@@ -471,8 +465,6 @@
       "SJISファイル保存",
       "EUCファイル読",
       "EUCファイル保存",
-      "ブラウザ起動",
-      "エクスプローラー起動",
       "ファイル列挙",
       "フォルダ存在",
       "ファイルコピーデフォルト動作",
@@ -1970,7 +1962,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "afee4f41c41576bc6fb9b3d037ed6b33f6dcef6db8a4682c81156c9d471e4cdd",
-        "compileManifestSha256": "139d1a91f4a6b754b59bf8ad9e411821944d804c4cf3be77a235e2500d7a21e8"
+        "compileManifestSha256": "d79eeb794afd4cf530628bd5704049621c929e5039f189cfbe5cac4eb5845dc9"
       }
     },
     {
@@ -2156,7 +2148,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "6525dfb6ebe3e4bd985833eaac16b849dcfb3a6aea849bb90aabfcb97d9e9e50",
-        "compileManifestSha256": "1509062d5bdb6599a76d2f4965f532d1b57b22e878d6c94d482b6a848b4b7543"
+        "compileManifestSha256": "ff53775e4950633628a526a591aa3e8bb936dba8a980b33f8d5b4cf4a5215867"
       }
     },
     {
@@ -2280,7 +2272,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "f09626ad2300ca2c1321230b991043293329ac37661326cc0e4de17046bfaba0",
-        "compileManifestSha256": "440bb4c4c2ed6bb0f4f268a775657f9cf04e41b0ea4d78f55002a99032bbbdac"
+        "compileManifestSha256": "f3eb35f064684eb3bb314a315dc228e7fbacd2591ebba259d4cd975a04840321"
       }
     },
     {
@@ -2436,7 +2428,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "f6b3c818a5b73f08526a9579ee06d7d432ee4bfd85bff7f1beb3249d3ceeb735",
-        "compileManifestSha256": "09722c0565b4d14e53a6b2379b1d5849de1a18e8742767f2c3065e7e12f7c12d"
+        "compileManifestSha256": "8830e6442d5b649bd24b2fda446751c5a8ddcc53f8aa0c7ee9bc61cffd1ea9c2"
       }
     },
     {
@@ -2618,7 +2610,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "05be6dcb6bcd0e121d417f18db8e9acec202b21150ad7448cfa11f748e699b95",
-        "compileManifestSha256": "7c6f7529ca4f66a67de3ffee74269e647efad4cdad9cb4987f4ef620f379e11e"
+        "compileManifestSha256": "1cf181d88be984ebed1b81b671ca55d80bda85840922a9bc6614de501b436973"
       }
     },
     {
@@ -2712,7 +2704,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "3c9bc1528ccc913e725564f1465eaeb77934b8fa3bfb92a4add9136ed4f35a9a",
-        "compileManifestSha256": "fb05fb8c128ba19e4a4ce6b5cec8178f78c01eac80534c5f649783e10949ae12"
+        "compileManifestSha256": "6faa2708eb1a91345abd13ff6e8cde35e08184f5747f8aa503d1def1926061c0"
       }
     },
     {
@@ -2796,7 +2788,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 1,
         "traceSha256": "d9c83bcb47f90a848384c93c978da261450c49e00e2eb87cc635e2fa9dabc042",
-        "compileManifestSha256": "01e069dac2d5eda89f36d998ae4623069e7367b947ff05ef7830b458d38f1272"
+        "compileManifestSha256": "90987f1fcf1d6d3e96f0e055a77480f3966850a85630ef9b57189596ca18e2ac"
       }
     },
     {
@@ -2891,7 +2883,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "2e550db8e67850bdb9c0a48b7640e79c6075418e83ef7fdcb78e430f2a0eeb8a",
-        "compileManifestSha256": "e3c1f2f0d12039ab0e7bfabe3aaadc6e08ee35aa31839faa9c0c752a56ef3843"
+        "compileManifestSha256": "4d979f459e3799555e899132150f8465a81cd1c5aaf11af154155dc0b66aaac3"
       }
     },
     {
@@ -3032,7 +3024,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "f1f47b480cd689c836bd1d923c285889411e2280e7cc1ffefc0a5bdb73d23a73",
-        "compileManifestSha256": "978b4177e8f8ddbb406601f94a9d327246cbd33596a713d8e69a6406f4daa8d1"
+        "compileManifestSha256": "ff515cd11334b678a80524def8cbc93ad2e152813ddc3306c9ab699f9868fe1d"
       }
     },
     {
@@ -3131,7 +3123,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "0ef661754051b020f4a6656f0a92669d0e333e9283c051989bf2ce73f554e92a",
-        "compileManifestSha256": "7da792f4505de7783ecb39b44ae6eab7a257c3d771c9961436ad2271b375e772"
+        "compileManifestSha256": "7c7de7100fd38d10df8982051f9c226f73156c5f904786bcc03ab218714b5806"
       }
     },
     {
@@ -3220,7 +3212,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "279aa08fd2283a5c86c9dd78d98d1fb9372301b32c3cacc9f8376ea6a6440f29",
-        "compileManifestSha256": "e5d2cca83a2a52bf94e3f1db2b10720a286caf1bbf0d6229281e2d63a01586bd"
+        "compileManifestSha256": "cfc5476c6e028a5e53031023a5c020fea084a690a5f80426823426d4908f5ab3"
       }
     },
     {
@@ -3347,7 +3339,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "7332b6b140b7d75a8d9155cbb029de4918fe691773e30c789fec945a0de0e40b",
-        "compileManifestSha256": "ed9d1ead4fbc1457814e90d013d6571fd2271301a166d11d69846d17e937135c"
+        "compileManifestSha256": "40ad487da6f84e48ce0905e5e52b6fa7faf5dcde8704d14066fc5b6b0862829f"
       }
     },
     {
@@ -3443,7 +3435,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "b6d08bfa8c78f53c68a0fddc6f782a7b5d94a25ff6aae1c026a8ab2c0ecb7246",
-        "compileManifestSha256": "7bd700a9d1fdb18de199381dd9c4a875d11eb67111ebf809f38141742003db32"
+        "compileManifestSha256": "f10cca12eaed5f98df21d1f756d3171efeb6b50662de86ff7ba960574abd1e96"
       }
     },
     {
@@ -3617,7 +3609,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "0338bbd4764f7e09133eb2a7f0f9cc7c3dac9c1b7b86fcca42944a3417933677",
-        "compileManifestSha256": "4ae745b4d42061832900406c288db805ef790ae6a808197d29f5aaca83e7a62c"
+        "compileManifestSha256": "7321bef89787b407f265bf9f631ac24d9a6511ae66c0a369b883f043ee673527"
       }
     },
     {
@@ -3722,7 +3714,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "579cbc15cfd6fe892fc7e5eb976a131f0e192a0905ed9ffc6638fda6737efa4d",
-        "compileManifestSha256": "efc76328493f53ec755575b5e0eedea20769e152bfbb52fc8ee776c321d3fd6d"
+        "compileManifestSha256": "87c88a8739f81d1a255055442d819b0004f6bf0c7170bd0396e155b788084b64"
       }
     },
     {
@@ -3824,7 +3816,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "45de4bdfb8df5dc38743799f977b297fb8d5d27ce6ddf7f4a818fe5f2570053f",
-        "compileManifestSha256": "c23e60e8e8178f05332bf7bfb64850b1939849fd5cee11e808232db2188599ce"
+        "compileManifestSha256": "1a900c58360ac784f875cc15c24edc141e1e5d11175f9b03924b6f264fbd8427"
       }
     },
     {
@@ -3915,7 +3907,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "4ee8fb98e3531b5adc89dd5e349ebe1d33f24231318e2d32ac59e6e5dba93447",
-        "compileManifestSha256": "571af6b9b3988e9505515a69162963789cfffe06614cf6a56bf66c461d0b7205"
+        "compileManifestSha256": "452f47dedb20fb4ba141434b1c7dbec26f8d7817a8ddaf43e89fa31a921f640a"
       }
     },
     {
@@ -4056,7 +4048,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "08f4b00af6dc904cd82a78120593fb45bd519a63df0e3b87790c9f2b22cea0fb",
-        "compileManifestSha256": "1546fd3a45d9c2d6904e7185dbe522e77edd917571226ec08272a1299f55ac62"
+        "compileManifestSha256": "2c983de8a8237a4ad6b74a22bbb31e32edeb80cf747d927452c001de85f98a06"
       }
     },
     {
@@ -4243,7 +4235,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "482d1a31c600d3a2e1869110a151471f0b32133736021a5938753c8635a77fe7",
-        "compileManifestSha256": "c412eb068246ebebe11ce079b096aa528b994880e0409b0c9bdd837124c63f54"
+        "compileManifestSha256": "1ec479f720a4800b3494408c0206871e0581cd7fd1640ee65b21a2601a4389b1"
       }
     },
     {
@@ -4339,7 +4331,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "6b8731ef33694c65906d6390d690b61a387fd88ebf1346b0788320edc0f90d5f",
-        "compileManifestSha256": "81e5a7110a1926086dc33aebc6565050be3230c0a81ec15be6107220aa480850"
+        "compileManifestSha256": "04cafbb3644dbfabc0bd85f94aa08e94bfcbe4cc5686ac1bda87039007c6cd9b"
       }
     },
     {
@@ -4387,7 +4379,7 @@
             "status": 1,
             "signal": null,
             "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "stderrSha256": "46a023b74a16f5d8a2fa6cc5bae95010e09b9d74ef1488202c7d041a1f516b6e"
+            "stderrSha256": "7942df8ea69f63c2424868058e86a8b86f3c55d0db0f54e87f16d1d81581165a"
           },
           "lnakoRun": {
             "status": 0,
@@ -4420,7 +4412,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "243cfc20cf6cba6625fa1f40b87e43b8ff2fb9a2bfbd283f6f4c5335c9d9dbda",
-        "compileManifestSha256": "efd6de3ca2e0ff673fce4bc890daa218ceadea94e159d9d9884074c65f31622b"
+        "compileManifestSha256": "0ea17bf75798d51f4d963a401345962d5833656cca9b8985d3189f62beebf9ff"
       }
     },
     {
@@ -4504,7 +4496,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "47fe3fb33afd6dadfc6b9f4f12af28ef441fb1e752503c79cd07300356f77558",
-        "compileManifestSha256": "e5b7b1f5adc086e51717df95983d4f6647988beb1d48c0b29c854389b10871f7"
+        "compileManifestSha256": "9effd03610a257cc7ad3e97fb1d16999aabf115ff05f47e5505a75443c84d015"
       }
     },
     {
@@ -4552,7 +4544,7 @@
             "status": 1,
             "signal": null,
             "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "stderrSha256": "de70065bd60a6709361b95a0219cc59feb67b3869b2f370e358630e77929ee04"
+            "stderrSha256": "6aaeb97174614dc66ff6e8a02f0646a4b72335b817a1237dd7f5e6d95f99483d"
           },
           "lnakoRun": {
             "status": 0,
@@ -4585,7 +4577,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "f7812d6e7672c3fe7f8731f6fad601dae016d855d19ac53d3513e41b219d415d",
-        "compileManifestSha256": "2bc1d167510a1dcc0df1423fb5ff0bc2b733136fc5793a9dce1ebfea27793895"
+        "compileManifestSha256": "f47b57285f27d9ad3e25e1e5ad018e18ee9ddb0a8a35730880c59d74dfd03c0e"
       }
     },
     {
@@ -4631,7 +4623,7 @@
             "status": 1,
             "signal": null,
             "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "stderrSha256": "1577fe4e2c78ba49bc9a600a97153958621abed65444e9485c5aeed0efa4b44f"
+            "stderrSha256": "40c939299f74f9cbda1162b752fa33a29e4e9f794f59e706f13e1c02e2f10ecb"
           },
           "lnakoRun": {
             "status": 0,
@@ -4664,7 +4656,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "0c0f15785a5242f591d25e117533009244194ff33de9877d061ddf59b7f3f263",
-        "compileManifestSha256": "3132d61e4fea6f825dfec48f7eb47f74e2fc135215058f4a75c85ac1e5a37267"
+        "compileManifestSha256": "fbc7ce859929cf9edce0518f5eb219ce3fad8b7128a7aa4b1cafe44e093b99cf"
       }
     },
     {
@@ -4717,7 +4709,7 @@
             "status": 1,
             "signal": null,
             "stdoutSha256": "770c2d18aa4ec3159f46da461ef452972949942ff4f6a9771044485faa146398",
-            "stderrSha256": "5ff8287e8f2a72d1d9e4effc598d9abdf84b00b083155602d4b5fd9b0bee5b8c"
+            "stderrSha256": "d2be6297a5d9f3cdd134f3f21fa9215ccee6d8ddc685dbe00ac000494eb65f94"
           },
           "lnakoRun": {
             "status": 0,
@@ -4750,7 +4742,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "e369c2a63d74e16725bc1c4e69635d85ae3f1a67d204a9a58b7ee0fbd9a7f592",
-        "compileManifestSha256": "9a13130febb3294216fc6daeac79f0a140ab7f9f13fa00b5d5e5f66d09606342"
+        "compileManifestSha256": "08b1849b18a6b9b414794e29a33123fc5ddaa5f61be5bb0e575ddc397464469f"
       }
     },
     {
@@ -4847,7 +4839,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "afe1f940e621ff38ddff46ec4291c1a0efd3e7f8bc866e45714dc8e91da08513",
-        "compileManifestSha256": "1a22f1e2b70e0aabc70e81df189e913e8d7ed5c67ee6bf816c89e0b66d9a7f23"
+        "compileManifestSha256": "6933e193e813baf97aefc21a91d842b9d7003306dce734ed42a5775b4d86cf9e"
       }
     },
     {
@@ -4923,7 +4915,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "322f24689e27810857231659a12d16b0b475a387ceb148b0992549ca6e97ec47",
-        "compileManifestSha256": "11a82cb05aaa7c626dcb0a43b4b93ad785ac891228e650d293f558564df3471a"
+        "compileManifestSha256": "65591744a0a059a84a2d3b888ce9a3da48114e1982b060153614a1d284e5584b"
       }
     },
     {
@@ -5005,7 +4997,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "abc039d4bec6720461a912e9a30c2c43366a1b9e6b7b298e0ba705ac3a0a01d3",
-        "compileManifestSha256": "7c9decba8e86928ba27c6bd173e65ad1ea788230f4f5c8c85c47e17f0405796f"
+        "compileManifestSha256": "e07ebb91ad4b51e099bcc99f872ae7e0d5cf69729f457fd9baa0f4ae9e296ff3"
       }
     },
     {
@@ -5115,7 +5107,95 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "2d70a5a3227e8f32d3bf1b6e2f6e184c225ca37564a44f73063fb4934a68b704",
-        "compileManifestSha256": "e8c74db2f478974cd2542e1ad645b2799b828f4c4649011211e0f454aed4577e"
+        "compileManifestSha256": "f9a52ff38d148d55a335c4969f7267ceca7640d8f5dfe7a2e9b3cc04d446a9dd"
+      }
+    },
+    {
+      "id": "plugin-node-host-open-external",
+      "file": "node-file-cases.json",
+      "sourceSha256": "585c3fff1aebd9732dd6a270b90cbdc1354d299fad8133656d11fdfc689870bb",
+      "associatedCommandNames": [
+        "ブラウザ起動",
+        "エクスプローラー起動"
+      ],
+      "associationWithoutDispatch": [],
+      "observedStaticCommandNames": [
+        "ブラウザ起動",
+        "表示"
+      ],
+      "observedDispatchCommandNames": [
+        "エクスプローラー起動",
+        "ブラウザ起動",
+        "表示"
+      ],
+      "dispatchExpectations": [
+        {
+          "command": "エクスプローラー起動",
+          "result": "failure",
+          "count": 1,
+          "platforms": [
+            "darwin",
+            "linux"
+          ]
+        }
+      ],
+      "officialComparison": {
+        "oracle": "officialSource",
+        "routes": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "selectedOracleEquivalent": true,
+        "officialGeneratedAvailable": true,
+        "officialGeneratedRouteUnavailableReason": null,
+        "officialRoutesEquivalent": true,
+        "results": {
+          "officialSource": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "7d8a55e551507b465d2777f2235b8bcc5c8248a054ffb86cb8925ebe73603ec3",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "officialGenerated": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "7d8a55e551507b465d2777f2235b8bcc5c8248a054ffb86cb8925ebe73603ec3",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoRun": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "7d8a55e551507b465d2777f2235b8bcc5c8248a054ffb86cb8925ebe73603ec3",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO0": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "7d8a55e551507b465d2777f2235b8bcc5c8248a054ffb86cb8925ebe73603ec3",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      },
+      "interpreter": {
+        "dispatchEventCount": 4,
+        "staticSuccessSiteCount": 3,
+        "expectedFailureSiteCount": 1,
+        "expectedFailureDispatchCount": 1,
+        "staticSiteWithoutAotManifestCount": 0,
+        "traceSha256": "5adea32b7e871b6e44db4dc8b1371bd5f46496188f4032bdd634695048bb96c5"
+      },
+      "aot": {
+        "manifestEntryCount": 6,
+        "dispatchAttemptCount": 4,
+        "dispatchResultCount": 4,
+        "staticSuccessSiteCount": 3,
+        "expectedFailureSiteCount": 1,
+        "expectedFailureDispatchCount": 1,
+        "failedDispatchCount": 1,
+        "traceSha256": "d11fdde706284a745c0bc94c3c9bd34621da77a5357771bc5dd76b89b82b7790",
+        "compileManifestSha256": "2706688e274996e7fe5d695fddbb847fec34d8d59cbfd8a5638edab335451756"
       }
     },
     {
@@ -5196,7 +5276,7 @@
         "expectedFailureDispatchCount": 4,
         "failedDispatchCount": 4,
         "traceSha256": "8b917d7f1d62eb46f007bff18c47c6e2a9e5e45239a74df19f2afbf30321199f",
-        "compileManifestSha256": "ca6800731ba540b48d79c20ea5656d1c3260f2d455231c7378162a2a50900573"
+        "compileManifestSha256": "2b2ca0f89f2bff3a0cdafd89f5529892edbe3cf4ce31b38273ff32ad7205358f"
       }
     },
     {
@@ -6040,25 +6120,25 @@
           "officialSource": {
             "status": 0,
             "signal": null,
-            "stdoutSha256": "0dbff52ab710076f590e0b66c4f891e94eccd4e78754726a41806c4642af8a28",
+            "stdoutSha256": "484fa87d854f93dfc3d7bc8e5e263773113e244628179bd652536eec2fb814c7",
             "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
           },
           "officialGenerated": {
             "status": 0,
             "signal": null,
-            "stdoutSha256": "0dbff52ab710076f590e0b66c4f891e94eccd4e78754726a41806c4642af8a28",
+            "stdoutSha256": "484fa87d854f93dfc3d7bc8e5e263773113e244628179bd652536eec2fb814c7",
             "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
           },
           "lnakoRun": {
             "status": 0,
             "signal": null,
-            "stdoutSha256": "0dbff52ab710076f590e0b66c4f891e94eccd4e78754726a41806c4642af8a28",
+            "stdoutSha256": "484fa87d854f93dfc3d7bc8e5e263773113e244628179bd652536eec2fb814c7",
             "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
           },
           "lnakoNativeO0": {
             "status": 0,
             "signal": null,
-            "stdoutSha256": "0dbff52ab710076f590e0b66c4f891e94eccd4e78754726a41806c4642af8a28",
+            "stdoutSha256": "484fa87d854f93dfc3d7bc8e5e263773113e244628179bd652536eec2fb814c7",
             "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
           }
         }
@@ -6080,7 +6160,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 4,
         "traceSha256": "45cc99f18b8242ebde48ee527669333329b378007ad95681bf445939cfccfd07",
-        "compileManifestSha256": "6226ee57da529cae641a4d32d078324aa469eded3f8ba7db212da085dbe546e6"
+        "compileManifestSha256": "11a0f63e2383267bbb592ac48c8b914078c0923ec9651ca68b2957f4987d951d"
       }
     },
     {
@@ -6156,7 +6236,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "252b1aa5c2cc4770e956e51179a8a4efb3572cc23aa986b27624e617238c7205",
-        "compileManifestSha256": "30e8c1f6cb7a68dfcadace9b6750232959edcc4c49408557433d34384a8190eb"
+        "compileManifestSha256": "3985289fbbd288f33c648774080ca7b03b8cffe668f1a20aed3473b299c688c9"
       }
     },
     {
@@ -6202,7 +6282,7 @@
             "status": 1,
             "signal": null,
             "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "stderrSha256": "3f7fea7939bf9abf982f48ccc13b51e84354673cf8bba30ed54376e0fcad6f0c"
+            "stderrSha256": "a153cee5f8e2c316dbee0c6a30c49b78d87965b2adc5be31e2c12992519c206c"
           },
           "lnakoRun": {
             "status": 0,
@@ -6235,7 +6315,7 @@
         "expectedFailureDispatchCount": 0,
         "failedDispatchCount": 0,
         "traceSha256": "62d9616b1a068b613f63222e8c0be86eec49f47270c0ba7c4f989f287fabdac5",
-        "compileManifestSha256": "47a087afe27abb00e3894bf1aa823e22b8b00bb8224571a2203d66fd093684e0"
+        "compileManifestSha256": "71ed392a0c365f78da9c8e4a8081e4e5205552c44b6ddb4e2bbfab42dc4030ba"
       }
     }
   ],
@@ -29740,6 +29820,102 @@
       "fixtureId": "plugin-node-file-callbacks",
       "file": "node-file-cases.json",
       "siteId": "0x000000030000001c",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "plugin-node-host-open-external",
+      "file": "node-file-cases.json",
+      "siteId": "0x0000000000000001",
+      "sourceName": "ブラウザ起動",
+      "canonicalOpcode": "node_open_external_browser",
+      "opcode": 348,
+      "route": "node-process",
+      "runtimeRoutes": [
+        "node-process"
+      ],
+      "interpreterRoutes": [
+        "plugin_node"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0702",
+      "name": "ブラウザ起動",
+      "plugin": "plugin_node",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "plugin-node-host-open-external",
+      "file": "node-file-cases.json",
+      "siteId": "0x0000000000000003",
+      "sourceName": "エクスプローラー起動",
+      "canonicalOpcode": "node_open_external_explorer",
+      "opcode": 349,
+      "route": "node-process",
+      "runtimeRoutes": [
+        "node-process"
+      ],
+      "interpreterRoutes": [
+        "plugin_node"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "failure",
+      "catalogId": "command-0703",
+      "name": "エクスプローラー起動",
+      "plugin": "plugin_node",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "plugin-node-host-open-external",
+      "file": "node-file-cases.json",
+      "siteId": "0x0000000000000004",
+      "sourceName": "表示",
+      "canonicalOpcode": "display",
+      "opcode": 0,
+      "route": "direct-display",
+      "runtimeRoutes": [
+        "direct-display"
+      ],
+      "interpreterRoutes": [
+        "interpreter-core"
+      ],
+      "interpreterCount": 1,
+      "aotCount": 1,
+      "result": "success",
+      "catalogId": "command-0307",
+      "name": "表示",
+      "plugin": "plugin_system",
+      "catalogStatus": "native",
+      "resolution": "unique-name",
+      "selectedOracleEquivalent": true
+    },
+    {
+      "fixtureId": "plugin-node-host-open-external",
+      "file": "node-file-cases.json",
+      "siteId": "0x0000000000000005",
       "sourceName": "表示",
       "canonicalOpcode": "display",
       "opcode": 0,
