@@ -18,9 +18,9 @@ U22完了時点の正本は、`compat/v3.7.24/evidence.json`、`compat/v3.7.24/c
 
 ### U22以降の現行更新
 
-現行HEADは署名済み`baaf6ad3eba946f684dc1ea6cdbf18036da442ea`である。`compat/v3.7.24/evidence.json`は`verified 0 / trace-confirmed-unattested 527 / unverified 0`を維持しており、`compat/v3.7.24/dispatch-coverage-evidence.json`はcleanな`f753d32`由来の225 fixture・4,464 site・426/523 native entry・424/492 unique nameを、純LLVM AOTの全件証明とは分けたunattested sampled coverageとして記録する。ベンチマークは`benchmarks/results/latest.json`／`latest.md`へmacOS arm64・Zig 0.16.0・LLVM 22.1.8のInterpreter／AOT compile／AOT run結果を保存済みである。
+現行HEADは署名済み`6a5d66281e55b3e3b3117058962d3fffcc1fc507`である。`compat/v3.7.24/evidence.json`は`verified 0 / trace-confirmed-unattested 527 / unverified 0`を維持しており、`compat/v3.7.24/dispatch-evidence.json`と`dispatch-coverage-evidence.json`をcleanな現行HEADから再生成した。coverageは225 fixture・4,464 site・426/523 native entry・424/492 unique nameを、純LLVM AOTの全件証明とは分けたunattested sampled coverageとして記録する。expected-exit、global/static constant、compat-js artifactも同じclean HEADのprovenanceへ更新した。ベンチマークは`benchmarks/results/latest.json`／`latest.md`へmacOS arm64・Zig 0.16.0・LLVM 22.1.8のInterpreter／AOT compile／AOT run結果を保存済みである。
 
-CIはjob増加とmacOS同時実行上限を考慮し、通常10 job、native AOT 27 job、Linux/Windows support AOT 12 jobの合計49 matrix job、coverage shard検証job、attestation jobへ分割した。macOSは1 runあたり5 jobを維持し、Linux/Windowsのdispatch coverageだけを3 weighted shardへ分ける。直近pushのrun `33684995563`は記録時点でpendingであり、壁時計・runner合計の改善値は完了runで測定するまで未確定とする。
+CIはjob増加とmacOS同時実行上限を考慮し、通常10 job、native AOT 27 job、Linux/Windows support AOT 12 jobの合計49 matrix job、coverage shard検証job、attestation jobへ分割した。macOSは1 runあたり5 jobを維持し、Linux/Windowsのdispatch coverageだけを3 weighted shardへ分ける。直近pushのrun `33685952711`はmacOS runnerの同時実行待ちを含むqueued状態であり、壁時計・runner合計の改善値は完了runで測定するまで未確定とする。待機中に作業は停止せず、次回push前に完了済み失敗runを再確認する。
 
 公式HTTPサーバqueryの異常系を、固定`plugin_httpserver.mts`の`decodeURIComponent`／`uri.split('?')`へ合わせた。`%`欠落・非16進・不正UTF-8は`URI malformed`、2個目以降の`?`は無視する。Interpreter/AOT単体テストと既存の公式HTTP差分を通過し、詳細は`docs/COMPATIBILITY_QUIRKS.md`へ記録した。この単位は`httpserver-query-parser-error`の未実装TODOを解消したもので、POSTフォームの`URLSearchParams`寛容性は変更していない。続くU23では、固定sourceのcase-sensitiveなmultipart content-type、boundary正規表現、LF-only header、引用付きContent-Dispositionの部分一致をInterpreter/AOTへ揃え、`plugin-httpserver-all`を21件から23件へ拡張した。壊れたbody全体の診断、外部endpoint、3正式OSのHTTP attestationは未確定のまま残す。
 
