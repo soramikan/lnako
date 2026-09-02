@@ -13,5 +13,12 @@
     "pluginRoute": "plugin_system",
     "dispatchExpectations": [{"command": "終", "result": "failure", "count": 1, "platforms": ["darwin", "linux", "win32"]}],
     "source": "エラー監視\n終()\nエラーならば\n(\"ERROR:\"&エラーメッセージ)を表示\nここまで\n"
+  },
+  {
+    "id": "plugin-node-path-route",
+    "commands": ["ファイル名抽出", "パス抽出"],
+    "catalogIds": {"ファイル名抽出": "command-0722", "パス抽出": "command-0723"},
+    "pluginRoute": "plugin_node",
+    "source": "ファイル名抽出(\"a/b.txt\")を表示\nパス抽出(\"a/b.txt\")を表示\n"
   }
 ]
