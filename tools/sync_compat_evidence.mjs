@@ -499,6 +499,7 @@ async function readFixtureRecords() {
         sourceSha256: typeof fixture.source === "string" ? createHash("sha256").update(fixture.source).digest("hex") : null,
         catalogIds: readFixtureCatalogIds(fixture, file),
         expectedDispatchRoute: fixture.expectedDispatchRoute ?? null,
+        officialSourceStderrIncludes: fixture.officialSourceStderrIncludes ?? null,
         commandNames: new Set(),
         associationOrigins: new Map(),
         dispatchExpectations: Array.isArray(fixture.dispatchExpectations) ? fixture.dispatchExpectations : [],
@@ -696,7 +697,7 @@ function validateDispatchCoverageEvidence(evidence, lock, standard, records, aud
       throw new Error(`dispatch coverage証拠のfixture identityが不正です: ${key}`);
     }
     validateDispatchExpectations(report.dispatchExpectations, fixture.commandNames, `${key}.dispatchExpectations`);
-    validateCoverageComparison(report.officialComparison, hashPattern, key);
+    validateCoverageComparison(report.officialComparison, hashPattern, key, fixture);
     assertKnownObjectKeys(report.interpreter, ["dispatchEventCount", "staticSuccessSiteCount", "expectedFailureSiteCount", "expectedFailureDispatchCount", "staticSiteWithoutAotManifestCount", "traceSha256"], `${key}.interpreter`);
     assertKnownObjectKeys(report.aot, ["manifestEntryCount", "dispatchAttemptCount", "dispatchResultCount", "staticSuccessSiteCount", "expectedFailureSiteCount", "expectedFailureDispatchCount", "failedDispatchCount", "traceSha256", "compileManifestSha256"], `${key}.aot`);
     if (!Number.isSafeInteger(report.interpreter.dispatchEventCount) || report.interpreter.dispatchEventCount < 1 ||
@@ -836,13 +837,14 @@ function validateDispatchCoverageEvidence(evidence, lock, standard, records, aud
   }
 }
 
-function validateCoverageComparison(comparison, hashPattern, fixtureKey) {
-  assertKnownObjectKeys(comparison, ["oracle", "routes", "selectedOracleEquivalent", "officialGeneratedAvailable", "officialGeneratedRouteUnavailableReason", "officialRoutesEquivalent", "results"], `${fixtureKey}.officialComparison`);
+function validateCoverageComparison(comparison, hashPattern, fixtureKey, fixture) {
+  assertKnownObjectKeys(comparison, ["oracle", "routes", "selectedOracleEquivalent", "officialGeneratedAvailable", "officialGeneratedRouteUnavailableReason", "officialRoutesEquivalent", "officialSourceStderrIncludes", "results"], `${fixtureKey}.officialComparison`);
   const expectedRoutes = ["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0"];
   if (!new Set(["officialSource", "officialGenerated"]).has(comparison.oracle) || JSON.stringify(comparison.routes) !== JSON.stringify(expectedRoutes) || comparison.selectedOracleEquivalent !== true ||
       typeof comparison.officialGeneratedAvailable !== "boolean" || (comparison.officialGeneratedAvailable && comparison.officialGeneratedRouteUnavailableReason !== null) ||
       (!comparison.officialGeneratedAvailable && typeof comparison.officialGeneratedRouteUnavailableReason !== "string") ||
-      typeof comparison.officialRoutesEquivalent !== "boolean") {
+      typeof comparison.officialRoutesEquivalent !== "boolean" ||
+      comparison.officialSourceStderrIncludes !== (fixture.officialSourceStderrIncludes ?? null)) {
     throw new Error(`dispatch coverage証拠の公式差分metadataが不正です: ${fixtureKey}`);
   }
   assertKnownObjectKeys(comparison.results, expectedRoutes, `${fixtureKey}.officialComparison.results`);
@@ -870,7 +872,9 @@ function validateCoverageComparison(comparison, hashPattern, fixtureKey) {
   } else {
     for (const route of [comparison.oracle, "lnakoRun", "lnakoNativeO0"]) {
       const result = comparison.results[route];
-      if (result.status !== 0 || result.signal !== null || result.stdoutSha256 !== selected.stdoutSha256 || result.stderrSha256 !== selected.stderrSha256) {
+      const diagnosticDifferenceAllowed = comparison.oracle === "officialSource" && comparison.officialSourceStderrIncludes !== null;
+      if (result.status !== 0 || result.signal !== null || result.stdoutSha256 !== selected.stdoutSha256 ||
+          (!diagnosticDifferenceAllowed && result.stderrSha256 !== selected.stderrSha256)) {
         throw new Error(`dispatch coverage証拠のsource差分結果が不一致です: ${fixtureKey}/${route}`);
       }
     }

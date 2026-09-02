@@ -27,6 +27,7 @@
     "catalogIds": {"今": "command-0808", "システム時間": "command-0809", "今日": "command-0810", "明日": "command-0811", "昨日": "command-0812", "今年": "command-0813", "来年": "command-0814", "去年": "command-0815", "今月": "command-0816", "来月": "command-0817", "先月": "command-0818"},
     "pluginRoute": "plugin_datetime",
     "expectedDispatchRoute": "plugin_datetime",
+    "officialSourceStderrIncludes": "古い形式なので正しく動作しない可能性があります。",
     "source": "!「${PLUGIN_DATETIME}」を取り込む\n今()を表示\nシステム時間()を表示\n今日()を表示\n明日()を表示\n昨日()を表示\n今年()を表示\n来年()を表示\n去年()を表示\n今月()を表示\n来月()を表示\n先月()を表示\n"
   },
   {
@@ -35,6 +36,7 @@
     "catalogIds": {"曜日": "command-0819", "曜日番号取得": "command-0820", "UNIX時間変換": "command-0821", "UNIXTIME変換": "command-0822", "日時変換": "command-0823"},
     "pluginRoute": "plugin_datetime",
     "expectedDispatchRoute": "plugin_datetime",
+    "officialSourceStderrIncludes": "古い形式なので正しく動作しない可能性があります。",
     "source": "!「${PLUGIN_DATETIME}」を取り込む\n曜日(\"2024/02/29\")を表示\n曜日番号取得(\"2024/02/29\")を表示\nUNIX時間変換(\"1970/01/01 09:00:02\")を表示\nUNIXTIME変換(\"1970/01/01 09:00:01\")を表示\n日時変換(3)を表示\n"
   },
   {
@@ -45,6 +47,7 @@
     "catalogIds": {"和暦変換": "command-0824"},
     "pluginRoute": "plugin_datetime",
     "expectedDispatchRoute": "plugin_datetime",
+    "officialSourceStderrIncludes": "古い形式なので正しく動作しない可能性があります。",
     "source": "!「${PLUGIN_DATETIME}」を取り込む\n和暦変換(\"2019/05/01\")を表示\n"
   },
   {
@@ -53,6 +56,7 @@
     "catalogIds": {"年数差": "command-0825", "月数差": "command-0826", "日数差": "command-0827", "日時差": "command-0828", "時間差": "command-0829", "分差": "command-0830", "秒差": "command-0831", "時間加算": "command-0832", "日付加算": "command-0833", "日時加算": "command-0834"},
     "pluginRoute": "plugin_datetime",
     "expectedDispatchRoute": "plugin_datetime",
+    "officialSourceStderrIncludes": "古い形式なので正しく動作しない可能性があります。",
     "source": "!「${PLUGIN_DATETIME}」を取り込む\n年数差(\"2020/01/01\",\"2024/01/01\")を表示\n月数差(\"2024/01/01\",\"2025/03/01\")を表示\n日数差(\"2024/01/01\",\"2024/01/03\")を表示\n日時差(\"2024/01/01\",\"2024/01/08\",\"日\")を表示\n時間差(\"2024/01/01 00:00:00\",\"2024/01/01 03:00:00\")を表示\n分差(\"2024/01/01 00:00:00\",\"2024/01/01 00:03:00\")を表示\n秒差(\"2024/01/01 00:00:00\",\"2024/01/01 00:00:03\")を表示\n時間加算(\"2024/01/01 23:30:00\",\"+01:00:00\")を表示\n日付加算(\"2024/01/31\",\"+0/1/0\")を表示\n日時加算(\"2024/01/01 00:00:00\",\"+90分\")を表示\n"
   }
 ]

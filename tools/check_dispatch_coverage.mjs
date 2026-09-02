@@ -243,6 +243,10 @@ function validateFixture(testCase, file) {
       (typeof testCase.expectedDispatchRoute !== "string" || testCase.expectedDispatchRoute !== "plugin_datetime" || testCase.pluginRoute !== "plugin_datetime")) {
     throw new Error(`fixtureのexpectedDispatchRouteが不正です: ${file}/${testCase.id}`);
   }
+  if (testCase.officialSourceStderrIncludes !== undefined &&
+      (testCase.pluginRoute !== "plugin_datetime" || typeof testCase.officialSourceStderrIncludes !== "string" || testCase.officialSourceStderrIncludes.length === 0)) {
+    throw new Error(`officialSourceStderrIncludesはplugin_datetimeの空でない文字列で指定してください: ${file}/${testCase.id}`);
+  }
   if (testCase.officialSourceStdoutIncludes !== undefined &&
       (testCase.oracle !== "official-generated" || typeof testCase.officialSourceStdoutIncludes !== "string" || testCase.officialSourceStdoutIncludes.length === 0)) {
     throw new Error(`officialSourceStdoutIncludesはoracle=official-generatedの空でない文字列で指定してください: ${file}/${testCase.id}`);
@@ -349,6 +353,9 @@ async function runFixture(fixture, index, temporary, loopbackBase) {
   if (fixture.officialSourceStdoutIncludes !== undefined && !officialSource.stdout.includes(fixture.officialSourceStdoutIncludes)) {
     throw new Error(`${fixture.file}/${fixture.id} 公式CLI sourceの既知エラー出力が見つかりません: ${fixture.officialSourceStdoutIncludes}`);
   }
+  if (fixture.officialSourceStderrIncludes !== undefined && !officialSource.stderr.includes(fixture.officialSourceStderrIncludes)) {
+    throw new Error(`${fixture.file}/${fixture.id} 公式CLI sourceの既知診断出力が見つかりません: ${fixture.officialSourceStderrIncludes}`);
+  }
   const officialCompile = run(
     process.execPath,
     [...oracleHostArguments, officialCli, "--compile", "--silent", "--output", generatedPath, officialGeneratedSourcePath],
@@ -420,6 +427,7 @@ async function runFixture(fixture, index, temporary, loopbackBase) {
           ? generatedRouteUnavailableFixtures.get(`${fixture.file}/${fixture.id}`)
           : null,
         officialRoutesEquivalent,
+        officialSourceStderrIncludes: fixture.officialSourceStderrIncludes ?? null,
         results: Object.fromEntries([
           ["officialSource", summarizeProcess(officialSource)],
           ["officialGenerated", summarizeProcess(officialGenerated)],
