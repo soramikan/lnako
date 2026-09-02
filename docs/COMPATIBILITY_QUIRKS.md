@@ -558,6 +558,12 @@ Windows runnerで公式oracleを`D:`、fixtureの一時ディレクトリを`C:`
 
 lnakoのdispatch監査は、公式source・Interpreter・純LLVM AOT O0を同じfixtureで比較するため、oracleが既定の`.cache/oracle`にあるCIでは監査のscratch treeをリポジトリ側へ置き、全OSでfixtureからoracle pluginへの相対pathを生成する。この変更は公式の挙動を隠すものではなく、公式oracleを実行可能な同一drive条件へ固定するテストハーネス上の意図的な回避策である。Interpreter/AOTのplugin routeはこのfixtureで比較し、公式生成JavaScriptのstandalone plugin登録差は別の既知gapとして扱う。対象経路は公式source・Interpreter・純LLVM AOTで、QuickJSは標準命令の証拠対象外である。差分テストIDは`dispatch coverage / supplemental-plugin-cases.json/plugin-markup-all`とし、公式側の追跡TODOは`TODO: official-cnako3-drive-letter-import-path`として残す。
 
+## 標準入力のEOFと行分割
+
+公式の[plugin_node命令一覧](https://nadesi.com/v3/doc/index.php?plugin_node=&show=)は、`標準入力取得時`・`尋`・`文字尋`・`標準入力全取得`の命令名と引数形を掲載するが、raw入力のCR/LF保持、EOF時の末尾部分行、`尋`の数値変換、callbackの同期順序までは説明していない。固定v3.7.24の[`src/plugin_node.mts`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/src/plugin_node.mts)を公式sourceとして実測した結果、`標準入力全取得`は入力バイト列をUTF-8文字列へ変換してCR/LFを保持し、行命令はCRLFのCRだけを除去する。EOF直前に改行のない部分行も捨てず、`尋`は`Number(line)`がNaNでない場合だけ数値、`文字尋`は文字列として返す。`標準入力取得時`は登録関数を同期実行し、各行をシステムグローバル`対象`へ設定してEOFまで渡す。この境界は命令一覧からは予測しにくい仕様であり、EOF部分行を処理しない実装では入力を失うため、回帰対象とする。
+
+U08の`native-node-stdin-lines`は末尾改行なしの`abc\r\n41\nrest`、`native-node-stdin-callback`は`A\r\nB`、`native-node-stdin-all`は`A\n日本語\n`を使い、公式CLI・公式生成JavaScript・lnako Interpreter・LLVM AOT O0〜O3を比較した。行fixture内の`標準入力全取得`でも末尾改行なしraw入力を確認する。3 fixtureは`dispatch-coverage-evidence.json`の同一siteへ接続され、38 fixture・1,737 site・326 native entryの監査に含まれる。lnakoはInterpreter／純LLVM AOTでこの挙動を意図的に再現しており、未実装ではない。ただし、artifactはmacOS arm64のclean実測であり、Windowsのコンソール入力と3正式OSの外部署名attestationは未検証である。対象経路は公式source・公式生成JavaScript・Interpreter・AOTで、QuickJSは標準命令の証拠対象外。差分テストIDは`plugin-node-stdin`、`plugin-node-stdin-callback`、`native-node-stdin-lines`、`native-node-stdin-callback`、`native-node-stdin-all`、追跡TODOは`TODO: node-stdin-cross-os-attestation`とする。
+
 ## 更新規則
 
 - 説明文と実装が食い違う場合は、固定した公式v3.7.24の実行結果を優先する。

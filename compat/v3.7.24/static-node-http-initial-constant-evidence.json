@@ -71,16 +71,16 @@
     },
     "lnako": {
       "binarySha256": "8f67bed8458cd81cf46da66cfd8da31905b9340639b65c2190a869d173d987d4",
-      "commit": "07a980c8101ee09beb1918bc87ac203f0b9f30b2",
+      "commit": "d9a867c9f2b8a7ec5e27c90b7f8f4bfc0d42a673",
       "dirty": false
     },
     "raw": {
       "interpreterTraceSha256": "61110a79cbd78ee896940e14e255399e518fa358191cef31e1473a1d62d6b1c2",
       "aotTraceSha256": "24592e862083cbc64cf19442216d831d165670a6dd41543ce236b21a75fca936",
-      "globalManifestSha256": "fd284d49481762901877551ede5da1a96b4dadd79b5c08f7f2e220f8488b88d3",
+      "globalManifestSha256": "b52a2b764704e66a10d2cba7959df89b149f6fd44bd6e628a2a92a863e7503f3",
       "literalInterpreterTraceSha256": "d1a240ca85bb6425f4ad3e15b23d56a4366b64e8631f58b1af10c96a38b65232",
       "literalAotTraceSha256": "b503b7eae644c3b3cc2fbe7504669a86aa68f5db0642b31b5d61cde895e2a1ea",
-      "literalManifestSha256": "703fab8b4b3a346517766fe0c81afcaea6912c47633d844b98ad5c7ce2730380"
+      "literalManifestSha256": "36a8d2f51a30c76cd27fa597aa504e7162374c5e64617d0d7e7badfd539b6e94"
     }
   },
   "trace": {
