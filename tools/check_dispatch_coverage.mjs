@@ -591,6 +591,7 @@ async function runHttpServerFixture(fixture, index, temporary) {
           ? null
           : generatedRouteUnavailableFixtures.get(`${fixture.file}/${fixture.id}`),
         officialRoutesEquivalent: generatedAvailable && JSON.stringify(officialSource.responses) === JSON.stringify(officialGenerated.responses),
+        officialSourceStderrIncludes: null,
         results: Object.fromEntries([
           ["officialSource", summarizeHttpSuite(officialSource)],
           ["officialGenerated", summarizeHttpSuite(officialGenerated)],
