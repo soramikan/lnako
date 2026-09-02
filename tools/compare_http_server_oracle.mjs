@@ -61,6 +61,7 @@ async function runSuite(label, command) {
       ["/headers", "GET"],
       ["/redirect", "GET"],
       ["/route/long/test", "GET"],
+      ["/api2", "GET"],
       ["/static/hello.txt?x=1", "GET"],
       ["/static/missing.txt", "GET"],
     ];

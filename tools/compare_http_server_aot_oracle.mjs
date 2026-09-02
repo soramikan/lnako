@@ -95,6 +95,7 @@ async function runSuite(label, optimization) {
       ["/headers", "GET"],
       ["/redirect", "GET"],
       ["/route/long/test", "GET"],
+      ["/api2", "GET"],
       ["/static/hello.txt?x=1", "GET"],
       ["/static/missing.txt", "GET"],
     ];
@@ -118,7 +119,7 @@ function suiteEnvironment() {
 }
 
 function requestCount() {
-  return 14;
+  return 15;
 }
 
 function multipartBody() {
