@@ -22,8 +22,8 @@
   },
   "executionEvidenceStates": {
     "verified": 0,
-    "trace-confirmed-unattested": 452,
-    "unverified": 75
+    "trace-confirmed-unattested": 455,
+    "unverified": 72
   },
   "entries": [
     {
@@ -23273,9 +23273,25 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.expected-exit-evidence.v1",
+        "fixtureId": "node-exit-evidence",
+        "siteIds": [
+          "0x0000000000000002"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0",
+          "lnakoNativeO1",
+          "lnakoNativeO2",
+          "lnakoNativeO3"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 明示catalog ID・終了site IDについて、公式source/generated、Interpreter、AOT O0〜O3の終了結果、terminal reason、trace-end、compile manifestを機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式7経路の終了処理差分テストに成功"
     },
     {
@@ -23307,9 +23323,25 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.expected-exit-evidence.v1",
+        "fixtureId": "node-exit-evidence",
+        "siteIds": [
+          "0x0000000100000001"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0",
+          "lnakoNativeO1",
+          "lnakoNativeO2",
+          "lnakoNativeO3"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 明示catalog ID・終了site IDについて、公式source/generated、Interpreter、AOT O0〜O3の終了結果、terminal reason、trace-end、compile manifestを機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式7経路のSIGINTコールバック登録と偽結果の差分テストに成功"
     },
     {
@@ -23341,9 +23373,25 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.expected-exit-evidence.v1",
+        "fixtureId": "node-exit-evidence",
+        "siteIds": [
+          "0x0000000000000002"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0",
+          "lnakoNativeO1",
+          "lnakoNativeO2",
+          "lnakoNativeO3"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 明示catalog ID・終了site IDについて、公式source/generated、Interpreter、AOT O0〜O3の終了結果、terminal reason、trace-end、compile manifestを機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式7経路の終了処理差分テストに成功"
     },
     {

@@ -188,6 +188,11 @@ UTF-16ヒープ値、配列・挿入順辞書、コレクションを保持す�
 - `tools/compare_native_oracle.mjs` は同じ入力を公式CLI、公式生成済みJavaScript＋Node、`lnako run`、
   `lnako build` の実行ファイルという4経路で実行し、標準出力・エラー分類・終了コード・シグナルを照合する。
   dispatch traceではlowering時に決めたsite IDをInterpreter/AOTで共有し、AOTはattempt/resultをcall IDで対にする。
+- 終了経路は通常のartifactへ混在させず、`DispatchTrace`の最後に`phase: "trace-end"`、`terminalReason`、
+  `exitCode`、`signal`を追加してから標準出力をflushする。Interpreterは`プロセス終`／`終了`と割り込みcallbackを、
+  純LLVM AOTはbuiltinの終了呼出しとPOSIX SIGINTのpollを同じ形式へ記録する。`tools/check_node_exit_evidence.mjs`は
+  `expected-exit-evidence.json`へ公式source・generated、Interpreter、AOT O0〜O3、O0 manifest targetをcatalog ID別に固定する。
+  POSIXの非同期割り込みではin-flight dispatchが最大1件未完了になり得るため、終了結果とは別にその境界を検査する。
 
 ## plugin_system標準命令
 

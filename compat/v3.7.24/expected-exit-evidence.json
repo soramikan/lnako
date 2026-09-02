@@ -1,0 +1,695 @@
+{
+  "schema": "lnako.expected-exit-evidence.v1",
+  "generator": "tools/check_node_exit_evidence.mjs",
+  "baseline": {
+    "tag": "3.7.24",
+    "commit": "aa18c7e640523938c680958fe731418cc6f7a58f"
+  },
+  "fixture": {
+    "id": "node-exit-evidence",
+    "files": [
+      "tests/oracle/node-exit-cases.json",
+      "tests/oracle/node-interrupt-case.json"
+    ],
+    "cases": [
+      {
+        "id": "plugin-node-exit-code",
+        "command": "プロセス終",
+        "catalogId": "command-0746",
+        "sourceSha256": "da4a063fec5bf9f236c51f4a90096808425e5eb39e977704d63577186ddbf9fa"
+      },
+      {
+        "id": "plugin-node-interrupt",
+        "command": "強制終了時",
+        "catalogId": "command-0747",
+        "sourceSha256": "3e066d3737a052cd567efc61d6e524abc2aefdee0c5f0242fbbd336bf054acd9"
+      },
+      {
+        "id": "plugin-node-exit-japanese-alias",
+        "command": "終了",
+        "catalogId": "command-0748",
+        "sourceSha256": "c9fb0295b1267629e95c5d1fbbc7df92d4071a99e2d678e28e03ade890bab90f"
+      }
+    ]
+  },
+  "officialComparison": {
+    "routes": [
+      "officialSource",
+      "officialGenerated",
+      "lnakoRun",
+      "lnakoNativeO0",
+      "lnakoNativeO1",
+      "lnakoNativeO2",
+      "lnakoNativeO3"
+    ],
+    "equivalent": true
+  },
+  "provenance": {
+    "environment": {
+      "platform": "darwin",
+      "arch": "arm64",
+      "node": "v24.19.0"
+    },
+    "oracle": {
+      "build": 4,
+      "archiveSha256": "c3bedbf101118a261f631d331127ae441657fec091c712b07d237c4336eb0011",
+      "cliSha256": "65e32f1d7de0b2da18edf3f4c49565c37d31aa474d31ee08426f2f6a0c0d6c81",
+      "markerSha256": "e9444955298c3bb22164a219c0f342ee32301e901ec967d648cae9a25d8bf531",
+      "treeHashAlgorithm": "sha256-json-records-v3",
+      "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
+    },
+    "lnako": {
+      "binarySha256": "8f67bed8458cd81cf46da66cfd8da31905b9340639b65c2190a869d173d987d4",
+      "commit": "07a980c8101ee09beb1918bc87ac203f0b9f30b2",
+      "dirty": false
+    },
+    "raw": {
+      "traceSha256": {
+        "plugin-node-exit-code": {
+          "interpreter": "5c9c6bb1d5053518615018d8840be525e73f0ff6abffef46b1a6aa538fd9284b",
+          "aot": {
+            "O0": "777fe4ab4e726447766d988b35ca40db90f199d4fd37792ac59b4e42ce8f84e5",
+            "O1": "777fe4ab4e726447766d988b35ca40db90f199d4fd37792ac59b4e42ce8f84e5",
+            "O2": "777fe4ab4e726447766d988b35ca40db90f199d4fd37792ac59b4e42ce8f84e5",
+            "O3": "777fe4ab4e726447766d988b35ca40db90f199d4fd37792ac59b4e42ce8f84e5"
+          }
+        },
+        "plugin-node-interrupt": {
+          "interpreter": "b7d38cf9220f0ec08b2061edde3da5ef73c0324c2c59adfbb809b75626fac3da",
+          "aot": {
+            "O0": "156dca532679f3253dfa33680188934f81444f51d733e25b84e334ea88b6eaea",
+            "O1": "156dca532679f3253dfa33680188934f81444f51d733e25b84e334ea88b6eaea",
+            "O2": "156dca532679f3253dfa33680188934f81444f51d733e25b84e334ea88b6eaea",
+            "O3": "156dca532679f3253dfa33680188934f81444f51d733e25b84e334ea88b6eaea"
+          }
+        },
+        "plugin-node-exit-japanese-alias": {
+          "interpreter": "b45534ea876278795fbd0854483157ab56eff25e0368384dfe08a3b2f25dd18b",
+          "aot": {
+            "O0": "b911b7e3e6f9b94ccabbcb47c5c391163e699aad384f4b4f0af894843632ca9a",
+            "O1": "b911b7e3e6f9b94ccabbcb47c5c391163e699aad384f4b4f0af894843632ca9a",
+            "O2": "b911b7e3e6f9b94ccabbcb47c5c391163e699aad384f4b4f0af894843632ca9a",
+            "O3": "b911b7e3e6f9b94ccabbcb47c5c391163e699aad384f4b4f0af894843632ca9a"
+          }
+        }
+      }
+    }
+  },
+  "entries": [
+    {
+      "caseId": "plugin-node-exit-code",
+      "catalogId": "command-0746",
+      "name": "プロセス終",
+      "plugin": "plugin_node",
+      "sourceSha256": "da4a063fec5bf9f236c51f4a90096808425e5eb39e977704d63577186ddbf9fa",
+      "expectedExitCode": 7,
+      "terminalReason": "process-exit",
+      "officialComparison": {
+        "oracle": "official-source",
+        "routes": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0",
+          "lnakoNativeO1",
+          "lnakoNativeO2",
+          "lnakoNativeO3"
+        ],
+        "equivalent": true,
+        "results": {
+          "officialSource": {
+            "status": 7,
+            "signal": null,
+            "stdoutSha256": "be9351741a8155d01fd028d158546f1005e73ceeb0bb2d093335feac4144e450",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "officialGenerated": {
+            "status": 7,
+            "signal": null,
+            "stdoutSha256": "be9351741a8155d01fd028d158546f1005e73ceeb0bb2d093335feac4144e450",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoRun": {
+            "status": 7,
+            "signal": null,
+            "stdoutSha256": "be9351741a8155d01fd028d158546f1005e73ceeb0bb2d093335feac4144e450",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO0": {
+            "status": 7,
+            "signal": null,
+            "stdoutSha256": "be9351741a8155d01fd028d158546f1005e73ceeb0bb2d093335feac4144e450",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO1": {
+            "status": 7,
+            "signal": null,
+            "stdoutSha256": "be9351741a8155d01fd028d158546f1005e73ceeb0bb2d093335feac4144e450",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO2": {
+            "status": 7,
+            "signal": null,
+            "stdoutSha256": "be9351741a8155d01fd028d158546f1005e73ceeb0bb2d093335feac4144e450",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO3": {
+            "status": 7,
+            "signal": null,
+            "stdoutSha256": "be9351741a8155d01fd028d158546f1005e73ceeb0bb2d093335feac4144e450",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      },
+      "site": {
+        "siteId": "0x0000000000000002",
+        "sourceName": "プロセス終",
+        "canonicalOpcode": "node_process_exit",
+        "opcode": 271,
+        "route": "builtin"
+      },
+      "trace": {
+        "interpreter": {
+          "eventCount": 2,
+          "terminalReason": "process-exit",
+          "exitCode": 7,
+          "signal": null,
+          "target": {
+            "siteId": "0x0000000000000002",
+            "sourceName": "プロセス終",
+            "route": "plugin_node",
+            "result": "success",
+            "count": 1
+          },
+          "traceSha256": "5c9c6bb1d5053518615018d8840be525e73f0ff6abffef46b1a6aa538fd9284b"
+        },
+        "aot": {
+          "O0": {
+            "eventCount": 4,
+            "terminalReason": "process-exit",
+            "exitCode": 7,
+            "signal": null,
+            "target": {
+              "siteId": "0x0000000000000002",
+              "sourceName": "プロセス終",
+              "canonicalOpcode": "node_process_exit",
+              "opcode": 271,
+              "route": "builtin",
+              "result": true,
+              "callId": 1,
+              "count": 1,
+              "unmatchedCallCount": 0
+            },
+            "traceSha256": "777fe4ab4e726447766d988b35ca40db90f199d4fd37792ac59b4e42ce8f84e5"
+          },
+          "O1": {
+            "eventCount": 4,
+            "terminalReason": "process-exit",
+            "exitCode": 7,
+            "signal": null,
+            "target": {
+              "siteId": "0x0000000000000002",
+              "sourceName": "プロセス終",
+              "canonicalOpcode": "node_process_exit",
+              "opcode": 271,
+              "route": "builtin",
+              "result": true,
+              "callId": 1,
+              "count": 1,
+              "unmatchedCallCount": 0
+            },
+            "traceSha256": "777fe4ab4e726447766d988b35ca40db90f199d4fd37792ac59b4e42ce8f84e5"
+          },
+          "O2": {
+            "eventCount": 4,
+            "terminalReason": "process-exit",
+            "exitCode": 7,
+            "signal": null,
+            "target": {
+              "siteId": "0x0000000000000002",
+              "sourceName": "プロセス終",
+              "canonicalOpcode": "node_process_exit",
+              "opcode": 271,
+              "route": "builtin",
+              "result": true,
+              "callId": 1,
+              "count": 1,
+              "unmatchedCallCount": 0
+            },
+            "traceSha256": "777fe4ab4e726447766d988b35ca40db90f199d4fd37792ac59b4e42ce8f84e5"
+          },
+          "O3": {
+            "eventCount": 4,
+            "terminalReason": "process-exit",
+            "exitCode": 7,
+            "signal": null,
+            "target": {
+              "siteId": "0x0000000000000002",
+              "sourceName": "プロセス終",
+              "canonicalOpcode": "node_process_exit",
+              "opcode": 271,
+              "route": "builtin",
+              "result": true,
+              "callId": 1,
+              "count": 1,
+              "unmatchedCallCount": 0
+            },
+            "traceSha256": "777fe4ab4e726447766d988b35ca40db90f199d4fd37792ac59b4e42ce8f84e5"
+          }
+        },
+        "compileManifest": {
+          "complete": true,
+          "entries": [
+            {
+              "sourceName": "表示",
+              "canonicalOpcode": "display",
+              "opcode": 0,
+              "route": "direct-display",
+              "siteId": "0x0000000000000001"
+            },
+            {
+              "sourceName": "プロセス終",
+              "canonicalOpcode": "node_process_exit",
+              "opcode": 271,
+              "route": "builtin",
+              "siteId": "0x0000000000000002"
+            },
+            {
+              "sourceName": "表示",
+              "canonicalOpcode": "display",
+              "opcode": 0,
+              "route": "direct-display",
+              "siteId": "0x0000000000000003"
+            }
+          ],
+          "rawSha256": "298918a8e791b78a9ab74646c47f139b0bdb46df6809bcea855fbb4396f97dde"
+        }
+      },
+      "compileStatuses": {
+        "O0": 0,
+        "O1": 0,
+        "O2": 0,
+        "O3": 0
+      }
+    },
+    {
+      "caseId": "plugin-node-interrupt",
+      "catalogId": "command-0747",
+      "name": "強制終了時",
+      "plugin": "plugin_node",
+      "sourceSha256": "3e066d3737a052cd567efc61d6e524abc2aefdee0c5f0242fbbd336bf054acd9",
+      "expectedExitCode": 0,
+      "terminalReason": "interrupt-callback",
+      "officialComparison": {
+        "oracle": "official-source",
+        "routes": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0",
+          "lnakoNativeO1",
+          "lnakoNativeO2",
+          "lnakoNativeO3"
+        ],
+        "equivalent": true,
+        "results": {
+          "officialSource": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "3dfa3fb239f56c778a1e9b33eb31328349edd155a95806dac4378904e88527e5",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "officialGenerated": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "3dfa3fb239f56c778a1e9b33eb31328349edd155a95806dac4378904e88527e5",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoRun": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "3dfa3fb239f56c778a1e9b33eb31328349edd155a95806dac4378904e88527e5",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO0": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "3dfa3fb239f56c778a1e9b33eb31328349edd155a95806dac4378904e88527e5",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO1": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "3dfa3fb239f56c778a1e9b33eb31328349edd155a95806dac4378904e88527e5",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO2": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "3dfa3fb239f56c778a1e9b33eb31328349edd155a95806dac4378904e88527e5",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO3": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "3dfa3fb239f56c778a1e9b33eb31328349edd155a95806dac4378904e88527e5",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      },
+      "site": {
+        "siteId": "0x0000000100000001",
+        "sourceName": "強制終了時",
+        "canonicalOpcode": "node_interrupt_callback",
+        "opcode": 332,
+        "route": "node-interrupt"
+      },
+      "trace": {
+        "interpreter": {
+          "eventCount": 3,
+          "terminalReason": "interrupt-callback",
+          "exitCode": 0,
+          "signal": null,
+          "target": {
+            "siteId": "0x0000000100000001",
+            "sourceName": "強制終了時",
+            "route": "plugin_node",
+            "result": "success",
+            "count": 1
+          },
+          "traceSha256": "b7d38cf9220f0ec08b2061edde3da5ef73c0324c2c59adfbb809b75626fac3da"
+        },
+        "aot": {
+          "O0": {
+            "eventCount": 5,
+            "terminalReason": "interrupt-callback",
+            "exitCode": 0,
+            "signal": null,
+            "target": {
+              "siteId": "0x0000000100000001",
+              "sourceName": "強制終了時",
+              "canonicalOpcode": "node_interrupt_callback",
+              "opcode": 332,
+              "route": "node-interrupt",
+              "result": true,
+              "callId": 0,
+              "count": 1,
+              "unmatchedCallCount": 1
+            },
+            "traceSha256": "156dca532679f3253dfa33680188934f81444f51d733e25b84e334ea88b6eaea"
+          },
+          "O1": {
+            "eventCount": 5,
+            "terminalReason": "interrupt-callback",
+            "exitCode": 0,
+            "signal": null,
+            "target": {
+              "siteId": "0x0000000100000001",
+              "sourceName": "強制終了時",
+              "canonicalOpcode": "node_interrupt_callback",
+              "opcode": 332,
+              "route": "node-interrupt",
+              "result": true,
+              "callId": 0,
+              "count": 1,
+              "unmatchedCallCount": 1
+            },
+            "traceSha256": "156dca532679f3253dfa33680188934f81444f51d733e25b84e334ea88b6eaea"
+          },
+          "O2": {
+            "eventCount": 5,
+            "terminalReason": "interrupt-callback",
+            "exitCode": 0,
+            "signal": null,
+            "target": {
+              "siteId": "0x0000000100000001",
+              "sourceName": "強制終了時",
+              "canonicalOpcode": "node_interrupt_callback",
+              "opcode": 332,
+              "route": "node-interrupt",
+              "result": true,
+              "callId": 0,
+              "count": 1,
+              "unmatchedCallCount": 1
+            },
+            "traceSha256": "156dca532679f3253dfa33680188934f81444f51d733e25b84e334ea88b6eaea"
+          },
+          "O3": {
+            "eventCount": 5,
+            "terminalReason": "interrupt-callback",
+            "exitCode": 0,
+            "signal": null,
+            "target": {
+              "siteId": "0x0000000100000001",
+              "sourceName": "強制終了時",
+              "canonicalOpcode": "node_interrupt_callback",
+              "opcode": 332,
+              "route": "node-interrupt",
+              "result": true,
+              "callId": 0,
+              "count": 1,
+              "unmatchedCallCount": 1
+            },
+            "traceSha256": "156dca532679f3253dfa33680188934f81444f51d733e25b84e334ea88b6eaea"
+          }
+        },
+        "compileManifest": {
+          "complete": true,
+          "entries": [
+            {
+              "sourceName": "強制終了時",
+              "canonicalOpcode": "node_interrupt_callback",
+              "opcode": 332,
+              "route": "node-interrupt",
+              "siteId": "0x0000000100000001"
+            },
+            {
+              "sourceName": "表示",
+              "canonicalOpcode": "display",
+              "opcode": 0,
+              "route": "direct-display",
+              "siteId": "0x0000000100000002"
+            },
+            {
+              "sourceName": "秒待",
+              "canonicalOpcode": "timer_wait",
+              "opcode": 251,
+              "route": "builtin",
+              "siteId": "0x0000000100000003"
+            },
+            {
+              "sourceName": "表示",
+              "canonicalOpcode": "display",
+              "opcode": 0,
+              "route": "direct-display",
+              "siteId": "0x0000000100000004"
+            }
+          ],
+          "rawSha256": "984f6afb56a1c112d2061d3026442e150a8ea339a7b00e9647fe43b2528412c6"
+        }
+      },
+      "compileStatuses": {
+        "O0": 0,
+        "O1": 0,
+        "O2": 0,
+        "O3": 0
+      }
+    },
+    {
+      "caseId": "plugin-node-exit-japanese-alias",
+      "catalogId": "command-0748",
+      "name": "終了",
+      "plugin": "plugin_node",
+      "sourceSha256": "c9fb0295b1267629e95c5d1fbbc7df92d4071a99e2d678e28e03ade890bab90f",
+      "expectedExitCode": 0,
+      "terminalReason": "process-exit",
+      "officialComparison": {
+        "oracle": "official-source",
+        "routes": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0",
+          "lnakoNativeO1",
+          "lnakoNativeO2",
+          "lnakoNativeO3"
+        ],
+        "equivalent": true,
+        "results": {
+          "officialSource": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "be9351741a8155d01fd028d158546f1005e73ceeb0bb2d093335feac4144e450",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "officialGenerated": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "be9351741a8155d01fd028d158546f1005e73ceeb0bb2d093335feac4144e450",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoRun": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "be9351741a8155d01fd028d158546f1005e73ceeb0bb2d093335feac4144e450",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO0": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "be9351741a8155d01fd028d158546f1005e73ceeb0bb2d093335feac4144e450",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO1": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "be9351741a8155d01fd028d158546f1005e73ceeb0bb2d093335feac4144e450",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO2": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "be9351741a8155d01fd028d158546f1005e73ceeb0bb2d093335feac4144e450",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "lnakoNativeO3": {
+            "status": 0,
+            "signal": null,
+            "stdoutSha256": "be9351741a8155d01fd028d158546f1005e73ceeb0bb2d093335feac4144e450",
+            "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      },
+      "site": {
+        "siteId": "0x0000000000000002",
+        "sourceName": "終了",
+        "canonicalOpcode": "node_exit",
+        "opcode": 270,
+        "route": "builtin"
+      },
+      "trace": {
+        "interpreter": {
+          "eventCount": 2,
+          "terminalReason": "process-exit",
+          "exitCode": 0,
+          "signal": null,
+          "target": {
+            "siteId": "0x0000000000000002",
+            "sourceName": "終了",
+            "route": "plugin_node",
+            "result": "success",
+            "count": 1
+          },
+          "traceSha256": "b45534ea876278795fbd0854483157ab56eff25e0368384dfe08a3b2f25dd18b"
+        },
+        "aot": {
+          "O0": {
+            "eventCount": 4,
+            "terminalReason": "process-exit",
+            "exitCode": 0,
+            "signal": null,
+            "target": {
+              "siteId": "0x0000000000000002",
+              "sourceName": "終了",
+              "canonicalOpcode": "node_exit",
+              "opcode": 270,
+              "route": "builtin",
+              "result": true,
+              "callId": 1,
+              "count": 1,
+              "unmatchedCallCount": 0
+            },
+            "traceSha256": "b911b7e3e6f9b94ccabbcb47c5c391163e699aad384f4b4f0af894843632ca9a"
+          },
+          "O1": {
+            "eventCount": 4,
+            "terminalReason": "process-exit",
+            "exitCode": 0,
+            "signal": null,
+            "target": {
+              "siteId": "0x0000000000000002",
+              "sourceName": "終了",
+              "canonicalOpcode": "node_exit",
+              "opcode": 270,
+              "route": "builtin",
+              "result": true,
+              "callId": 1,
+              "count": 1,
+              "unmatchedCallCount": 0
+            },
+            "traceSha256": "b911b7e3e6f9b94ccabbcb47c5c391163e699aad384f4b4f0af894843632ca9a"
+          },
+          "O2": {
+            "eventCount": 4,
+            "terminalReason": "process-exit",
+            "exitCode": 0,
+            "signal": null,
+            "target": {
+              "siteId": "0x0000000000000002",
+              "sourceName": "終了",
+              "canonicalOpcode": "node_exit",
+              "opcode": 270,
+              "route": "builtin",
+              "result": true,
+              "callId": 1,
+              "count": 1,
+              "unmatchedCallCount": 0
+            },
+            "traceSha256": "b911b7e3e6f9b94ccabbcb47c5c391163e699aad384f4b4f0af894843632ca9a"
+          },
+          "O3": {
+            "eventCount": 4,
+            "terminalReason": "process-exit",
+            "exitCode": 0,
+            "signal": null,
+            "target": {
+              "siteId": "0x0000000000000002",
+              "sourceName": "終了",
+              "canonicalOpcode": "node_exit",
+              "opcode": 270,
+              "route": "builtin",
+              "result": true,
+              "callId": 1,
+              "count": 1,
+              "unmatchedCallCount": 0
+            },
+            "traceSha256": "b911b7e3e6f9b94ccabbcb47c5c391163e699aad384f4b4f0af894843632ca9a"
+          }
+        },
+        "compileManifest": {
+          "complete": true,
+          "entries": [
+            {
+              "sourceName": "表示",
+              "canonicalOpcode": "display",
+              "opcode": 0,
+              "route": "direct-display",
+              "siteId": "0x0000000000000001"
+            },
+            {
+              "sourceName": "終了",
+              "canonicalOpcode": "node_exit",
+              "opcode": 270,
+              "route": "builtin",
+              "siteId": "0x0000000000000002"
+            },
+            {
+              "sourceName": "表示",
+              "canonicalOpcode": "display",
+              "opcode": 0,
+              "route": "direct-display",
+              "siteId": "0x0000000000000003"
+            }
+          ],
+          "rawSha256": "af2a33469aa49eb221a2ed8f58c7469af21ec1a3db638f74b1174bdd71e61e02"
+        }
+      },
+      "compileStatuses": {
+        "O0": 0,
+        "O1": 0,
+        "O2": 0,
+        "O3": 0
+      }
+    }
+  ]
+}
