@@ -7,8 +7,8 @@
 | 状態 | entry数 | 意味 |
 |---|---:|---|
 | `verified` | 0 | 3正式OSの署名付きattestationまで揃った現在HEADの証拠 |
-| `trace-confirmed-unattested` | 445 | 公式差分、Interpreter/AOT trace、compile manifest等は揃うが、外部署名attestation前 |
-| `unverified` | 82 | 実装・fixtureの存在だけではcatalog ID単位の実行証拠にならない残件 |
+| `trace-confirmed-unattested` | 448 | 公式差分、Interpreter/AOT trace、compile manifest等は揃うが、外部署名attestation前 |
+| `unverified` | 79 | 実装・fixtureの存在だけではcatalog ID単位の実行証拠にならない残件 |
 
 `native: 523`という分類、fixtureの存在、Interpreterだけの成功、artifactの生成は、AOT verifiedや`trace-confirmed-unattested`を意味しない。各単位を完了扱いにするのは、この文書の共通完了条件と台帳検査が同時に通った場合だけとする。最終的な目標は、まず`trace-confirmed-unattested 527 / unverified 0`、その後に3正式OSの外部署名attestationを含む`verified`へ進むことである。
 
@@ -18,7 +18,7 @@ U01（`エラー発生`、`__DEBUG`）は完了した。cleanな`7eb6a96d9d44909
 
 同じclean HEADで10件のstatic constant artifactも再生成し、U01時点の`sync_compat_evidence.mjs --generate`の結果は`verified 0 / trace-confirmed-unattested 440 / unverified 87`となった。U02（`ナデシコ`、`ナデシコ続`）も完了した。cleanな`eb9949499c6f55329da3c5199543fb334cd41817`で再生成した33-fixture dispatch coverageは1,703 site・313 native entryを含み、`native-system-dynamic-execution`の`ナデシコ` 2 site（`command-0057`）と`ナデシコ続` 2 site（`command-0058`）を公式source・Interpreter・AOT O0の同一結果、compile manifest、runtime traceへ接続した。公式生成JavaScript単体の終了コード1は既存のstandalone system host登録差であり、P0の既知route差として記録する。
 
-U02のdispatch generator変更を`eb99494`へ、33-fixtureを受理する同期検査変更を`b68ec28`へ分離し、後者のfollow-up規則でclean artifact provenanceを検査した。U03ではOS別argvを本番経路で構築してから安全なhost adapterで最終launcher生成だけを捕捉し、`エクスプローラー起動`のdarwin/linux期待失敗をfixture policyへ追加した。`c7c6501`を証拠生成元とする34-fixture dispatch coverageは1,707 site・315 native entryを含み、U03の2 entryをcatalog evidenceへ接続する。U04ではglobal readだけでなくwriteも同じaccess namespaceのsite IDで記録し、`global-binding-evidence.json`へ`ファイルコピーデフォルト動作`の5 access（read/write/read/write/read）を固定した。cleanな`df544a2`で公式source・公式生成JavaScript・lnako Interpreter・AOT O0の結果、global manifest、両runtime traceを比較済みである。U04完了後の`sync_compat_evidence.mjs --generate`は実測で`verified 0 / trace-confirmed-unattested 445 / unverified 82`を返し、U04も3正式OSの外部署名attestationを含む`verified`ではない。次の実装単位はU05（`デスクトップ`、`マイドキュメント`、`テンポラリフォルダ`）である。
+U02のdispatch generator変更を`eb99494`へ、33-fixtureを受理する同期検査変更を`b68ec28`へ分離し、後者のfollow-up規則でclean artifact provenanceを検査した。U03ではOS別argvを本番経路で構築してから安全なhost adapterで最終launcher生成だけを捕捉し、`エクスプローラー起動`のdarwin/linux期待失敗をfixture policyへ追加した。`c7c6501`を証拠生成元とする34-fixture dispatch coverageは1,707 site・315 native entryを含み、U03の2 entryをcatalog evidenceへ接続する。U04ではglobal readだけでなくwriteも同じaccess namespaceのsite IDで記録し、`global-binding-evidence.json`へ`ファイルコピーデフォルト動作`の5 access（read/write/read/write/read）を固定した。U05では標準カタログ上は`関数`である3命令を括弧なしで参照するfixtureについて、OS依存の値を固定文字列にせずhost Context／AOT directory initializerから供給し、3つのglobal-read siteを`directory-binding-evidence.json`（`lnako.global-binding-evidence.v2`）へcatalog ID別に固定した。公式plugin_node命令一覧（https://nadesi.com/v3/doc/index.php?plugin_node=&show=）と固定upstream実装（https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/src/plugin_node.mts#L897-L939）を参照し、公式source・公式生成JavaScript・lnako Interpreter・AOT O0を比較した。U05完了後の`sync_compat_evidence.mjs --generate`は実測で`verified 0 / trace-confirmed-unattested 448 / unverified 79`を返したが、U04/U05とも3正式OSの外部署名attestationを含む`verified`ではない。
 
 ## 証拠基盤の柱
 
@@ -68,7 +68,7 @@ fixture.catalogIds[name]
 
 裸のglobal参照や可変globalを関数dispatchへ偽装しない。`lnako.global-binding-evidence.v1`相当の証拠を、既存のstatic constant evidenceと同じ厳格さで追加する。
 
-最低限、catalog ID、global binding/site ID、Interpreter read/write trace、AOT manifest、AOT read/write trace、公式source/generated比較、clean commit provenanceを`compat/v3.7.24/global-binding-evidence.json`へ記録する。U04ではこのschemaを実装し、global load/storeをbuiltin dispatchとは別namespaceで検査する。
+最低限、catalog ID、global binding/site ID、Interpreter read/write trace、AOT manifest、AOT read/write trace、公式source/generated比較、clean commit provenanceをartifactへ記録する。U04では`lnako.global-binding-evidence.v1`で可変globalのload/storeをbuiltin dispatchとは別namespaceで検査し、U05では`lnako.global-binding-evidence.v2`の複数binding形式でOS依存値のglobal readをcatalog ID別に検査する。catalogの型が`関数`でも、括弧なしの実行構文がglobal readとしてlowerされる場合は、関数dispatchの証拠と混同しない。
 
 ### P3 — compat-js evidence
 
@@ -83,8 +83,8 @@ fixture.catalogIds[name]
 | U01 | `command-0065 エラー発生`、`command-0066 __DEBUG`。既存の監視内throwとdebug traceをcoverageへ接続し、未捕捉例外のU07とは分ける | 2 | 440 |
 | U02 | `command-0057 ナデシコ`、`command-0058 ナデシコ続`。外側のdynamic dispatchを証拠化し、generated standalone差をP0で扱う | 2 | 442 |
 | U03 | `0702 ブラウザ起動`、`0703 エクスプローラー起動`。OS別argvを本番経路で組み立て、最後の外部process生成だけhost adapterでcaptureする | 2 | 444 |
-| U04 | `0709 ファイルコピーデフォルト動作`。`上書禁止`→`上書`→`overwrite`のglobal read/write/readをP2で記録する | 1 | 445 |
-| U05 | `0731 デスクトップ`、`0732 マイドキュメント`、`0735 テンポラリフォルダ`。OS依存値を固定文字列にせず、host adapterとglobal readを記録する | 3 | 448 |
+| U04 | `0709 ファイルコピーデフォルト動作`。`上書禁止`→`上書`→`overwrite`のglobal read/write/readをP2で記録する（完了） | 1 | 445 |
+| U05 | `0731 デスクトップ`、`0732 マイドキュメント`、`0735 テンポラリフォルダ`。OS依存値を固定文字列にせず、host adapterとglobal readを記録する（完了） | 3 | 448 |
 | U06 | `0741 解凍`、`0742 解凍時`、`0743 圧縮`、`0744 圧縮時`。hermeticな7z互換helperで本体とcallbackを実行し、ZIPの意味結果を比較する | 4 | 452 |
 | U07 | `0746 プロセス終`、`0747 強制終了時`、`0748 終了`。終了直前のdispatch-result、terminal reason、`trace-end`をflushし、expected exitを証拠化する | 3 | 455 |
 | U08 | `0754 標準入力取得時`、`0755 尋`、`0756 文字尋`、`0757 標準入力全取得`。固定stdin、EOF、callback drainを同じsiteで比較する | 4 | 459 |
@@ -128,7 +128,7 @@ P3 compat-js evidence
   └─ U22
 ```
 
-実装上は、まず一意名nativeの残り44件（445→489）、次に同名異pluginの34件（489→523）、最後にcompat-jsの4件（523→527）を目安にする。ただし、実際のcatalog ID・route・oracle差が確認できない場合は件数を減らさず、失敗理由をfixture policyまたは`docs/COMPATIBILITY_QUIRKS.md`へ残す。
+実装上は、まず一意名nativeの残り41件（448→489）、次に同名異pluginの34件（489→523）、最後にcompat-jsの4件（523→527）を目安にする。ただし、実際のcatalog ID・route・oracle差が確認できない場合は件数を減らさず、失敗理由をfixture policyまたは`docs/COMPATIBILITY_QUIRKS.md`へ残す。
 
 ## 各単位の共通完了条件
 

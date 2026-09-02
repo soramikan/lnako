@@ -1,0 +1,138 @@
+{
+  "schema": "lnako.global-binding-evidence.v2",
+  "generator": "tools/check_global_binding_evidence.mjs",
+  "baseline": {
+    "tag": "3.7.24",
+    "commit": "aa18c7e640523938c680958fe731418cc6f7a58f"
+  },
+  "fixture": {
+    "id": "native-node-directory-values",
+    "file": "native-cases.json",
+    "sourceSha256": "a7245143aad45c54e9113cea6f295d11e11870f686af9405b967968f28e7676c"
+  },
+  "bindings": [
+    {
+      "catalogId": "command-0731",
+      "name": "デスクトップ",
+      "plugin": "plugin_node",
+      "accessSequence": [
+        "global-load"
+      ],
+      "sites": [
+        {
+          "catalogId": "command-0731",
+          "name": "デスクトップ",
+          "plugin": "plugin_node",
+          "kind": "global-load",
+          "siteId": "0x0000000000000001"
+        }
+      ]
+    },
+    {
+      "catalogId": "command-0732",
+      "name": "マイドキュメント",
+      "plugin": "plugin_node",
+      "accessSequence": [
+        "global-load"
+      ],
+      "sites": [
+        {
+          "catalogId": "command-0732",
+          "name": "マイドキュメント",
+          "plugin": "plugin_node",
+          "kind": "global-load",
+          "siteId": "0x0000000000000002"
+        }
+      ]
+    },
+    {
+      "catalogId": "command-0735",
+      "name": "テンポラリフォルダ",
+      "plugin": "plugin_node",
+      "accessSequence": [
+        "global-load"
+      ],
+      "sites": [
+        {
+          "catalogId": "command-0735",
+          "name": "テンポラリフォルダ",
+          "plugin": "plugin_node",
+          "kind": "global-load",
+          "siteId": "0x0000000000000003"
+        }
+      ]
+    }
+  ],
+  "officialComparison": {
+    "oracle": "official-source",
+    "routes": [
+      "officialSource",
+      "officialGenerated",
+      "lnakoRun",
+      "lnakoNativeO0"
+    ],
+    "equivalent": true,
+    "results": {
+      "officialSource": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "2a20f475471e51d737521618b421143eb58b498735d290bf05476907376605db",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "officialGenerated": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "2a20f475471e51d737521618b421143eb58b498735d290bf05476907376605db",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "lnakoRun": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "2a20f475471e51d737521618b421143eb58b498735d290bf05476907376605db",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "lnakoNativeO0": {
+        "status": 0,
+        "signal": null,
+        "stdoutSha256": "2a20f475471e51d737521618b421143eb58b498735d290bf05476907376605db",
+        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  },
+  "attestation": null,
+  "provenance": {
+    "environment": {
+      "platform": "darwin",
+      "arch": "arm64",
+      "node": "v24.19.0"
+    },
+    "oracle": {
+      "build": 4,
+      "archiveSha256": "c3bedbf101118a261f631d331127ae441657fec091c712b07d237c4336eb0011",
+      "cliSha256": "65e32f1d7de0b2da18edf3f4c49565c37d31aa474d31ee08426f2f6a0c0d6c81",
+      "markerSha256": "e9444955298c3bb22164a219c0f342ee32301e901ec967d648cae9a25d8bf531",
+      "treeHashAlgorithm": "sha256-json-records-v3",
+      "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
+    },
+    "lnako": {
+      "binarySha256": "2cac4bdc7068c1d6dce5c8123a49695eac69decd801d2e111f79bcb2fc026405",
+      "commit": "095e5d0945b5ce8b1d9b21f2737c17c7abc9b08e",
+      "dirty": false
+    },
+    "raw": {
+      "interpreterTraceSha256": "6ee351ec2c4f0d11c0ec1f3cf1df9e43a1661e51df8e66f9c70795fa43a8ce03",
+      "aotTraceSha256": "8563fae5ec29d621b51a24d9ec37e50d89bb5b8186f336d5e42d28e9467a6cb4",
+      "globalManifestSha256": "82d0eded0ad936c9cf871ca99d44c30a91b037c06f755da042065a2a40f78a3d"
+    }
+  },
+  "trace": {
+    "interpreter": {
+      "schema": 1,
+      "eventCount": 3
+    },
+    "aot": {
+      "schema": 1,
+      "eventCount": 3
+    }
+  }
+}
