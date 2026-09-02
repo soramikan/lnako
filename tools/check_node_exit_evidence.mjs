@@ -65,13 +65,13 @@ await ensureOutputFree(outputPath);
 if (process.platform === "win32") throw new Error("強制終了時の実SIGINT証拠はWindowsコンソール制御イベント実装後に有効化します");
 
 const oracle = await readOracleIdentity();
+if (!noBuild) buildCompiler();
+await access(executable);
+const git = gitState();
 const temporary = await mkdtemp(join(root, ".tmp-lnako-node-exit-evidence-"));
 try {
-  if (!noBuild) buildCompiler();
-  await access(executable);
   const entries = [];
   for (const testCase of selectedCases) entries.push(await runSelectedCase(testCase, temporary, oracle));
-  const git = gitState();
   const artifact = {
     schema: "lnako.expected-exit-evidence.v1",
     generator: "tools/check_node_exit_evidence.mjs",
