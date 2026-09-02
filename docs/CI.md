@@ -77,6 +77,8 @@ AOT native 3 route jobへ割り当てる。dispatch supportは早く開始する
 
 その後の[run 33610505944](https://github.com/soramikan/lnako/actions/runs/33610505944)（`b853cc4`、CI #461）は15分32秒でFailureとなり、macOS `mac-core-standard-support`とLinux `core`の`Verify compatibility baseline`がexit code 1になった。公開ログのNode.js 20警告は全体のwarningで、失敗原因ではない。履歴artifactを照合すると、canonical dispatch証拠は`54155f6`、coverageは`b6b48f1`、expected-exit・global binding・static constant群は`25c4f7c`のclean provenanceを指したまま、検査対象のfixture／dispatch監査ツールが後続commitで変わっていた。`sync_compat_evidence.mjs --check`のfollow-up規則がこの状態を受理しなかったことが原因であり、runnerや命令実装の失敗ではない。U11では現行HEAD `17df1d1`からcanonical、coverage、expected-exit、global binding、static constant群を再生成し、台帳同期を成功させた。この再発防止の証拠更新を`628e5ce`へ記録する。
 
+その後の[run 33615040065](https://github.com/soramikan/lnako/actions/runs/33615040065)（`24483dc`、CI #462）は15分33秒でFailureとなった。macOS `mac-core-standard-support`とLinux `core`では`check_interpreter_only_classification.mjs --check`が、Linux `host`とmacOS `mac-host-compat`では`update_node_implemented.mjs --check`が、後続のU12証拠台帳更新に追随していない生成物を検出した。Node.js 20の`mlugg/setup-zig`非推奨警告45件は警告であり、失敗原因ではない。現行HEADでは`check_interpreter_only_classification.mjs --generate`、`update_node_implemented.mjs`、`sync_compat_evidence.mjs --generate`を順に実行し、`interpreter-only-classification.json`、`implemented.json`、`evidence.json`を再生成する。これらはNode HTTPの既存AOT証拠と対応する生成台帳の更新であり、製品ランタイムやCIの検証範囲を変更しない。再生成後に各`--check`、compat report、CI構成検査を通し、次のpushで再発がないかを確認する。
+
 ## AOT検証の共通buildとjob分割
 
 各AOT jobは自身のrunner上でcompilerを一度だけbuildし、`--no-build`の検査へ渡します。native jobは`LNAKO_NATIVE_ORACLE_JOBS=1`

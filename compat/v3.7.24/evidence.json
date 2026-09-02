@@ -24664,7 +24664,8 @@
             "implemented.tests"
           ],
           "plugin-node-http-options-and-promises": [
-            "fixture.commands"
+            "fixture.commands",
+            "implemented.tests"
           ]
         },
         "aot": {
@@ -24673,7 +24674,8 @@
             "implemented.tests"
           ],
           "plugin-node-http-options-and-promises": [
-            "fixture.commands"
+            "fixture.commands",
+            "implemented.tests"
           ]
         },
         "compatJs": {}

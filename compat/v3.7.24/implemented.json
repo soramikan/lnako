@@ -3374,7 +3374,8 @@
   "AJAX受信": {
     "status": "native",
     "tests": [
-      "plugin-node-http-async-values"
+      "plugin-node-http-async-values",
+      "plugin-node-http-options-and-promises"
     ],
     "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
   },
