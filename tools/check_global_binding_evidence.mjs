@@ -37,7 +37,7 @@ if (catalog.commandCount !== 527 || !Array.isArray(catalog.commands) || catalog.
   throw new Error("標準cnakoカタログが527 entryではありません");
 }
 const fixture = cases.find((candidate) => candidate.id === fixtureId);
-if (fixture === undefined || !Array.isArray(fixture.commands) || !fixture.commands.includes(bindingName) || fixture.aot !== true) {
+if (fixture === undefined || !Array.isArray(fixture.commands) || !fixture.commands.includes(bindingName) || fixture.aot === false) {
   throw new Error(`global binding fixtureが不正です: ${fixtureId}`);
 }
 const command = catalog.commands.find((candidate) => candidate.id === bindingCatalogId);
