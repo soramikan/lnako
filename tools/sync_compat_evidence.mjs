@@ -207,6 +207,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "tools/check_global_binding_evidence.mjs",
   "tools/check_node_exit_evidence.mjs",
   "tools/check_compat_js_evidence.mjs",
+  "tools/compare_interpreter_oracle.mjs",
   "docs/UNVERIFIED_EVIDENCE_PLAN.md",
   "tools/sync_compat_evidence.mjs",
 ]);
