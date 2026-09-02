@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { access, link, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
@@ -104,12 +104,16 @@ await access(compiler);
 // plugin paths remain valid on Windows.
 const auditGitState = gitState();
 const temporary = await mkdtemp(join(root, ".tmp-lnako-dispatch-coverage-"));
+let loopbackServer = null;
 try {
+  if (selectedFixtures.some((fixture) => fixture.file === "node-http-cases.json")) {
+    loopbackServer = await startLoopbackServer();
+  }
   const fixtureReports = [];
   const sites = [];
   const unresolvedSites = [];
   for (const [index, fixture] of selectedFixtures.entries()) {
-    const result = await runFixture(fixture, index, temporary);
+    const result = await runFixture(fixture, index, temporary, loopbackServer?.base ?? null);
     fixtureReports.push(result.report);
     sites.push(...result.sites);
     unresolvedSites.push(...result.unresolvedSites);
@@ -124,6 +128,7 @@ try {
       `${nativeCoverage}/523 native entries・${nativeNames}/492 unique names (unattested sampled coverage)`,
   );
 } finally {
+  if (loopbackServer !== null) await stopLoopbackServer(loopbackServer.process);
   await rm(temporary, { recursive: true, force: true });
 }
 
@@ -163,6 +168,7 @@ async function loadSelectedFixtures() {
     { file: "supplemental-plugin-cases.json", selection: (testCase) => testCase.commands?.length > 0 && testCase.expectedFailure !== true },
     { file: "node-file-cases.json", selection: (testCase) => testCase.aot === true && testCase.commands?.length > 0 && testCase.expectError !== true },
     { file: "node-native-cases.json", selection: (testCase) => testCase.aot === true && testCase.commands?.length > 0 && testCase.expectError !== true },
+    { file: "node-http-cases.json", selection: (testCase) => ["plugin-node-http-callbacks", "plugin-node-http-onerror"].includes(testCase.id) },
     { file: "native-cases.json", selection: (testCase) =>
       testCase.id === "native-cut-commands" || testCase.id === "native-system-error-raise" || testCase.id === "native-system-debug" || testCase.id === "native-system-dynamic-execution" ||
       (!arguments_.includeNative && ["native-node-stdin-all", "native-node-stdin-lines", "native-node-stdin-callback", "native-node-network-addresses"].includes(testCase.id)) },
@@ -184,7 +190,7 @@ async function loadSelectedFixtures() {
       fixtures.push({ file: specification.file, ...testCase });
     }
   }
-  const expectedFixtureCount = arguments_.includeNative ? 203 : 39;
+  const expectedFixtureCount = arguments_.includeNative ? 205 : 41;
   if (fixtures.length !== expectedFixtureCount) throw new Error(`dispatch coverageのfixture数が想定外です: ${fixtures.length}`);
   return fixtures;
 }
@@ -242,7 +248,7 @@ function validateFixture(testCase, file) {
   }
 }
 
-async function runFixture(fixture, index, temporary) {
+async function runFixture(fixture, index, temporary, loopbackBase) {
   const fixtureDirectory = resolve(temporary, `${String(index).padStart(2, "0")}-${fixture.id}`);
   await mkdir(fixtureDirectory);
   const stem = `${String(index).padStart(2, "0")}-${fixture.id}`;
@@ -276,7 +282,7 @@ async function runFixture(fixture, index, temporary) {
   const manifestPath = resolve(aotTraceDirectory, "compile-manifest.jsonl");
   const sourceSha256 = sha256(fixture.source);
   await Promise.all([...new Set(routeDirectories)].map(async (directory) => {
-    const source = replacePluginPlaceholders(fixture.source, directory);
+    const source = replacePluginPlaceholders(fixture.source, directory, loopbackBase);
     for (const [name, contents] of Object.entries(fixture.files ?? {})) await writeFile(resolve(directory, name), contents, "utf8");
     await writeFile(resolve(directory, sourceName), source, "utf8");
   }));
@@ -438,7 +444,7 @@ function fixedEnvironment() {
   return environment;
 }
 
-function replacePluginPlaceholders(source, fixtureDirectory) {
+function replacePluginPlaceholders(source, fixtureDirectory, loopbackBase) {
   const replacements = {
     "${PLUGIN_CANIUSE}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_caniuse.mjs")).replaceAll("\\", "/"),
     "${PLUGIN_KANSUJI}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_kansuji.mjs")).replaceAll("\\", "/"),
@@ -446,7 +452,47 @@ function replacePluginPlaceholders(source, fixtureDirectory) {
     "${PLUGIN_CSV}": relative(fixtureDirectory, resolve(oracleRoot, "core/src/plugin_csv.mjs")).replaceAll("\\", "/"),
     "${PLUGIN_TOML}": relative(fixtureDirectory, resolve(oracleRoot, "core/src/plugin_toml.mjs")).replaceAll("\\", "/"),
   };
-  return Object.entries(replacements).reduce((result, [placeholder, path]) => result.replaceAll(placeholder, path), source);
+  let replaced = Object.entries(replacements).reduce((result, [placeholder, path]) => result.replaceAll(placeholder, path), source);
+  if (replaced.includes("${BASE}")) {
+    if (loopbackBase === null) throw new Error("HTTP fixtureにloopback baseがありません");
+    replaced = replaced.replaceAll("${BASE}", loopbackBase);
+  }
+  return replaced;
+}
+
+async function startLoopbackServer() {
+  const child = spawn(process.execPath, [resolve(root, "tools/oracle/http_loopback_server.mjs")], {
+    cwd: root,
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  child.stderr.resume();
+  try {
+    const port = await firstLine(child.stdout);
+    if (!/^\d+$/.test(port)) throw new Error(`loopback HTTPサーバのportが不正です: ${port}`);
+    return { process: child, base: `http://127.0.0.1:${port}` };
+  } catch (error) {
+    if (child.exitCode === null) child.kill("SIGTERM");
+    throw error;
+  }
+}
+
+async function stopLoopbackServer(child) {
+  if (child.exitCode !== null) return;
+  const exited = new Promise((resolveExit) => child.once("exit", resolveExit));
+  child.kill("SIGTERM");
+  await Promise.race([exited, new Promise((resolveTimeout) => setTimeout(resolveTimeout, 2000))]);
+  if (child.exitCode === null) child.kill("SIGKILL");
+}
+
+async function firstLine(stream) {
+  let buffered = "";
+  for await (const chunk of stream) {
+    buffered += chunk.toString("utf8");
+    const newline = buffered.indexOf("\n");
+    if (newline >= 0) return buffered.slice(0, newline).trim();
+  }
+  throw new Error("loopback HTTPサーバがポートを通知せず終了しました");
 }
 
 function run(command, arguments_, environment, cwd, extraOptions = {}) {
@@ -812,8 +858,8 @@ function createReport({ fixtureReports, sites, unresolvedSites, oracle, git }) {
       nativeEntries: nativeCommands.length,
       nativeUniqueNames: nativeNames.size,
       fixtureSelection: arguments_.includeNative
-        ? "the default command-bearing selection plus all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps"
-        : "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus native-cut-commands, excluding explicit AOT gaps",
+        ? "the default command-bearing selection plus the two node-http callback fixtures and all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps"
+        : "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus the two node-http callback fixtures and native-cut-commands, excluding explicit AOT gaps",
       fixtureCount: fixtureReports.length,
       excludedFixtures: [...excludedFixtures].map(([key, reason]) => ({ key, reason })),
       commandAssociationIsNotExecutionEvidence: true,
