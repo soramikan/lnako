@@ -2,13 +2,13 @@
 
 ## 目的と基準
 
-この文書は、なでしこ3 v3.7.24（upstream `aa18c7e640523938c680958fe731418cc6f7a58f`）の標準cnako 527 entryについて、実装済み機能を過大評価せず、`compat/v3.7.24/evidence.json`の`unverified`を実行証拠へ接続するための計画である。2026-09-02時点の基準HEADは`7eb6a96d9d44909d7051a2017d7c35f525a70739`で、台帳は次の状態にある。
+この文書は、なでしこ3 v3.7.24（upstream `aa18c7e640523938c680958fe731418cc6f7a58f`）の標準cnako 527 entryについて、実装済み機能を過大評価せず、`compat/v3.7.24/evidence.json`の`unverified`を実行証拠へ接続するための計画である。2026-09-02時点の基準HEADは`b68ec28`で、台帳は次の状態にある。
 
 | 状態 | entry数 | 意味 |
 |---|---:|---|
 | `verified` | 0 | 3正式OSの署名付きattestationまで揃った現在HEADの証拠 |
-| `trace-confirmed-unattested` | 440 | 公式差分、Interpreter/AOT trace、compile manifest等は揃うが、外部署名attestation前 |
-| `unverified` | 87 | 実装・fixtureの存在だけではcatalog ID単位の実行証拠にならない残件 |
+| `trace-confirmed-unattested` | 442 | 公式差分、Interpreter/AOT trace、compile manifest等は揃うが、外部署名attestation前 |
+| `unverified` | 85 | 実装・fixtureの存在だけではcatalog ID単位の実行証拠にならない残件 |
 
 `native: 523`という分類、fixtureの存在、Interpreterだけの成功、artifactの生成は、AOT verifiedや`trace-confirmed-unattested`を意味しない。各単位を完了扱いにするのは、この文書の共通完了条件と台帳検査が同時に通った場合だけとする。最終的な目標は、まず`trace-confirmed-unattested 527 / unverified 0`、その後に3正式OSの外部署名attestationを含む`verified`へ進むことである。
 
@@ -16,7 +16,9 @@
 
 U01（`エラー発生`、`__DEBUG`）は完了した。cleanな`7eb6a96d9d44909d7051a2017d7c35f525a70739`で再生成したdispatch coverageは32 fixture・1,698 site・311 native entryを含み、`native-system-error-raise`の4 throw failure siteと`native-system-debug`の1 success siteを、それぞれ明示catalog ID付きでInterpreter trace・AOT manifest/runtime traceへ接続している。`エラー発生`は通常のbuiltin opcodeではなくSSA throw terminatorの監査専用routeであり、期待失敗を成功siteとして数えない。
 
-同じclean HEADで10件のstatic constant artifactも再生成し、`sync_compat_evidence.mjs --generate`の結果は`verified 0 / trace-confirmed-unattested 440 / unverified 87`となった。ここで増えた2 entryは`trace-confirmed-unattested`であり、3正式OSの外部署名attestationを含む`verified`ではない。次の実装単位はU02（`ナデシコ`、`ナデシコ続`）である。
+同じclean HEADで10件のstatic constant artifactも再生成し、U01時点の`sync_compat_evidence.mjs --generate`の結果は`verified 0 / trace-confirmed-unattested 440 / unverified 87`となった。U02（`ナデシコ`、`ナデシコ続`）も完了した。cleanな`eb9949499c6f55329da3c5199543fb334cd41817`で再生成した33-fixture dispatch coverageは1,703 site・313 native entryを含み、`native-system-dynamic-execution`の`ナデシコ` 2 site（`command-0057`）と`ナデシコ続` 2 site（`command-0058`）を公式source・Interpreter・AOT O0の同一結果、compile manifest、runtime traceへ接続した。公式生成JavaScript単体の終了コード1は既存のstandalone system host登録差であり、P0の既知route差として記録する。
+
+U02のdispatch generator変更を`eb99494`へ、33-fixtureを受理する同期検査変更を`b68ec28`へ分離し、後者のfollow-up規則でclean artifact provenanceを検査した。現行の`sync_compat_evidence.mjs --generate`は`verified 0 / trace-confirmed-unattested 442 / unverified 85`を返す。ここで増えた4 entry（U01・U02）は`trace-confirmed-unattested`であり、3正式OSの外部署名attestationを含む`verified`ではない。次の実装単位はU03（`ブラウザ起動`、`エクスプローラー起動`）である。
 
 ## 証拠基盤の柱
 
@@ -126,7 +128,7 @@ P3 compat-js evidence
   └─ U22
 ```
 
-実装上は、まず一意名nativeの残り49件（440→489）、次に同名異pluginの34件（489→523）、最後にcompat-jsの4件（523→527）を目安にする。ただし、実際のcatalog ID・route・oracle差が確認できない場合は件数を減らさず、失敗理由をfixture policyまたは`docs/COMPATIBILITY_QUIRKS.md`へ残す。
+実装上は、まず一意名nativeの残り47件（442→489）、次に同名異pluginの34件（489→523）、最後にcompat-jsの4件（523→527）を目安にする。ただし、実際のcatalog ID・route・oracle差が確認できない場合は件数を減らさず、失敗理由をfixture policyまたは`docs/COMPATIBILITY_QUIRKS.md`へ残す。
 
 ## 各単位の共通完了条件
 
