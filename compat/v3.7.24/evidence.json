@@ -8,9 +8,9 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 398,
-    "nativeAot": 303,
-    "interpreter": 99,
+    "total": 399,
+    "nativeAot": 304,
+    "interpreter": 100,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
@@ -22,8 +22,8 @@
   },
   "executionEvidenceStates": {
     "verified": 0,
-    "trace-confirmed-unattested": 448,
-    "unverified": 79
+    "trace-confirmed-unattested": 452,
+    "unverified": 75
   },
   "entries": [
     {
@@ -22992,15 +22992,21 @@
       "plugin": "plugin_node",
       "status": "native",
       "interpreterFixtureIds": [
-        "plugin-node-native-archive"
+        "plugin-node-native-archive",
+        "plugin-node-native-archive-hermetic"
       ],
       "aotFixtureIds": [
-        "plugin-node-native-archive"
+        "plugin-node-native-archive",
+        "plugin-node-native-archive-hermetic"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
           "plugin-node-native-archive": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
+          "plugin-node-native-archive-hermetic": [
             "fixture.commands",
             "implemented.tests"
           ]
@@ -23009,16 +23015,32 @@
           "plugin-node-native-archive": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-node-native-archive-hermetic": [
+            "fixture.commands",
+            "implemented.tests"
           ]
         },
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "ZigネイティブZIPの作成・展開スモークテストに成功"
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-node-native-archive-hermetic/0x0000000200000006"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
+      "implementationReason": "公式source・公式生成JavaScript・Interpreter・AOT O0〜O3のhermetic stored-ZIP意味結果差分テストに成功"
     },
     {
       "id": "command-0742",
@@ -23026,15 +23048,21 @@
       "plugin": "plugin_node",
       "status": "native",
       "interpreterFixtureIds": [
-        "plugin-node-native-archive"
+        "plugin-node-native-archive",
+        "plugin-node-native-archive-hermetic"
       ],
       "aotFixtureIds": [
-        "plugin-node-native-archive"
+        "plugin-node-native-archive",
+        "plugin-node-native-archive-hermetic"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
           "plugin-node-native-archive": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
+          "plugin-node-native-archive-hermetic": [
             "fixture.commands",
             "implemented.tests"
           ]
@@ -23043,16 +23071,32 @@
           "plugin-node-native-archive": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-node-native-archive-hermetic": [
+            "fixture.commands",
+            "implemented.tests"
           ]
         },
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "ZigネイティブZIPの作成・展開スモークテストに成功"
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-node-native-archive-hermetic/0x000000020000000e"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
+      "implementationReason": "公式source・公式生成JavaScript・Interpreter・AOT O0〜O3のhermetic stored-ZIP意味結果差分テストに成功"
     },
     {
       "id": "command-0743",
@@ -23060,15 +23104,21 @@
       "plugin": "plugin_node",
       "status": "native",
       "interpreterFixtureIds": [
-        "plugin-node-native-archive"
+        "plugin-node-native-archive",
+        "plugin-node-native-archive-hermetic"
       ],
       "aotFixtureIds": [
-        "plugin-node-native-archive"
+        "plugin-node-native-archive",
+        "plugin-node-native-archive-hermetic"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
           "plugin-node-native-archive": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
+          "plugin-node-native-archive-hermetic": [
             "fixture.commands",
             "implemented.tests"
           ]
@@ -23077,16 +23127,32 @@
           "plugin-node-native-archive": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-node-native-archive-hermetic": [
+            "fixture.commands",
+            "implemented.tests"
           ]
         },
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "ZigネイティブZIPの作成・展開スモークテストに成功"
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-node-native-archive-hermetic/0x0000000200000003"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
+      "implementationReason": "公式source・公式生成JavaScript・Interpreter・AOT O0〜O3のhermetic stored-ZIP意味結果差分テストに成功"
     },
     {
       "id": "command-0744",
@@ -23094,15 +23160,21 @@
       "plugin": "plugin_node",
       "status": "native",
       "interpreterFixtureIds": [
-        "plugin-node-native-archive"
+        "plugin-node-native-archive",
+        "plugin-node-native-archive-hermetic"
       ],
       "aotFixtureIds": [
-        "plugin-node-native-archive"
+        "plugin-node-native-archive",
+        "plugin-node-native-archive-hermetic"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
           "plugin-node-native-archive": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
+          "plugin-node-native-archive-hermetic": [
             "fixture.commands",
             "implemented.tests"
           ]
@@ -23111,16 +23183,32 @@
           "plugin-node-native-archive": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-node-native-archive-hermetic": [
+            "fixture.commands",
+            "implemented.tests"
           ]
         },
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
-      "implementationReason": "ZigネイティブZIPの作成・展開スモークテストに成功"
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-node-native-archive-hermetic/0x000000020000000b"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
+      "implementationReason": "公式source・公式生成JavaScript・Interpreter・AOT O0〜O3のhermetic stored-ZIP意味結果差分テストに成功"
     },
     {
       "id": "command-0745",

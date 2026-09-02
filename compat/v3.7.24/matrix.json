@@ -17061,14 +17061,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-native-archive"
+        "plugin-node-native-archive",
+        "plugin-node-native-archive-hermetic"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "ZigネイティブZIPの作成・展開スモークテストに成功"
+      "reason": "公式source・公式生成JavaScript・Interpreter・AOT O0〜O3のhermetic stored-ZIP意味結果差分テストに成功"
     },
     {
       "id": "command-0742",
@@ -17086,14 +17087,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-native-archive"
+        "plugin-node-native-archive",
+        "plugin-node-native-archive-hermetic"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "ZigネイティブZIPの作成・展開スモークテストに成功"
+      "reason": "公式source・公式生成JavaScript・Interpreter・AOT O0〜O3のhermetic stored-ZIP意味結果差分テストに成功"
     },
     {
       "id": "command-0743",
@@ -17111,14 +17113,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-native-archive"
+        "plugin-node-native-archive",
+        "plugin-node-native-archive-hermetic"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "ZigネイティブZIPの作成・展開スモークテストに成功"
+      "reason": "公式source・公式生成JavaScript・Interpreter・AOT O0〜O3のhermetic stored-ZIP意味結果差分テストに成功"
     },
     {
       "id": "command-0744",
@@ -17136,14 +17139,15 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-native-archive"
+        "plugin-node-native-archive",
+        "plugin-node-native-archive-hermetic"
       ],
       "platforms": [
         "macos-aarch64",
         "linux-x86_64-gnu",
         "windows-x86_64-msvc"
       ],
-      "reason": "ZigネイティブZIPの作成・展開スモークテストに成功"
+      "reason": "公式source・公式生成JavaScript・Interpreter・AOT O0〜O3のhermetic stored-ZIP意味結果差分テストに成功"
     },
     {
       "id": "command-0745",
