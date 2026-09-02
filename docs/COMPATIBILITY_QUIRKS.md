@@ -306,8 +306,8 @@ xorshift64*系列を使うため、AOT乱数の差分fixtureでは全経路の�
 
 | 境界 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 対象経路 | 差分テストID | TODO識別子 |
 |---|---|---|---|---|---|
-| `対応ブラウザ一覧取得`のデータとidentity | `対応ブラウザ一覧取得()`は`browsers.mjs`の16キー・各バージョン配列を返し、同じプラグイン状態では呼出しごとに同じオブジェクトを返す。キーは生成ファイルの順序で列挙される。公式`--compile`のstandalone JavaScriptはimportしたcaniuse pluginを登録しないため、このfixtureでは公式CLI実行をoracleにする | InterpreterはZig製caniuse plugin state、AOTはv3.7.24生成データを純Zigで構築したランタイムキャッシュを返す。AOTは通常モードへJavaScriptを混入させず、同一Runtime内の呼出しidentityを保持する | 公式CLI source、Interpreter/AOT。公式生成JavaScriptとQuickJSは対象外 | `plugin-caniuse-all`、`native-caniuse-browsers` | なし（公式生成経路の制約） |
-| `ブラウザ名変換表`のデータとidentity | 公式は`browsers_agents.mjs`の19キー辞書を定数として公開し、同じimport済みオブジェクトを参照する | InterpreterはZig製caniuse plugin state、AOTは公式生成データをUTF-16キー・値の純Zig挿入順辞書として構築し、グローバル定数とRuntimeキャッシュのidentityを保持する。通常モードへJavaScriptを混入させない | 公式CLI source、Interpreter/AOT。公式生成JavaScriptとQuickJSは対象外 | `plugin-caniuse-all`、`native-caniuse-agents` | なし（公式生成経路の制約） |
+| `対応ブラウザ一覧取得`のデータとidentity | `対応ブラウザ一覧取得()`は`browsers.mjs`の16キー・各バージョン配列を返し、同じプラグイン状態では呼出しごとに同じオブジェクトを返す。キーは生成ファイルの順序で列挙される。公式`--compile`のstandalone JavaScriptはimportしたcaniuse pluginを登録しないため、生成物の実行は失敗する | InterpreterはZig製caniuse plugin state、AOTはv3.7.24生成データを純Zigで構築したランタイムキャッシュを返す。AOTは通常モードへJavaScriptを混入させず、同一Runtime内の呼出しidentityを保持する | 公式CLI source、Interpreter/AOT。公式生成JavaScriptはplugin未登録の期待失敗として記録し、QuickJSは対象外 | `plugin-caniuse-all`、`native-caniuse-browsers` | なし（公式生成経路の制約） |
+| `ブラウザ名変換表`のデータとidentity | 公式は`browsers_agents.mjs`の19キー辞書を定数として公開し、同じimport済みオブジェクトを参照する。公式`--compile`のstandalone JavaScriptはplugin未登録でも終了コード0になる場合があるが、stdoutは公式CLI sourceと一致しない。この成功終了をデータ互換の証明と解釈できない | InterpreterはZig製caniuse plugin state、AOTは公式生成データをUTF-16キー・値の純Zig挿入順辞書として構築し、グローバル定数とRuntimeキャッシュのidentityを保持する。通常モードへJavaScriptを混入させない | 公式CLI source、Interpreter/AOT。生成routeは終了状態とstdout差を`officialGeneratedAvailable`／`officialRoutesEquivalent`へ分離記録し、QuickJSは対象外 | `plugin-caniuse-all`、`native-caniuse-agents` | なし（公式生成経路の制約） |
 
 ## モジュール取り込み
 

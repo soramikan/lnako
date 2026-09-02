@@ -425,7 +425,7 @@ async function runFixture(fixture, index, temporary, loopbackBase) {
         oracle: oracleRoute,
         routes: ["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0"],
         selectedOracleEquivalent: true,
-        officialGeneratedAvailable: !generatedRouteUnavailable && officialGenerated.status === 0,
+        officialGeneratedAvailable: officialGenerated.status === 0,
         officialGeneratedRouteUnavailableReason: generatedRouteUnavailable && officialGenerated.status !== 0
           ? generatedRouteUnavailableFixtures.get(`${fixture.file}/${fixture.id}`)
           : null,
