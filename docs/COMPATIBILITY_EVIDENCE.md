@@ -1,14 +1,18 @@
 # 命令カタログ証拠レイヤー
 
-## 現行スナップショット（2026-09-02）
+## 現行スナップショット（2026-09-03）
 
-現行HEADの`compat/v3.7.24/evidence.json`は、`verified: 0`、`trace-confirmed-unattested: 495`、`unverified: 32`です。U16で`plugin-route-cases.json`にsystem-only 2 fixtureとNode route 1 fixtureを追加し、`終` 2 entryとpath alias 4 entryの計6 entryを、明示`catalogIds`付きのInterpreter／LLVM AOT同一siteへ接続しました。
+現行HEADの`compat/v3.7.24/evidence.json`は、`verified: 0`、`trace-confirmed-unattested: 523`、`unverified: 4`です。U16で`終` 2 entryとpath alias 4 entryを、U17〜U21で`plugin_datetime`の明示route 28 entryを、明示`catalogIds`付きのInterpreter／LLVM AOT同一siteへ接続しました。残る4 entryはQuickJS／`compat-js`専用命令です。
 
-`dispatch-coverage-evidence.json`は、cleanな`401af96726488588a31a252bbe1185de9298435d`から生成した52 fixture・1,863 site・364 native entry（492 unique names中362）です。fixture inventoryは全405件（AOT 307件、Interpreter 106件、QuickJS 9件）です。system-onlyの公式生成JavaScriptはstandalone system plugin runtime bundleがないため実行不能として記録し、公式sourceを選択oracleにしています。
+`dispatch-coverage-evidence.json`は、cleanな`f92c76d6ed91bfc4738854be202bdbe48984d8c7`から生成した56 fixture・1,917 site・391 native entry（492 unique names中389）です。fixture inventoryは全410件（AOT 308件、Interpreter 110件、QuickJS 9件）です。system-onlyの公式生成JavaScriptはstandalone system plugin runtime bundleがないため実行不能として記録し、公式sourceを選択oracleにしています。
 
-この文書の後続段落にはU07〜U15の完了時点を記録した履歴値が含まれます。現行値はこのスナップショットと`compat/v3.7.24/evidence.json`、`dispatch-coverage-evidence.json`を正本とし、履歴段落の旧件数を現在値として解釈しません。
+U17〜U21では、`plugin_datetime`の`command-0807`〜`command-0834`を通常の`plugin_system` routeから推測せず、4つの明示route fixtureと`native-datetime-plugin-era-data`のstatic global readへ分離しました。公式sourceのimport時に出る「古い形式なので正しく動作しない可能性があります。」というstderr警告は、fixtureが宣言した`officialSourceStderrIncludes`だけを検証時に許容し、raw stderr hashは引き続き保存します。`和暦変換`の公式sourceは`sys.__v0.元号データ is not iterable`をstdoutへ出す一方、公式generated routeはsystem pluginの成功値を返すため、source/generated差として記録しています。`日付加算`も、明示`plugin_datetime` routeでは`2024/02/29`、既定system routeでは`2024/03/02`となります。
+
+この文書の後続段落にはU07〜U16の完了時点を記録した履歴値が含まれます。現行値はこのスナップショットと`compat/v3.7.24/evidence.json`、`dispatch-coverage-evidence.json`を正本とし、履歴段落の旧件数を現在値として解釈しません。
 
 ## U07〜U15完了時点の履歴
+
+以下の節にある「現行HEAD」や件数は各節の完了時点の履歴値であり、現在の台帳値ではありません。
 
 U07では`plugin-node-exit-code`、`plugin-node-interrupt`、`plugin-node-exit-japanese-alias`を追加し、`プロセス終`・`強制終了時`・`終了`の3 entryを`compat/v3.7.24/expected-exit-evidence.json`へ分離して記録した。公式source・公式生成JavaScript・lnako Interpreter・LLVM AOT O0〜O3の終了コードと出力hashを比較し、終了直前のdispatch result、AOT attempt/result、`terminalReason`、`trace-end`、O0 compile manifestのsiteを同一catalog IDで検証する。`プロセス終`は終了コード7、`終了`は0、`強制終了時`はPOSIXの実SIGINT callback後に0である。SIGINTは非同期timerのin-flight dispatchを最大1件残し得るため、その境界をartifact checkerが明示的に許容する。現行artifactはmacOS arm64のclean実測で、Windowsの実コンソール制御イベント発生と3正式OSattestationは証明しない。Windows回帰は`TODO: node-interrupt-windows-console-test`として残す。
 
@@ -79,12 +83,13 @@ node tools/verify_dispatch_attestation.mjs --directory /absolute/path/dispatch-e
 - `compat/v3.7.24/implemented.json`（実装台帳）
 - `tests/oracle/*.json`（fixtureの明示`commands`と実在ID）
 - `compat/v3.7.24/dispatch-evidence.json`（checkerが生成した同一fixture/siteの実行証拠）
-- `compat/v3.7.24/dispatch-coverage-evidence.json`（52 fixture・1,863 siteのサンプルdispatch監査。catalogへ接続する364 native entry（492 unique names中362）を含む。U06のarchive helper、U08のstdin fixture、U09のnetwork topology fixture、U10/U11/U12/U13のloopback HTTP fixture、U15のHTTP server dispatch fixture、U16のsystem／Node route fixtureを含む）
+- `compat/v3.7.24/dispatch-coverage-evidence.json`（56 fixture・1,917 siteのサンプルdispatch監査。catalogへ接続する391 native entry（492 unique names中389）を含む。U06のarchive helper、U08のstdin fixture、U09のnetwork topology fixture、U10/U11/U12/U13のloopback HTTP fixture、U15のHTTP server dispatch fixture、U16のsystem／Node route fixture、U17〜U21の`plugin_datetime` route fixtureを含む）
 - `compat/v3.7.24/expected-exit-evidence.json`（U07の`プロセス終`・`強制終了時`・`終了`、公式7経路、Interpreter/AOT terminal trace、O0 manifestの終了site）
 - `compat/v3.7.24/static-constant-evidence.json`（`native-scalar-system-constants`のglobal read 17件＋typed literal 7件の実行証拠）
 - `compat/v3.7.24/static-string-constant-evidence.json`（`native-string-system-constants`のglobal read 24件の実行証拠）
 - `compat/v3.7.24/static-array-constant-evidence.json`（`native-array-system-constants`のglobal read 2件の実行証拠）
 - `compat/v3.7.24/static-datetime-era-constant-evidence.json`（`native-datetime-era-data`の`plugin_system`／`command-0227` global read 1件の実行証拠）
+- `compat/v3.7.24/static-datetime-plugin-era-constant-evidence.json`（`native-datetime-plugin-era-data`の`plugin_datetime`／`command-0807` global read 1件の実行証拠）
 - `compat/v3.7.24/static-node-archive-constant-evidence.json`（`native-node-archive-constant`の`plugin_node` global read 1件の実行証拠）
 - `compat/v3.7.24/static-node-command-line-constant-evidence.json`（`native-node-command-line-constants`の`plugin_node` global read 3件の実行証拠）
 - `compat/v3.7.24/static-node-mother-path-constant-evidence.json`（`native-node-mother-path`の`plugin_node` global read 1件の実行証拠）
@@ -187,6 +192,12 @@ U06の`plugin-node-native-archive-hermetic`は、固定upstreamの[`plugin_node.
 canonical fixtureの明示IDは、公式cnako3の既定登録経路で実行される`plugin_system`側日時27 entryに限らず、`plugin-route-cases.json`のsystem-only／Node routeでもfixtureの`catalogIds`をそのままsemantic binding・Interpreter trace・AOT manifest/runtime traceと照合します。`plugin_datetime`側の28 entryは同じ命令名のtraceから推測せず、別の明示import経路のfixtureができるまで未証拠のままです。
 
 `native-datetime-explicit-plugin-route`は、この同名境界を別namespaceで観測するAOT fixtureです。固定v3.7.24の命令一覧が`plugin_datetime`として掲載する28 entryを明示importし、公式CLI sourceでは`和暦変換`の`sys.__v0.元号データ is not iterable`が標準出力内の実行時エラーになる一方、公式`--compile` standaloneはimport済みpluginを登録せず`plugin_system`相当の出力になることを確認します。比較のoracleは成功する公式生成JavaScriptに固定し、source routeの既知エラーはfixtureの`officialSourceStdoutIncludes`で別途検査します。このfixtureは`commands`を持たないため、同じ命令名だけで`command-0807`〜`command-0834`へ実行証拠を関連付けず、カタログidentityの解決が完了するまで`unverified`を維持します。
+
+### U17〜U21の現行plugin_datetime証拠
+
+`plugin_datetime`の`command-0807`〜`command-0834`は、通常の`plugin_system`命令のtraceから推測せず、`plugin-datetime-clock-route`（0808〜0818）、`plugin-datetime-conversion-route`（0819〜0823）、`plugin-datetime-era-route`（0824）、`plugin-datetime-difference-addition-route`（0825〜0834）へ分割した。`command-0807`は`native-datetime-plugin-era-data`のstatic global readとして別artifactへ固定した。4 fixtureは`pluginRoute: plugin_datetime`、`expectedDispatchRoute: plugin_datetime`、明示`catalogIds`を持ち、公式source・`lnako run`・LLVM AOT O0の同一siteへ接続されている。
+
+公式source import時の旧形式plugin警告は、`officialSourceStderrIncludes`でその既知診断だけを確認し、stderr全体のSHA-256はartifactへ残す。したがって、宣言されていないstderr差は通常どおり拒否される。固定upstreamの[`src/plugin_datetime.mjs`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/src/plugin_datetime.mjs)と[`core/src/plugin_system_datetime.mts`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/core/src/plugin_system_datetime.mts)が示す別実装を、`docs/COMPATIBILITY_QUIRKS.md`の実測表へ分離している。これらはcleanな現行HEADのtrace-confirmed-unattestedであり、3正式OSの外部署名attestation後の`verified`ではない。
 
 ## 実dispatch trace
 

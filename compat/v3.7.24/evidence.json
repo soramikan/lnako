@@ -8,9 +8,9 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 405,
-    "nativeAot": 307,
-    "interpreter": 106,
+    "total": 410,
+    "nativeAot": 308,
+    "interpreter": 110,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
@@ -22,8 +22,8 @@
   },
   "executionEvidenceStates": {
     "verified": 0,
-    "trace-confirmed-unattested": 495,
-    "unverified": 32
+    "trace-confirmed-unattested": 523,
+    "unverified": 4
   },
   "entries": [
     {
@@ -11881,7 +11881,8 @@
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
-        "native-datetime-era-data"
+        "native-datetime-era-data",
+        "native-datetime-plugin-era-data"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -11895,6 +11896,9 @@
           "native-datetime-era-data": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-datetime-plugin-era-data": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
@@ -11925,6 +11929,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-clock-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -11933,6 +11938,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-clock-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -11972,6 +11980,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-clock-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -11980,6 +11989,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-clock-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -12066,6 +12078,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-clock-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -12074,6 +12087,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-clock-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -12113,6 +12129,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-clock-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -12121,6 +12138,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-clock-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -12160,6 +12180,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-clock-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -12168,6 +12189,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-clock-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -12207,6 +12231,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-clock-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -12215,6 +12240,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-clock-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -12254,6 +12282,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-clock-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -12262,6 +12291,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-clock-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -12301,6 +12333,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-clock-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -12309,6 +12342,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-clock-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -12348,6 +12384,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-clock-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -12356,6 +12393,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-clock-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -12395,6 +12435,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-clock-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -12403,6 +12444,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-clock-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -12442,6 +12486,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-clock-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -12450,6 +12495,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-clock-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -12489,6 +12537,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-conversion-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -12497,6 +12546,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-conversion-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -12536,6 +12588,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-conversion-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -12544,6 +12597,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-conversion-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -12583,6 +12639,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-conversion-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -12591,6 +12648,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-conversion-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -12630,6 +12690,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-conversion-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -12638,6 +12699,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-conversion-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -12677,6 +12741,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-conversion-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -12685,6 +12750,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-conversion-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -12771,6 +12839,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-era-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -12779,6 +12848,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-era-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -12818,6 +12890,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-difference-addition-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -12826,6 +12899,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-difference-addition-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -12865,6 +12941,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-difference-addition-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -12873,6 +12950,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-difference-addition-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -12912,6 +12992,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-difference-addition-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -12920,6 +13001,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-difference-addition-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -12959,6 +13043,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-difference-addition-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -12967,6 +13052,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-difference-addition-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -13006,6 +13094,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-difference-addition-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -13014,6 +13103,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-difference-addition-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -13053,6 +13145,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-difference-addition-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -13061,6 +13154,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-difference-addition-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -13100,6 +13196,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-difference-addition-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -13108,6 +13205,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-difference-addition-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -13147,6 +13247,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-difference-addition-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -13155,6 +13256,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-difference-addition-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -13194,6 +13298,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-difference-addition-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -13202,6 +13307,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-difference-addition-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -13241,6 +13349,7 @@
       "plugin": "plugin_system",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-difference-addition-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -13249,6 +13358,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-difference-addition-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -26551,7 +26663,8 @@
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
-        "native-datetime-era-data"
+        "native-datetime-era-data",
+        "native-datetime-plugin-era-data"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -26565,15 +26678,31 @@
           "native-datetime-era-data": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-datetime-plugin-era-data": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.static-constant-evidence.v2",
+        "fixtureId": "native-datetime-plugin-era-data",
+        "siteIds": [
+          "0x0000000000000005"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "officialGenerated",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 明示catalog ID・global/literal site IDについて、同一fixtureのInterpreter/AOT trace、対応manifest、公式差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "固定した元号表をInterpreterと純LLVM AOTの起動時初期化へ実装し、公式差分テストに成功"
     },
     {
@@ -26582,6 +26711,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-clock-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -26590,6 +26720,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-clock-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -26604,10 +26737,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-clock-route/0x0000000000000001"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "差し替え可能な壁時計と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
@@ -26616,6 +26761,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-clock-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -26624,6 +26770,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-clock-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -26638,10 +26787,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-clock-route/0x0000000000000003"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "差し替え可能な壁時計と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
@@ -26650,6 +26811,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-clock-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -26658,6 +26820,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-clock-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -26672,10 +26837,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-clock-route/0x0000000000000005"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
@@ -26684,6 +26861,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-clock-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -26692,6 +26870,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-clock-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -26706,10 +26887,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-clock-route/0x0000000000000007"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
@@ -26718,6 +26911,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-clock-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -26726,6 +26920,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-clock-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -26740,10 +26937,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-clock-route/0x0000000000000009"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
@@ -26752,6 +26961,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-clock-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -26760,6 +26970,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-clock-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -26774,10 +26987,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-clock-route/0x000000000000000b"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
@@ -26786,6 +27011,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-clock-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -26794,6 +27020,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-clock-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -26808,10 +27037,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-clock-route/0x000000000000000d"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
@@ -26820,6 +27061,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-clock-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -26828,6 +27070,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-clock-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -26842,10 +27087,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-clock-route/0x000000000000000f"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
@@ -26854,6 +27111,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-clock-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -26862,6 +27120,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-clock-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -26876,10 +27137,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-clock-route/0x0000000000000011"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
@@ -26888,6 +27161,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-clock-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -26896,6 +27170,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-clock-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -26910,10 +27187,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-clock-route/0x0000000000000013"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
@@ -26922,6 +27211,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-clock-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -26930,6 +27220,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-clock-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -26944,10 +27237,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-clock-route/0x0000000000000015"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Asia/Tokyo規則と純LLVM AOT dispatchで実装し、公式差分テストに成功"
     },
     {
@@ -26956,6 +27261,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-conversion-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -26964,6 +27270,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-conversion-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -26978,10 +27287,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-conversion-route/0x0000000000000001"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Asia/Tokyoの日付正規化と日曜始まりの曜日番号を純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
@@ -26990,6 +27311,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-conversion-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -26998,6 +27320,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-conversion-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -27012,10 +27337,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-conversion-route/0x0000000000000003"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Asia/Tokyoの日付正規化と日曜始まりの曜日番号を純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
@@ -27024,6 +27361,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-conversion-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -27032,6 +27370,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-conversion-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -27046,10 +27387,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-conversion-route/0x0000000000000005"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "UNIXTIME変換の別名を純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
@@ -27058,6 +27411,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-conversion-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -27066,6 +27420,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-conversion-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -27080,10 +27437,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-conversion-route/0x0000000000000007"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "日時解析とUnix秒変換を純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
@@ -27092,6 +27461,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-conversion-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -27100,6 +27470,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-conversion-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -27114,10 +27487,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-conversion-route/0x0000000000000009"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "Unix秒からAsia/Tokyoの日時文字列への変換を純LLVM AOTへ実装し、公式差分テストに成功"
     },
     {
@@ -27126,6 +27511,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-era-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -27134,6 +27520,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-era-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -27148,10 +27537,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-era-route/0x0000000000000001"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "明治以降の元号変換をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
@@ -27160,6 +27561,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-difference-addition-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -27168,6 +27570,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-difference-addition-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -27182,10 +27587,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-difference-addition-route/0x0000000000000001"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "JavaScript Date互換規則の日時差分をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
@@ -27194,6 +27611,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-difference-addition-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -27202,6 +27620,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-difference-addition-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -27216,10 +27637,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-difference-addition-route/0x0000000000000003"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "JavaScript Date互換規則の日時差分をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
@@ -27228,6 +27661,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-difference-addition-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -27236,6 +27670,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-difference-addition-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -27250,10 +27687,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-difference-addition-route/0x0000000000000005"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "JavaScript Date互換規則の日時差分をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
@@ -27262,6 +27711,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-difference-addition-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -27270,6 +27720,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-difference-addition-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -27284,10 +27737,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-difference-addition-route/0x0000000000000007"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "単位指定の日時間隔をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
@@ -27296,6 +27761,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-difference-addition-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -27304,6 +27770,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-difference-addition-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -27318,10 +27787,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-difference-addition-route/0x0000000000000009"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "JavaScript Date互換規則の日時差分をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
@@ -27330,6 +27811,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-difference-addition-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -27338,6 +27820,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-difference-addition-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -27352,10 +27837,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-difference-addition-route/0x000000000000000b"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "JavaScript Date互換規則の日時差分をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
@@ -27364,6 +27861,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-difference-addition-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -27372,6 +27870,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-difference-addition-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -27386,10 +27887,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-difference-addition-route/0x000000000000000d"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "JavaScript Date互換規則の日時差分をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
@@ -27398,6 +27911,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-difference-addition-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -27406,6 +27920,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-difference-addition-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -27420,10 +27937,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-difference-addition-route/0x000000000000000f"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "JavaScript Date正規化規則の日時加算をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
@@ -27432,6 +27961,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-difference-addition-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -27440,6 +27970,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-difference-addition-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -27454,10 +27987,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-difference-addition-route/0x0000000000000011"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "JavaScript Date正規化規則の日時加算をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {
@@ -27466,6 +28011,7 @@
       "plugin": "plugin_datetime",
       "status": "native",
       "interpreterFixtureIds": [
+        "plugin-datetime-difference-addition-route",
         "plugin-system-datetime"
       ],
       "aotFixtureIds": [
@@ -27474,6 +28020,9 @@
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
+          "plugin-datetime-difference-addition-route": [
+            "fixture.commands"
+          ],
           "plugin-system-datetime": [
             "fixture.commands",
             "implemented.tests"
@@ -27488,10 +28037,22 @@
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
-      "identityResolution": "ambiguous-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "同名異pluginのため、同じfixtureへの命令名ベースの割当はcatalog IDを識別する証拠にならない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "identityResolution": "explicit-catalog-id",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-datetime-difference-addition-route/0x0000000000000013"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "同名異pluginだが、fixtureの明示catalog IDで対象entryを固定した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "日本語単位の日付時刻加算をInterpreterと純LLVM AOTへ実装し、公式7経路差分テストに成功"
     },
     {

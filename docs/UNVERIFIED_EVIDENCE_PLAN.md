@@ -1,18 +1,18 @@
-# `unverified` 89件の証拠化計画（U16完了時点）
+# `unverified` 89件の証拠化計画（U17〜U21完了時点）
 
 ## 目的と基準
 
-この文書は、なでしこ3 v3.7.24（upstream `aa18c7e640523938c680958fe731418cc6f7a58f`）の標準cnako 527 entryについて、実装済み機能を過大評価せず、`compat/v3.7.24/evidence.json`の`unverified`を実行証拠へ接続するための計画である。89件の初期残件をU01〜U22へ分解し、2026-09-02のU16完了後は次の状態にある。
+この文書は、なでしこ3 v3.7.24（upstream `aa18c7e640523938c680958fe731418cc6f7a58f`）の標準cnako 527 entryについて、実装済み機能を過大評価せず、`compat/v3.7.24/evidence.json`の`unverified`を実行証拠へ接続するための計画である。89件の初期残件をU01〜U22へ分解し、2026-09-03のU17〜U21完了後は次の状態にある。
 
 | 状態 | entry数 | 意味 |
 |---|---:|---|
 | `verified` | 0 | 3正式OSの署名付きattestationまで揃った現在HEADの証拠 |
-| `trace-confirmed-unattested` | 495 | 公式差分、Interpreter/AOT trace、compile manifest等は揃うが、外部署名attestation前 |
-| `unverified` | 32 | 実装・fixtureの存在だけではcatalog ID単位の実行証拠にならない残件 |
+| `trace-confirmed-unattested` | 523 | 公式差分、Interpreter/AOT trace、compile manifest等は揃うが、外部署名attestation前 |
+| `unverified` | 4 | QuickJS／`compat-js`専用traceが未接続の残件 |
 
 `native: 523`という分類、fixtureの存在、Interpreterだけの成功、artifactの生成は、AOT verifiedや`trace-confirmed-unattested`を意味しない。各単位を完了扱いにするのは、この文書の共通完了条件と台帳検査が同時に通った場合だけとする。最終的な目標は、まず`trace-confirmed-unattested 527 / unverified 0`、その後に3正式OSの外部署名attestationを含む`verified`へ進むことである。
 
-## 現在の進捗（2026-09-02）
+## 現在の進捗（2026-09-03）
 
 U01（`エラー発生`、`__DEBUG`）は完了した。cleanな`7eb6a96d9d44909d7051a2017d7c35f525a70739`で再生成したdispatch coverageは32 fixture・1,698 site・311 native entryを含み、`native-system-error-raise`の4 throw failure siteと`native-system-debug`の1 success siteを、それぞれ明示catalog ID付きでInterpreter trace・AOT manifest/runtime traceへ接続している。`エラー発生`は通常のbuiltin opcodeではなくSSA throw terminatorの監査専用routeであり、期待失敗を成功siteとして数えない。
 
@@ -42,6 +42,12 @@ U15では`http-server-dispatch-cases.json`を追加し、`簡易HTTPサーバ起
 
 U16では、公式の同名登録経路を名前だけで混同しないため、`tests/oracle/plugin-route-cases.json`へsystem-onlyの`plugin-system-path-route`／`plugin-system-end-route`とNode-onlyの`plugin-node-path-route`を追加した。`終`（`command-0061`）、system側の`ファイル名抽出`／`パス抽出`（`command-0268`／`command-0269`）、Node側の同名path命令（`command-0722`／`command-0723`）、Node側`終` alias（`command-0745`）の6 entryを、fixtureの`catalogIds`、semantic binding、Interpreter trace、AOT compile manifest/runtime traceの一致で明示同定した。system-onlyの公式生成JavaScriptはstandalone system plugin runtime bundleがないため実行不能として記録し、公式sourceを選択oracleとした。system routeでは`/a/b`のbasename／dirnameが`b`／`/a`、`a/`が空文字／`a`となり、`終`は`__終わる__`を`エラー監視`へ渡す。Node routeの`a/b.txt`は`b.txt`／`a`となる。cleanな`401af96726488588a31a252bbe1185de9298435d`から再生成したdispatch coverageは52 fixture・1,863 site・364 native entry（362 unique names）で、同期後の台帳は`verified 0 / trace-confirmed-unattested 495 / unverified 32`となった。これはmacOS arm64のclean実測であり、3正式OSの外部署名attestation、QuickJS、全527 entryの純LLVM AOT実行を意味しない。
 
+## U17〜U21完了記録
+
+U17〜U21では、`plugin_datetime`の同名命令を通常の`plugin_system` routeから流用せず、`plugin-datetime-clock-route`（`command-0808`〜`command-0818`）、`plugin-datetime-conversion-route`（`command-0819`〜`command-0823`）、`plugin-datetime-era-route`（`command-0824`）、`plugin-datetime-difference-addition-route`（`command-0825`〜`command-0834`）の4 fixtureへ分離した。`command-0807 元号データ`は`native-datetime-plugin-era-data`のstatic global readとして別artifactへ固定した。全28 entryでfixtureの`catalogIds`、`pluginRoute: plugin_datetime`、`expectedDispatchRoute`、Interpreter trace、AOT compile manifest/runtime traceを明示し、`sync_compat_evidence.mjs --generate`は`verified 0 / trace-confirmed-unattested 523 / unverified 4`を返す。
+
+coverage artifactはcleanな`f92c76d6ed91bfc4738854be202bdbe48984d8c7`由来の56 fixture・1,917 site・391 native entry（492 unique names中389）で、fixture inventoryは410件（AOT 308、Interpreter 110、QuickJS 9）である。公式source import時の旧形式plugin警告はfixture宣言の`officialSourceStderrIncludes`だけを許容し、raw stderr hashを保持する。`和暦変換`は公式sourceの`sys.__v0.元号データ is not iterable`とgenerated routeの成功値を別route差として扱い、`日付加算`はplugin routeの`2024/02/29`とsystem routeの`2024/03/02`を区別する。これらは`trace-confirmed-unattested`であり、3正式OSの外部署名attestation後の`verified`ではない。
+
 ## 証拠基盤の柱
 
 89件を命令名だけで台帳へ付け替えない。次の4基盤を依存関係の柱として実装する。
@@ -60,6 +66,7 @@ fixtureごとに、成功終了だけでは表せない実行結果を明示す�
 | `catalogIds` | 同名異pluginの実catalog IDをfixtureから指定する |
 | `resolution: explicit-catalog-id` | `unique-name`以外の安全な命令同定を明示する |
 | `officialSourceExpectedDifference` | 公式sourceとgenerated routeの既知差を隠さず記録する |
+| `officialSourceStderrIncludes` | 公式sourceだけが出す既知診断をfixture宣言で検証する。raw stderr hashは保持し、宣言外のstderr差は拒否する |
 
 `ambiguous-name`を名前だけで自動選択することは禁止する。
 
@@ -119,11 +126,11 @@ fixture.catalogIds[name]
 | U14 | `0784 LINE送信`、`0785 LINE画像送信`。成功ではなく廃止エラーが互換結果であることを`エラー監視`のexpected failure dispatchと公式固有本文で証拠化する（完了） | 2 | 483 |
 | U15 | `0799 簡易HTTPサーバ起動時`〜`0804 簡易HTTPサーバ移動`。ephemeral port、実通信、response、callback完了、shutdown、trace-endを一体でcoverageへ接続する | 6 | 489 |
 | U16 | `0061 終`、`0268 ファイル名抽出`、`0269 パス抽出`、`0722 ファイル名抽出`、`0723 パス抽出`、`0745 終`。system/nodeのrouteをfixtureで分離し、P1の明示IDで同定する | 6 | 495 |
-| U17 | `plugin_datetime`明示routeのidentity基盤。明示importを`{catalogId, plugin, namespace, route}`として保持する。entry数は減らさない | 0（基盤） | 495 |
-| U18 | `0807 元号データ`、`0808 今`〜`0818 先月`。固定clock・Asia/Tokyo・global bindingを明示plugin routeで比較する | 12 | 507 |
-| U19 | `0819 曜日`、`0820 曜日番号取得`、`0821 UNIX時間変換`、`0822 UNIXTIME変換`、`0823 日時変換`。既存差分fixtureをexplicit routeへ分離する | 5 | 512 |
-| U20 | `0824 和暦変換`。explicit `plugin_datetime` routeで公式の`sys.__v0.元号データ is not iterable`境界を実測し、system版の成功を流用しない | 1 | 513 |
-| U21 | `0825 年数差`〜`0834 日時加算`。和暦エラーを含まない別explicit fixtureで10件の実routeを証拠化する | 10 | 523 |
+| U17 | `plugin_datetime`明示routeのidentity基盤。明示importを`{catalogId, plugin, namespace, route}`として保持する（完了） | 0（基盤） | 495 |
+| U18 | `0807 元号データ`、`0808 今`〜`0818 先月`。固定clock・Asia/Tokyo・global bindingを明示plugin routeで比較する（完了） | 12 | 507 |
+| U19 | `0819 曜日`、`0820 曜日番号取得`、`0821 UNIX時間変換`、`0822 UNIXTIME変換`、`0823 日時変換`。既存差分fixtureをexplicit routeへ分離する（完了） | 5 | 512 |
+| U20 | `0824 和暦変換`。explicit `plugin_datetime` routeで公式の`sys.__v0.元号データ is not iterable`境界を実測し、system版の成功を流用しない（完了） | 1 | 513 |
+| U21 | `0825 年数差`〜`0834 日時加算`。和暦エラーを含まない別explicit fixtureで10件の実routeを証拠化する（完了） | 10 | 523 |
 | U22 | `0051 JS実行`、`0052 JSオブジェクト取得`、`0053 JS関数実行`、`0056 JSメソッド実行`。QuickJS/compat-js専用traceをP3で追加する | 4 | 527 |
 
 U01〜U15は51件、U16は6件、U18〜U21は28件、U22は4件で合計89件となる。U17はU18〜U21の前提であり、二重計上しない。
@@ -151,7 +158,7 @@ P3 compat-js evidence
   └─ U22
 ```
 
-実装上は、U01〜U15で一意名nativeの残り15件（474→489）を接続し、U16で同名異pluginの6件（489→495）を明示catalog IDへ接続した。次にU17〜U21で残る`plugin_datetime` 28件、最後にU22でcompat-jsの4件（523→527）を扱う。ただし、実際のcatalog ID・route・oracle差が確認できない場合は件数を減らさず、失敗理由をfixture policyまたは`docs/COMPATIBILITY_QUIRKS.md`へ残す。
+実装上は、U01〜U15で一意名nativeの残り15件（474→489）を接続し、U16で同名異pluginの6件（489→495）を明示catalog IDへ接続した。U17〜U21では`plugin_datetime`の28件（495→523）を、4つの明示route fixtureと1つのstatic global evidenceへ接続済みである。公式sourceの旧形式plugin警告は`officialSourceStderrIncludes`で明示検証し、`和暦変換`のsource/generated差と、dayjs互換の月末クランプ（`2024/02/29`）対system Dateのオーバーフロー（`2024/03/02`）を`docs/COMPATIBILITY_QUIRKS.md`へ記録した。次にU22でcompat-jsの4件（523→527）を扱う。ただし、実際のcatalog ID・route・oracle差が確認できない場合は件数を減らさず、失敗理由をfixture policyまたは`docs/COMPATIBILITY_QUIRKS.md`へ残す。
 
 ## 各単位の共通完了条件
 

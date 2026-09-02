@@ -6,16 +6,16 @@
     "commit": "aa18c7e640523938c680958fe731418cc6f7a58f"
   },
   "fixture": {
-    "id": "native-caniuse-agents",
+    "id": "native-datetime-plugin-era-data",
     "file": "native-cases.json",
-    "sourceSha256": "3c1929ab30d0e65006b76cf5d81a32dd1d62abafbf8e5be303cce825b2d5b20b",
+    "sourceSha256": "7f1f707acaaf8f11fd89bc7cdb08f14786c0275ffa29f521f1dd8efe3bc2cf5d",
     "globalReadNames": [
-      "ブラウザ名変換表"
+      "元号データ"
     ],
     "literalNames": []
   },
   "officialComparison": {
-    "oracle": "official-source",
+    "oracle": "official-generated",
     "routes": [
       "officialSource",
       "officialGenerated",
@@ -27,25 +27,25 @@
       "officialSource": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "0738f6f31192f29571e108e13525716fef48a0489a69b1797f577940a0b36bb2",
-        "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "stdoutSha256": "ed69d23e4b00ece9f47ef1003fe8983ac53fd4c48250e526f95d344bdb742bb9",
+        "stderrSha256": "b889c7b16e29c898ca764c5d918583cf1bc85b45755e217d3d22438cf7b10052"
       },
       "officialGenerated": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "b9e52043acaab3b3b49e752fd68942fac08ae7a6a5f6d7ab24867e54b924efb2",
+        "stdoutSha256": "ed69d23e4b00ece9f47ef1003fe8983ac53fd4c48250e526f95d344bdb742bb9",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoRun": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "0738f6f31192f29571e108e13525716fef48a0489a69b1797f577940a0b36bb2",
+        "stdoutSha256": "ed69d23e4b00ece9f47ef1003fe8983ac53fd4c48250e526f95d344bdb742bb9",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       },
       "lnakoNativeO0": {
         "status": 0,
         "signal": null,
-        "stdoutSha256": "0738f6f31192f29571e108e13525716fef48a0489a69b1797f577940a0b36bb2",
+        "stdoutSha256": "ed69d23e4b00ece9f47ef1003fe8983ac53fd4c48250e526f95d344bdb742bb9",
         "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       }
     }
@@ -71,12 +71,12 @@
       "dirty": false
     },
     "raw": {
-      "interpreterTraceSha256": "63d22a8311ad3dfd50ecb9f80bb53486b7d1661e9b7a857d4b74beeadde7861c",
-      "aotTraceSha256": "b5e49f5149d069215d0b4e1111e565bbb5a1d2fc36deb974798777bdc0f6150b",
-      "globalManifestSha256": "c0bc5499e0751852ccc7f2b359e45989680dc92c8d60e16e28f16d7d3e464f67",
+      "interpreterTraceSha256": "4cffa2464ad6f612591a35bc5240822807fb0395919b1f99d5d926c09562717b",
+      "aotTraceSha256": "97b20225abc19943eab7359100c62fc7bbd8ff6ededdbc02d01185263ca50fa5",
+      "globalManifestSha256": "de1ba96a39873d05f963e1e4f1a2b77ea3f6e04a7c6c04bd8d28629854158445",
       "literalInterpreterTraceSha256": "d1a240ca85bb6425f4ad3e15b23d56a4366b64e8631f58b1af10c96a38b65232",
       "literalAotTraceSha256": "b503b7eae644c3b3cc2fbe7504669a86aa68f5db0642b31b5d61cde895e2a1ea",
-      "literalManifestSha256": "b1e7d8927572bdbd3aada6bfee5867805b63510681d043d79bc917871348b76b"
+      "literalManifestSha256": "470112fa8a164da29be4763d2b0578c34e7e6c465da995f8fc139a9ad3f3879c"
     }
   },
   "trace": {
@@ -103,11 +103,11 @@
   },
   "entries": [
     {
-      "catalogId": "command-0835",
-      "name": "ブラウザ名変換表",
-      "plugin": "plugin_caniuse",
+      "catalogId": "command-0807",
+      "name": "元号データ",
+      "plugin": "plugin_datetime",
       "kind": "global-read",
-      "siteId": "0x0000000000000004",
+      "siteId": "0x0000000000000005",
       "runtime": {
         "interpreter": {
           "success": true,
