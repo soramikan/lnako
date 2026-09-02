@@ -211,6 +211,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "tools/check_compat_js_evidence.mjs",
   "tools/check_distribution.mjs",
   "tools/create_distribution.mjs",
+  "tools/check_benchmark_result.mjs",
   "tools/compare_interpreter_oracle.mjs",
   "docs/UNVERIFIED_EVIDENCE_PLAN.md",
   "tools/sync_compat_evidence.mjs",

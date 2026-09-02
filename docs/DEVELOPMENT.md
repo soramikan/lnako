@@ -182,6 +182,7 @@ zig build ir-probe -- $'A=1\nAを表示\n'
 `benchmarks/results/latest.json`と`benchmarks/results/latest.md`へ保存します。JSONにはsuite、対象OS/CPU、固定toolchain、
 commit（`LNAKO_BENCHMARK_COMMIT`指定時）、iteration/warmup、個別sampleとmin/median/maxを含めます。
 値は子プロセス完了までのwall-clock値であり、CIの壁時計やrunner合計時間とは別の指標です。
+保存後は`node tools/check_benchmark_result.mjs`でsuiteとのcase順、3経路、sample数、min/median/max、JSONとMarkdownの一致を検査します。
 
 ```sh
 LNAKO_BENCHMARK_COMMIT="$(git rev-parse HEAD)" zig build run -- benchmark
