@@ -1,3 +1,5 @@
+import os from "node:os";
+
 const fixedNow = Number.parseInt(process.env.LNAKO_TEST_NOW_MS ?? "1735689845678", 10);
 const fixedMonotonic = Number.parseFloat(process.env.LNAKO_TEST_MONOTONIC_MS ?? "123.5");
 const RealDate = globalThis.Date;
@@ -34,3 +36,20 @@ Math.random = () => {
   const bits = ((randomState * 0x2545f4914f6cdd1dn) & mask) >> 11n;
   return Number(bits) / 9007199254740992;
 };
+
+if (process.env.LNAKO_TEST_NETWORK_TOPOLOGY === "synthetic-v1") {
+  // Preserve the official os.networkInterfaces() shape, including internal
+  // and scope metadata, while making the address order identical on all CI
+  // hosts. The Nadesiko command itself returns only `address` strings.
+  os.networkInterfaces = () => ({
+    lo0: [
+      { address: "127.0.0.1", family: "IPv4", internal: true, cidr: "127.0.0.1/8" },
+      { address: "::1", family: "IPv6", internal: true, scopeid: 0, cidr: "::1/128" },
+    ],
+    en0: [
+      { address: "192.0.2.10", family: "IPv4", internal: false, cidr: "192.0.2.10/24" },
+      { address: "fe80::1234", family: "IPv6", internal: false, scopeid: 4, cidr: "fe80::1234/64" },
+      { address: "2001:db8::10", family: "IPv6", internal: false, scopeid: 0, cidr: "2001:db8::10/64" },
+    ],
+  });
+}

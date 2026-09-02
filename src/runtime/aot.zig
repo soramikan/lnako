@@ -7622,7 +7622,13 @@ pub export fn lnako_aot_node_http_call(
 }
 
 fn nodeNetworkAddressesBuiltin(runtime: *Runtime, ipv6: bool) !Value {
-    var addresses = if (builtin.os.tag == .windows)
+    const synthetic = if (std.c.getenv("LNAKO_TEST_NETWORK_TOPOLOGY")) |topology|
+        std.mem.eql(u8, std.mem.span(topology), "synthetic-v1")
+    else
+        false;
+    var addresses = if (synthetic)
+        try syntheticAotNetworkAddresses(runtime.allocator, ipv6)
+    else if (builtin.os.tag == .windows)
         try aotWindowsNetworkAddresses(runtime.allocator, ipv6)
     else
         try aotPosixNetworkAddresses(runtime.allocator, ipv6);
@@ -7637,6 +7643,19 @@ fn nodeNetworkAddressesBuiltin(runtime: *Runtime, ipv6: bool) !Value {
         try result.object().?.payload.array.append(runtime.allocator, value);
     }
     return result;
+}
+
+fn syntheticAotNetworkAddresses(allocator: std.mem.Allocator, ipv6: bool) !std.ArrayList([]u8) {
+    // Keep the AOT test route byte-for-byte aligned with the CLI host's
+    // synthetic topology. The marker is injected only by oracle fixtures.
+    const addresses: []const []const u8 = if (ipv6)
+        &.{ "::1", "fe80::1234", "2001:db8::10" }
+    else
+        &.{ "127.0.0.1", "192.0.2.10" };
+    var items: std.ArrayList([]u8) = .empty;
+    errdefer deinitAotNetworkAddressList(allocator, &items);
+    for (addresses) |address| try items.append(allocator, try allocator.dupe(u8, address));
+    return items;
 }
 
 fn aotPosixNetworkAddresses(allocator: std.mem.Allocator, ipv6: bool) !std.ArrayList([]u8) {

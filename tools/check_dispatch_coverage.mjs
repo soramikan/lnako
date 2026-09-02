@@ -165,7 +165,7 @@ async function loadSelectedFixtures() {
     { file: "node-native-cases.json", selection: (testCase) => testCase.aot === true && testCase.commands?.length > 0 && testCase.expectError !== true },
     { file: "native-cases.json", selection: (testCase) =>
       testCase.id === "native-cut-commands" || testCase.id === "native-system-error-raise" || testCase.id === "native-system-debug" || testCase.id === "native-system-dynamic-execution" ||
-      (!arguments_.includeNative && ["native-node-stdin-all", "native-node-stdin-lines", "native-node-stdin-callback"].includes(testCase.id)) },
+      (!arguments_.includeNative && ["native-node-stdin-all", "native-node-stdin-lines", "native-node-stdin-callback", "native-node-network-addresses"].includes(testCase.id)) },
   ];
   if (arguments_.includeNative) {
     specifications.push({
@@ -184,7 +184,7 @@ async function loadSelectedFixtures() {
       fixtures.push({ file: specification.file, ...testCase });
     }
   }
-  const expectedFixtureCount = arguments_.includeNative ? 202 : 38;
+  const expectedFixtureCount = arguments_.includeNative ? 203 : 39;
   if (fixtures.length !== expectedFixtureCount) throw new Error(`dispatch coverageのfixture数が想定外です: ${fixtures.length}`);
   return fixtures;
 }
@@ -204,6 +204,9 @@ function validateFixture(testCase, file) {
     throw new Error(`fixtureのsourceFileNameが不正です: ${file}/${testCase.id}`);
   }
   if (testCase.stdin !== undefined && typeof testCase.stdin !== "string") throw new Error(`fixtureのstdinが不正です: ${file}/${testCase.id}`);
+  if (testCase.networkTopology !== undefined && testCase.networkTopology !== "synthetic-v1") {
+    throw new Error(`fixtureのnetworkTopologyが不正です: ${file}/${testCase.id}`);
+  }
   if (testCase.safeExternalMock !== undefined && typeof testCase.safeExternalMock !== "boolean") {
     throw new Error(`fixtureのsafeExternalMockが不正です: ${file}/${testCase.id}`);
   }
@@ -278,7 +281,10 @@ async function runFixture(fixture, index, temporary) {
     await writeFile(resolve(directory, sourceName), source, "utf8");
   }));
 
-  const baseEnvironment = fixedEnvironment();
+  const baseEnvironment = {
+    ...fixedEnvironment(),
+    ...(fixture.networkTopology ? { LNAKO_TEST_NETWORK_TOPOLOGY: fixture.networkTopology } : {}),
+  };
   const lnakoEnvironment = {
     ...baseEnvironment,
     ...(fixture.safeExternalMock ? { LNAKO_TEST_OPEN_EXTERNAL: "mock" } : {}),

@@ -833,7 +833,11 @@ const CliHost = struct {
         }
     }
 
-    fn networkAddresses(_: *anyopaque, allocator: std.mem.Allocator, ipv6: bool) !lnako.plugins.node.NetworkAddresses {
+    fn networkAddresses(context: *anyopaque, allocator: std.mem.Allocator, ipv6: bool) !lnako.plugins.node.NetworkAddresses {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        if (self.environmentValue("LNAKO_TEST_NETWORK_TOPOLOGY")) |topology| {
+            if (std.mem.eql(u8, topology, "synthetic-v1")) return syntheticNetworkAddresses(allocator, ipv6);
+        }
         return if (builtin.os.tag == .windows)
             windowsNetworkAddresses(allocator, ipv6)
         else
@@ -1402,6 +1406,20 @@ fn posixNetworkAddresses(allocator: std.mem.Allocator, ipv6: bool) !lnako.plugin
         if ((!ipv6 and family != std.posix.AF.INET) or (ipv6 and family != std.posix.AF.INET6)) continue;
         try items.append(allocator, try formatSockAddress(allocator, address, if (ipv6) std.mem.span(entry.name) else null));
     }
+    return .{ .items = try items.toOwnedSlice(allocator) };
+}
+
+fn syntheticNetworkAddresses(allocator: std.mem.Allocator, ipv6: bool) !lnako.plugins.node.NetworkAddresses {
+    // This test-only topology mirrors the fields that Node's os.networkInterfaces()
+    // exposes while keeping the returned command value limited to address strings.
+    // Production runs never set LNAKO_TEST_NETWORK_TOPOLOGY and use the OS APIs below.
+    const addresses: []const []const u8 = if (ipv6)
+        &.{ "::1", "fe80::1234", "2001:db8::10" }
+    else
+        &.{ "127.0.0.1", "192.0.2.10" };
+    var items: std.ArrayList([]u8) = .empty;
+    errdefer deinitNetworkAddressList(allocator, &items);
+    for (addresses) |address| try items.append(allocator, try allocator.dupe(u8, address));
     return .{ .items = try items.toOwnedSlice(allocator) };
 }
 

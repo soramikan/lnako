@@ -38,7 +38,7 @@ const artifactOracleIdentity = artifactPath === null ? null : oracleIdentity;
 // different drive.
 const temporary = await mkdtemp(join(root, ".tmp-lnako-native-"));
 const maxBuffer = 16 * 1024 * 1024;
-const knownCaseFields = new Set(["id", "source", "sourceFileName", "oracle", "stderrIncludes", "officialSourceStdoutIncludes", "normalizeDebugDump", "commands", "stdin", "dispatchExpectations"]);
+const knownCaseFields = new Set(["id", "source", "sourceFileName", "oracle", "stderrIncludes", "officialSourceStdoutIncludes", "normalizeDebugDump", "commands", "stdin", "networkTopology", "dispatchExpectations"]);
 const throwStatementOpcode = 0xffff;
 const routeNames = ["officialSource", "officialGenerated", "lnakoRun", ...selectedOptimizations.map((optimization) => `lnakoNative${optimization}`)];
 let artifactLnakoBinarySha256 = null;
@@ -78,6 +78,9 @@ try {
     }
     if (testCase.stdin !== undefined && typeof testCase.stdin !== "string") {
       throw new Error(`stdinは文字列で指定してください: ${testCase.id}`);
+    }
+    if (testCase.networkTopology !== undefined && testCase.networkTopology !== "synthetic-v1") {
+      throw new Error(`未知のnetworkTopologyです: ${testCase.id}: ${testCase.networkTopology}`);
     }
   }
   selectedCases = selectCases(cases, shard);
@@ -234,7 +237,15 @@ async function runCase(testCase, index, temporary, executable, officialCli, coll
   await writeFile(sourcePath, source, "utf8");
   const options = {
     cwd: fixtureDirectory,
-    env: { ...process.env, TZ: "Asia/Tokyo", LNAKO_TEST_NOW_MS: "1735689845678", LNAKO_TEST_MONOTONIC_MS: "123.5", LNAKO_TEST_RANDOM_SEED: "5573589319906701683", LNAKO_LLVM_TRACE: "1" },
+    env: {
+      ...process.env,
+      TZ: "Asia/Tokyo",
+      LNAKO_TEST_NOW_MS: "1735689845678",
+      LNAKO_TEST_MONOTONIC_MS: "123.5",
+      LNAKO_TEST_RANDOM_SEED: "5573589319906701683",
+      LNAKO_LLVM_TRACE: "1",
+      ...(testCase.networkTopology ? { LNAKO_TEST_NETWORK_TOPOLOGY: testCase.networkTopology } : {}),
+    },
     maxBuffer,
   };
   const runOptions = testCase.stdin === undefined ? options : { ...options, input: testCase.stdin };

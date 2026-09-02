@@ -1456,7 +1456,8 @@
   {
     "id": "native-node-network-addresses",
     "commands": ["自分IPアドレス取得", "自分IPV6アドレス取得"],
-    "source": "V4=自分IPアドレス取得(); JSON変換(配列ソート(V4))を表示\nV6=自分IPV6アドレス取得(); JSON変換(配列ソート(V6))を表示\n"
+    "source": "V4=自分IPアドレス取得(); JSON変換(V4)を表示\nV6=自分IPV6アドレス取得(); JSON変換(V6)を表示\n",
+    "networkTopology": "synthetic-v1"
   },
   {
     "id": "native-system-dynamic-execution",
