@@ -2,6 +2,7 @@ const std = @import("std");
 const value_mod = @import("../../runtime/value.zig");
 const constants = @import("constants.zig");
 const common = @import("common.zig");
+const environment = @import("../../runtime/environment.zig");
 
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
@@ -402,8 +403,7 @@ fn isLeapYear(year: i64) bool {
 }
 
 fn datetimePluginRouteEnabled() bool {
-    const route = std.c.getenv("LNAKO_PLUGIN_ROUTE") orelse return false;
-    return std.mem.eql(u8, std.mem.span(route), "plugin_datetime");
+    return environment.valueEquals("LNAKO_PLUGIN_ROUTE", "plugin_datetime");
 }
 
 fn addDateTime(runtime: *Runtime, source: Value, addition: Value, now: i64) !Value {

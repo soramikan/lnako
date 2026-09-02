@@ -25,6 +25,7 @@ const plugin_caniuse = @import("../plugins/caniuse.zig");
 const plugin_kansuji = @import("../plugins/kansuji.zig");
 const plugin_native = @import("../plugins/native.zig");
 const quickjs = @import("../compat/quickjs.zig");
+const environment = @import("environment.zig");
 
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
@@ -1344,8 +1345,7 @@ pub const Interpreter = struct {
     }
 
     fn datetimePluginRouteEnabled() bool {
-        const route = std.c.getenv("LNAKO_PLUGIN_ROUTE") orelse return false;
-        return std.mem.eql(u8, std.mem.span(route), "plugin_datetime");
+        return environment.valueEquals("LNAKO_PLUGIN_ROUTE", "plugin_datetime");
     }
 
     fn initializeSystem(self: *Interpreter) !void {

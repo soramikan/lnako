@@ -1,4 +1,5 @@
 const std = @import("std");
+const environment = @import("environment.zig");
 
 pub const Command = enum(u16) {
     to_string,
@@ -870,13 +871,11 @@ fn routeSpecificCommand(name: []const u8, system_route: bool) ?Command {
 }
 
 fn systemRouteEnabled() bool {
-    const route = std.c.getenv("LNAKO_PLUGIN_ROUTE") orelse return false;
-    return std.mem.eql(u8, std.mem.span(route), "plugin_system");
+    return environment.valueEquals("LNAKO_PLUGIN_ROUTE", "plugin_system");
 }
 
 fn datetimePluginRouteEnabled() bool {
-    const route = std.c.getenv("LNAKO_PLUGIN_ROUTE") orelse return false;
-    return std.mem.eql(u8, std.mem.span(route), "plugin_datetime");
+    return environment.valueEquals("LNAKO_PLUGIN_ROUTE", "plugin_datetime");
 }
 
 test "plugin_datetime routeは旧形式pluginの27命令だけを識別する" {
