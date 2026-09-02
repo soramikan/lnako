@@ -109,6 +109,11 @@ AOT差分ケースは `tests/oracle/native-cases.json` に置きます。公式C
 Interpreter、`tools/compare_http_server_aot_oracle.mjs`で純LLVM AOT O0〜O3を公式処理系と比較します。HTTP server fixtureは
 外部接続を伴うため、通常のAOT artifact／dispatch証拠とは分離し、CIの`aot` suiteで実行します。
 
+HTTP命令のdispatch実行証拠は `tests/oracle/http-server-dispatch-cases.json` と
+`tools/check_dispatch_coverage.mjs`で別に監査します。このfixtureは各routeへ外部loopback clientから実通信を行い、
+公式source・lnako Interpreter・AOT O0のHTTP応答とdispatch traceを同じsiteへ接続します。公式生成JavaScriptの
+standalone plugin登録不足は既知route差として記録し、通常のHTTP差分fixtureや3正式OSのattestationとは混同しません。
+
 HTTPクライアントの実通信fixtureは `tests/oracle/node-http-cases.json` に置き、`tools/compare_node_http_oracle.mjs`で
 loopbackサーバーを使って公式CLI・公式生成JavaScript・Interpreter・AOT O0〜O3を比較します。AOT対象7ケースでは
 全最適化レベルを検証し、通常モードの実行にJavaScript runtimeを含めません。localhostのlistenを伴うため、sandbox環境では

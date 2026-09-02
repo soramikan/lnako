@@ -135,6 +135,7 @@ const throwStatementOpcode = 0xffff;
 const runtimeFixtureFiles = new Set([
   "compat-js-cases.json",
   "http-server-cases.json",
+  "http-server-dispatch-cases.json",
   "native-cases.json",
   "node-crypto-cases.json",
   "node-exit-cases.json",
@@ -592,12 +593,12 @@ function validateDispatchCoverageEvidence(evidence, lock, standard, records, aud
   }
 
   assertKnownObjectKeys(evidence.scope, ["catalogEntries", "nativeEntries", "nativeUniqueNames", "fixtureSelection", "fixtureCount", "excludedFixtures", "commandAssociationIsNotExecutionEvidence"], "dispatch-coverage-evidence.scope");
-  const defaultDispatchCoverageSelection = "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures and native-cut-commands, excluding explicit AOT gaps";
-  const fullDispatchCoverageSelection = "the default command-bearing selection plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures and all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps";
+  const defaultDispatchCoverageSelection = "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, and native-cut-commands, excluding explicit AOT gaps";
+  const fullDispatchCoverageSelection = "the default command-bearing selection plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, and all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps";
   const expectedFixtureCount = evidence.scope.fixtureSelection === defaultDispatchCoverageSelection
-    ? 48
+    ? 49
     : evidence.scope.fixtureSelection === fullDispatchCoverageSelection
-      ? 212
+      ? 213
       : null;
   if (evidence.scope.catalogEntries !== 527 || evidence.scope.nativeEntries !== 523 || evidence.scope.nativeUniqueNames !== 492 ||
       expectedFixtureCount === null || evidence.scope.fixtureCount !== expectedFixtureCount ||
@@ -795,17 +796,31 @@ function validateCoverageComparison(comparison, hashPattern, fixtureKey) {
   }
   assertKnownObjectKeys(comparison.results, expectedRoutes, `${fixtureKey}.officialComparison.results`);
   const source = comparison.results.officialSource;
+  const httpServerComparison = fixtureKey === "http-server-dispatch-cases.json/plugin-httpserver-dispatch";
   for (const route of expectedRoutes) {
     const result = comparison.results[route];
-    assertKnownObjectKeys(result, ["status", "signal", "stdoutSha256", "stderrSha256"], `${fixtureKey}.officialComparison.results.${route}`);
-    if (!Number.isInteger(result.status) || !hashPattern.test(result.stdoutSha256) || !hashPattern.test(result.stderrSha256)) {
+    assertKnownObjectKeys(result, httpServerComparison
+      ? ["status", "signal", "stdoutSha256", "stderrSha256", "responseCount", "responseSha256"]
+      : ["status", "signal", "stdoutSha256", "stderrSha256"], `${fixtureKey}.officialComparison.results.${route}`);
+    if (!Number.isInteger(result.status) || !hashPattern.test(result.stdoutSha256) || !hashPattern.test(result.stderrSha256) ||
+        (httpServerComparison && (!Number.isSafeInteger(result.responseCount) || result.responseCount < 0 ||
+          (result.responseSha256 !== null && !hashPattern.test(result.responseSha256))))) {
       throw new Error(`dispatch coverage証拠の公式差分結果が不正です: ${fixtureKey}/${route}`);
     }
   }
-  for (const route of ["officialSource", "lnakoRun", "lnakoNativeO0"]) {
-    const result = comparison.results[route];
-    if (result.status !== 0 || result.signal !== null || result.stdoutSha256 !== source.stdoutSha256 || result.stderrSha256 !== source.stderrSha256) {
-      throw new Error(`dispatch coverage証拠のsource差分結果が不一致です: ${fixtureKey}/${route}`);
+  if (httpServerComparison) {
+    for (const route of ["officialSource", "lnakoRun", "lnakoNativeO0"]) {
+      const result = comparison.results[route];
+      if (result.status !== 0 || result.signal !== null || result.responseCount !== source.responseCount || result.responseSha256 !== source.responseSha256) {
+        throw new Error(`dispatch coverage証拠のHTTP応答結果が不一致です: ${fixtureKey}/${route}`);
+      }
+    }
+  } else {
+    for (const route of ["officialSource", "lnakoRun", "lnakoNativeO0"]) {
+      const result = comparison.results[route];
+      if (result.status !== 0 || result.signal !== null || result.stdoutSha256 !== source.stdoutSha256 || result.stderrSha256 !== source.stderrSha256) {
+        throw new Error(`dispatch coverage証拠のsource差分結果が不一致です: ${fixtureKey}/${route}`);
+      }
     }
   }
   const generated = comparison.results.officialGenerated;
@@ -813,7 +828,11 @@ function validateCoverageComparison(comparison, hashPattern, fixtureKey) {
     if (generated.status !== 0 || generated.signal !== null) {
       throw new Error(`dispatch coverage証拠のgenerated成功状態が不正です: ${fixtureKey}`);
     }
-  } else if (generated.status === 0 || generated.signal !== null) {
+    if (httpServerComparison && (generated.responseCount !== source.responseCount || generated.responseSha256 !== source.responseSha256)) {
+      throw new Error(`dispatch coverage証拠のgenerated HTTP応答結果が不一致です: ${fixtureKey}`);
+    }
+  } else if (generated.status === 0 || generated.signal !== null || (httpServerComparison && generated.responseCount !== 0) ||
+      (httpServerComparison && generated.responseSha256 !== null)) {
     throw new Error(`dispatch coverage証拠のgenerated unavailable状態が不正です: ${fixtureKey}`);
   }
 }

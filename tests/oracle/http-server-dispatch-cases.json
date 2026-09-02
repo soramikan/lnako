@@ -1,0 +1,16 @@
+{
+  "id": "plugin-httpserver-dispatch",
+  "aot": true,
+  "httpServer": true,
+  "oracle": "official-source",
+  "commands": [
+    "簡易HTTPサーバ起動時",
+    "簡易HTTPサーバ静的パス指定",
+    "簡易HTTPサーバ受信時",
+    "簡易HTTPサーバ出力",
+    "簡易HTTPサーバヘッダ出力",
+    "簡易HTTPサーバ移動",
+    "終了"
+  ],
+  "source": "!\"${PLUGIN}\"を取り込む\n●起動\n戻る\nここまで\n●受信\nR={\"method\":HTTPメソッド,\"get\":GETデータ,\"post\":POSTデータ}\nJ=JSON変換(R)\nJを簡易HTTPサーバ出力\nここまで\n●アップロード受信\nF=FILESデータ[0]\nP=(F[\"path\"]!=\"\")\nR={\"field\":F[\"fieldName\"],\"name\":F[\"name\"],\"size\":F[\"size\"],\"type\":F[\"type\"],\"hasPath\":P,\"title\":POSTデータ[\"title\"]}\nJ=JSON変換(R)\nJを簡易HTTPサーバ出力\nここまで\n●ヘッダ受信\nH={\"X-Lnako\":\"yes\",\"Content-Type\":\"text/plain\"}\n201でHを簡易HTTPサーバヘッダ出力\n\"HEADER\"を簡易HTTPサーバ出力\nここまで\n●移動受信\n\"/destination\"へ簡易HTTPサーバ移動\nここまで\n●短経路\n\"SHORT\"を簡易HTTPサーバ出力\nここまで\n●長経路\n\"LONG\"を簡易HTTPサーバ出力\nここまで\n●接頭辞\n\"PREFIX\"を簡易HTTPサーバ出力\nここまで\n●シャットダウン\n\"BYE\"を簡易HTTPサーバ出力\n終了()\nここまで\n\"起動\"を${PORT}で簡易HTTPサーバ起動時\n\"/static\"を\"${STATIC}\"に簡易HTTPサーバ静的パス指定\n\"受信\"を\"/echo\"に簡易HTTPサーバ受信時\n\"アップロード受信\"を\"/upload\"に簡易HTTPサーバ受信時\n\"ヘッダ受信\"を\"/headers\"に簡易HTTPサーバ受信時\n\"移動受信\"を\"/redirect\"に簡易HTTPサーバ受信時\n\"短経路\"を\"/route\"に簡易HTTPサーバ受信時\n\"長経路\"を\"/route/long\"に簡易HTTPサーバ受信時\n\"接頭辞\"を\"/api\"に簡易HTTPサーバ受信時\n\"シャットダウン\"を\"/shutdown\"に簡易HTTPサーバ受信時\n"
+}

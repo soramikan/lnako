@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { access, link, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
+import http from "node:http";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
@@ -67,6 +68,7 @@ const generatedRouteUnavailableFixtures = new Map([
   ["native-cases.json/native-toml-commands", "公式生成JavaScriptのstandalone TOML plugin host登録が不足する"],
   ["native-cases.json/native-markup-commands", "公式生成JavaScriptのstandalone markup plugin host登録が不足する"],
   ["native-cases.json/native-system-dynamic-execution", "公式生成JavaScriptのstandalone system async host登録が不足する"],
+  ["http-server-dispatch-cases.json/plugin-httpserver-dispatch", "公式生成JavaScriptのstandalone plugin_node登録が不足し、shutdown補助命令『終了』を解決できない"],
 ]);
 const selectedFixtures = await loadSelectedFixtures();
 const compiler = resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
@@ -113,7 +115,9 @@ try {
   const sites = [];
   const unresolvedSites = [];
   for (const [index, fixture] of selectedFixtures.entries()) {
-    const result = await runFixture(fixture, index, temporary, loopbackServer?.base ?? null);
+    const result = fixture.httpServer === true
+      ? await runHttpServerFixture(fixture, index, temporary)
+      : await runFixture(fixture, index, temporary, loopbackServer?.base ?? null);
     fixtureReports.push(result.report);
     sites.push(...result.sites);
     unresolvedSites.push(...result.unresolvedSites);
@@ -169,6 +173,7 @@ async function loadSelectedFixtures() {
     { file: "node-file-cases.json", selection: (testCase) => testCase.aot === true && testCase.commands?.length > 0 && testCase.expectError !== true },
     { file: "node-native-cases.json", selection: (testCase) => testCase.aot === true && testCase.commands?.length > 0 && testCase.expectError !== true },
     { file: "node-http-cases.json", selection: (testCase) => ["plugin-node-http-callbacks", "plugin-node-http-onerror", "plugin-node-http-options-and-promises", "plugin-node-http-async-values", "plugin-node-http-discord", "plugin-node-http-discord-file", "plugin-node-http-discord-failure", "plugin-node-http-line-message-discontinued-captured", "plugin-node-http-line-image-discontinued-captured"].includes(testCase.id) },
+    { file: "http-server-dispatch-cases.json", selection: (testCase) => testCase.id === "plugin-httpserver-dispatch" },
     { file: "native-cases.json", selection: (testCase) =>
       testCase.id === "native-cut-commands" || testCase.id === "native-system-error-raise" || testCase.id === "native-system-debug" || testCase.id === "native-system-dynamic-execution" ||
       (!arguments_.includeNative && ["native-node-stdin-all", "native-node-stdin-lines", "native-node-stdin-callback", "native-node-network-addresses"].includes(testCase.id)) },
@@ -182,7 +187,8 @@ async function loadSelectedFixtures() {
   const fixtures = [];
   for (const specification of specifications) {
     const path = resolve(root, "tests/oracle", specification.file);
-    const cases = JSON.parse(await readFile(path, "utf8"));
+    const parsed = JSON.parse(await readFile(path, "utf8"));
+    const cases = Array.isArray(parsed) ? parsed : [parsed];
     if (!Array.isArray(cases)) throw new Error(`fixtureが配列ではありません: ${specification.file}`);
     for (const testCase of cases.filter(specification.selection)) {
       validateFixture(testCase, specification.file);
@@ -190,7 +196,7 @@ async function loadSelectedFixtures() {
       fixtures.push({ file: specification.file, ...testCase });
     }
   }
-  const expectedFixtureCount = arguments_.includeNative ? 212 : 48;
+  const expectedFixtureCount = arguments_.includeNative ? 213 : 49;
   if (fixtures.length !== expectedFixtureCount) throw new Error(`dispatch coverageのfixture数が想定外です: ${fixtures.length}`);
   return fixtures;
 }
@@ -218,6 +224,12 @@ function validateFixture(testCase, file) {
   }
   if (testCase.archiveHelper !== undefined && typeof testCase.archiveHelper !== "boolean") {
     throw new Error(`fixtureのarchiveHelperが不正です: ${file}/${testCase.id}`);
+  }
+  if (testCase.httpServer !== undefined && typeof testCase.httpServer !== "boolean") {
+    throw new Error(`fixtureのhttpServerが不正です: ${file}/${testCase.id}`);
+  }
+  if (testCase.httpServer === true && testCase.aot !== true) {
+    throw new Error(`httpServer fixtureはAOT対象である必要があります: ${file}/${testCase.id}`);
   }
   if (testCase.dispatchExpectations !== undefined) {
     if (!Array.isArray(testCase.dispatchExpectations) || testCase.dispatchExpectations.length === 0) {
@@ -401,6 +413,302 @@ async function runFixture(fixture, index, temporary, loopbackBase) {
   };
 }
 
+async function runHttpServerFixture(fixture, index, temporary) {
+  const fixtureDirectory = resolve(temporary, `${String(index).padStart(2, "0")}-${fixture.id}`);
+  await mkdir(fixtureDirectory);
+  const stem = `${String(index).padStart(2, "0")}-${fixture.id}`;
+  const sourceName = fixture.sourceFileName ?? `${stem}.nako3`;
+  const sourceSha256 = sha256(fixture.source);
+  const directories = {
+    officialSource: resolve(fixtureDirectory, "official-source"),
+    officialGenerated: resolve(fixtureDirectory, "official-generated"),
+    interpreterTrace: resolve(fixtureDirectory, "interpreter-trace"),
+    aotTrace: resolve(fixtureDirectory, "aot-trace"),
+  };
+  await Promise.all(Object.values(directories).map((directory) => mkdir(directory, { recursive: true })));
+
+  const prepare = async (directory) => {
+    const staticDirectory = resolve(directory, "static");
+    await mkdir(staticDirectory, { recursive: true });
+    await writeFile(resolve(staticDirectory, "hello.txt"), "STATIC", "utf8");
+    const port = await reserveHttpServerPort();
+    const source = replacePluginPlaceholders(fixture.source, directory, null, fixture, {
+      "${PORT}": String(port),
+      "${STATIC}": staticDirectory.replaceAll("\\", "/"),
+    });
+    const sourcePath = resolve(directory, sourceName);
+    await writeFile(sourcePath, source, "utf8");
+    return { directory, port, sourcePath };
+  };
+
+  const oracleHostArguments = ["--import", pathToFileURL(fixedHost).href];
+  const fixedEnvironmentForHttp = () => fixedEnvironment();
+  const officialSourceSetup = await prepare(directories.officialSource);
+  const officialSource = await runHttpServerSuite(
+    `${fixture.id} 公式source`,
+    [process.execPath, ...oracleHostArguments, resolve(oracleRoot, "src/cnako3.mjs"), officialSourceSetup.sourcePath],
+    officialSourceSetup.port,
+    fixedEnvironmentForHttp(),
+    officialSourceSetup.directory,
+  );
+
+  const officialGeneratedSetup = await prepare(directories.officialGenerated);
+  const generatedPath = resolve(officialGeneratedSetup.directory, `${stem}.mjs`);
+  const officialCompile = run(
+    process.execPath,
+    [...oracleHostArguments, resolve(oracleRoot, "src/cnako3.mjs"), "--compile", "--silent", "--output", generatedPath, officialGeneratedSetup.sourcePath],
+    fixedEnvironmentForHttp(),
+    officialGeneratedSetup.directory,
+  );
+  assertSuccess(`${fixture.file}/${fixture.id} 公式JavaScript生成`, officialCompile);
+  const officialGenerated = await runHttpServerSuite(
+    `${fixture.id} 公式生成JavaScript`,
+    [process.execPath, ...oracleHostArguments, generatedPath],
+    officialGeneratedSetup.port,
+    fixedEnvironmentForHttp(),
+    officialGeneratedSetup.directory,
+    { allowUnavailable: isKnownGeneratedRouteUnavailable(fixture) },
+  );
+  if (officialGenerated.responses !== null) assertHttpSuiteEquivalent(`${fixture.file}/${fixture.id} 公式source/公式生成JavaScript`, officialSource, officialGenerated);
+
+  const interpreterSetup = await prepare(directories.interpreterTrace);
+  const interpreterTracePath = resolve(interpreterSetup.directory, "interpreter.jsonl");
+  const interpreter = await runHttpServerSuite(
+    `${fixture.file}/${fixture.id} Interpreter`,
+    [compiler, "run", interpreterSetup.sourcePath],
+    interpreterSetup.port,
+    { ...fixedEnvironmentForHttp(), LNAKO_DISPATCH_TRACE: interpreterTracePath },
+    interpreterSetup.directory,
+  );
+  const interpreterWithoutTrace = await runHttpServerSuite(
+    `${fixture.file}/${fixture.id} Interpreter trace無効`,
+    [compiler, "run", interpreterSetup.sourcePath],
+    interpreterSetup.port,
+    fixedEnvironmentForHttp(),
+    interpreterSetup.directory,
+  );
+  assertHttpSuiteEquivalent(`${fixture.file}/${fixture.id} Interpreter trace`, interpreterWithoutTrace, interpreter);
+  assertHttpSuiteEquivalent(`${fixture.file}/${fixture.id} 公式source/Interpreter`, officialSource, interpreterWithoutTrace);
+  const interpreterTrace = await readInterpreterTrace(interpreterTracePath, fixture);
+
+  const aotSetup = await prepare(directories.aotTrace);
+  const nativePath = resolve(aotSetup.directory, `${stem}${process.platform === "win32" ? ".exe" : ""}`);
+  const manifestPath = resolve(aotSetup.directory, "compile-manifest.jsonl");
+  const compile = run(
+    compiler,
+    ["build", aotSetup.sourcePath, "-o", nativePath, "-O0"],
+    { ...fixedEnvironmentForHttp(), LNAKO_COMPILE_MANIFEST: manifestPath },
+    aotSetup.directory,
+  );
+  assertSuccess(`${fixture.file}/${fixture.id} AOT O0コンパイル`, compile);
+  const manifest = await readCompileManifest(manifestPath, aotSetup.sourcePath, fixture);
+  const aot = await runHttpServerSuite(
+    `${fixture.file}/${fixture.id} AOT O0`,
+    [nativePath],
+    aotSetup.port,
+    { ...fixedEnvironmentForHttp(), LNAKO_DISPATCH_TRACE: resolve(aotSetup.directory, "aot.jsonl") },
+    aotSetup.directory,
+  );
+  const aotWithoutTrace = await runHttpServerSuite(
+    `${fixture.file}/${fixture.id} AOT O0 trace無効`,
+    [nativePath],
+    aotSetup.port,
+    fixedEnvironmentForHttp(),
+    aotSetup.directory,
+  );
+  assertHttpSuiteEquivalent(`${fixture.file}/${fixture.id} AOT trace`, aotWithoutTrace, aot);
+  assertHttpSuiteEquivalent(`${fixture.file}/${fixture.id} 公式source/AOT O0`, officialSource, aotWithoutTrace);
+  const aotTrace = await readAotTrace(resolve(aotSetup.directory, "aot.jsonl"), fixture, manifest.entries);
+  const coverage = collectSites(fixture, interpreterTrace.events, aotTrace, manifest.entries);
+  const observedCommandNames = new Set(coverage.observedCommandNames);
+  const associationWithoutDispatch = fixture.commands
+    .filter((name) => !observedCommandNames.has(name))
+    .map((name) => ({ name, catalogIds: (catalogByName.get(name) ?? []).map((command) => command.id) }));
+  const generatedAvailable = officialGenerated.responses !== null;
+  return {
+    report: {
+      id: fixture.id,
+      file: fixture.file,
+      sourceSha256,
+      associatedCommandNames: [...fixture.commands],
+      associationWithoutDispatch,
+      observedStaticCommandNames: [...coverage.staticSuccessNames].sort(),
+      observedDispatchCommandNames: [...coverage.observedCommandNames].sort(),
+      dispatchExpectations: fixture.dispatchExpectations ?? [],
+      officialComparison: {
+        oracle: "officialSource",
+        routes: ["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0"],
+        selectedOracleEquivalent: true,
+        officialGeneratedAvailable: generatedAvailable,
+        officialGeneratedRouteUnavailableReason: generatedAvailable
+          ? null
+          : generatedRouteUnavailableFixtures.get(`${fixture.file}/${fixture.id}`),
+        officialRoutesEquivalent: generatedAvailable && JSON.stringify(officialSource.responses) === JSON.stringify(officialGenerated.responses),
+        results: Object.fromEntries([
+          ["officialSource", summarizeHttpSuite(officialSource)],
+          ["officialGenerated", summarizeHttpSuite(officialGenerated)],
+          ["lnakoRun", summarizeHttpSuite(interpreterWithoutTrace)],
+          ["lnakoNativeO0", summarizeHttpSuite(aotWithoutTrace)],
+        ]),
+      },
+      interpreter: {
+        dispatchEventCount: interpreterTrace.events.length,
+        staticSuccessSiteCount: coverage.staticSuccessSiteCount,
+        expectedFailureSiteCount: coverage.expectedFailureSiteCount,
+        expectedFailureDispatchCount: coverage.expectedFailureDispatchCount,
+        staticSiteWithoutAotManifestCount: coverage.interpreterSitesWithoutManifest.length,
+        traceSha256: interpreterTrace.rawSha256,
+      },
+      aot: {
+        manifestEntryCount: manifest.entries.length,
+        dispatchAttemptCount: aotTrace.attempts.length,
+        dispatchResultCount: aotTrace.results.length,
+        staticSuccessSiteCount: coverage.staticSuccessSiteCount,
+        expectedFailureSiteCount: coverage.expectedFailureSiteCount,
+        expectedFailureDispatchCount: coverage.expectedFailureDispatchCount,
+        failedDispatchCount: aotTrace.results.filter((event) => event.success === false).length,
+        traceSha256: aotTrace.rawSha256,
+        compileManifestSha256: manifest.rawSha256,
+      },
+    },
+    sites: coverage.sites,
+    unresolvedSites: coverage.unresolvedSites,
+  };
+}
+
+async function reserveHttpServerPort() {
+  return new Promise((resolvePort, reject) => {
+    const server = http.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address !== null ? address.port : null;
+      server.close((error) => error ? reject(error) : resolvePort(port));
+    });
+  });
+}
+
+async function runHttpServerSuite(label, command, port, environment, cwd, options = {}) {
+  const child = spawn(command[0], command.slice(1), {
+    cwd,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: environment,
+    windowsHide: true,
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
+  child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+  try {
+    await waitForHttpServerReady(port, child, () => `stdout=${stdout}\nstderr=${stderr}`);
+    const responses = [];
+    for (const requestCase of httpServerDispatchRequests()) responses.push(await requestHttpServer(port, ...requestCase));
+    responses.push(await requestHttpServer(port, "/shutdown", "GET"));
+    const exit = await waitForHttpServerExit(child, 5000);
+    if (exit.status !== 0 || exit.signal !== null) {
+      throw new Error(`${label}が異常終了しました: status=${exit.status} signal=${exit.signal}\nstdout=${stdout}\nstderr=${stderr}`);
+    }
+    return { status: exit.status, signal: exit.signal, stdout, stderr, responses: responses.map(normalizeHttpServerResponse) };
+  } catch (error) {
+    if (options.allowUnavailable === true && child.exitCode !== null && child.exitCode !== 0) {
+      return { status: child.exitCode, signal: child.signalCode, stdout, stderr, responses: null };
+    }
+    if (child.exitCode === null) await terminateHttpServerChild(child);
+    throw new Error(`${label}に失敗しました: ${error.message}\nstdout=${stdout}\nstderr=${stderr}`, { cause: error });
+  } finally {
+    if (child.exitCode === null) await terminateHttpServerChild(child);
+  }
+}
+
+function httpServerDispatchRequests() {
+  return [
+    ["/echo?probe=1", "GET"],
+    ["/headers", "GET"],
+    ["/redirect", "GET"],
+    ["/route/long/test", "GET"],
+    ["/api2", "GET"],
+    ["/static/hello.txt?x=1", "GET"],
+  ];
+}
+
+async function waitForHttpServerReady(port, child, diagnostics) {
+  for (let attempt = 0; attempt < 250; attempt += 1) {
+    if (child.exitCode !== null) throw new Error(`HTTPサーバが起動前に終了しました: ${child.exitCode}\n${diagnostics()}`);
+    if (diagnostics().includes(`ポート番号(${port})で監視開始`) || diagnostics().includes("ポート番号(0)で監視開始")) return;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
+  }
+  throw new Error(`HTTPサーバが5秒以内に起動しませんでした\n${diagnostics()}`);
+}
+
+async function waitForHttpServerExit(child, timeoutMs) {
+  if (child.exitCode === null && !(await waitForHttpServerChildExit(child, timeoutMs))) await terminateHttpServerChild(child);
+  return { status: child.exitCode, signal: child.signalCode };
+}
+
+function waitForHttpServerChildExit(child, timeoutMs) {
+  if (child.exitCode !== null) return Promise.resolve(true);
+  return new Promise((resolveExit) => {
+    let timer = null;
+    const onExit = () => {
+      if (timer !== null) clearTimeout(timer);
+      resolveExit(true);
+    };
+    child.once("exit", onExit);
+    timer = setTimeout(() => {
+      child.removeListener("exit", onExit);
+      resolveExit(child.exitCode !== null);
+    }, timeoutMs);
+  });
+}
+
+async function terminateHttpServerChild(child) {
+  if (child.exitCode !== null) return;
+  child.kill("SIGTERM");
+  if (await waitForHttpServerChildExit(child, 1500)) return;
+  child.kill("SIGKILL");
+  if (!(await waitForHttpServerChildExit(child, 1500))) throw new Error("HTTPサーバ子プロセスを終了できませんでした");
+}
+
+async function requestHttpServer(port, path, method) {
+  return new Promise((resolveResponse, reject) => {
+    const request = http.request({ hostname: "127.0.0.1", port, path, method }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => resolveResponse({ status: response.statusCode, headers: response.headers, body: Buffer.concat(chunks) }));
+    });
+    request.setTimeout(5000, () => request.destroy(new Error("HTTP request timed out")));
+    request.on("error", reject);
+    request.end();
+  });
+}
+
+function normalizeHttpServerResponse(response) {
+  return {
+    status: response.status,
+    contentType: response.headers["content-type"] ?? "",
+    location: response.headers.location ?? "",
+    custom: response.headers["x-lnako"] ?? "",
+    body: response.body.toString("utf8"),
+  };
+}
+
+function summarizeHttpSuite(result) {
+  return {
+    status: result.status,
+    signal: result.signal,
+    stdoutSha256: sha256(normalizeLineEndings(result.stdout)),
+    stderrSha256: sha256(normalizeLineEndings(result.stderr)),
+    responseCount: result.responses === null ? 0 : result.responses.length,
+    responseSha256: result.responses === null ? null : sha256(JSON.stringify(result.responses)),
+  };
+}
+
+function assertHttpSuiteEquivalent(label, left, right) {
+  if (left.status !== right.status || left.signal !== right.signal || JSON.stringify(left.responses) !== JSON.stringify(right.responses)) {
+    throw new Error(`${label}でHTTP応答または終了結果が一致しません: left=${JSON.stringify({ status: left.status, signal: left.signal, responses: left.responses })} right=${JSON.stringify({ status: right.status, signal: right.signal, responses: right.responses })}`);
+  }
+}
+
 function requiresIsolatedFixtureState(fixture) {
   // Path-observing fixtures must see the same cwd and source path on every
   // route. Only fixtures that create or mutate shared files need per-route
@@ -444,15 +752,19 @@ function fixedEnvironment() {
   return environment;
 }
 
-function replacePluginPlaceholders(source, fixtureDirectory, loopbackBase, fixture) {
+function replacePluginPlaceholders(source, fixtureDirectory, loopbackBase, fixture, extraReplacements = {}) {
   const replacements = {
     "${PLUGIN_CANIUSE}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_caniuse.mjs")).replaceAll("\\", "/"),
     "${PLUGIN_KANSUJI}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_kansuji.mjs")).replaceAll("\\", "/"),
     "${PLUGIN_MARKUP}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_markup.mjs")).replaceAll("\\", "/"),
     "${PLUGIN_CSV}": relative(fixtureDirectory, resolve(oracleRoot, "core/src/plugin_csv.mjs")).replaceAll("\\", "/"),
     "${PLUGIN_TOML}": relative(fixtureDirectory, resolve(oracleRoot, "core/src/plugin_toml.mjs")).replaceAll("\\", "/"),
+    "${PLUGIN}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_httpserver.mjs")).replaceAll("\\", "/"),
   };
   let replaced = Object.entries(replacements).reduce((result, [placeholder, path]) => result.replaceAll(placeholder, path), source);
+  for (const [placeholder, value] of Object.entries(extraReplacements)) {
+    replaced = replaced.replaceAll(placeholder, value);
+  }
   if (replaced.includes("${BASE}")) {
     if (loopbackBase === null) throw new Error("HTTP fixtureにloopback baseがありません");
     replaced = replaced.replaceAll("${BASE}", loopbackBase);
@@ -863,8 +1175,8 @@ function createReport({ fixtureReports, sites, unresolvedSites, oracle, git }) {
       nativeEntries: nativeCommands.length,
       nativeUniqueNames: nativeNames.size,
       fixtureSelection: arguments_.includeNative
-        ? "the default command-bearing selection plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures and all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps"
-        : "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures and native-cut-commands, excluding explicit AOT gaps",
+        ? "the default command-bearing selection plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, and all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps"
+        : "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, and native-cut-commands, excluding explicit AOT gaps",
       fixtureCount: fixtureReports.length,
       excludedFixtures: [...excludedFixtures].map(([key, reason]) => ({ key, reason })),
       commandAssociationIsNotExecutionEvidence: true,
