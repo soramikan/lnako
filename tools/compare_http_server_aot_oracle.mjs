@@ -98,6 +98,8 @@ async function runSuite(label, optimization) {
       ["/echo", "POST", "multipart/form-data; boundary=----LnakoBoundary", multipartFieldBody("\n")],
       ["/echo", "POST", "Multipart/form-data; boundary=----LnakoBoundary", multipartFieldBody()],
       ["/echo", "POST", "multipart/form-data", multipartFieldBody()],
+      ["/upload", "POST", "multipart/form-data; boundary=----LnakoBoundary", multipartBody("hello;v1.txt")],
+      ["/upload", "POST", "multipart/form-data; boundary=----LnakoBoundary", multipartOrphanFileBody()],
       ["/headers", "GET"],
       ["/redirect", "GET"],
       ["/route/long/test", "GET"],
@@ -125,11 +127,11 @@ function suiteEnvironment() {
 }
 
 function requestCount() {
-  return 21;
+  return 23;
 }
 
-function multipartBody() {
-  return Buffer.from("------LnakoBoundary\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nhello\r\n------LnakoBoundary\r\nContent-Disposition: form-data; name=\"file1\"; filename=\"hello.txt\"\r\nContent-Type: text/plain\r\n\r\nhello upload--\r\n------LnakoBoundary--\r\n");
+function multipartBody(filename = "hello.txt") {
+  return Buffer.from(`------LnakoBoundary\r\nContent-Disposition: form-data; name="title"\r\n\r\nhello\r\n------LnakoBoundary\r\nContent-Disposition: form-data; name="file1"; filename="${filename}"\r\nContent-Type: text/plain\r\n\r\nhello upload--\r\n------LnakoBoundary--\r\n`);
 }
 
 function multipartFieldBody(lineEnding = "\r\n") {
@@ -140,6 +142,10 @@ function multipartFieldBody(lineEnding = "\r\n") {
     `hello${lineEnding}`,
     `------LnakoBoundary--${lineEnding}`,
   ].join(""));
+}
+
+function multipartOrphanFileBody() {
+  return Buffer.from("------LnakoBoundary\r\nContent-Disposition: form-data; filename=\"orphan.txt\"\r\nContent-Type: text/plain\r\n\r\norphan\r\n------LnakoBoundary--\r\n");
 }
 
 function normalizeResponse(response) {

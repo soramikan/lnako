@@ -6513,14 +6513,17 @@ fn aotHttpFindHeader(head: []const u8, expected: []const u8) ?[]const u8 {
 }
 
 fn aotHttpDispositionParameter(disposition: []const u8, expected: []const u8) ?[]const u8 {
-    var parts = std.mem.splitScalar(u8, disposition, ';');
-    while (parts.next()) |part| {
-        const trimmed = std.mem.trim(u8, part, " \t");
-        const equal = std.mem.indexOfScalar(u8, trimmed, '=') orelse continue;
-        if (!std.ascii.eqlIgnoreCase(trimmed[0..equal], expected)) continue;
-        var value = trimmed[equal + 1 ..];
-        if (value.len >= 2 and value[0] == '"' and value[value.len - 1] == '"') value = value[1 .. value.len - 1];
-        return value;
+    var search_start: usize = 0;
+    while (search_start <= disposition.len) {
+        const relative_marker = std.mem.indexOf(u8, disposition[search_start..], expected) orelse return null;
+        const marker = search_start + relative_marker;
+        const value_start = marker + expected.len;
+        if (value_start + 2 < disposition.len and disposition[value_start] == '=' and disposition[value_start + 1] == '"') {
+            if (std.mem.indexOfScalarPos(u8, disposition, value_start + 2, '"')) |quote| {
+                if (quote > value_start + 2) return disposition[value_start + 2 .. quote];
+            }
+        }
+        search_start = marker + 1;
     }
     return null;
 }
@@ -24247,6 +24250,14 @@ test "AOT HTTP multipartは公式のboundary抽出とLFヘッダ区切りを保�
     const raw = try valueUtf8LossyAlloc(&runtime, roots[2]);
     defer runtime.allocator.free(raw);
     try std.testing.expectEqualStrings("raw", raw);
+}
+
+test "AOT HTTP multipartのContent-Dispositionは公式の引用正規表現境界を保つ" {
+    try std.testing.expectEqualStrings("hello;v1.txt", aotHttpDispositionParameter("form-data; filename=\"hello;v1.txt\"", "name").?);
+    try std.testing.expectEqualStrings("hello;v1.txt", aotHttpDispositionParameter("form-data; filename=\"hello;v1.txt\"", "filename").?);
+    try std.testing.expect(aotHttpDispositionParameter("form-data; Name=\"title\"", "name") == null);
+    try std.testing.expect(aotHttpDispositionParameter("form-data; name=title", "name") == null);
+    try std.testing.expect(aotHttpDispositionParameter("form-data; name=\"\"", "name") == null);
 }
 
 test "AOT HTTP routeと静的配信の補助判定は公式境界を保つ" {
