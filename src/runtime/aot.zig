@@ -6408,10 +6408,8 @@ fn aotHttpParseQuery(runtime: *Runtime, target: []const u8) !Value {
 }
 
 fn aotHttpParsePost(runtime: *Runtime, content_type: []const u8, body: []const u8, files: Value) !Value {
-    if (std.ascii.indexOfIgnoreCase(content_type, "multipart/form-data") != null) {
-        const marker = std.ascii.indexOfIgnoreCase(content_type, "boundary=") orelse return runtime.createDictionary(&.{});
-        var boundary = std.mem.trim(u8, content_type[marker + "boundary=".len ..], " \t");
-        if (boundary.len >= 2 and boundary[0] == '"' and boundary[boundary.len - 1] == '"') boundary = boundary[1 .. boundary.len - 1];
+    if (std.mem.indexOf(u8, content_type, "multipart/form-data") != null) {
+        const boundary = aotHttpMultipartBoundary(content_type) orelse return runtime.createDictionary(&.{});
         return aotHttpParseMultipart(runtime, body, boundary, files);
     }
     if (std.ascii.indexOfIgnoreCase(content_type, "application/json") != null) {
@@ -6423,6 +6421,27 @@ fn aotHttpParsePost(runtime: *Runtime, content_type: []const u8, body: []const u
     }
     if (std.ascii.indexOfIgnoreCase(content_type, "application/x-www-form-urlencoded") != null) return aotHttpParseUrlEncoded(runtime, body);
     return runtimeUtf8StringLossy(runtime, body);
+}
+
+fn aotHttpMultipartBoundary(content_type: []const u8) ?[]const u8 {
+    var search_start: usize = 0;
+    while (search_start <= content_type.len) {
+        const relative_marker = std.mem.indexOf(u8, content_type[search_start..], "boundary=") orelse return null;
+        const marker = search_start + relative_marker;
+        const value_start = marker + "boundary=".len;
+
+        if (value_start < content_type.len and content_type[value_start] == '"') {
+            if (std.mem.indexOfScalarPos(u8, content_type, value_start + 1, '"')) |quote| {
+                if (quote > value_start + 1) return std.mem.trim(u8, content_type[value_start + 1 .. quote], " \t\r\n");
+            }
+        }
+
+        var value_end = value_start;
+        while (value_end < content_type.len and content_type[value_end] != ';') value_end += 1;
+        if (value_end > value_start) return std.mem.trim(u8, content_type[value_start..value_end], " \t\r\n");
+        search_start = marker + 1;
+    }
+    return null;
 }
 
 fn aotHttpParseUrlEncoded(runtime: *Runtime, body: []const u8) !Value {
@@ -6457,9 +6476,11 @@ fn aotHttpParseMultipart(runtime: *Runtime, body: []const u8, boundary: []const 
         if (std.mem.startsWith(u8, part, "\r\n")) part = part[2..] else if (std.mem.startsWith(u8, part, "\n")) part = part[1..];
         if (std.mem.endsWith(u8, part, "\r\n")) part = part[0 .. part.len - 2] else if (std.mem.endsWith(u8, part, "\n")) part = part[0 .. part.len - 1];
         if (part.len == 0 or std.mem.eql(u8, part, "--")) continue;
-        const separator = std.mem.indexOf(u8, part, "\r\n\r\n") orelse continue;
+        const crlf_separator = std.mem.indexOf(u8, part, "\r\n\r\n");
+        const separator = crlf_separator orelse std.mem.indexOf(u8, part, "\n\n") orelse continue;
+        const separator_length: usize = if (crlf_separator != null) 4 else 2;
         const head = part[0..separator];
-        part = part[separator + 4 ..];
+        part = part[separator + separator_length ..];
         const disposition = aotHttpFindHeader(head, "content-disposition") orelse continue;
         const field_name = aotHttpDispositionParameter(disposition, "name") orelse continue;
         if (aotHttpDispositionParameter(disposition, "filename")) |filename| {
@@ -6481,8 +6502,10 @@ fn aotHttpParseMultipart(runtime: *Runtime, body: []const u8, boundary: []const 
 }
 
 fn aotHttpFindHeader(head: []const u8, expected: []const u8) ?[]const u8 {
-    var lines = std.mem.splitSequence(u8, head, "\r\n");
-    while (lines.next()) |line| {
+    var lines = std.mem.splitScalar(u8, head, '\n');
+    while (lines.next()) |raw_line| {
+        var line = raw_line;
+        if (std.mem.endsWith(u8, line, "\r")) line = line[0 .. line.len - 1];
         const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
         if (std.ascii.eqlIgnoreCase(std.mem.trim(u8, line[0..colon], " \t"), expected)) return std.mem.trim(u8, line[colon + 1 ..], " \t");
     }
@@ -24201,6 +24224,29 @@ test "AOT HTTPのqueryの不正percent encodingはURI malformedへ変換する" 
     for ([_][]const u8{ "/a?x=%", "/a?x=%2", "/a?x=%GG", "/a?x=%FF", "/a?x=%C3%28" }) |target| {
         try std.testing.expectError(error.InvalidHttpQueryEncoding, aotHttpParseQuery(&runtime, target));
     }
+}
+
+test "AOT HTTP multipartは公式のboundary抽出とLFヘッダ区切りを保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    try std.testing.expectEqualStrings("X", aotHttpMultipartBoundary("multipart/form-data; boundary=X; charset=utf-8").?);
+    try std.testing.expectEqualStrings("X;Y", aotHttpMultipartBoundary("multipart/form-data; boundary=\"X;Y\"; charset=utf-8").?);
+    try std.testing.expect(aotHttpMultipartBoundary("multipart/form-data") == null);
+
+    var roots = [_]Value{.{}} ** 3;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[0] = try runtime.createArray(&.{});
+    roots[1] = try aotHttpParsePost(&runtime, "multipart/form-data; boundary=\"X\"; charset=utf-8", "--X\nContent-Disposition: form-data; name=\"title\"\n\nhello\n--X--\n", roots[0]);
+    const title = try valueUtf8LossyAlloc(&runtime, runtime.indexGet(roots[1], staticStringValue("title")));
+    defer runtime.allocator.free(title);
+    try std.testing.expectEqualStrings("hello", title);
+
+    roots[2] = try aotHttpParsePost(&runtime, "Multipart/form-data; boundary=X", "raw", roots[0]);
+    const raw = try valueUtf8LossyAlloc(&runtime, roots[2]);
+    defer runtime.allocator.free(raw);
+    try std.testing.expectEqualStrings("raw", raw);
 }
 
 test "AOT HTTP routeと静的配信の補助判定は公式境界を保つ" {

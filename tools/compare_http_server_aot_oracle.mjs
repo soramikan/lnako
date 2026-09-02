@@ -93,6 +93,11 @@ async function runSuite(label, optimization) {
       ["/echo", "POST", "application/x-www-form-urlencoded", "message=hello+world&x=A%2BB"],
       ["/echo", "POST-CHUNKED", "application/x-www-form-urlencoded", "message=chunked+body"],
       ["/upload", "POST", "multipart/form-data; boundary=----LnakoBoundary", multipartBody()],
+      ["/echo", "POST", "multipart/form-data; boundary=----LnakoBoundary; charset=utf-8", multipartFieldBody()],
+      ["/echo", "POST", "multipart/form-data; boundary=\"----LnakoBoundary\"; charset=utf-8", multipartFieldBody()],
+      ["/echo", "POST", "multipart/form-data; boundary=----LnakoBoundary", multipartFieldBody("\n")],
+      ["/echo", "POST", "Multipart/form-data; boundary=----LnakoBoundary", multipartFieldBody()],
+      ["/echo", "POST", "multipart/form-data", multipartFieldBody()],
       ["/headers", "GET"],
       ["/redirect", "GET"],
       ["/route/long/test", "GET"],
@@ -120,11 +125,21 @@ function suiteEnvironment() {
 }
 
 function requestCount() {
-  return 16;
+  return 21;
 }
 
 function multipartBody() {
   return Buffer.from("------LnakoBoundary\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nhello\r\n------LnakoBoundary\r\nContent-Disposition: form-data; name=\"file1\"; filename=\"hello.txt\"\r\nContent-Type: text/plain\r\n\r\nhello upload--\r\n------LnakoBoundary--\r\n");
+}
+
+function multipartFieldBody(lineEnding = "\r\n") {
+  return Buffer.from([
+    `------LnakoBoundary${lineEnding}`,
+    `Content-Disposition: form-data; name="title"${lineEnding}`,
+    lineEnding,
+    `hello${lineEnding}`,
+    `------LnakoBoundary--${lineEnding}`,
+  ].join(""));
 }
 
 function normalizeResponse(response) {

@@ -318,10 +318,8 @@ fn parseQuery(runtime: *Runtime, target: []const u8) !Value {
 }
 
 fn parsePost(runtime: *Runtime, context: Context, content_type: []const u8, body: []const u8, files: *value_mod.Array) !Value {
-    if (std.ascii.indexOfIgnoreCase(content_type, "multipart/form-data") != null) {
-        const marker = std.ascii.indexOfIgnoreCase(content_type, "boundary=") orelse return runtime.createDictionary();
-        var boundary = std.mem.trim(u8, content_type[marker + "boundary=".len ..], " \t");
-        if (boundary.len >= 2 and boundary[0] == '"' and boundary[boundary.len - 1] == '"') boundary = boundary[1 .. boundary.len - 1];
+    if (std.mem.indexOf(u8, content_type, "multipart/form-data") != null) {
+        const boundary = multipartBoundary(content_type) orelse return runtime.createDictionary();
         return parseMultipart(runtime, context, body, boundary, files);
     }
     if (std.ascii.indexOfIgnoreCase(content_type, "application/json") != null) {
@@ -330,6 +328,27 @@ fn parsePost(runtime: *Runtime, context: Context, content_type: []const u8, body
     }
     if (std.ascii.indexOfIgnoreCase(content_type, "application/x-www-form-urlencoded") != null) return parseUrlEncoded(runtime, body);
     return runtime.stringUtf8Lossy(body);
+}
+
+fn multipartBoundary(content_type: []const u8) ?[]const u8 {
+    var search_start: usize = 0;
+    while (search_start <= content_type.len) {
+        const relative_marker = std.mem.indexOf(u8, content_type[search_start..], "boundary=") orelse return null;
+        const marker = search_start + relative_marker;
+        const value_start = marker + "boundary=".len;
+
+        if (value_start < content_type.len and content_type[value_start] == '"') {
+            if (std.mem.indexOfScalarPos(u8, content_type, value_start + 1, '"')) |quote| {
+                if (quote > value_start + 1) return std.mem.trim(u8, content_type[value_start + 1 .. quote], " \t\r\n");
+            }
+        }
+
+        var value_end = value_start;
+        while (value_end < content_type.len and content_type[value_end] != ';') value_end += 1;
+        if (value_end > value_start) return std.mem.trim(u8, content_type[value_start..value_end], " \t\r\n");
+        search_start = marker + 1;
+    }
+    return null;
 }
 
 fn parseUrlEncoded(runtime: *Runtime, body: []const u8) !Value {
@@ -362,9 +381,11 @@ fn parseMultipart(runtime: *Runtime, context: Context, body: []const u8, boundar
         if (std.mem.startsWith(u8, part, "\r\n")) part = part[2..] else if (std.mem.startsWith(u8, part, "\n")) part = part[1..];
         if (std.mem.endsWith(u8, part, "\r\n")) part = part[0 .. part.len - 2] else if (std.mem.endsWith(u8, part, "\n")) part = part[0 .. part.len - 1];
         if (part.len == 0 or std.mem.eql(u8, part, "--")) continue;
-        const separator = std.mem.indexOf(u8, part, "\r\n\r\n") orelse continue;
+        const crlf_separator = std.mem.indexOf(u8, part, "\r\n\r\n");
+        const separator = crlf_separator orelse std.mem.indexOf(u8, part, "\n\n") orelse continue;
+        const separator_length: usize = if (crlf_separator != null) 4 else 2;
         const head = part[0..separator];
-        part = part[separator + 4 ..];
+        part = part[separator + separator_length ..];
         const disposition = findHeader(head, "content-disposition") orelse continue;
         const field_name = dispositionParameter(disposition, "name") orelse continue;
         if (dispositionParameter(disposition, "filename")) |filename| {
@@ -385,8 +406,10 @@ fn parseMultipart(runtime: *Runtime, context: Context, body: []const u8, boundar
 }
 
 fn findHeader(head: []const u8, expected: []const u8) ?[]const u8 {
-    var lines = std.mem.splitSequence(u8, head, "\r\n");
-    while (lines.next()) |line| {
+    var lines = std.mem.splitScalar(u8, head, '\n');
+    while (lines.next()) |raw_line| {
+        var line = raw_line;
+        if (std.mem.endsWith(u8, line, "\r")) line = line[0 .. line.len - 1];
         const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
         if (std.ascii.eqlIgnoreCase(std.mem.trim(u8, line[0..colon], " \t"), expected)) return std.mem.trim(u8, line[colon + 1 ..], " \t");
     }
@@ -541,6 +564,31 @@ test "URLのクエリの不正percent encodingはURI malformedへ変換する" {
         try std.testing.expectError(error.InvalidHttpQueryEncoding, parseQuery(&runtime, target));
         runtime.clearFailureMessage();
     }
+}
+
+test "HTTP multipartは公式のboundary抽出とLFヘッダ区切りを保つ" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    try std.testing.expectEqualStrings("X", multipartBoundary("multipart/form-data; boundary=X; charset=utf-8").?);
+    try std.testing.expectEqualStrings("X;Y", multipartBoundary("multipart/form-data; boundary=\"X;Y\"; charset=utf-8").?);
+    try std.testing.expect(multipartBoundary("multipart/form-data") == null);
+
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var files = try runtime.createArray();
+    try roots.protect(&files);
+    const context: Context = undefined;
+    var parsed = try parsePost(&runtime, context, "multipart/form-data; boundary=\"X\"; charset=utf-8", "--X\nContent-Disposition: form-data; name=\"title\"\n\nhello\n--X--\n", files.array);
+    try roots.protect(&parsed);
+    const title = try dictionaryUtf8(&runtime, parsed.dictionary, "title");
+    defer runtime.allocator().free(title);
+    try std.testing.expectEqualStrings("hello", title);
+
+    var uppercase = try parsePost(&runtime, context, "Multipart/form-data; boundary=X", "raw", files.array);
+    try roots.protect(&uppercase);
+    const raw = try uppercase.string.toUtf8Lossy(runtime.allocator());
+    defer runtime.allocator().free(raw);
+    try std.testing.expectEqualStrings("raw", raw);
 }
 
 fn dictionaryUtf8(runtime: *Runtime, dictionary: *value_mod.Dictionary, expected: []const u8) ![]const u8 {

@@ -198,7 +198,7 @@ P3 compat-js evidence
 - 仕様上の注意や不具合候補を、標準的に期待される挙動として修正しない。互換性を意図した再現と安全制限を明記する。
 - 未実測境界は「未確定」とし、`trace-confirmed`や`verified`へ昇格させない。
 
-現在のHTTPサーバのquery境界はこの規則の実例である。公式は`duplicate=first&duplicate=last`を後勝ち、値なしを`"undefined"`、`raw=a=b`を`"a"`、`empty=`を空文字として扱い、2個目以降の`?`を`uri.split('?')`の2番目の要素だけへ含める。不正なpercent escapeやdecode後の不正UTF-8は`URIError: URI malformed`になる。`docs/COMPATIBILITY_QUIRKS.md`、Interpreter/AOT単体テスト、`plugin-httpserver-all`の正常系16リクエストへこの境界を記録・反映した。multipartの壊れた入力、外部endpoint、3正式OSのHTTP attestationは未確定の別境界として残す。文字列幅埋めでは、公式sourceの`for (i < A)`が`parseInt(A)`より前にあるため正の`Infinity`が非終了になることを固定ソースで確認し、lnakoの`StringPadWidthUnbounded`を意図的安全差異として記録した。
+現在のHTTPサーバのquery境界はこの規則の実例である。公式は`duplicate=first&duplicate=last`を後勝ち、値なしを`"undefined"`、`raw=a=b`を`"a"`、`empty=`を空文字として扱い、2個目以降の`?`を`uri.split('?')`の2番目の要素だけへ含める。不正なpercent escapeやdecode後の不正UTF-8は`URIError: URI malformed`になる。`docs/COMPATIBILITY_QUIRKS.md`、Interpreter/AOT単体テスト、`plugin-httpserver-all`の正常系21リクエストへこの境界を記録・反映した。multipartでは、公式のcase-sensitiveなcontent-type判定、quoted/unquoted boundaryの正規表現、boundary後続parameterの切り捨て、LF-only header separatorをInterpreter/AOTへ反映した。multipartの壊れた入力、外部endpoint、3正式OSのHTTP attestationは未確定の別境界として残す。文字列幅埋めでは、公式sourceの`for (i < A)`が`parseInt(A)`より前にあるため正の`Infinity`が非終了になることを固定ソースで確認し、lnakoの`StringPadWidthUnbounded`を意図的安全差異として記録した。
 
 ## 台帳・CI・リリースの扱い
 
