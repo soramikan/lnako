@@ -1391,7 +1391,7 @@ function validateExpectedExitEvidence(evidence, lock, standard, records) {
   assertKnownObjectKeys(evidence.baseline, ["tag", "commit"], "expected-exit-evidence.baseline");
   if (evidence.baseline.tag !== lock.nadesiko3.tag || evidence.baseline.commit !== lock.nadesiko3.commit) throw new Error("expected-exit証拠のbaselineがupstream.lock.jsonと一致しません");
   assertKnownObjectKeys(evidence.fixture, ["id", "files", "cases"], "expected-exit-evidence.fixture");
-  if (evidence.fixture.id !== "node-exit-evidence" || JSON.stringify(evidence.fixture.files) !== JSON.stringify(["tests/oracle/node-exit-cases.json", "tests/oracle/node-interrupt-case.json"]) || !Array.isArray(evidence.fixture.cases) || evidence.fixture.cases.length !== 3) throw new Error("expected-exit証拠のfixture identityが不正です");
+  if (evidence.fixture.id !== "node-exit-evidence" || JSON.stringify(evidence.fixture.files) !== JSON.stringify(["tests/oracle/node-exit-cases.json", "tests/oracle/node-interrupt-case.json"]) || !Array.isArray(evidence.fixture.cases) || evidence.fixture.cases.length !== 4) throw new Error("expected-exit証拠のfixture identityが不正です");
   assertKnownObjectKeys(evidence.officialComparison, ["routes", "equivalent"], "expected-exit-evidence.officialComparison");
   const expectedRoutes = ["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0", "lnakoNativeO1", "lnakoNativeO2", "lnakoNativeO3"];
   if (JSON.stringify(evidence.officialComparison.routes) !== JSON.stringify(expectedRoutes) || evidence.officialComparison.equivalent !== true) throw new Error("expected-exit証拠のroute集合が不正です");
