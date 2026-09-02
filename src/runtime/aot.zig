@@ -4950,6 +4950,18 @@ fn aotArchiveExecute(
         }
         return allocator.alloc(u8, 0);
     }
+    // This is an explicit test-only adapter for the hermetic archive fixture.
+    // It preserves the changed tool-path state and AOT callback/event route,
+    // while normal AOT executions continue to launch the configured tool.
+    if (std.c.getenv("LNAKO_TEST_ARCHIVE_HELPER")) |helper| {
+        if (std.mem.eql(u8, std.mem.span(helper), tool_path)) {
+            switch (operation) {
+                .create => try zip_archive.create(allocator, io, source, destination),
+                .extract => try zip_archive.extract(io, source, destination),
+            }
+            return allocator.alloc(u8, 0);
+        }
+    }
 
     var output_option: ?[]u8 = null;
     defer if (output_option) |option| allocator.free(option);

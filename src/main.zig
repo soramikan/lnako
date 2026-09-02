@@ -1253,12 +1253,17 @@ const CliHost = struct {
 
     fn archive(context: *anyopaque, allocator: std.mem.Allocator, operation: lnako.plugins.node.ArchiveOperation, source: []const u8, destination: []const u8, external_tool: ?[]const u8) ![]u8 {
         const self: *CliHost = @ptrCast(@alignCast(context));
-        if (external_tool) |tool| return runArchiveTool(allocator, self.io, tool, operation, source, destination);
-        switch (operation) {
-            .compress => try zip_archive.create(allocator, self.io, source, destination),
-            .extract => try zip_archive.extract(self.io, source, destination),
+        if (external_tool) |tool| {
+            // The archive helper is test-only. It keeps the explicit external
+            // tool state and archive callback route under test without
+            // depending on a host-installed 7-Zip executable. Normal runs
+            // still invoke the configured external tool unchanged.
+            if (self.environmentValue("LNAKO_TEST_ARCHIVE_HELPER")) |helper| {
+                if (std.mem.eql(u8, helper, tool)) return runStoredZipArchive(allocator, self.io, operation, source, destination);
+            }
+            return runArchiveTool(allocator, self.io, tool, operation, source, destination);
         }
-        return allocator.alloc(u8, 0);
+        return runStoredZipArchive(allocator, self.io, operation, source, destination);
     }
 
     fn installInterrupt(_: *anyopaque) !void {
@@ -1632,6 +1637,14 @@ fn runArchiveTool(allocator: std.mem.Allocator, io: std.Io, tool: []const u8, op
         return error.ArchiveToolFailed;
     }
     return result.stdout;
+}
+
+fn runStoredZipArchive(allocator: std.mem.Allocator, io: std.Io, operation: lnako.plugins.node.ArchiveOperation, source: []const u8, destination: []const u8) ![]u8 {
+    switch (operation) {
+        .compress => try zip_archive.create(allocator, io, source, destination),
+        .extract => try zip_archive.extract(io, source, destination),
+    }
+    return allocator.alloc(u8, 0);
 }
 
 test {

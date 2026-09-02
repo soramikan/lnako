@@ -3150,30 +3150,34 @@
   "圧縮": {
     "status": "native",
     "tests": [
-      "plugin-node-native-archive"
+      "plugin-node-native-archive",
+      "plugin-node-native-archive-hermetic"
     ],
-    "reason": "ZigネイティブZIPの作成・展開スモークテストに成功"
+    "reason": "公式source・公式生成JavaScript・Interpreter・AOT O0〜O3のhermetic stored-ZIP意味結果差分テストに成功"
   },
   "解凍": {
     "status": "native",
     "tests": [
-      "plugin-node-native-archive"
+      "plugin-node-native-archive",
+      "plugin-node-native-archive-hermetic"
     ],
-    "reason": "ZigネイティブZIPの作成・展開スモークテストに成功"
+    "reason": "公式source・公式生成JavaScript・Interpreter・AOT O0〜O3のhermetic stored-ZIP意味結果差分テストに成功"
   },
   "圧縮時": {
     "status": "native",
     "tests": [
-      "plugin-node-native-archive"
+      "plugin-node-native-archive",
+      "plugin-node-native-archive-hermetic"
     ],
-    "reason": "ZigネイティブZIPの作成・展開スモークテストに成功"
+    "reason": "公式source・公式生成JavaScript・Interpreter・AOT O0〜O3のhermetic stored-ZIP意味結果差分テストに成功"
   },
   "解凍時": {
     "status": "native",
     "tests": [
-      "plugin-node-native-archive"
+      "plugin-node-native-archive",
+      "plugin-node-native-archive-hermetic"
     ],
-    "reason": "ZigネイティブZIPの作成・展開スモークテストに成功"
+    "reason": "公式source・公式生成JavaScript・Interpreter・AOT O0〜O3のhermetic stored-ZIP意味結果差分テストに成功"
   },
   "強制終了時": {
     "status": "native",

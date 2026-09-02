@@ -75,6 +75,7 @@ const normalizedDebugHost = resolve(root, "tools/oracle/normalize_debug_host.mjs
 const safeExternalHost = resolve(root, "tools/oracle/safe_external_host.mjs");
 const maxBuffer = 32 * 1024 * 1024;
 const throwStatementOpcode = 0xffff;
+const archiveHelperName = "lnako-archive-7z-helper";
 const fixtureStateMutationCommands = new Set([
   "保存",
   "SJISファイル保存",
@@ -182,7 +183,7 @@ async function loadSelectedFixtures() {
       fixtures.push({ file: specification.file, ...testCase });
     }
   }
-  const expectedFixtureCount = arguments_.includeNative ? 201 : 34;
+  const expectedFixtureCount = arguments_.includeNative ? 202 : 35;
   if (fixtures.length !== expectedFixtureCount) throw new Error(`dispatch coverageのfixture数が想定外です: ${fixtures.length}`);
   return fixtures;
 }
@@ -204,6 +205,9 @@ function validateFixture(testCase, file) {
   if (testCase.stdin !== undefined && typeof testCase.stdin !== "string") throw new Error(`fixtureのstdinが不正です: ${file}/${testCase.id}`);
   if (testCase.safeExternalMock !== undefined && typeof testCase.safeExternalMock !== "boolean") {
     throw new Error(`fixtureのsafeExternalMockが不正です: ${file}/${testCase.id}`);
+  }
+  if (testCase.archiveHelper !== undefined && typeof testCase.archiveHelper !== "boolean") {
+    throw new Error(`fixtureのarchiveHelperが不正です: ${file}/${testCase.id}`);
   }
   if (testCase.dispatchExpectations !== undefined) {
     if (!Array.isArray(testCase.dispatchExpectations) || testCase.dispatchExpectations.length === 0) {
@@ -274,11 +278,14 @@ async function runFixture(fixture, index, temporary) {
   }));
 
   const baseEnvironment = fixedEnvironment();
-  const lnakoEnvironment = fixture.safeExternalMock
-    ? { ...baseEnvironment, LNAKO_TEST_OPEN_EXTERNAL: "mock" }
-    : baseEnvironment;
+  const lnakoEnvironment = {
+    ...baseEnvironment,
+    ...(fixture.safeExternalMock ? { LNAKO_TEST_OPEN_EXTERNAL: "mock" } : {}),
+    ...(fixture.archiveHelper ? { LNAKO_TEST_ARCHIVE_HELPER: archiveHelperName } : {}),
+  };
   const runOptions = fixture.stdin === undefined ? {} : { input: fixture.stdin };
-  const oracleHostArguments = fixture.safeExternalMock
+  const oracleUsesSafeExternalHost = fixture.safeExternalMock === true || fixture.archiveHelper === true;
+  const oracleHostArguments = oracleUsesSafeExternalHost
     ? ["--import", pathToFileURL(fixedHost).href, "--import", pathToFileURL(safeExternalHost).href]
     : ["--import", pathToFileURL(fixture.normalizeDebugDump === true ? normalizedDebugHost : fixedHost).href];
   const officialSource = run(process.execPath, [...oracleHostArguments, resolve(oracleRoot, "src/cnako3.mjs"), officialSourcePath], baseEnvironment, officialSourceDirectory, runOptions);

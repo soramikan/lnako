@@ -18,6 +18,12 @@ for (const [path, reason] of sources) {
   const cases = Array.isArray(loaded) ? loaded : [loaded];
   for (const testCase of cases) for (const name of testCase.commands) register(name, testCase.id, reason);
 }
+const archiveCases = JSON.parse(await readFile(resolve(root, "tests/oracle/node-native-cases.json"), "utf8"));
+const hermeticArchive = archiveCases.find((testCase) => testCase.id === "plugin-node-native-archive-hermetic");
+if (hermeticArchive === undefined) throw new Error("hermetic Node archive fixtureがありません");
+for (const name of hermeticArchive.commands) {
+  register(name, hermeticArchive.id, "公式source・公式生成JavaScript・Interpreter・AOT O0〜O3のhermetic stored-ZIP意味結果差分テストに成功");
+}
 const interrupt = JSON.parse(await readFile(resolve(root, "tests/oracle/node-interrupt-case.json"), "utf8"));
 for (const name of interrupt.commands) register(name, interrupt.id, "SIGINTコールバックと終了結果の公式差分テストに成功");
 
