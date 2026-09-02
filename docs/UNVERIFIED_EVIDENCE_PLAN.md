@@ -1,14 +1,14 @@
-# `unverified` 89件の証拠化計画（U10完了・U11着手時点）
+# `unverified` 89件の証拠化計画（U11完了時点）
 
 ## 目的と基準
 
-この文書は、なでしこ3 v3.7.24（upstream `aa18c7e640523938c680958fe731418cc6f7a58f`）の標準cnako 527 entryについて、実装済み機能を過大評価せず、`compat/v3.7.24/evidence.json`の`unverified`を実行証拠へ接続するための計画である。89件の初期残件をU01〜U22へ分解し、2026-09-02のU10完了後は次の状態にある。
+この文書は、なでしこ3 v3.7.24（upstream `aa18c7e640523938c680958fe731418cc6f7a58f`）の標準cnako 527 entryについて、実装済み機能を過大評価せず、`compat/v3.7.24/evidence.json`の`unverified`を実行証拠へ接続するための計画である。89件の初期残件をU01〜U22へ分解し、2026-09-02のU11完了後は次の状態にある。
 
 | 状態 | entry数 | 意味 |
 |---|---:|---|
 | `verified` | 0 | 3正式OSの署名付きattestationまで揃った現在HEADの証拠 |
-| `trace-confirmed-unattested` | 467 | 公式差分、Interpreter/AOT trace、compile manifest等は揃うが、外部署名attestation前 |
-| `unverified` | 60 | 実装・fixtureの存在だけではcatalog ID単位の実行証拠にならない残件 |
+| `trace-confirmed-unattested` | 474 | 公式差分、Interpreter/AOT trace、compile manifest等は揃うが、外部署名attestation前 |
+| `unverified` | 53 | 実装・fixtureの存在だけではcatalog ID単位の実行証拠にならない残件 |
 
 `native: 523`という分類、fixtureの存在、Interpreterだけの成功、artifactの生成は、AOT verifiedや`trace-confirmed-unattested`を意味しない。各単位を完了扱いにするのは、この文書の共通完了条件と台帳検査が同時に通った場合だけとする。最終的な目標は、まず`trace-confirmed-unattested 527 / unverified 0`、その後に3正式OSの外部署名attestationを含む`verified`へ進むことである。
 
@@ -29,6 +29,8 @@ U08では`plugin-node-stdin`と`plugin-node-stdin-callback`を追加し、`標�
 U09では`plugin_node`の`自分IPアドレス取得`（`command-0759`）と`自分IPV6アドレス取得`（`command-0760`）を追加し、公式Nodeの[命令一覧](https://nadesi.com/v3/doc/index.php?plugin_node=&show=)と固定upstreamの[`plugin_node.mts`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/src/plugin_node.mts#L1180-L1219)が利用する`os.networkInterfaces()`の形状を、`synthetic-v1` topologyとして公式source・公式生成JavaScript・lnako Interpreter・LLVM AOT O0へ同じ順序で供給した。内部アドレスとIPv6の`scopeid`を含めて公式Nodeのネットワーク表を再現するが、命令の結果はアドレス文字列だけに射影する。IPv4は`127.0.0.1`→`192.0.2.10`、IPv6は`::1`→`fe80::1234`→`2001:db8::10`となり、cleanな`54155f6191baa95dcc1c9a73b7ef32c9a95e54f9`でfocused native shardのO0〜O3とdispatch coverageの同一siteを確認した。coverageは39 fixture・1,743 site・328 native entryへ更新され、`sync_compat_evidence.mjs --generate`は`verified 0 / trace-confirmed-unattested 461 / unverified 66`を返す。fixtureの決定性は確認済みだが、実OSの列挙順、3正式OSの外部署名attestationは未完了であり、`TODO: node-network-cross-os-attestation`として残す。
 
 U10では`plugin-node-http-callbacks`と`plugin-node-http-onerror`をloopback HTTP fixtureへ接続し、`AJAX送信時`、`AJAX受信時`、`GET送信時`、`POST送信時`、`POSTフォーム送信時`、`AJAX失敗時`の6 entryを明示catalog ID付きのdispatch siteへ昇格した。cleanな`b6b48f1c1ab7a9e5dde68ec20440ed82b9ce21cf`から生成したartifactで、公式source・公式生成JavaScript・lnako Interpreter・LLVM AOT O0のsuccess/failure、`対象`更新、callback順序、compile manifest、runtime traceを比較した。loopbackを使うため外部HTTP endpointは証明せず、`plugin-node-http-callbacks`の公式source／生成route差は`officialRoutesEquivalent: false`としてartifactへ残し、公式sourceを選択oracleにする。dispatch coverageは41 fixture・1,760 site・334 native entry、`sync_compat_evidence.mjs --generate`は`verified 0 / trace-confirmed-unattested 467 / unverified 60`を返した。3正式OSの外部署名attestation、U10全O0〜O3の外部証拠は未完了であり、`TODO: node-http-cross-os-attestation`として残す。
+
+U11では`plugin-node-http-options-and-promises`へ`AJAX受信`の成功経路を追加し、`AJAX保障送信`、`HTTP保障取得`、`GET保障送信`、`POST保障送信`、`POSTフォーム保障送信`、`AJAX内容取得`、`AJAX受信`の7 entryを明示catalog ID付きのdispatch siteへ接続した。cleanな`17df1d1ad29d5a5252a1cf34c30b4060163f4012`からcanonical、coverage、expected-exit、static constant、global bindingのderived artifactを再生成し、公式source・公式生成JavaScript・lnako Interpreter・LLVM AOT O0の結果、Promise成功resolve、`対象`更新、event drain、compile manifest、runtime traceを比較した。dispatch coverageは42 fixture・1,798 site・342 native entry、`sync_compat_evidence.mjs --generate`は`verified 0 / trace-confirmed-unattested 474 / unverified 53`を返した。別の公式Node HTTP差分テストは11ケース・27命令、AOT O0〜O3の7ケースに成功した。Promiseのreject専用fixture、3正式OSの外部署名attestation、外部HTTP endpointは未完了であり、`TODO: node-http-cross-os-attestation`として残す。
 
 ## 証拠基盤の柱
 
@@ -101,7 +103,7 @@ fixture.catalogIds[name]
 | U08 | `0754 標準入力取得時`、`0755 尋`、`0756 文字尋`、`0757 標準入力全取得`。固定stdin、EOF、callback drainを同じsiteで比較する（完了） | 4 | 459 |
 | U09 | `0759 自分IPアドレス取得`、`0760 自分IPV6アドレス取得`。公式Nodeとlnakoへ同じnetwork topologyを供給し、順序・internal・IPv6 scopeを比較する（完了） | 2 | 461 |
 | U10 | `0761 AJAX送信時`、`0762 AJAX受信時`、`0763 GET送信時`、`0764 POST送信時`、`0765 POSTフォーム送信時`、`0766 AJAX失敗時`。loopbackでsuccess/failure/callback orderを証拠化する（完了） | 6 | 467 |
-| U11 | `0769 AJAX保障送信`〜`0775 AJAX受信`のPromise/保障系7件。resolve/rejectとevent drain完了後にtraceを閉じる | 7 | 474 |
+| U11 | `0769 AJAX保障送信`〜`0775 AJAX受信`のPromise/保障系7件。成功resolve、`対象`更新、event drain完了後にtraceを閉じる（完了。reject専用fixtureは別TODO） | 7 | 474 |
 | U12 | `0777 POST送信`〜`0781 AJAXバイナリ取得`のasync値5件。text、JSON、binary、formをloopbackで比較し、AOT byte buffer種別まで確認する | 5 | 479 |
 | U13 | `0782 DISCORD送信`、`0783 DISCORDファイル送信`。外部Discordへ送らず、loopback transportでJSON、multipart、failureを比較する | 2 | 481 |
 | U14 | `0784 LINE送信`、`0785 LINE画像送信`。成功ではなく廃止エラーが互換結果であることをexpected error/exitとして証拠化する | 2 | 483 |
@@ -139,7 +141,7 @@ P3 compat-js evidence
   └─ U22
 ```
 
-実装上は、まず一意名nativeの残り22件（467→489）、次に同名異pluginの34件（489→523）、最後にcompat-jsの4件（523→527）を目安にする。ただし、実際のcatalog ID・route・oracle差が確認できない場合は件数を減らさず、失敗理由をfixture policyまたは`docs/COMPATIBILITY_QUIRKS.md`へ残す。
+実装上は、まず一意名nativeの残り15件（474→489）、次に同名異pluginの34件（489→523）、最後にcompat-jsの4件（523→527）を目安にする。ただし、実際のcatalog ID・route・oracle差が確認できない場合は件数を減らさず、失敗理由をfixture policyまたは`docs/COMPATIBILITY_QUIRKS.md`へ残す。
 
 ## 各単位の共通完了条件
 

@@ -586,6 +586,22 @@ lnakoのproduction経路は、Interpreterではhost Context、純LLVM AOTではP
 
 U10のfixtureは`tests/oracle/node-http-cases.json`の`plugin-node-http-callbacks`と`plugin-node-http-onerror`で、cleanな`b6b48f1c1ab7a9e5dde68ec20440ed82b9ce21cf`から生成した`compat/v3.7.24/dispatch-coverage-evidence.json`へcatalog ID付き6 entryを接続した。監査は41 fixture・1,760 site・334 native entryで、対象6 entryはInterpreter trace、AOT manifest/runtime trace、公式sourceとの差分へ接続済みである。ただしこれは`trace-confirmed-unattested`であり、3正式OSの外部署名attestation、外部endpoint、U10の全O0〜O3証拠を意味しない。対象はInterpreter／純LLVM AOTで、QuickJSは標準命令の証拠対象外である。
 
+## Node HTTP Promise命令と`AJAX受信`の境界
+
+公式の[plugin_node命令一覧](https://nadesi.com/v3/doc/index.php?plugin_node=&show=)はPromiseを返す命令の用途を短く説明するが、`AJAXオプション`の空文字による既定method、Responseを本文へ変換する段階、Promise版と`AJAX受信`の失敗処理、未知の内容種別の扱い、公式sourceと生成JavaScriptのroute差までは規定しない。固定v3.7.24の[`src/plugin_node.mts`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/src/plugin_node.mts#L1332-L1447)を読み、`plugin-node-http-options-and-promises`で成功経路を実測した。
+
+| 境界 | 公式処理系の実測結果または固定sourceの挙動 | lnakoの現在の動作 | 対象経路 / 差分テストID / TODO |
+|---|---|---|---|
+| `AJAX保障送信`と既定method | `AJAXオプション`が空文字のとき`{method: 'GET'}`を作って`fetch`のPromiseを返す。オプション設定後はその値をそのままfetchへ渡す | 純ZigのHTTP clientが同じglobal optionを使い、Response相当のPromiseをevent queueで解決する。loopbackではPUT optionと既定GETの両方を比較した | Interpreter / LLVM AOT O0; `plugin-node-http-options-and-promises`; `TODO: node-http-cross-os-attestation` |
+| `HTTP保障取得`・`GET保障送信` | 固定sourceでは`AJAX保障送信`へ委譲するため、別のmethod実装ではなく同じ`AJAXオプション`とResponse Promiseを共有する | 同じ`node_http_response_promise`／`node_get_response_promise` routeへ明示dispatchし、Promise stateを個別に生成する | Interpreter / LLVM AOT O0; `plugin-node-http-options-and-promises`; `TODO: node-http-cross-os-attestation` |
+| `POST保障送信`と`POSTフォーム保障送信` | 前者は辞書の`for...in`順に`encodeURIComponent`した`application/x-www-form-urlencoded` bodyを作る。後者は`FormData`を作り、固定sourceではContent-Typeを手動指定しない | 純Zigで辞書順のform bodyとmultipart bodyを別routeとして生成し、Promise成功を同じevent drainで解決する。callback版の手動boundary差と混同しない | Interpreter / LLVM AOT O0; `plugin-node-http-options-and-promises`; `TODO: node-http-cross-os-attestation` |
+| `AJAX内容取得`の内容種別 | 固定sourceは`TEXT`／`テキスト`、`JSON`、`BLOB`、`ARRAY`／`配列`、`BODY`／`本体`を分岐し、U11ではTEXTとテキストをResponseから別Promiseで取得した | 対応するtext／JSON／binary／body routeを持ち、未知の種別は`InvalidAjaxContentType`として拒否する。未知種別の公式実行結果はまだ比較していない | Interpreter / LLVM AOT O0; `plugin-node-http-options-and-promises`; `TODO: node-http-response-unknown-type` |
+| `AJAX内容取得`の未知種別 | 固定sourceのelse分岐は`res.body()`を呼ぶ。標準Fetchの`Response.body`は通常プロパティであり関数ではないため、未知種別ではTypeErrorになる可能性がある。これはsource読解上の不具合候補で、U11のfixtureは既知種別だけを使う | 互換性を理由に推測で`body()`を実装せず、未知種別は明示エラーにする。公式の実測結果と同値になっているとはまだ主張しない | 公式source; `TODO: node-http-response-unknown-type` |
+| `AJAX受信`の戻り値と失敗 | `return_none: true`でPromiseを返さない。成功時だけ`res.text()`の結果を`対象`へ設定し、非2xxは`status=...`のErrorを投げて`[AJAX受信のエラー]`付き`console.error`へ流す | `node_ajax_receive`をset-targetの非Promise routeとしてevent drainへ登録し、成功本文を`対象`へ設定する。Promise rejectや`AJAX:ONERROR`への自動変換は行わない | Interpreter / LLVM AOT O0; `plugin-node-http-options-and-promises`は成功経路のみ; `TODO: node-http-ajax-receive-error` |
+| 公式sourceと生成JavaScript | U11のartifactでも公式sourceと公式生成JavaScriptの結果hashが一致せず、`officialRoutesEquivalent: false`となった。原因は未確定で、生成routeをoracleへ格上げしない | 公式sourceを選択oracleとしてlnako Interpreter／純LLVM AOTを比較し、route差をartifactに残す | 公式source / 公式生成JavaScript / Interpreter / LLVM AOT O0; `plugin-node-http-options-and-promises`; `TODO: node-http-generated-route-diagnosis` |
+
+U11では`tests/oracle/node-http-cases.json`の`plugin-node-http-options-and-promises`を更新し、`AJAX受信`の成功requestと`対象`表示を追加した。現行HEAD `17df1d1ad29d5a5252a1cf34c30b4060163f4012`から生成したcoverageは42 fixture・1,798 site・342 native entryで、7 entryすべてにInterpreter trace、AOT O0 manifest/runtime trace、公式sourceとの差分を接続している。別の公式Node HTTP差分テストは11ケース・27命令、AOT O0〜O3の7ケースに成功した。ただしこれは`trace-confirmed-unattested`であり、Promise reject専用fixture、外部HTTP endpoint、3正式OSの外部署名attestation、QuickJS標準命令証拠を意味しない。
+
 ## 更新規則
 
 - 説明文と実装が食い違う場合は、固定した公式v3.7.24の実行結果を優先する。

@@ -22,8 +22,8 @@
   },
   "executionEvidenceStates": {
     "verified": 0,
-    "trace-confirmed-unattested": 467,
-    "unverified": 60
+    "trace-confirmed-unattested": 474,
+    "unverified": 53
   },
   "entries": [
     {
@@ -24392,9 +24392,21 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-node-http-options-and-promises/0x0000000a00000002"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
@@ -24426,9 +24438,21 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-node-http-options-and-promises/0x0000000a00000006"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
@@ -24460,9 +24484,21 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-node-http-options-and-promises/0x0000000a00000009"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
@@ -24494,9 +24530,21 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-node-http-options-and-promises/0x0000000a0000000c"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
@@ -24528,9 +24576,21 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-node-http-options-and-promises/0x0000000a0000000f"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
@@ -24562,9 +24622,25 @@
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-node-http-options-and-promises/0x0000000100000004",
+          "plugin-node-http-options-and-promises/0x0000000300000001",
+          "plugin-node-http-options-and-promises/0x0000000500000001",
+          "plugin-node-http-options-and-promises/0x0000000700000001",
+          "plugin-node-http-options-and-promises/0x0000000900000001"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（5 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
@@ -24573,10 +24649,12 @@
       "plugin": "plugin_node",
       "status": "native",
       "interpreterFixtureIds": [
-        "plugin-node-http-async-values"
+        "plugin-node-http-async-values",
+        "plugin-node-http-options-and-promises"
       ],
       "aotFixtureIds": [
-        "plugin-node-http-async-values"
+        "plugin-node-http-async-values",
+        "plugin-node-http-options-and-promises"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -24584,21 +24662,39 @@
           "plugin-node-http-async-values": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-node-http-options-and-promises": [
+            "fixture.commands"
           ]
         },
         "aot": {
           "plugin-node-http-async-values": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-node-http-options-and-promises": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-node-http-options-and-promises/0x0000000a00000012"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分の成功を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
     },
     {
