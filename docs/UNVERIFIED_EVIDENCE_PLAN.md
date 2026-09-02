@@ -2,13 +2,13 @@
 
 ## 目的と基準
 
-この文書は、なでしこ3 v3.7.24（upstream `aa18c7e640523938c680958fe731418cc6f7a58f`）の標準cnako 527 entryについて、実装済み機能を過大評価せず、`compat/v3.7.24/evidence.json`の`unverified`を実行証拠へ接続するための計画である。2026-09-02時点のU03証拠生成基準は`c7c6501`、台帳検査器の追従は`22f8d14`で、台帳は次の状態にある。
+この文書は、なでしこ3 v3.7.24（upstream `aa18c7e640523938c680958fe731418cc6f7a58f`）の標準cnako 527 entryについて、実装済み機能を過大評価せず、`compat/v3.7.24/evidence.json`の`unverified`を実行証拠へ接続するための計画である。2026-09-02時点のU04証拠生成基準は`df544a2`、台帳検査器の追従は`df544a2`で、台帳は次の状態にある。
 
 | 状態 | entry数 | 意味 |
 |---|---:|---|
 | `verified` | 0 | 3正式OSの署名付きattestationまで揃った現在HEADの証拠 |
-| `trace-confirmed-unattested` | 444 | 公式差分、Interpreter/AOT trace、compile manifest等は揃うが、外部署名attestation前 |
-| `unverified` | 83 | 実装・fixtureの存在だけではcatalog ID単位の実行証拠にならない残件 |
+| `trace-confirmed-unattested` | 445 | 公式差分、Interpreter/AOT trace、compile manifest等は揃うが、外部署名attestation前 |
+| `unverified` | 82 | 実装・fixtureの存在だけではcatalog ID単位の実行証拠にならない残件 |
 
 `native: 523`という分類、fixtureの存在、Interpreterだけの成功、artifactの生成は、AOT verifiedや`trace-confirmed-unattested`を意味しない。各単位を完了扱いにするのは、この文書の共通完了条件と台帳検査が同時に通った場合だけとする。最終的な目標は、まず`trace-confirmed-unattested 527 / unverified 0`、その後に3正式OSの外部署名attestationを含む`verified`へ進むことである。
 
@@ -18,7 +18,7 @@ U01（`エラー発生`、`__DEBUG`）は完了した。cleanな`7eb6a96d9d44909
 
 同じclean HEADで10件のstatic constant artifactも再生成し、U01時点の`sync_compat_evidence.mjs --generate`の結果は`verified 0 / trace-confirmed-unattested 440 / unverified 87`となった。U02（`ナデシコ`、`ナデシコ続`）も完了した。cleanな`eb9949499c6f55329da3c5199543fb334cd41817`で再生成した33-fixture dispatch coverageは1,703 site・313 native entryを含み、`native-system-dynamic-execution`の`ナデシコ` 2 site（`command-0057`）と`ナデシコ続` 2 site（`command-0058`）を公式source・Interpreter・AOT O0の同一結果、compile manifest、runtime traceへ接続した。公式生成JavaScript単体の終了コード1は既存のstandalone system host登録差であり、P0の既知route差として記録する。
 
-U02のdispatch generator変更を`eb99494`へ、33-fixtureを受理する同期検査変更を`b68ec28`へ分離し、後者のfollow-up規則でclean artifact provenanceを検査した。U03ではOS別argvを本番経路で構築してから安全なhost adapterで最終launcher生成だけを捕捉し、`エクスプローラー起動`のdarwin/linux期待失敗をfixture policyへ追加した。`c7c6501`を証拠生成元とする34-fixture dispatch coverageは1,707 site・315 native entryを含み、U03の2 entryをcatalog evidenceへ接続する。現行の`sync_compat_evidence.mjs --generate`は`verified 0 / trace-confirmed-unattested 444 / unverified 83`を返す。ここで増えた6 entry（U01・U02・U03）は`trace-confirmed-unattested`であり、3正式OSの外部署名attestationを含む`verified`ではない。次の実装単位はU04（`ファイルコピーデフォルト動作`）である。
+U02のdispatch generator変更を`eb99494`へ、33-fixtureを受理する同期検査変更を`b68ec28`へ分離し、後者のfollow-up規則でclean artifact provenanceを検査した。U03ではOS別argvを本番経路で構築してから安全なhost adapterで最終launcher生成だけを捕捉し、`エクスプローラー起動`のdarwin/linux期待失敗をfixture policyへ追加した。`c7c6501`を証拠生成元とする34-fixture dispatch coverageは1,707 site・315 native entryを含み、U03の2 entryをcatalog evidenceへ接続する。U04ではglobal readだけでなくwriteも同じaccess namespaceのsite IDで記録し、`global-binding-evidence.json`へ`ファイルコピーデフォルト動作`の5 access（read/write/read/write/read）を固定した。cleanな`df544a2`で公式source・公式生成JavaScript・lnako Interpreter・AOT O0の結果、global manifest、両runtime traceを比較済みである。U04完了後の`sync_compat_evidence.mjs --generate`は`verified 0 / trace-confirmed-unattested 445 / unverified 82`を返す見込みで、U04も3正式OSの外部署名attestationを含む`verified`ではない。次の実装単位はU05（`デスクトップ`、`マイドキュメント`、`テンポラリフォルダ`）である。
 
 ## 証拠基盤の柱
 
@@ -68,7 +68,7 @@ fixture.catalogIds[name]
 
 裸のglobal参照や可変globalを関数dispatchへ偽装しない。`lnako.global-binding-evidence.v1`相当の証拠を、既存のstatic constant evidenceと同じ厳格さで追加する。
 
-最低限、catalog ID、global binding/site ID、Interpreter read/write trace、AOT manifest、AOT read/write trace、公式source/generated比較、clean commit provenanceを記録する。
+最低限、catalog ID、global binding/site ID、Interpreter read/write trace、AOT manifest、AOT read/write trace、公式source/generated比較、clean commit provenanceを`compat/v3.7.24/global-binding-evidence.json`へ記録する。U04ではこのschemaを実装し、global load/storeをbuiltin dispatchとは別namespaceで検査する。
 
 ### P3 — compat-js evidence
 
@@ -128,7 +128,7 @@ P3 compat-js evidence
   └─ U22
 ```
 
-実装上は、まず一意名nativeの残り45件（444→489）、次に同名異pluginの34件（489→523）、最後にcompat-jsの4件（523→527）を目安にする。ただし、実際のcatalog ID・route・oracle差が確認できない場合は件数を減らさず、失敗理由をfixture policyまたは`docs/COMPATIBILITY_QUIRKS.md`へ残す。
+実装上は、まず一意名nativeの残り44件（445→489）、次に同名異pluginの34件（489→523）、最後にcompat-jsの4件（523→527）を目安にする。ただし、実際のcatalog ID・route・oracle差が確認できない場合は件数を減らさず、失敗理由をfixture policyまたは`docs/COMPATIBILITY_QUIRKS.md`へ残す。
 
 ## 各単位の共通完了条件
 
