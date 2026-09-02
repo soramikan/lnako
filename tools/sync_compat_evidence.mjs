@@ -592,12 +592,12 @@ function validateDispatchCoverageEvidence(evidence, lock, standard, records, aud
   }
 
   assertKnownObjectKeys(evidence.scope, ["catalogEntries", "nativeEntries", "nativeUniqueNames", "fixtureSelection", "fixtureCount", "excludedFixtures", "commandAssociationIsNotExecutionEvidence"], "dispatch-coverage-evidence.scope");
-  const defaultDispatchCoverageSelection = "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus the four node-http Promise/callback/value fixtures and native-cut-commands, excluding explicit AOT gaps";
-  const fullDispatchCoverageSelection = "the default command-bearing selection plus the four node-http Promise/callback/value fixtures and all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps";
+  const defaultDispatchCoverageSelection = "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus the seven node-http callback/Promise/value/Discord fixtures and native-cut-commands, excluding explicit AOT gaps";
+  const fullDispatchCoverageSelection = "the default command-bearing selection plus the seven node-http callback/Promise/value/Discord fixtures and all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps";
   const expectedFixtureCount = evidence.scope.fixtureSelection === defaultDispatchCoverageSelection
-    ? 43
+    ? 46
     : evidence.scope.fixtureSelection === fullDispatchCoverageSelection
-      ? 207
+      ? 210
       : null;
   if (evidence.scope.catalogEntries !== 527 || evidence.scope.nativeEntries !== 523 || evidence.scope.nativeUniqueNames !== 492 ||
       expectedFixtureCount === null || evidence.scope.fixtureCount !== expectedFixtureCount ||

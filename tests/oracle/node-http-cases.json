@@ -37,14 +37,15 @@
     "id": "plugin-node-http-discord-file",
     "aot": true,
     "commands": ["DISCORDファイル送信"],
+    "files": {"discord.txt": "hello-file"},
     "source": "DISCORDファイル送信(\"${BASE}/discord-file\",\"${FILE}\",\"hello discord\")\n\"OK\"を表示\n"
   },
   {
     "id": "plugin-node-http-discord-failure",
     "aot": true,
     "commands": ["DISCORD送信"],
-    "expectError": true,
-    "source": "DISCORD送信(\"${BASE}/discord-fail\",\"failure\")\n"
+    "dispatchExpectations": [{"command": "DISCORD送信", "result": "failure", "count": 1}],
+    "source": "エラー監視\nDISCORD送信(\"${BASE}/discord-fail\",\"failure\")\nエラーならば\n\"DISCORD_ERROR\"を表示\nここまで\n"
   },
   {
     "id": "plugin-node-http-onerror",

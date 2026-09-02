@@ -168,7 +168,7 @@ async function loadSelectedFixtures() {
     { file: "supplemental-plugin-cases.json", selection: (testCase) => testCase.commands?.length > 0 && testCase.expectedFailure !== true },
     { file: "node-file-cases.json", selection: (testCase) => testCase.aot === true && testCase.commands?.length > 0 && testCase.expectError !== true },
     { file: "node-native-cases.json", selection: (testCase) => testCase.aot === true && testCase.commands?.length > 0 && testCase.expectError !== true },
-    { file: "node-http-cases.json", selection: (testCase) => ["plugin-node-http-callbacks", "plugin-node-http-onerror", "plugin-node-http-options-and-promises", "plugin-node-http-async-values"].includes(testCase.id) },
+    { file: "node-http-cases.json", selection: (testCase) => ["plugin-node-http-callbacks", "plugin-node-http-onerror", "plugin-node-http-options-and-promises", "plugin-node-http-async-values", "plugin-node-http-discord", "plugin-node-http-discord-file", "plugin-node-http-discord-failure"].includes(testCase.id) },
     { file: "native-cases.json", selection: (testCase) =>
       testCase.id === "native-cut-commands" || testCase.id === "native-system-error-raise" || testCase.id === "native-system-debug" || testCase.id === "native-system-dynamic-execution" ||
       (!arguments_.includeNative && ["native-node-stdin-all", "native-node-stdin-lines", "native-node-stdin-callback", "native-node-network-addresses"].includes(testCase.id)) },
@@ -190,7 +190,7 @@ async function loadSelectedFixtures() {
       fixtures.push({ file: specification.file, ...testCase });
     }
   }
-  const expectedFixtureCount = arguments_.includeNative ? 207 : 43;
+  const expectedFixtureCount = arguments_.includeNative ? 210 : 46;
   if (fixtures.length !== expectedFixtureCount) throw new Error(`dispatch coverageのfixture数が想定外です: ${fixtures.length}`);
   return fixtures;
 }
@@ -282,7 +282,7 @@ async function runFixture(fixture, index, temporary, loopbackBase) {
   const manifestPath = resolve(aotTraceDirectory, "compile-manifest.jsonl");
   const sourceSha256 = sha256(fixture.source);
   await Promise.all([...new Set(routeDirectories)].map(async (directory) => {
-    const source = replacePluginPlaceholders(fixture.source, directory, loopbackBase);
+    const source = replacePluginPlaceholders(fixture.source, directory, loopbackBase, fixture);
     for (const [name, contents] of Object.entries(fixture.files ?? {})) await writeFile(resolve(directory, name), contents, "utf8");
     await writeFile(resolve(directory, sourceName), source, "utf8");
   }));
@@ -444,7 +444,7 @@ function fixedEnvironment() {
   return environment;
 }
 
-function replacePluginPlaceholders(source, fixtureDirectory, loopbackBase) {
+function replacePluginPlaceholders(source, fixtureDirectory, loopbackBase, fixture) {
   const replacements = {
     "${PLUGIN_CANIUSE}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_caniuse.mjs")).replaceAll("\\", "/"),
     "${PLUGIN_KANSUJI}": relative(fixtureDirectory, resolve(oracleRoot, "src/plugin_kansuji.mjs")).replaceAll("\\", "/"),
@@ -456,6 +456,11 @@ function replacePluginPlaceholders(source, fixtureDirectory, loopbackBase) {
   if (replaced.includes("${BASE}")) {
     if (loopbackBase === null) throw new Error("HTTP fixtureにloopback baseがありません");
     replaced = replaced.replaceAll("${BASE}", loopbackBase);
+  }
+  if (replaced.includes("${FILE}")) {
+    const fileNames = Object.keys(fixture.files ?? {});
+    if (fileNames.length !== 1) throw new Error(`${fixture.id}の\${FILE}にはfixture.filesを1件だけ指定してください`);
+    replaced = replaced.replaceAll("${FILE}", resolve(fixtureDirectory, fileNames[0]).replaceAll("\\", "/"));
   }
   return replaced;
 }
@@ -858,8 +863,8 @@ function createReport({ fixtureReports, sites, unresolvedSites, oracle, git }) {
       nativeEntries: nativeCommands.length,
       nativeUniqueNames: nativeNames.size,
       fixtureSelection: arguments_.includeNative
-        ? "the default command-bearing selection plus the four node-http Promise/callback/value fixtures and all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps"
-        : "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus the four node-http Promise/callback/value fixtures and native-cut-commands, excluding explicit AOT gaps",
+        ? "the default command-bearing selection plus the seven node-http callback/Promise/value/Discord fixtures and all native-cases command-bearing fixtures, excluding explicit error/termination/host gaps"
+        : "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus the seven node-http callback/Promise/value/Discord fixtures and native-cut-commands, excluding explicit AOT gaps",
       fixtureCount: fixtureReports.length,
       excludedFixtures: [...excludedFixtures].map(([key, reason]) => ({ key, reason })),
       commandAssociationIsNotExecutionEvidence: true,
