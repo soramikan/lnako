@@ -1,14 +1,14 @@
-# `unverified` 89件の証拠化計画（U12完了時点）
+# `unverified` 89件の証拠化計画（U13完了時点）
 
 ## 目的と基準
 
-この文書は、なでしこ3 v3.7.24（upstream `aa18c7e640523938c680958fe731418cc6f7a58f`）の標準cnako 527 entryについて、実装済み機能を過大評価せず、`compat/v3.7.24/evidence.json`の`unverified`を実行証拠へ接続するための計画である。89件の初期残件をU01〜U22へ分解し、2026-09-02のU12完了後は次の状態にある。
+この文書は、なでしこ3 v3.7.24（upstream `aa18c7e640523938c680958fe731418cc6f7a58f`）の標準cnako 527 entryについて、実装済み機能を過大評価せず、`compat/v3.7.24/evidence.json`の`unverified`を実行証拠へ接続するための計画である。89件の初期残件をU01〜U22へ分解し、2026-09-02のU13完了後は次の状態にある。
 
 | 状態 | entry数 | 意味 |
 |---|---:|---|
 | `verified` | 0 | 3正式OSの署名付きattestationまで揃った現在HEADの証拠 |
-| `trace-confirmed-unattested` | 479 | 公式差分、Interpreter/AOT trace、compile manifest等は揃うが、外部署名attestation前 |
-| `unverified` | 48 | 実装・fixtureの存在だけではcatalog ID単位の実行証拠にならない残件 |
+| `trace-confirmed-unattested` | 481 | 公式差分、Interpreter/AOT trace、compile manifest等は揃うが、外部署名attestation前 |
+| `unverified` | 46 | 実装・fixtureの存在だけではcatalog ID単位の実行証拠にならない残件 |
 
 `native: 523`という分類、fixtureの存在、Interpreterだけの成功、artifactの生成は、AOT verifiedや`trace-confirmed-unattested`を意味しない。各単位を完了扱いにするのは、この文書の共通完了条件と台帳検査が同時に通った場合だけとする。最終的な目標は、まず`trace-confirmed-unattested 527 / unverified 0`、その後に3正式OSの外部署名attestationを含む`verified`へ進むことである。
 
@@ -33,6 +33,8 @@ U10では`plugin-node-http-callbacks`と`plugin-node-http-onerror`をloopback HT
 U11では`plugin-node-http-options-and-promises`へ`AJAX受信`の成功経路を追加し、`AJAX保障送信`、`HTTP保障取得`、`GET保障送信`、`POST保障送信`、`POSTフォーム保障送信`、`AJAX内容取得`、`AJAX受信`の7 entryを明示catalog ID付きのdispatch siteへ接続した。cleanな`17df1d1ad29d5a5252a1cf34c30b4060163f4012`からcanonical、coverage、expected-exit、static constant、global bindingのderived artifactを再生成し、公式source・公式生成JavaScript・lnako Interpreter・LLVM AOT O0の結果、Promise成功resolve、`対象`更新、event drain、compile manifest、runtime traceを比較した。dispatch coverageは42 fixture・1,798 site・342 native entry、`sync_compat_evidence.mjs --generate`は`verified 0 / trace-confirmed-unattested 474 / unverified 53`を返した。別の公式Node HTTP差分テストは11ケース・27命令、AOT O0〜O3の7ケースに成功した。Promiseのreject専用fixture、3正式OSの外部署名attestation、外部HTTP endpointは未完了であり、`TODO: node-http-cross-os-attestation`として残す。
 
 U12では既存の`plugin-node-http-async-values`を既定dispatch監査へ追加し、`POST送信`、`POSTフォーム送信`、`AJAXテキスト取得`、`AJAX_JSON取得`、`AJAXバイナリ取得`の5 entryを明示catalog ID付きのdispatch siteへ接続した。cleanな`e2589cdd0c01505d7b9ef69dd681051bf6ac4177`から43 fixture・1,820 site・348 native entryのcoverage artifactを再生成し、同fixtureの22 dispatchについて公式source・公式生成JavaScript・lnako Interpreter・LLVM AOT O0のstdout/stderr hash、Interpreter/AOT trace、compile manifestを比較した。`AJAX_JSON取得`は通常のJSONと空bodyの2 site、他4 entryは1 siteずつで、`AJAXバイナリ取得`のArrayBuffer形状も値比較へ含める。`sync_compat_evidence.mjs --generate`は`verified 0 / trace-confirmed-unattested 479 / unverified 48`を返した。これはloopbackによる成功値の証拠であり、Promise reject専用fixture、外部HTTP endpoint、3正式OSの外部署名attestation、QuickJS標準命令証拠は未完了である。
+
+U13では`plugin-node-http-discord`、`plugin-node-http-discord-file`、`plugin-node-http-discord-failure`を既定dispatch監査へ追加し、`DISCORD送信`（JSON successとHTTP 400を`エラー監視`で捕捉する期待失敗）と`DISCORDファイル送信`（multipartのcontent/file）を明示catalog ID付きsiteへ接続した。cleanな`03e6071374a968443bec83a4ae85cb27c66f8c2b`でfixture／監査生成器を固定し、46 fixture・1,826 site・350 native entryのcoverageを再生成した。3 fixtureは公式source・公式生成JavaScript・lnako Interpreter・LLVM AOT O0でstdout/stderr、Interpreter/AOT trace、compile manifestを比較し、Discord 2命令の3 site（success 2、expected failure 1）を確認した。別のNode HTTP差分テストは11ケース・27命令、AOT O0〜O3の7ケースに成功した。外部Discord endpointへは接続しておらず、3正式OSの外部署名attestation、QuickJS標準命令証拠、実Discord APIとの相互運用性は未完了である。
 
 ## 証拠基盤の柱
 
@@ -107,7 +109,7 @@ fixture.catalogIds[name]
 | U10 | `0761 AJAX送信時`、`0762 AJAX受信時`、`0763 GET送信時`、`0764 POST送信時`、`0765 POSTフォーム送信時`、`0766 AJAX失敗時`。loopbackでsuccess/failure/callback orderを証拠化する（完了） | 6 | 467 |
 | U11 | `0769 AJAX保障送信`〜`0775 AJAX受信`のPromise/保障系7件。成功resolve、`対象`更新、event drain完了後にtraceを閉じる（完了。reject専用fixtureは別TODO） | 7 | 474 |
 | U12 | `0777 POST送信`〜`0781 AJAXバイナリ取得`のasync値5件。text、JSON、binary、formをloopbackで比較し、AOT byte buffer種別まで確認する（完了。JSON通常body／空bodyの2 siteを含む） | 5 | 479 |
-| U13 | `0782 DISCORD送信`、`0783 DISCORDファイル送信`。外部Discordへ送らず、loopback transportでJSON、multipart、failureを比較する | 2 | 481 |
+| U13 | `0782 DISCORD送信`、`0783 DISCORDファイル送信`。外部Discordへ送らず、loopback transportでJSON、multipart、failureを比較する（完了。success 2 siteとHTTP 400期待失敗1 site） | 2 | 481 |
 | U14 | `0784 LINE送信`、`0785 LINE画像送信`。成功ではなく廃止エラーが互換結果であることをexpected error/exitとして証拠化する | 2 | 483 |
 | U15 | `0799 簡易HTTPサーバ起動時`〜`0804 簡易HTTPサーバ移動`。ephemeral port、実通信、response、callback完了、shutdown、trace-endを一体でcoverageへ接続する | 6 | 489 |
 | U16 | `0061 終`、`0268 ファイル名抽出`、`0269 パス抽出`、`0722 ファイル名抽出`、`0723 パス抽出`、`0745 終`。system/nodeのrouteをfixtureで分離し、P1の明示IDで同定する | 6 | 495 |

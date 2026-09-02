@@ -604,6 +604,18 @@ U11では`tests/oracle/node-http-cases.json`の`plugin-node-http-options-and-pro
 
 U12では既存の`plugin-node-http-async-values`を既定dispatch監査へ追加した。公式の[plugin_node命令一覧](https://nadesi.com/v3/doc/index.php?plugin_node=&show=)は5命令を「非同期通信の結果を得る」と短く記載するだけだが、固定v3.7.24の[`plugin_node.mts`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/src/plugin_node.mts#L1462-L1561)では、`POST送信`／`POSTフォーム送信`は本文textをPromiseから解決し、`AJAXテキスト取得`は`AJAXオプション`の空文字をGETへ置換し、`AJAX_JSON取得`はHTTP 204/205または`Content-Length: 0`の空本文だけを`null`へ変換し、`AJAXバイナリ取得`は`Response.arrayBuffer()`のArrayBufferを返す。loopbackの`plugin-node-http-async-values`は22 dispatch site（JSON通常body／空bodyを含む）を公式source・公式生成JavaScript・lnako Interpreter・LLVM AOT O0で比較し、5 entryを`trace-confirmed-unattested`へ接続した。これは明示した成功値の証拠であり、reject時のError文面、外部HTTP endpoint、3正式OSの外部署名attestation、QuickJS標準命令証拠は未完了として`TODO: node-http-cross-os-attestation`等へ残す。
 
+## Node HTTP Discord命令のpayloadと失敗境界
+
+公式の[plugin_node命令一覧](https://nadesi.com/v3/doc/index.php?plugin_node=&show=)はWebhook URL、メッセージ、ファイルを渡すことは説明するが、HTTP method、JSON／multipartのfield名、ファイル名の決定、非2xx時のPromise失敗、`return_none`と文構文の関係までは詳しく規定しない。固定v3.7.24の[`src/plugin_node.mts`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/src/plugin_node.mts#L1559-L1601)を公式sourceとして実測・読解した結果を次に固定する。
+
+| 境界 | 公式処理系の実測結果または固定sourceの挙動 | lnakoの現在の動作 | 対象経路 / 差分テストID / TODO |
+|---|---|---|---|
+| `DISCORD送信`のbody | `POST`で`{content: S}`をJSON化し、`Content-Type: application/json`を明示する。HTTP responseが`ok`でなければ`『DISCORD送信』に失敗しました。`と`statusText`を連結したErrorを投げる | 純ZigのHTTP clientで同じJSON fieldとheaderを作り、2xxだけを成功、その他を`DiscordRequestFailed`として失敗dispatchへ記録する | Interpreter / LLVM AOT O0; `plugin-node-http-discord`、`plugin-node-http-discord-failure`; `TODO: node-http-discord-cross-os-attestation` |
+| `DISCORDファイル送信`のmultipart | `FormData`へ`content`と`file`を追加し、`file`は`fs.readFileSync(F)`のbytes、`path.basename(F)`のfilename、`Blob`として送る。Content-TypeはFetchに任せるため、sourceはboundaryを手動指定しない | `content`／`file`を同じfield名で組み立て、basenameとbytesを保持する。再現性のためboundaryは固定し、`multipart/form-data; boundary=...`を明示する。raw boundary値は公式と同一であることを主張せず、loopbackでfield・filename・bytesの意味結果だけを比較する | Interpreter / LLVM AOT O0; `plugin-node-http-discord-file`; 意図的なraw multipart差; `TODO: node-http-discord-multipart-interoperability` |
+| 戻り値と失敗の捕捉 | 両命令は`asyncFn: true`かつ`return_none: true`で、文としては完了を待つが値を返さない。非2xxはPromise rejectionになる。公式コンパイラは戻り値を変数へ代入する構文を拒否する | 文dispatchを完了まで待ち、成功時は`undefined`相当、非2xxは失敗dispatchにする。`エラー監視`で捕捉した場合は後続の「エラーならば」へ渡す | Interpreter / LLVM AOT O0; `plugin-node-http-discord-failure`; expected failure 1 site; `TODO: node-http-discord-rejection-message` |
+
+U13の`plugin-node-http-discord`、`plugin-node-http-discord-file`、`plugin-node-http-discord-failure`は、外部Discordへ送信せずloopback transportで公式source・公式生成JavaScript・lnako Interpreter・LLVM AOT O0の結果hashを比較した。cleanなU13 artifactでは46 fixture・1,826 site・350 native entryを監査し、Discord 2命令を3 site（success 2、HTTP 400を`エラー監視`で捕捉するexpected failure 1）へcatalog ID付きで接続し、`officialRoutesEquivalent: true`を確認した。これはJSON／multipartの意味結果と失敗dispatchの実行証拠であり、raw multipart boundary、実Discord APIとの相互運用性、3正式OSの外部署名attestation、QuickJS標準命令証拠を意味しない。したがってU13は`trace-confirmed-unattested`として完了し、実Discord endpoint・cross-OS attestation・reject文面の専用検証は未完了TODOに残す。
+
 ## 更新規則
 
 - 説明文と実装が食い違う場合は、固定した公式v3.7.24の実行結果を優先する。
