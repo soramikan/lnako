@@ -381,6 +381,13 @@ pub const Command = enum(u16) {
     // emitted into manifests remain stable.  The official implementation
     // uses a command-specific error message for this alias.
     line_image_notify_discontinued,
+    // These route-specific commands are appended to preserve every opcode
+    // already emitted into a compile manifest.  They are selected only by
+    // the evidence-only plugin_system route; normal cnako execution keeps
+    // the Node-shadowing opcodes above.
+    system_end,
+    system_path_basename,
+    system_path_dirname,
 };
 
 /// `エラー発生` is lowered to an IR throw terminator, not to the generic
@@ -417,6 +424,8 @@ pub fn dispatchRoute(command: Command) []const u8 {
         .system_nadesiko, .system_nadesiko_continue => "dynamic-execute",
         .system_hatena_configure => "hatena-configure",
         .node_interrupt_callback => "node-interrupt",
+        .system_end => "system-debug",
+        .system_path_basename, .system_path_dirname => "system-path",
         .http_server_start, .http_server_static, .http_server_receive, .http_server_output, .http_server_headers, .http_server_redirect => "http-server",
         .system_debug_breakpoint_wait => "debug-breakpoint-wait",
         .node_stdin_line, .node_stdin_character, .node_stdin_callback => "node-stdin-lines",
@@ -432,6 +441,7 @@ pub fn dispatchRoute(command: Command) []const u8 {
 }
 
 pub fn lookup(name: []const u8) ?Command {
+    if (routeSpecificCommand(name, systemRouteEnabled())) |command| return command;
     if (std.mem.eql(u8, name, "文字列変換") or std.mem.eql(u8, name, "TOSTR")) return .to_string;
     if (std.mem.eql(u8, name, "変数型確認") or std.mem.eql(u8, name, "TYPEOF")) return .type_of;
     if (std.mem.eql(u8, name, "整数変換") or std.mem.eql(u8, name, "TOINT") or std.mem.eql(u8, name, "INT")) return .to_int;
@@ -635,8 +645,6 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "環境変数一覧取得")) return .node_environment_list;
     if (std.mem.eql(u8, name, "カレントディレクトリ取得") or std.mem.eql(u8, name, "作業フォルダ取得")) return .node_current_directory;
     if (std.mem.eql(u8, name, "カレントディレクトリ変更") or std.mem.eql(u8, name, "作業フォルダ変更")) return .node_change_directory;
-    if (std.mem.eql(u8, name, "ファイル名抽出")) return .node_path_basename;
-    if (std.mem.eql(u8, name, "パス抽出")) return .node_path_dirname;
     if (std.mem.eql(u8, name, "絶対パス変換")) return .node_path_absolute;
     if (std.mem.eql(u8, name, "相対パス展開")) return .node_path_resolve;
     if (std.mem.eql(u8, name, "日時書式変換")) return .datetime_format;
@@ -745,7 +753,6 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "配列フィルタ")) return .array_filter;
     if (std.mem.eql(u8, name, "LINE送信")) return .line_notify_discontinued;
     if (std.mem.eql(u8, name, "LINE画像送信")) return .line_image_notify_discontinued;
-    if (std.mem.eql(u8, name, "終") or std.mem.eql(u8, name, "終了")) return .node_exit;
     if (std.mem.eql(u8, name, "プロセス終")) return .node_process_exit;
     if (std.mem.eql(u8, name, "存在")) return .node_file_exists;
     if (std.mem.eql(u8, name, "フォルダ存在")) return .node_folder_exists;
@@ -810,6 +817,29 @@ pub fn lookup(name: []const u8) ?Command {
     if (std.mem.eql(u8, name, "ファイル削除")) return .node_file_delete;
     if (std.mem.eql(u8, name, "コンソールクリア")) return .node_console_clear;
     return null;
+}
+
+fn routeSpecificCommand(name: []const u8, system_route: bool) ?Command {
+    if (std.mem.eql(u8, name, "ファイル名抽出")) return if (system_route) .system_path_basename else .node_path_basename;
+    if (std.mem.eql(u8, name, "パス抽出")) return if (system_route) .system_path_dirname else .node_path_dirname;
+    if (std.mem.eql(u8, name, "終")) return if (system_route) .system_end else .node_exit;
+    if (std.mem.eql(u8, name, "終了")) return .node_exit;
+    return null;
+}
+
+fn systemRouteEnabled() bool {
+    const route = std.c.getenv("LNAKO_PLUGIN_ROUTE") orelse return false;
+    return std.mem.eql(u8, std.mem.span(route), "plugin_system");
+}
+
+test "同名pathと終命令はrouteごとのAOT opcodeへ分離する" {
+    try std.testing.expectEqual(Command.node_path_basename, routeSpecificCommand("ファイル名抽出", false).?);
+    try std.testing.expectEqual(Command.node_path_dirname, routeSpecificCommand("パス抽出", false).?);
+    try std.testing.expectEqual(Command.node_exit, routeSpecificCommand("終", false).?);
+    try std.testing.expectEqual(Command.system_path_basename, routeSpecificCommand("ファイル名抽出", true).?);
+    try std.testing.expectEqual(Command.system_path_dirname, routeSpecificCommand("パス抽出", true).?);
+    try std.testing.expectEqual(Command.system_end, routeSpecificCommand("終", true).?);
+    try std.testing.expectEqual(Command.node_exit, routeSpecificCommand("終了", true).?);
 }
 
 test "AOT標準命令の正式名と別名を同じIDへ解決する" {

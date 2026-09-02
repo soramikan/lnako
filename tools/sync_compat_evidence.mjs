@@ -143,6 +143,7 @@ const runtimeFixtureFiles = new Set([
   "node-http-cases.json",
   "node-interrupt-case.json",
   "node-native-cases.json",
+  "plugin-route-cases.json",
   "plugin-system-cases.json",
   "standard-plugin-cases.json",
   "supplemental-plugin-cases.json",
@@ -185,6 +186,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "tools/check_ci_workflow.mjs",
   "tools/check_aot_suite_parallel.mjs",
   "tools/check_dispatch_coverage.mjs",
+  "tools/oracle/system_only.mjs",
   "tools/compare_native_oracle.mjs",
   "tools/check_static_constant_evidence.mjs",
   "tools/check_global_binding_evidence.mjs",
@@ -358,7 +360,8 @@ const entries = standard.commands.map((command) => {
   const dispatchCoverageSites = dispatchCoverageEvidenceByCatalogId.get(command.id) ?? [];
   const staticConstantSites = staticConstantEvidenceByCatalogId.get(command.id) ?? [];
   const globalBindingSites = globalBindingEvidenceByCatalogId.get(command.id) ?? [];
-  const explicitlyMappedDispatch = dispatchCatalogIds.get(command.name) === command.id;
+  const explicitlyMappedDispatch = dispatchCatalogIds.get(command.name) === command.id ||
+    dispatchCoverageSites.some((site) => site.resolution === "explicit-catalog-id");
   const expectedExitProof = expectedExitEvidenceByCatalogId.get(command.id) ?? null;
   const identityResolution = duplicateNames.has(command.name)
     ? staticConstantSites.length > 0 || globalBindingSites.length > 0 || expectedExitProof !== null || explicitlyMappedDispatch ? "explicit-catalog-id" : "ambiguous-name"
@@ -482,6 +485,7 @@ async function readFixtureRecords() {
         file,
         aot: file === "native-cases.json" || fixture.aot === true,
         sourceSha256: typeof fixture.source === "string" ? createHash("sha256").update(fixture.source).digest("hex") : null,
+        catalogIds: readFixtureCatalogIds(fixture, file),
         commandNames: new Set(),
         associationOrigins: new Map(),
         dispatchExpectations: Array.isArray(fixture.dispatchExpectations) ? fixture.dispatchExpectations : [],
@@ -511,6 +515,25 @@ async function readFixtureRecords() {
   if (new Set(records.map((record) => record.id)).size !== records.length) throw new Error("オラクルfixture IDが重複しています");
 
   return records;
+}
+
+function readFixtureCatalogIds(fixture, file) {
+  if (fixture.catalogIds === undefined) return new Map();
+  if (fixture.catalogIds === null || typeof fixture.catalogIds !== "object" || Array.isArray(fixture.catalogIds)) {
+    throw new Error(`fixtureのcatalogIdsが不正です: ${file}/${fixture.id}`);
+  }
+  const ids = new Map();
+  const usedIds = new Set();
+  const standardById = new Map(standard.commands.map((command) => [command.id, command]));
+  for (const [name, catalogId] of Object.entries(fixture.catalogIds)) {
+    const command = standardById.get(catalogId);
+    if (typeof catalogId !== "string" || command === undefined || command.name !== name || usedIds.has(catalogId)) {
+      throw new Error(`fixtureのcatalogIdsが標準カタログと一致しません: ${file}/${fixture.id}/${name}`);
+    }
+    ids.set(name, catalogId);
+    usedIds.add(catalogId);
+  }
+  return ids;
 }
 
 function addAssociation(record, name, origin) {
@@ -638,6 +661,7 @@ function validateDispatchCoverageEvidence(evidence, lock, standard, records, aud
   }
 
   const standardById = new Map(standard.commands.map((command) => [command.id, command]));
+  const recordByKey = new Map(records.map((record) => [`${record.file}/${record.id}`, record]));
   const nativeCommands = standard.commands.filter((command) => command.status === "native");
   const nativeIds = new Set(nativeCommands.map((command) => command.id));
   const nativeNames = new Set(nativeCommands.map((command) => command.name));
@@ -714,6 +738,7 @@ function validateDispatchCoverageEvidence(evidence, lock, standard, records, aud
     const siteKey = hasStringIdentity ? coverageSiteKey(site) : "<invalid-site>";
     const fixtureKey = typeof site.file === "string" && typeof site.fixtureId === "string" ? `${site.file}/${site.fixtureId}` : "<invalid-fixture>";
     const fixtureReport = fixtureReports.get(fixtureKey);
+    const fixtureRecord = recordByKey.get(fixtureKey);
     const expectedFailure = fixtureReport?.dispatchExpectations.find((expectation) =>
       expectation.command === site.name && dispatchExpectationIsActive(expectation, evidence.provenance.environment.platform));
     const expectedResult = expectedFailure === undefined ? "success" : expectedFailure.result;
@@ -725,7 +750,9 @@ function validateDispatchCoverageEvidence(evidence, lock, standard, records, aud
         !new Set(["success", "failure"]).has(site.result) || site.result !== expectedResult ||
         ((site.result === "failure") !== (expectedFailure !== undefined ||
           (site.canonicalOpcode === "throw_statement" && site.route === "throw" && site.opcode === throwStatementOpcode))) ||
-        site.catalogStatus !== "native" || site.resolution !== "unique-name" || site.selectedOracleEquivalent !== true) {
+        site.catalogStatus !== "native" || !["unique-name", "explicit-catalog-id"].includes(site.resolution) ||
+        (site.resolution === "explicit-catalog-id" && fixtureRecord?.catalogIds?.get(site.name) !== site.catalogId) ||
+        site.selectedOracleEquivalent !== true) {
       throw new Error(`dispatch coverage証拠のsite metadataが不正です: ${siteKey}`);
     }
     const command = standardById.get(site.catalogId);
@@ -1396,7 +1423,8 @@ function validateExpectedExitEvidence(evidence, lock, standard, records) {
     if (casesById.has(item.id) || !hashPattern.test(item.sourceSha256)) throw new Error(`expected-exit証拠のfixture caseが不正です: ${item.id}`);
     const record = recordById.get(item.id);
     const command = standardById.get(item.catalogId);
-    if (record === undefined || record.sourceSha256 !== item.sourceSha256 || command === undefined || command.name !== item.command || command.plugin !== "plugin_node" || command.status !== "native") throw new Error(`expected-exit証拠のfixture caseがcatalog/fixtureと不一致です: ${item.id}`);
+    if (record === undefined || record.sourceSha256 !== item.sourceSha256 || command === undefined || command.name !== item.command || command.plugin !== "plugin_node" || command.status !== "native" ||
+        (duplicateNames.has(item.command) && record.catalogIds?.get(item.command) !== item.catalogId)) throw new Error(`expected-exit証拠のfixture caseがcatalog/fixtureと不一致です: ${item.id}`);
     casesById.set(item.id, item);
   }
   if (evidence.entries.length !== casesById.size) throw new Error("expected-exit証拠のentry数がfixture case数と一致しません");

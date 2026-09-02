@@ -69,10 +69,13 @@ const generatedRouteUnavailableFixtures = new Map([
   ["native-cases.json/native-markup-commands", "公式生成JavaScriptのstandalone markup plugin host登録が不足する"],
   ["native-cases.json/native-system-dynamic-execution", "公式生成JavaScriptのstandalone system async host登録が不足する"],
   ["http-server-dispatch-cases.json/plugin-httpserver-dispatch", "公式生成JavaScriptのstandalone plugin_node登録が不足し、shutdown補助命令『終了』を解決できない"],
+  ["plugin-route-cases.json/plugin-system-path-route", "公式生成JavaScriptのstandalone system-only compiler runtime bundleがなく、system plugin単独routeを実行できない"],
+  ["plugin-route-cases.json/plugin-system-end-route", "公式生成JavaScriptのstandalone system-only compiler runtime bundleがなく、system plugin単独routeを実行できない"],
 ]);
 const selectedFixtures = await loadSelectedFixtures();
 const compiler = resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
 const fixedHost = resolve(root, "tools/oracle/fixed_host.mjs");
+const systemOnlyRunner = resolve(root, "tools/oracle/system_only.mjs");
 const normalizedDebugHost = resolve(root, "tools/oracle/normalize_debug_host.mjs");
 const safeExternalHost = resolve(root, "tools/oracle/safe_external_host.mjs");
 const maxBuffer = 32 * 1024 * 1024;
@@ -174,6 +177,7 @@ async function loadSelectedFixtures() {
     { file: "node-native-cases.json", selection: (testCase) => testCase.aot === true && testCase.commands?.length > 0 && testCase.expectError !== true },
     { file: "node-http-cases.json", selection: (testCase) => ["plugin-node-http-callbacks", "plugin-node-http-onerror", "plugin-node-http-options-and-promises", "plugin-node-http-async-values", "plugin-node-http-discord", "plugin-node-http-discord-file", "plugin-node-http-discord-failure", "plugin-node-http-line-message-discontinued-captured", "plugin-node-http-line-image-discontinued-captured"].includes(testCase.id) },
     { file: "http-server-dispatch-cases.json", selection: (testCase) => testCase.id === "plugin-httpserver-dispatch" },
+    { file: "plugin-route-cases.json", selection: (testCase) => testCase.commands?.length > 0 },
     { file: "native-cases.json", selection: (testCase) =>
       testCase.id === "native-cut-commands" || testCase.id === "native-system-error-raise" || testCase.id === "native-system-debug" || testCase.id === "native-system-dynamic-execution" ||
       (!arguments_.includeNative && ["native-node-stdin-all", "native-node-stdin-lines", "native-node-stdin-callback", "native-node-network-addresses"].includes(testCase.id)) },
@@ -196,7 +200,7 @@ async function loadSelectedFixtures() {
       fixtures.push({ file: specification.file, ...testCase });
     }
   }
-  const expectedFixtureCount = arguments_.includeNative ? 213 : 49;
+  const expectedFixtureCount = arguments_.includeNative ? 215 : 51;
   if (fixtures.length !== expectedFixtureCount) throw new Error(`dispatch coverageのfixture数が想定外です: ${fixtures.length}`);
   return fixtures;
 }
@@ -230,6 +234,22 @@ function validateFixture(testCase, file) {
   }
   if (testCase.httpServer === true && testCase.aot !== true) {
     throw new Error(`httpServer fixtureはAOT対象である必要があります: ${file}/${testCase.id}`);
+  }
+  if (testCase.pluginRoute !== undefined && !["plugin_system", "plugin_node"].includes(testCase.pluginRoute)) {
+    throw new Error(`fixtureのpluginRouteが不正です: ${file}/${testCase.id}`);
+  }
+  if (testCase.catalogIds !== undefined) {
+    if (testCase.catalogIds === null || typeof testCase.catalogIds !== "object" || Array.isArray(testCase.catalogIds)) {
+      throw new Error(`fixtureのcatalogIdsが不正です: ${file}/${testCase.id}`);
+    }
+    const catalogIds = new Set();
+    for (const [name, catalogId] of Object.entries(testCase.catalogIds)) {
+      const command = catalog.commands.find((candidate) => candidate.id === catalogId);
+      if (!testCase.commands.includes(name) || typeof catalogId !== "string" || command === undefined || command.name !== name || catalogIds.has(catalogId)) {
+        throw new Error(`fixtureのcatalogIdsがcommands/catalogと一致しません: ${file}/${testCase.id}/${name}`);
+      }
+      catalogIds.add(catalogId);
+    }
   }
   if (testCase.dispatchExpectations !== undefined) {
     if (!Array.isArray(testCase.dispatchExpectations) || testCase.dispatchExpectations.length === 0) {
@@ -307,23 +327,27 @@ async function runFixture(fixture, index, temporary, loopbackBase) {
     ...baseEnvironment,
     ...(fixture.safeExternalMock ? { LNAKO_TEST_OPEN_EXTERNAL: "mock" } : {}),
     ...(fixture.archiveHelper ? { LNAKO_TEST_ARCHIVE_HELPER: archiveHelperName } : {}),
+    ...(fixture.pluginRoute ? { LNAKO_PLUGIN_ROUTE: fixture.pluginRoute } : {}),
   };
   const runOptions = fixture.stdin === undefined ? {} : { input: fixture.stdin };
   const oracleUsesSafeExternalHost = fixture.safeExternalMock === true || fixture.archiveHelper === true;
   const oracleHostArguments = oracleUsesSafeExternalHost
     ? ["--import", pathToFileURL(fixedHost).href, "--import", pathToFileURL(safeExternalHost).href]
     : ["--import", pathToFileURL(fixture.normalizeDebugDump === true ? normalizedDebugHost : fixedHost).href];
-  const officialSource = run(process.execPath, [...oracleHostArguments, resolve(oracleRoot, "src/cnako3.mjs"), officialSourcePath], baseEnvironment, officialSourceDirectory, runOptions);
+  const officialCli = fixture.pluginRoute === "plugin_system" ? systemOnlyRunner : resolve(oracleRoot, "src/cnako3.mjs");
+  const officialSource = run(process.execPath, [...oracleHostArguments, officialCli, officialSourcePath], baseEnvironment, officialSourceDirectory, runOptions);
   assertSuccess(`${fixture.file}/${fixture.id} 公式source`, officialSource);
   const officialCompile = run(
     process.execPath,
-    [...oracleHostArguments, resolve(oracleRoot, "src/cnako3.mjs"), "--compile", "--silent", "--output", generatedPath, officialGeneratedSourcePath],
+    [...oracleHostArguments, officialCli, "--compile", "--silent", "--output", generatedPath, officialGeneratedSourcePath],
     baseEnvironment,
     officialGeneratedDirectory,
   );
   assertSuccess(`${fixture.file}/${fixture.id} 公式JavaScript生成`, officialCompile);
-  const officialGenerated = run(process.execPath, [...oracleHostArguments, generatedPath], baseEnvironment, officialGeneratedDirectory, runOptions);
   const generatedRouteUnavailable = isKnownGeneratedRouteUnavailable(fixture);
+  const officialGenerated = fixture.pluginRoute === "plugin_system"
+    ? unavailableProcess(generatedRouteUnavailableFixtures.get(`${fixture.file}/${fixture.id}`))
+    : run(process.execPath, [...oracleHostArguments, generatedPath], baseEnvironment, officialGeneratedDirectory, runOptions);
   if (generatedRouteUnavailable && officialGenerated.status !== 0 && officialGenerated.status !== 1) {
     throw new Error(`${fixture.file}/${fixture.id} 公式生成JavaScriptの既知gapと異なる終了状態です: ${officialGenerated.status}`);
   }
@@ -376,7 +400,7 @@ async function runFixture(fixture, index, temporary, loopbackBase) {
         oracle: oracleRoute,
         routes: ["officialSource", "officialGenerated", "lnakoRun", "lnakoNativeO0"],
         selectedOracleEquivalent: true,
-        officialGeneratedAvailable: officialGenerated.status === 0,
+        officialGeneratedAvailable: !generatedRouteUnavailable && officialGenerated.status === 0,
         officialGeneratedRouteUnavailableReason: generatedRouteUnavailable && officialGenerated.status !== 0
           ? generatedRouteUnavailableFixtures.get(`${fixture.file}/${fixture.id}`)
           : null,
@@ -829,6 +853,10 @@ function run(command, arguments_, environment, cwd, extraOptions = {}) {
   };
 }
 
+function unavailableProcess(reason) {
+  return { status: 1, signal: null, stdout: "", stderr: `${reason ?? "公式生成routeを実行できません"}\n` };
+}
+
 function buildCompiler() {
   const result = spawnSync("zig", ["build"], {
     cwd: root,
@@ -1067,7 +1095,7 @@ function collectSites(fixture, interpreterEvents, aotTrace, manifestEntries) {
         aotCount: failedAot.length,
         result: "failure",
       };
-      const resolution = resolveCatalogCommand(entry.sourceName, entry.route);
+      const resolution = resolveCatalogCommand(fixture, entry.sourceName);
       if (resolution === null) {
         unresolvedSites.push({ ...common, candidateCatalogIds: (catalogByName.get(entry.sourceName) ?? []).map((command) => command.id) });
         continue;
@@ -1091,7 +1119,7 @@ function collectSites(fixture, interpreterEvents, aotTrace, manifestEntries) {
     staticSuccessNames.add(entry.sourceName);
     observedCommandNames.add(entry.sourceName);
     const routes = [...new Set(successfulInterpreter.map((event) => event.route))].sort();
-    const resolution = resolveCatalogCommand(entry.sourceName, entry.route);
+    const resolution = resolveCatalogCommand(fixture, entry.sourceName);
     const common = {
       fixtureId: fixture.id,
       file: fixture.file,
@@ -1149,11 +1177,15 @@ function validDispatchExpectationPlatforms(platforms) {
       platforms.every((platform) => ["darwin", "linux", "win32"].includes(platform)));
 }
 
-function resolveCatalogCommand(name, route) {
+function resolveCatalogCommand(fixture, name) {
+  const configuredId = fixture.catalogIds?.[name];
+  if (configuredId !== undefined) {
+    const command = catalog.commands.find((candidate) => candidate.id === configuredId);
+    if (command === undefined || command.name !== name) throw new Error(`${fixture.id}のcatalogIdsが標準カタログと一致しません: ${name}/${configuredId}`);
+    return { command, reason: "explicit-catalog-id" };
+  }
   const candidates = catalogByName.get(name) ?? [];
   if (candidates.length === 1) return { command: candidates[0], reason: "unique-name" };
-  const routeCandidates = candidates.filter((command) => command.plugin === route);
-  if (routeCandidates.length === 1) return { command: routeCandidates[0], reason: "plugin-route" };
   return null;
 }
 

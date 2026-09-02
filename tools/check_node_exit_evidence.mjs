@@ -41,6 +41,16 @@ const selectedCases = [
     interrupted: true,
   },
   {
+    id: "plugin-node-exit-alias",
+    fixtureFile: "node-exit-cases.json",
+    command: "終",
+    catalogId: "command-0745",
+    source: directCases.find((testCase) => testCase.id === "plugin-node-exit-alias")?.source,
+    expectedExitCode: 0,
+    terminalReason: "process-exit",
+    interrupted: false,
+  },
+  {
     id: "plugin-node-exit-japanese-alias",
     fixtureFile: "node-exit-cases.json",
     command: "終了",

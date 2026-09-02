@@ -1,0 +1,17 @@
+[
+  {
+    "id": "plugin-system-path-route",
+    "commands": ["ファイル名抽出", "パス抽出"],
+    "catalogIds": {"ファイル名抽出": "command-0268", "パス抽出": "command-0269"},
+    "pluginRoute": "plugin_system",
+    "source": "ファイル名抽出(\"/a/b\")を表示\nパス抽出(\"/a/b\")を表示\nファイル名抽出(\"a/\")を表示\nパス抽出(\"a/\")を表示\n"
+  },
+  {
+    "id": "plugin-system-end-route",
+    "commands": ["終"],
+    "catalogIds": {"終": "command-0061"},
+    "pluginRoute": "plugin_system",
+    "dispatchExpectations": [{"command": "終", "result": "failure", "count": 1, "platforms": ["darwin", "linux", "win32"]}],
+    "source": "エラー監視\n終()\nエラーならば\n(\"ERROR:\"&エラーメッセージ)を表示\nここまで\n"
+  }
+]

@@ -1209,6 +1209,11 @@ pub const Interpreter = struct {
             self.exception_value = try self.errorMessageValue(thrown);
             return error.NakoException;
         }
+        if (self.host.node_context == null and std.mem.eql(u8, name, "終")) {
+            self.setDispatchRoute("plugin_system");
+            self.exception_value = try self.runtime.stringUtf8("__終わる__");
+            return error.NakoException;
+        }
         if (std.mem.eql(u8, name, "ASSERT") or std.mem.eql(u8, name, "確認")) {
             if (arguments.len == 0 or !arguments[arguments.len - 1].toBoolean()) return error.AssertionFailed;
             return arguments[arguments.len - 1];
@@ -1629,7 +1634,7 @@ pub const Interpreter = struct {
                 .now_milliseconds = try self.host.nowMilliseconds(),
                 .monotonic_milliseconds = try self.host.monotonicMilliseconds(),
             },
-            .path_separator = std.fs.path.sep_str,
+            .path_separator = if (self.host.node_context == null) "/" else std.fs.path.sep_str,
         };
     }
 

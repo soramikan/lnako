@@ -10,6 +10,8 @@ pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Val
 }
 
 pub fn callWithSeparator(runtime: *Runtime, name: []const u8, arguments: []const Value, path_separator: []const u8) !?Value {
+    if (eql(name, "ファイル名抽出")) return try extractPathComponent(runtime, arguments, path_separator, false);
+    if (eql(name, "パス抽出")) return try extractPathComponent(runtime, arguments, path_separator, true);
     const source = common.argument(arguments, 0);
     if (eql(name, "URLエンコード")) return try encode(runtime, source);
     if (eql(name, "URLデコード")) return try decode(runtime, source);
@@ -154,6 +156,15 @@ fn removeTrailingSeparator(runtime: *Runtime, source: Value, path_separator: []c
     return runtime.stringCodeUnits(if (units[units.len - 1] == separatorUnit(path_separator)) units[0 .. units.len - 1] else units);
 }
 
+fn extractPathComponent(runtime: *Runtime, arguments: []const Value, path_separator: []const u8, dirname: bool) !Value {
+    if (arguments.len < 1) return error.InvalidArgumentCount;
+    const source = arguments[0];
+    if (source != .string) return error.InvalidPathSource;
+    const separator = separatorUnit(path_separator);
+    const component = if (dirname) dirnameUnits(source.string.units, separator) else basenameUnits(source.string.units, separator);
+    return runtime.stringCodeUnits(component);
+}
+
 fn encode(runtime: *Runtime, source: Value) !Value {
     const text = try runtime.valueToString(source);
     var output: std.Io.Writer.Allocating = .init(runtime.allocator());
@@ -296,6 +307,11 @@ fn basenameUnits(path: []const u16, separator: u16) []const u16 {
     return path[index + 1 ..];
 }
 
+fn dirnameUnits(path: []const u16, separator: u16) []const u16 {
+    const index = std.mem.lastIndexOfScalar(u16, path, separator) orelse return &.{};
+    return path[0..index];
+}
+
 fn allExtensionUnits(units: []const u16) bool {
     for (units) |unit| switch (unit) {
         'a'...'z', 'A'...'Z', '0'...'9', '_', '-', '+' => {},
@@ -403,6 +419,29 @@ test "拡張子変更と終端パスをOS区切り文字ごとに再現する" {
     var alias = (try callWithSeparator(&runtime, "終端パス削除", &.{try runtime.stringUtf8("C:\\a\\")}, "\\")).?;
     try roots.protect(&alias);
     try expectUtf8(alias, "C:\\a");
+}
+
+test "system path aliasはsplitの末尾要素とpop後のpathを保持する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var basename = (try callWithSeparator(&runtime, "ファイル名抽出", &.{try runtime.stringUtf8("/a/b")}, "/")).?;
+    try roots.protect(&basename);
+    try expectUtf8(basename, "b");
+    var dirname = (try callWithSeparator(&runtime, "パス抽出", &.{try runtime.stringUtf8("/a/b")}, "/")).?;
+    try roots.protect(&dirname);
+    try expectUtf8(dirname, "/a");
+    var trailing_basename = (try callWithSeparator(&runtime, "ファイル名抽出", &.{try runtime.stringUtf8("a/")}, "/")).?;
+    try roots.protect(&trailing_basename);
+    try expectUtf8(trailing_basename, "");
+    var trailing_dirname = (try callWithSeparator(&runtime, "パス抽出", &.{try runtime.stringUtf8("a/")}, "/")).?;
+    try roots.protect(&trailing_dirname);
+    try expectUtf8(trailing_dirname, "a");
+    var repeated_dirname = (try callWithSeparator(&runtime, "パス抽出", &.{try runtime.stringUtf8("a//b//")}, "/")).?;
+    try roots.protect(&repeated_dirname);
+    try expectUtf8(repeated_dirname, "a//b/");
 }
 
 fn expectUtf8(value: Value, expected: []const u8) !void {
