@@ -12338,7 +12338,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-http-async-values"
+        "plugin-node-http-async-values",
+        "plugin-node-http-options-and-promises"
       ],
       "platforms": [
         "macos-aarch64",

@@ -79,6 +79,8 @@ AOT native 3 route jobへ割り当てる。dispatch supportは早く開始する
 
 その後の[run 33615040065](https://github.com/soramikan/lnako/actions/runs/33615040065)（`24483dc`、CI #462）は15分33秒でFailureとなった。macOS `mac-core-standard-support`とLinux `core`では`check_interpreter_only_classification.mjs --check`が、Linux `host`とmacOS `mac-host-compat`では`update_node_implemented.mjs --check`が、後続のU12証拠台帳更新に追随していない生成物を検出した。Node.js 20の`mlugg/setup-zig`非推奨警告45件は警告であり、失敗原因ではない。現行HEADでは`check_interpreter_only_classification.mjs --generate`、`update_node_implemented.mjs`、`sync_compat_evidence.mjs --generate`を順に実行し、`interpreter-only-classification.json`、`implemented.json`、`evidence.json`を再生成する。これらはNode HTTPの既存AOT証拠と対応する生成台帳の更新であり、製品ランタイムやCIの検証範囲を変更しない。再生成後に各`--check`、compat report、CI構成検査を通し、次のpushで再発がないかを確認する。
 
+その後の[run 33617822391](https://github.com/soramikan/lnako/actions/runs/33617822391)（`1ada8b2`、CI #463）は15分28秒でFailureとなった。Linux `core`とmacOS `mac-core-standard-support`の2 jobだけが、`sync_compat.mjs --check`で`compat/v3.7.24/matrix.json`の古い生成物を検出し、残る43 test jobは成功した。原因は、`plugin-node-http-options-and-promises`をfixtureへ追加した後に、対応する`matrix.json`と`standard-cnako.json`を再生成せずpushしたことである。ツールチェーンcacheの復元とAOT native／support jobは成功しており、Node.js 20警告も失敗原因ではない。現行HEADでは`sync_compat.mjs --generate`を実行し、2生成物を更新したうえで`--check`を通す。fixture、命令実装、job数、AOT／QuickJS経路は削減していない。次回pushではこの生成物同期を含む現HEADの45 test jobを起動し、完了を待たずに実装を継続しながら、次のpush前に完了済みrunの失敗有無を確認する。
+
 ## AOT検証の共通buildとjob分割
 
 各AOT jobは自身のrunner上でcompilerを一度だけbuildし、`--no-build`の検査へ渡します。native jobは`LNAKO_NATIVE_ORACLE_JOBS=1`
