@@ -75,6 +75,8 @@ AOT native 3 route jobへ割り当てる。dispatch supportは早く開始する
 
 直近の[run 33606373377](https://github.com/soramikan/lnako/actions/runs/33606373377)（`c00f22c`、CI #459）は12分45秒後に`cancel-in-progress`で取消された。公開注記は、同じ`ci-CI-refs/heads/main` concurrency groupに高優先度の後続待機runが存在したためであり、検証stepの失敗ではない。取消時点でAOT 35 jobと通常test 10 jobが完了し、attestationは未実行だった。このrunは失敗原因や性能値として扱わず、後続runの完了結果で3正式OSの成功、macOS 5枠、wall-clock、runner合計、各job時間を確認する。
 
+その後の[run 33610505944](https://github.com/soramikan/lnako/actions/runs/33610505944)（`b853cc4`、CI #461）は15分32秒でFailureとなり、macOS `mac-core-standard-support`とLinux `core`の`Verify compatibility baseline`がexit code 1になった。公開ログのNode.js 20警告は全体のwarningで、失敗原因ではない。履歴artifactを照合すると、canonical dispatch証拠は`54155f6`、coverageは`b6b48f1`、expected-exit・global binding・static constant群は`25c4f7c`のclean provenanceを指したまま、検査対象のfixture／dispatch監査ツールが後続commitで変わっていた。`sync_compat_evidence.mjs --check`のfollow-up規則がこの状態を受理しなかったことが原因であり、runnerや命令実装の失敗ではない。U11では現行HEAD `17df1d1`からcanonical、coverage、expected-exit、global binding、static constant群を再生成し、台帳同期を成功させた。この再発防止の証拠更新を`628e5ce`へ記録する。
+
 ## AOT検証の共通buildとjob分割
 
 各AOT jobは自身のrunner上でcompilerを一度だけbuildし、`--no-build`の検査へ渡します。native jobは`LNAKO_NATIVE_ORACLE_JOBS=1`
