@@ -8,9 +8,9 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 399,
-    "nativeAot": 304,
-    "interpreter": 100,
+    "total": 401,
+    "nativeAot": 306,
+    "interpreter": 102,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
@@ -22,8 +22,8 @@
   },
   "executionEvidenceStates": {
     "verified": 0,
-    "trace-confirmed-unattested": 481,
-    "unverified": 46
+    "trace-confirmed-unattested": 483,
+    "unverified": 44
   },
   "entries": [
     {
@@ -25087,15 +25087,21 @@
       "plugin": "plugin_node",
       "status": "native",
       "interpreterFixtureIds": [
-        "plugin-node-http-line-message-discontinued"
+        "plugin-node-http-line-message-discontinued",
+        "plugin-node-http-line-message-discontinued-captured"
       ],
       "aotFixtureIds": [
-        "native-node-line-message-discontinued"
+        "native-node-line-message-discontinued",
+        "plugin-node-http-line-message-discontinued-captured"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
           "plugin-node-http-line-message-discontinued": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
+          "plugin-node-http-line-message-discontinued-captured": [
             "fixture.commands",
             "implemented.tests"
           ]
@@ -25104,15 +25110,31 @@
           "native-node-line-message-discontinued": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-node-http-line-message-discontinued-captured": [
+            "fixture.commands",
+            "implemented.tests"
           ]
         },
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-node-http-line-message-discontinued-captured/0x0000000000000001"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分と明示した期待失敗結果を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式生成JavaScript・lnako Interpreter/AOTの廃止エラー差分テストに成功（公式CLIは既知の経路差）"
     },
     {
@@ -25121,15 +25143,21 @@
       "plugin": "plugin_node",
       "status": "native",
       "interpreterFixtureIds": [
-        "plugin-node-http-line-image-discontinued"
+        "plugin-node-http-line-image-discontinued",
+        "plugin-node-http-line-image-discontinued-captured"
       ],
       "aotFixtureIds": [
-        "native-node-line-image-discontinued"
+        "native-node-line-image-discontinued",
+        "plugin-node-http-line-image-discontinued-captured"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
         "interpreter": {
           "plugin-node-http-line-image-discontinued": [
+            "fixture.commands",
+            "implemented.tests"
+          ],
+          "plugin-node-http-line-image-discontinued-captured": [
             "fixture.commands",
             "implemented.tests"
           ]
@@ -25138,15 +25166,31 @@
           "native-node-line-image-discontinued": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-node-http-line-image-discontinued-captured": [
+            "fixture.commands",
+            "implemented.tests"
           ]
         },
         "compatJs": {}
       },
       "fixtureCoverageState": "paired",
       "identityResolution": "unique-name",
-      "executionEvidenceState": "unverified",
-      "executionEvidence": null,
-      "reason": "catalog IDに対する実行dispatch接続はまだ追跡していない。 明示関連付けはinterpreter 1件、AOT 1件（fixtureCoverageState=paired）。executionEvidenceState=unverified。",
+      "executionEvidenceState": "trace-confirmed-unattested",
+      "executionEvidence": {
+        "proofSchema": "lnako.dispatch-coverage.v1",
+        "fixtureId": "dispatch-coverage",
+        "siteIds": [
+          "plugin-node-http-line-image-discontinued-captured/0x0000000000000001"
+        ],
+        "officialComparison": [
+          "officialSource",
+          "lnakoRun",
+          "lnakoNativeO0"
+        ],
+        "state": "trace-confirmed-unattested"
+      },
+      "reason": "一意な命令名からcatalog IDを解決した。 dispatch coverage監査で同一fixture/siteのInterpreter/AOT trace、compile manifest、公式source差分と明示した期待失敗結果を機械検証した（1 site）。外部attestation未導入のためexecutionEvidenceState=trace-confirmed-unattestedであり、verifiedへは昇格しない。",
       "implementationReason": "公式生成JavaScript・lnako Interpreter/AOTの廃止エラー差分テストに成功（公式CLIは既知の経路差）"
     },
     {
