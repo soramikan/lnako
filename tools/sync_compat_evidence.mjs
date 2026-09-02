@@ -611,7 +611,9 @@ function evidenceReason(status, coverage, identityResolution, interpreterFixture
       : executionEvidenceState === "unverified"
         ? "catalog IDに対する実行dispatch接続はまだ追跡していない。"
         : "一意な命令名からcatalog IDを解決した。";
-  const proofDescription = proofKind === "static-constant"
+  const proofDescription = proofKind === "compat-js"
+    ? "明示catalog ID・operation別site IDについて、公式sourceとcompat-js実行結果、metadata-only traceを機械検証した"
+    : proofKind === "static-constant"
     ? "明示catalog ID・global/literal site IDについて、同一fixtureのInterpreter/AOT trace、対応manifest、公式差分の成功を機械検証した"
     : proofKind === "global-binding"
       ? "明示catalog ID・global read/write site IDについて、同一fixtureのInterpreter/AOT trace、対応manifest、公式差分の成功を機械検証した"
