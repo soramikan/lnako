@@ -59,8 +59,8 @@
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
     "lnako": {
-      "binarySha256": "8588507bf8b40dac8eaac9d90b399658248211721013b445127413da41749efa",
-      "commit": "fb1b372aef65e2f95ffdc763c4d5755111806930",
+      "binarySha256": "63793a93950ea5320311d852dbef90a8c39b8ec89eb3c0b72fb830889519c6c8",
+      "commit": "742ac5d4a4969da2446e420a3081bf9f543a9280",
       "dirty": false
     },
     "raw": {
@@ -282,7 +282,7 @@
               "siteId": "0x0000000000000003"
             }
           ],
-          "rawSha256": "4d9ab2992debeafba5113b8c9bfab5ee76b6584b7367f2a0281c6e90506fe860"
+          "rawSha256": "fd5828b6ee1a3109b3e097e0bea467de0d71041406fb9e66a07ee90fd870098d"
         }
       },
       "compileStatuses": {
@@ -485,7 +485,7 @@
               "siteId": "0x0000000100000004"
             }
           ],
-          "rawSha256": "8b6f08bfcc7099ff3c7d8b798f0a6e45c8baeb6af08cc29b352cf95b518784ac"
+          "rawSha256": "177204e5ff27f394638ad321401572a4f3d7bb43c1f6d97224537157a433514a"
         }
       },
       "compileStatuses": {
@@ -681,7 +681,7 @@
               "siteId": "0x0000000000000003"
             }
           ],
-          "rawSha256": "aae323d76ce4ae32100e6c7294a37ab6310760156a99d0bf15fd857ea97cb54f"
+          "rawSha256": "f7e90bdf83f6dd54c84afbc033a7353648ca1ec88300a38092c37edb746498c2"
         }
       },
       "compileStatuses": {
