@@ -168,7 +168,7 @@ const stepSuites = new Map([
   ["Differential standard plugin test", "standard"],
   ["Differential QuickJS compatibility test", "host"],
   ["Native plugin ABI test", "host"],
-  ["Differential Node host test", "host"],
+  ["Differential Node host test", "mac-core-host"],
   ["Distribution package self-test", "core"],
   ["Format", "core"],
   ["Test", "core"],
@@ -186,6 +186,8 @@ for (const [name, suite] of stepSuites) {
       ? "matrix.suite == 'standard' || matrix.suite == 'mac-core-standard-support'"
       : suite === "host"
         ? "matrix.suite == 'host' || matrix.suite == 'mac-host-compat'"
+        : suite === "mac-core-host"
+        ? "matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support'"
         : "matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'";
   const pattern = new RegExp(`^      - name: ${escaped}\\n        if: ${condition.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m");
   if (!pattern.test(workflow)) throw new Error(`${name}のsuite条件が${suite}ではありません`);

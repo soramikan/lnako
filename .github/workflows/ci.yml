@@ -34,7 +34,8 @@ jobs:
             suite: compat-aot
           # macOS-hosted runners admit at most five concurrent jobs. Keep the
           # two regular jobs and three native route jobs at exactly five slots;
-          # dispatch support is assigned to the early host/compat job below.
+          # Node host verification is assigned to the core job, while dispatch
+          # support remains on the host/compat job below.
           - name: macOS arm64
             os: macos-15
             suite: mac-core-standard-support
@@ -165,7 +166,7 @@ jobs:
         if: matrix.suite == 'host' || matrix.suite == 'mac-host-compat'
         run: node tools/check_native_plugin_abi.mjs --release-safe
       - name: Differential Node host test
-        if: matrix.suite == 'host' || matrix.suite == 'mac-host-compat'
+        if: matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support'
         run: |
           node tools/generate_legacy_encoding.mjs --check
           node tools/update_node_implemented.mjs --check
