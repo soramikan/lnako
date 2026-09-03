@@ -181,6 +181,23 @@ runごとに増えます。2026-08-27に確認した時点では、Actions cache
 しすぎず、今後の実runでcache clear、固定toolchain cacheの残存、壁時計時間を合わせて確認します。固定LLVM/LLD・QuickJS・
 公式オラクルの実体hash検証は、cache hit時も従来どおり毎jobで実行します。
 
+### LLVM toolchain cacheの最小化
+
+直近runのログでは、固定LLVM配布物を含む`.cache/toolchains`のActions cacheが約2.7 GBで、macOSでもcache復元stepに約50〜57秒を要した。
+LLVM配布物をそのまま保存すると、AOTを実行しない通常jobもclang／LLD以外の開発用binary、header、static libraryを復元するため、cache保存前に
+`tools/prune_llvm_toolchain.mjs`を実行する。保持するのは、target platformのclang／LLD、生成済み`libLLVM-C`、clang resource directoryだけである。
+macOSの`libLLVM-C.dylib`は`@loader_path`経由で`libc++.1.dylib`、`libc++abi.1.dylib`、`libunwind.1.dylib`を参照するため、これらとsymlinkの実体も保持する。
+prune後も`setup_llvm.mjs`のversion／marker固定hash検証と、通常／AOTのclang・LLD実行確認は省略しない。
+
+既存のfull cacheを一度だけ移行できるよう、CI test／AOTとRelease workflowのcache keyを`v2-minimal`へ上げ、`v1`を`restore-keys`へ指定する。
+restore後にpruneしてv2を保存するため、初回移行runはfull cacheの復元を伴い、同時実行jobの一部ではv2保存競合が起き得る。これは検証失敗として隠さず、
+後続runでv2 hitとcacheサイズを確認する。cache keyの変更はLLVM 22.1.8、QuickJS 2026-06-04、Zig 0.16.0の固定値を変えない。
+
+2026-09-03のmacOS arm64実測では、LLVM rootを7,911,820,345 bytesから426,943,591 bytesへ縮小し、約94.6%のpayloadを削減した。
+prune後のclang／LLD／LLVM C API共有ライブラリで`run-control.nako3`をLLVM AOT build・実行し、出力一致を確認した。この値はローカルのhardlink複製を使った
+検証であり、GitHub Actionsのwall-clock、runner合計、cache hit／miss、3正式OSの成立を示すものではない。次のpushでは新runの完了を待たずに実装を継続し、
+次回push前に最新完了runの失敗ログ、v2 cache復元時間、cache clear、固定toolchain残存、壁時計、runner合計を確認する。
+
 ### 1,536 MiBへの調整
 
 2026-08-30の`5a76445`までは上限1,024 MiBで運用していた。直近runではhost/aotの6件で約328.9 MBの新規Zig cacheを保存した一方、Actions cache全体は35件・約11.16 GBとなり、macOS host・Windows host・Windows aotでは上限超過後の空ディレクトリに近い184〜191 byteのcacheが残った。
@@ -738,6 +755,25 @@ run作成は08:45:41Z、最初のjob開始は08:45:43Z、最後のjob終了は09
 `verify_dispatch_coverage`はmacOSを含む3正式OS各3 shard、合計9 artifactのfixture集合・重複・欠落を検査する。dispatch evidence／security、native AOTのO0〜O3、
 coverage全56 fixture、coverage artifact、coverage verifier、native AOT aggregate、attestationは維持する。macOSのmatrixは5 jobのままで、6件目を追加しない。
 この配置によるwall-clock・runner合計の実測効果は次の完了済みCIで確認し、未完了runは待たずに実装を続ける。
+
+## macOS coverage shard分散後のCI実測（run 33743042471）
+
+[run 33743042471](https://github.com/soramikan/lnako/actions/runs/33743042471)（`878f378`）は、51 matrix job、coverage verifier、native AOT aggregate verifier、attestationの合計54 jobがすべて成功した。
+run作成は10:12:21Z、最初のjob開始は10:12:23Z、最後のjob終了は10:31:03Zで、run作成からの壁時計は18分43秒、最初のjob開始から最後のjob終了までは18分40秒だった。
+jobの実行時間合計は350分25秒であり、前回runからの壁時計短縮とrunner合計の増減を同じ指標として扱わない。
+
+| macOS job | 開始から終了まで | coverage shard |
+|---|---:|---:|
+| `mac-core-standard-support` | 13分27秒 | なし |
+| `mac-host-compat` | 10分31秒 | なし |
+| `AOT native routes O0+O1` | 13分09秒 | shard 2、約1分00秒 |
+| `AOT native routes O2` | 13分19秒 | shard 1、約4分32秒 |
+| `AOT native routes O3` | 10分13秒 | shard 3、約1分33秒 |
+
+直前のrun 33735104547は壁時計約20分01秒、`mac-core-standard-support` 18分21秒で、そのjob内のdispatch coverageが6分36秒だった。
+今回のcoverage分散で`mac-core-standard-support`は13分27秒へ短縮され、run全体も約1分18秒短くなった。一方、native route側ではO2がcoverage shard 1の実行を含むcritical pathとなった。
+検証対象、O0〜O3、3正式OS、coverage全fixture、artifact verifier、attestationは削減していない。macOS workflowのjob数は5件のままで、6件目のqueueは作っていない。
+このrunはcache prune変更前のv1 toolchain cacheであり、v2-minimal cacheのhit／復元時間と比較する基準として保持する。
 
 ## Linux／Windows parser fuzzの独立job化
 

@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 const workflow = await readFile(resolve(root, ".github/workflows/release.yml"), "utf8");
+const distribution = await readFile(resolve(root, "tools/create_distribution.mjs"), "utf8");
 const floatingActions = [...workflow.matchAll(/uses: ([^\s@]+)@([^\s#]+)/g)]
   .filter((match) => !/^[0-9a-f]{40}$/.test(match[2]))
   .map((match) => `${match[1]}@${match[2]}`);
@@ -58,5 +59,15 @@ if (!workflow.includes("git cat-file -t") || !workflow.includes("verification.ve
 }
 if (!workflow.includes("merge-multiple: true") || !workflow.includes("LNAKO_BENCHMARK_COMMIT")) {
   throw new Error("Release workflowのartifact集約またはbenchmark provenanceが不完全です");
+}
+if (!workflow.includes("key: release-toolchains-llvm-22.1.8-${{ matrix.target }}-v2-minimal") ||
+    !workflow.includes("restore-keys: |\n            release-toolchains-llvm-22.1.8-${{ matrix.target }}-v1") ||
+    !workflow.includes("run: node tools/prune_llvm_toolchain.mjs")) {
+  throw new Error("Release workflowのLLVM toolchain cache最小化が不完全です");
+}
+for (const required of ["lib/libc++.1.dylib", "lib/libc++abi.1.dylib", "lib/libunwind.1.dylib"]) {
+  if (!distribution.includes(`source: \"${required}\"`) || !distribution.includes(`destination: \"${required}\"`)) {
+    throw new Error(`macOS配布物にLLVM runtime依存がありません: ${required}`);
+  }
 }
 console.log("Release workflow構成検査: 3正式OS build・benchmark・distribution・checksum／SBOM・tag gate成功");

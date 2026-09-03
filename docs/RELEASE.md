@@ -16,7 +16,7 @@ node tools/check_distribution.mjs \
   --archive /absolute/path/dist/lnako-1.0.0-macos-arm64.tar.gz
 ```
 
-クロスtargetを作る場合は、そのtarget用の`lnako`実行ファイルと`liblnako_runtime.a`または`lnako_runtime.lib`を`--binary`と`--runtime`で明示します。配布targetは`macos-arm64`、`linux-x64`、`windows-x64`です。生成物の`manifest.json`にはtarget、source commit、dirty状態、固定toolchain、各payloadのSHA-256を記録します。
+クロスtargetを作る場合は、そのtarget用の`lnako`実行ファイルと`liblnako_runtime.a`または`lnako_runtime.lib`を`--binary`と`--runtime`で明示します。配布targetは`macos-arm64`、`linux-x64`、`windows-x64`です。生成物の`manifest.json`にはtarget、source commit、dirty状態、固定toolchain、各payloadのSHA-256を記録します。macOSのLLVM C API共有ライブラリは`@rpath`でlibc++／libc++abi／libunwindを参照するため、配布物へ`libc++.1.dylib`、`libc++abi.1.dylib`、`libunwind.1.dylib`も同梱します。
 
 ## 3正式OSの候補生成
 

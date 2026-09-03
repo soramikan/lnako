@@ -21,6 +21,7 @@ const nativeAotArtifactChecker = await readFile(resolve(root, "tools/check_nativ
 const nativeAotAttestationVerifier = await readFile(resolve(root, "tools/verify_native_aot_attestation.mjs"), "utf8");
 const interpreterOracleScript = await readFile(resolve(root, "tools/compare_interpreter_oracle.mjs"), "utf8");
 const compatJsEvidenceScript = await readFile(resolve(root, "tools/check_compat_js_evidence.mjs"), "utf8");
+const pruneLlvmToolchainScript = await readFile(resolve(root, "tools/prune_llvm_toolchain.mjs"), "utf8");
 const trackedAttestationChecker = await readFile(resolve(root, "tools/check_tracked_dispatch_attestation.mjs"), "utf8");
 const syncEvidence = await readFile(resolve(root, "tools/sync_compat_evidence.mjs"), "utf8");
 const verifyAttestation = await readFile(resolve(root, "tools/verify_dispatch_attestation.mjs"), "utf8");
@@ -444,6 +445,10 @@ const legacySmokeCommands = [
 if (new Set(legacySmokeCommands).size !== legacySmokeCommands.length) throw new Error("smokeコマンドが重複しています");
 if (legacySmokeCommands.length !== 7) throw new Error(`smokeコマンド数が従来の7件ではありません: ${legacySmokeCommands.length}`);
 if ((workflow.match(/\.\/zig-out\/bin\/lnako/g) ?? []).length !== 11) throw new Error("lnako smokeコマンドの合計が通常support＋macOS分割jobの11件ではありません");
+if (!pruneLlvmToolchainScript.includes("lib/clang/") || !pruneLlvmToolchainScript.includes("libLLVM-C") ||
+    !pruneLlvmToolchainScript.includes("bin/clang")) {
+  throw new Error("LLVM toolchain cache pruneがAOTに必要なclang／LLVM C API／resourceを保持していません");
+}
 
 const setupZigBlocks = [...workflow.matchAll(
   /      - uses: mlugg\/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2\.2\.1[\s\S]*?(?=      - uses: actions\/setup-node@)/g,
@@ -482,6 +487,13 @@ if (oracleSkipConditions.length !== 3) {
 
 const cacheActions = [...workflow.matchAll(/^      - uses: actions\/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6\.1\.0$/gm)];
 if (cacheActions.length !== 5) throw new Error(`actions/cache v6.1.0固定SHAは5ステップ必要です: actual=${cacheActions.length}`);
+const toolchainCacheKey = "toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ runner.os }}-${{ runner.arch }}-v2-minimal";
+const legacyToolchainCacheKey = "toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ runner.os }}-${{ runner.arch }}-v1";
+if (countOccurrences(workflow, `key: ${toolchainCacheKey}`) !== 2 ||
+    countOccurrences(workflow, `restore-keys: |\n            ${legacyToolchainCacheKey}`) !== 2 ||
+    countOccurrences(workflow, "run: node tools/prune_llvm_toolchain.mjs") !== 2) {
+  throw new Error("LLVM toolchain cacheのv2-minimal移行またはprune stepがtest／AOT jobへ設定されていません");
+}
 const oracleBuild = setupOracle.match(/^const oracleBuild = (\d+);$/m)?.[1];
 if (oracleBuild === undefined) throw new Error("setup_oracle.mjsのoracleBuildを取得できません");
 if (Number(oracleBuild) !== oracleIdentity.build || !setupOracle.includes("oracleIdentity.cliSha256") || !setupOracle.includes("oracleIdentity.markerSha256") ||
@@ -498,4 +510,8 @@ function assertSetEqual(actual, expected, label) {
   const extra = [...actual].filter((value) => !expected.has(value));
   if (missing.length === 0 && extra.length === 0) return;
   throw new Error(`${label}が不正です: missing=${JSON.stringify(missing)} extra=${JSON.stringify(extra)}`);
+}
+
+function countOccurrences(text, fragment) {
+  return text.split(fragment).length - 1;
 }

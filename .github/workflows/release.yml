@@ -122,9 +122,13 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/toolchains
-          key: release-toolchains-llvm-22.1.8-${{ matrix.target }}-v1
+          key: release-toolchains-llvm-22.1.8-${{ matrix.target }}-v2-minimal
+          restore-keys: |
+            release-toolchains-llvm-22.1.8-${{ matrix.target }}-v1
       - name: Set up pinned LLVM and LLD
         run: node tools/setup_llvm.mjs
+      - name: Prune LLVM toolchain cache
+        run: node tools/prune_llvm_toolchain.mjs
       - name: Clear generated install outputs
         shell: bash
         run: rm -rf -- zig-out

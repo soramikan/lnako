@@ -396,6 +396,9 @@ function targetSpec(target) {
         { source: "bin/clang", destination: "bin/clang", executable: true },
         { source: "bin/ld64.lld", destination: "bin/ld64.lld", executable: true },
         { source: "lib/libLLVM-C.dylib", destination: "lib/libLLVM-C.dylib", executable: false },
+        { source: "lib/libc++.1.dylib", destination: "lib/libc++.1.dylib", executable: false },
+        { source: "lib/libc++abi.1.dylib", destination: "lib/libc++abi.1.dylib", executable: false },
+        { source: "lib/libunwind.1.dylib", destination: "lib/libunwind.1.dylib", executable: false },
       ],
     },
     "linux-x64": {

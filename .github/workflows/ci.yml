@@ -77,9 +77,13 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/toolchains
-          key: toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ runner.os }}-${{ runner.arch }}-v1
+          key: toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ runner.os }}-${{ runner.arch }}-v2-minimal
+          restore-keys: |
+            toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ runner.os }}-${{ runner.arch }}-v1
       - name: Set up pinned LLVM and LLD
         run: node tools/setup_llvm.mjs
+      - name: Prune LLVM toolchain cache
+        run: node tools/prune_llvm_toolchain.mjs
       - name: Set up pinned QuickJS
         run: node tools/setup_quickjs.mjs
       # zig-out is an install prefix, not part of the Zig cache. Remove any
@@ -661,9 +665,13 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/toolchains
-          key: toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ runner.os }}-${{ runner.arch }}-v1
+          key: toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ runner.os }}-${{ runner.arch }}-v2-minimal
+          restore-keys: |
+            toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ runner.os }}-${{ runner.arch }}-v1
       - name: Set up pinned LLVM and LLD
         run: node tools/setup_llvm.mjs
+      - name: Prune LLVM toolchain cache
+        run: node tools/prune_llvm_toolchain.mjs
       - name: Set up pinned QuickJS
         run: node tools/setup_quickjs.mjs
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
