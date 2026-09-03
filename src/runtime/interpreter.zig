@@ -1985,7 +1985,7 @@ pub const Interpreter = struct {
         var reject = try self.createPromiseResolver(promise.promise, true);
         try root.protect(&reject);
         _ = self.callFunctionValue(arguments[0].function, &.{ resolve, reject }) catch |failure| {
-            const reason = try self.runtime.stringUtf8(@errorName(failure));
+            const reason = try self.runtime.stringUtf8(error_message.forFailure(failure));
             try self.runtime.rejectPromise(promise.promise, reason);
         };
         if (promise.promise.state != .pending) try self.removePromiseResolvers(promise.promise);
@@ -2210,7 +2210,7 @@ pub const Interpreter = struct {
                 const captured = self.exception_value;
                 self.exception_value = .undefined;
                 break :blk captured;
-            } else try self.runtime.stringUtf8(@errorName(failure));
+            } else try self.runtime.stringUtf8(error_message.forFailure(failure));
             return self.runtime.rejectPromise(task.next, reason);
         };
         if (task.mode == .finally) {

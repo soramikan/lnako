@@ -54,6 +54,7 @@ pub fn forFailure(failure: anyerror) []const u8 {
         error.ArraySparseLengthLimit => "Sparse array length exceeds safety limit",
         error.StringPadWidthUnbounded => "String padding width is unbounded",
         error.InvalidHttpQueryEncoding => "URI malformed",
+        error.InvalidAjaxContentType => "TypeError: res.body is not a function",
         else => @errorName(failure),
     };
 }
@@ -109,4 +110,5 @@ test "BigInt実行時エラーを公式JavaScriptの文言へ変換する" {
     try std.testing.expectEqualStrings("Sparse array length exceeds safety limit", forFailure(error.ArraySparseLengthLimit));
     try std.testing.expectEqualStrings("String padding width is unbounded", forFailure(error.StringPadWidthUnbounded));
     try std.testing.expectEqualStrings("URI malformed", forFailure(error.InvalidHttpQueryEncoding));
+    try std.testing.expectEqualStrings("TypeError: res.body is not a function", forFailure(error.InvalidAjaxContentType));
 }

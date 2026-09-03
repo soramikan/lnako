@@ -5333,7 +5333,7 @@ fn forwardAotPromiseTask(runtime: *Runtime, task: AotPromiseTask) !void {
 
 fn callbackFailureReason(runtime: *Runtime, failure: anyerror) !Value {
     if (runtime.has_pending_exception) return runtime.takeException();
-    return runtimeUtf8String(runtime, @errorName(failure));
+    return runtimeUtf8String(runtime, error_message.forFailure(failure));
 }
 
 fn executeAotPromiseTask(runtime: *Runtime, task: AotPromiseTask) !void {
