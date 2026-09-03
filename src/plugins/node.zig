@@ -1210,11 +1210,11 @@ fn pathsOverlap(left: []const u8, right: []const u8) bool {
     right_normalized[right.len] = 0;
     if (builtin.os.tag == .windows) {
         for (left_normalized[0..left.len]) |*byte| {
-            if (byte.* == std.fs.path.sep_alt) byte.* = host_separator;
+            if (std.fs.path.isSep(byte.*)) byte.* = host_separator;
             if (byte.* >= 'A' and byte.* <= 'Z') byte.* += 'a' - 'A';
         }
         for (right_normalized[0..right.len]) |*byte| {
-            if (byte.* == std.fs.path.sep_alt) byte.* = host_separator;
+            if (std.fs.path.isSep(byte.*)) byte.* = host_separator;
             if (byte.* >= 'A' and byte.* <= 'Z') byte.* += 'a' - 'A';
         }
     }

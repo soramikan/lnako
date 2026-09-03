@@ -914,7 +914,7 @@ const CliHost = struct {
         errdefer allocator.free(resolved);
         if (builtin.os.tag == .windows) {
             for (resolved) |*byte| {
-                if (byte.* == std.fs.path.sep_alt) byte.* = std.fs.path.sep;
+                if (std.fs.path.isSep(byte.*)) byte.* = std.fs.path.sep;
             }
             for (resolved) |*byte| {
                 if (byte.* >= 'A' and byte.* <= 'Z') byte.* += 'a' - 'A';
