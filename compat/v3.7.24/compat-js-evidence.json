@@ -429,7 +429,7 @@
             "status": 0,
             "signal": null,
             "stdoutSha256": "38e0b9de817f645c4bec37c0d4a3e58baecccb040f5718dc069a72c7385a0bed",
-            "stderrSha256": "60d1b928587f8d05c492ab362d9b73c597485c29f58b27f1015c718244fa2433",
+            "stderrSha256": "c5276cb7b02b475943a340d85eda25df37c7e40e063eeeef7911bd382cd08396",
             "failed": true
           },
           "lnakoCompatJs": {
@@ -513,7 +513,7 @@
     },
     "lnako": {
       "binarySha256": "1ed5894cb83559ab649eec557095856135ea8f4c3aff6b170224ff0f62e011a1",
-      "commit": "19f68a4dc22b5d00d675bb8d656ea8f0f21ff98f",
+      "commit": "5ca6bb84ebdbdbd951b84bcf9a94d3623c5b2595",
       "dirty": false
     },
     "raw": {

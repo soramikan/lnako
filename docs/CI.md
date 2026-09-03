@@ -90,6 +90,8 @@ AOT native 3 route jobへ割り当てる。dispatch supportは早く開始する
 
 その後の[run 33617822391](https://github.com/soramikan/lnako/actions/runs/33617822391)（`1ada8b2`、CI #463）は15分28秒でFailureとなった。Linux `core`とmacOS `mac-core-standard-support`の2 jobだけが、`sync_compat.mjs --check`で`compat/v3.7.24/matrix.json`の古い生成物を検出し、残る43 test jobは成功した。原因は、`plugin-node-http-options-and-promises`をfixtureへ追加した後に、対応する`matrix.json`と`standard-cnako.json`を再生成せずpushしたことである。ツールチェーンcacheの復元とAOT native／support jobは成功しており、Node.js 20警告も失敗原因ではない。現行HEADでは`sync_compat.mjs --generate`を実行し、2生成物を更新したうえで`--check`を通す。fixture、命令実装、job数、AOT／QuickJS経路は削減していない。次回pushではこの生成物同期を含む現HEADの45 test jobを起動し、完了を待たずに実装を継続しながら、次のpush前に完了済みrunの失敗有無を確認する。
 
+直近の[run 33703568501](https://github.com/soramikan/lnako/actions/runs/33703568501)（`1fed080`）は、51 job（実行49、skip 2）のうち45 success、4 failureで、壁時計は14分47秒、実行jobの合計は287分17秒だった。AOT nativeの3正式OS shardと他のAOT検証は成功し、失敗したのはLinux `host`、macOS `mac-core-standard-support`、Linux `core`、macOS `mac-host-compat`である。`host`系2 jobは`implemented.json`が最新fixtureに追随していないこと、`core`系2 jobはcleanなdispatch証拠のcommitが現行HEADと一致しないことが原因で、製品実装やAOT差分の失敗ではない。現行HEADでは`d49e442`でNode実装台帳、`6049c2b`でdispatch監査のfixture数、`5ca6bb8`で全226 fixtureのcoverage証拠を再生成・同期した。これらを同一の署名付きpushへ含め、次のpush前にもこのrunより新しい完了失敗を確認する。失敗runの性能値は成功runとの短縮比較には用いず、macOS 5 job制限と全検証経路を維持したまま再発防止を確認する。
+
 ## AOT検証の共通buildとjob分割
 
 各AOT jobは自身のrunner上でcompilerを一度だけbuildし、`--no-build`の検査へ渡します。native jobは`LNAKO_NATIVE_ORACLE_JOBS=1`

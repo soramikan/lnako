@@ -115,14 +115,14 @@
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
     "lnako": {
-      "binarySha256": "ae28553cdb68091639004a53ad030d42572d20b1bbb2099745956b31d42bca02",
-      "commit": "19f68a4dc22b5d00d675bb8d656ea8f0f21ff98f",
+      "binarySha256": "1ed5894cb83559ab649eec557095856135ea8f4c3aff6b170224ff0f62e011a1",
+      "commit": "5ca6bb84ebdbdbd951b84bcf9a94d3623c5b2595",
       "dirty": false
     },
     "raw": {
       "interpreterTraceSha256": "6ee351ec2c4f0d11c0ec1f3cf1df9e43a1661e51df8e66f9c70795fa43a8ce03",
       "aotTraceSha256": "8563fae5ec29d621b51a24d9ec37e50d89bb5b8186f336d5e42d28e9467a6cb4",
-      "globalManifestSha256": "1f834d43802d329d013c173e9b6b929fcf0c2624ce07af22f87448c71d9f568e"
+      "globalManifestSha256": "5c8b06dc9a17dd0577180adbaee59cd8a72715bad7e30063f2c20cfde93b0ca7"
     }
   },
   "trace": {

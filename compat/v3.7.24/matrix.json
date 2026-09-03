@@ -17786,7 +17786,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-http-options-and-promises"
+        "plugin-node-http-options-and-promises",
+        "plugin-node-http-content-unknown-type"
       ],
       "platforms": [
         "macos-aarch64",
@@ -17911,7 +17912,8 @@
       "plannedMode": "native",
       "status": "native",
       "tests": [
-        "plugin-node-http-options-and-promises"
+        "plugin-node-http-options-and-promises",
+        "plugin-node-http-content-unknown-type"
       ],
       "platforms": [
         "macos-aarch64",
@@ -17937,7 +17939,8 @@
       "status": "native",
       "tests": [
         "plugin-node-http-async-values",
-        "plugin-node-http-options-and-promises"
+        "plugin-node-http-options-and-promises",
+        "plugin-node-http-receive-error"
       ],
       "platforms": [
         "macos-aarch64",

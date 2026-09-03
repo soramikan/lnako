@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 412,
-    "nativeAot": 310,
+    "total": 413,
+    "nativeAot": 311,
     "interpreter": 112,
     "compatJs": 9
   },
@@ -14028,6 +14028,7 @@
       ],
       "aotFixtureIds": [
         "native-node-path-components",
+        "native-node-path-mixed-separators",
         "native-node-path-type-errors"
       ],
       "compatJsFixtureIds": [],
@@ -14046,6 +14047,9 @@
         },
         "aot": {
           "native-node-path-components": [
+            "fixture.commands"
+          ],
+          "native-node-path-mixed-separators": [
             "fixture.commands"
           ],
           "native-node-path-type-errors": [
@@ -14086,6 +14090,7 @@
       ],
       "aotFixtureIds": [
         "native-node-path-components",
+        "native-node-path-mixed-separators",
         "native-node-path-type-errors"
       ],
       "compatJsFixtureIds": [],
@@ -14104,6 +14109,9 @@
         },
         "aot": {
           "native-node-path-components": [
+            "fixture.commands"
+          ],
+          "native-node-path-mixed-separators": [
             "fixture.commands"
           ],
           "native-node-path-type-errors": [
@@ -22344,6 +22352,7 @@
       ],
       "aotFixtureIds": [
         "native-node-path-components",
+        "native-node-path-mixed-separators",
         "native-node-path-type-errors"
       ],
       "compatJsFixtureIds": [],
@@ -22362,6 +22371,9 @@
         },
         "aot": {
           "native-node-path-components": [
+            "fixture.commands"
+          ],
+          "native-node-path-mixed-separators": [
             "fixture.commands"
           ],
           "native-node-path-type-errors": [
@@ -22401,6 +22413,7 @@
       ],
       "aotFixtureIds": [
         "native-node-path-components",
+        "native-node-path-mixed-separators",
         "native-node-path-type-errors"
       ],
       "compatJsFixtureIds": [],
@@ -22419,6 +22432,9 @@
         },
         "aot": {
           "native-node-path-components": [
+            "fixture.commands"
+          ],
+          "native-node-path-mixed-separators": [
             "fixture.commands"
           ],
           "native-node-path-type-errors": [
@@ -24690,7 +24706,8 @@
       "associationOrigin": {
         "interpreter": {
           "plugin-node-http-content-unknown-type": [
-            "fixture.commands"
+            "fixture.commands",
+            "implemented.tests"
           ],
           "plugin-node-http-options-and-promises": [
             "fixture.commands",
@@ -24699,7 +24716,8 @@
         },
         "aot": {
           "plugin-node-http-content-unknown-type": [
-            "fixture.commands"
+            "fixture.commands",
+            "implemented.tests"
           ],
           "plugin-node-http-options-and-promises": [
             "fixture.commands",
@@ -24928,7 +24946,8 @@
       "associationOrigin": {
         "interpreter": {
           "plugin-node-http-content-unknown-type": [
-            "fixture.commands"
+            "fixture.commands",
+            "implemented.tests"
           ],
           "plugin-node-http-options-and-promises": [
             "fixture.commands",
@@ -24937,7 +24956,8 @@
         },
         "aot": {
           "plugin-node-http-content-unknown-type": [
-            "fixture.commands"
+            "fixture.commands",
+            "implemented.tests"
           ],
           "plugin-node-http-options-and-promises": [
             "fixture.commands",
@@ -24996,7 +25016,8 @@
             "implemented.tests"
           ],
           "plugin-node-http-receive-error": [
-            "fixture.commands"
+            "fixture.commands",
+            "implemented.tests"
           ]
         },
         "aot": {
@@ -25009,7 +25030,8 @@
             "implemented.tests"
           ],
           "plugin-node-http-receive-error": [
-            "fixture.commands"
+            "fixture.commands",
+            "implemented.tests"
           ]
         },
         "compatJs": {}
