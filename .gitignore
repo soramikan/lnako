@@ -6,3 +6,6 @@ zig-out/
 benchmarks/results/*.json
 !benchmarks/results/latest.json
 !benchmarks/results/.gitkeep
+benchmarks/comparison/results/*.json
+benchmarks/comparison/results/*.md
+!benchmarks/comparison/results/.gitkeep

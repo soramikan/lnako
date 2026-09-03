@@ -1,0 +1,115 @@
+name: Comparison benchmark
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: ${{ matrix.target }} / comparison
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos-arm64
+            os: macos-15
+            shell: bash
+            lnako_executable: lnako
+          - target: linux-x64
+            os: ubuntu-24.04
+            shell: bash
+            lnako_executable: lnako
+          - target: windows-x64
+            os: windows-2025
+            shell: bash
+            lnako_executable: lnako.exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+          use-cache: true
+          cache-key: comparison-${{ matrix.target }}
+          cache-size-limit: 1536
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+
+      - uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
+        with:
+          go-version: stable
+
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+
+      - name: Install cnako
+        run: npm install -g nadesiko3
+
+      - name: Install gonako (optional)
+        id: gonako
+        continue-on-error: true
+        env:
+          GONAKO_INSTALL_DIR: ${{ runner.temp }}/gonako
+        run: |
+          mkdir -p "$GONAKO_INSTALL_DIR"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            curl -fsSL -o "$GONAKO_INSTALL_DIR/gonako.exe" "https://github.com/kujirahand/nadesiko3go/releases/download/v3.8.1/gonako-3.8.1-windows-amd64.exe" || true
+          else
+            curl -fsSL https://raw.githubusercontent.com/kujirahand/nadesiko3go/master/scripts/install.sh | bash
+          fi
+          echo "$GONAKO_INSTALL_DIR" >> "$GITHUB_PATH"
+
+      - name: Verify external runtimes
+        run: |
+          cnako3 -v
+          gonako -v 2>/dev/null || true
+          go version
+          rustc --version
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/toolchains
+          key: comparison-toolchains-llvm-22.1.8-${{ matrix.target }}-v2
+
+      - name: Set up pinned LLVM and LLD
+        run: node tools/setup_llvm.mjs
+
+      - name: Build ReleaseSafe compiler
+        run: zig build -Doptimize=ReleaseSafe
+
+      - name: Run comparison benchmark
+        env:
+          LNAKO_BENCHMARK_LNAKO: ${{ github.workspace }}/zig-out/bin/${{ matrix.lnako_executable }}
+        run: |
+          node tools/run_comparison_benchmark.mjs \
+            --iterations 3 \
+            --warmup 1 \
+            --lnako "$LNAKO_BENCHMARK_LNAKO" \
+            --output "$RUNNER_TEMP/benchmark-${{ matrix.target }}.json" \
+            --markdown "$RUNNER_TEMP/benchmark-${{ matrix.target }}.md"
+
+      - name: Verify comparison benchmark result
+        run: |
+          node tools/check_comparison_benchmark.mjs \
+            --json "$RUNNER_TEMP/benchmark-${{ matrix.target }}.json" \
+            --markdown "$RUNNER_TEMP/benchmark-${{ matrix.target }}.md"
+
+      - name: Upload benchmark artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: comparison-benchmark-${{ matrix.target }}
+          path: |
+            ${{ runner.temp }}/benchmark-${{ matrix.target }}.json
+            ${{ runner.temp }}/benchmark-${{ matrix.target }}.md
+          if-no-files-found: error
+          retention-days: 30

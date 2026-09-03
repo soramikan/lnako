@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "name": "lnako-comparison-v1",
+  "cases": [
+    {
+      "id": "arithmetic-loop",
+      "expected_stdout": "10000\n",
+      "sources": {
+        "cnako": "benchmarks/comparison/arithmetic-loop/cnako.nako3",
+        "gonako": "benchmarks/comparison/arithmetic-loop/gonako.nako3",
+        "python": "benchmarks/comparison/arithmetic-loop/ref.py",
+        "c": "benchmarks/comparison/arithmetic-loop/ref.c",
+        "rust": "benchmarks/comparison/arithmetic-loop/ref.rs",
+        "lnako": "benchmarks/comparison/arithmetic-loop/lnako.nako3"
+      }
+    },
+    {
+      "id": "array-mutation",
+      "expected_stdout": "1000\n",
+      "sources": {
+        "cnako": "benchmarks/comparison/array-mutation/cnako.nako3",
+        "python": "benchmarks/comparison/array-mutation/ref.py",
+        "c": "benchmarks/comparison/array-mutation/ref.c",
+        "rust": "benchmarks/comparison/array-mutation/ref.rs",
+        "lnako": "benchmarks/comparison/array-mutation/lnako.nako3"
+      }
+    },
+    {
+      "id": "closure-loop",
+      "expected_stdout": "10000\n",
+      "sources": {
+        "cnako": "benchmarks/comparison/closure-loop/cnako.nako3",
+        "python": "benchmarks/comparison/closure-loop/ref.py",
+        "c": "benchmarks/comparison/closure-loop/ref.c",
+        "rust": "benchmarks/comparison/closure-loop/ref.rs",
+        "lnako": "benchmarks/comparison/closure-loop/lnako.nako3"
+      }
+    },
+    {
+      "id": "recursion",
+      "expected_stdout": "832040\n",
+      "sources": {
+        "cnako": "benchmarks/comparison/recursion/cnako.nako3",
+        "python": "benchmarks/comparison/recursion/ref.py",
+        "c": "benchmarks/comparison/recursion/ref.c",
+        "rust": "benchmarks/comparison/recursion/ref.rs",
+        "lnako": "benchmarks/comparison/recursion/lnako.nako3"
+      }
+    },
+    {
+      "id": "string-bench",
+      "expected_stdout": "10000\n",
+      "sources": {
+        "cnako": "benchmarks/comparison/string-bench/cnako.nako3",
+        "gonako": "benchmarks/comparison/string-bench/gonako.nako3",
+        "python": "benchmarks/comparison/string-bench/ref.py",
+        "c": "benchmarks/comparison/string-bench/ref.c",
+        "rust": "benchmarks/comparison/string-bench/ref.rs",
+        "lnako": "benchmarks/comparison/string-bench/lnako.nako3"
+      }
+    }
+  ]
+}

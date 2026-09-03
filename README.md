@@ -70,6 +70,21 @@ lnako benchmark
 
 `build`、`run`、`check`、`test`、`compat report`、`benchmark`、ヘルプ、バージョン表示を利用できます。`benchmark`の結果形式やRelease向けの配布手順は、利用者向け導入手順とは分けて [`docs/RELEASE.md`](docs/RELEASE.md) に記録しています。
 
+## 性能比較
+
+以下は同一アルゴリズムを `cnako` (Node.js 版なでしこ3)、`gonako` (Go 版なでしこ3)、Python、C、Rust、`lnako` (interpreter / AOT) で計測した結果です。単位はミリ秒（ms）で、各5サンプルの中央値を記載しています。
+
+計測環境: macOS 15 / arm64、LLVM 23.1.0、Zig 0.16.0、`lnako` AOT および C / Rust は `-O2`。`gonako` はローカル未インストールのため今回未取得です。
+
+| ケース | cnako | gonako | Python | C (run) | Rust (run) | lnako interpreter | lnako AOT run |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| arithmetic-loop | 77.97 | - | 25.60 | 7.75 | 4.66 | 20.66 | 9.78 |
+| array-mutation | 75.48 | - | 25.21 | 6.33 | 5.32 | 8.15 | 4.30 |
+| closure-loop | 88.16 | - | 27.47 | 3.76 | 3.39 | 35.62 | 5.81 |
+| recursion | 3448.29 | - | 119.71 | 6.67 | 8.10 | 2357.54 | 322.42 |
+| string-bench | 79.19 | - | 28.52 | 7.38 | 9.07 | 97.22 | 139.44 |
+`lnako` は AOT 実行時にネイティブコンパイルを活かし、多くのケースで interpreter より高速に動作します。最新の結果は [`.github/workflows/comparison-benchmark.yml`](.github/workflows/comparison-benchmark.yml) から実行できます。
+
 ## 開発者向けドキュメント
 
 - [アーキテクチャ](docs/ARCHITECTURE.md): コンパイル経路、ランタイム、AOT、QuickJSの責務
