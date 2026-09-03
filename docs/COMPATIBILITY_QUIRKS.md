@@ -197,6 +197,7 @@ lnakoはInterpreterと純LLVM AOTでこのown→custom prototype chainの順序�
 | `MAX`・`MIN`のNaNと後続変換 | NaNを含めば結果はNaNだが、その後ろの引数もNumber変換するため、`MAX(非数,1n)`はNaNを返さずBigInt変換例外になる | 全引数を順にNumber変換し、変換成功後にNaN結果を確定する。Zigの`@max` / `@min`固有のNaN選択には依存しない | `AOT集約論理範囲命令は動的値と辞書を返す`、`native-system-aggregate-logical-range-commands` |
 | `÷÷`の負数丸め | 「0方向へ切り捨て」ではなく、公式生成JavaScriptの`Math.floor(left / right)`どおり負の無限大方向へ丸める。`(-5)÷÷2`は`-3` | インタプリタ、動的AOT、数値型が証明済みのLLVM最適化経路の全てでfloorに統一する | `native-dynamic-arithmetic` |
 | `かつ` / `&&`と`または` / `||` | 真偽値へ正規化せず、`and`は偽の左辺または右辺、`or`は真の左辺または右辺の値そのものを返す。結果が左辺で決まる場合、表示や関数呼び出しを含む右辺は実行しない | HIRの両辺を先に評価せず、SSA IRで右辺専用ブロックとPHIを生成して値と副作用を両方一致させる | `論理演算の右辺を短絡分岐とPHIへ変換する`、`native-logical-short-circuit` |
+| 括弧式の末尾助詞 | 公式parserは`(-1>\"\")を反復`のような括弧式で、閉じ括弧直後の`を`を外側の演算子ノードへ設定する。内部の負数表現（公式では`-1 * 1`相当）とそのリテラルへは助詞を伝播しない。内部まで`を`にすると、AST上の引数境界が変わる | `grouped`ノードを助詞伝播の境界にし、外側rootだけへ閉じ括弧の助詞を保持する。Interpreter・純LLVM AOTはこのAST境界を共有し、未実装ではない | 公式v3.7.24 [`nako_parser3.mts`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/core/src/nako_parser3.mts#L2076-L2124)、`fuzz-regression-grouped-josi`、`括弧付き演算子の助詞を内部式へ伝播しない` / TODOなし |
 | 単項`+` | JavaScriptでは数値変換演算子だが、なでしこ3の`+`は二項演算子だけであり、`+1`、`+A`、`+「1」`はいずれも`+`付近の文法エラーになる | 値変換へ下げず、`+`のソース位置を持つ構文診断として拒否する | `公式同様に単項プラスを拒否する`、`parser-diagnostic-cases` |
 
 固定した公式処理系は[`nako_gen.mts`](https://github.com/kujirahand/nadesiko3/blob/3.7.24/core/src/nako_gen.mts)で

@@ -1324,7 +1324,9 @@ fn clearConditionalJosi(node: *ast.Node) void {
 }
 
 fn propagateOperatorJosi(node: *ast.Node, josi: []const u8) void {
-    if (node.kind != .binary_operator) return;
+    // 公式の括弧式は閉じ括弧の助詞をrootへ設定するが、括弧内の
+    // 演算子・リテラルへは伝播させない。grouped rootを境界にする。
+    if (node.kind != .binary_operator or node.grouped) return;
     node.josi = josi;
     for (node.children) |child| if (!child.grouped) propagateOperatorJosi(child, josi);
 }
@@ -1475,6 +1477,19 @@ test "間と繰り返すの間の読点を許可する" {
     defer result.deinit();
     try std.testing.expect(result.succeeded());
     try std.testing.expectEqual(ast.Kind.while_statement, result.root.?.children[0].kind);
+}
+
+test "括弧付き演算子の助詞を内部式へ伝播しない" {
+    var result = try parse(std.testing.allocator, "(-1>\"\")を反復\n対象を表示\nここまで\n", "grouped-josi.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const collection = result.root.?.children[0].children[0];
+    try std.testing.expectEqual(ast.Kind.binary_operator, collection.kind);
+    try std.testing.expectEqualStrings("gt", collection.operator);
+    try std.testing.expectEqualStrings("を", collection.josi);
+    try std.testing.expectEqual(ast.Kind.binary_operator, collection.children[0].kind);
+    try std.testing.expectEqualStrings("", collection.children[0].josi);
+    try std.testing.expectEqualStrings("", collection.children[0].children[0].josi);
 }
 
 test "回だけの繰り返しは公式同様に暗黙のそれを回数へ使う" {
