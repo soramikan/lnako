@@ -231,7 +231,7 @@ node tools/check_tracked_dispatch_attestation.mjs --offline
 
 変更機能の公式差分と`check_dispatch_coverage.mjs`を追加し、artifactを再生成したときだけ台帳件数を更新する。CIは完了まで作業を停止しないが、次のpush前に直近完了runの失敗jobを確認し、失敗があれば原因を調査・修正してからpushする。U22のcompat-js checkerはこの台帳とは別artifactを検査し、nativeのAOT件数を水増ししない。
 
-現在のworkflowは3正式OSを含む51 matrix jobs（通常10、parser fuzz 2、native 27、support 12）＋coverage shard検証job＋1 attestation jobで、macOSは同時実行上限を考慮して1 runあたり5 jobsに固定している。Linux/Windowsのsupport dispatch coverageだけを各3 weighted shardへ分割し、macOSは全件full artifactを生成する。job分割による壁時計短縮の効果は、待ち時間、wall-clock、runner合計、macOS queueを別々に記録し、検証経路を削減した短縮とは扱わない。次のpush前には直近完了runの失敗jobを確認し、実行中runの完了は待たずに作業を継続する。
+現在のworkflowは3正式OSを含む51 matrix jobs（通常10、parser fuzz 2、native 27、support 12）にcoverage shard検証job、native AOT aggregate検証job、attestation jobを加えた54 jobsで、macOSは同時実行上限を考慮して1 runあたり5 jobsに固定している。Linux/Windowsのsupport dispatch coverageだけを各3 weighted shardへ分割し、macOSは全件full artifactを生成する。`verify_native_aot_artifacts`はLinux 12、macOS 3、Windows 12の計27 artifactについて、292 native fixture、O0〜O3のroute、partition、source/toolchain、compile status、結果hashを全件再検証し、成功時だけ`lnako.native-aot-aggregate-evidence.v1`を後段attestationへ渡す。artifactの存在や個別jobの成功は全件AOT証拠とみなさない。job分割による壁時計短縮の効果は、待ち時間、wall-clock、runner合計、macOS queueを別々に記録し、検証経路を削減した短縮とは扱わない。次のpush前には直近完了runの失敗jobを確認し、実行中runの完了は待たずに作業を継続する。
 
 3正式OSの性能・配布証拠は通常CIへ混ぜず、`.github/workflows/release.yml`のタグ／手動workflowで収集する。各OSのReleaseSafe compilerからbenchmark JSON/MarkdownとLLVM/LLD同梱archiveを生成し、aggregate jobでtargetの揃い、共通計測条件、archive sidecar、SPDX SBOM、`SHA256SUMS`を検証する。正式tagのpublishはannotated signed tag、同一source commitのCI成功、`build.zig.zon`のversion一致を前提とし、手動実行ではReleaseを公開しない。未実行のworkflow artifactを性能結果・配布物・Release完了とは扱わない。
 
