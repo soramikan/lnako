@@ -235,6 +235,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   // as a deletion when the provenance commit is compared with HEAD.
   "docs/UNVERIFIED_EVIDENCE_PLAN.md",
   "tools/sync_compat_evidence.mjs",
+  "tools/update_current_evidence.mjs",
 ]);
 const arguments_ = process.argv.slice(2);
 const mode = arguments_[0] ?? "--check";
