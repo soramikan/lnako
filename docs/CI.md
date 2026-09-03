@@ -97,6 +97,8 @@ AOT native 3 route jobへ割り当てる。dispatch supportは早く開始する
 
 その後の[run 33720416549](https://github.com/soramikan/lnako/actions/runs/33720416549)（`a03d77b`）は、AOT nativeを含む大半のjobが成功したが、Linux `core`とmacOS `mac-core-standard-support`の2 jobが`sync_compat_evidence.mjs --check`で失敗した。両jobの同じエラーは`cleanなdispatch証拠のlnako commitが現行HEADと一致しません`であり、Node.js 20非推奨warningやmacOSの5枠待ちは原因ではない。`a03d77b`で追加したRelease workflow・Release checker・Release文書が、dispatch生成を行わないfollow-up許可リストへまだ登録されていなかったため、cleanな`f07e30d`由来の証拠を安全側で拒否した。現行の`b6afead`ではRelease検証ファイルとAOT成果物検証器を許可リストへ追加し、`sync_compat_evidence.mjs --check`、CI構成検査、AOT集約checker self-testを通している。検証範囲を弱めず、証拠生成器・fixture・製品ソースの変更は引き続きfollow-upとして許可しない。
 
+さらに直近の[run 33740228112](https://github.com/soramikan/lnako/actions/runs/33740228112)（`c1f104c`）は、Linux `core`とmacOS `mac-core-standard-support`の`Verify compatibility baseline`が失敗した。両jobの完了済みログは`sync_compat_evidence.mjs --check`の`cleanなdispatch証拠のlnako commitが現行HEADと一致しません`で停止しており、Node.js 20警告やmacOS 5枠待ち、製品の差分テストが原因ではない。parser本体とparser fuzz回帰fixtureを更新したpushに、現行HEAD由来のdispatch／coverage／expected-exit／global binding／static constant／compat-js証拠をまだ再生成していなかったためである。`24df9bb`では全証拠を現行HEAD `c1f104c`から`dirty:false`で再生成し、`sync_compat_evidence.mjs --generate --check`、`sync_compat.mjs --check`、compat report、CI構成検査、dispatch security検査、Zig 845/845を通した。次のpushではこのrunより新しい完了済み失敗を先に確認し、新runの完了は待たずに実装を継続する。
+
 ## AOT検証の共通buildとjob分割
 
 各AOT jobは自身のrunner上でcompilerを一度だけbuildし、`--no-build`の検査へ渡します。native jobは`LNAKO_NATIVE_ORACLE_JOBS=1`
