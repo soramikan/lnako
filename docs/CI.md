@@ -695,6 +695,8 @@ macOS 5 jobのZig tarball、Zig build、LLVM／QuickJS、公式oracle cacheは�
 
 現行CIのbundleは4 subjectを署名する。dispatch検証は3 OS dispatch digestを全て要求し、4件目はnative AOT aggregateの固定ファイル名に限定して追加許容する。aggregateのdigest・27 artifact・292 fixture全件性は`verify_native_aot_attestation.mjs`が別に検証するため、dispatch catalogの昇格条件を緩めたものではない。次回push前にこのrunを完了済み失敗として再確認し、同じattestation bundle構成の成功を確認する。新runの完了は待たずに実装を継続する。
 
+push `a666e5a`では、push前に最新完了失敗のrun `33724560925`（4-subject attestation）と、その直前の`33720416549`（clean dispatch証拠のcommit不一致）を`gh run view --log-failed`で確認した。修正済みの証拠検証器と現行HEAD由来の補助artifactを同じpushへ含め、run `33730631133`がHEAD `a666e5a`に対してqueuedとなったことを記録する。新runの完了・wall-clock・runner合計・macOS 5 jobの実測値は未確定であり、完了を待たず次の実装を継続する。
+
 ## Linux／Windows parser fuzzの独立job化
 
 Linux／Windowsの通常`core` jobから文法生成fuzzを分離し、`parser_fuzz`の2 matrix job（各OS 1件）として実行する。各jobはZig 0.16.0、Node 24.15.0、固定v3.7.24公式oracleだけを準備し、`node tools/fuzz_parser_oracle.mjs --iterations 1024 --seed 20260830`を実行する。回帰fixture9件を含むため、各OSで合計1,033件（生成1,024件＋回帰9件）を検査する。
