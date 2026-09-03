@@ -3,7 +3,7 @@ import { createWriteStream } from "node:fs";
 import { access, appendFile, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
@@ -58,7 +58,7 @@ async function install() {
     if (actualHash !== artifact.sha256) {
       throw new Error(`LLVM配布物のSHA-256不一致: expected=${artifact.sha256} actual=${actualHash}`);
     }
-    run("tar", ["-xJf", archive, "-C", staging]);
+    run("tar", ["-xJf", basename(archive)], staging);
     const entries = (await readdir(staging, { withFileTypes: true })).filter((entry) => entry.isDirectory());
     if (entries.length !== 1) throw new Error(`LLVM配布物の展開ルートが一意ではありません: ${entries.map((entry) => entry.name).join(", ")}`);
     const extracted = resolve(staging, entries[0].name);
@@ -208,7 +208,7 @@ function capture(command, args) {
   return result.stdout;
 }
 
-function run(command, args) {
-  const result = spawnSync(command, args, { cwd: root, stdio: "inherit" });
+function run(command, args, cwd = root) {
+  const result = spawnSync(command, args, { cwd, stdio: "inherit" });
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} が失敗しました`);
 }

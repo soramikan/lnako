@@ -49,6 +49,7 @@ jobs:
       - uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
         with:
           go-version: 1.26.0
+          cache: false
 
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
 
@@ -68,10 +69,15 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/toolchains
-          key: comparison-toolchains-llvm-22.1.8-${{ matrix.target }}-v2
+          key: toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ runner.os }}-${{ runner.arch }}-v2-minimal
+          restore-keys: |
+            toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ runner.os }}-${{ runner.arch }}-v1
 
       - name: Set up pinned LLVM and LLD
         run: node tools/setup_llvm.mjs
+
+      - name: Prune LLVM toolchain cache
+        run: node tools/prune_llvm_toolchain.mjs
 
       - name: Build ReleaseSafe compiler
         run: zig build -Doptimize=ReleaseSafe
