@@ -3,6 +3,9 @@
 この文書は、検証範囲を維持したままGitHub Actionsの待ち時間を短縮する構成と、直感だけでは分かりにくい
 取消・キャッシュ規則を記録します。
 
+過去runの節に現れる45 job／49 matrix jobは、その時点の構成と測定値を示す履歴である。現行構成は、通常10 job、
+Linux／Windows専用parser fuzz 2 job、AOT 39 jobの合計51 matrix jobであり、macOSは5 job以内に固定する。
+
 ## 変更前の実測
 
 2026-08-25の[run 32818778076](https://github.com/soramikan/lnako/actions/runs/32818778076)では、各OSの全検証を
@@ -144,7 +147,7 @@ pushされた場合だけ、進行中の古いrunを取り消します。別ブ�
 
 最新commitは古いcommitを祖先として含むため、最新runが累積したソースを全スイートで検証します。一方、取り消された
 個々のcommitにはGitHub上の完走記録が残らないため、機能コミット前のローカル検証と署名を省略してよい規則では
-ありません。リリース候補やマイルストーンのcommitは、後続pushを止めて全49 matrix job、coverage shard検証job、attestation jobの完走を証拠として残します。
+ありません。リリース候補やマイルストーンのcommitは、後続pushを止めて全51 matrix job、coverage shard検証job、attestation jobの完走を証拠として残します。
 
 追跡中のdispatch証拠が直前のfixture commitを指す場合、`sync_compat_evidence.mjs`はそのcommitから現HEADまでの変更が
 CI・文書・証拠検証のallowlistだけであることを`git merge-base`とpath差分で確認します。この検査に必要な履歴を確保するため、
@@ -163,7 +166,7 @@ Linux／Windowsの`core`とmacOSの`mac-core-standard-support`の3 jobだけは`
 
 ### Zig build cacheの保存対象
 
-`mlugg/setup-zig`のbuild cacheは、保存keyへrun IDとattemptが付くため、全49 matrixジョブで有効にすると最大49個の新規cacheが
+`mlugg/setup-zig`のbuild cacheは、保存keyへrun IDとattemptが付くため、全51 matrixジョブで有効にすると最大51個の新規cacheが
 runごとに増えます。2026-08-27に確認した時点では、Actions cacheが30件・約11.6 GBに達し、固定Linux LLVM cacheが
 退避された後のrunで5つのLinuxジョブが同じ配布物の取得・SHA-256検証・展開を約148秒ずつ重複していました。
 
@@ -625,12 +628,12 @@ attestationが成功したため、macOS 5 job制約を守ったjob分割の短�
 ## Linux／WindowsのAOT support目的別job分割
 
 worker数を増やしても壁時計の改善が再現しなかったため、supportの同一runner内並列をjob境界へ移した。Linux／Windowsそれぞれで、
-`support-http`、`support-dispatch-evidence`、`support-dispatch-coverage`、`support-smoke`の4 jobを起動する。これによりAOT matrixは
-native 27 job＋support 8 job、通常test 10 jobの計45 test jobとなる。
+`support-http`、`support-dispatch-evidence`、`support-dispatch-coverage`（3 shard）、`support-smoke`の6 jobを起動する。これによりAOT matrixは
+native 27 job＋support 12 job、通常test 10 job＋parser fuzz 2 jobの計51 matrix jobとなる。
 
 各support jobの検証内容は維持する。HTTP jobは先行`zig build`後に公式HTTP serverとの差分をO0〜O3で実行し、evidence jobは
 先行build後にcanonical dispatch traceとtiny fixtureのsecurity不変条件を検査してevidence artifactを保存する。coverage jobは先行build後に
-全fixture・全siteのdispatch coverageを検査してcoverage artifactを保存する。smoke jobはReleaseSafe compilerをbuildし、`--version`、compat report、
+全fixture・全siteのdispatch coverageを3 shardへ分けて検査し、coverage artifactを保存する。smoke jobはReleaseSafe compilerをbuildし、`--version`、compat report、
 2件の`check`、通常`run`、`test`を実行する。dispatch evidence artifactは従来どおりattestation jobの3 OS subjectへ使い、coverage artifactも保存する。
 
 目的別jobではsetup、固定LLVM／QuickJS、公式オラクル取得、必要なcompiler buildが重複するため、単一runのrunner合計時間は増える可能性がある。
@@ -638,7 +641,7 @@ native 27 job＋support 8 job、通常test 10 jobの計45 test jobとなる。
 `mac-core-standard-support`、`mac-host-compat`、native route 3 jobの5件を維持し、supportを追加して6件目のqueueを発生させない。
 
 この変更のCI性能値は未確定であり、次のpushでは先に直前の完了済みrunの結論と失敗ログを確認する。新runの完了は待たずに実装を続け、
-次回push前にLinux／Windowsの4 support jobの開始待ち、各step時間、run全体のwall-clock、runner合計、cache hit/miss、3 OS artifact、attestationを確認する。
+次回push前にLinux／Windowsの6 support job（coverage 3 shardを含む）の開始待ち、各step時間、run全体のwall-clock、runner合計、cache hit/miss、3 OS artifact、attestationを確認する。
 
 ## 直近CIの待機とmacOS 5枠（run 33505339154）
 
@@ -690,4 +693,4 @@ macOSは既存の`mac-core-standard-support`内で同じfuzzを実行し、`mac-
 
 この分離でLinux／Windowsのcore jobはparser fuzzの実行と生成compilerの待ち時間から解放され、検証内容自体は削減しない。parser専用jobはLLVM／QuickJSやAOT証拠を必要としないため、それらの取得を繰り返さない。専用jobのsetupが増えるためrunner合計時間が減るとは仮定せず、次の完了済みrunでwall-clock、runner合計、各job／step時間、cache hit/missを測定する。現在の変更ではまだGitHub Actionsの実測値は確定していない。
 
-次回push時には、まず`d2000116`以降の最新完了runについて失敗jobと`gh run view --log-failed`を確認する。その後、新runの完了を待たずに次の実装を進め、次回push前にparser fuzz 2 job、macOS 5 job、全AOT native／support job、coverage、attestationの成否を再確認する。
+直近push `6b0d036`に対するrun `33719393574`は、push後の起動状態をqueuedとして確認した。次回push時にも、まずその時点の最新完了runについて失敗jobと`gh run view --log-failed`を確認する。新runの完了は待たずに次の実装を進め、次回push前にparser fuzz 2 job、macOS 5 job、全AOT native／support job、coverage、attestationの成否を再確認する。
