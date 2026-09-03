@@ -236,6 +236,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "docs/UNVERIFIED_EVIDENCE_PLAN.md",
   "tools/sync_compat_evidence.mjs",
   "tools/update_current_evidence.mjs",
+  "tools/fast_forward_evidence.mjs",
 ]);
 const arguments_ = process.argv.slice(2);
 const mode = arguments_[0] ?? "--check";
