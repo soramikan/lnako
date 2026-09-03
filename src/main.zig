@@ -1203,9 +1203,10 @@ const CliHost = struct {
             if (task.token != token) continue;
             const complete = task.complete.load(.acquire);
             if (!complete) return null;
+            const task_order = task.completion_order.load(.acquire);
             for (self.async_tasks.items) |other| {
                 if (other == task or !other.complete.load(.acquire)) continue;
-                if (other.completion_order < task.completion_order) return null;
+                if (other.completion_order.load(.acquire) < task_order) return null;
             }
             const failure = task.failure;
             const source = task.result;
@@ -1557,19 +1558,19 @@ const AsyncOperationTask = struct {
     operation: AsyncOperation,
     thread: ?std.Thread = null,
     complete: std.atomic.Value(bool) = .init(false),
-    completion_order: u64 = 0,
+    completion_order: std.atomic.Value(u64) = .init(0),
     result: ?lnako.plugins.node.CommandResult = null,
     failure: ?anyerror = null,
 
     fn run(self: *@This()) void {
         const result = self.execute() catch |err| {
             self.failure = err;
-            self.completion_order = self.host.async_completion_sequence.fetchAdd(1, .monotonic);
+            self.completion_order.store(self.host.async_completion_sequence.fetchAdd(1, .monotonic), .release);
             self.complete.store(true, .release);
             return;
         };
         self.result = result;
-        self.completion_order = self.host.async_completion_sequence.fetchAdd(1, .monotonic);
+        self.completion_order.store(self.host.async_completion_sequence.fetchAdd(1, .monotonic), .release);
         self.complete.store(true, .release);
     }
 
