@@ -60,7 +60,9 @@ jobs:
         run: go install github.com/kujirahand/nadesiko3go/cmd/gonako@latest
 
       - name: Verify external runtimes
+        shell: bash
         run: |
+          set -euo pipefail
           cnako3 -v
           gonako -e '1を表示'
           go version
@@ -85,7 +87,9 @@ jobs:
       - name: Run comparison benchmark
         env:
           LNAKO_BENCHMARK_LNAKO: ${{ github.workspace }}/zig-out/bin/${{ matrix.lnako_executable }}
+        shell: bash
         run: |
+          set -euo pipefail
           node tools/run_comparison_benchmark.mjs \
             --iterations 3 \
             --warmup 1 \
@@ -94,7 +98,9 @@ jobs:
             --markdown "$RUNNER_TEMP/benchmark-${{ matrix.target }}.md"
 
       - name: Verify comparison benchmark result
+        shell: bash
         run: |
+          set -euo pipefail
           node tools/check_comparison_benchmark.mjs \
             --json "$RUNNER_TEMP/benchmark-${{ matrix.target }}.json" \
             --markdown "$RUNNER_TEMP/benchmark-${{ matrix.target }}.md"

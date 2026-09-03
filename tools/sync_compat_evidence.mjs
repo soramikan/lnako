@@ -170,6 +170,7 @@ const runtimeFixtureFiles = new Set([
 const dispatchEvidenceFollowUpPaths = new Set([
   ".github/workflows/ci.yml",
   ".github/workflows/release.yml",
+  ".github/workflows/comparison-benchmark.yml",
   "README.md",
   "benchmarks/results/latest.json",
   "benchmarks/results/latest.md",

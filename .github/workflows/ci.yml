@@ -94,7 +94,9 @@ jobs:
         run: rm -rf -- zig-out
       - name: Verify compatibility baseline
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
+        shell: bash
         run: |
+          set -euo pipefail
           node tools/check_ci_workflow.mjs
           node tools/check_release_workflow.mjs
           node tools/check_dispatch_attestation_security.mjs
@@ -147,7 +149,9 @@ jobs:
         run: node tools/compare_interpreter_oracle.mjs
       - name: Differential plugin_system test
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
+        shell: bash
         run: |
+          set -euo pipefail
           node tools/generate_unicode_case.mjs --check
           node tools/generate_unicode_properties.mjs --check
           node tools/update_plugin_system_implemented.mjs --check
@@ -156,7 +160,9 @@ jobs:
           node tools/compare_plugin_system_oracle.mjs
       - name: Differential standard plugin test
         if: matrix.suite == 'standard' || matrix.suite == 'mac-core-standard-support'
+        shell: bash
         run: |
+          set -euo pipefail
           node tools/check_standard_plugin_coverage.mjs
           node tools/compare_standard_plugin_oracle.mjs
           node tools/update_supplemental_implemented.mjs --check
@@ -164,7 +170,9 @@ jobs:
           node tools/compare_supplemental_plugin_oracle.mjs
       - name: Differential QuickJS compatibility test
         if: matrix.suite == 'host' || matrix.suite == 'mac-host-compat'
+        shell: bash
         run: |
+          set -euo pipefail
           node tools/check_compat_js_coverage.mjs
           node tools/compare_compat_js_oracle.mjs
           node tools/check_compat_js_evidence.mjs --no-build
@@ -173,7 +181,9 @@ jobs:
         run: node tools/check_native_plugin_abi.mjs --release-safe
       - name: Differential Node host test
         if: matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support'
+        shell: bash
         run: |
+          set -euo pipefail
           node tools/generate_legacy_encoding.mjs --check
           node tools/update_node_implemented.mjs --check
           node tools/check_node_plugin_coverage.mjs
@@ -233,6 +243,7 @@ jobs:
         if: matrix.suite == 'mac-core-standard-support'
         shell: bash
         run: |
+          set -euo pipefail
           ./zig-out/bin/lnako --version
           node tools/check_compat_report.mjs --no-build
           ./zig-out/bin/lnako check tests/fixtures/check-valid.nako3
@@ -694,6 +705,7 @@ jobs:
           FIXTURE_SHARD_COUNT: ${{ matrix.fixtureShardCount }}
         shell: bash
         run: |
+          set -euo pipefail
           native_args=(
             --no-build
             --optimizations "${{ matrix.optimizations }}"
@@ -771,6 +783,7 @@ jobs:
         if: matrix.task == 'support-smoke'
         shell: bash
         run: |
+          set -euo pipefail
           ./zig-out/bin/lnako --version
           node tools/check_compat_report.mjs --no-build
           ./zig-out/bin/lnako check tests/fixtures/check-valid.nako3
@@ -883,7 +896,9 @@ jobs:
       - name: Verify artifact attestations and catalog promotion
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
+          set -euo pipefail
           node tools/verify_dispatch_attestation.mjs \
             --directory "${{ runner.temp }}/dispatch-evidence" \
             --bundle "${{ steps.attest-dispatch.outputs.bundle-path }}" \
@@ -896,7 +911,9 @@ jobs:
       - name: Verify native AOT artifact attestation
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
+          set -euo pipefail
           node tools/verify_native_aot_attestation.mjs \
             --evidence "${{ runner.temp }}/native-aot-evidence/lnako-native-aot-aggregate-evidence.json" \
             --bundle "${{ steps.attest-dispatch.outputs.bundle-path }}" \

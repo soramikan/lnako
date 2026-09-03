@@ -1,8 +1,10 @@
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 const workflow = await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8");
+const comparisonBenchmarkWorkflow = await readFile(resolve(root, ".github/workflows/comparison-benchmark.yml"), "utf8");
 const floatingActions = [...workflow.matchAll(/uses: ([^\s@]+)@([^\s#]+)/g)]
   .filter((match) => !/^[0-9a-f]{40}$/.test(match[2]))
   .map((match) => `${match[1]}@${match[2]}`);
@@ -503,7 +505,40 @@ if (Number(oracleBuild) !== oracleIdentity.build || !setupOracle.includes("oracl
 const oracleCacheKey = `key: nadesiko3-oracle-3.7.24-\${{ runner.os }}-\${{ runner.arch }}-a${oracleArchiveSha256.slice(0, 12)}-v${oracleBuild}`;
 if (!workflow.includes(oracleCacheKey)) throw new Error(`公式オラクルのキャッシュキーがoracleBuildと一致しません: ${oracleCacheKey}`);
 
+checkFailFastShell(workflow, ".github/workflows/ci.yml");
+checkFailFastShell(comparisonBenchmarkWorkflow, ".github/workflows/comparison-benchmark.yml");
+checkBashFailFastBehavior();
+
 console.log(`CI構成検査: ${matrixEntries.length} matrixジョブ＋coverage shard検証＋native AOT集約検証＋1 attestationジョブ・${stepSuites.size}条件付き検証ステップ成功`);
+
+function checkFailFastShell(workflowText, filename) {
+  const stepHeaders = [...workflowText.matchAll(/^      - name: .*$/gm)];
+  for (let index = 0; index < stepHeaders.length; index += 1) {
+    const start = stepHeaders[index].index;
+    const end = stepHeaders[index + 1]?.index ?? workflowText.length;
+    const block = workflowText.slice(start, end);
+    if (!block.includes("run: |\n")) continue;
+    const name = block.match(/^      - name: (.+)$/m)?.[1] ?? "unknown";
+    if (!block.includes("shell: bash\n")) {
+      throw new Error(`${filename}の「${name}」ステップは複数行runにshell: bashがありません`);
+    }
+    const runMatch = block.match(/ {8}run: \|\n([\s\S]*?)(?= {6}- |$)/);
+    if (!runMatch) {
+      throw new Error(`${filename}の「${name}」ステップのrun内容を解析できません`);
+    }
+    const firstRunLine = runMatch[1].split("\n")[0].trim();
+    if (firstRunLine !== "set -euo pipefail") {
+      throw new Error(`${filename}の「${name}」ステップはset -euo pipefailでは始まっていません`);
+    }
+  }
+}
+
+function checkBashFailFastBehavior() {
+  const result = spawnSync("bash", ["-c", "set -euo pipefail; false; true"], { encoding: "utf8" });
+  if (result.status === 0) {
+    throw new Error("fail-fastなbashで最初の失敗が検出されません（'false; true'が成功しました）");
+  }
+}
 
 function assertSetEqual(actual, expected, label) {
   const missing = [...expected].filter((value) => !actual.has(value));
