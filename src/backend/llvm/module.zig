@@ -2164,7 +2164,7 @@ const Emitter = struct {
         const flags_start = self.next_metadata;
         try writer.print("!llvm.module.flags = !{{!{d}, !{d}}}\n", .{ flags_start, flags_start + 1 });
         try writer.print("!llvm.ident = !{{!{d}}}\n\n", .{flags_start + 2});
-        try writer.writeAll("!0 = distinct !DICompileUnit(language: DW_LANG_C99, file: !1, producer: \"lnako Zig+LLVM 22.1.8\", isOptimized: ");
+        try writer.writeAll("!0 = distinct !DICompileUnit(language: DW_LANG_C99, file: !1, producer: \"lnako Zig+LLVM\", isOptimized: ");
         try writer.writeAll(if (self.optimized) "true" else "false");
         try writer.writeAll(", runtimeVersion: 0, emissionKind: FullDebug)\n!1 = !DIFile(filename: \"");
         try writeMetadataString(writer, file_name);

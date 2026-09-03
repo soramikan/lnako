@@ -107,7 +107,12 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
     defer generated.deinit(allocator);
     try trace(options.trace, diagnostics, "LLVM共有ライブラリを読み込みます");
     var api = api_mod.Api.openAt(allocator, llvm_root, options.llvm_library) catch |failure| {
-        try diagnostics.print("LLVM 22.1.8を読み込めません: {s}\n", .{@errorName(failure)});
+        try diagnostics.print("対応するLLVM/LLD ({d}.{d}+-{d}.x) を読み込めません: {s}\n", .{
+            api_mod.min_supported_version.major,
+            api_mod.min_supported_version.minor,
+            api_mod.max_supported_version.major,
+            @errorName(failure),
+        });
         return failure;
     };
     defer api.close();
@@ -377,14 +382,39 @@ fn findLinkTools(allocator: std.mem.Allocator, io: std.Io, llvm_root: ?[]const u
         return .{ .clang = clang, .lld = lld };
     }
     const clang_candidates: []const []const u8 = switch (builtin.os.tag) {
-        .macos => &.{ "/opt/homebrew/opt/llvm/bin/clang", "/usr/local/opt/llvm/bin/clang", "clang-22", "clang" },
+        .macos => &.{
+            "/opt/homebrew/opt/llvm/bin/clang",
+            "/opt/homebrew/opt/llvm@21/bin/clang",
+            "/usr/local/opt/llvm/bin/clang",
+            "clang-22",
+            "clang-21",
+            "clang",
+        },
         .windows => &.{ "clang.exe", "clang-cl.exe" },
-        else => &.{ "/usr/lib/llvm-22/bin/clang", "/usr/local/bin/clang-22", "clang-22", "clang" },
+        else => &.{
+            "/usr/lib/llvm-22/bin/clang",
+            "/usr/lib/llvm-21/bin/clang",
+            "/usr/local/bin/clang-22",
+            "/usr/local/bin/clang-21",
+            "clang-22",
+            "clang-21",
+            "clang",
+        },
     };
     const lld_candidates: []const []const u8 = switch (builtin.os.tag) {
-        .macos => &.{ "/opt/homebrew/opt/lld/bin/ld64.lld", "/usr/local/opt/lld/bin/ld64.lld", "ld64.lld" },
+        .macos => &.{
+            "/opt/homebrew/opt/lld/bin/ld64.lld",
+            "/opt/homebrew/opt/lld@21/bin/ld64.lld",
+            "/usr/local/opt/lld/bin/ld64.lld",
+            "ld64.lld",
+        },
         .windows => &.{ "lld-link.exe", "lld-link" },
-        else => &.{ "/usr/lib/llvm-22/bin/ld.lld", "/usr/local/bin/ld.lld", "ld.lld" },
+        else => &.{
+            "/usr/lib/llvm-22/bin/ld.lld",
+            "/usr/lib/llvm-21/bin/ld.lld",
+            "/usr/local/bin/ld.lld",
+            "ld.lld",
+        },
     };
     const clang = try findVersionedTool(allocator, io, clang_candidates);
     errdefer allocator.free(clang);
@@ -397,19 +427,45 @@ fn findVersionedTool(allocator: std.mem.Allocator, io: std.Io, candidates: []con
         requireVersionedTool(allocator, io, candidate) catch continue;
         return allocator.dupe(u8, candidate);
     }
-    return error.Llvm22LinkerToolsNotFound;
+    return error.LlvmLinkerToolsNotFound;
 }
 
 fn requireVersionedTool(allocator: std.mem.Allocator, io: std.Io, candidate: []const u8) !void {
-    const result = std.process.run(allocator, io, .{ .argv = &.{ candidate, "--version" }, .stdout_limit = .limited(64 * 1024), .stderr_limit = .limited(64 * 1024) }) catch return error.Llvm22LinkerToolsNotFound;
+    const result = std.process.run(allocator, io, .{ .argv = &.{ candidate, "--version" }, .stdout_limit = .limited(64 * 1024), .stderr_limit = .limited(64 * 1024) }) catch return error.LlvmLinkerToolsNotFound;
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
     const succeeded = switch (result.term) {
         .exited => |code| code == 0,
         else => false,
     };
-    if (!succeeded) return error.Llvm22LinkerToolsNotFound;
-    if (std.mem.indexOf(u8, result.stdout, "22.1.8") == null and std.mem.indexOf(u8, result.stderr, "22.1.8") == null) return error.Llvm22LinkerToolsNotFound;
+    if (!succeeded) return error.LlvmLinkerToolsNotFound;
+    const version = parseVersionFromOutput(result.stdout) orelse parseVersionFromOutput(result.stderr) orelse return error.LlvmLinkerToolsNotFound;
+    if (!api_mod.isSupportedVersion(version)) return error.LlvmLinkerToolsNotFound;
+}
+
+fn parseVersionFromOutput(output: []const u8) ?api_mod.Version {
+    var i: usize = 0;
+    while (i < output.len) {
+        while (i < output.len and !std.ascii.isDigit(output[i])) i += 1;
+        if (i >= output.len) break;
+        const major_start = i;
+        while (i < output.len and std.ascii.isDigit(output[i])) i += 1;
+        if (i >= output.len or output[i] != '.') continue;
+        const major = std.fmt.parseInt(u32, output[major_start..i], 10) catch continue;
+        i += 1; // skip '.'
+        if (i >= output.len or !std.ascii.isDigit(output[i])) continue;
+        const minor_start = i;
+        while (i < output.len and std.ascii.isDigit(output[i])) i += 1;
+        if (i >= output.len or output[i] != '.') continue;
+        const minor = std.fmt.parseInt(u32, output[minor_start..i], 10) catch continue;
+        i += 1; // skip '.'
+        if (i >= output.len or !std.ascii.isDigit(output[i])) continue;
+        const patch_start = i;
+        while (i < output.len and std.ascii.isDigit(output[i])) i += 1;
+        const patch = std.fmt.parseInt(u32, output[patch_start..i], 10) catch continue;
+        return .{ .major = major, .minor = minor, .patch = patch };
+    }
+    return null;
 }
 
 test "LLVM C APIで全最適化レベルのモジュールを検証してIRを出力する" {
@@ -465,4 +521,14 @@ test "捕捉ありクロージャをLLVM生成対象として受理する" {
     defer generated.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.indexOf(u8, generated.text, "@lnako_aot_function_capture") != null);
     try std.testing.expect(std.mem.indexOf(u8, generated.text, "closure.capture") != null);
+}
+
+test "Clang/LLDのバージョン出力から最初の3桁バージョンを解析する" {
+    const homebrew_clang = "Homebrew clang version 22.1.8\nTarget: arm64-apple-darwin27.0.0\n";
+    const homebrew_lld = "Homebrew LLD 21.1.8\n";
+    const ubuntu_clang = "Ubuntu clang version 21.1.7-++2025xxxx\n";
+    try std.testing.expectEqual(api_mod.Version{ .major = 22, .minor = 1, .patch = 8 }, parseVersionFromOutput(homebrew_clang).?);
+    try std.testing.expectEqual(api_mod.Version{ .major = 21, .minor = 1, .patch = 8 }, parseVersionFromOutput(homebrew_lld).?);
+    try std.testing.expectEqual(api_mod.Version{ .major = 21, .minor = 1, .patch = 7 }, parseVersionFromOutput(ubuntu_clang).?);
+    try std.testing.expect(parseVersionFromOutput("no version here") == null);
 }
