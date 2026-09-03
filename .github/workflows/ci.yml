@@ -119,8 +119,8 @@ jobs:
       - name: Differential parser test
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node tools/compare_parser_oracle.mjs
-      - name: Grammar-generating parser fuzz test
-        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
+      - name: Grammar-generating parser fuzz test (macOS)
+        if: matrix.suite == 'mac-core-standard-support'
         run: node tools/fuzz_parser_oracle.mjs --iterations 1024 --seed 20260830
       - name: Differential parser diagnostic test
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
@@ -241,6 +241,38 @@ jobs:
           ./zig-out/bin/lnako check tests/fixtures/module/main.nako3
           ./zig-out/bin/lnako run tests/fixtures/run-control.nako3
           ./zig-out/bin/lnako test tests/fixtures/run-tests.nako3
+
+  parser_fuzz:
+    name: ${{ matrix.name }} / parser fuzz
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            suite: parser-fuzz
+          - name: Windows x86_64
+            os: windows-2025
+            suite: parser-fuzz
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+          use-cache: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/oracle
+          key: nadesiko3-oracle-3.7.24-${{ runner.os }}-${{ runner.arch }}-ac3bedbf10111-v4
+      - name: Build official oracle
+        run: node tools/setup_oracle.mjs
+      - name: Grammar-generating parser fuzz test
+        run: node tools/fuzz_parser_oracle.mjs --iterations 1024 --seed 20260830
 
   aot:
     name: ${{ matrix.name }} / ${{ matrix.jobName }}
@@ -749,8 +781,8 @@ jobs:
 
   attest-dispatch-evidence:
     name: Attest and verify dispatch evidence
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') && needs.test.result == 'success' && needs.aot.result == 'success' && needs.verify_dispatch_coverage.result == 'success'
-    needs: [test, aot, verify_dispatch_coverage]
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') && needs.test.result == 'success' && needs.parser_fuzz.result == 'success' && needs.aot.result == 'success' && needs.verify_dispatch_coverage.result == 'success'
+    needs: [test, parser_fuzz, aot, verify_dispatch_coverage]
     runs-on: ubuntu-24.04
     permissions:
       contents: read

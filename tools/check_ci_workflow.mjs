@@ -55,7 +55,7 @@ const expectedMatrix = new Set();
 for (const [name, os] of platforms) {
   const expectedSuites = name === "macOS arm64"
     ? ["mac-core-standard-support", "mac-host-compat", "aot-native"]
-    : suites;
+    : [...suites, "parser-fuzz"];
   for (const suite of expectedSuites) expectedMatrix.add(`${name}\0${os}\0${suite}`);
 }
 assertSetEqual(actualMatrix, expectedMatrix, "CI matrix");
@@ -90,7 +90,25 @@ const expectedSupportRowCount = [...expectedSupportTaskCounts.values()].reduce((
 if (nativeAotMatrixEntries.length !== expectedNativeRowCount || supportAotMatrixEntries.length !== expectedSupportRowCount) {
   throw new Error(`AOT job分割数が不正です: native=${nativeAotMatrixEntries.length} support=${supportAotMatrixEntries.length}`);
 }
-if (matrixEntries.length !== 49) throw new Error(`CI matrixの実job数が不正です: actual=${matrixEntries.length}`);
+if (matrixEntries.length !== 51) throw new Error(`CI matrixの実job数が不正です: actual=${matrixEntries.length}`);
+const parserFuzzJob = workflow.match(/  parser_fuzz:[\s\S]*?(?=\n  aot:)/)?.[0];
+if (!parserFuzzJob || !parserFuzzJob.includes("strategy:\n      fail-fast: false") ||
+    !parserFuzzJob.includes("runs-on: ${{ matrix.os }}") || !parserFuzzJob.includes("timeout-minutes: 20") ||
+    !parserFuzzJob.includes("suite: parser-fuzz") ||
+    (parserFuzzJob.match(/^          - name: /gm) ?? []).length !== 2 ||
+    !parserFuzzJob.includes("mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1") ||
+    !parserFuzzJob.includes("version: 0.16.0") || !parserFuzzJob.includes("use-cache: false") ||
+    !parserFuzzJob.includes("actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0") ||
+    !parserFuzzJob.includes("node-version: 24.15.0") ||
+    !parserFuzzJob.includes("actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0") ||
+    !parserFuzzJob.includes("path: .cache/oracle") ||
+    !parserFuzzJob.includes("node tools/setup_oracle.mjs") ||
+    !parserFuzzJob.includes("node tools/fuzz_parser_oracle.mjs --iterations 1024 --seed 20260830")) {
+  throw new Error("Linux／Windows専用parser fuzz jobの構成が不完全です");
+}
+if (parserFuzzJob.includes("macos-15") || parserFuzzJob.includes("macOS arm64")) {
+  throw new Error("parser fuzz専用jobへmacOSを追加してrunner上限5を超えています");
+}
 const nativeAotJob = workflow.match(/  aot:[\s\S]*?(?=\n  (?:verify_dispatch_coverage|attest-dispatch-evidence):)/)?.[0];
 if (!nativeAotJob) throw new Error("分割AOT jobがありません");
 const nativeShardRows = [...nativeAotJob.matchAll(/^          - name: (.+)\n            os: (.+)\n            suite: aot-native\n            task: native\n            fixtureShardIndex: (\d+)\n            fixtureShardCount: (\d+)\n            fixtureSharded: (true|false)\n            optimizationKey: (.+)\n            optimizations: (.+)\n            jobName: (.+)$/gm)]
@@ -138,7 +156,7 @@ const stepSuites = new Map([
   ["Differential lexer test", "core"],
   ["Differential syntax transform test", "core"],
   ["Differential parser test", "core"],
-  ["Grammar-generating parser fuzz test", "core"],
+  ["Grammar-generating parser fuzz test (macOS)", "macos-fuzz"],
   ["Differential parser diagnostic test", "core"],
   ["Differential semantic test", "core"],
   ["Differential semantic diagnostic test", "core"],
@@ -160,7 +178,9 @@ for (const [name, suite] of stepSuites) {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const condition = suite === "core"
     ? "matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'"
-    : suite === "standard"
+    : suite === "macos-fuzz"
+      ? "matrix.suite == 'mac-core-standard-support'"
+      : suite === "standard"
       ? "matrix.suite == 'standard' || matrix.suite == 'mac-core-standard-support'"
       : suite === "host"
         ? "matrix.suite == 'host' || matrix.suite == 'mac-host-compat'"
@@ -169,10 +189,13 @@ for (const [name, suite] of stepSuites) {
   if (!pattern.test(workflow)) throw new Error(`${name}のsuite条件が${suite}ではありません`);
 }
 
-const testJob = workflow.match(/  test:[\s\S]*?(?=\n  aot:)/)?.[0];
+const testJob = workflow.match(/  test:[\s\S]*?(?=\n  parser_fuzz:|\n  aot:)/)?.[0];
 if (!testJob) throw new Error("通常test jobがありません");
 if (!testJob.includes("name: Clear generated Zig install outputs\n        shell: bash\n        run: rm -rf -- zig-out")) {
   throw new Error("差分test前に生成Zig install出力を消去する再発防止策がありません");
+}
+if (testJob.includes("Grammar-generating parser fuzz test\n")) {
+  throw new Error("Linux／Windowsのparser fuzzを通常core jobへ残さないでください");
 }
 if (!interpreterOracleScript.includes("sanity.error?.code !== \"ENOEXEC\"") ||
     !interpreterOracleScript.includes("rmSync(resolve(root, \"zig-out\")") ||
@@ -325,7 +348,7 @@ if (!coverageVerificationJob || !coverageVerificationJob.includes("if: needs.tes
 }
 const attestJob = workflow.match(/  attest-dispatch-evidence:[\s\S]*$/)?.[0];
 if (!attestJob || !attestJob.includes("github.event_name == 'push'") || !attestJob.includes("github.ref == 'refs/heads/main'") ||
-    !attestJob.includes("needs: [test, aot, verify_dispatch_coverage]") || !attestJob.includes("needs.test.result == 'success'") || !attestJob.includes("needs.aot.result == 'success'") || !attestJob.includes("needs.verify_dispatch_coverage.result == 'success'") || !attestJob.includes("id-token: write") || !attestJob.includes("attestations: write") || !attestJob.includes("artifact-metadata: write") ||
+    !attestJob.includes("needs: [test, parser_fuzz, aot, verify_dispatch_coverage]") || !attestJob.includes("needs.test.result == 'success'") || !attestJob.includes("needs.parser_fuzz.result == 'success'") || !attestJob.includes("needs.aot.result == 'success'") || !attestJob.includes("needs.verify_dispatch_coverage.result == 'success'") || !attestJob.includes("id-token: write") || !attestJob.includes("attestations: write") || !attestJob.includes("artifact-metadata: write") ||
     !attestJob.includes("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1") || !attestJob.includes("merge-multiple: true") ||
     !attestJob.includes("actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2") || !attestJob.includes("node tools/verify_dispatch_attestation.mjs") ||
     !attestJob.includes("id: attest-dispatch") || !attestJob.includes("--bundle \"${{ steps.attest-dispatch.outputs.bundle-path }}\"") ||
@@ -367,9 +390,10 @@ const setupZigBlocks = [...workflow.matchAll(
   /      - uses: mlugg\/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2\.2\.1[\s\S]*?(?=      - uses: actions\/setup-node@)/g,
 )].map((match) => match[0]);
 const setupZigCacheSizeLimitMiB = 1536;
-if (setupZigBlocks.length !== 2 ||
+if (setupZigBlocks.length !== 3 ||
     !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.suite == 'host' || matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat' }}") && block.includes("cache-key: ${{ matrix.suite }}")) ||
     !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: ${{ matrix.task == 'native' }}") && block.includes("cache-key: ${{ matrix.suite }}")) ||
+    !setupZigBlocks.some((block) => block.includes("version: 0.16.0") && block.includes("use-cache: false")) ||
     (workflow.match(/cache-size-limit:/g) ?? []).length !== 2) {
   throw new Error(`setup-zigのcache保存対象または${setupZigCacheSizeLimitMiB} MiB上限が不正です`);
 }
@@ -398,7 +422,7 @@ if (oracleSkipConditions.length !== 3) {
 }
 
 const cacheActions = [...workflow.matchAll(/^      - uses: actions\/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6\.1\.0$/gm)];
-if (cacheActions.length !== 4) throw new Error(`actions/cache v6.1.0固定SHAは4ステップ必要です: actual=${cacheActions.length}`);
+if (cacheActions.length !== 5) throw new Error(`actions/cache v6.1.0固定SHAは5ステップ必要です: actual=${cacheActions.length}`);
 const oracleBuild = setupOracle.match(/^const oracleBuild = (\d+);$/m)?.[1];
 if (oracleBuild === undefined) throw new Error("setup_oracle.mjsのoracleBuildを取得できません");
 if (Number(oracleBuild) !== oracleIdentity.build || !setupOracle.includes("oracleIdentity.cliSha256") || !setupOracle.includes("oracleIdentity.markerSha256") ||

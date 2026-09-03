@@ -24,13 +24,14 @@ Linuxログでは通常のmath・CSV・TOML・Promise差分は約0.8秒で完了
 
 ## 検証jobの分割
 
-各正式環境（Linux x86_64、macOS arm64、Windows x86_64）で、通常の`test` matrix 10 jobに加えて、AOT専用matrix 39 jobを
-並列実行します。全体は49 matrix job＋coverage shard検証job＋1 attestation jobです。Linux／Windowsは4つの通常suite、native 12 job、support 6 jobへ分割し、
+各正式環境（Linux x86_64、macOS arm64、Windows x86_64）で、通常の`test` matrix 10 jobとLinux／Windows専用parser fuzz 2 jobに加えて、AOT専用matrix 39 jobを
+並列実行します。全体は51 matrix job＋coverage shard検証job＋1 attestation jobです。Linux／Windowsは4つの通常suite、native 12 job、support 6 job、parser fuzz 1 jobへ分割し、
 macOSは通常suiteを2 jobへ分割してAOT native 3 jobと合わせ、同時実行上限5に収めます。
 
 | job／suite | 検証内容 |
 |---|---|
-| `core` | 互換台帳、字句・構文変換・構文・文法生成fuzz・意味・動的値・インタープリタ・plugin_system差分、format、全Zig単体テスト |
+| `core` | 互換台帳、字句・構文変換・構文・意味・動的値・インタープリタ・plugin_system差分、format、全Zig単体テスト。macOSでは5枠内の文法生成fuzzも実行 |
+| `parser_fuzz`（Linux／Windows） | 固定seedの文法生成fuzzと`tests/oracle/fuzz-regressions.json`の回帰fixture。parser probeと公式oracleだけを使用 |
 | `standard` | math・CSV・TOML・Promise、markup・caniuse・kansujiの公式差分と全生成コーパス |
 | `host` | QuickJS互換差分（`compat-js` 4 entryの9ケース実行証拠を含む）、ネイティブプラグインABI、ファイル・プロセス・HTTP・暗号・文字コード・圧縮などNodeホスト差分。symlink経由のカレントディレクトリ実パスと失敗時のchdir診断も公式CLI・Interpreter・AOT O0〜O3で確認 |
 | `aot-native`（Linux／Windowsはfixture shard 1/3〜3/3 × O0〜O3、macOSはO0+O1／O2／O3） | 各OSでnative fixture 284件を重み付き固定割当し、公式CLI・公式生成JavaScript・`lnako run`と選択したLLVM AOT routeを実行。全route groupを合わせてO0〜O3の7経路を全件実行 |
@@ -54,8 +55,8 @@ coverageだけは3つの重み付きfixture shardへ分け、各shardが公式so
 追加の`verify_dispatch_coverage` jobが通常testとAOT matrixの両方の完了後、macOSの全件coverageを基準にLinux／Windows各3 shardのfixture集合を照合し、重複・欠落を拒否します。
 これにより検証範囲を削らず、長いcoverage監査の壁時計を短縮します。macOSではrunner上限5を超えないよう、supportを既存の2通常jobへ分散し、dispatch監査を早く開始する`mac-host-compat`へ移しています。
 dispatch evidenceとcoverageの全fixture・全site、HTTP serverの10命令・14リクエスト、tiny fixtureの全security不変条件は維持します。
-`tools/check_ci_workflow.mjs`はnative 27 job（Linux／Windows各12、macOS 3）、support 12 job（Linux／Windows各6）、通常10 job、
-全49 matrix job、coverage shard検証、macOS 5 job、3正式OS、全7経路、O0〜O3、artifact、attestationの構成を固定します。
+`tools/check_ci_workflow.mjs`はnative 27 job（Linux／Windows各12、macOS 3）、support 12 job（Linux／Windows各6）、通常10 job、parser fuzz 2 job、
+全51 matrix job、coverage shard検証、macOS 5 job、3正式OS、全7経路、O0〜O3、artifact、attestationの構成を固定します。parser fuzz jobへmacOSを追加しないことと、attestationがparser fuzzの成功を待つことも検査します。
 
 2026-09-03にmacOS arm64で既定coverageの3 shardを実測した。重い順の固定割当は、shard 1/3が1 fixture・約234.86秒、
 shard 2/3が28 fixture・約42.86秒、shard 3/3が27 fixture・約53.68秒で、3つを同時に起動した場合の検査区間の下限は
@@ -680,3 +681,13 @@ macOS 5 jobのZig tarball、Zig build、LLVM／QuickJS、公式oracle cacheは�
 [run 33708609448](https://github.com/soramikan/lnako/actions/runs/33708609448)（`e34df1a`）は、Windows x86_64のAOT native shard 2/3でO0〜O3の4 jobが同じ`native-node-path-mixed-separators`により失敗した。公式source・公式generated・AOTの標準出力は一致しており、Interpreterだけが混在区切りnamespace pathの`パス抽出`でdirnameへ余分な`Z:_ab?0Y/`を残していた。したがって、これはjob分割、macOS 5 jobのqueue、cache、LLVM AOTの失敗ではなく、InterpreterのWindows root-scan実装差である。
 
 `src/plugins/node.zig`をAOTと同じNode 24相当のroot scanへ揃え、`native-node-path-mixed-separators`の混在`/`・`\\`、drive-relative、UNC、namespace境界を単体テストへ固定した。修正commitは`f07e30d`で、Windows targetのクロスビルド、全Zigテスト837/837、canonical／coverage／補助証拠のclean provenance再生成に成功している。次回push前にもこのrun以降の完了済み失敗を確認し、新runは完了待ちせず実装を継続する。macOSは5 job以内、Linux／Windowsのnative shardと全O0〜O3は維持する。
+
+## Linux／Windows parser fuzzの独立job化
+
+Linux／Windowsの通常`core` jobから文法生成fuzzを分離し、`parser_fuzz`の2 matrix job（各OS 1件）として実行する。各jobはZig 0.16.0、Node 24.15.0、固定v3.7.24公式oracleだけを準備し、`node tools/fuzz_parser_oracle.mjs --iterations 1024 --seed 20260830`を実行する。回帰fixture9件を含むため、各OSで合計1,033件（生成1,024件＋回帰9件）を検査する。
+
+macOSは既存の`mac-core-standard-support`内で同じfuzzを実行し、`mac-host-compat`とAOT native 3 jobを合わせた5 jobを維持する。parser fuzz専用jobへmacOSを追加しないため、runnerの同時実行上限による6件目の待ち行列は作らない。attestation jobは通常test、parser fuzz、AOT、coverage shard検証のすべてが成功した場合だけ起動する。
+
+この分離でLinux／Windowsのcore jobはparser fuzzの実行と生成compilerの待ち時間から解放され、検証内容自体は削減しない。parser専用jobはLLVM／QuickJSやAOT証拠を必要としないため、それらの取得を繰り返さない。専用jobのsetupが増えるためrunner合計時間が減るとは仮定せず、次の完了済みrunでwall-clock、runner合計、各job／step時間、cache hit/missを測定する。現在の変更ではまだGitHub Actionsの実測値は確定していない。
+
+次回push時には、まず`d2000116`以降の最新完了runについて失敗jobと`gh run view --log-failed`を確認する。その後、新runの完了を待たずに次の実装を進め、次回push前にparser fuzz 2 job、macOS 5 job、全AOT native／support job、coverage、attestationの成否を再確認する。
