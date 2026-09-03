@@ -1713,6 +1713,19 @@ test "ブラウザとファイルマネージャーの起動をホストへ委�
     try std.testing.expectEqualStrings("file.txt", host.last_target[0..host.last_target_length]);
 }
 
+test "copy/moveは同一・子孫パスを重複判定する" {
+    try std.testing.expect(pathsOverlap("/work", "/work"));
+    try std.testing.expect(pathsOverlap("/work", "/work/file"));
+    try std.testing.expect(pathsOverlap("/work/file", "/work"));
+    try std.testing.expect(!pathsOverlap("/work", "/work2"));
+    try std.testing.expect(!pathsOverlap("/work", "/other"));
+    try std.testing.expect(!pathsOverlap("/work/a", "/work/ab"));
+    if (builtin.os.tag == .windows) {
+        try std.testing.expect(pathsOverlap("C:/work", "C:\\work"));
+        try std.testing.expect(pathsOverlap("C:/work/file", "C:\\WORK"));
+    }
+}
+
 test "一時フォルダの空指定はテンポラリパス自体を接頭辞にする" {
     const TestHost = struct {
         seen: [64]u8 = undefined,
