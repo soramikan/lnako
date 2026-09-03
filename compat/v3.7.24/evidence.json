@@ -8,9 +8,9 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 411,
-    "nativeAot": 309,
-    "interpreter": 111,
+    "total": 412,
+    "nativeAot": 310,
+    "interpreter": 112,
     "compatJs": 9
   },
   "fixtureCoverageStates": {
@@ -24976,11 +24976,13 @@
       "status": "native",
       "interpreterFixtureIds": [
         "plugin-node-http-async-values",
-        "plugin-node-http-options-and-promises"
+        "plugin-node-http-options-and-promises",
+        "plugin-node-http-receive-error"
       ],
       "aotFixtureIds": [
         "plugin-node-http-async-values",
-        "plugin-node-http-options-and-promises"
+        "plugin-node-http-options-and-promises",
+        "plugin-node-http-receive-error"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -24992,6 +24994,9 @@
           "plugin-node-http-options-and-promises": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-node-http-receive-error": [
+            "fixture.commands"
           ]
         },
         "aot": {
@@ -25002,6 +25007,9 @@
           "plugin-node-http-options-and-promises": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "plugin-node-http-receive-error": [
+            "fixture.commands"
           ]
         },
         "compatJs": {}
