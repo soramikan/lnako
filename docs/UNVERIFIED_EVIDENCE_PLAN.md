@@ -1,4 +1,4 @@
-# `unverified` 89件の証拠化計画（U26完了・現行証拠更新後）
+# `unverified` 89件の証拠化計画（U26完了・U27 path回帰修正後）
 
 ## 目的と基準
 
@@ -55,6 +55,10 @@ U14では`LINE送信`と`LINE画像送信`を、公式固定ソースの命令�
 U15では`http-server-dispatch-cases.json`を追加し、`簡易HTTPサーバ起動時`、`簡易HTTPサーバ静的パス指定`、`簡易HTTPサーバ受信時`、`簡易HTTPサーバ出力`、`簡易HTTPサーバヘッダ出力`、`簡易HTTPサーバ移動`の6 entryを、ephemeral portへの外部loopback 7 requestへ接続した。`終了`はU07の既存expected-exit証拠をflushする補助命令として同じfixtureへ含めるが、新規6件には数えない。公式source・lnako Interpreter・LLVM AOT O0のHTTP response status/header/body hash、Interpreter/AOT trace、O0 compile manifestを比較し、coverageを49 fixture・1,849 site・359 native entryへ更新する。公式生成JavaScriptはshutdown補助命令`終了`をstandalone pluginへ登録できず、`TypeError: __self.__varslist[0].get(...) is not a function`になるため、公式sourceを選択oracleとする既知route差として記録する。同一プロセス内self-HTTPを避ける外部clientは、Interpreterのイベントポーリング順序によるdeadlockを避けるfixture設計であり、製品HTTP仕様の差ではない。これはmacOS arm64のdispatch証拠で、既存AOT O0〜O3差分、QuickJS、外部endpoint、3正式OS attestationを証明しない。`TODO: node-http-cross-os-attestation`は継続する。
 
 U16では、公式の同名登録経路を名前だけで混同しないため、`tests/oracle/plugin-route-cases.json`へsystem-onlyの`plugin-system-path-route`／`plugin-system-end-route`とNode-onlyの`plugin-node-path-route`を追加した。`終`（`command-0061`）、system側の`ファイル名抽出`／`パス抽出`（`command-0268`／`command-0269`）、Node側の同名path命令（`command-0722`／`command-0723`）、Node側`終` alias（`command-0745`）の6 entryを、fixtureの`catalogIds`、semantic binding、Interpreter trace、AOT compile manifest/runtime traceの一致で明示同定した。system-onlyの公式生成JavaScriptはstandalone system plugin runtime bundleがないため実行不能として記録し、公式sourceを選択oracleとした。system routeでは`/a/b`のbasename／dirnameが`b`／`/a`、`a/`が空文字／`a`となり、`終`は`__終わる__`を`エラー監視`へ渡す。Node routeの`a/b.txt`は`b.txt`／`a`となる。cleanな`401af96726488588a31a252bbe1185de9298435d`から再生成したdispatch coverageは52 fixture・1,863 site・364 native entry（362 unique names）で、同期後の台帳は`verified 0 / trace-confirmed-unattested 495 / unverified 32`となった。これはmacOS arm64のclean実測であり、3正式OSの外部署名attestation、QuickJS、全527 entryの純LLVM AOT実行を意味しない。
+
+### U27 — Windows path root-scan回帰の修正
+
+push前の完了CI `33708609448`を再確認した結果、WindowsのAOT native shard 2/3（O0〜O3）で`native-node-path-mixed-separators`だけが失敗していた。公式source・公式generated・AOTは一致し、Interpreterだけが混在区切りnamespace pathのdirnameへ余分な`Z:_ab?0Y/`を残していたため、`src/plugins/node.zig`のWindows dirnameをAOTと同じNode 24相当のroot scanへ揃えた。これは意図的制限ではなく実装バグであり、公式仕様・実測・差分テストIDは`docs/COMPATIBILITY_QUIRKS.md`へ記録した。`f07e30d320339611730d3e563700a78b507a376d`からcanonical／coverage／補助artifactを再生成し、`dirty:false`とcommit一致を確認した。Windows targetのクロスビルドと全Zigテスト（837/837）は成功したが、修正commitのWindows runner外部署名attestationは次回CIで確認する。
 
 ## U17〜U26完了記録
 

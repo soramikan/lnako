@@ -674,3 +674,9 @@ macOS 5 jobのZig tarball、Zig build、LLVM／QuickJS、公式oracle cacheは�
 [run 33665261243](https://github.com/soramikan/lnako/actions/runs/33665261243)（`1bf3e01`）は、macOS `mac-core-standard-support`の`Differential interpreter test`で失敗した。`compare_interpreter_oracle.mjs`が公式／lnakoの`spawnSync`結果を比較する際、プロセス起動失敗またはOS側終了でstdoutが未定義になったケースを診断せず、`replaceAll`を直接呼び出して二次的な`TypeError`を発生させていた。前段の構文、fuzz（1,033件）、診断、意味、動的値の差分は成功しており、命令実装の差分ではない。チェッカーは欠落したstdoutを安全に正規化し、exit code・signal・spawn errorを結果へ含めるよう修正したため、再発時も本来のプロセス原因を表示できる。ローカルでは公式cnako3との差分31件が成功した。
 
 [run 33691715529](https://github.com/soramikan/lnako/actions/runs/33691715529)（`2e046ad`）は、macOS `mac-core-standard-support`の`Verify compatibility baseline`だけが、`cleanなdispatch証拠のlnako commitが現行HEADと一致しません`で失敗した。ログでは他のmacOS／Linux／Windowsの実行中AOT、coverage、通常差分は成功しており、macOS 5 jobの枠待ちやNode.js 20警告が原因ではない。`2e046ad`のリモートには、その後ローカルで生成したcanonical dispatch（`260a60a`）とcoverage／補助artifact（`57ca05a`）がまだ含まれていなかったため、台帳検査が正しく停止したものである。次のpushでは、これらのartifactと現行README／互換性文書を署名コミットへまとめ、provenanceを現行commitの祖先として公開する。証拠の整合性を弱めたり、`--check`を省略したりせず、次回push前にこのrun以降の完了済み失敗ログを再確認する。新runの完了は待たず、実装を継続する。
+
+## 直近完了CIのWindows path回帰（run 33708609448）
+
+[run 33708609448](https://github.com/soramikan/lnako/actions/runs/33708609448)（`e34df1a`）は、Windows x86_64のAOT native shard 2/3でO0〜O3の4 jobが同じ`native-node-path-mixed-separators`により失敗した。公式source・公式generated・AOTの標準出力は一致しており、Interpreterだけが混在区切りnamespace pathの`パス抽出`でdirnameへ余分な`Z:_ab?0Y/`を残していた。したがって、これはjob分割、macOS 5 jobのqueue、cache、LLVM AOTの失敗ではなく、InterpreterのWindows root-scan実装差である。
+
+`src/plugins/node.zig`をAOTと同じNode 24相当のroot scanへ揃え、`native-node-path-mixed-separators`の混在`/`・`\\`、drive-relative、UNC、namespace境界を単体テストへ固定した。修正commitは`f07e30d`で、Windows targetのクロスビルド、全Zigテスト837/837、canonical／coverage／補助証拠のclean provenance再生成に成功している。次回push前にもこのrun以降の完了済み失敗を確認し、新runは完了待ちせず実装を継続する。macOSは5 job以内、Linux／Windowsのnative shardと全O0〜O3は維持する。
