@@ -227,4 +227,6 @@ node tools/check_tracked_dispatch_attestation.mjs --offline
 
 現在のworkflowは3正式OSを含む49 matrix test jobs＋coverage shard検証job＋1 attestation jobで、macOSは同時実行上限を考慮して1 runあたり5 jobsに固定している。Linux/Windowsのsupport dispatch coverageだけを各3 weighted shardへ分割し、macOSは全件full artifactを生成する。job分割による壁時計短縮の効果は、待ち時間、wall-clock、runner合計、macOS queueを別々に記録し、検証経路を削減した短縮とは扱わない。次のpush前には直近完了runの失敗jobを確認し、実行中runの完了は待たずに作業を継続する。
 
+3正式OSの性能・配布証拠は通常CIへ混ぜず、`.github/workflows/release.yml`のタグ／手動workflowで収集する。各OSのReleaseSafe compilerからbenchmark JSON/MarkdownとLLVM/LLD同梱archiveを生成し、aggregate jobでtargetの揃い、共通計測条件、archive sidecar、SPDX SBOM、`SHA256SUMS`を検証する。正式tagのpublishはannotated signed tag、同一source commitのCI成功、`build.zig.zon`のversion一致を前提とし、手動実行ではReleaseを公開しない。未実行のworkflow artifactを性能結果・配布物・Release完了とは扱わない。
+
 89件が0になってもGoal完了ではない。3正式OSの単体・差分・AOT・QuickJS・fuzz回帰、benchmark JSON/Markdown、配布archive/checksum/SBOM、署名済み`v1.0.0`タグとGitHub Releaseがすべて揃うまで継続する。

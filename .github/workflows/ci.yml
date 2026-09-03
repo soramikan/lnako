@@ -90,6 +90,7 @@ jobs:
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: |
           node tools/check_ci_workflow.mjs
+          node tools/check_release_workflow.mjs
           node tools/check_dispatch_attestation_security.mjs
           node tools/check_tracked_dispatch_attestation.mjs --offline
           node tools/check_tracked_dispatch_attestation_security.mjs

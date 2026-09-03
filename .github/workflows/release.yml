@@ -1,0 +1,228 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "検証する配布version（手動実行では公開しない）"
+        required: true
+        default: "0.0.0-dev"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Validate release source
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.release-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+      - name: Validate tag, source version, and completed CI
+        id: release-version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION_INPUT: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "正式Release tagはvX.Y.Zでなければなりません: $GITHUB_REF_NAME" >&2
+              exit 1
+            fi
+            version="${GITHUB_REF_NAME#v}"
+            if [[ "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" != "tag" ]]; then
+              echo "Release tagはannotated tagでなければなりません" >&2
+              exit 1
+            fi
+            tag_object="$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{tag}")"
+            verified="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object}" --jq '.verification.verified')"
+            if [[ "$verified" != "true" ]]; then
+              echo "GitHubがRelease tagの署名を検証できません: $GITHUB_REF_NAME" >&2
+              exit 1
+            fi
+            ci_successes="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow CI --commit "$GITHUB_SHA" --json status,conclusion --jq '[.[] | select(.status == "completed" and .conclusion == "success")] | length')"
+            if [[ "$ci_successes" -lt 1 ]]; then
+              echo "同じsource commitのCI成功runがありません: $GITHUB_SHA" >&2
+              exit 1
+            fi
+          else
+            version="$RELEASE_VERSION_INPUT"
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "versionがsemver形式ではありません: $version" >&2
+            exit 1
+          fi
+          source_version="$(sed -nE 's/^\s*\.version\s*=\s*"([^"]+)".*/\1/p' build.zig.zon | head -n 1)"
+          if [[ "$source_version" != "$version" ]]; then
+            echo "source versionとRelease versionが一致しません: $source_version/$version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "source commit=$GITHUB_SHA / version=$version / run=$GITHUB_RUN_ID"
+
+  build:
+    name: ${{ matrix.target }} / build benchmark distribution
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos-arm64
+            os: macos-15
+            executable: lnako
+            runtime: liblnako_runtime.a
+            extension: tar.gz
+          - target: linux-x64
+            os: ubuntu-24.04
+            executable: lnako
+            runtime: liblnako_runtime.a
+            extension: tar.gz
+          - target: windows-x64
+            os: windows-2025
+            executable: lnako.exe
+            runtime: lnako_runtime.lib
+            extension: zip
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      LNAKO_VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+          use-cache: true
+          cache-key: release-${{ matrix.target }}
+          cache-size-limit: 1536
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/toolchains
+          key: release-toolchains-llvm-22.1.8-${{ matrix.target }}-v1
+      - name: Set up pinned LLVM and LLD
+        run: node tools/setup_llvm.mjs
+      - name: Clear generated install outputs
+        shell: bash
+        run: rm -rf -- zig-out
+      - name: Build ReleaseSafe compiler and AOT runtime
+        shell: bash
+        run: zig build -Doptimize=ReleaseSafe
+      - name: Verify compiler version
+        shell: bash
+        run: |
+          actual="$(./zig-out/bin/${{ matrix.executable }} --version | tr -d '\r\n')"
+          test "$actual" = "lnako $LNAKO_VERSION"
+      - name: Run benchmark for this target
+        env:
+          LNAKO_BENCHMARK_COMMIT: ${{ github.sha }}
+        shell: bash
+        run: |
+          ./zig-out/bin/${{ matrix.executable }} benchmark \
+            --iterations 3 \
+            --warmup 1 \
+            --output "$RUNNER_TEMP/benchmark-${{ matrix.target }}.json" \
+            --markdown "$RUNNER_TEMP/benchmark-${{ matrix.target }}.md"
+      - name: Verify benchmark result
+        shell: bash
+        run: |
+          node tools/check_benchmark_result.mjs \
+            --json "$RUNNER_TEMP/benchmark-${{ matrix.target }}.json" \
+            --markdown "$RUNNER_TEMP/benchmark-${{ matrix.target }}.md"
+      - name: Create distribution archive
+        shell: bash
+        run: |
+          node tools/create_distribution.mjs \
+            --version "$LNAKO_VERSION" \
+            --target "${{ matrix.target }}" \
+            --output "$RUNNER_TEMP/dist" \
+            --binary "$GITHUB_WORKSPACE/zig-out/bin/${{ matrix.executable }}" \
+            --runtime "$GITHUB_WORKSPACE/zig-out/lib/${{ matrix.runtime }}" \
+            --llvm-dir "$LNAKO_LLVM_DIR" \
+            --require-llvm
+      - name: Verify distribution archive
+        shell: bash
+        run: |
+          node tools/check_distribution.mjs \
+            --archive "$RUNNER_TEMP/dist/lnako-${LNAKO_VERSION}-${{ matrix.target }}.${{ matrix.extension }}"
+      - name: Upload target release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-release-${{ matrix.target }}
+          path: |
+            ${{ runner.temp }}/dist/lnako-${{ needs.preflight.outputs.version }}-${{ matrix.target }}.*
+            ${{ runner.temp }}/benchmark-${{ matrix.target }}.json
+            ${{ runner.temp }}/benchmark-${{ matrix.target }}.md
+          if-no-files-found: error
+          retention-days: 30
+
+  aggregate:
+    name: Verify all release assets
+    needs: [preflight, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+      - name: Download target release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: lnako-release-*
+          path: ${{ runner.temp }}/release-assets
+          merge-multiple: true
+      - name: Create combined release checksums
+        run: node tools/create_release_checksums.mjs --directory "${{ runner.temp }}/release-assets" --version "${{ needs.preflight.outputs.version }}"
+      - name: Verify all distribution assets
+        run: node tools/check_release_assets.mjs --directory "${{ runner.temp }}/release-assets" --version "${{ needs.preflight.outputs.version }}"
+      - name: Verify all benchmark targets
+        run: node tools/check_benchmark_set.mjs --directory "${{ runner.temp }}/release-assets" --version "${{ needs.preflight.outputs.version }}" --commit "${{ github.sha }}"
+      - name: Upload verified release bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-release-assets-${{ needs.preflight.outputs.version }}
+          path: ${{ runner.temp }}/release-assets/*
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish GitHub Release
+    if: github.event_name == 'push'
+    needs: [preflight, aggregate]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: lnako-release-assets-${{ needs.preflight.outputs.version }}
+          path: ${{ runner.temp }}/release-assets
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "lnako ${{ needs.preflight.outputs.version }}" \
+            --generate-notes \
+            "$RUNNER_TEMP"/release-assets/*
