@@ -1,7 +1,7 @@
 # 開発手順
 
 GitHub Actionsのスイート分割、同一refの旧run取消、変更前後の所要時間は[`CI.md`](CI.md)に記録します。
-CI定義を変更した場合は `node tools/check_ci_workflow.mjs` で51件のmatrix job（通常10件＋AOT 39件＋Linux／Windows専用parser fuzz 2件）、coverage shard検証job、native AOT aggregate検証job、attestation job、全検証ステップの所属も確認します。macOSのmatrixは同時実行上限5件に収まるよう5件のまま固定し、Linux／Windowsのdispatch coverageだけを3 shardへ分割します。macOSではcoverageを`mac-core-standard-support`、evidence／securityを`mac-host-compat`へ分散します。matrixを増やすだけで待機列が解消するとは扱わず、wall-clockとrunner合計を`docs/CI.md`へ実測記録します。
+CI定義を変更した場合は `node tools/check_ci_workflow.mjs` で51件のmatrix job（通常10件＋AOT 39件＋Linux／Windows専用parser fuzz 2件）、coverage shard検証job、native AOT aggregate検証job、attestation job、全検証ステップの所属も確認します。macOSのmatrixは同時実行上限5件に収まるよう5件のまま固定し、3正式OSのdispatch coverageを各3 weighted shardへ分割します。macOSではcoverageを既存native route 3 job、evidence／securityを`mac-host-compat`へ分散します。matrixを増やすだけで待機列が解消するとは扱わず、wall-clockとrunner合計を`docs/CI.md`へ実測記録します。
 
 ## 検証順序
 

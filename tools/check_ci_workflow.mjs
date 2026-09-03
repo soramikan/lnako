@@ -152,6 +152,15 @@ if (nativeShardRows.length !== expectedNativeRowCount || supportRows.length !== 
       !expectedSupportRows.has(`${row.name}\0${row.os}\0${row.task}\0${row.index}\0${row.count}\0${row.sharded}\0${row.jobName}`))) {
   throw new Error("AOT native/support jobのOS別fixture shard／optimization matrixが不正です");
 }
+const expectedMacCoverageRows = new Map([
+  ["AOT native routes O0+O1", 1],
+  ["AOT native routes O2", 0],
+  ["AOT native routes O3", 2],
+]);
+for (const [jobName, index] of expectedMacCoverageRows) {
+  const row = `jobName: ${jobName}\n            dispatchCoverageShardIndex: ${index}\n            dispatchCoverageShardCount: 3`;
+  if (!nativeAotJob.includes(row)) throw new Error(`macOS ${jobName}のdispatch coverage shard割当が不正です`);
+}
 
 const stepSuites = new Map([
   ["Verify compatibility baseline", "core"],
@@ -209,11 +218,9 @@ if (!interpreterOracleScript.includes("sanity.error?.code !== \"ENOEXEC\"") ||
 const macSupportSteps = new Map([
   ["Build macOS AOT verification compiler", ["matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat'", "run: zig build"]],
   ["macOS AOT HTTP server oracle", ["matrix.suite == 'mac-core-standard-support'", "node tools/compare_http_server_aot_oracle.mjs --no-build"]],
-  ["macOS dispatch coverage audit", ["matrix.suite == 'mac-core-standard-support'", "node tools/check_dispatch_coverage.mjs --no-build"]],
   ["macOS dispatch evidence audit", ["matrix.suite == 'mac-host-compat'", "node tools/check_dispatch_trace.mjs --no-build"]],
   ["macOS dispatch trace security audit", ["matrix.suite == 'mac-host-compat'", "node tools/check_dispatch_trace_security.mjs --no-build"]],
   ["Upload macOS native dispatch evidence", ["matrix.suite == 'mac-host-compat' && always()", "name: lnako-dispatch-evidence-macos-15"]],
-  ["Upload macOS native dispatch coverage audit", ["matrix.suite == 'mac-core-standard-support' && always()", "name: lnako-dispatch-coverage-macos-15"]],
   ["Build macOS ReleaseSafe compiler", ["matrix.suite == 'mac-core-standard-support'", "run: zig build -Doptimize=ReleaseSafe"]],
   ["macOS normal smoke test", ["matrix.suite == 'mac-core-standard-support'", "./zig-out/bin/lnako test tests/fixtures/run-tests.nako3"]],
 ]);
@@ -226,8 +233,8 @@ for (const [name, [condition, required]] of macSupportSteps) {
     throw new Error(`macOS分割jobの${name}が不完全です`);
   }
 }
-if ((testJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 2) {
-  throw new Error("macOS分割jobのdispatch artifact uploadが2件ありません");
+if ((testJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 1) {
+  throw new Error("macOSのdispatch evidence artifact uploadが1件ありません");
 }
 
 const aotStep = (name) => {
@@ -243,6 +250,21 @@ if (!nativeAotJob.includes("strategy:\n      fail-fast: false") || !nativeAotJob
 const nativeAotBuildBlock = aotStep("Build AOT verification compiler");
 if (!nativeAotBuildBlock || !nativeAotBuildBlock.includes("if: matrix.task != 'support-smoke'") || !nativeAotBuildBlock.includes("run: zig build")) {
   throw new Error("AOT検証用compilerの先行buildがありません");
+}
+const macCoverageBlock = aotStep("macOS dispatch coverage audit");
+if (!macCoverageBlock || !macCoverageBlock.includes("if: matrix.name == 'macOS arm64' && matrix.task == 'native'") ||
+    !macCoverageBlock.includes("node tools/check_dispatch_coverage.mjs --no-build") ||
+    !macCoverageBlock.includes('--fixture-shard-index "${{ matrix.dispatchCoverageShardIndex }}"') ||
+    !macCoverageBlock.includes('--fixture-shard-count "${{ matrix.dispatchCoverageShardCount }}"') ||
+    !macCoverageBlock.includes("--output") || !macCoverageBlock.includes("dispatch-coverage-${{ matrix.os }}-${{ matrix.dispatchCoverageShardIndex }}.json")) {
+  throw new Error("macOS native routeへ分散したdispatch coverage shardの設定が不完全です");
+}
+const macCoverageUploadBlock = aotStep("Upload macOS native dispatch coverage audit");
+if (!macCoverageUploadBlock || !macCoverageUploadBlock.includes("if: matrix.name == 'macOS arm64' && matrix.task == 'native' && always()") ||
+    !macCoverageUploadBlock.includes("name: lnako-dispatch-coverage-${{ matrix.os }}-shard-${{ matrix.dispatchCoverageShardIndex }}") ||
+    !macCoverageUploadBlock.includes("path: ${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}-${{ matrix.dispatchCoverageShardIndex }}.json") ||
+    !macCoverageUploadBlock.includes("if-no-files-found: ignore")) {
+  throw new Error("macOS native routeのdispatch coverage artifact uploadが不完全です");
 }
 const nativeAotVerificationBlock = aotStep("Differential native AOT verification (fixture/route shard)");
 if (!nativeAotVerificationBlock || !nativeAotVerificationBlock.includes("if: matrix.task == 'native'") ||
@@ -315,9 +337,9 @@ if (!nativeUpload || !nativeUpload.includes("if: matrix.task == 'native' && alwa
 }
 if (nativeUpload.includes("run:")) throw new Error("AOT shard artifact uploadで追加の検証コマンドを実行しないでください");
 const uploadActions = workflow.match(/^        uses: actions\/upload-artifact@/gm) ?? [];
-if (uploadActions.length !== 7 || (testJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 2 ||
-    (nativeAotJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 3) {
-  throw new Error(`actions/upload-artifactはmacOS dispatch 2＋AOT artifact 3＋aggregate 1＋attestation 1ステップ必要です: actual=${uploadActions.length}`);
+if (uploadActions.length !== 7 || (testJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 1 ||
+    (nativeAotJob.match(/^        uses: actions\/upload-artifact@/gm) ?? []).length !== 4) {
+  throw new Error(`actions/upload-artifactはmacOS dispatch evidence 1＋AOT artifact 4＋aggregate 1＋attestation 1ステップ必要です: actual=${uploadActions.length}`);
 }
 const dispatchUploadBlock = aotStep("Upload native dispatch evidence");
 if (!dispatchUploadBlock || !dispatchUploadBlock.includes("if: matrix.task == 'support-dispatch-evidence' && always()") ||

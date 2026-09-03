@@ -212,11 +212,17 @@ const Parser = struct {
     fn parseIf(self: *Parser) ParseFailure!*ast.Node {
         const start = self.advance();
         self.skipCommas();
-        const condition = try self.parseExpression(0);
+        var condition = try self.parseExpression(0);
         if (!isConditionalJosi(condition.josi) and !self.identifierValue("ならば")) {
             return self.fail(.invalid_control_statement, "『もし』文の条件末尾に『ならば』が必要です", self.peek());
         }
         if (self.identifierValue("ならば")) _ = self.advance();
+        // 公式parserは「Aでなければ」を条件式Aの否定ノードとして保持する。
+        // DNCLの「Aでないならば」はsyntax_transformで同じ助詞へ正規化されるため、
+        // 条件式のjosiを消す前にnotへ包む必要がある。
+        if (std.mem.eql(u8, condition.josi, "でなければ")) {
+            condition = try self.unary("not", condition, self.peekPrevious());
+        }
         clearConditionalJosi(condition);
 
         var multiline = false;
@@ -237,6 +243,11 @@ const Parser = struct {
                 self.skipEols();
                 false_block = try self.parseBlock(.{ .end = true });
             } else {
+                // 公式parserは、複数行の真節でも違えば節が同じ行から
+                // 始まる場合を「短文」として扱い、外側のここまでを要求しない。
+                // これにより「そうでなくもし」を、内側のもし文だけが
+                // インライン分岐として閉じる公式のASTに合わせる。
+                multiline = false;
                 false_block = try self.wrapSingle(try self.parseStatement());
             }
         }
@@ -706,9 +717,31 @@ const Parser = struct {
     fn parseCallExpression(self: *Parser) ParseFailure!*ast.Node {
         if (self.at(.def_func)) return self.parseAnonymousFunction();
         const value = try self.parseExpression(0);
-        if (!self.at(.identifier)) return value;
+        if (!self.at(.identifier) and (value.josi.len == 0 or !canStartExpression(self.peek().kind))) return value;
         var arguments: std.ArrayList(*ast.Node) = .empty;
         try arguments.append(self.allocator, value);
+
+        // DNCLの「すべての値を0にする」は、公式の変換後に
+        // `[0] 100を掛`という助詞付きの連続引数になる。最初の式の
+        // 直後が識別子でない場合も、次の命令まで引数式を集める。
+        // 識別子の引数は、次の識別子が命令名として続く場合だけ読む。
+        const argument_start = self.index;
+        while (true) {
+            if (self.at(.identifier)) {
+                if (self.peek().josi.len > 0 and self.peekAhead(1).kind == .identifier) {
+                    try arguments.append(self.allocator, try self.parseExpression(0));
+                    continue;
+                }
+                break;
+            }
+            if (self.isTerminator() or arguments.items[arguments.items.len - 1].josi.len == 0 or
+                !canStartExpression(self.peek().kind)) break;
+            try arguments.append(self.allocator, try self.parseExpression(0));
+        }
+        if (!self.at(.identifier)) {
+            self.index = argument_start;
+            return value;
+        }
         while (self.at(.identifier)) {
             const command = self.advance();
             const call = try self.makeNodeWithChildren(.function_call, command, try arguments.toOwnedSlice(self.allocator));
@@ -1246,6 +1279,13 @@ fn operatorInfo(kind: Kind) ?OperatorInfo {
     };
 }
 
+fn canStartExpression(kind: Kind) bool {
+    return switch (kind) {
+        .number, .bigint, .string, .string_template, .identifier, .function_ref, .left_paren, .left_bracket, .left_brace, .not, .minus => true,
+        else => false,
+    };
+}
+
 fn operatorName(kind: Kind) []const u8 {
     return switch (kind) {
         .not => "not",
@@ -1399,6 +1439,28 @@ test "もし文とソース位置を構文解析する" {
     try std.testing.expectEqual(@as(usize, 3), statement.children.len);
     try std.testing.expectEqual(@as(usize, 0), statement.span.line);
     try std.testing.expectEqual(@as(usize, 1), statement.span.column);
+}
+
+test "DNCLの「でないならば」を条件否定へ変換する" {
+    var result = try parse(std.testing.allocator, "!DNCLモード\nもしA=1でないならば\n|B=2\nを実行する\n", "dncl-not.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const statement = result.root.?.children[1];
+    const condition = statement.children[0];
+    try std.testing.expectEqual(ast.Kind.unary_operator, condition.kind);
+    try std.testing.expectEqualStrings("not", condition.operator);
+    try std.testing.expectEqual(ast.Kind.binary_operator, condition.children[0].kind);
+    try std.testing.expectEqualStrings("eq", condition.children[0].operator);
+}
+
+test "公式同様にインラインの「そうでなくもし」を入れ子の条件分岐にする" {
+    var result = try parse(std.testing.allocator, "!DNCL2\nもしC=0ならば:\n　1を表示\nそうでなくもし、C=1ならば:\n　2を表示\n", "dncl2-else-if.nako3");
+    defer result.deinit();
+    try std.testing.expect(result.succeeded());
+    const outer = result.root.?.children[1];
+    try std.testing.expectEqual(ast.Kind.if_statement, outer.kind);
+    try std.testing.expectEqual(@as(usize, 1), outer.children[2].children.len);
+    try std.testing.expectEqual(ast.Kind.if_statement, outer.children[2].children[0].kind);
 }
 
 test "もし直後の読点を許可する" {

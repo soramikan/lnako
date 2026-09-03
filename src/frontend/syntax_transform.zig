@@ -405,7 +405,7 @@ fn transformDnclArrays(tokens: *std.ArrayList(Token), allocator: std.mem.Allocat
             i += replacement.len;
             continue;
         }
-        if (!is_v2 and matchValues(tokens.items, i, &.{ null, "すべて", null, null, null })) {
+        if (!is_v2 and matchValues(tokens.items, i, &.{ null, "すべて", null, null })) {
             const element = tokens.items[i + 2].value;
             if (std.mem.eql(u8, element, "要素") or std.mem.eql(u8, element, "値")) {
                 const anchor = tokens.items[i];
@@ -426,7 +426,10 @@ fn transformDnclArrays(tokens: *std.ArrayList(Token), allocator: std.mem.Allocat
                     count,
                     synthetic(.identifier, "掛", anchor),
                 };
-                try tokens.replaceRange(allocator, i, 5, &replacement);
+                // 公式変換は「する」がない入力でも、値の直後までを置換する。
+                // fuzzの縮小で末尾の語が消えた場合もこの境界を保つ。
+                const consumed = @min(@as(usize, 5), tokens.items.len - i);
+                try tokens.replaceRange(allocator, i, consumed, &replacement);
                 i += replacement.len;
                 continue;
             }

@@ -35,8 +35,8 @@ jobs:
           # macOS-hosted runners admit at most five concurrent jobs. Keep the
           # two regular jobs and three native route jobs at exactly five slots;
           # Node host verification is assigned to the core job, while the
-          # dispatch evidence/coverage audits are balanced across both regular
-          # jobs below.
+          # dispatch evidence/security stay on mac-host-compat, while the
+          # coverage audit is distributed across the three native route jobs.
           - name: macOS arm64
             os: macos-15
             suite: mac-core-standard-support
@@ -204,11 +204,6 @@ jobs:
       - name: macOS AOT HTTP server oracle
         if: matrix.suite == 'mac-core-standard-support'
         run: node tools/compare_http_server_aot_oracle.mjs --no-build
-      - name: macOS dispatch coverage audit
-        if: matrix.suite == 'mac-core-standard-support'
-        run: >
-          node tools/check_dispatch_coverage.mjs --no-build
-          --output "${{ runner.temp }}/dispatch-coverage-macos-15.json"
       - name: macOS dispatch evidence audit
         if: matrix.suite == 'mac-host-compat'
         run: >
@@ -224,15 +219,6 @@ jobs:
         with:
           name: lnako-dispatch-evidence-macos-15
           path: ${{ runner.temp }}/dispatch-evidence-macos-15.json
-          if-no-files-found: ignore
-          retention-days: 30
-      - name: Upload macOS native dispatch coverage audit
-        if: matrix.suite == 'mac-core-standard-support' && always()
-        continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: lnako-dispatch-coverage-macos-15
-          path: ${{ runner.temp }}/dispatch-coverage-macos-15.json
           if-no-files-found: ignore
           retention-days: 30
       - name: Build macOS ReleaseSafe compiler
@@ -417,6 +403,8 @@ jobs:
             optimizationKey: O0-O1
             optimizations: O0,O1
             jobName: AOT native routes O0+O1
+            dispatchCoverageShardIndex: 1
+            dispatchCoverageShardCount: 3
           - name: macOS arm64
             os: macos-15
             suite: aot-native
@@ -427,6 +415,8 @@ jobs:
             optimizationKey: O2
             optimizations: O2
             jobName: AOT native routes O2
+            dispatchCoverageShardIndex: 0
+            dispatchCoverageShardCount: 3
           - name: macOS arm64
             os: macos-15
             suite: aot-native
@@ -437,6 +427,8 @@ jobs:
             optimizationKey: O3
             optimizations: O3
             jobName: AOT native routes O3
+            dispatchCoverageShardIndex: 2
+            dispatchCoverageShardCount: 3
           - name: Windows x86_64
             os: windows-2025
             suite: aot-native
@@ -709,6 +701,22 @@ jobs:
         with:
           name: lnako-native-oracle-${{ matrix.os }}-shard-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}
           path: ${{ runner.temp }}/lnako-native-oracle-${{ matrix.fixtureShardIndex }}-${{ matrix.optimizationKey }}.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: macOS dispatch coverage audit
+        if: matrix.name == 'macOS arm64' && matrix.task == 'native'
+        run: >
+          node tools/check_dispatch_coverage.mjs --no-build
+          --fixture-shard-index "${{ matrix.dispatchCoverageShardIndex }}"
+          --fixture-shard-count "${{ matrix.dispatchCoverageShardCount }}"
+          --output "${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}-${{ matrix.dispatchCoverageShardIndex }}.json"
+      - name: Upload macOS native dispatch coverage audit
+        if: matrix.name == 'macOS arm64' && matrix.task == 'native' && always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-dispatch-coverage-${{ matrix.os }}-shard-${{ matrix.dispatchCoverageShardIndex }}
+          path: ${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}-${{ matrix.dispatchCoverageShardIndex }}.json
           if-no-files-found: ignore
           retention-days: 30
       - name: Differential HTTP server AOT oracle

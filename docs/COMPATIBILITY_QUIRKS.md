@@ -13,6 +13,20 @@ lnakoは、意図的な非互換として合意した項目を除き、説明文
 |---|---|---|---|
 | 文字列内のCRLF / CR | ソース前処理はコード部分だけでなく、`『…』`などの文字列内もCRLFとCRをLFへ1文字で正規化する | 公式と同じく読込時にLFへ正規化する。実行時の文字列値としてCRLFを渡すテストは`CHR(13)&CHR(10)`で生成し、ソース改行の正規化と混同しない | `公式前処理の全角記号と改行規則に合わせる`、`native-system-json-decode-errors` |
 
+## DNCL・インラインインデント
+
+DNCLの変換後トークンとインラインインデントのブロック境界は、短い命令説明からは復元しにくい。固定v3.7.24の
+[`nako_from_dncl.mts`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/core/src/nako_from_dncl.mts)、
+[`nako_from_dncl2.mts`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/core/src/nako_from_dncl2.mts)、
+[`nako_indent_inline.mts`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/core/src/nako_indent_inline.mts)と
+公式parserの実測を根拠にする。
+
+| 構文境界 | 公式v3.7.24の実際の挙動 | lnakoの扱い | 対象経路・差分テストID / TODO識別子 |
+|---|---|---|---|
+| DNCLの`でないならば` | `!DNCLモード`の`もしA=1でないならば`は、変換段階で条件末尾を`でなければ`へ正規化する。公式parserはその助詞を条件式の属性として残さず、条件式全体を`not`ノードで包む。通常の`でなければ`という語を単なる助詞削除として扱うと、否定が失われる | syntax transformで公式と同じ助詞へ変換し、Parserで助詞を消す前に`not`ノードへ包む。Interpreter・純LLVM AOT・QuickJS互換モードで共有するAST境界であり、未実装ではない | Parser単体、`公式v3.7.24とのAST差分テスト`、`公式v3.7.24との文法生成fuzz差分テスト`、`DNCLの「でないならば」を条件否定へ変換する`、`fuzz-regression-dncl-not` / TODOなし |
+| DNCLの「すべての値を〜にする」 | 公式変換は`Aのすべての値を0にする`を、通常の括弧付き関数呼出しではなく`A = [0] 100を掛`相当の助詞付き連続引数へ変換し、parserは`掛`の引数を配列と回数として構成する。さらに、縮小された`Aのすべての値にる`のように末尾の`する`が欠けた入力でも、`すべて`と値の位置を検出した時点で同じ置換を行い、構文として受理する。後者は利用者向け仕様として説明されていない公式変換の寛容さであり、不具合候補である | 公式のトークン列を変更せず、助詞付きの連続式を同一命令の引数列として読む。末尾語が欠けた縮小入力についても公式との差分を隠さず同じASTを生成する。これは通常入力の互換実装であり、公式の寛容さを新しい構文仕様として保証するものではない | Interpreter・純LLVM AOTの前段Parser、`公式v3.7.24とのインデント・DNCL差分テスト`、`公式v3.7.24との文法生成fuzz差分テスト`、`fuzz-regression-dncl-all-elements` / `TODO: official-dncl-all-elements-tail` |
+| DNCL2の同一行`そうでなくもし` | `そうでなくもし`は変換後に`違えば`と`もし`の2 tokenになる。`もしC=0ならば:`の真節が複数行でも、`違えば`と次の`もし`が同じ行にあるため、公式parserは外側を短文分岐として扱い、内側の`もし`だけが末尾の合成`ここまで`を消費する。したがって外側の明示`ここまで`は要求されない | `違えば`節が同じ行から始まる場合は公式の短文判定に合わせ、外側の`ここまで`を追加要求せず、内側の条件分岐へ合成終端を渡す。通常の別行`違えば`では従来どおり外側の終端を要求する。Parser単体でこの同一行判定を固定し、未実装ではない | Interpreter・純LLVM AOT・QuickJS互換モードで共有するParser、`公式v3.7.24とのAST差分テスト`、`公式v3.7.24との文法生成fuzz差分テスト`、`公式同様にインラインの「そうでなくもし」を入れ子の条件分岐にする`、`fuzz-regression-dncl2-else-if` / TODOなし |
+
 ## JSON（plugin_system）
 
 公式実装は `.cache/oracle/nadesiko3-3.7.24/core/src/plugin_system_json.mts` の

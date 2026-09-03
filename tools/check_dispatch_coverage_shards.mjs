@@ -11,7 +11,9 @@ const currentCommit = readGitCommit();
 const auditScriptSha256 = sha256(await readFile(resolve(root, "tools/check_dispatch_coverage.mjs")));
 const expectedSelection = "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, seven explicit plugin-route fixtures, and native-cut-commands, excluding explicit AOT gaps";
 const files = (await jsonFiles(arguments_.directory)).sort();
-if (files.length !== 7) throw new Error(`dispatch coverage shard artifactは7件必要です: actual=${files.length}`);
+const expectedShardCount = arguments_.shardCount;
+const expectedArtifactCount = expectedShardCount * 3;
+if (files.length !== expectedArtifactCount) throw new Error(`dispatch coverage shard artifactは${expectedArtifactCount}件必要です: actual=${files.length}`);
 
 const artifacts = [];
 for (const path of files) artifacts.push(await readCoverageArtifact(path));
@@ -21,25 +23,26 @@ if (byPlatform.size !== expectedPlatforms.size || [...byPlatform.keys()].some((p
   throw new Error(`dispatch coverage artifactの正式OS集合が不正です: ${JSON.stringify([...byPlatform.keys()])}`);
 }
 
-const mac = requirePlatform(byPlatform, "darwin-arm64", 1);
-if (mac[0].kind !== "sampled-unattested-dispatch-audit" || mac[0].shard !== null) {
-  throw new Error("macOS dispatch coverage artifactは全件監査である必要があります");
+const mac = requirePlatform(byPlatform, "darwin-arm64", expectedShardCount);
+if (mac.some((artifact) => artifact.kind !== "sampled-unattested-dispatch-audit-shard")) {
+  throw new Error("macOS dispatch coverage artifactは全てshard監査である必要があります");
 }
-const referenceKeys = mac[0].fixtureKeys;
-if (referenceKeys.size !== 56 || mac[0].fixtureCount !== 56) {
-  throw new Error(`macOS dispatch coverageのfixture件数が不正です: ${mac[0].fixtureCount}`);
+const referenceFixtureCount = mac[0].shard?.totalFixtureCount;
+if (referenceFixtureCount !== 56) {
+  throw new Error(`macOS dispatch coverageの全fixture件数が不正です: reference=${referenceFixtureCount}`);
 }
-for (const platform of ["linux-x64", "win32-x64"]) {
-  const shards = requirePlatform(byPlatform, platform, arguments_.shardCount);
+let referenceKeys = null;
+for (const platform of ["darwin-arm64", "linux-x64", "win32-x64"]) {
+  const shards = platform === "darwin-arm64" ? mac : requirePlatform(byPlatform, platform, expectedShardCount);
   const indexes = shards.map((artifact) => artifact.shard.index).sort((left, right) => left - right);
-  const expectedIndexes = Array.from({ length: arguments_.shardCount }, (_, index) => index);
+  const expectedIndexes = Array.from({ length: expectedShardCount }, (_, index) => index);
   if (JSON.stringify(indexes) !== JSON.stringify(expectedIndexes)) {
     throw new Error(`${platform} dispatch coverage shard indexが不連続です: ${JSON.stringify(indexes)}`);
   }
   const union = new Set();
   for (const artifact of shards) {
-    if (artifact.kind !== "sampled-unattested-dispatch-audit-shard" || artifact.shard.totalFixtureCount !== referenceKeys.size ||
-        artifact.shard.selectedFixtureCount !== artifact.fixtureCount || artifact.shard.count !== arguments_.shardCount) {
+    if (artifact.kind !== "sampled-unattested-dispatch-audit-shard" || artifact.shard.totalFixtureCount !== referenceFixtureCount ||
+        artifact.shard.selectedFixtureCount !== artifact.fixtureCount || artifact.shard.count !== expectedShardCount) {
       throw new Error(`${platform} dispatch coverage shard metadataが不正です: ${artifact.path}`);
     }
     for (const key of artifact.fixtureKeys) {
@@ -47,14 +50,16 @@ for (const platform of ["linux-x64", "win32-x64"]) {
       union.add(key);
     }
   }
+  if (referenceKeys === null) referenceKeys = union;
   assertSetEqual(union, referenceKeys, `${platform} dispatch coverage shardのfixture集合`);
 }
+if (referenceKeys.size !== referenceFixtureCount) throw new Error(`macOS dispatch coverageのshard集合が不完全です: actual=${referenceKeys.size}`);
 
 const scriptHashes = new Set(artifacts.map((artifact) => artifact.auditScriptSha256));
 if (scriptHashes.size !== 1 || !scriptHashes.has(auditScriptSha256)) {
   throw new Error("dispatch coverage shardが同一の監査scriptから生成されていません");
 }
-console.log(`dispatch coverage shard監査: macOS全件＋Linux/Windows各${arguments_.shardCount} shardで56 fixtureを重複なく検証しました`);
+console.log(`dispatch coverage shard監査: 3正式OS各${expectedShardCount} shardで56 fixtureを重複なく検証しました`);
 
 function parseArguments() {
   let directory = null;

@@ -37,13 +37,13 @@ macOSは通常suiteを2 jobへ分割してAOT native 3 jobと合わせ、同時�
 | `parser_fuzz`（Linux／Windows） | 固定seedの文法生成fuzzと`tests/oracle/fuzz-regressions.json`の回帰fixture。parser probeと公式oracleだけを使用 |
 | `standard` | math・CSV・TOML・Promise、markup・caniuse・kansujiの公式差分と全生成コーパス |
 | `host` | QuickJS互換差分（`compat-js` 4 entryの9ケース実行証拠を含む）、ネイティブプラグインABI、ファイル・プロセス・HTTP・暗号・文字コード・圧縮などNodeホスト差分。symlink経由のカレントディレクトリ実パスと失敗時のchdir診断も公式CLI・Interpreter・AOT O0〜O3で確認 |
-| `aot-native`（Linux／Windowsはfixture shard 1/3〜3/3 × O0〜O3、macOSはO0+O1／O2／O3） | 各OSでnative fixture 292件を重み付き固定割当し、公式CLI・公式生成JavaScript・`lnako run`と選択したLLVM AOT routeを実行。全route groupを合わせてO0〜O3の7経路を全件実行 |
+| `aot-native`（Linux／Windowsはfixture shard 1/3〜3/3 × O0〜O3、macOSはO0+O1／O2／O3） | 各OSでnative fixture 292件を重み付き固定割当し、公式CLI・公式生成JavaScript・`lnako run`と選択したLLVM AOT routeを実行。全route groupを合わせてO0〜O3の7経路を全件実行し、macOSではdispatch coverage 3 shardの一つも担当 |
 | `aot-support` `support-http`（Linux／Windows） | HTTP serverの公式処理系対AOT O0〜O3実通信 |
 | `aot-support` `support-dispatch-evidence`（Linux／Windows） | canonical dispatch evidenceとdispatch security。evidence artifactを保存 |
 | `aot-support` `support-dispatch-coverage`（Linux／Windows各3 shard） | canonical dispatch coverageを重み付きfixture shardで全件実行。coverage artifactを保存 |
 | `aot-support` `support-smoke`（Linux／Windows） | ReleaseSafe buildと通常smoke |
 | `compat-aot` | QuickJS Debug単体テスト、QuickJS ReleaseSafe compiler build、compat-js smoke |
-| `mac-core-standard-support`（macOSのみ） | `core`・`standard`・Node host差分に加えて、macOSのAOT support（HTTP、dispatch coverage、ReleaseSafe、通常smoke）を実行し、coverage artifactを保存 |
+| `mac-core-standard-support`（macOSのみ） | `core`・`standard`・Node host差分に加えて、macOSのAOT support（HTTP、ReleaseSafe、通常smoke）を実行 |
 | `mac-host-compat`（macOSのみ） | QuickJS互換、ネイティブplugin ABIに加えて、AOT dispatch evidence／securityを実行し、evidence artifactを保存 |
 
 `aot-native`は重いfixture shardの中でO0〜O3を直列に処理していたため、Linux／Windowsではfixture集合を3つへ分けたうえで、
@@ -55,20 +55,19 @@ O0〜O3の全routeを同じjobへ拘束しない構成です。macOSは同時実
 
 `aot-support`のHTTP、canonical dispatch evidence／security、coverage、ReleaseSafe build／smokeは、Linux／Windowsで目的別jobへ分けます。
 coverageだけは3つの重み付きfixture shardへ分け、各shardが公式source・生成JavaScript・Interpreter・AOT O0の全比較を担当します。
-追加の`verify_dispatch_coverage` jobが通常testとAOT matrixの両方の完了後、macOSの全件coverageを基準にLinux／Windows各3 shardのfixture集合を照合し、重複・欠落を拒否します。
-これにより検証範囲を削らず、長いcoverage監査の壁時計を短縮します。macOSではrunner上限5を超えないよう、supportを既存の2通常jobへ分散し、dispatch coverageを`mac-core-standard-support`、dispatch evidence／securityを`mac-host-compat`へ置きます。
+追加の`verify_dispatch_coverage` jobが通常testとAOT matrixの両方の完了後、3正式OS各3 shardのfixture集合を照合し、重複・欠落を拒否します。
+これにより検証範囲を削らず、長いcoverage監査を既存jobの実行時間へ分散します。macOSではrunner上限5を超えないよう、HTTP／ReleaseSafe／smokeを`mac-core-standard-support`、dispatch evidence／securityを`mac-host-compat`、dispatch coverageを既存native route 3 jobへ置きます。
 dispatch evidenceとcoverageの全fixture・全site、HTTP serverの10命令・14リクエスト、tiny fixtureの全security不変条件は維持します。
 `tools/check_ci_workflow.mjs`はnative 27 job（Linux／Windows各12、macOS 3）、support 12 job（Linux／Windows各6）、通常10 job、parser fuzz 2 job、
 全51 matrix job、coverage shard検証、native AOT aggregate検証、macOS 5 job、3正式OS、全7経路、O0〜O3、artifact、attestationの構成を固定します。parser fuzz jobへmacOSを追加しないことと、attestationがparser fuzzおよびnative AOT aggregate verifierの成功を待つことも検査します。
 
-2026-09-03にmacOS arm64で既定coverageの3 shardを実測した。重い順の固定割当は、shard 1/3が1 fixture・約234.86秒、
-shard 2/3が28 fixture・約42.86秒、shard 3/3が27 fixture・約53.68秒で、3つを同時に起動した場合の検査区間の下限は
-約234.86秒となる。shard 1/3には`native-cut-commands`が単独で入り、これが分割後も残る単一fixtureの下限である。単純なfixture件数ではなく
-source長とcommands数の重みを使い、各shardのfixture集合は56件を重複なく覆うことをローカルで確認した。この値はmacOS arm64の
+2026-09-03にmacOS arm64で既定coverageの3 shardを実測した。shard 1/3（index 0）は1 fixture・約176.7秒、shard 2/3（index 1）は28 fixture・約34.8秒、
+shard 3/3（index 2）は27 fixture・約45.1秒だった。重いshard 1/3を`AOT native routes O2`、shard 2/3を`O0+O1`、shard 3/3を`O3`へ割り当てる。
+単純なfixture件数ではなくsource長とcommands数の重みを使い、各shardのfixture集合は56件を重複なく覆うことをローカルで確認した。この値はmacOS arm64の
 権限付きローカル測定であり、GitHub Actionsのwall-clock、runner合計時間、3正式OSの結果、外部署名attestationの代替ではない。
 
 GitHub ActionsのmacOS runnerは同時に5 jobまでです。現行workflowでは`mac-core-standard-support`、`mac-host-compat`、native route 3 jobの
-5 jobだけをmacOSへ割り当て、同一run内で6件目以降が待ち行列へ入らない構成を維持します。dispatch coverageは`mac-core-standard-support`、dispatch evidence／securityは`mac-host-compat`へ置き、通常のcore／standardとNode host差分、HTTP／smokeは`mac-core-standard-support`へ残します。Linux／Windowsのnative route shardに加えて
+5 jobだけをmacOSへ割り当て、同一run内で6件目以降が待ち行列へ入らない構成を維持します。dispatch coverageはnative route 3 jobへ、dispatch evidence／securityは`mac-host-compat`へ置き、通常のcore／standardとNode host差分、HTTP／smokeは`mac-core-standard-support`へ残します。Linux／Windowsのnative route shardに加えて
 macOSの通常suiteもjob境界へ分けます。それぞれLinux／Windowsは通常4 job・native 12 job・support 6 job、macOSは通常2 job・native 3 jobを
 独立runnerへ割り当てます。別workflowや同時runがrunner枠を使用する場合の
 外部queueは残るため、queue時間を含む壁時計、runner合計時間、各job時間は完了済みrunで別途確認します。macOSについてはworkflow自身が
@@ -108,12 +107,12 @@ HTTP、dispatch evidence／security、dispatch coverage shard、ReleaseSafe／sm
 |---|---|---|
 | `aot-native` × 3 OS（Linux／Windows各12 job、macOS 3 job） | `zig build` → native oracleのfixture／route shard（全292件の一部または全件、公式3経路＋選択AOT route） | OS・fixture shard・optimization別native oracle artifact |
 | `aot-support` × Linux／Windows（6 purpose/shard jobs／OS） | `zig build` → HTTP AOT、dispatch evidence／security、dispatch coverage shard、ReleaseSafe build／通常smokeを目的別jobで実行 | OS別dispatch evidence／coverage shard artifact |
-| `mac-core-standard-support` × macOS | 通常core／standard → `zig build` → HTTP AOT、ReleaseSafe build、通常smoke | macOS dispatch evidence／coverageは`mac-host-compat`から保存 |
+| `mac-core-standard-support` × macOS | 通常core／standard → `zig build` → HTTP AOT、ReleaseSafe build、通常smoke | dispatch artifactは生成しない |
 
 通常の`test` matrixはLinux／Windowsのcore／standard／host／compat-aot 8 jobとmacOSの`mac-core-standard-support`／`mac-host-compat` 2 jobへ分け、AOT nativeの
-fixture検証条件を混ぜません。macOSのdispatch support監査だけはrunner上限のため後者へ移し、core／standardとHTTP・smokeは前者へ残します。したがってAOT nativeだけの失敗は
+fixture検証条件を混ぜません。macOSのdispatch evidence／securityはrunner上限のため後者へ置き、coverageはnative route 3 jobへ分散し、core／standardとHTTP・smokeは前者へ残します。したがってAOT nativeだけの失敗は
 native shardかsupportのどのjob／stepで起きたかを直接確認できます。attestation jobは`test`と`aot` matrixの両方が成功した場合だけ
-起動し、3 OSのdispatch evidenceとnative AOT aggregateを取得します。coverage shard検証jobは`aot`の成功後に7つのcoverage artifactを照合します。job数を増やした結果、setupの重複とrunner合計時間は増える可能性があるため、
+起動し、3 OSのdispatch evidenceとnative AOT aggregateを取得します。coverage shard検証jobは`aot`の成功後に9つのcoverage artifactを照合します。job数を増やした結果、setupの重複とrunner合計時間は増える可能性があるため、
 壁時計、runner合計、各job時間、cache hit/missは分割後の完了済みrunで別々に記録します。Linux／Windowsのnative route job増加による
 setup重複とrunner合計の変化も、macOSのqueueが発生していないことと分けて評価します。
 
@@ -460,7 +459,7 @@ schemaを`lnako.native-oracle-artifact.v3`へ上げて旧v1/v2のartifactと混�
 
 Linux／Windowsの`support-dispatch-evidence` jobは同じ検証runで`${{ runner.temp }}/dispatch-evidence-${{ matrix.os }}.json`を生成し、OS別artifactへ保存する。
 `support-dispatch-coverage`は各OSを3つの重み付きfixture shard jobへ分け、`${{ runner.temp }}/dispatch-coverage-${{ matrix.os }}-${{ matrix.fixtureShardIndex }}.json`を別artifactへ保存する。
-`verify_dispatch_coverage` jobはmacOSの全件artifactとLinux／Windows各3 shardを照合し、56 fixtureの集合が各OSで完全かつ重複なしであることを確認する。`attest-dispatch-evidence`はdispatch JSON 3件とnative AOT aggregate 1件をmulti-subjectで署名し、`verify_native_aot_attestation.mjs`がaggregateのSHA-256を公式`gh attestation verify`でsource commit・workflow・main ref・GitHub-hosted runnerへ拘束して検証する。dispatch JSONは
+`verify_dispatch_coverage` jobは3正式OS各3 shard、合計9件のcoverage artifactを照合し、56 fixtureの集合が各OSで完全かつ重複なしであることを確認する。`attest-dispatch-evidence`はdispatch JSON 3件とnative AOT aggregate 1件をmulti-subjectで署名し、`verify_native_aot_attestation.mjs`がaggregateのSHA-256を公式`gh attestation verify`でsource commit・workflow・main ref・GitHub-hosted runnerへ拘束して検証する。dispatch JSONは
 引数・値・source本文・ローカルパス・標準出力を含まない。main pushまたはmainへのworkflow_dispatchだけが、専用の
 `attest-dispatch-evidence` job（`contents/actions: read`、`id-token: write`、`attestations/artifact-metadata: write`）へ進む。
 
@@ -716,9 +715,31 @@ dispatch evidence／coverageの複合監査463秒を要した。検証は全件�
 個別測定したdispatch evidence 397.44秒とcoverage 316.34秒を、前回の基礎時間へ加えた推定最長が小さくなるよう、coverageを`mac-core-standard-support`、
 evidenceを`mac-host-compat`へ分散する。security監査、2 artifact、coverage verifier、3 OS attestationの入力は維持する。これは次回CI完了前の推定であり、短縮効果は次回pushの完了済みrunで確定する。
 
+## macOS監査分散の再計測とcoverage shard再配置（run 33735104547）
+
+[run 33735104547](https://github.com/soramikan/lnako/actions/runs/33735104547)（`a59cec6`）は、51 matrix job、coverage verifier、native AOT aggregate verifier、attestationの合計54 jobがすべて成功した。
+run作成は08:45:41Z、最初のjob開始は08:45:43Z、最後のjob終了は09:05:40Zで、run作成からの壁時計は約20分01秒だった。
+前回のrun 33731279614より約1分長く、coverageを`mac-core-standard-support`へ移しただけでは短縮にならないことを確認した。
+
+| macOS job／step | 所要時間 |
+|---|---:|
+| `mac-core-standard-support` | 18分21秒 |
+| `mac-host-compat` | 12分29秒 |
+| `AOT native routes O0+O1` | 12分50秒 |
+| `AOT native routes O2` | 8分24秒 |
+| `AOT native routes O3` | 10分43秒 |
+| `mac-core-standard-support` のdispatch coverage | 6分36秒 |
+| `mac-host-compat` のdispatch evidence／security | 8分04秒 |
+
+検証範囲を削らずcritical pathを下げるため、macOSのcoverageを全件1 jobから3つの重み付きshardへ変更し、既存のnative route 3 jobへ1 shardずつ割り当てる。
+ローカル実測はshard 1/3（index 0）が約176.7秒、shard 2/3（index 1）が約34.8秒、shard 3/3（index 2）が約45.1秒であり、重いindex 0を`O2`へ置く。
+`verify_dispatch_coverage`はmacOSを含む3正式OS各3 shard、合計9 artifactのfixture集合・重複・欠落を検査する。dispatch evidence／security、native AOTのO0〜O3、
+coverage全56 fixture、coverage artifact、coverage verifier、native AOT aggregate、attestationは維持する。macOSのmatrixは5 jobのままで、6件目を追加しない。
+この配置によるwall-clock・runner合計の実測効果は次の完了済みCIで確認し、未完了runは待たずに実装を続ける。
+
 ## Linux／Windows parser fuzzの独立job化
 
-Linux／Windowsの通常`core` jobから文法生成fuzzを分離し、`parser_fuzz`の2 matrix job（各OS 1件）として実行する。各jobはZig 0.16.0、Node 24.15.0、固定v3.7.24公式oracleだけを準備し、`node tools/fuzz_parser_oracle.mjs --iterations 1024 --seed 20260830`を実行する。回帰fixture9件を含むため、各OSで合計1,033件（生成1,024件＋回帰9件）を検査する。
+Linux／Windowsの通常`core` jobから文法生成fuzzを分離し、`parser_fuzz`の2 matrix job（各OS 1件）として実行する。各jobはZig 0.16.0、Node 24.15.0、固定v3.7.24公式oracleだけを準備し、`node tools/fuzz_parser_oracle.mjs --iterations 1024 --seed 20260830`を実行する。回帰fixture28件（通常構文、明示インデント、DNCL、DNCL2）を含むため、各OSで合計1,052件（生成1,024件＋回帰28件）を検査する。
 
 macOSは既存の`mac-core-standard-support`内で同じfuzzを実行し、`mac-host-compat`とAOT native 3 jobを合わせた5 jobを維持する。parser fuzz専用jobへmacOSを追加しないため、runnerの同時実行上限による6件目の待ち行列は作らない。attestation jobは通常test、parser fuzz、AOT、coverage shard検証のすべてが成功した場合だけ起動する。
 
