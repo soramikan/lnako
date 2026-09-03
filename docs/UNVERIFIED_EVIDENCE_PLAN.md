@@ -1,8 +1,8 @@
-# `unverified` 89件の証拠化計画（U24完了時点）
+# `unverified` 89件の証拠化計画（U25完了・現行証拠更新後）
 
 ## 目的と基準
 
-この文書は、なでしこ3 v3.7.24（upstream `aa18c7e640523938c680958fe731418cc6f7a58f`）の標準cnako 527 entryについて、実装済み機能を過大評価せず、`compat/v3.7.24/evidence.json`の`unverified`を実行証拠へ接続するための計画である。89件の初期残件をU01〜U23へ分解し、2026-09-03のU23完了後は次の状態にある。
+この文書は、なでしこ3 v3.7.24（upstream `aa18c7e640523938c680958fe731418cc6f7a58f`）の標準cnako 527 entryについて、実装済み機能を過大評価せず、`compat/v3.7.24/evidence.json`の`unverified`を実行証拠へ接続するための計画である。89件の初期残件をU01〜U25へ分解し、2026-09-03のU25完了後は次の状態にある。
 
 | 状態 | entry数 | 意味 |
 |---|---:|---|
@@ -14,11 +14,11 @@
 
 ## 現在の進捗（2026-09-03）
 
-U22完了時点の正本は、`compat/v3.7.24/evidence.json`、`compat/v3.7.24/compat-js-evidence.json`、`compat/v3.7.24/dispatch-evidence.json`、`compat/v3.7.24/dispatch-coverage-evidence.json`である。compat-js artifactは9ケース（成功6、期待失敗3）と4 entryの24 direct root siteを記録し、native dispatch証拠とは別schema・別namespaceで扱う。成功ケースは公式sourceと`lnako run --compat-js`の正規化stdout・終了状態・signalを比較し、stderrはhashだけを保存する。期待失敗は失敗相当の確認だけを行い、partial traceをproof siteへ選択しない。
+U25完了後の正本は、`compat/v3.7.24/evidence.json`、`compat/v3.7.24/compat-js-evidence.json`、`compat/v3.7.24/dispatch-evidence.json`、`compat/v3.7.24/dispatch-coverage-evidence.json`である。compat-js artifactは9ケース（成功6、期待失敗3）と4 entryの24 direct root siteを記録し、native dispatch証拠とは別schema・別namespaceで扱う。成功ケースは公式sourceと`lnako run --compat-js`の正規化stdout・終了状態・signalを比較し、stderrはhashだけを保存する。期待失敗は失敗相当の確認だけを行い、partial traceをproof siteへ選択しない。
 
-### U22以降の現行更新
+### U22以降の現行更新（U25完了後）
 
-canonical dispatch artifactは署名済み`260a60abe7dd9abd187105bf4a2df466bb11f774`から、coverageとexpected-exit、global/static constant、compat-jsの補助artifactは署名済み`57ca05a82ee1d6f575ada2aca37de62f3070bdea`から、それぞれcleanなprovenanceで再生成した。`compat/v3.7.24/evidence.json`は`verified 0 / trace-confirmed-unattested 527 / unverified 0`を維持しており、coverageは225 fixture・4,464 site・426/523 native entry・424/492 unique nameを、純LLVM AOTの全件証明とは分けたunattested sampled coverageとして記録する。ベンチマークは`benchmarks/results/latest.json`／`latest.md`へmacOS arm64・Zig 0.16.0・LLVM 22.1.8のInterpreter／AOT compile／AOT run結果を保存済みである。
+canonical dispatch artifactは現行の`dispatch-evidence.json`へ固定し、Interpreter 944 event、Node route 42 event、AOT manifest 946件・runtime 1,888 eventを記録する。coverageとexpected-exit、global/static constant、compat-jsの補助artifactも現行のclean provenanceで追跡している。`compat/v3.7.24/evidence.json`は`verified 0 / trace-confirmed-unattested 527 / unverified 0`を維持しており、coverageは225 fixture・4,464 site・426/523 native entry・424/492 unique nameを、純LLVM AOTの全件証明とは分けたunattested sampled coverageとして記録する。fixture inventoryは412件（AOT 310、Interpreter 112、QuickJS 9）である。ベンチマークは`benchmarks/results/latest.json`／`latest.md`へmacOS arm64・Zig 0.16.0・LLVM 22.1.8のInterpreter／AOT compile／AOT run結果を保存済みだが、Linux／Windowsを含む性能記録は未完了である。
 
 追加の互換境界として、固定v3.7.24の[`plugin_node.mts`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/src/plugin_node.mts#L1401-L1423)にある`AJAX内容取得`の未知種別を`plugin-node-http-content-unknown-type`へ固定した。公式は未知種別で`Response.body`を`res.body()`として呼ぶため、外側の失敗callbackで観測される拒否理由は`TypeError: res.body is not a function`になる。lnakoはJavaScript runtimeを呼ばず、`InvalidAjaxContentType`をこの観測可能な拒否理由へ変換するだけで、未知種別を正常なbody取得として実装しない。さらに公式の[`AJAX受信`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/src/plugin_node.mts#L1426-L1447)が400応答で`対象`を変更せず`console.error`へ流す境界を`plugin-node-http-receive-error`へ固定し、lnakoもstderrへ観測可能な接頭辞とstatusを出す。公式CLI・lnako Interpreter・純LLVM AOT O0〜O3の15ケース（27命令、AOT 11ケース）を比較し、Interpreter／AOTの実行経路を同一fixtureへ接続した。これらの単位は既存の89件の証拠化件数を増減させず、通常dispatch coverageへ未検証のsiteを追加せず、公式sourceの不具合候補とNode内部stack差は`docs/COMPATIBILITY_QUIRKS.md`へ分離して記録する。対応するTODO `node-http-response-unknown-type`と`node-http-ajax-receive-error`は解消済みとするが、3正式OSの外部署名attestationは未完了である。
 
@@ -54,13 +54,13 @@ U15では`http-server-dispatch-cases.json`を追加し、`簡易HTTPサーバ起
 
 U16では、公式の同名登録経路を名前だけで混同しないため、`tests/oracle/plugin-route-cases.json`へsystem-onlyの`plugin-system-path-route`／`plugin-system-end-route`とNode-onlyの`plugin-node-path-route`を追加した。`終`（`command-0061`）、system側の`ファイル名抽出`／`パス抽出`（`command-0268`／`command-0269`）、Node側の同名path命令（`command-0722`／`command-0723`）、Node側`終` alias（`command-0745`）の6 entryを、fixtureの`catalogIds`、semantic binding、Interpreter trace、AOT compile manifest/runtime traceの一致で明示同定した。system-onlyの公式生成JavaScriptはstandalone system plugin runtime bundleがないため実行不能として記録し、公式sourceを選択oracleとした。system routeでは`/a/b`のbasename／dirnameが`b`／`/a`、`a/`が空文字／`a`となり、`終`は`__終わる__`を`エラー監視`へ渡す。Node routeの`a/b.txt`は`b.txt`／`a`となる。cleanな`401af96726488588a31a252bbe1185de9298435d`から再生成したdispatch coverageは52 fixture・1,863 site・364 native entry（362 unique names）で、同期後の台帳は`verified 0 / trace-confirmed-unattested 495 / unverified 32`となった。これはmacOS arm64のclean実測であり、3正式OSの外部署名attestation、QuickJS、全527 entryの純LLVM AOT実行を意味しない。
 
-## U17〜U23完了記録
+## U17〜U25完了記録
 
 U17〜U21では、`plugin_datetime`の同名命令を通常の`plugin_system` routeから流用せず、`plugin-datetime-clock-route`（`command-0808`〜`command-0818`）、`plugin-datetime-conversion-route`（`command-0819`〜`command-0823`）、`plugin-datetime-era-route`（`command-0824`）、`plugin-datetime-difference-addition-route`（`command-0825`〜`command-0834`）の4 fixtureへ分離した。`command-0807 元号データ`は`native-datetime-plugin-era-data`のstatic global readとして別artifactへ固定した。全28 entryでfixtureの`catalogIds`、`pluginRoute: plugin_datetime`、`expectedDispatchRoute`、Interpreter trace、AOT compile manifest/runtime traceを明示し、`sync_compat_evidence.mjs --generate`は`verified 0 / trace-confirmed-unattested 523 / unverified 4`を返す。
 
 coverage artifactはcleanな`f92c76d6ed91bfc4738854be202bdbe48984d8c7`由来の56 fixture・1,917 site・391 native entry（492 unique names中389）で、fixture inventoryは410件（AOT 308、Interpreter 110、QuickJS 9）である。公式source import時の旧形式plugin警告はfixture宣言の`officialSourceStderrIncludes`だけを許容し、raw stderr hashを保持する。`和暦変換`は公式sourceの`sys.__v0.元号データ is not iterable`とgenerated routeの成功値を別route差として扱い、`日付加算`はplugin routeの`2024/02/29`とsystem routeの`2024/03/02`を区別する。これらは`trace-confirmed-unattested`であり、3正式OSの外部署名attestation後の`verified`ではない。
 
-U22完了後の現行監査では、`--include-native`を用いてcleanな`2874ff6`から225 fixture・4,464 site・426 native entry（492 unique names中424）を再実行し、未観測97 native entryを`unobservedNativeEntryIds`へ明示しました。同名命令はcatalog IDで解決し、公式generated routeが終了コード0でもstdoutだけ異なる場合は利用可能性とroute同値性を別metadataへ保存します。この拡張は初期89件の台帳状態（`trace-confirmed-unattested: 527`、`unverified: 0`）を変更せず、単一macOS環境のunattested sampled coverageを増やしたものとして扱います。3正式OSのAOT／QuickJS／fuzz実行、外部署名attestation、`verified`昇格は引き続き後続の完了条件です。
+U22完了後の現行監査では、`--include-native`を用いて現行のclean coverage artifactから225 fixture・4,464 site・426 native entry（492 unique names中424）を再実行し、未観測97 native entryを`unobservedNativeEntryIds`へ明示しました。同名命令はcatalog IDで解決し、公式generated routeが終了コード0でもstdoutだけ異なる場合は利用可能性とroute同値性を別metadataへ保存します。この拡張は初期89件の台帳状態（`trace-confirmed-unattested: 527`、`unverified: 0`）を変更せず、単一macOS環境のunattested sampled coverageを増やしたものとして扱います。3正式OSのAOT／QuickJS／fuzz実行、外部署名attestation、`verified`昇格は引き続き後続の完了条件です。
 
 U23では、固定`plugin_httpserver.mts`のmultipart処理を再確認し、case-sensitiveな`multipart/form-data`判定、`boundary=`正規表現のquoted/unquoted分岐と`;`後続parameterの切り捨て、CRLF/LFのheader separator、引用付き`name`／`filename`の部分一致をInterpreter/AOTへ揃えた。公式CLI／Interpreterは23リクエスト、AOTはO0〜O3の各23リクエスト、Zig全体は832/832テストで成功した。`filename`だけのContent-Dispositionが`name`の部分一致でfield nameを得る挙動も、標準的なmultipart解釈へ補正せずfixtureと`docs/COMPATIBILITY_QUIRKS.md`へ記録した。壊れたbody全体の診断、外部endpoint、3正式OSのHTTP attestationは未確定のまま残す。
 
