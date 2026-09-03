@@ -45,7 +45,7 @@ if (!workflow.includes("needs: preflight") || !workflow.includes("needs: [prefli
   throw new Error("Release workflowのjob依存関係またはpublish条件が不正です");
 }
 if (!workflow.includes("GITHUB_RUN_ID") || !workflow.includes("github.sha") || !workflow.includes("CI --commit") ||
-    !workflow.includes("CI_EXPECTED_JOB_COUNT: 53") || !workflow.includes("--json jobs") ||
+    !workflow.includes("CI_EXPECTED_JOB_COUNT: 54") || !workflow.includes("--json jobs") ||
     !workflow.includes("ci_job_count") || !workflow.includes("ci_non_success_jobs")) {
   throw new Error("Release workflowにsource commit／CI gateの検証がありません");
 }

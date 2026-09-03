@@ -99,6 +99,7 @@ jobs:
           node tools/check_interpreter_only_classification.mjs --check
           node tools/check_builtin_catalog.mjs
           node tools/check_benchmark_result.mjs
+          node tools/check_native_aot_artifacts.mjs --self-test
       - name: Distribution package self-test
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node tools/check_distribution.mjs --self-test
@@ -779,10 +780,49 @@ jobs:
           --directory "${{ runner.temp }}/dispatch-coverage"
           --shard-count 3
 
+  verify_native_aot_artifacts:
+    name: Verify native AOT artifacts
+    if: always()
+    needs: [aot]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+      - name: Download native AOT artifacts
+        if: needs.aot.result == 'success'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: lnako-native-oracle-*
+          path: ${{ runner.temp }}/native-aot-artifacts
+          merge-multiple: false
+      - name: Verify native AOT artifact partition
+        if: needs.aot.result == 'success'
+        run: >
+          node tools/check_native_aot_artifacts.mjs
+          --directory "${{ runner.temp }}/native-aot-artifacts"
+          --commit "${{ github.sha }}"
+          --output "${{ runner.temp }}/lnako-native-aot-aggregate-evidence.json"
+      - name: Reject failed native AOT matrix
+        if: needs.aot.result != 'success'
+        run: exit 1
+      - name: Upload native AOT aggregate evidence
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lnako-native-aot-aggregate
+          path: ${{ runner.temp }}/lnako-native-aot-aggregate-evidence.json
+          if-no-files-found: error
+          retention-days: 30
+
   attest-dispatch-evidence:
     name: Attest and verify dispatch evidence
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') && needs.test.result == 'success' && needs.parser_fuzz.result == 'success' && needs.aot.result == 'success' && needs.verify_dispatch_coverage.result == 'success'
-    needs: [test, parser_fuzz, aot, verify_dispatch_coverage]
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') && needs.test.result == 'success' && needs.parser_fuzz.result == 'success' && needs.aot.result == 'success' && needs.verify_dispatch_coverage.result == 'success' && needs.verify_native_aot_artifacts.result == 'success'
+    needs: [test, parser_fuzz, aot, verify_dispatch_coverage, verify_native_aot_artifacts]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -804,11 +844,19 @@ jobs:
           pattern: lnako-dispatch-evidence-*
           path: ${{ runner.temp }}/dispatch-evidence
           merge-multiple: true
+      - name: Download native AOT aggregate evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: lnako-native-aot-aggregate
+          path: ${{ runner.temp }}/native-aot-evidence
+          merge-multiple: true
       - name: Generate artifact attestation
         id: attest-dispatch
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: ${{ runner.temp }}/dispatch-evidence/dispatch-evidence-*.json
+          subject-path: |
+            ${{ runner.temp }}/dispatch-evidence/dispatch-evidence-*.json
+            ${{ runner.temp }}/native-aot-evidence/lnako-native-aot-aggregate-evidence.json
       - name: Verify artifact attestations and catalog promotion
         env:
           GH_TOKEN: ${{ github.token }}
@@ -822,6 +870,18 @@ jobs:
             --commit "${{ github.sha }}" \
             --source-ref "refs/heads/main" \
             --workflow "${{ github.repository }}/.github/workflows/ci.yml"
+      - name: Verify native AOT artifact attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node tools/verify_native_aot_attestation.mjs \
+            --evidence "${{ runner.temp }}/native-aot-evidence/lnako-native-aot-aggregate-evidence.json" \
+            --bundle "${{ steps.attest-dispatch.outputs.bundle-path }}" \
+            --output "${{ runner.temp }}/native-aot-attestation.json" \
+            --repository "${{ github.repository }}" \
+            --commit "${{ github.sha }}" \
+            --source-ref "refs/heads/main" \
+            --workflow "${{ github.repository }}/.github/workflows/ci.yml"
       - name: Upload verified catalog evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -829,6 +889,7 @@ jobs:
           path: |
             ${{ runner.temp }}/catalog-evidence-verified.json
             ${{ runner.temp }}/dispatch-attestation.json
+            ${{ runner.temp }}/native-aot-attestation.json
             ${{ steps.attest-dispatch.outputs.bundle-path }}
           if-no-files-found: error
           retention-days: 30

@@ -32,8 +32,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION_INPUT: ${{ inputs.version }}
-          # 51 matrix jobs + dispatch coverage verifier + attestation.
-          CI_EXPECTED_JOB_COUNT: 53
+          # 51 matrix jobs + dispatch coverage verifier + native AOT aggregate verifier + attestation.
+          CI_EXPECTED_JOB_COUNT: 54
         shell: bash
         run: |
           set -euo pipefail

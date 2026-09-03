@@ -169,6 +169,7 @@ const runtimeFixtureFiles = new Set([
 // dispatch-generator change requires a fresh dispatch run.
 const dispatchEvidenceFollowUpPaths = new Set([
   ".github/workflows/ci.yml",
+  ".github/workflows/release.yml",
   "README.md",
   "benchmarks/results/latest.json",
   "benchmarks/results/latest.md",
@@ -200,6 +201,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "docs/CI.md",
   "docs/DEVELOPMENT.md",
   "tools/check_ci_workflow.mjs",
+  "tools/check_release_workflow.mjs",
   "tools/check_dispatch_coverage_shards.mjs",
   "tools/check_aot_suite_parallel.mjs",
   "tools/check_dispatch_coverage.mjs",
@@ -213,6 +215,8 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "tools/create_distribution.mjs",
   "tools/check_benchmark_result.mjs",
   "tools/compare_interpreter_oracle.mjs",
+  "tools/check_native_aot_artifacts.mjs",
+  "tools/verify_native_aot_attestation.mjs",
   "docs/UNVERIFIED_EVIDENCE_PLAN.md",
   "tools/sync_compat_evidence.mjs",
 ]);
