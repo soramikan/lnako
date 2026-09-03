@@ -388,6 +388,10 @@ if (!attestJob || !attestJob.includes("github.event_name == 'push'") || !attestJ
     !nativeAotAttestationVerifier.includes("--predicate-type") || !nativeAotAttestationVerifier.includes("subject digest")) {
   throw new Error("dispatch evidenceのattestation／検証job設定が不正です");
 }
+if (!syncEvidence.includes('extras[0].name !== "lnako-native-aot-aggregate-evidence.json"') ||
+    !syncEvidence.includes("expectedDigests.some((digest) => !digests.includes(digest))")) {
+  throw new Error("dispatch attestation verifierがnative AOT aggregateの追加subjectを安全に扱っていません");
+}
 
 const smokeCommands = {
   "Normal smoke test": [

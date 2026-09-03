@@ -638,7 +638,7 @@ native 27 job＋support 12 job、通常test 10 job＋parser fuzz 2 jobの計51 m
 各support jobの検証内容は維持する。HTTP jobは先行`zig build`後に公式HTTP serverとの差分をO0〜O3で実行し、evidence jobは
 先行build後にcanonical dispatch traceとtiny fixtureのsecurity不変条件を検査してevidence artifactを保存する。coverage jobは先行build後に
 全fixture・全siteのdispatch coverageを3 shardへ分けて検査し、coverage artifactを保存する。smoke jobはReleaseSafe compilerをbuildし、`--version`、compat report、
-2件の`check`、通常`run`、`test`を実行する。dispatch evidence artifactは従来どおりattestation jobの3 OS subjectへ使い、coverage artifactも保存する。
+2件の`check`、通常`run`、`test`を実行する。dispatch evidence artifactはattestation jobの3 OS subjectへ使い、native AOT aggregateも同じbundleの追加subjectとして保存・検証し、coverage artifactも保存する。
 
 目的別jobではsetup、固定LLVM／QuickJS、公式オラクル取得、必要なcompiler buildが重複するため、単一runのrunner合計時間は増える可能性がある。
 一方、長いdispatch監査とReleaseSafe buildを同じrunnerのCPU・I/Oへ拘束せず、Linux／Windowsの壁時計改善を測定できる。macOSは
@@ -688,6 +688,12 @@ macOS 5 jobのZig tarball、Zig build、LLVM／QuickJS、公式oracle cacheは�
 [run 33708609448](https://github.com/soramikan/lnako/actions/runs/33708609448)（`e34df1a`）は、Windows x86_64のAOT native shard 2/3でO0〜O3の4 jobが同じ`native-node-path-mixed-separators`により失敗した。公式source・公式generated・AOTの標準出力は一致しており、Interpreterだけが混在区切りnamespace pathの`パス抽出`でdirnameへ余分な`Z:_ab?0Y/`を残していた。したがって、これはjob分割、macOS 5 jobのqueue、cache、LLVM AOTの失敗ではなく、InterpreterのWindows root-scan実装差である。
 
 `src/plugins/node.zig`をAOTと同じNode 24相当のroot scanへ揃え、`native-node-path-mixed-separators`の混在`/`・`\\`、drive-relative、UNC、namespace境界を単体テストへ固定した。修正commitは`f07e30d`で、Windows targetのクロスビルド、全Zigテスト837/837、canonical／coverage／補助証拠のclean provenance再生成に成功している。次回push前にもこのrun以降の完了済み失敗を確認し、新runは完了待ちせず実装を継続する。macOSは5 job以内、Linux／Windowsのnative shardと全O0〜O3は維持する。
+
+## 直近完了CIのattestation bundle subject差分（run 33724560925）
+
+[run 33724560925](https://github.com/soramikan/lnako/actions/runs/33724560925)（`41e262d`）は、51 matrix jobと`Verify dispatch coverage shards`が成功し、最後の`Attest and verify dispatch evidence`だけが失敗した。失敗箇所はAOT実行やmacOSの5枠待ちではなく、attestation bundleにdispatch 3 OSのJSONに加えて`lnako-native-aot-aggregate-evidence.json`も含まれたのに、`sync_compat_evidence.mjs`が3 subjectのdigest完全一致を要求していたことである。Node.js 20警告も原因ではない。
+
+現行CIのbundleは4 subjectを署名する。dispatch検証は3 OS dispatch digestを全て要求し、4件目はnative AOT aggregateの固定ファイル名に限定して追加許容する。aggregateのdigest・27 artifact・292 fixture全件性は`verify_native_aot_attestation.mjs`が別に検証するため、dispatch catalogの昇格条件を緩めたものではない。次回push前にこのrunを完了済み失敗として再確認し、同じattestation bundle構成の成功を確認する。新runの完了は待たずに実装を継続する。
 
 ## Linux／Windows parser fuzzの独立job化
 

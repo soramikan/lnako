@@ -1180,10 +1180,18 @@ function verifyAttestationBundle(attestation, inputPath, bundlePath, bundleBytes
   const matchesAllSubjects = Array.isArray(verified) && verified.some((entry) => {
     const subjects = entry.verificationResult?.statement?.subject;
     if (!Array.isArray(subjects)) return false;
-    const digests = subjects.map((subject) => attestedSha256(subject)).filter((digest) => digest !== null).sort();
-    return JSON.stringify(digests) === JSON.stringify(expectedDigests);
+    const parsedSubjects = subjects.map((subject) => ({ name: subject?.name, digest: attestedSha256(subject) }));
+    if (parsedSubjects.some((subject) => subject.digest === null)) return false;
+    const digests = parsedSubjects.map((subject) => subject.digest).sort();
+    if (digests.length !== expectedDigests.length && digests.length !== expectedDigests.length + 1) return false;
+    if (new Set(digests).size !== digests.length || expectedDigests.some((digest) => !digests.includes(digest))) return false;
+    if (digests.length === expectedDigests.length + 1) {
+      const extras = parsedSubjects.filter((subject) => !expectedDigests.includes(subject.digest));
+      if (extras.length !== 1 || extras[0].name !== "lnako-native-aot-aggregate-evidence.json") return false;
+    }
+    return true;
   });
-  if (!matchesAllSubjects) throw new Error("検証済みattestation bundleの3 OS subject digestが一致しません");
+  if (!matchesAllSubjects) throw new Error("検証済みattestation bundleのdispatch subject digestが一致しません");
 }
 
 function attestedSha256(subject) {

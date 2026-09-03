@@ -39,9 +39,11 @@ U05更新時点の現行値は`verified: 0`、`trace-confirmed-unattested: 448`�
 
 AOT差分artifactとdispatch証拠は入力・実行物・結果のSHA-256を内包します。各OS内では公式source・生成JavaScript・lnako run・AOT O0の
 stdout/stderr hashを一致させますが、OS間のdispatch意味比較では、パス区切りなどOS依存の出力hashを含めず、fixture・route結果状態・catalog/site構造を比較します。
-CIのmain push/workflow_dispatchでは、3正式OSのdispatch JSONを公式`actions/attest`のmulti-subject artifact attestationへ結び付け、公式`gh attestation verify`で
+CIのmain push/workflow_dispatchでは、3正式OSのdispatch JSONとnative AOT aggregate JSONを公式`actions/attest`のmulti-subject artifact attestationへ結び付け、公式`gh attestation verify`で
 署名、SLSA predicate、workflow identity、OIDC issuer、対象commit、3 OSのdigestを検証します。検証成功時だけCI一時出力のcatalog evidenceを`verified`として生成し、追跡中のmacOS単体JSONは変更しません。
 未attest、fork PR、権限不足、対象commit・workflow・digest不一致では`trace-confirmed-unattested`のまま昇格しません。
+
+attestation bundleのdispatch検証は、dispatch 3 subjectのdigestが全て含まれることに加え、現行CIが同じbundleへ追加する`lnako-native-aot-aggregate-evidence.json`を1 subjectだけ許容する。native AOT aggregate自体は`verify_native_aot_attestation.mjs`が別にdigest検証するため、dispatch catalog昇格側はaggregateを3 OS dispatch subjectの代替として扱わない。run `33724560925`ではこの4 subject bundleに対して旧検証が3件の完全一致を要求して失敗したため、subject名とdigest集合を分けて検証するよう修正した。
 
 ### 外部成果物の履歴固定
 
