@@ -3860,7 +3860,8 @@ fn hostObjectToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint
     const object = roots[0].object().?;
 
     for ([_][]const u16{ first, second }) |name| {
-        if (runtime.aotObjectOwnPropertyGetUnits(object, name)) |callable| {
+        const method = runtime.aotObjectOwnPropertyGetUnits(object, name) orelse aotCustomObjectPrototypeProperty(roots[0], name);
+        if (method) |callable| {
             if (callable.tag == @intFromEnum(Tag.undefined) or callable.tag == @intFromEnum(Tag.null_value)) continue;
             if (callable.tag != @intFromEnum(Tag.function)) return error.NotCallable;
             roots[1] = try invokeAotCallback(runtime, callable, null, 0);
@@ -3888,6 +3889,16 @@ fn hostObjectToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint
         }
     }
     return error.CannotConvertObjectToPrimitive;
+}
+
+/// Return only properties supplied by an explicitly assigned object
+/// prototype.  The synthesized standard Buffer/TypedArray/ArrayBuffer
+/// methods are deliberately excluded: hostObjectToPrimitive handles their
+/// built-in conversion itself when no custom override exists.
+fn aotCustomObjectPrototypeProperty(value: Value, key: []const u16) ?Value {
+    const object = value.object() orelse return null;
+    if (object.prototype.tag != @intFromEnum(Tag.dictionary)) return null;
+    return dictionaryOwnProperty(object.prototype, key) orelse dictionaryPrototypeProperty(object.prototype, key);
 }
 
 fn arrayToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint) !Value {
@@ -22175,6 +22186,36 @@ test "AOT配列のカスタムToPrimitiveは文字列と数値hintへ接続す�
     roots[5] = try active.createFunction(testAotToPrimitiveObject, 0, &.{});
     try active.setDictionary(&roots[4].object().?.array_properties, staticStringValue("toString"), roots[5]);
     try std.testing.expectError(error.CannotConvertObjectToPrimitive, valueToPrimitive(active, roots[4], .string));
+}
+
+test "AOT byte bufferのcustom prototypeをToPrimitiveへ接続する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    active_runtime = runtime;
+    defer {
+        runtime = active_runtime.?;
+        active_runtime = null;
+    }
+    const active = &active_runtime.?;
+    var roots = [_]Value{.{}} ** 8;
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+
+    roots[0] = try active.createBytes(&.{ 85, 66 });
+    roots[1] = try active.createUint8Array(&.{ 85, 66 });
+    roots[2] = try active.createArrayBuffer(&.{ 85, 66 });
+    roots[3] = try active.createFunction(testAotCustomString, 0, &.{});
+    roots[4] = try active.createFunction(testAotConstantSeven, 0, &.{});
+    roots[5] = try active.createDictionary(&.{ staticStringValue("toString"), roots[3] });
+    roots[6] = try active.createDictionary(&.{ staticStringValue("valueOf"), roots[4] });
+    roots[0].object().?.prototype = roots[5];
+    roots[1].object().?.prototype = roots[5];
+    roots[2].object().?.prototype = roots[6];
+
+    try expectUtf16String(active, try valueToPrimitive(active, roots[0], .string), "CUSTOM");
+    try expectUtf16String(active, try valueToPrimitive(active, roots[1], .string), "CUSTOM");
+    try std.testing.expectEqual(@as(f64, 7), @as(f64, @bitCast((try valueToPrimitive(active, roots[2], .number)).payload)));
 }
 
 test "AOT BigInt比較をNumberとの間でも精度を落とさず処理する" {

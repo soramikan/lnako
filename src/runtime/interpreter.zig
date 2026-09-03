@@ -812,7 +812,17 @@ pub const Interpreter = struct {
                 if (value_mod.arrayPrototypePropertyUnits(array, name)) |inherited| break :blk inherited;
                 break :blk null;
             },
-            .bytes => |bytes| ownProperty(bytes.properties.items, name),
+            .bytes => |bytes| blk: {
+                if (ownProperty(bytes.properties.items, name)) |own_value| break :blk own_value;
+                // OrdinaryToPrimitive performs a normal property lookup.  A
+                // Buffer/TypedArray/ArrayBuffer may therefore inherit a
+                // custom toString/valueOf from an object assigned through
+                // __proto__.  Do not use standardInheritedProperty here:
+                // its synthesized built-in methods are handled by the
+                // default conversion below and are not custom overrides.
+                if (bytes.prototype == .dictionary) break :blk value_mod.dictionaryPropertyUnits(bytes.prototype.dictionary, name);
+                break :blk null;
+            },
             .function => |function| ownProperty(function.properties.items, name),
             .promise => |promise| ownProperty(promise.properties.items, name),
             else => null,
@@ -3277,6 +3287,56 @@ test "配列のカスタムToPrimitiveは文字列と数値hintへ接続する" 
     defer interpreter.deinit();
     _ = try interpreter.run();
     try std.testing.expectEqualStrings("ARRAY\n6\n", host.written());
+}
+
+fn testInterpreterCustomString(runtime: *Runtime, _: []const Value) !Value {
+    return runtime.stringUtf8("CUSTOM");
+}
+
+fn testInterpreterConstantSeven(_: *Runtime, _: []const Value) !Value {
+    return .{ .number = 7 };
+}
+
+test "byte bufferのcustom prototypeをToPrimitiveへ接続する" {
+    var fixture = try compileForTest(std.testing.allocator, "");
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = [_]Value{.undefined} ** 6;
+    var root_frame = runtime.rootFrame();
+    defer root_frame.deinit();
+    for (&roots) |*root| try root_frame.protect(root);
+    roots[0] = try runtime.createBytes(&.{ 85, 66 });
+    roots[1] = try runtime.createUint8Array(&.{ 85, 66 });
+    roots[2] = try runtime.createArrayBuffer(&.{ 85, 66 });
+    const to_string_name = try runtime.stringUtf8("toString");
+    roots[3] = try runtime.createNativeFunction(to_string_name.string, 0, testInterpreterCustomString, &.{});
+    const value_of_name = try runtime.stringUtf8("valueOf");
+    roots[4] = try runtime.createNativeFunction(value_of_name.string, 0, testInterpreterConstantSeven, &.{});
+    roots[5] = try runtime.createDictionary();
+    try roots[5].dictionary.set((try runtime.stringUtf8("toString")).string, roots[3]);
+    roots[0].bytes.prototype = roots[5];
+    roots[1].bytes.prototype = roots[5];
+    var number_prototype = try runtime.createDictionary();
+    try root_frame.protect(&number_prototype);
+    try number_prototype.dictionary.set((try runtime.stringUtf8("valueOf")).string, roots[4]);
+    roots[2].bytes.prototype = number_prototype;
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+    const buffer_primitive = (try interpreter.objectToPrimitive(roots[0], .string)).?;
+    try std.testing.expect(buffer_primitive == .string);
+    try std.testing.expectEqualSlices(u16, &.{ 'C', 'U', 'S', 'T', 'O', 'M' }, buffer_primitive.string.units);
+    const uint8_primitive = (try interpreter.objectToPrimitive(roots[1], .string)).?;
+    try std.testing.expect(uint8_primitive == .string);
+    try std.testing.expectEqualSlices(u16, &.{ 'C', 'U', 'S', 'T', 'O', 'M' }, uint8_primitive.string.units);
+    const number = (try interpreter.objectToPrimitive(roots[2], .number)).?;
+    try std.testing.expect(number == .number);
+    try std.testing.expectEqual(@as(f64, 7), number.number);
 }
 
 test "テスト定義を個別に実行して結果を記録する" {

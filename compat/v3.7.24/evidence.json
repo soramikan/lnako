@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 413,
-    "nativeAot": 311,
+    "total": 414,
+    "nativeAot": 312,
     "interpreter": 112,
     "compatJs": 9
   },
@@ -14292,6 +14292,7 @@
         "native-system-array-custom-prototype-properties",
         "native-system-array-to-primitive",
         "native-system-dictionary-to-primitive",
+        "native-system-object-to-primitive-byte-prototype",
         "native-system-object-to-primitive-host-properties",
         "native-system-table-function-properties",
         "native-system-table-inherited-properties",
@@ -14316,6 +14317,9 @@
             "fixture.commands"
           ],
           "native-system-dictionary-to-primitive": [
+            "fixture.commands"
+          ],
+          "native-system-object-to-primitive-byte-prototype": [
             "fixture.commands"
           ],
           "native-system-object-to-primitive-host-properties": [
@@ -16686,6 +16690,7 @@
         "native-system-array-to-primitive",
         "native-system-byte-buffer-backing-identity",
         "native-system-dictionary-to-primitive",
+        "native-system-object-to-primitive-byte-prototype",
         "native-system-object-to-primitive-host-properties",
         "native-system-table-byte-buffer-inherited-length",
         "native-system-table-byte-row-view-offset",
@@ -16721,6 +16726,9 @@
             "fixture.commands"
           ],
           "native-system-dictionary-to-primitive": [
+            "fixture.commands"
+          ],
+          "native-system-object-to-primitive-byte-prototype": [
             "fixture.commands"
           ],
           "native-system-object-to-primitive-host-properties": [
@@ -25866,6 +25874,7 @@
         "native-system-dictionary-buffer-enumerable-properties",
         "native-system-dictionary-byte-buffer-enumeration",
         "native-system-dictionary-byte-buffer-properties",
+        "native-system-object-to-primitive-byte-prototype",
         "native-system-object-to-primitive-host-properties",
         "native-system-reference-byte-buffer-properties",
         "native-system-string-array-from-arraybuffer-arraylike",
@@ -25928,6 +25937,9 @@
           "native-system-dictionary-byte-buffer-properties": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-system-object-to-primitive-byte-prototype": [
+            "fixture.commands"
           ],
           "native-system-object-to-primitive-host-properties": [
             "fixture.commands"
@@ -26054,6 +26066,7 @@
         "native-system-byte-buffer-property",
         "native-system-dictionary-byte-buffer-enumeration",
         "native-system-dictionary-byte-buffer-properties",
+        "native-system-object-to-primitive-byte-prototype",
         "native-system-reference-byte-buffer-properties"
       ],
       "compatJsFixtureIds": [],
@@ -26099,6 +26112,9 @@
           "native-system-dictionary-byte-buffer-properties": [
             "fixture.commands",
             "implemented.tests"
+          ],
+          "native-system-object-to-primitive-byte-prototype": [
+            "fixture.commands"
           ],
           "native-system-reference-byte-buffer-properties": [
             "fixture.commands"

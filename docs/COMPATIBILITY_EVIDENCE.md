@@ -10,6 +10,8 @@ U17〜U21では、`plugin_datetime`の`command-0807`〜`command-0834`を通常�
 
 この文書の後続段落にはU07〜U21の完了時点を記録した履歴値と、U22前のfixture inventory／execution evidenceの説明が含まれます。現行値はこのスナップショットと`compat/v3.7.24/evidence.json`、各証拠artifactを正本とし、履歴段落の旧件数を現在値として解釈しません。
 
+U26では、Buffer・Uint8Array・ArrayBufferへ設定したcustom `__proto__`の辞書prototype chainをToPrimitiveへ接続した。`native-system-object-to-primitive-byte-prototype`は、公式の`String`／数値変換がcustom prototypeの`toString`／`valueOf`を解決する経路を、公式CLI・公式生成JavaScript・Interpreter・LLVM AOT O0〜O3で比較する。prototype置換後に標準byte buffer propertyが消える完全なdescriptor／receiver semanticsは、別TODOとして未実装扱いにする。fixture追加後のinventoryは`compat/v3.7.24/evidence.json`の`fixtureInventory`（414件、AOT 312件、Interpreter 112件、QuickJS 9件）を正本とする。
+
 U22完了後の履歴監査は、当時のcleanな`57ca05a82ee1d6f575ada2aca37de62f3070bdea`から225 fixture・4,464 site・426 native entry（492 unique names中424）を再実行し、未観測97 native entryを`unobservedNativeEntryIds`へ明示しました。`native-caniuse-agents`のように公式generated routeが終了コード0でもstdoutだけ異なる場合は、`officialGeneratedAvailable: true`と`officialRoutesEquivalent: false`を分離して記録します。この拡張はcatalog evidenceの`trace-confirmed-unattested`状態を補強するものであり、3正式OSの外部署名attestationや`verified`昇格ではありません。
 
 ## U07〜U15完了時点の履歴

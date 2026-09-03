@@ -1480,5 +1480,10 @@
     "id": "native-system-object-to-primitive-host-properties",
     "commands": ["文字列変換", "ハッシュ値計算", "動時", "成功時", "表示", "辞書キー存在", "辞書キー削除", "辞書キー列挙", "JSON変換"],
     "source": "BUF=ハッシュ値計算(\"A\",\"sha256\",undefined)\nBUF[\"toString\"]=関数()それは\"BUF-CUSTOM\";ここまで\n文字列変換(BUF)を表示\nBUF[\"valueOf\"]=関数()それは7;ここまで\n(BUF-1)を表示\nBUF[\"marker\"]=42\n辞書キー存在(BUF,\"marker\")を表示\n辞書キー削除(BUF,\"marker\")\n辞書キー存在(BUF,\"marker\")を表示\nF=関数()それは1;ここまで\nF[\"toString\"]=関数()それは\"FUNCTION-CUSTOM\";ここまで\n文字列変換(F)を表示\nF[\"valueOf\"]=関数()それは9;ここまで\n(F-1)を表示\nF[\"marker\"]=\"F-MARKER\"\nJSON変換(辞書キー列挙(F))を表示\n辞書キー削除(F,\"marker\")\n辞書キー存在(F,\"marker\")を表示\n動いた時には(成功,失敗)\n成功(1)\nここまで\nP=それ\nP[\"toString\"]=関数()それは\"PROMISE-CUSTOM\";ここまで\n文字列変換(P)を表示\nP[\"valueOf\"]=関数()それは11;ここまで\n(P-1)を表示\nP[\"marker\"]=\"P-MARKER\"\n辞書キー存在(P,\"marker\")を表示\n辞書キー削除(P,\"marker\")\n辞書キー存在(P,\"marker\")を表示\n"
+  },
+  {
+    "id": "native-system-object-to-primitive-byte-prototype",
+    "commands": ["文字列変換", "ハッシュ値計算", "ランダム配列生成", "表示"],
+    "source": "B=ハッシュ値計算(\"A\",\"sha256\",undefined)\nAB=B[\"buffer\"]\nBP={\"toString\":関数()それは\"BUFFER-PROTO\";ここまで}\nB[\"__proto__\"]=BP\n文字列変換(B)を表示\nU=ランダム配列生成(2)\nUP={\"toString\":関数()それは\"UINT8-PROTO\";ここまで}\nU[\"__proto__\"]=UP\n文字列変換(U)を表示\nAP={\"valueOf\":関数()それは7;ここまで}\nAB[\"__proto__\"]=AP\n(AB-1)を表示\n"
   }
 ]
