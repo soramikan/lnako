@@ -44,8 +44,14 @@ if (!workflow.includes("needs: preflight") || !workflow.includes("needs: [prefli
     !workflow.includes("needs: [preflight, aggregate]") || !workflow.includes("if: github.event_name == 'push'")) {
   throw new Error("Release workflowのjob依存関係またはpublish条件が不正です");
 }
-if (!workflow.includes("GITHUB_RUN_ID") || !workflow.includes("github.sha") || !workflow.includes("CI --commit")) {
+if (!workflow.includes("GITHUB_RUN_ID") || !workflow.includes("github.sha") || !workflow.includes("CI --commit") ||
+    !workflow.includes("CI_EXPECTED_JOB_COUNT: 53") || !workflow.includes("--json jobs") ||
+    !workflow.includes("ci_job_count") || !workflow.includes("ci_non_success_jobs")) {
   throw new Error("Release workflowにsource commit／CI gateの検証がありません");
+}
+if (!workflow.includes('"$ci_job_count" -ne "$CI_EXPECTED_JOB_COUNT"') ||
+    !workflow.includes('"$ci_non_success_jobs" -ne 0')) {
+  throw new Error("Release workflowがCIの全job成功を要求していません");
 }
 if (!workflow.includes("git cat-file -t") || !workflow.includes("verification.verified")) {
   throw new Error("tag Releaseでannotated signed tagを検証していません");

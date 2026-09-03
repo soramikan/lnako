@@ -32,6 +32,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION_INPUT: ${{ inputs.version }}
+          # 51 matrix jobs + dispatch coverage verifier + attestation.
+          CI_EXPECTED_JOB_COUNT: 53
         shell: bash
         run: |
           set -euo pipefail
@@ -51,11 +53,18 @@ jobs:
               echo "GitHubがRelease tagの署名を検証できません: $GITHUB_REF_NAME" >&2
               exit 1
             fi
-            ci_successes="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow CI --commit "$GITHUB_SHA" --json status,conclusion --jq '[.[] | select(.status == "completed" and .conclusion == "success")] | length')"
-            if [[ "$ci_successes" -lt 1 ]]; then
+            ci_run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow CI --commit "$GITHUB_SHA" --limit 50 --json databaseId,status,conclusion --jq '[.[] | select(.status == "completed" and .conclusion == "success") | .databaseId] | .[0] // empty')"
+            if [[ -z "$ci_run_id" ]]; then
               echo "同じsource commitのCI成功runがありません: $GITHUB_SHA" >&2
               exit 1
             fi
+            ci_job_count="$(gh run view "$ci_run_id" --repo "$GITHUB_REPOSITORY" --json jobs --jq '.jobs | length')"
+            ci_non_success_jobs="$(gh run view "$ci_run_id" --repo "$GITHUB_REPOSITORY" --json jobs --jq '[.jobs[] | select(.conclusion != "success")] | length')"
+            if [[ "$ci_job_count" -ne "$CI_EXPECTED_JOB_COUNT" || "$ci_non_success_jobs" -ne 0 ]]; then
+              echo "同じsource commitのCIが全job成功ではありません: run=$ci_run_id jobs=$ci_job_count/$CI_EXPECTED_JOB_COUNT non_success=$ci_non_success_jobs" >&2
+              exit 1
+            fi
+            echo "同じsource commitのCI全job成功を確認: run=$ci_run_id jobs=$ci_job_count/$CI_EXPECTED_JOB_COUNT"
           else
             version="$RELEASE_VERSION_INPUT"
           fi
