@@ -3332,7 +3332,8 @@
   "AJAX保障送信": {
     "status": "native",
     "tests": [
-      "plugin-node-http-options-and-promises"
+      "plugin-node-http-options-and-promises",
+      "plugin-node-http-content-unknown-type"
     ],
     "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
   },
@@ -3367,7 +3368,8 @@
   "AJAX内容取得": {
     "status": "native",
     "tests": [
-      "plugin-node-http-options-and-promises"
+      "plugin-node-http-options-and-promises",
+      "plugin-node-http-content-unknown-type"
     ],
     "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
   },
@@ -3375,7 +3377,8 @@
     "status": "native",
     "tests": [
       "plugin-node-http-async-values",
-      "plugin-node-http-options-and-promises"
+      "plugin-node-http-options-and-promises",
+      "plugin-node-http-receive-error"
     ],
     "reason": "公式cnako3とのHTTP・ネットワーク差分テストに成功"
   },
