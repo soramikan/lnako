@@ -96,6 +96,8 @@ AOT native 3 route jobへ割り当てる。dispatch supportは早く開始する
 
 直近の[run 33703568501](https://github.com/soramikan/lnako/actions/runs/33703568501)（`1fed080`）は、51 job（実行49、skip 2）のうち45 success、4 failureで、壁時計は14分47秒、実行jobの合計は287分17秒だった。AOT nativeの3正式OS shardと他のAOT検証は成功し、失敗したのはLinux `host`、macOS `mac-core-standard-support`、Linux `core`、macOS `mac-host-compat`である。`host`系2 jobは`implemented.json`が最新fixtureに追随していないこと、`core`系2 jobはcleanなdispatch証拠のcommitが現行HEADと一致しないことが原因で、製品実装やAOT差分の失敗ではない。現行HEADでは`d49e442`でNode実装台帳、`6049c2b`でdispatch監査のfixture数、`5ca6bb8`で全226 fixtureのcoverage証拠を再生成・同期した。これらを同一の署名付きpushへ含め、次のpush前にもこのrunより新しい完了失敗を確認する。失敗runの性能値は成功runとの短縮比較には用いず、macOS 5 job制限と全検証経路を維持したまま再発防止を確認する。
 
+その後の[run 33720416549](https://github.com/soramikan/lnako/actions/runs/33720416549)（`a03d77b`）は、AOT nativeを含む大半のjobが成功したが、Linux `core`とmacOS `mac-core-standard-support`の2 jobが`sync_compat_evidence.mjs --check`で失敗した。両jobの同じエラーは`cleanなdispatch証拠のlnako commitが現行HEADと一致しません`であり、Node.js 20非推奨warningやmacOSの5枠待ちは原因ではない。`a03d77b`で追加したRelease workflow・Release checker・Release文書が、dispatch生成を行わないfollow-up許可リストへまだ登録されていなかったため、cleanな`f07e30d`由来の証拠を安全側で拒否した。現行の`b6afead`ではRelease検証ファイルとAOT成果物検証器を許可リストへ追加し、`sync_compat_evidence.mjs --check`、CI構成検査、AOT集約checker self-testを通している。検証範囲を弱めず、証拠生成器・fixture・製品ソースの変更は引き続きfollow-upとして許可しない。
+
 ## AOT検証の共通buildとjob分割
 
 各AOT jobは自身のrunner上でcompilerを一度だけbuildし、`--no-build`の検査へ渡します。native jobは`LNAKO_NATIVE_ORACLE_JOBS=1`
