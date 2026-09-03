@@ -35,7 +35,7 @@ U07では`plugin-node-exit-code`、`plugin-node-interrupt`、`plugin-node-exit-j
 
 U05更新時点の現行値は`verified: 0`、`trace-confirmed-unattested: 448`、`unverified: 79`である。上の履歴列挙に残る`445/82`はU04完了時点の値であり、現在の台帳値ではない。`native-node-directory-values`の3 global-read siteは`directory-binding-evidence.json`でcatalog ID別に固定し、OS依存の実値はartifactへ保存していない。
 
-`ASSERT等`は公式マニュアルの詳細説明が準備中で、成功時の戻り値と保留Promiseの排出順は短い説明だけからは確定できません。固定v3.7.24の公式CLIでは、Promise callbackを登録した後に`ASSERT等(1,1)`を実行するとcallback群を先に排出してから`undefined`を出力します。lnakoのInterpreter/AOTは同期dispatchの`undefined`を先に出力してからcallback群を排出するため、この混在順序は未実装境界として`docs/COMPATIBILITY_QUIRKS.md`へ分離しました。canonical `native-dispatch-commands`では`ASSERT等`をPromise登録より前に置き、同一siteのInterpreter/AOT trace・compile manifest・公式4経路を一致させています。さらにpipe出力で副作用が観測できない`コンソールクリア`も同じcanonical fixtureへ追加しました。
+`ASSERT等`は公式マニュアルの詳細説明が準備中で、成功時の戻り値と保留Promiseの排出順は短い説明だけからは確定できません。固定v3.7.24の公式CLIをmacOS arm64のpipe出力で最小probeとして再測定した結果、timer／Promise callbackを登録した後の`ASSERT等(1,1)`は、公式・lnakoとも同期結果の`undefined`を先に出力してからcallbackを排出しました。以前の広いprobeに基づく「公式だけcallback先行」という主張は再現しなかったため、公式とlnakoの差異として確定せず、実TTY・複雑なcallback組合せ・3正式OSは未検証境界として`docs/COMPATIBILITY_QUIRKS.md`へ分離しています。canonical `native-dispatch-commands`では`ASSERT等`をPromise登録より前に置き、同一siteのInterpreter/AOT trace・compile manifest・公式4経路を一致させています。pipe出力で副作用が観測できない`コンソールクリア`の単独実行も同じcanonical fixtureで比較しています。
 
 AOT差分artifactとdispatch証拠は入力・実行物・結果のSHA-256を内包します。各OS内では公式source・生成JavaScript・lnako run・AOT O0の
 stdout/stderr hashを一致させますが、OS間のdispatch意味比較では、パス区切りなどOS依存の出力hashを含めず、fixture・route結果状態・catalog/site構造を比較します。

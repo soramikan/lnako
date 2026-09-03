@@ -127,7 +127,7 @@ loopbackサーバーを使って公式CLI・公式生成JavaScript・Interpreter
 この指定を使った差異は `docs/COMPATIBILITY_QUIRKS.md` に両経路の実測結果と採用理由を記録し、ハーネスの
 成功表示にも基準別の件数を出します。
 
-`native-cases.json`全284件の実行結果を保存する必要がある検証では、任意の絶対パスを明示してJSON artifactを生成できます。
+`native-cases.json`全292件の実行結果を保存する必要がある検証では、任意の絶対パスを明示してJSON artifactを生成できます。
 CIのfixture shard検証では`--shard-index`と`--shard-count`を併用し、route分割検証では`--optimizations`へ`O0`〜`O3`の
 カンマ区切り値を指定します。artifactの`selection`でfixtureと最適化routeの部分結果であることを確認します。
 通常実行のstdout、所要時間、比較処理は変わりません。
