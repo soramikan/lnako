@@ -29,10 +29,11 @@ pub const Version = struct {
 };
 
 /// 22.1.8 is the baseline used for official distribution and CI.
-/// 21.x is additionally supported because Zig 0.16.0 bundles LLVM 21.
+/// 21.x is supported because Zig 0.16.0 bundles LLVM 21.
+/// 23.x is supported because the C API surface we use is stable across releases.
 pub const baseline_version = Version{ .major = 22, .minor = 1, .patch = 8 };
 pub const min_supported_version = Version{ .major = 21, .minor = 0, .patch = 0 };
-pub const max_supported_version = Version{ .major = 22, .minor = 255, .patch = 255 };
+pub const max_supported_version = Version{ .major = 23, .minor = 255, .patch = 255 };
 
 pub fn isSupportedVersion(version: Version) bool {
     return !version.lessThan(min_supported_version) and !max_supported_version.lessThan(version);
@@ -181,11 +182,15 @@ const PosixLibrary = struct {
                 .macos => &.{
                     "lib/libLLVM-C.dylib",
                     "lib/libLLVM.dylib",
+                    "lib/libLLVM-23.dylib",
                     "lib/libLLVM-22.dylib",
                     "lib/libLLVM-21.dylib",
                 },
                 else => &.{
                     "lib/libLLVM-C.so",
+                    "lib/libLLVM.so.23.1",
+                    "lib/libLLVM.so.23",
+                    "lib/libLLVM-23.so",
                     "lib/libLLVM.so.22.1",
                     "lib/libLLVM.so.22",
                     "lib/libLLVM-22.so",
@@ -206,23 +211,32 @@ const PosixLibrary = struct {
         const candidates: []const []const u8 = switch (builtin.os.tag) {
             .macos => &.{
                 "/opt/homebrew/opt/llvm/lib/libLLVM-C.dylib",
+                "/opt/homebrew/opt/llvm@23/lib/libLLVM-C.dylib",
+                "/opt/homebrew/opt/llvm@22/lib/libLLVM-C.dylib",
                 "/opt/homebrew/opt/llvm@21/lib/libLLVM-C.dylib",
                 "/usr/local/opt/llvm/lib/libLLVM-C.dylib",
                 "/opt/homebrew/opt/llvm/lib/libLLVM.dylib",
+                "/opt/homebrew/opt/llvm@23/lib/libLLVM.dylib",
+                "/opt/homebrew/opt/llvm@22/lib/libLLVM.dylib",
                 "/opt/homebrew/opt/llvm@21/lib/libLLVM.dylib",
                 "/usr/local/opt/llvm/lib/libLLVM.dylib",
+                "libLLVM-23.dylib",
                 "libLLVM-22.dylib",
                 "libLLVM-21.dylib",
                 "libLLVM.dylib",
             },
             else => &.{
                 "libLLVM-C.so",
+                "libLLVM.so.23.1",
+                "libLLVM.so.23",
+                "libLLVM-23.so",
                 "libLLVM.so.22.1",
                 "libLLVM.so.22",
                 "libLLVM-22.so",
                 "libLLVM.so.21.1",
                 "libLLVM.so.21",
                 "libLLVM-21.so",
+                "/usr/lib/llvm-23/lib/libLLVM.so",
                 "/usr/lib/llvm-22/lib/libLLVM.so",
                 "/usr/lib/llvm-21/lib/libLLVM.so",
                 "/usr/local/lib/libLLVM.so",
@@ -297,7 +311,8 @@ test "LLVM 21.x-22.xのC APIを動的に読み込む" {
 test "LLVMバージョン判定が動作する" {
     try std.testing.expect(isSupportedVersion(.{ .major = 22, .minor = 1, .patch = 8 }));
     try std.testing.expect(isSupportedVersion(.{ .major = 21, .minor = 1, .patch = 8 }));
+    try std.testing.expect(isSupportedVersion(.{ .major = 23, .minor = 0, .patch = 0 }));
     try std.testing.expect(isSupportedVersion(.{ .major = 22, .minor = 0, .patch = 0 }));
     try std.testing.expect(!isSupportedVersion(.{ .major = 20, .minor = 0, .patch = 0 }));
-    try std.testing.expect(!isSupportedVersion(.{ .major = 23, .minor = 0, .patch = 0 }));
+    try std.testing.expect(!isSupportedVersion(.{ .major = 24, .minor = 0, .patch = 0 }));
 }

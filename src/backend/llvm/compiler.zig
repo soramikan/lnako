@@ -384,18 +384,24 @@ fn findLinkTools(allocator: std.mem.Allocator, io: std.Io, llvm_root: ?[]const u
     const clang_candidates: []const []const u8 = switch (builtin.os.tag) {
         .macos => &.{
             "/opt/homebrew/opt/llvm/bin/clang",
+            "/opt/homebrew/opt/llvm@23/bin/clang",
+            "/opt/homebrew/opt/llvm@22/bin/clang",
             "/opt/homebrew/opt/llvm@21/bin/clang",
             "/usr/local/opt/llvm/bin/clang",
+            "clang-23",
             "clang-22",
             "clang-21",
             "clang",
         },
         .windows => &.{ "clang.exe", "clang-cl.exe" },
         else => &.{
+            "/usr/lib/llvm-23/bin/clang",
             "/usr/lib/llvm-22/bin/clang",
             "/usr/lib/llvm-21/bin/clang",
+            "/usr/local/bin/clang-23",
             "/usr/local/bin/clang-22",
             "/usr/local/bin/clang-21",
+            "clang-23",
             "clang-22",
             "clang-21",
             "clang",
@@ -404,12 +410,15 @@ fn findLinkTools(allocator: std.mem.Allocator, io: std.Io, llvm_root: ?[]const u
     const lld_candidates: []const []const u8 = switch (builtin.os.tag) {
         .macos => &.{
             "/opt/homebrew/opt/lld/bin/ld64.lld",
+            "/opt/homebrew/opt/lld@23/bin/ld64.lld",
+            "/opt/homebrew/opt/lld@22/bin/ld64.lld",
             "/opt/homebrew/opt/lld@21/bin/ld64.lld",
             "/usr/local/opt/lld/bin/ld64.lld",
             "ld64.lld",
         },
         .windows => &.{ "lld-link.exe", "lld-link" },
         else => &.{
+            "/usr/lib/llvm-23/bin/ld.lld",
             "/usr/lib/llvm-22/bin/ld.lld",
             "/usr/lib/llvm-21/bin/ld.lld",
             "/usr/local/bin/ld.lld",
@@ -527,8 +536,10 @@ test "Clang/LLDのバージョン出力から最初の3桁バージョンを解�
     const homebrew_clang = "Homebrew clang version 22.1.8\nTarget: arm64-apple-darwin27.0.0\n";
     const homebrew_lld = "Homebrew LLD 21.1.8\n";
     const ubuntu_clang = "Ubuntu clang version 21.1.7-++2025xxxx\n";
+    const clang_23 = "Homebrew clang version 23.1.0\n";
     try std.testing.expectEqual(api_mod.Version{ .major = 22, .minor = 1, .patch = 8 }, parseVersionFromOutput(homebrew_clang).?);
     try std.testing.expectEqual(api_mod.Version{ .major = 21, .minor = 1, .patch = 8 }, parseVersionFromOutput(homebrew_lld).?);
     try std.testing.expectEqual(api_mod.Version{ .major = 21, .minor = 1, .patch = 7 }, parseVersionFromOutput(ubuntu_clang).?);
+    try std.testing.expectEqual(api_mod.Version{ .major = 23, .minor = 1, .patch = 0 }, parseVersionFromOutput(clang_23).?);
     try std.testing.expect(parseVersionFromOutput("no version here") == null);
 }
