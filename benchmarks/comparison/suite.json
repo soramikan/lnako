@@ -19,6 +19,7 @@
       "expected_stdout": "1000\n",
       "sources": {
         "cnako": "benchmarks/comparison/array-mutation/cnako.nako3",
+        "gonako": "benchmarks/comparison/array-mutation/gonako.nako3",
         "python": "benchmarks/comparison/array-mutation/ref.py",
         "c": "benchmarks/comparison/array-mutation/ref.c",
         "rust": "benchmarks/comparison/array-mutation/ref.rs",
@@ -30,6 +31,7 @@
       "expected_stdout": "10000\n",
       "sources": {
         "cnako": "benchmarks/comparison/closure-loop/cnako.nako3",
+        "gonako": "benchmarks/comparison/closure-loop/gonako.nako3",
         "python": "benchmarks/comparison/closure-loop/ref.py",
         "c": "benchmarks/comparison/closure-loop/ref.c",
         "rust": "benchmarks/comparison/closure-loop/ref.rs",
@@ -41,6 +43,7 @@
       "expected_stdout": "832040\n",
       "sources": {
         "cnako": "benchmarks/comparison/recursion/cnako.nako3",
+        "gonako": "benchmarks/comparison/recursion/gonako.nako3",
         "python": "benchmarks/comparison/recursion/ref.py",
         "c": "benchmarks/comparison/recursion/ref.c",
         "rust": "benchmarks/comparison/recursion/ref.rs",

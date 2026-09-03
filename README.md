@@ -74,7 +74,7 @@ lnako benchmark
 
 以下は同一アルゴリズムを `cnako` (Node.js 版なでしこ3)、`gonako` (Go 版なでしこ3)、Python、C、Rust、`lnako` (interpreter / AOT) で計測した結果です。単位はミリ秒（ms）で、各5サンプルの中央値を記載しています。
 
-計測環境: macOS 15 / arm64、LLVM 23.1.0、Zig 0.16.0、`lnako` AOT および C / Rust は `-O2`。`gonako` はローカル未インストールのため今回未取得です。
+計測環境: macOS 15 / arm64、LLVM 23.1.0、Zig 0.16.0、`lnako` AOT および C / Rust は `-O2`。`gonako` はローカル未インストールのため表では未取得ですが、[`.github/workflows/comparison-benchmark.yml`](.github/workflows/comparison-benchmark.yml) では標準実行されます。
 
 | ケース | cnako | gonako | Python | C (run) | Rust (run) | lnako interpreter | lnako AOT run |
 |---|---:|---:|---:|---:|---:|---:|---:|
