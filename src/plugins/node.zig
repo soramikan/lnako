@@ -1412,48 +1412,78 @@ fn nodeDirname(path: []const u8) []const u8 {
 }
 
 fn nodeDirnameFor(path: []const u8, windows: bool) []const u8 {
+    if (windows) return nodeDirnameWindowsFor(path);
     if (path.len == 0) return ".";
+    if (path.len == 1) return if (isSeparator(path[0], false)) path else ".";
     var end = path.len;
-    while (end > 0 and isSeparator(path[end - 1], windows)) end -= 1;
+    while (end > 0 and isSeparator(path[end - 1], false)) end -= 1;
     if (end == 0) return path[0..1];
 
-    const drive_path = windows and path.len >= 2 and isWindowsDriveLetter(path[0]) and path[1] == ':';
-    if (drive_path and end == 2) {
-        if (path.len > end and isSeparator(path[2], true)) return path[0..3];
-        return path[0..2];
+    var start = end;
+    while (start > 0 and !isSeparator(path[start - 1], false)) start -= 1;
+    if (start == 0) return ".";
+    if (start == 1 and isSeparator(path[0], false)) return path[0..1];
+    if (start == 2 and isSeparator(path[0], false) and isSeparator(path[1], false)) return path[0..2];
+    return path[0 .. start - 1];
+}
+
+fn nodeDirnameWindowsFor(path: []const u8) []const u8 {
+    // Port Node 24's path.win32.dirname root scan.  A UNC root is special
+    // only when it has a server, share, and a leftover component; the
+    // original mixed separator bytes are retained in the returned prefix.
+    const len = path.len;
+    if (len == 0) return ".";
+    if (len == 1) return if (isSeparator(path[0], true)) path else ".";
+
+    var root_end: ?usize = null;
+    var offset: usize = 0;
+    const first = path[0];
+    if (isSeparator(first, true)) {
+        root_end = 1;
+        offset = 1;
+        if (isSeparator(path[1], true)) {
+            var index: usize = 2;
+            var last = index;
+            while (index < len and !isSeparator(path[index], true)) index += 1;
+            if (index < len and index != last) {
+                last = index;
+                while (index < len and isSeparator(path[index], true)) index += 1;
+                if (index < len and index != last) {
+                    last = index;
+                    while (index < len and !isSeparator(path[index], true)) index += 1;
+                    if (index == len) return path;
+                    if (index != last) {
+                        root_end = index + 1;
+                        offset = index + 1;
+                    }
+                }
+            }
+        }
+    } else if (isWindowsDriveLetter(first) and path[1] == ':') {
+        root_end = if (len > 2 and isSeparator(path[2], true)) 3 else 2;
+        offset = root_end.?;
     }
 
-    const unc_root_end = if (windows) windowsUncRootEnd(path) else null;
-    if (unc_root_end) |root_end| if (end == root_end) {
-        return if (path.len > end) path[0 .. root_end + 1] else path[0..root_end];
-    };
-
-    var start = end;
-    while (start > 0 and !isSeparator(path[start - 1], windows)) start -= 1;
-    if (start == 0) return if (drive_path) path[0..2] else ".";
-    if (start == 1 and isSeparator(path[0], windows)) return path[0..1];
-    if (unc_root_end) |root_end| if (start == root_end + 1) return path[0..start];
-    if (drive_path and start == 3 and isSeparator(path[2], true)) return path[0..3];
-    if (start == 2 and isSeparator(path[0], windows) and isSeparator(path[1], windows) and !windows) return path[0..2];
-    return path[0 .. start - 1];
+    var end: ?usize = null;
+    var matched_separator = true;
+    var index = len;
+    while (index > offset) {
+        index -= 1;
+        if (isSeparator(path[index], true)) {
+            if (!matched_separator) {
+                end = index;
+                break;
+            }
+        } else {
+            matched_separator = false;
+        }
+    }
+    if (end == null) end = root_end orelse return ".";
+    return path[0..end.?];
 }
 
 fn isWindowsDriveLetter(byte: u8) bool {
     return byte >= 'A' and byte <= 'Z' or byte >= 'a' and byte <= 'z';
-}
-
-fn windowsUncRootEnd(path: []const u8) ?usize {
-    if (path.len < 2 or !isSeparator(path[0], true) or !isSeparator(path[1], true)) return null;
-    var index: usize = 2;
-    while (index < path.len and isSeparator(path[index], true)) index += 1;
-    const server_start = index;
-    while (index < path.len and !isSeparator(path[index], true)) index += 1;
-    if (index == server_start or index == path.len) return null;
-    while (index < path.len and isSeparator(path[index], true)) index += 1;
-    const share_start = index;
-    while (index < path.len and !isSeparator(path[index], true)) index += 1;
-    if (index == share_start) return null;
-    return index;
 }
 
 fn isSeparator(byte: u8, windows: bool) bool {
@@ -1571,6 +1601,14 @@ test "Node互換のWindowsパスはdrive-relativeとUNC rootを保持する" {
     try std.testing.expectEqualStrings("\\\\?\\UNC\\server", nodeDirnameFor("\\\\?\\UNC\\server\\share\\", true));
     try std.testing.expectEqualStrings("name", nodeBasenameFor("\\\\.\\pipe\\name\\", true));
     try std.testing.expectEqualStrings("\\\\.\\pipe\\", nodeDirnameFor("\\\\.\\pipe\\name\\", true));
+    try std.testing.expectEqualStrings("b", nodeBasenameFor("a/\\\\b", true));
+    try std.testing.expectEqualStrings("a/\\", nodeDirnameFor("a/\\\\b", true));
+    try std.testing.expectEqualStrings("b", nodeBasenameFor("a\\\\/b", true));
+    try std.testing.expectEqualStrings("a\\\\", nodeDirnameFor("a\\\\/b", true));
+    const mixed_unc = [_]u8{ '/', '\\', '\\', 'c', '?', '\\', 'Z', ':', '_', 'a', 'b', '?', '0', 'Y', '/', '\\' };
+    const mixed_unc_dir = [_]u8{ '/', '\\', '\\', 'c', '?' };
+    try std.testing.expectEqualStrings("Z:_ab?0Y", nodeBasenameFor(&mixed_unc, true));
+    try std.testing.expectEqualSlices(u8, &mixed_unc_dir, nodeDirnameFor(&mixed_unc, true));
 }
 
 test "Nodeパス命令は非文字列入力をNodeの型診断へ変換する" {

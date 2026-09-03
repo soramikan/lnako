@@ -662,6 +662,14 @@ U13の`plugin-node-http-discord`、`plugin-node-http-discord-file`、`plugin-nod
 
 通常モードでJS評価を許可しないことは、JSランタイム混入を避けるためのlnakoの意図的な安全制限である。一方、公式sourceとlnakoの期待失敗時のstdout／stderr／終了コード差、receiverやglobal探索の未収録範囲は、未実装または追加検証が必要な互換境界として上記TODOへ分離する。
 
+## Windows path root-scan回帰の記録
+
+Node 24の公式[Windows path仕様](https://nodejs.org/docs/latest-v24.x/api/path.html#pathwin32)では、`path.win32.dirname`は`/`と`\\`を同じ区切り文字として走査する一方、返すroot prefixの区切り文字列は入力のまま保持する。固定入力`/\\c?\Z:_ab?0Y/\`の実測結果はbasenameが`Z:_ab?0Y`、dirnameが`/\\c?`である。これは一般的な「区切り文字を正規化してからUNCを判定する」実装とは異なるため、公式ドキュメントだけでは見落としやすい境界として記録する。
+
+GitHub Actions run `33708609448`のWindows `AOT native shard 2/3`（O0〜O3）では、公式source・公式generated・AOTが一致する一方、Interpreterだけがdirnameへ`\Z:_ab?0Y/`を残していた。原因はInterpreter固有のUNC root判定が混在区切りnamespace pathを完全なrootとして扱っていたことで、AOT側のtarget-aware root scanとは異なる結果になっていた。InterpreterをAOTと同じroot scanへ揃え、`src/plugins/node.zig`の単体テストと既存fixture `native-node-path-mixed-separators`へ回帰を固定した。この差分は意図的制限ではなくlnakoの実装バグであり、修正後はWindows targetのクロスビルドと全Zigテスト（837/837）を確認した。
+
+対象経路はInterpreter／純LLVM AOTで、QuickJS互換モードは対象外。今回確認したのはmacOS上のWindows helper単体テストとWindows targetのコンパイルまでであり、修正commitに対するWindows runnerの外部署名attestationはまだ未完了である。したがって`TODO: node-path-win32-boundary`は実装未完了ではなく、Windows実行環境でのnamespace path外部証拠として残す。差分テストIDは`native-node-path-mixed-separators`、単体テスト名は`Node互換のWindowsパスはdrive-relativeとUNC rootを保持する`。
+
 ## 更新規則
 
 - 説明文と実装が食い違う場合は、固定した公式v3.7.24の実行結果を優先する。
