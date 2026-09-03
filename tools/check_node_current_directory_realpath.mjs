@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
@@ -25,7 +25,6 @@ try {
   ].join("\n"), "utf8");
 
   buildLnako();
-  const expected = "target\ntarget\n";
   const environment = {
     ...process.env,
     TZ: "Asia/Tokyo",
@@ -45,9 +44,25 @@ try {
   }
 
   const expectedRealpath = await realpath(alias);
-  const failures = Object.entries(results).filter(([, result]) => result.status !== 0 || result.stdout !== expected);
+  const expected = `${basename(expectedRealpath)}\n${basename(expectedRealpath)}\n`;
+  // Windowsのcnako3(process.cwd())はjunctionを解決しないため、公式CLIの期待値を別にする
+  const expectedOfficial = process.platform === "win32"
+    ? `${basename(alias)}\n${basename(alias)}\n`
+    : expected;
+  const expectedByResult = {
+    official: expectedOfficial,
+    interpreter: expected,
+    "aot-O0": expected,
+    "aot-O1": expected,
+    "aot-O2": expected,
+    "aot-O3": expected,
+  };
+  const failures = Object.entries(results).filter(([name, result]) => {
+    const want = expectedByResult[name];
+    return result.status !== 0 || result.stdout !== want;
+  });
   if (failures.length > 0) {
-    throw new Error(`Node cwd realpath差分: expected=${JSON.stringify({ expected, expectedRealpath })} actual=${JSON.stringify(results)}`);
+    throw new Error(`Node cwd realpath差分: expected=${JSON.stringify({ expected, expectedRealpath, expectedOfficial })} actual=${JSON.stringify(results)}`);
   }
   console.log(`Nodeカレントディレクトリ実パス差分テスト: 公式CLI・Interpreter・AOT O0〜O3成功 (${expectedRealpath})`);
 } finally {
