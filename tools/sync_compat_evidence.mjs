@@ -213,6 +213,7 @@ const dispatchEvidenceFollowUpPaths = new Set([
   "tools/check_compat_js_evidence.mjs",
   "tools/check_distribution.mjs",
   "tools/create_distribution.mjs",
+  "tools/prune_llvm_toolchain.mjs",
   "tools/check_benchmark_result.mjs",
   "tools/compare_interpreter_oracle.mjs",
   "tools/check_native_aot_artifacts.mjs",
