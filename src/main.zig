@@ -918,8 +918,37 @@ const CliHost = struct {
         try std.Io.Dir.cwd().deleteTree(self.io, path);
     }
 
+    fn normalizedPath(self: *CliHost, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+        const cwd = try std.Io.Dir.cwd().realPathFileAlloc(self.io, ".", allocator);
+        defer allocator.free(cwd);
+        const resolved = try std.fs.path.resolve(allocator, &.{ cwd, path });
+        errdefer allocator.free(resolved);
+        if (builtin.os.tag == .windows) {
+            for (resolved) |*byte| {
+                if (byte.* == std.fs.path.sep_alt) byte.* = std.fs.path.sep;
+            }
+            for (resolved) |*byte| {
+                if (byte.* >= 'A' and byte.* <= 'Z') byte.* += 'a' - 'A';
+            }
+        }
+        return resolved;
+    }
+
+    fn isSameOrDescendantPath(self: *CliHost, allocator: std.mem.Allocator, left: []const u8, right: []const u8) !bool {
+        const left_normalized = try self.normalizedPath(allocator, left);
+        defer allocator.free(left_normalized);
+        const right_normalized = try self.normalizedPath(allocator, right);
+        defer allocator.free(right_normalized);
+        if (std.mem.eql(u8, left_normalized, right_normalized)) return true;
+        const sep = std.fs.path.sep_str;
+        if (std.mem.startsWith(u8, right_normalized, left_normalized) and std.mem.startsWith(u8, right_normalized[left_normalized.len..], sep)) return true;
+        if (std.mem.startsWith(u8, left_normalized, right_normalized) and std.mem.startsWith(u8, left_normalized[right_normalized.len..], sep)) return true;
+        return false;
+    }
+
     fn copyPath(context: *anyopaque, allocator: std.mem.Allocator, source: []const u8, destination: []const u8, overwrite: bool) !void {
         const self: *CliHost = @ptrCast(@alignCast(context));
+        if (try self.isSameOrDescendantPath(allocator, source, destination)) return error.SelfOrDescendantPath;
         const stat = try std.Io.Dir.cwd().statFile(self.io, source, .{});
         if (stat.kind != .directory) return std.Io.Dir.cwd().copyFile(source, std.Io.Dir.cwd(), destination, self.io, .{ .replace = overwrite, .make_path = true });
         try std.Io.Dir.cwd().createDirPath(self.io, destination);
@@ -930,6 +959,7 @@ const CliHost = struct {
         while (try walker.next(self.io)) |entry| {
             const target = try std.fs.path.join(allocator, &.{ destination, entry.path });
             defer allocator.free(target);
+            if (try self.isSameOrDescendantPath(allocator, source, target)) return error.SelfOrDescendantPath;
             if (entry.kind == .directory) {
                 try std.Io.Dir.cwd().createDirPath(self.io, target);
             } else if (entry.kind == .file) {
@@ -941,6 +971,8 @@ const CliHost = struct {
     }
 
     fn movePath(context: *anyopaque, allocator: std.mem.Allocator, source: []const u8, destination: []const u8, overwrite: bool) !void {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        if (try self.isSameOrDescendantPath(allocator, source, destination)) return error.SelfOrDescendantPath;
         try copyPath(context, allocator, source, destination, overwrite);
         try deletePath(context, source);
     }

@@ -1097,6 +1097,13 @@ fn copyOrMoveWithProgress(
     overwrite: bool,
     move: bool,
 ) !void {
+    {
+        const resolved_source = try absolutePath(runtime.allocator(), context, source);
+        defer runtime.allocator().free(resolved_source);
+        const resolved_destination = try absolutePath(runtime.allocator(), context, destination);
+        defer runtime.allocator().free(resolved_destination);
+        if (pathsOverlap(resolved_source, resolved_destination)) return error.SelfOrDescendantPath;
+    }
     if (!overwrite and pathExists(context, destination)) return error.CopyDestinationExists;
     state.file_process_stop = false;
     const callback_enabled = state.file_process_callback != .undefined and effects != null;
@@ -1190,6 +1197,33 @@ fn absolutePath(allocator: std.mem.Allocator, context: Context, path: []const u8
     const cwd = try context.cwd(allocator);
     defer allocator.free(cwd);
     return std.fs.path.resolve(allocator, &.{ cwd, path });
+}
+
+fn pathsOverlap(left: []const u8, right: []const u8) bool {
+    const host_separator = std.fs.path.sep;
+    var left_normalized: [4096]u8 = undefined;
+    var right_normalized: [4096]u8 = undefined;
+    if (left.len >= left_normalized.len or right.len >= right_normalized.len) return false;
+    @memcpy(left_normalized[0..left.len], left);
+    left_normalized[left.len] = 0;
+    @memcpy(right_normalized[0..right.len], right);
+    right_normalized[right.len] = 0;
+    if (builtin.os.tag == .windows) {
+        for (left_normalized[0..left.len]) |*byte| {
+            if (byte.* == std.fs.path.sep_alt) byte.* = host_separator;
+            if (byte.* >= 'A' and byte.* <= 'Z') byte.* += 'a' - 'A';
+        }
+        for (right_normalized[0..right.len]) |*byte| {
+            if (byte.* == std.fs.path.sep_alt) byte.* = host_separator;
+            if (byte.* >= 'A' and byte.* <= 'Z') byte.* += 'a' - 'A';
+        }
+    }
+    if (std.mem.eql(u8, left_normalized[0..left.len], right_normalized[0..right.len])) return true;
+    const left_norm = left_normalized[0..left.len];
+    const right_norm = right_normalized[0..right.len];
+    if (std.mem.startsWith(u8, right_norm, left_norm) and right_norm.len > left_norm.len and right_norm[left_norm.len] == host_separator) return true;
+    if (std.mem.startsWith(u8, left_norm, right_norm) and left_norm.len > right_norm.len and left_norm[right_norm.len] == host_separator) return true;
+    return false;
 }
 
 fn nodePathArgument(runtime: *Runtime, label: []const u8, value: Value) ![]u8 {
