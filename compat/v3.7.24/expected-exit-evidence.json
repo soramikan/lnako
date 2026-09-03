@@ -65,8 +65,8 @@
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
     "lnako": {
-      "binarySha256": "9db085253dc43758afe87993eb01bcc86abc5b5d43a8080557aaa1a63a081298",
-      "commit": "f07e30d320339611730d3e563700a78b507a376d",
+      "binarySha256": "c03272d05532beaa51ecc67348711de733e69cc2c241bc408ee513ec91a60d84",
+      "commit": "64f3459fe666cbe94f7567dc7022323ce4bbb667",
       "dirty": false
     },
     "raw": {
@@ -297,7 +297,7 @@
               "siteId": "0x0000000000000003"
             }
           ],
-          "rawSha256": "2df1308219c2f951e221bf226f2e23e018ebcd98bcce8357e09fac450644cfd5"
+          "rawSha256": "c2cac97ab287b93cd25f99ffc43ddab45f21c0245e1a439399aebaca80770ea6"
         }
       },
       "compileStatuses": {
@@ -500,7 +500,7 @@
               "siteId": "0x0000000100000004"
             }
           ],
-          "rawSha256": "bfdf6c045dfd5891bb8c6d14466ca866e4268481d3cc361212439110b2ce11a5"
+          "rawSha256": "b4bbcd76208916f011eb82bb5480400a298d3383397d1ac99603e304d5c3e5c9"
         }
       },
       "compileStatuses": {
@@ -696,7 +696,7 @@
               "siteId": "0x0000000000000003"
             }
           ],
-          "rawSha256": "1c65c99f55cf587bb64587666cae9fa3efcd281b96979d696fddca8e31fabc14"
+          "rawSha256": "52d1697ca2f854951bb17212d33a7dd6544429468566b49047a63556c75dcbfd"
         }
       },
       "compileStatuses": {
@@ -892,7 +892,7 @@
               "siteId": "0x0000000000000003"
             }
           ],
-          "rawSha256": "0251b1a0ad9de02a91a293638e7171c94b4ceb9ec6b1c19499c30f4d50aa9ec2"
+          "rawSha256": "51d86c6cf085a872414fbd4381f6544128511c49ceb37420d2f1ba0c57b6f91d"
         }
       },
       "compileStatuses": {
