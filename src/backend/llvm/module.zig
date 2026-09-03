@@ -5,6 +5,7 @@ const ast = @import("../../frontend/ast.zig");
 const aot_abi = @import("../../runtime/aot_abi.zig");
 const aot_builtin = @import("../../runtime/aot_builtin.zig");
 const system_constant = @import("../../runtime/system_constant.zig");
+const project_version = @import("../../version.zig");
 
 pub const GeneratedModule = struct {
     text: []u8,
@@ -2182,7 +2183,7 @@ const Emitter = struct {
         for (self.locations.items) |location| try writer.print("!{d} = !DILocation(line: {d}, column: {d}, scope: !{d})\n", .{ location.id, location.line, location.column, location.scope });
         try writer.print("!{d} = !{{i32 2, !\"Dwarf Version\", i32 4}}\n", .{flags_start});
         try writer.print("!{d} = !{{i32 2, !\"Debug Info Version\", i32 3}}\n", .{flags_start + 1});
-        try writer.print("!{d} = !{{!\"lnako 0.0.0-dev\"}}\n", .{flags_start + 2});
+        try writer.print("!{d} = !{{!\"lnako {s}\"}}\n", .{ flags_start + 2, project_version.string });
     }
 
     fn debugSuffix(self: *Emitter, span: ast.Span, scope: usize) !void {
