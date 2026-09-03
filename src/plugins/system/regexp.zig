@@ -1535,9 +1535,32 @@ fn codePointsEqual(left: u21, right: u21, flags: Flags) bool {
 }
 
 fn propertyMatches(property: UnicodeProperty, codepoint: u21, flags: Flags) bool {
+    // ECMAScript keeps the special `ASCII` property as a literal range in
+    // Unicode Sets mode.  The v-mode case-folding pass applies to the
+    // property set, but the `ASCII` shorthand is resolved before that pass;
+    // this is why `/\p{ASCII}/iv` does not match the Kelvin sign while the
+    // same expression with `u` does.
+    if (property.property == .ascii and flags.unicode_sets) {
+        return unicode_properties.contains(property.property, codepoint) != property.negated;
+    }
     if (flags.ignore_case and flags.unicode) {
         if (unicode_case.simpleFoldVariants(codepoint)) |variants| {
-            for (variants) |variant| if (unicode_properties.contains(property.property, variant) != property.negated) return true;
+            if (property.negated) {
+                if (flags.unicode_sets) {
+                    // In v mode, case folding happens before complementing
+                    // the property set.  A negative property therefore
+                    // matches only when no member of the case-fold group has
+                    // the property.
+                    for (variants) |variant| if (unicode_properties.contains(property.property, variant)) return false;
+                    return true;
+                }
+                // In u mode, complementing happens before case folding.  It
+                // is enough for one equivalent code point to be outside the
+                // property for the input code point to match.
+                for (variants) |variant| if (!unicode_properties.contains(property.property, variant)) return true;
+                return false;
+            }
+            for (variants) |variant| if (unicode_properties.contains(property.property, variant)) return true;
             return false;
         }
     }
@@ -2282,6 +2305,49 @@ test "Unicode大小文字無視のword判定を拡張する" {
     try roots.protect(&unicode_sets_pattern);
     const unicode_sets = (try call(&runtime, "正規表現マッチ", &.{ long_s, unicode_sets_pattern })).?;
     try std.testing.expectEqualSlices(u16, long_s.string.units, unicode_sets.string.units);
+}
+
+test "Unicode propertyの負集合はuとvのcase fold順序を分ける" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+
+    var source = try runtime.stringUtf8("aAkKKſS1éÉ");
+    try roots.protect(&source);
+
+    var unicode_pattern = try runtime.stringUtf8("/\\P{Lowercase_Letter}/giu");
+    try roots.protect(&unicode_pattern);
+    const unicode_match = (try call(&runtime, "正規表現マッチ", &.{ source, unicode_pattern })).?;
+    try std.testing.expect(unicode_match == .array);
+    try std.testing.expectEqual(@as(usize, 10), unicode_match.array.len());
+    for (source.string.units, 0..) |unit, index| {
+        try std.testing.expectEqualSlices(u16, &.{unit}, unicode_match.array.items.items[index].string.units);
+    }
+
+    var unicode_sets_pattern = try runtime.stringUtf8("/\\P{Lowercase_Letter}/giv");
+    try roots.protect(&unicode_sets_pattern);
+    const unicode_sets_match = (try call(&runtime, "正規表現マッチ", &.{ source, unicode_sets_pattern })).?;
+    try std.testing.expect(unicode_sets_match == .array);
+    try std.testing.expectEqual(@as(usize, 1), unicode_sets_match.array.len());
+    try std.testing.expectEqualSlices(u16, &.{'1'}, unicode_sets_match.array.items.items[0].string.units);
+
+    var ascii_source = try runtime.stringUtf8("kKK");
+    try roots.protect(&ascii_source);
+    var ascii_positive_pattern = try runtime.stringUtf8("/\\p{ASCII}/giv");
+    try roots.protect(&ascii_positive_pattern);
+    const ascii_positive = (try call(&runtime, "正規表現マッチ", &.{ ascii_source, ascii_positive_pattern })).?;
+    try std.testing.expect(ascii_positive == .array);
+    try std.testing.expectEqual(@as(usize, 2), ascii_positive.array.len());
+    try std.testing.expectEqualSlices(u16, &.{'k'}, ascii_positive.array.items.items[0].string.units);
+    try std.testing.expectEqualSlices(u16, &.{'K'}, ascii_positive.array.items.items[1].string.units);
+
+    var ascii_negative_pattern = try runtime.stringUtf8("/\\P{ASCII}/giv");
+    try roots.protect(&ascii_negative_pattern);
+    const ascii_negative = (try call(&runtime, "正規表現マッチ", &.{ ascii_source, ascii_negative_pattern })).?;
+    try std.testing.expect(ascii_negative == .array);
+    try std.testing.expectEqual(@as(usize, 1), ascii_negative.array.len());
+    try std.testing.expectEqualSlices(u16, &.{0x212a}, ascii_negative.array.items.items[0].string.units);
 }
 
 test "vフラグの文字集合intersectionとsubtractionを処理する" {
