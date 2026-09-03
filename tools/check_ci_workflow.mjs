@@ -209,10 +209,11 @@ if (!interpreterOracleScript.includes("sanity.error?.code !== \"ENOEXEC\"") ||
 const macSupportSteps = new Map([
   ["Build macOS AOT verification compiler", ["matrix.suite == 'mac-core-standard-support' || matrix.suite == 'mac-host-compat'", "run: zig build"]],
   ["macOS AOT HTTP server oracle", ["matrix.suite == 'mac-core-standard-support'", "node tools/compare_http_server_aot_oracle.mjs --no-build"]],
-  ["macOS dispatch evidence/coverage audit", ["matrix.suite == 'mac-host-compat'", "node tools/check_dispatch_audits_parallel.mjs"]],
+  ["macOS dispatch coverage audit", ["matrix.suite == 'mac-core-standard-support'", "node tools/check_dispatch_coverage.mjs --no-build"]],
+  ["macOS dispatch evidence audit", ["matrix.suite == 'mac-host-compat'", "node tools/check_dispatch_trace.mjs --no-build"]],
   ["macOS dispatch trace security audit", ["matrix.suite == 'mac-host-compat'", "node tools/check_dispatch_trace_security.mjs --no-build"]],
   ["Upload macOS native dispatch evidence", ["matrix.suite == 'mac-host-compat' && always()", "name: lnako-dispatch-evidence-macos-15"]],
-  ["Upload macOS native dispatch coverage audit", ["matrix.suite == 'mac-host-compat' && always()", "name: lnako-dispatch-coverage-macos-15"]],
+  ["Upload macOS native dispatch coverage audit", ["matrix.suite == 'mac-core-standard-support' && always()", "name: lnako-dispatch-coverage-macos-15"]],
   ["Build macOS ReleaseSafe compiler", ["matrix.suite == 'mac-core-standard-support'", "run: zig build -Doptimize=ReleaseSafe"]],
   ["macOS normal smoke test", ["matrix.suite == 'mac-core-standard-support'", "./zig-out/bin/lnako test tests/fixtures/run-tests.nako3"]],
 ]);
