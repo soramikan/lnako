@@ -1,8 +1,8 @@
-# `unverified` 89件の証拠化計画（U26完了・U27 path回帰修正後）
+# `unverified` 89件の証拠化計画（U26完了・U27 path回帰修正・U28 parser回帰修正後）
 
 ## 目的と基準
 
-この文書は、なでしこ3 v3.7.24（upstream `aa18c7e640523938c680958fe731418cc6f7a58f`）の標準cnako 527 entryについて、実装済み機能を過大評価せず、`compat/v3.7.24/evidence.json`の`unverified`を実行証拠へ接続するための計画である。89件の初期残件をU01〜U26へ分解し、2026-09-03のU26完了後は次の状態にある。
+この文書は、なでしこ3 v3.7.24（upstream `aa18c7e640523938c680958fe731418cc6f7a58f`）の標準cnako 527 entryについて、実装済み機能を過大評価せず、`compat/v3.7.24/evidence.json`の`unverified`を実行証拠へ接続するための計画である。89件の初期残件をU01〜U26へ分解し、U27のWindows path回帰修正とU28のparser回帰修正を経た2026-09-03時点では次の状態にある。
 
 | 状態 | entry数 | 意味 |
 |---|---:|---|
@@ -16,9 +16,9 @@
 
 U26完了後の正本は、`compat/v3.7.24/evidence.json`、`compat/v3.7.24/compat-js-evidence.json`、`compat/v3.7.24/dispatch-evidence.json`、`compat/v3.7.24/dispatch-coverage-evidence.json`である。compat-js artifactは9ケース（成功6、期待失敗3）と4 entryの24 direct root siteを記録し、native dispatch証拠とは別schema・別namespaceで扱う。成功ケースは公式sourceと`lnako run --compat-js`の正規化stdout・終了状態・signalを比較し、stderrはhashだけを保存する。期待失敗は失敗相当の確認だけを行い、partial traceをproof siteへ選択しない。
 
-### U22以降の現行更新（U26完了後）
+### U22以降の現行更新（U28完了後）
 
-canonical dispatch artifactは現行の`dispatch-evidence.json`へ固定し、Interpreter 944 event、Node route 42 event、AOT manifest 946件・runtime 1,888 eventを記録する。coverageとexpected-exit、global/static constant、compat-jsの補助artifactも現行のclean provenanceで追跡している。`compat/v3.7.24/evidence.json`は`verified 0 / trace-confirmed-unattested 527 / unverified 0`を維持しており、coverageは227 fixture・4,477 site・426/523 native entry・424/492 unique nameを、純LLVM AOTの全件証明とは分けたunattested sampled coverageとして記録する。fixture inventoryは414件（AOT 312、Interpreter 112、QuickJS 9）である。ベンチマークは`a666e5a`でmacOS arm64・Zig 0.16.0・LLVM/LLD 22.1.8・ReleaseSafe（O2）・3 samples／1 warmupのInterpreter／AOT compile／AOT run結果を`benchmarks/results/latest.json`／`latest.md`へ更新した。Linux／Windowsの同一条件の性能記録はRelease workflowで生成・集約するまで未完了である。
+canonical dispatch artifactは現行の`dispatch-evidence.json`へ固定し、Interpreter 944 event、Node route 42 event、AOT manifest 946件・runtime 1,888 eventを記録する。coverageとexpected-exit、global/static constant、compat-jsの補助artifactも現行のclean provenanceで追跡している。`compat/v3.7.24/evidence.json`は`verified 0 / trace-confirmed-unattested 527 / unverified 0`を維持しており、coverageは227 fixture・4,489 site・426/523 native entry・424/492 unique nameを、純LLVM AOTの全件証明とは分けたunattested sampled coverageとして記録する。fixture inventoryは414件（AOT 312、Interpreter 112、QuickJS 9）である。U28では括弧付き式の末尾助詞が内部演算子へ伝播しない公式境界を修正し、29個の縮小回帰fixtureを含む8,221件の文法生成fuzz（seed `20260903`）と別seed `20260904`を成功させた。ベンチマークは`a666e5a`でmacOS arm64・Zig 0.16.0・LLVM/LLD 22.1.8・ReleaseSafe（O2）・3 samples／1 warmupのInterpreter／AOT compile／AOT run結果を`benchmarks/results/latest.json`／`latest.md`へ更新した。Linux／Windowsの同一条件の性能記録はRelease workflowで生成・集約するまで未完了である。
 
 U26では、Buffer・Uint8Array・ArrayBufferへ設定したcustom `__proto__`の辞書prototype chainをToPrimitiveへ接続した。`native-system-object-to-primitive-byte-prototype`で公式CLI・公式生成JavaScript・Interpreter・LLVM AOT O0〜O3の`toString`／`valueOf`解決を比較し、標準prototypeの合成methodをcustom overrideとして扱わない。prototype置換後の標準byte buffer property全体、receiver付きmethod、descriptorは`TODO: aot-byte-buffer-value`／`TODO: aot-buffer`へ分離する。fixture inventoryは414件（AOT 312、Interpreter 112、QuickJS 9）へ更新されたが、527 entryの証拠状態は変わらず`trace-confirmed-unattested 527 / unverified 0`である。
 
