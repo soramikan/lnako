@@ -4882,6 +4882,14 @@ fn writeAotStderr(bytes: []const u8) void {
     if (bytes.len > 0) std.debug.print("{s}", .{bytes});
 }
 
+fn writeAotAjaxReceiveError(status: u16, failure: ?anyerror) void {
+    if (failure) |err| {
+        std.debug.print("[AJAX受信のエラー] Error: {s}\n", .{error_message.forFailure(err)});
+    } else {
+        std.debug.print("[AJAX受信のエラー] Error: status={d}\n", .{status});
+    }
+}
+
 fn drainAotProcessTasks(runtime: *Runtime) !void {
     while (readyAotProcessTaskIndex(runtime)) |index| {
         try countAotEvent(runtime);
@@ -5088,7 +5096,7 @@ fn drainAotClientHttpTasks(runtime: *Runtime) !void {
                         _ = try invokeAotCallback(runtime, rooted[0], @ptrCast(&rooted[1]), 1);
                     } else return error.HttpRequestFailed;
                 },
-                .set_target => {},
+                .set_target => writeAotAjaxReceiveError(task.result.status, failure),
                 .response_promise => {
                     if (task.promise.tag != @intFromEnum(Tag.promise)) return error.InvalidPendingPromise;
                     var reason = try runtimeUtf8StringLossy(runtime, @errorName(failure));
@@ -5113,9 +5121,9 @@ fn drainAotClientHttpTasks(runtime: *Runtime) !void {
             },
             .set_target => {
                 const status = task.result.status;
-                if (status >= 200 and status < 300) if (task.target) |target| {
-                    target.* = try runtimeUtf8StringLossy(runtime, task.result.body);
-                };
+                if (status >= 200 and status < 300) {
+                    if (task.target) |target| target.* = try runtimeUtf8StringLossy(runtime, task.result.body);
+                } else writeAotAjaxReceiveError(status, null);
             },
             .response_promise => {
                 if (task.promise.tag != @intFromEnum(Tag.promise)) return error.InvalidPendingPromise;

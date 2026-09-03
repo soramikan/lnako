@@ -8,6 +8,7 @@ const server = http.createServer(async (request, response) => {
   const contentType = request.headers["content-type"] ?? "";
 
   if (url.pathname === "/text") return send(response, 200, "text/plain; charset=utf-8", `TEXT:${request.method}:${url.searchParams.get("q") ?? ""}`);
+  if (url.pathname === "/status") return send(response, 400, "text/plain", "bad status");
   if (url.pathname === "/json") return send(response, 200, "application/json", JSON.stringify({ ok: true, value: 3 }));
   if (url.pathname === "/empty") return send(response, 204, "application/json", "");
   if (url.pathname === "/binary") return send(response, 200, "application/octet-stream", Buffer.from([65, 0, 66, 255]));

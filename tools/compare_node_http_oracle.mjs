@@ -69,10 +69,15 @@ try {
     const aotError = Object.values(aotResults).every((result) => result.exitCode !== 0);
     const aotSuccess = Object.values(aotResults).every((result) => result.exitCode === 0);
     const aotOutputMatches = Object.values(aotResults).every((result) => JSON.stringify(result) === JSON.stringify(expected));
+    const stderrIncludes = Array.isArray(testCase.stderrIncludes) ? testCase.stderrIncludes : [];
+    const officialStderrIncludes = stderrIncludes.every((value) => official.stderr.includes(value));
+    const lnakoStderrIncludes = stderrIncludes.every((value) => actual.stderr.includes(value));
+    const aotStderrIncludes = Object.values(aotStderr).every((stderr) => stderrIncludes.every((value) => stderr.includes(value)));
     const mismatch = testCase.expectError
       ? !expectedError || !receivedError || (testCase.aot === true && (!aotError || aotCompileFailure))
       : official.status !== 0 || actual.status !== 0 || JSON.stringify(expected) !== JSON.stringify(received) ||
-        (testCase.aot === true && (!aotSuccess || aotCompileFailure || !aotOutputMatches));
+        !officialStderrIncludes || !lnakoStderrIncludes ||
+        (testCase.aot === true && (!aotSuccess || aotCompileFailure || !aotOutputMatches || !aotStderrIncludes));
     if (mismatch) {
       failures += 1;
       console.error(`Node HTTP差分 ${testCase.id}:\nofficial=${JSON.stringify(expected)}\nlnako  =${JSON.stringify(received)}\nofficial stderr=${official.stderr}\nlnako stderr=${actual.stderr}${testCase.aot === true ? `\naot=${JSON.stringify(aotResults)}\naotStderr=${JSON.stringify(aotStderr)}` : ""}`);

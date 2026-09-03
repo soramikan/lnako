@@ -28,6 +28,13 @@
     "source": "P=AJAX保障送信(\"${BASE}/text?q=unknown-type\")\nPの成功した時には\nAJAX内容取得(対象,\"UNKNOWN\")の成功した時には\n\"UNEXPECTED_SUCCESS\"を表示\nここまで\nここまで\nR=そ\nRの失敗した時には\n(\"UNKNOWN_REJECT:\"&対象)を表示\nここまで\n0.3秒待\n"
   },
   {
+    "id": "plugin-node-http-receive-error",
+    "aot": true,
+    "commands": ["AJAX受信"],
+    "stderrIncludes": ["[AJAX受信のエラー]", "Error: status=400"],
+    "source": "対象=\"UNCHANGED\"\nAJAX受信(\"${BASE}/status\")\n0.3秒待\n対象を表示\n"
+  },
+  {
     "id": "plugin-node-http-async-values",
     "aot": true,
     "commands": ["AJAX受信", "POST送信", "POSTフォーム送信", "AJAXテキスト取得", "AJAX_JSON取得", "AJAXバイナリ取得"],

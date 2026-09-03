@@ -1034,7 +1034,10 @@ pub fn pollOperations(runtime: *Runtime, state: *State, context: Context, effect
             },
             .http_set_target => {
                 const status = result.http_status orelse 0;
-                if (result.exit_code != 0 or status < 200 or status >= 300) continue;
+                if (result.exit_code != 0 or status < 200 or status >= 300) {
+                    try writeAjaxReceiveError(context, result);
+                    continue;
+                }
                 const body = try runtime.stringUtf8Lossy(result.stdout);
                 try effects.setGlobal("対象", body);
             },
@@ -1058,6 +1061,18 @@ pub fn pollOperations(runtime: *Runtime, state: *State, context: Context, effect
         }
     }
     return state.pending_operations.items.len > 0;
+}
+
+fn writeAjaxReceiveError(context: Context, result: CommandResult) !void {
+    try context.writeStderr("[AJAX受信のエラー] ");
+    if (result.http_status) |status| {
+        var buffer: [32]u8 = undefined;
+        const message = try std.fmt.bufPrint(&buffer, "Error: status={d}\n", .{status});
+        try context.writeStderr(message);
+    } else if (result.stderr.len > 0) {
+        try context.writeStderr(result.stderr);
+        if (result.stderr[result.stderr.len - 1] != '\n') try context.writeStderr("\n");
+    } else try context.writeStderr("Error: fetch failed\n");
 }
 
 fn defaultCopyOverwrite(runtime: *Runtime, effects: ?Effects) !bool {
