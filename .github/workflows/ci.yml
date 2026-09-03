@@ -100,6 +100,7 @@ jobs:
           node tools/check_dispatch_attestation_security.mjs
           node tools/check_tracked_dispatch_attestation.mjs --offline
           node tools/check_tracked_dispatch_attestation_security.mjs
+          node tools/check_docs_current.mjs
           node tools/sync_compat.mjs --check
           node tools/sync_compat_evidence.mjs --check
           node tools/check_interpreter_only_classification.mjs --check

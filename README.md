@@ -1,157 +1,66 @@
 # lnako
 
-`lnako` は、日本語プログラミング言語「なでしこ3」のソースをネイティブ実行ファイルへ変換する、Zig製コンパイラです。独自の意味IRとSSA IRを経由してLLVM IRを生成し、LLDでリンクします。
+`lnako` は、なでしこ3 v3.7.24互換を目指す、Zig＋LLVM製のネイティブコンパイラです。通常モードではJavaScriptランタイムを使わず、なでしこソースを独自IRからLLVMへ変換して実行ファイルを生成します。
 
-現在は実用版 v1.0.0 に向けて開発中です。互換基準は、なでしこ3 v3.7.24です。未実装機能を動作済みとして扱わず、進捗は `compat/` の機械可読な互換表で公開します。
+現在の製品バージョンは `0.0.0-dev` です。互換性の正本は、実装コードの印象やfixtureの数ではなく、[`compat/`](compat/) の機械可読データと検証結果です。
 
-## 現行互換性スナップショット（2026-09-03）
+## 対応範囲
 
-標準cnako 527 entryの分類は`native: 523`、明示的な`compat-js: 4`、`blocked: 0`です。これは実装分類であり、全件の純LLVM AOT実行を意味しません。現行`compat/v3.7.24/evidence.json`の実行証拠は、`verified: 0`、`trace-confirmed-unattested: 527`、`unverified: 0`です。`verified: 0`は、3正式OSの外部署名attestationがまだ完了していないためです。
+標準cnako 527 entryの現行分類は、`native` 523、明示的な `compat-js` 4、`blocked` 0です。これは実装分類であり、全entryの純LLVM AOT実行や3 OS attestationの完了を意味しません。
 
-canonical dispatch証拠は現行の`compat/v3.7.24/dispatch-evidence.json`に固定し、Interpreter 944 event、Node route 42 event、AOT manifest 946件・runtime 1,888 eventを記録しています。native dispatchの拡張監査は現行の`dispatch-coverage-evidence.json`の227 fixture・4,477 site・426 native entry（492 unique names中424）で、97 native entryはまだunambiguous site未観測です。これは`--include-native`を含むunattested sampled coverageで、全527 entryの純LLVM AOT実行証明ではありません。fixture inventoryは`evidence.json`の414件（AOT 312、Interpreter 112、QuickJS 9）です。QuickJSの4 entryはnative dispatchとは別に、[`compat-js-evidence.json`](compat/v3.7.24/compat-js-evidence.json)へ9ケース（成功6、期待失敗3）と24 direct root siteを記録しています。成功ケースは公式sourceと`lnako run --compat-js`を比較し、期待失敗は診断本文・終了コードの完全一致ではなく失敗相当として管理します。実装分類、fixture、単一環境のtrace、compat-js証拠は、3正式OSのAOT attestationやリリース完了の代替ではありません。
+実行証拠の読み方、canonical台帳とCI artifactの違いは [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) にまとめています。公式処理系の説明だけでは分かりにくい挙動や、バグの可能性がある挙動は [`docs/COMPATIBILITY_QUIRKS.md`](docs/COMPATIBILITY_QUIRKS.md) から領域別に参照できます。
 
-以下のU07〜U13の記述は当時の実測を残した履歴です。現行件数・証拠状態は上記スナップショットと[`docs/COMPATIBILITY_EVIDENCE.md`](docs/COMPATIBILITY_EVIDENCE.md)、`compat/`のartifactを参照してください。
+正式に検証する対象OSは次の3つです。
 
-U07では`プロセス終`・`強制終了時`・`終了`を`compat/v3.7.24/expected-exit-evidence.json`へ分離し、公式source・公式生成JavaScript・Interpreter・LLVM AOT O0〜O3の終了結果、terminal trace、O0 manifest targetをmacOS arm64のclean実測で比較しています。POSIX SIGINTは確認済みですが、Windowsの実コンソール制御イベントと3正式OSの外部署名attestationは未完了です。
-
-U08では`標準入力取得時`・`尋`・`文字尋`・`標準入力全取得`を、raw stdin、CRLF、EOF時の末尾改行なし部分行、同期callback drainを含むfixtureで公式source・公式生成JavaScript・Interpreter・LLVM AOT O0〜O3と比較しました。cleanなmacOS arm64で`native-node-stdin-lines`、`native-node-stdin-callback`、`native-node-stdin-all`を実行し、`dispatch-coverage-evidence.json`へ38 fixture・1,737 site・326 native entryを記録しています。3正式OSの外部署名attestationとQuickJSは対象外です。
-
-U09ではNodeの`os.networkInterfaces()`が返すインターフェース内のIPv4/IPv6アドレスについて、内部アドレス、IPv6の`scopeid`を含む公式形状、列挙順を固定した`synthetic-v1` topologyをfixture専用に注入し、`自分IPアドレス取得`・`自分IPV6アドレス取得`を公式source・公式生成JavaScript・Interpreter・LLVM AOT O0で比較しました。IPv4は`127.0.0.1`→`192.0.2.10`、IPv6は`::1`→`fe80::1234`→`2001:db8::10`の順で、命令の戻り値はアドレス文字列だけです。cleanなmacOS arm64のdispatch監査は39 fixture・1,743 site・328 native entryとなり、focused native shardではO0〜O3も一致しました。実OSのアドレス列挙と3正式OSの外部署名attestationは未完了です。
-
-U10では`AJAX送信時`、`AJAX受信時`、`GET送信時`、`POST送信時`、`POSTフォーム送信時`、`AJAX失敗時`をloopback HTTP fixtureへ接続し、公式source・公式生成JavaScript・Interpreter・LLVM AOT O0のsuccess dispatch、`対象`更新、callback順序、失敗callback登録を比較しました。cleanなmacOS arm64のdispatch監査は41 fixture・1,760 site・334 native entryへ更新され、6 entryを`trace-confirmed-unattested`へ接続しています。外部HTTP endpoint、3正式OSの外部署名attestation、全O0〜O3のU10証拠は未完了です。
-
-U11では`AJAX保障送信`、`HTTP保障取得`、`GET保障送信`、`POST保障送信`、`POSTフォーム保障送信`、`AJAX内容取得`、`AJAX受信`の7 entryを、loopbackのPromise成功経路と`対象`更新・event drainを含むfixtureへ接続しました。cleanなmacOS arm64でdispatch coverageは42 fixture・1,798 site・342 native entryとなり、公式source・公式生成JavaScript・Interpreter・LLVM AOT O0の結果を比較しています。別のNode HTTP差分テストは11ケース・27命令、AOT O0〜O3の7ケースに成功しました。Promiseの失敗経路、外部HTTP endpoint、3正式OSの外部署名attestationは未完了です。
-
-U12では`POST送信`、`POSTフォーム送信`、`AJAXテキスト取得`、`AJAX_JSON取得`、`AJAXバイナリ取得`の5 entryを、`plugin-node-http-async-values`のloopback成功値fixtureへ接続しました。cleanなmacOS arm64でdispatch coverageは43 fixture・1,820 site・348 native entryとなり、公式source・公式生成JavaScript・Interpreter・LLVM AOT O0の22 dispatchを比較しています。JSONの通常body／空body、ArrayBuffer形状、form本文を含みますが、Promiseの失敗経路、外部HTTP endpoint、3正式OSの外部署名attestationは未完了です。
-
-U13では`DISCORD送信`と`DISCORDファイル送信`をloopback transportへ接続しました。JSON success、multipartの`content`／`file`、HTTP 400を`エラー監視`で捕捉する期待失敗を公式source・公式生成JavaScript・Interpreter・LLVM AOT O0で比較し、3 site（success 2、expected failure 1）をdispatch coverageへ記録しています。外部Discord endpointへは接続しておらず、3正式OSの外部署名attestation、QuickJS標準命令証拠、実Discord APIとの相互運用性は未完了です。
+| OS | CPU | 用途 |
+| --- | --- | --- |
+| macOS 15 | arm64 | macOSネイティブ実行・AOT |
+| Ubuntu 24.04 | x86_64 GNU | Linuxネイティブ実行・AOT |
+| Windows 2025 | x86_64 MSVC | Windowsネイティブ実行・AOT |
 
 ## 必要なツール
 
-- Zig 0.16.0
-- LLVM / LLD 22.1.8
-- Node.js 24.x（公式処理系との互換テストだけで使用）
-- QuickJS 2026-06-04（`--compat-js` ビルドだけで使用）
+| ツール | 固定版 | 用途 |
+| --- | --- | --- |
+| Zig | 0.16.0 | コンパイラ・ランタイム・テスト |
+| LLVM / LLD | 22.1.8 | LLVM IR生成・最適化・リンク |
+| Node.js | 24.15.0 | 公式処理系との差分テストのみ |
+| QuickJS | 2026-06-04 | 明示的な `--compat-js` 経路のみ |
 
-`node tools/setup_llvm.mjs` は `toolchain.lock.json` のOS別アーカイブをストリーミング取得し、SHA-256を
-検証して `.cache/toolchains/` へ展開します。CIはこの固定配布物だけを使います。手動配置したLLVMを使う場合は
-配布ルートを `LNAKO_LLVM_DIR` に指定できます。共有ライブラリが標準位置にない配布物では
-`LNAKO_LLVM_LIBRARY` にファイル自体を指定できます。セットアップスクリプトとCIはアーカイブ内を検査して両方を自動設定します。
-macOSではHomebrewのLLVM/LLD 22.1.8も検出します。
+Zig、LLVM、LLD、Node.jsを通常の生成物へ組み込むことはありません。固定toolchainの取得と検証は開発環境・CI向けです。
 
-QuickJS互換ビルドは、固定アーカイブを検証してから明示的に有効化します。通常ビルドにはJSエンジンを
-リンクしません。
-
-```sh
-node tools/setup_quickjs.mjs
-zig build -Dcompat-js=true
-zig build -Dcompat-js=true test
-```
-
-## ビルド
+## ビルドと実行
 
 ```sh
 zig build
 zig build test
 zig build run -- --help
-```
 
-構文・意味・HIR/SSA中間表現の検査と、SSA IRの直接実行は実装済みです。相対 `.nako3` 取り込みも再帰的に
-検査・実行します。エラー時は元ソースのファイル名・行・列、診断コード、該当行を表示し、終了コード1を返します。
-
-ランタイム値層では、JS互換のbinary64、`undefined` / `null` / 真偽値、UTF-16文字列、任意精度BigIntと
-文字列・配列・辞書のNumber変換を含むそれらの演算を実装済みです。配列、挿入順辞書、関数・クロージャと、循環参照を回収する正確な
-mark-and-sweep GCも値層へ統合しています。Node 24との差分テストは固定境界値と決定的生成ケースを継続照合します。
-
-Promiseは明示的な状態機械とFIFOマイクロタスクキューで実装し、Interpreterと純LLVM AOTで`動時`、成功・失敗・処理・終了時の連鎖、
-`束`、`AWAIT実行`による完了待機を扱います。Interpreterのタイマーはホスト抽象化された時計を使い、CLIでは実時間、テストでは待たずに進む決定的時計で
-`秒待`、単発・周期タイマー、個別・一括停止を検証します。純LLVM AOTでも`秒待`・`秒待機`・`秒逐次待機`の同期待機に加え、
-コールバックを伴う単発・周期タイマー、個別停止・一括停止を実行し、生成main（Windowsではwmain）終了前に保留イベントをドレインします。Windows AOTのwmainはwide argvをUTF-16 code unitのままNode定数へ渡し、WTF-16のunpaired surrogateも保持します。現在の標準命令の実装状況は
-`compat/v3.7.24/summary.json` と `implemented.json` に記録しています。
-
-`plugin_system` のシステム定数、四則・論理・ビット演算、型変換、文字列・文字種・幅・かな変換、JSON、
-正規表現、配列・表・辞書・日時・URL・標準出力・タイマー・特殊実行・デバッグ支援を実装しています。標準命令の実行基盤は純Zigランタイム、
-JS固有の4命令は明示的なQuickJS互換モードで動作します。Unicode大小文字テーブルは固定Node 24の
-ECMAScript変換から生成してコミットし、正規表現はUTF-16上の内蔵エンジンで量指定、選択、文字クラス、
-通常・名前付きキャプチャ、置換参照、分割を扱います。`u`/`v`の基本Unicode code point・property照合と、
-`iu`/`iv`のsimple fold照合にも対応します。`v`の基本集合演算にも対応し、文字列property escapeなど残る構文は未実装境界として拒否します。
-さらに数学38命令、CSV 7命令、TOML 2命令、
-Promise集約の`束`を純Zigで実装しました。Nodeホスト層ではBuffer、UTF-8/16/32、CESU-8、UTF-7、ASCII、Latin-1、
-hex/base64、Shift_JIS/EUC-JP、中国語・韓国語・Big5の多バイト8系統と81種の単バイトコードページ、ファイル・パス・
-標準入力・子プロセス・終了シグナル・ZIP、ハッシュ・UUID・安全な乱数、HTTPクライアントと簡易HTTPサーバを
-実装し、対象116命令をホスト抽象化へ接続しています。また、Markdown/GFM・HTML整形、固定ブラウザ対応表とブラウザ名変換表、任意精度の漢数字変換も
-実装しています。公式カタログの標準527 entryは523件が`native`、4件が明示的な`compat-js`、`blocked`は0件です。
-一意命令名の実装台帳は496件（`native` 492件、`compat-js` 4件）で、同名異pluginの重複は31組62 entryです。
-catalog ID単位で別に扱います。これらの分類・台帳・fixture関連付けと実行証拠の状態は
-`compat/v3.7.24/summary.json`、`implemented.json`、`evidence.json`を正本とします。ここから下の旧記述にある件数はU17〜U21時点の履歴値です。
-（履歴値）`verified` 0件、`trace-confirmed-unattested` 481件、`unverified` 46件です。`native-scalar-system-constants`の17件のglobal readと7件のtyped literal、`native-string-system-constants`の24件、`native-array-system-constants`の2件、`native-datetime-era-data`の`plugin_system`／`command-0227` global read 1件と、`native-node-archive-constant`の`plugin_node` global read 1件と、`native-node-command-line-constants`の`plugin_node` global read 3件、`native-node-http-initial-constants`の5件（`plugin_node`の`AJAXオプション`、`plugin_httpserver`のHTTPサーバー4定数）、`native-node-mother-path`の`plugin_node` global read 1件、`native-caniuse-agents`の`plugin_caniuse` global read 1件、`native-system-promise-reject`の`plugin_promise` global read 1件を、Interpreter/AOT専用trace・対応manifest・公式経路比較で検証し、10ファイルの`lnako.static-constant-evidence.v2`へ別namespaceの実行証拠として記録しています。scalar fixtureは公式4経路が一致し、string fixtureは公式sourceをoracleとして`lnako run`・AOT O0が一致します（公式生成JavaScriptには初期`名前空間`の既知差があります）。array fixtureは共有配列の変更後表示を含む4経路が一致し、`元号データ` fixtureは同名異pluginのうち明示catalog IDで固定した`command-0227`を含む4経路が一致し、Node archive constant fixtureも初期値`7z`の4経路が一致し、Node command-line fixtureはargv由来の非空条件を公式source oracleとlnako Interpreter/AOTで一致させ、Node HTTP initial fixtureは空文字と未取り込み時の`null`という公式初期値を4経路で一致させ、Node mother path fixtureは定数global readのみを関数呼出しから分離して4経路で一致させます。caniuse fixtureは公式source・`lnako run`・AOT O0が19キーの`ブラウザ名変換表`を一致させますが、公式生成JavaScriptはimport済みcaniuse pluginをstandaloneへ登録しないため生成成功後のstdoutが異なります。Promise定数fixtureは、Promise生成後に更新された`そ`を公式4経路で一致させます。同名の`元号データ`では`plugin_system`の`command-0227`だけを明示catalog IDで証拠化し、`plugin_datetime`の`command-0807`は未証拠のままです。これらの既知の公式経路差は`docs/COMPATIBILITY_QUIRKS.md`へ記録し、公式sourceをoracleにしています。分類やfixtureの存在は、全entryのAOT実行証明を意味しません。
-dispatch証拠では、同名命令を名前だけで数えず、canonical fixtureの`catalogIds`で通常`plugin_system` routeの日時27 entry（`command-0228`〜`command-0256`の該当ID）を明示固定しています。`plugin_datetime`側は別経路として未証拠に残し、詳細は`docs/COMPATIBILITY_QUIRKS.md`に記録しています。
-`dispatch-coverage-evidence.json`は46 fixture・1,826 siteのサンプル監査で、一意名として同定できる350 native entryを記録します。公式source・`lnako run`・AOT O0、Interpreter/AOT trace、compile manifestの同一site確認であり、公式生成JavaScriptのplugin登録差、3 OS attestation、標準527 entry全件のAOT実行証明ではありません。`ブラウザ起動`は安全なhost adapterで最終launcher生成だけを捕捉し、`エクスプローラー起動`は公式のOS分岐に合わせてdarwin/linuxの期待失敗を記録します。U06の`plugin-node-native-archive-hermetic`は`解凍`・`解凍時`・`圧縮`・`圧縮時`について、公式source・公式生成JavaScript・Interpreter・AOT O0〜O3のZIP entry名・ディレクトリ・サイズ・CRC32・内容hashをfixture専用helperで比較します。U08の`native-node-stdin-lines`・`native-node-stdin-callback`・`native-node-stdin-all`はraw stdin、CRLF、EOF時の末尾改行なし部分行、同期callback drainを同じsiteで比較します。U10の`plugin-node-http-callbacks`・`plugin-node-http-onerror`はloopback HTTPで`AJAX送信時`、`AJAX受信時`、`GET送信時`、`POST送信時`、`POSTフォーム送信時`、`AJAX失敗時`の6 entryを接続し、success/failure、`対象`更新、callback順序、AOT O0の同一siteを比較します。U11の`plugin-node-http-options-and-promises`はPromise応答7 entryをloopbackへ接続し、成功resolve、`AJAX内容取得`、`AJAX受信`の`対象`更新、event drain、AOT O0の同一siteを比較します。U12の`plugin-node-http-async-values`は5 entryの22 dispatch siteで、text／JSON／空JSON／form／ArrayBufferの成功値を公式source・公式生成JavaScript・`lnako run`・AOT O0と比較します。U13の`plugin-node-http-discord`、`plugin-node-http-discord-file`、`plugin-node-http-discord-failure`は`DISCORD送信`のJSON success／HTTP 400期待失敗と`DISCORDファイル送信`のmultipart `content`／`file`をloopbackで比較し、3 site（success 2、expected failure 1）を接続します。外部Discord endpoint、外部署名attestation、QuickJS標準命令、全527 entryのAOT実行は証明しません。helperは明示marker時だけ有効で、raw ZIP byte列、任意の外部7z実装、外部HTTP endpointを証明しません。公式sourceと公式生成JavaScriptのstandalone route差はartifactへ記録し、公式sourceを選択oracleにします。公式ドキュメントの説明不足や公式実装の不具合候補は、実測結果と差分テストIDを`docs/COMPATIBILITY_QUIRKS.md`へ分離して記録します。
-`native-node-file-copy-default`は、可変globalの初期値`上書禁止`と`上書`・`overwrite`の代入をglobal read/write/read/write/readの5 siteで記録し、公式source・生成JavaScript・Interpreter・AOT O0の結果とcatalog IDを`compat/v3.7.24/global-binding-evidence.json`へ固定します。これは`trace-confirmed-unattested`であり、外部署名付き`verified`や3正式OSのAOT全件証明ではありません。
-`native-node-directory-values`は、`デスクトップ`・`マイドキュメント`・`テンポラリフォルダ`のglobal read 3 siteを`compat/v3.7.24/directory-binding-evidence.json`へ固定します。OSごとのホーム／一時フォルダ値は実行環境から供給し、artifactへ固定文字列を保存しません。これは`trace-confirmed-unattested`であり、外部署名付き`verified`や3正式OSのAOT全件証明ではありません。
-
-Nodeの圧縮・解凍は公式[命令一覧](https://nadesi.com/v3/doc/index.php?plugin_node=&show=)が`7z`を前提に掲載しますが、実行ファイルの存在やPATH上の可用性までは保証しません。固定upstreamの[`plugin_node.mts`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/src/plugin_node.mts#L970-L1040)が組み立てる`a -r`／`x -o... -y` command、tool-path state、callback順序を保ち、`plugin-node-native-archive-hermetic`で公式source・生成JavaScript・Interpreter・AOT O0〜O3をstored-ZIPの意味結果で比較しています。通常の明示tool pathは外部委譲のままで、helperはテスト専用です。
-
-外部ネイティブ拡張向けには、Cの公開ヘッダ、opaque値、sync・async・pure属性、Promise、host callbackを持つ
-`lnako_plugin_v1` ABIを実装しています。`lnako run`とLLVM AOT `-O0`〜`-O3`の両方が同じloaderを使い、
-AOTではJavaScriptを使わず埋め込みZig Interpreterでhost callbackとPromiseを橋渡しします。
-
-```sh
 zig build run -- check program.nako3
 zig build run -- run program.nako3
 zig build run -- test tests/
 zig build run -- build program.nako3 -o program -O2
-zig build run -- build program.nako3 -o program.o -O2 --emit obj
-zig build run -- build program.nako3 -o program.ll -O2 --emit llvm-ir
-zig build -Dcompat-js=true run -- run program.nako3 --compat-js
-zig build -Dcompat-js=true run -- build program.nako3 -o program --compat-js
 ```
 
-`run` は条件・反復・関数・クロージャ・配列・辞書・例外監視・動的ななでしこ実行、Promise・タイマーをNako SSA IR実行器で処理します。
-`test` は単一ファイルまたはディレクトリ以下の `.nako3` を読み、テスト定義を決定的な順序で実行します。
-`build` はLLVM 22.1.8 C APIで生成IRを検証し、PassBuilderの `default<O0>` ～ `default<O3>`、
-TargetMachineによるオブジェクト生成、LLD 22.1.8によるリンクを行います。生成物には元 `.nako3` の
-ファイル・行・列に対応するデバッグメタデータを保持します。`-O1`以上ではLLVMのPassBuilderへ渡す前に、
-独立複製したNako SSA IRへ型推論、定数伝播、直接呼び出し、dead code eliminationを適用し、証明済みの
-数値・真偽値をアンボックスします。`-O0`は元IRを変更せず、動的変換を維持します。
-生成実行ファイルにはZig製のJS非依存AOTランタイム静的ライブラリをリンクし、UTF-16ヒープ値と
-型付きルートによるmark-and-sweepのライフサイクルを初期化します。実行先にZigやLLVMは不要です。
+LLVM/LLDの場所を明示する場合は `LNAKO_LLVM_DIR` または `LNAKO_LLVM_LIBRARY` を使います。詳細なセットアップと検証順序は [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) を参照してください。
 
-AOTのbyte bufferは、Buffer・Uint8Array・ArrayBufferの直接property参照、Bufferの`parent`・`offset`、
-標準prototype methodの関数値を解決します。標準prototypeの代表的な`__proto__`・constructor・method値は
-prototype familyごとにidentityを共有し、Buffer・Uint8Array・ArrayBufferの`__proto__ = NULL`では標準propertyを
-遮断しながら数値添字とown propertyを維持します。custom prototypeの直接property、継承`length`、標準prototypeを
-遮断する境界も実装済みです。Bufferから取り出した`slice`関数を後から呼ぶと、公式生成JavaScriptと同じく
-receiver未束縛の実行時エラーになります。receiverを保持した成功呼出し、残るprototype methodの実装、property descriptor、
-完全なview identityとcustom prototype semanticsは`TODO: aot-byte-buffer-value`に記録し、
-`native-system-byte-buffer-direct-properties`、`native-system-byte-buffer-null-prototype`、
-`native-system-byte-buffer-method-calls`で境界を比較します。
-Nodeの`ファイル名抽出`・`パス抽出`・`絶対パス変換`・`相対パス展開`は、非文字列入力を暗黙に文字列化せず、Node 24の引数ラベルと`TypeError`の`Received`文面へ変換します。nullish・number・boolean・BigInt・Array・Object・function・Buffer・Uint8Array・ArrayBufferを`native-node-path-type-errors`で公式CLI・生成JavaScript・Interpreter・LLVM AOT O0〜O3と比較します。Windows namespace path、特殊なUNC形式、非UTF-8 path値など残る境界は`COMPATIBILITY_QUIRKS.md`のTODOへ分離します。
+## QuickJS互換モード
 
-現段階のAOT対応は、数値・真偽値・null・NULを含むUTF-16文字列・配列と辞書を含む`&`文字列連結、辞書のown/prototypeおよび配列のownカスタム`toString` / `valueOf`を使う文字列・数値hintのToPrimitive、配列カスタムソートの64要素未満のrun判定・binary insertionと64要素以上のV8 TimSort（run stack・gallop・stable merge）の比較順へ接続、幅変換命令の辞書・prototypeカスタム`substring` / `charAt` / `split`呼出し、BigInt定数・加減乗除・剰余・冪乗・シフト・動的値の抽象等価・厳密等価・関係比較・真偽判定、変数・増減文、数値演算・比較、条件・while・後判定・条件分岐、直接関数呼び出しと関数値呼び出し、捕捉ありクロージャ、エラー監視と例外伝播、
-表示、文字列・配列・辞書の添字参照・直接表示、配列・辞書の更新・変数や非配列値からの分割宣言、回数・範囲・変数を含む文字列・配列・辞書の反復、動的ソース実行2 entry（`ナデシコ`・`ナデシコ続`。埋め込みZig Interpreterで構文解析・意味解析・SSA検証・実行を行い、AOTのグローバルと`表示ログ`を同期）、数学38 entry（乱数は固定可能なAOTランタイムPRNGへ接続）、日時29 entry（固定可能なAsia/Tokyo壁時計、Unix秒変換、日時文字列・書式・元号・差分・加算・単調時計へ接続）、URL・Base64 5 entry、パス5 entry（拡張子・終端パス処理）、漢数字・算用数字2 entry（指数・全角数字・小数・BigInt変換）、Nodeホスト情報23 entry（OS・CPU・argv由来のコマンドライン定数3件・環境変数取得・一覧取得・カレントディレクトリ取得2 alias・カレントディレクトリ変更2 alias・ファイル／フォルダ存在判定・ファイル情報取得・ホーム／デスクトップ／ドキュメント／テンポラリパス・母艦パス／母艦パス取得・一時フォルダ作成・IPv4/IPv6アドレス列挙）、NodeファイルI/O 4 entry（`開`・`読`・`バイナリ読`・`保存`のテキスト／Buffer読み書き）、Node文字コード8 entry（SJIS/EUC-JPファイルI/O、`SJIS変換`・`SJIS取得`・任意名のエンコーディング変換・取得）、Node標準入力4 entry（`尋`・`文字尋`の行取得、`標準入力全取得`のUTF-8 stdin読み取り、`標準入力取得時`の全行コールバック）、Node HTTP/AJAX状態3 entry（`POSTデータ生成`のURI component変換、`AJAXオプション設定`のグローバル保持、`AJAX失敗時`の`AJAX:ONERROR`保持）、Node暗号4 entry（固定したNode互換ハッシュ名一覧、全52別名のハッシュ値計算、ランダムUUID生成、ランダム配列生成。生ハッシュはBuffer、乱数配列はUint8ArrayとしてAOTのbyte buffer種別へ保持）、Nodeプロセス終了4 entry（終了処理と終了コードのAOT dispatch、`強制終了時`のSIGINT／コンソール制御イベントcallback）、LINE Notify廃止エラー2 entry（Interpreter/AOTとも外部通信せず常に廃止エラーへ接続）、HTTP/AJAX初期定数5 entry（AJAXオプションの空文字とHTTPサーバー4変数の未取り込み時null）、`元号データ`（5件の固定元号表）、caniuseの`対応ブラウザ一覧取得`（16キーのv3.7.24生成データ）と`ブラウザ名変換表`（19キーの生成データ）です。数値の`÷÷`は対応し、BigIntの`÷÷`は公式処理系と同じ実行時エラー経路として扱います。
-NodeプロセスのAOT対応には、`起動待機`・`起動`・`コマンド実行`・`コマンド実行待機`・`起動時`のshell実行と完了順callback、および`ブラウザ起動`・`エクスプローラー起動`のOSランチャー委譲を含みます。通常モードではJavaScript runtimeを使わず、`plugin-node-process`、`plugin-node-process-order`、`plugin-node-process-completion-order`、`plugin-node-host-open-external`で公式CLI・生成JavaScript・Interpreter・AOT O0〜O3を比較します。
-NodeファイルcallbackのAOT対応には、`ファイルコピー時`・`ファイル移動時`・`ファイル削除時`の完了callback、`ファイル処理時`の再帰ファイル単位の進捗通知、`ファイル処理強制停止`の現在ファイル後停止を含みます。専用`node-file-callback` ABIは、workerがGC値へ直接触れず、完了callbackをAOTイベントドレインで実行します。`plugin-node-file-callbacks`で公式CLI・生成JavaScript・Interpreter・AOT O0〜O3と副作用を比較します。
-生成コード用ランタイムABIへ接続した命令には、CSV 7 entry（CSV/TSV解析、引用、数値自動変換、セル文字列化、オプション設定）とTOML 2 entry（TOML解析・表変換、配列テーブル、インライン表、文字列・数値変換）、Markdown/GFM・HTML整形2 entry、一致・不一致2 entry（配列・辞書の内容比較）、表ソート・表数値ソート2 entry（指定列の安定ソート）、敬語6 entry（礼節状態と未定義初期値の公式規則）、標準出力6 entry（出力プール、表示ログ、全引数改行出力）、プラグイン管理3 entry（プラグイン名・名前空間の設定とスタック復元）、システムカタログ6 entry（システム関数一覧・存在確認、プラグイン・モジュール・助詞・予約語一覧）、`ASYNC`（同期実行時のno-op）、Promise 6 entry（`動時`・成功／失敗／処理／終了時の連鎖・`束`）、`AWAIT実行`（Promiseのマイクロタスクとタイマーの完了待機）、`実行時間計測`（関数値・関数名の実行時間）、`デバッグ表示`（位置付きJSON表示）、`ハテナ関数設定`（非JSの関数値・システム命令名配列を保持してcallback列を構築）、`ハテナ関数実行`（設定済みcallback列または既定の`??`を位置付きJSON表示へ接続）、`秒待`・`秒待機`・`秒逐次待機`（ホスト実時間の同期待機）、`秒後`・`秒毎`・`秒タイマー開始時`・`タイマー停止`・`全タイマー停止`（コールバック保持、登録順、終了時ドレイン）、Nodeの`ファイルコピーデフォルト動作`（既定値と代入）、Nodeの基本ファイルI/O 4 entry（`開`・`読`・`バイナリ読`・`保存`のテキスト／Buffer読み書き）、Node文字コード8 entry（SJIS/EUC-JPファイルI/O、`SJIS変換`・`SJIS取得`・任意名のエンコーディング変換・取得）、`ファイルサイズ取得`（statサイズの数値化）、`ファイル情報取得`（stat数値フィールドと`isFile`等のメソッド値生成）、`文字コード変換サポート判定`（Bufferを生成しない正規化・別名判定）、Node標準入力4 entry（`尋`・`文字尋`の行取得、`標準入力全取得`のstdin全体のUTF-8文字列化、`標準入力取得時`の全行コールバック）、`POSTデータ生成`（辞書をURI component形式へ変換）、`AJAXオプション設定`（AJAXオプションの可変グローバル保持）、`AJAX失敗時`（`AJAX:ONERROR`の可変グローバル保持）、`自分IPアドレス`・`自分IPV6アドレス取得`（OS APIによるIPv4/IPv6列挙）、`ハッシュ値計算`（全52別名・5出力形式）、`ランダムUUID生成`（version 4・variant固定）、`ランダム配列生成`（Uint8Arrayの長さ・要素境界）、`圧縮解凍ツールパス`（`7z`既定値）と`圧縮解凍ツールパス変更`（可変グローバル更新）、Node圧縮・解凍4 entry（未変更時はpure-Zig stored-ZIP、明示変更時は指定した7z互換ツール、callbackはAOTイベントドレイン）があります。Node HTTPクライアント19 entry（`AJAX送信時`・`AJAX受信時`・`GET送信時`・`POST送信時`・`POSTフォーム送信時`・`AJAX保障送信`・`HTTP保障取得`・`GET保障送信`・`POST保障送信`・`POSTフォーム保障送信`・`AJAX内容取得`・`AJAX受信`・`POST送信`・`POSTフォーム送信`・`AJAXテキスト取得`・`AJAX_JSON取得`・`AJAXバイナリ取得`・`DISCORD送信`・`DISCORDファイル送信`）は純Zigの`std.http.Client`へ接続し、callback・`対象`更新・Response Promise・ArrayBuffer・フォーム／JSON／バイナリ本文・Discord送信・失敗処理を実装します。AOTのcallbackとPromiseはリクエスト完了結果をイベントキューからメイン実行へ渡し、`AJAX内容取得`はResponse本文またはArrayBufferを返します。`plugin-node-http-callbacks`、`plugin-node-http-options-and-promises`、`plugin-node-http-async-values`、`plugin-node-http-discord`、`plugin-node-http-discord-file`、`plugin-node-http-discord-failure`、`plugin-node-http-onerror`で公式CLI・生成JavaScript・Interpreter・AOT O0〜O3を比較します。`ハテナ関数設定`による非JSのカスタムコールバックはAOTで対応し、`JS:` callbackは明示的な`--compat-js`境界に残します。未対応IRを含む入力は誤変換せず、命令名と元ソース位置付きで拒否します。この列挙は現行AOT routeの範囲であり、互換分類の`native` 523 entryやfixtureの存在は、標準527 entry全件のAOT実行証拠を意味しません。
+JavaScript固有の4命令は通常モードへ混入させず、明示的な互換モードだけで実行します。
 
-Node同期ファイル操作8 entry（`ファイル列挙`・`全ファイル列挙`・`フォルダ作成`・`ファイルコピー`・`ファイル上書コピー`・`ファイル移動`・`ファイル上書移動`・`ファイル削除`）は、純Zigの`node-file-operation` ABIへ接続し、glob列挙、再帰コピー／移動、上書き制御、削除を処理します。`native-node-file-operations`で公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3を比較します。
+```sh
+node tools/setup_quickjs.mjs
+zig build -Dcompat-js=true
+zig build -Dcompat-js=true test
+zig build -Dcompat-js=true run -- run program.nako3 --compat-js
+```
 
-Nodeの`コンソールクリア`は、比較ハーネスのpipe出力では公式の`console.clear()`が表示内容を変更しないため、純LLVM AOTでは副作用のないno-opとして接続します。`native-node-console-clear`で前後の標準出力を公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3と比較します。
-
-`__DEBUG_BP_WAIT`は、ブレイクポイント一覧・強制待機フラグ・待機フラグ・プラグイン名を専用`debug-breakpoint-wait` ABIへ渡し、純LLVM AOTでも非該当時の即時復帰、メインプラグインの待機解除、非メインプラグインの未解決Promiseを処理します。`native-system-debug-breakpoint-wait`では待機しない非該当経路を公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3と比較します。
-
-Nodeの`尋`と`文字尋`は、純LLVM AOTでも標準入力を一度バッファして行単位に分割し、前者だけ数値変換し、後者は文字列のまま返します。`標準入力取得時`は同じ入力をEOFまで行分割し、各行をシステムグローバル`対象`へ設定して登録コールバックへ同期的に渡します。公式[plugin_node命令一覧](https://nadesi.com/v3/doc/index.php?plugin_node=&show=)は命令名と引数形だけを示し、固定upstreamの[`plugin_node.mts`](https://github.com/kujirahand/nadesiko3/blob/aa18c7e640523938c680958fe731418cc6f7a58f/src/plugin_node.mts)の実測で、raw全入力はCR/LFを保持し、行命令はCRLFのCRだけを除去し、EOFの末尾改行なし部分行も返すことを記録しています。`native-node-stdin-lines`、`native-node-stdin-callback`、`native-node-stdin-all`でCRLF、プロンプト、EOF部分行、後続の`標準入力全取得`、全行コールバックを公式CLI・生成JavaScript・Interpreter・LLVM O0〜O3と比較します。
-
-Node HTTPクライアントの実通信は、`plugin-node-http-callbacks`、`plugin-node-http-options-and-promises`、`plugin-node-http-async-values`、未知種別の拒否、`AJAX受信`の400応答、Discord、失敗処理の15ケース・27命令参照をloopbackサーバーで比較し、AOT対象11ケースではO0〜O3も公式CLI・Interpreterと比較します。未知の`AJAX内容取得`種別で公式が`TypeError: res.body is not a function`を返す不具合候補は、lnakoの拒否理由変換とともに`plugin-node-http-content-unknown-type`で固定し、非2xx時に`対象`を保持してstderrへ出す`AJAX受信`の境界は`plugin-node-http-receive-error`で固定しています。通常モードのAOTはJavaScript runtimeを使わず、ZigのHTTP clientとイベントドレインでcallback・Promise・`対象`更新を実行します。
-
-`plugin-httpserver-all`で扱う簡易HTTPサーバ6 entryは、HTTPクライアントのAJAX命令とは別の純Zig routeです。AOTはlistener、HTTP/1.1 request parser、query/form/multipart、静的ファイル、登録callback、応答header、リダイレクトを実装し、`tools/compare_http_server_aot_oracle.mjs`で公式処理系とO0〜O3を比較します。
-
-TOMLの日時値は公式`smol-toml`のDate系値として、日付・時刻・local/offset datetimeの秒・ミリ秒・`T`正規化をInterpreterと純LLVM AOTで再現します。公式依存由来の分かりにくい境界と、時刻単独のoffset入力で観測される壊れた出力は[`docs/COMPATIBILITY_QUIRKS.md`](docs/COMPATIBILITY_QUIRKS.md)へ分離して記録しています。標準527 entry全件のAOT証拠やDateの全メソッド実装を意味するものではありません。
+QuickJS経路の範囲と証拠は [`docs/compatibility/COMPAT_JS.md`](docs/compatibility/COMPAT_JS.md) にあります。
 
 ## CLI
 
 ```text
-lnako build <file.nako3> -o <output> [-O0|-O1|-O2|-O3] [--compat-js] [--emit exe|obj|llvm-ir]
+lnako build <file.nako3> -o <output> [-O0|-O1|-O2|-O3] [--emit exe|obj|llvm-ir]
 lnako run <file.nako3> [--compat-js] -- <program arguments>
 lnako check <file.nako3>
 lnako test <file-or-directory>
@@ -159,26 +68,17 @@ lnako compat report
 lnako benchmark
 ```
 
-現時点では `build`、`run`、`check`、`test`、`compat report`、`benchmark`、ヘルプ、バージョン表示を利用できます。
-`compat report`はビルド時の正本`compat/v3.7.24/summary.json`を機械可読JSONで出力します。
-`benchmark`は固定suiteをInterpreter、LLVM O2コンパイル、AOT実行の3経路で計測し、各sampleの期待stdoutを確認したうえで
-JSONとMarkdownへ保存します。既定の出力先は`benchmarks/results/latest.json`と`benchmarks/results/latest.md`です。
-`--iterations`、`--warmup`、`--suite`、`--output`、`--markdown`で計測条件と出力先を指定できます。
-配布アーカイブ、checksum、SPDX SBOMの生成と検証は[`docs/RELEASE.md`](docs/RELEASE.md)に記載しています。公開用配布物では固定LLVM/LLDを同梱します。
-`run --compat-js` はQuickJS 2026-06-04で
-4つのJS命令とESモジュール形式プラグインを実行します。`build --compat-js` は検証済みのなでしこ・JSソースを
-QuickJS対応ランタイムへ埋め込み、元ソース、Zig、LLVMを実行先で要求しない単一実行ファイルを生成します。
-互換生成物はランタイムを内包するため`--emit exe`専用です。
+`build`、`run`、`check`、`test`、`compat report`、`benchmark`、ヘルプ、バージョン表示を利用できます。`benchmark`の結果形式やRelease向けの配布手順は、利用者向け導入手順とは分けて [`docs/RELEASE.md`](docs/RELEASE.md) に記録しています。
 
-ネイティブプラグインの作成方法と所有権規則は
-[docs/NATIVE_PLUGIN_ABI.md](docs/NATIVE_PLUGIN_ABI.md)を参照してください。
+## 開発者向けドキュメント
 
-設計と検証方針は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) と [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) を参照してください。
-命令ごとのfixture関連付けと、実行証拠ではないことの境界は
-[docs/COMPATIBILITY_EVIDENCE.md](docs/COMPATIBILITY_EVIDENCE.md) に記録します。
-公式実装の説明だけでは分かりにくい戻り値、破壊的変更、出力プールなどは
-[docs/COMPATIBILITY_QUIRKS.md](docs/COMPATIBILITY_QUIRKS.md) に差分テストID付きで記録します。
+- [アーキテクチャ](docs/ARCHITECTURE.md): コンパイル経路、ランタイム、AOT、QuickJSの責務
+- [開発・検証手順](docs/DEVELOPMENT.md): 固定toolchain、fixture、差分検証、コミット方針
+- [CI](docs/CI.md): 54-job構成、macOSの5枠制限、artifact、失敗確認
+- [互換性概要](docs/COMPATIBILITY.md): 分類、証拠、3 OS attestationの読み方
+- [互換性証拠](docs/COMPATIBILITY_EVIDENCE.md): canonical JSONと証拠状態の定義
+- [ネイティブプラグインABI](docs/NATIVE_PLUGIN_ABI.md): `lnako_plugin_v1` の公開契約
 
 ## ライセンス
 
-MIT License。互換テストで参照するなでしこ3もMIT Licenseです。第三者依存関係は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) に記録します。
+MIT License。互換テストで参照するなでしこ3もMIT Licenseです。第三者依存関係は [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) に記録しています。

@@ -1,4 +1,6 @@
-# `unverified` 89件の証拠化計画（U26完了・U27 path回帰修正・U28 parser回帰修正後）
+# `unverified` 89件の証拠化計画（履歴）
+
+> 完了した計画の作業履歴です。現在の証拠stateは [`../COMPATIBILITY_EVIDENCE.md`](../COMPATIBILITY_EVIDENCE.md) を参照してください。
 
 ## 目的と基準
 
