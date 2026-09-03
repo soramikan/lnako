@@ -841,18 +841,7 @@ const CliHost = struct {
 
     fn randomBytes(context: *anyopaque, output: []u8) !void {
         const self: *CliHost = @ptrCast(@alignCast(context));
-        if (self.random_state == 0) {
-            try self.io.randomSecure(output);
-            return;
-        }
-        for (output) |*byte| {
-            var value = self.random_state;
-            value ^= value >> 12;
-            value ^= value << 25;
-            value ^= value >> 27;
-            self.random_state = value;
-            byte.* = @truncate(value *% 0x2545f4914f6cdd1d);
-        }
+        try self.io.randomSecure(output);
     }
 
     fn networkAddresses(context: *anyopaque, allocator: std.mem.Allocator, ipv6: bool) !lnako.plugins.node.NetworkAddresses {
