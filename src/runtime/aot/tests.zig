@@ -1,3 +1,6 @@
+const widthBuiltin = state.widthBuiltin;
+const asciiWidthBuiltin = state.asciiWidthBuiltin;
+const nodePathArgument = state.nodePathArgument;
 const std = @import("std");
 const builtin = @import("builtin");
 const shared = @import("shared.zig");
@@ -29,7 +32,6 @@ const Runtime = state.Runtime;
 const Tag = state.Tag;
 const Value = state.Value;
 const aotArchitectureName = state.aotArchitectureName;
-const aotBigintRangeAllocationTest = state.aotBigintRangeAllocationTest;
 const aotByteBufferSlice = state.aotByteBufferSlice;
 const aotClientHttpBodyKind = state.aotClientHttpBodyKind;
 const aotClientHttpResponseBody = state.aotClientHttpResponseBody;
@@ -37,8 +39,6 @@ const aotClientHttpResponseStatus = state.aotClientHttpResponseStatus;
 const aotClientHttpResponseValue = state.aotClientHttpResponseValue;
 const aotClientPrepareAjax = state.aotClientPrepareAjax;
 const aotClientPreparePost = state.aotClientPreparePost;
-const aotDictionaryBigIntPropertyKeyAllocationTest = state.aotDictionaryBigIntPropertyKeyAllocationTest;
-const aotDictionaryPropertyKeyAllocationTest = state.aotDictionaryPropertyKeyAllocationTest;
 const aotHttpBestRoute = state.aotHttpBestRoute;
 const aotHttpDispositionParameter = state.aotHttpDispositionParameter;
 const aotHttpMimeType = state.aotHttpMimeType;
@@ -47,7 +47,6 @@ const aotHttpParsePost = state.aotHttpParsePost;
 const aotHttpParseQuery = state.aotHttpParseQuery;
 const aotHttpUploadBasename = state.aotHttpUploadBasename;
 const aotOsName = state.aotOsName;
-const aotWidthAllocationTest = state.aotWidthAllocationTest;
 const aot_builtin = state.aot_builtin;
 const appendDisplayLog = state.appendDisplayLog;
 const appendSearchElements = state.appendSearchElements;
@@ -69,7 +68,6 @@ const arrayTakeBuiltin = state.arrayTakeBuiltin;
 const bigIntArithmetic = state.bigIntArithmetic;
 const caniuseAgentsBuiltin = state.caniuseAgentsBuiltin;
 const caniuseBrowsersBuiltin = state.caniuseBrowsersBuiltin;
-const codePointFindAllocationTest = state.codePointFindAllocationTest;
 const codePointFindBuiltin = state.codePointFindBuiltin;
 const compareValues = state.compareValues;
 const concat = state.concat;
@@ -95,8 +93,6 @@ const drainAotNativePluginTasks = state.drainAotNativePluginTasks;
 const drainAotTimers = state.drainAotTimers;
 const dynamicPromiseToAotValue = state.dynamicPromiseToAotValue;
 const eraDataBuiltin = state.eraDataBuiltin;
-const expectAotNodePathArgumentFailure = state.expectAotNodePathArgumentFailure;
-const expectAotReferenceStringRangeMessage = state.expectAotReferenceStringRangeMessage;
 const expectJsonAotString = state.expectJsonAotString;
 const expectUtf16String = state.expectUtf16String;
 const incrementNumber = state.incrementNumber;
@@ -186,7 +182,6 @@ const nodeStdinValueBuiltin = state.nodeStdinValueBuiltin;
 const numberValue = state.numberValue;
 const pathBuiltin = state.pathBuiltin;
 const pendingExceptionMessageUtf8Alloc = state.pendingExceptionMessageUtf8Alloc;
-const referenceAotArrayStringKeyAllocationTest = state.referenceAotArrayStringKeyAllocationTest;
 const referenceBuiltin = state.referenceBuiltin;
 const regexpBuiltin = state.regexpBuiltin;
 const runtimeUtf8String = state.runtimeUtf8String;
@@ -203,27 +198,12 @@ const tableColumnCountBuiltin = state.tableColumnCountBuiltin;
 const tablePropertyIndex = state.tablePropertyIndex;
 const tableRowProperty = state.tableRowProperty;
 const table_byte_buffer_buffer_enumerable_property_names = state.table_byte_buffer_buffer_enumerable_property_names;
-const testAotCapturedIncrement = state.testAotCapturedIncrement;
-const testAotConstantSeven = state.testAotConstantSeven;
-const testAotCustomString = state.testAotCustomString;
-const testAotDescending = state.testAotDescending;
-const testAotDouble = state.testAotDouble;
-const testAotEven = state.testAotEven;
-const testAotFileProgressStop = state.testAotFileProgressStop;
-const testAotFunction = state.testAotFunction;
-const testAotKanaCharAtA = state.testAotKanaCharAtA;
-const testAotKanaSplit = state.testAotKanaSplit;
-const testAotKanaSubstringPlain = state.testAotKanaSubstringPlain;
-const testAotKanaSubstringVoiced = state.testAotKanaSubstringVoiced;
-const testAotSecondArgument = state.testAotSecondArgument;
-const testAotSortOrder = state.testAotSortOrder;
-const testAotTimerStop = state.testAotTimerStop;
-const testAotToPrimitiveObject = state.testAotToPrimitiveObject;
 const toml_temporal = state.toml_temporal;
 const urlBuiltin = state.urlBuiltin;
 const utf16FailureMessageUtf8Alloc = state.utf16FailureMessageUtf8Alloc;
 const validateFillDimensions = state.validateFillDimensions;
 const valueToNumber = state.valueToNumber;
+const runtimeFailure = state.runtimeFailure;
 const valueToPrimitive = state.valueToPrimitive;
 const valueUtf16Alloc = state.valueUtf16Alloc;
 const valueUtf8LossyAlloc = state.valueUtf8LossyAlloc;
@@ -6356,4 +6336,242 @@ test "AOT generic builtin dispatch routeはmanifestと一致する" {
     try std.testing.expectEqualStrings("node-interrupt", builtinDispatchRoute(.node_interrupt_callback));
     try std.testing.expectEqualStrings("node-encoding", builtinDispatchRoute(.node_encoding_sjis_encode));
     try std.testing.expectEqualStrings("builtin", builtinDispatchRoute(.to_string));
+}
+
+pub fn testAotFunction(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
+    out.* = if (arguments == null or len != 1) .{} else arguments.?[0];
+}
+
+pub fn testAotCustomString(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    out.* = staticStringValue("CUSTOM");
+}
+
+pub fn testAotKanaSubstringVoiced(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    out.* = staticStringValue("ｶﾞ");
+}
+
+pub fn testAotKanaSubstringPlain(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    out.* = staticStringValue("x");
+}
+
+pub fn testAotKanaCharAtA(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    out.* = staticStringValue("ｱ");
+}
+
+pub fn testAotKanaSplit(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    const runtime = if (state.active_runtime) |*active| active else return;
+    out.* = runtime.createArray(&.{ staticStringValue("ガ"), staticStringValue("ッ"), staticStringValue("ツ") }) catch |failure| runtimeFailure(failure);
+}
+
+pub fn testAotToPrimitiveObject(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    const runtime = if (state.active_runtime) |*active| active else return;
+    out.* = runtime.createDictionary(&.{}) catch |failure| runtimeFailure(failure);
+}
+
+pub fn testAotTimerStop(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
+    if (arguments != null and len > 0) {
+        var ignored = Value{};
+        lnako_aot_builtin_call(&ignored, arguments, 1, @intFromEnum(aot_builtin.Command.timer_stop));
+    }
+    out.* = .{};
+}
+
+pub fn testAotConstantSeven(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    out.* = numberValue(7);
+}
+
+pub fn testAotSecondArgument(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
+    out.* = if (arguments == null or len != 2) .{} else arguments.?[1];
+}
+
+pub fn testAotDescending(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
+    out.* = if (arguments == null or len != 2)
+        .{}
+    else
+        numberValue(valueToNumber(arguments.?[1]) - valueToNumber(arguments.?[0]));
+}
+
+pub fn testAotSortOrder(out: *Value, context: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
+    const runtime = if (state.active_runtime) |*active| active else return;
+    if (arguments == null or len != 2) {
+        out.* = .{};
+        return;
+    }
+    const function: *Object = @ptrCast(@alignCast(context));
+    const log = function.payload.function.captures[0];
+    runtime.aotArrayAppend(log.object() orelse return, numberValue(valueToNumber(arguments.?[0]) * 10 + valueToNumber(arguments.?[1]))) catch |failure| runtimeFailure(failure);
+    out.* = numberValue(valueToNumber(arguments.?[0]) - valueToNumber(arguments.?[1]));
+}
+
+pub fn testAotDouble(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
+    out.* = if (arguments == null or len != 1) .{} else numberValue(valueToNumber(arguments.?[0]) * 2);
+}
+
+pub fn testAotEven(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
+    out.* = if (arguments == null or len != 1)
+        .{}
+    else
+        .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(@mod(valueToNumber(arguments.?[0]), 2) == 0) };
+}
+
+pub fn testAotCapturedIncrement(out: *Value, context: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    const function: *Object = @ptrCast(@alignCast(context));
+    const cell = function.payload.function.captures[0].object().?;
+    const next = numberValue(valueToNumber(cell.payload.binding_cell) + 1);
+    cell.payload.binding_cell = next;
+    out.* = next;
+}
+
+pub fn testAotFileProgressStop(out: *Value, context: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {
+    const function: *Object = @ptrCast(@alignCast(context));
+    const cell = function.payload.function.captures[0].object().?;
+    if (arguments != null and len == 1) {
+        const current = valueToNumber(dictionaryProperty(arguments.?[0], &.{ '現', '在' }));
+        cell.payload.binding_cell = numberValue(current);
+        if (current == 1) {
+            var ignored = Value{};
+            lnako_aot_builtin_call(&ignored, null, 0, @intFromEnum(aot_builtin.Command.node_file_process_stop));
+        }
+    }
+    out.* = .{};
+}
+
+pub fn expectAotNodePathArgumentFailure(runtime: *Runtime, label: []const u8, value: Value, expected: []const u8) !void {
+    _ = nodePathArgument(runtime, label, value) catch |failure| {
+        try std.testing.expectEqual(error.InvalidPathSource, failure);
+        try std.testing.expect(runtime.has_pending_exception);
+        try expectUtf16String(runtime, runtime.pending_exception, expected);
+        _ = runtime.takeException();
+        return;
+    };
+    return error.ExpectedFailure;
+}
+
+pub fn codePointFindAllocationTest(allocator: std.mem.Allocator) !void {
+    var runtime = Runtime{ .allocator = allocator };
+    defer runtime.deinit();
+    const source = try runtime.createArray(&.{ staticStringValue("A"), staticStringValue("😀"), staticStringValue("B") });
+    const needle = try runtime.createArray(&.{staticStringValue("😀")});
+    const result = try codePointFindBuiltin(&runtime, source, needle);
+    try std.testing.expectEqual(@as(usize, 2), result);
+    const string_source = try runtime.createString(&.{ 'A', 0xd83d, 0xde00, 'B' });
+    const string_needle = try runtime.createString(&.{ 0xd83d, 0xde00, 'B' });
+    const string_result = try codePointFindBuiltin(&runtime, string_source, string_needle);
+    try std.testing.expectEqual(@as(usize, 2), string_result);
+}
+
+pub fn referenceAotArrayStringKeyAllocationTest(allocator: std.mem.Allocator) !void {
+    var runtime = Runtime{ .allocator = allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 2;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[0] = try runtime.createArray(&.{ numberValue(1), numberValue(2) });
+    roots[1] = try runtime.createString(&.{ 'l', 'e', 'n', 'g', 't', 'h' });
+    const result = try referenceBuiltin(&runtime, roots[0], roots[1]);
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(result));
+}
+
+pub fn aotBigintRangeAllocationTest(allocator: std.mem.Allocator) !void {
+    var runtime = Runtime{ .allocator = allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 7;
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createArray(&.{ numberValue(0), numberValue(1), numberValue(2) });
+    roots[1] = try runtime.createBigInt("1n");
+    roots[2] = try runtime.createDictionary(&.{ staticStringValue("先頭"), numberValue(0), staticStringValue("末尾"), roots[1] });
+    runtime.next_collection = runtime.object_count;
+    roots[3] = try arrayRangeCopyBuiltin(&runtime, roots[0], roots[2]);
+    try std.testing.expectEqual(@as(usize, 2), roots[3].object().?.payload.array.items.len);
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(try referenceBuiltin(&runtime, roots[0], roots[1])));
+    roots[4] = try runtime.createString(&.{ 'A', 'B', 'C' });
+    roots[5] = try runtime.createDictionary(&.{ staticStringValue("先頭"), numberValue(0), staticStringValue("末尾"), roots[1] });
+    runtime.next_collection = runtime.object_count;
+    roots[6] = try referenceBuiltin(&runtime, roots[4], roots[5]);
+    try std.testing.expectEqualSlices(u16, &.{ 'A', 'B' }, roots[6].object().?.payload.utf16_string);
+}
+
+pub fn expectAotReferenceStringRangeMessage(runtime: *Runtime, index: Value, expected: []const u8) !void {
+    _ = referenceBuiltin(runtime, staticStringValue("ABC"), index) catch |failure| {
+        try std.testing.expectEqual(error.InvalidStringRange, failure);
+        const message = runtime.takeException();
+        const actual = try valueUtf16Alloc(runtime, message);
+        defer runtime.allocator.free(actual);
+        const expected_units = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, expected);
+        defer runtime.allocator.free(expected_units);
+        try std.testing.expectEqualSlices(u16, expected_units, actual);
+        return;
+    };
+    try std.testing.expect(false);
+}
+
+pub fn aotWidthAllocationTest(allocator: std.mem.Allocator) !void {
+    var runtime = Runtime{ .allocator = allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 4;
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[0] = try runtime.createString(&.{ 'A', 0x20, 0xff76, 0xff9e });
+    roots[2] = try runtime.createArray(&.{numberValue(1)});
+    roots[3] = try runtime.createDictionary(&.{ staticStringValue("length"), numberValue(1) });
+    runtime.next_collection = 1;
+
+    roots[1] = try asciiWidthBuiltin(&runtime, roots[0], true, false);
+    runtime.next_collection = 1;
+    roots[1] = try asciiWidthBuiltin(&runtime, roots[0], false, false);
+    runtime.next_collection = 1;
+    roots[1] = try asciiWidthBuiltin(&runtime, roots[0], true, true);
+    runtime.next_collection = 1;
+    roots[1] = try asciiWidthBuiltin(&runtime, roots[0], false, true);
+    runtime.next_collection = 1;
+    roots[1] = try kanaMapBuiltin(&runtime, roots[0], true);
+    runtime.next_collection = 1;
+    roots[1] = try kanaMapBuiltin(&runtime, roots[0], false);
+    runtime.next_collection = 1;
+    roots[1] = try widthBuiltin(&runtime, roots[0], true);
+    runtime.next_collection = 1;
+    roots[1] = try widthBuiltin(&runtime, roots[0], false);
+    try std.testing.expectError(error.KatakanaFullWidthSubstringReceiver, kanaMapBuiltin(&runtime, roots[2], true));
+    try std.testing.expectError(error.KatakanaFullWidthSubstringReceiver, kanaMapBuiltin(&runtime, roots[3], true));
+    try std.testing.expectError(error.KatakanaHalfWidthSplitReceiver, kanaMapBuiltin(&runtime, numberValue(1), false));
+}
+
+pub fn aotDictionaryPropertyKeyAllocationTest(allocator: std.mem.Allocator) !void {
+    var runtime = Runtime{ .allocator = allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ try runtime.createBigInt("1n"), .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    runtime.next_collection = runtime.object_count;
+    roots[1] = try runtime.createDictionary(&.{ roots[0], numberValue(1), staticStringValue("1"), numberValue(2), numberValue(2), numberValue(3), staticStringValue("2"), numberValue(4) });
+    const entries = roots[1].object().?.payload.dictionary.items;
+    try std.testing.expectEqual(@as(usize, 2), entries.len);
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(entries[0].value));
+    try std.testing.expectEqual(@as(f64, 4), valueToNumber(entries[1].value));
+    roots[2] = try dictionaryKeysBuiltin(&runtime, roots[1]);
+    try std.testing.expectEqualSlices(u16, &.{'1'}, roots[2].object().?.payload.array.items[0].object().?.payload.utf16_string);
+    try std.testing.expectEqualSlices(u16, &.{'2'}, roots[2].object().?.payload.array.items[1].object().?.payload.utf16_string);
+}
+
+pub fn aotDictionaryBigIntPropertyKeyAllocationTest(allocator: std.mem.Allocator) !void {
+    var runtime = Runtime{ .allocator = allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 3;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[0] = try runtime.createBigInt("1n");
+    roots[1] = try runtime.createBigInt("2n");
+    runtime.next_collection = runtime.object_count;
+    roots[2] = try runtime.createDictionary(&.{ roots[0], numberValue(1), staticStringValue("1"), numberValue(2), roots[1], numberValue(3), staticStringValue("2"), numberValue(4) });
+    const entries = roots[2].object().?.payload.dictionary.items;
+    try std.testing.expectEqual(@as(usize, 2), entries.len);
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(entries[0].value));
+    try std.testing.expectEqual(@as(f64, 4), valueToNumber(entries[1].value));
 }
