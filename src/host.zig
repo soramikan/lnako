@@ -1,6 +1,7 @@
 pub const environment = @import("host/environment.zig");
 pub const archive = @import("host/archive.zig");
 pub const network = @import("host/network.zig");
+pub const http_client = @import("host/http_client.zig");
 pub const homeDirectory = environment.homeDirectory;
 pub const temporaryDirectory = environment.temporaryDirectory;
 pub const parseOptionalI64 = environment.parseOptionalI64;

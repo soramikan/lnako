@@ -158,8 +158,8 @@
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
     "lnako": {
-      "binarySha256": "96561f381f8066c69033fbb8aba0f4c075287bc26da6bc5e22defaead199f20a",
-      "commit": "ff017ccc81778477b5437473a6e60ba4c8415184",
+      "binarySha256": "4a230347892a785fb593174e397ec7cc5da141cf156a61335556b40c3b0a0d11",
+      "commit": "4a0a56df8da54ca056daee758873e7ad0b960a58",
       "dirty": false
     },
     "auditScriptSha256": "c950575c684b1ef14c74dfadc545bb427fe81828d43b3c106c804d3e3fc6e47b"
