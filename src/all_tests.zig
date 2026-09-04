@@ -16,4 +16,9 @@ test {
     _ = @import("host/network.zig");
     _ = @import("host/http_client.zig");
     _ = @import("host/state.zig");
+
+    _ = @import("cli.zig");
+    _ = @import("cli/app.zig");
+    _ = @import("cli/arguments.zig");
+    _ = @import("cli/commands/test.zig");
 }
