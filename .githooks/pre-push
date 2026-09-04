@@ -1,0 +1,102 @@
+#!/bin/sh
+# pre-push hook for lnako
+# Enable with: git config core.hooksPath .githooks
+
+set -euo pipefail
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+
+current_branch=$(git branch --show-current || true)
+if [ -z "$current_branch" ]; then
+    # detached HEAD; no branch commit to extend
+    exit 0
+fi
+
+# Inspect all refs being pushed. Only act when pushing the current branch
+# to a remote tracking branch. Also reject force-pushes.
+pushing_current=false
+while read -r local_ref local_sha remote_ref remote_sha; do
+    case "$remote_ref" in
+        refs/heads/*)
+            ;;
+        *)
+            # tag or other ref; skip
+            exit 0
+            ;;
+    esac
+
+    if [ "$local_ref" != "refs/heads/$current_branch" ]; then
+        continue
+    fi
+    pushing_current=true
+
+    # remote_sha is all zeros for a new branch
+    if [ "$remote_sha" != "0000000000000000000000000000000000000000" ]; then
+        if ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+            echo "pre-push: force push is not allowed" >&2
+            exit 1
+        fi
+    fi
+done
+
+if [ "$pushing_current" != "true" ]; then
+    exit 0
+fi
+
+# Require a clean working tree so we do not accidentally commit user changes.
+if [ -n "$(git status --porcelain)" ]; then
+    echo "pre-push: working tree is not clean; commit or stash changes first" >&2
+    exit 1
+fi
+
+# Locate zig.
+if command -v zig >/dev/null 2>&1; then
+    ZIG=zig
+else
+    echo "pre-push: zig not found in PATH" >&2
+    exit 1
+fi
+
+# Locate node. Prefer a direct install, otherwise fall back to mise.
+if command -v node >/dev/null 2>&1; then
+    NODE=node
+elif command -v mise >/dev/null 2>&1; then
+    NODE="mise exec node -- node"
+else
+    echo "pre-push: node (or mise) not found in PATH" >&2
+    exit 1
+fi
+
+echo "pre-push: running zig build fmt-check..." >&2
+"$ZIG" build fmt-check
+
+echo "pre-push: building lnako..." >&2
+"$ZIG" build
+
+echo "pre-push: running zig build test..." >&2
+"$ZIG" build test
+
+echo "pre-push: fast-forwarding compatibility evidence..." >&2
+$NODE tools/fast_forward_evidence.mjs
+
+# fast_forward_evidence.mjs may leave the evidence files unchanged if they are
+# already up to date. Only commit when there is a real diff.
+if [ -z "$(git status --porcelain compat/)" ]; then
+    echo "pre-push: compatibility evidence already up to date" >&2
+    exit 0
+fi
+
+git add compat/
+
+# Try to sign the commit. If GPG signing is unavailable, fall back to an
+# unsigned commit; the project rule prefers signed commits, but a hook should
+# not block pushes when the signing key is not available.
+if git commit -S -m "互換性証拠のprovenanceを現行HEADへfast-forward" >/dev/null 2>&1; then
+    echo "pre-push: created signed fast-forward commit" >&2
+elif git commit -m "互換性証拠のprovenanceを現行HEADへfast-forward" >/dev/null 2>&1; then
+    echo "pre-push: created unsigned fast-forward commit (GPG signing not configured)" >&2
+else
+    echo "pre-push: failed to create fast-forward commit" >&2
+    exit 1
+fi
