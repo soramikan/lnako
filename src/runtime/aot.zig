@@ -4,7 +4,7 @@ const builtins = @import("aot/builtins.zig");
 const control_flow = @import("aot/control_flow.zig");
 const debug = @import("aot/debug.zig");
 const instructions = @import("aot/instructions.zig");
-const tests = @import("aot/tests.zig");
+pub const tests = @import("aot/tests.zig");
 
 pub const Tag = values.Tag;
 pub const no_dispatch_call_id = values.no_dispatch_call_id;
