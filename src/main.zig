@@ -55,7 +55,7 @@ pub fn main(init: std.process.Init) !void {
             .async_task_map = std.AutoHashMap(u64, *AsyncOperationTask).init(std.heap.page_allocator),
         };
         defer cli_host.deinit();
-        var interpreter = lnako.runtime.interpreter.Interpreter.init(allocator, &runtime, ir_program, cli_host.host());
+        var interpreter = lnako.runtime.interpreter.Interpreter.init(allocator, &runtime, ir_program, cli_host.interpreterHost());
         defer interpreter.deinit();
         _ = interpreter.run() catch |err| {
             if (err == error.ProcessExitRequested) {
@@ -181,7 +181,7 @@ pub fn main(init: std.process.Init) !void {
                 .async_task_map = std.AutoHashMap(u64, *AsyncOperationTask).init(std.heap.page_allocator),
             };
             defer cli_host.deinit();
-            var interpreter = lnako.runtime.interpreter.Interpreter.init(allocator, &runtime, ir_program, cli_host.host());
+            var interpreter = lnako.runtime.interpreter.Interpreter.init(allocator, &runtime, ir_program, cli_host.interpreterHost());
             defer interpreter.deinit();
             _ = interpreter.run() catch |err| {
                 if (err == error.ProcessExitRequested) {
@@ -325,7 +325,7 @@ const CliHost = struct {
         self.async_task_map.deinit();
     }
 
-    fn host(self: *CliHost) lnako.runtime.interpreter.Host {
+    fn interpreterHost(self: *CliHost) lnako.runtime.interpreter.Host {
         return .{
             .context = self,
             .writeFn = write,
@@ -1058,11 +1058,11 @@ const CliHost = struct {
             // depending on a host-installed 7-Zip executable. Normal runs
             // still invoke the configured external tool unchanged.
             if (self.environmentValue("LNAKO_TEST_ARCHIVE_HELPER")) |helper| {
-                if (std.mem.eql(u8, helper, tool)) return @import("root").host.archive.runStoredZipArchive(allocator, self.io, operation, source, destination);
+                if (std.mem.eql(u8, helper, tool)) return host.archive.runStoredZipArchive(allocator, self.io, operation, source, destination);
             }
             return runArchiveTool(allocator, self.io, tool, operation, source, destination);
         }
-        return @import("root").host.archive.runStoredZipArchive(allocator, self.io, operation, source, destination);
+        return host.archive.runStoredZipArchive(allocator, self.io, operation, source, destination);
     }
 
     fn installInterrupt(_: *anyopaque) !void {
@@ -1583,7 +1583,7 @@ fn runTestFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8, stdou
         .async_task_map = std.AutoHashMap(u64, *AsyncOperationTask).init(std.heap.page_allocator),
     };
     defer cli_host.deinit();
-    var interpreter = lnako.runtime.interpreter.Interpreter.init(allocator, &runtime, ir_program, cli_host.host());
+    var interpreter = lnako.runtime.interpreter.Interpreter.init(allocator, &runtime, ir_program, cli_host.interpreterHost());
     defer interpreter.deinit();
     _ = interpreter.run() catch |err| {
         try stderr.print("{s}: テスト初期化エラー: {s}\n", .{ path, runtime.failureMessage() orelse @errorName(err) });
