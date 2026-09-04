@@ -1,0 +1,25 @@
+const state = @import("state.zig");
+const shared = @import("shared.zig");
+
+pub const lnako_aot_string_new = state.lnako_aot_string_new;
+pub const lnako_aot_bigint_new = state.lnako_aot_bigint_new;
+pub const lnako_aot_bigint_truthy = state.lnako_aot_bigint_truthy;
+pub const lnako_aot_arithmetic = state.lnako_aot_arithmetic;
+pub const lnako_aot_compare = state.lnako_aot_compare;
+pub const lnako_aot_shift = state.lnako_aot_shift;
+pub const lnako_aot_concat = state.lnako_aot_concat;
+pub const lnako_aot_increment = state.lnako_aot_increment;
+pub const lnako_aot_array_new = state.lnako_aot_array_new;
+pub const lnako_aot_dictionary_new = state.lnako_aot_dictionary_new;
+pub const lnako_aot_caniuse_agents_new = state.lnako_aot_caniuse_agents_new;
+pub const lnako_aot_era_data_new = state.lnako_aot_era_data_new;
+pub const lnako_aot_index_get = state.lnako_aot_index_get;
+pub const lnako_aot_index_set = state.lnako_aot_index_set;
+pub const lnako_aot_destructure_get = state.lnako_aot_destructure_get;
+pub const lnako_aot_iterator_new = state.lnako_aot_iterator_new;
+pub const lnako_aot_iterator_has_next = state.lnako_aot_iterator_has_next;
+pub const lnako_aot_iterator_next = state.lnako_aot_iterator_next;
+pub const lnako_aot_binding_cell_new = state.lnako_aot_binding_cell_new;
+pub const lnako_aot_binding_cell_value = state.lnako_aot_binding_cell_value;
+pub const lnako_aot_cut = state.lnako_aot_cut;
+pub const lnako_aot_cut_site = state.lnako_aot_cut_site;

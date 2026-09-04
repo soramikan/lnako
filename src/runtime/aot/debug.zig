@@ -1,0 +1,24 @@
+const state = @import("state.zig");
+const shared = @import("shared.zig");
+
+pub const lnako_aot_global_read_site = state.lnako_aot_global_read_site;
+pub const lnako_aot_global_write_site = state.lnako_aot_global_write_site;
+pub const lnako_aot_literal_site = state.lnako_aot_literal_site;
+pub const lnako_aot_dispatch_display_begin = state.lnako_aot_dispatch_display_begin;
+pub const lnako_aot_dispatch_display_begin_with_epoch = state.lnako_aot_dispatch_display_begin_with_epoch;
+pub const lnako_aot_dispatch_result = state.lnako_aot_dispatch_result;
+pub const lnako_aot_throw_site = state.lnako_aot_throw_site;
+pub const lnako_aot_exception_set = state.lnako_aot_exception_set;
+pub const lnako_aot_exception_set_error_message = state.lnako_aot_exception_set_error_message;
+pub const lnako_aot_exception_pending = state.lnako_aot_exception_pending;
+pub const lnako_aot_exception_take = state.lnako_aot_exception_take;
+pub const lnako_aot_exception_abort = state.lnako_aot_exception_abort;
+pub const lnako_aot_print_utf16 = state.lnako_aot_print_utf16;
+pub const lnako_aot_print_number = state.lnako_aot_print_number;
+pub const lnako_aot_print_bigint = state.lnako_aot_print_bigint;
+pub const lnako_aot_print_collection = state.lnako_aot_print_collection;
+pub const lnako_aot_display_value = state.lnako_aot_display_value;
+pub const lnako_aot_debug_display = state.lnako_aot_debug_display;
+pub const lnako_aot_hatena_execute = state.lnako_aot_hatena_execute;
+pub const lnako_aot_display_many = state.lnako_aot_display_many;
+pub const lnako_aot_debug_breakpoint_wait_call = state.lnako_aot_debug_breakpoint_wait_call;
