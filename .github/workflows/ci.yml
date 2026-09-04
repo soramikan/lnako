@@ -81,10 +81,13 @@ jobs:
           restore-keys: |
             toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ runner.os }}-${{ runner.arch }}-v1
       - name: Set up pinned LLVM and LLD
+        shell: bash
         run: node tools/setup_llvm.mjs
       - name: Prune LLVM toolchain cache
+        shell: bash
         run: node tools/prune_llvm_toolchain.mjs
       - name: Set up pinned QuickJS
+        shell: bash
         run: node tools/setup_quickjs.mjs
       # zig-out is an install prefix, not part of the Zig cache. Remove any
       # runner-workspace residue before a differential script builds a host
@@ -681,10 +684,13 @@ jobs:
           restore-keys: |
             toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ runner.os }}-${{ runner.arch }}-v1
       - name: Set up pinned LLVM and LLD
+        shell: bash
         run: node tools/setup_llvm.mjs
       - name: Prune LLVM toolchain cache
+        shell: bash
         run: node tools/prune_llvm_toolchain.mjs
       - name: Set up pinned QuickJS
+        shell: bash
         run: node tools/setup_quickjs.mjs
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

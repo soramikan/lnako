@@ -76,9 +76,11 @@ jobs:
             toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ runner.os }}-${{ runner.arch }}-v1
 
       - name: Set up pinned LLVM and LLD
+        shell: bash
         run: node tools/setup_llvm.mjs
 
       - name: Prune LLVM toolchain cache
+        shell: bash
         run: node tools/prune_llvm_toolchain.mjs
 
       - name: Build ReleaseSafe compiler

@@ -19,12 +19,22 @@ const marker = resolve(target, ".lnako-toolchain.json");
 const clang = resolve(target, "bin", process.platform === "win32" ? "clang.exe" : "clang");
 const lld = resolve(target, "bin", lldName());
 
-if (!(await isCurrent())) await install();
-verifyTool(clang, lock.version);
-verifyTool(lld, lock.version);
-const llvmLibrary = (await findLlvmLibrary(target)) ?? buildLlvmLibrary(target);
-await exportEnvironment(llvmLibrary);
-console.log(`LLVM/LLD ${lock.version}を確認しました: ${target}`);
+try {
+  if (!(await isCurrent())) {
+    console.log(`LLVM ${lock.version}をセットアップします: ${target}`);
+    await install();
+  }
+  console.log(`LLVMツールを検証します: clang=${clang} lld=${lld}`);
+  verifyTool(clang, lock.version);
+  verifyTool(lld, lock.version);
+  const llvmLibrary = (await findLlvmLibrary(target)) ?? buildLlvmLibrary(target);
+  await exportEnvironment(llvmLibrary);
+  console.log(`LLVM/LLD ${lock.version}を確認しました: ${target}`);
+} catch (error) {
+  console.error(`setup_llvm.mjs failed: ${error}`);
+  if (error.stack) console.error(error.stack);
+  process.exit(1);
+}
 
 async function isCurrent() {
   try {

@@ -126,8 +126,10 @@ jobs:
           restore-keys: |
             release-toolchains-llvm-22.1.8-${{ matrix.target }}-v1
       - name: Set up pinned LLVM and LLD
+        shell: bash
         run: node tools/setup_llvm.mjs
       - name: Prune LLVM toolchain cache
+        shell: bash
         run: node tools/prune_llvm_toolchain.mjs
       - name: Clear generated install outputs
         shell: bash
