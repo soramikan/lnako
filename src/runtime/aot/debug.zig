@@ -320,15 +320,15 @@ pub export fn lnako_aot_regexp_call_site(out: *state.Value, captures: ?*state.Va
     const runtime = if (state.active_runtime) |*active| active else return;
     const start_epoch = runtime.failure_epoch;
     const command = std.enums.fromInt(state.aot_builtin.Command, opcode) orelse {
-        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "state.regexp", site_id);
+        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "regexp", site_id);
         runtime.setFailure(error.UnknownCommand);
-        runtime.dispatch_trace.result(call_id, "unknown", opcode, "state.regexp", site_id, false);
+        runtime.dispatch_trace.result(call_id, "unknown", opcode, "regexp", site_id, false);
         return;
     };
     const command_name = state.aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "state.regexp", site_id);
+    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "regexp", site_id);
     var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "state.regexp", site_id, success);
+    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "regexp", site_id, success);
     if (arguments == null and len != 0) {
         runtime.setFailure(error.InvalidArgumentCount);
         return;
