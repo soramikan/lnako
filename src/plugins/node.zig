@@ -86,7 +86,7 @@ pub const State = struct {
 const HttpResultKind = enum { response, text, json, binary, none };
 const PendingMode = enum { command_output, output_callback, no_argument_callback, http_callback, http_set_target, http_promise };
 const PendingOperation = struct {
-    token: usize,
+    token: u64,
     mode: PendingMode,
     callback: Value = .undefined,
     promise: Value = .undefined,
@@ -138,10 +138,10 @@ pub const Context = struct {
     movePathFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, source: []const u8, destination: []const u8, overwrite: bool) anyerror!void = null,
     listDirectoryFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, path: []const u8, recursive: bool) anyerror![]FileEntry = null,
     runCommandFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, command: []const u8) anyerror!CommandResult = null,
-    startCommandFn: ?*const fn (context: *anyopaque, command: []const u8) anyerror!usize = null,
-    startFileOperationFn: ?*const fn (context: *anyopaque, operation: FileOperation, source: []const u8, destination: ?[]const u8, overwrite: bool) anyerror!usize = null,
-    startArchiveFn: ?*const fn (context: *anyopaque, operation: ArchiveOperation, source: []const u8, destination: []const u8, external_tool: ?[]const u8) anyerror!usize = null,
-    pollOperationFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, token: usize) anyerror!?CommandResult = null,
+    startCommandFn: ?*const fn (context: *anyopaque, command: []const u8) anyerror!u64 = null,
+    startFileOperationFn: ?*const fn (context: *anyopaque, operation: FileOperation, source: []const u8, destination: ?[]const u8, overwrite: bool) anyerror!u64 = null,
+    startArchiveFn: ?*const fn (context: *anyopaque, operation: ArchiveOperation, source: []const u8, destination: []const u8, external_tool: ?[]const u8) anyerror!u64 = null,
+    pollOperationFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, token: u64) anyerror!?CommandResult = null,
     readStdinFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator) anyerror![]u8 = null,
     createTemporaryDirectoryFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, prefix: []const u8) anyerror![]u8 = null,
     openExternalFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, target: []const u8, reveal: bool) anyerror!void = null,
@@ -153,7 +153,7 @@ pub const Context = struct {
     randomBytesFn: ?*const fn (context: *anyopaque, output: []u8) anyerror!void = null,
     networkAddressesFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, ipv6: bool) anyerror!NetworkAddresses = null,
     httpRequestFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator, request: HttpRequest) anyerror!CommandResult = null,
-    startHttpFn: ?*const fn (context: *anyopaque, request: HttpRequest) anyerror!usize = null,
+    startHttpFn: ?*const fn (context: *anyopaque, request: HttpRequest) anyerror!u64 = null,
 
     fn cwd(self: Context, allocator: std.mem.Allocator) ![]u8 {
         return self.cwdFn(self.context, allocator);

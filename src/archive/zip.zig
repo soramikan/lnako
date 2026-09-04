@@ -1,5 +1,9 @@
 const std = @import("std");
 
+const max_entries = 100_000;
+const max_total_size = 1024 * 1024 * 1024;
+const max_compression_ratio = 100;
+
 const Entry = struct {
     name: []u8,
     data: []u8,
@@ -20,6 +24,11 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, source: []const u8, dest
     }
     try gatherEntries(allocator, io, source, &entries);
     std.mem.sort(Entry, entries.items, {}, lessThanEntry);
+    if (entries.items.len > max_entries) return error.ZipEntryCountExceeded;
+
+    var total_input_size: u64 = 0;
+    for (entries.items) |entry| total_input_size += entry.data.len;
+    if (total_input_size > max_total_size) return error.ZipTotalSizeExceeded;
 
     var output: std.ArrayList(u8) = .empty;
     defer output.deinit(allocator);
@@ -75,6 +84,7 @@ pub fn create(allocator: std.mem.Allocator, io: std.Io, source: []const u8, dest
     try appendInt(&output, allocator, u32, central_size);
     try appendInt(&output, allocator, u32, central_offset);
     try appendInt(&output, allocator, u16, 0);
+    if (output.items.len > max_total_size) return error.ZipTotalSizeExceeded;
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = destination, .data = output.items });
 }
 
@@ -82,16 +92,29 @@ pub fn extract(io: std.Io, source: []const u8, destination: []const u8) !void {
     try std.Io.Dir.cwd().createDirPath(io, destination);
     var destination_directory = try std.Io.Dir.cwd().openDir(io, destination, .{});
     defer destination_directory.close(io);
+    const archive_stat = try std.Io.Dir.cwd().statFile(io, source, .{});
+    const archive_size = archive_stat.size;
     const file = try std.Io.Dir.cwd().openFile(io, source, .{});
     defer file.close(io);
     var buffer: [8192]u8 = undefined;
     var reader = file.reader(io, &buffer);
     var iterator = try std.zip.Iterator.init(&reader);
     var filename_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    var total_uncompressed: u64 = 0;
+    var total_compressed: u64 = 0;
+    var entry_count: u64 = 0;
     while (try iterator.next()) |entry| {
+        entry_count += 1;
+        if (entry_count > max_entries) return error.ZipEntryCountExceeded;
+        total_uncompressed = std.math.add(u64, total_uncompressed, entry.uncompressed_size) catch return error.ZipTotalSizeExceeded;
+        if (total_uncompressed > max_total_size) return error.ZipTotalSizeExceeded;
+        total_compressed = std.math.add(u64, total_compressed, entry.compressed_size) catch return error.ZipTotalSizeExceeded;
+        if (entry.compressed_size != 0 and entry.uncompressed_size / max_compression_ratio > entry.compressed_size) return error.ZipCompressionRatioExceeded;
+        if (archive_size > 0 and total_uncompressed / max_compression_ratio > archive_size) return error.ZipCompressionRatioExceeded;
         try entry.extract(&reader, .{}, &filename_buffer, destination_directory);
         const filename = filename_buffer[0..entry.filename_len];
         if (filename.len > 0 and filename[filename.len - 1] == '/') continue;
+        if (filename.len == 0 or std.mem.indexOfAny(u8, filename, "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f") != null) return error.ZipBadFilename;
         if (!try verifyExtractedFile(io, destination_directory, filename, entry.uncompressed_size, entry.crc32)) {
             destination_directory.deleteTree(io, filename) catch {};
             return error.ZipChecksumMismatch;
@@ -117,9 +140,10 @@ fn verifyExtractedFile(io: std.Io, directory: std.Io.Dir, path: []const u8, expe
 }
 
 fn gatherEntries(allocator: std.mem.Allocator, io: std.Io, source: []const u8, entries: *std.ArrayList(Entry)) !void {
+    var total_size: u64 = 0;
     const stat = try std.Io.Dir.cwd().statFile(io, source, .{});
     if (stat.kind != .directory) {
-        const data = try std.Io.Dir.cwd().readFileAlloc(io, source, allocator, .limited(1024 * 1024 * 1024));
+        const data = try std.Io.Dir.cwd().readFileAlloc(io, source, allocator, .limited(max_total_size));
         errdefer allocator.free(data);
         try entries.append(allocator, .{ .name = try normalizedName(allocator, std.fs.path.basename(source), false), .data = data, .is_directory = false });
         return;
@@ -132,6 +156,7 @@ fn gatherEntries(allocator: std.mem.Allocator, io: std.Io, source: []const u8, e
     var walker = try directory.walk(allocator);
     defer walker.deinit();
     while (try walker.next(io)) |walked| {
+        if (entries.items.len >= max_entries) return error.ZipEntryCountExceeded;
         const joined_name = try std.fs.path.join(allocator, &.{ root_name, walked.path });
         defer allocator.free(joined_name);
         if (walked.kind == .directory) {
@@ -139,8 +164,10 @@ fn gatherEntries(allocator: std.mem.Allocator, io: std.Io, source: []const u8, e
         } else if (walked.kind == .file) {
             const file_path = try std.fs.path.join(allocator, &.{ source, walked.path });
             defer allocator.free(file_path);
-            const data = try std.Io.Dir.cwd().readFileAlloc(io, file_path, allocator, .limited(1024 * 1024 * 1024));
+            const data = try std.Io.Dir.cwd().readFileAlloc(io, file_path, allocator, .limited(max_total_size));
             errdefer allocator.free(data);
+            total_size = std.math.add(u64, total_size, data.len) catch return error.ZipTotalSizeExceeded;
+            if (total_size > max_total_size) return error.ZipTotalSizeExceeded;
             try entries.append(allocator, .{ .name = try normalizedName(allocator, joined_name, false), .data = data, .is_directory = false });
         }
     }

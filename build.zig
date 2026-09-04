@@ -45,6 +45,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{.{ .name = "lnako", .module = lnako }},
         }),
     });
+    if (target.result.os.tag == .windows) exe.root_module.linkSystemLibrary("shell32", .{});
     b.installArtifact(exe);
 
     const aot_module = b.createModule(.{

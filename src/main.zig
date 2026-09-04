@@ -50,6 +50,7 @@ pub fn main(init: std.process.Init) !void {
             .fixed_monotonic_milliseconds = parseOptionalF64(init.environ_map.get("LNAKO_TEST_MONOTONIC_MS")),
             .random_state = parseOptionalU64(init.environ_map.get("LNAKO_TEST_RANDOM_SEED")) orelse 0,
             .http_server_enabled = ir_program.http_server_plugin_imported,
+            .async_task_map = std.AutoHashMap(u64, *AsyncOperationTask).init(std.heap.page_allocator),
         };
         defer cli_host.deinit();
         var interpreter = lnako.runtime.interpreter.Interpreter.init(allocator, &runtime, ir_program, cli_host.host());
@@ -69,9 +70,10 @@ pub fn main(init: std.process.Init) !void {
     }
 
     const command = lnako.parseCommand(args) catch |err| {
-        try stdout.print("コマンドラインエラー: {s}\n\n", .{@errorName(err)});
-        try lnako.usage(stdout);
-        return;
+        try stderr.print("コマンドラインエラー: {s}\n\n", .{@errorName(err)});
+        try lnako.usage(stderr);
+        try stderr.flush();
+        std.process.exit(2);
     };
 
     switch (command) {
@@ -145,7 +147,8 @@ pub fn main(init: std.process.Init) !void {
                 try stderr.flush();
                 std.process.exit(2);
             }
-            const compat_js = hasArgument(args[2..], "--compat-js");
+            const run_options = splitRunArguments(args[2..]);
+            const compat_js = hasArgument(run_options.lnako, "--compat-js");
             if (compat_js and !lnako.compat.quickjs.available()) {
                 try stderr.writeAll("run: このlnakoはQuickJSなしでビルドされています。zig build -Dcompat-js=trueを使用してください\n");
                 try stderr.flush();
@@ -173,6 +176,7 @@ pub fn main(init: std.process.Init) !void {
                 .fixed_monotonic_milliseconds = parseOptionalF64(init.environ_map.get("LNAKO_TEST_MONOTONIC_MS")),
                 .random_state = parseOptionalU64(init.environ_map.get("LNAKO_TEST_RANDOM_SEED")) orelse 0,
                 .http_server_enabled = ir_program.http_server_plugin_imported,
+                .async_task_map = std.AutoHashMap(u64, *AsyncOperationTask).init(std.heap.page_allocator),
             };
             defer cli_host.deinit();
             var interpreter = lnako.runtime.interpreter.Interpreter.init(allocator, &runtime, ir_program, cli_host.host());
@@ -641,7 +645,8 @@ const CliHost = struct {
     temporary_directory: []const u8 = "/tmp",
     http_server_enabled: bool = false,
     async_tasks: std.ArrayList(*AsyncOperationTask) = .empty,
-    next_async_token: usize = 1,
+    async_task_map: std.AutoHashMap(u64, *AsyncOperationTask),
+    next_async_token: u64 = 1,
     async_completion_sequence: std.atomic.Value(u64) = .init(1),
     http_server: ?std.Io.net.Server = null,
     http_connection: ?std.Io.net.Stream = null,
@@ -664,6 +669,7 @@ const CliHost = struct {
         if (self.http_server) |*server| server.deinit(self.io);
         while (self.async_tasks.pop()) |task| destroyAsyncTask(task, true);
         self.async_tasks.deinit(std.heap.page_allocator);
+        self.async_task_map.deinit();
     }
 
     fn host(self: *CliHost) lnako.runtime.interpreter.Host {
@@ -1006,7 +1012,7 @@ const CliHost = struct {
         return runShellCommand(allocator, self.io, command, null);
     }
 
-    fn startCommand(context: *anyopaque, command: []const u8) !usize {
+    fn startCommand(context: *anyopaque, command: []const u8) !u64 {
         const self: *CliHost = @ptrCast(@alignCast(context));
         const allocator = std.heap.page_allocator;
         const owned_command = try allocator.dupe(u8, command);
@@ -1016,7 +1022,7 @@ const CliHost = struct {
         return self.startAsyncOperation(.{ .command = .{ .command = owned_command, .cwd = cwd } });
     }
 
-    fn startFileOperation(context: *anyopaque, operation: lnako.plugins.node.FileOperation, source: []const u8, destination: ?[]const u8, overwrite: bool) !usize {
+    fn startFileOperation(context: *anyopaque, operation: lnako.plugins.node.FileOperation, source: []const u8, destination: ?[]const u8, overwrite: bool) !u64 {
         const self: *CliHost = @ptrCast(@alignCast(context));
         const allocator = std.heap.page_allocator;
         const owned_source = try allocator.dupe(u8, source);
@@ -1026,7 +1032,7 @@ const CliHost = struct {
         return self.startAsyncOperation(.{ .file = .{ .operation = operation, .source = owned_source, .destination = owned_destination, .overwrite = overwrite } });
     }
 
-    fn startArchive(context: *anyopaque, operation: lnako.plugins.node.ArchiveOperation, source: []const u8, destination: []const u8, external_tool: ?[]const u8) !usize {
+    fn startArchive(context: *anyopaque, operation: lnako.plugins.node.ArchiveOperation, source: []const u8, destination: []const u8, external_tool: ?[]const u8) !u64 {
         const self: *CliHost = @ptrCast(@alignCast(context));
         const allocator = std.heap.page_allocator;
         const owned_source = try allocator.dupe(u8, source);
@@ -1038,7 +1044,7 @@ const CliHost = struct {
         return self.startAsyncOperation(.{ .archive = .{ .operation = operation, .source = owned_source, .destination = owned_destination, .external_tool = owned_tool } });
     }
 
-    fn startHttp(context: *anyopaque, request: lnako.plugins.node.HttpRequest) !usize {
+    fn startHttp(context: *anyopaque, request: lnako.plugins.node.HttpRequest) !u64 {
         const self: *CliHost = @ptrCast(@alignCast(context));
         const allocator = std.heap.page_allocator;
         const method = try allocator.dupe(u8, request.method);
@@ -1204,7 +1210,7 @@ const CliHost = struct {
         return path;
     }
 
-    fn startAsyncOperation(self: *CliHost, operation: AsyncOperation) !usize {
+    fn startAsyncOperation(self: *CliHost, operation: AsyncOperation) !u64 {
         const allocator = std.heap.page_allocator;
         const task = try allocator.create(AsyncOperationTask);
         errdefer allocator.destroy(task);
@@ -1214,36 +1220,39 @@ const CliHost = struct {
         task.* = .{ .token = token, .host = self, .operation = operation };
         try self.async_tasks.append(allocator, task);
         errdefer _ = self.async_tasks.pop();
+        try self.async_task_map.put(token, task);
+        errdefer _ = self.async_task_map.remove(token);
         task.thread = try std.Thread.spawn(.{}, AsyncOperationTask.run, .{task});
         return token;
     }
 
-    fn pollOperation(context: *anyopaque, allocator: std.mem.Allocator, token: usize) !?lnako.plugins.node.CommandResult {
+    fn pollOperation(context: *anyopaque, allocator: std.mem.Allocator, token: u64) !?lnako.plugins.node.CommandResult {
         const self: *CliHost = @ptrCast(@alignCast(context));
-        for (self.async_tasks.items, 0..) |task, index| {
-            if (task.token != token) continue;
-            const complete = task.complete.load(.acquire);
-            if (!complete) return null;
-            const task_order = task.completion_order.load(.acquire);
-            for (self.async_tasks.items) |other| {
-                if (other == task or !other.complete.load(.acquire)) continue;
-                if (other.completion_order.load(.acquire) < task_order) return null;
-            }
-            const failure = task.failure;
-            const source = task.result;
-            const owned = if (source) |result| blk: {
-                const stdout_bytes = try allocator.dupe(u8, result.stdout);
-                errdefer allocator.free(stdout_bytes);
-                const stderr_bytes = try allocator.dupe(u8, result.stderr);
-                errdefer allocator.free(stderr_bytes);
-                break :blk lnako.plugins.node.CommandResult{ .stdout = stdout_bytes, .stderr = stderr_bytes, .exit_code = result.exit_code, .http_status = result.http_status };
-            } else null;
-            _ = self.async_tasks.orderedRemove(index);
-            destroyAsyncTask(task, true);
-            if (failure) |err| return err;
-            return owned orelse error.AsyncCommandMissingResult;
+        const task = self.async_task_map.get(token) orelse return error.AsyncCommandNotFound;
+        const complete = task.complete.load(.acquire);
+        if (!complete) return null;
+        const task_order = task.completion_order.load(.acquire);
+        for (self.async_tasks.items) |other| {
+            if (other == task or !other.complete.load(.acquire)) continue;
+            if (other.completion_order.load(.acquire) < task_order) return null;
         }
-        return error.AsyncCommandNotFound;
+        const failure = task.failure;
+        const source = task.result;
+        const owned = if (source) |result| blk: {
+            const stdout_bytes = try allocator.dupe(u8, result.stdout);
+            errdefer allocator.free(stdout_bytes);
+            const stderr_bytes = try allocator.dupe(u8, result.stderr);
+            errdefer allocator.free(stderr_bytes);
+            break :blk lnako.plugins.node.CommandResult{ .stdout = stdout_bytes, .stderr = stderr_bytes, .exit_code = result.exit_code, .http_status = result.http_status };
+        } else null;
+        const index = for (self.async_tasks.items, 0..) |candidate, i| {
+            if (candidate == task) break i;
+        } else return error.AsyncCommandNotFound;
+        _ = self.async_tasks.orderedRemove(index);
+        _ = self.async_task_map.remove(token);
+        destroyAsyncTask(task, true);
+        if (failure) |err| return err;
+        return owned orelse error.AsyncCommandMissingResult;
     }
 
     fn readStdin(context: *anyopaque, allocator: std.mem.Allocator) ![]u8 {
@@ -1275,30 +1284,30 @@ const CliHost = struct {
 
     fn openExternal(context: *anyopaque, allocator: std.mem.Allocator, target: []const u8, reveal: bool) !void {
         const self: *CliHost = @ptrCast(@alignCast(context));
-        const argv: []const []const u8 = switch (builtin.os.tag) {
-            .macos => if (reveal) &.{ "/usr/bin/open", "-R", target } else &.{ "/usr/bin/open", target },
-            .windows => if (reveal)
-                &.{ "explorer.exe", "/select,", target }
-            else
-                &.{ "cmd.exe", "/d", "/s", "/c", "start", "", target },
-            else => if (reveal)
-                &.{ "xdg-open", std.fs.path.dirname(target) orelse "." }
-            else
-                &.{ "xdg-open", target },
-        };
-        // Oracle fixtures opt into this hook after the platform-specific argv
-        // has been built, so CI never starts a browser or file manager while
-        // still exercising the production launcher selection. Preserve the
-        // official non-Windows Explorer behavior: upstream launches first and
-        // then reports an unsupported OS, while Windows returns successfully.
         if (self.environmentValue("LNAKO_TEST_OPEN_EXTERNAL") != null) {
             if (reveal and builtin.os.tag != .windows) return error.OpenExternalFailed;
             return;
         }
-        const result = try std.process.run(allocator, self.io, .{ .argv = argv, .stdout_limit = .limited(1024 * 1024), .stderr_limit = .limited(1024 * 1024) });
-        defer allocator.free(result.stdout);
-        defer allocator.free(result.stderr);
-        if (result.term != .exited or result.term.exited != 0) return error.OpenExternalFailed;
+        switch (builtin.os.tag) {
+            .windows => return WindowsShell.openExternal(allocator, target, reveal),
+            .macos => {
+                const argv = if (reveal) &.{ "/usr/bin/open", "-R", target } else &.{ "/usr/bin/open", target };
+                const result = try std.process.run(allocator, self.io, .{ .argv = argv, .stdout_limit = .limited(1024 * 1024), .stderr_limit = .limited(1024 * 1024) });
+                defer allocator.free(result.stdout);
+                defer allocator.free(result.stderr);
+                if (result.term != .exited or result.term.exited != 0) return error.OpenExternalFailed;
+            },
+            else => {
+                const argv = if (reveal)
+                    &.{ "xdg-open", std.fs.path.dirname(target) orelse "." }
+                else
+                    &.{ "xdg-open", target };
+                const result = try std.process.run(allocator, self.io, .{ .argv = argv, .stdout_limit = .limited(1024 * 1024), .stderr_limit = .limited(1024 * 1024) });
+                defer allocator.free(result.stdout);
+                defer allocator.free(result.stderr);
+                if (result.term != .exited or result.term.exited != 0) return error.OpenExternalFailed;
+            },
+        }
     }
 
     fn archive(context: *anyopaque, allocator: std.mem.Allocator, operation: lnako.plugins.node.ArchiveOperation, source: []const u8, destination: []const u8, external_tool: ?[]const u8) ![]u8 {
@@ -1387,6 +1396,32 @@ const WindowsInterrupt = if (builtin.os.tag == .windows) struct {
         if (control_type != 0 and control_type != 1) return 0;
         interrupt_requested.store(true, .release);
         return 1;
+    }
+} else struct {};
+
+const WindowsShell = if (builtin.os.tag == .windows) struct {
+    extern "shell32" fn ShellExecuteW(hwnd: ?*anyopaque, lpOperation: ?[*:0]const u16, lpFile: [*:0]const u16, lpParameters: ?[*:0]const u16, lpDirectory: ?[*:0]const u16, nShowCmd: c_int) callconv(.winapi) isize;
+
+    fn wtf16LeFromWtf8(allocator: std.mem.Allocator, source: []const u8) ![:0]u16 {
+        const units = try std.unicode.wtf8ToWtf16LeAlloc(allocator, source);
+        defer allocator.free(units);
+        return try allocator.dupeZ(u16, units);
+    }
+
+    fn openExternal(allocator: std.mem.Allocator, target: []const u8, reveal: bool) !void {
+        if (reveal) {
+            if (std.mem.indexOfAny(u8, target, "\"\x00")) |_| return error.OpenExternalFailed;
+            const file: [*:0]const u16 = std.unicode.wtf8ToWtf16LeStringLiteral("explorer.exe").ptr;
+            const parameters_utf8 = try std.fmt.allocPrint(allocator, "/select,\"{s}\"", .{target});
+            defer allocator.free(parameters_utf8);
+            const parameters = try wtf16LeFromWtf8(allocator, parameters_utf8);
+            defer allocator.free(parameters);
+            if (ShellExecuteW(null, null, file, parameters.ptr, null, 1) <= 32) return error.OpenExternalFailed;
+        } else {
+            const file = try wtf16LeFromWtf8(allocator, target);
+            defer allocator.free(file);
+            if (ShellExecuteW(null, null, file.ptr, null, null, 1) <= 32) return error.OpenExternalFailed;
+        }
     }
 } else struct {};
 
@@ -1574,7 +1609,7 @@ const AsyncOperation = union(enum) {
 };
 
 const AsyncOperationTask = struct {
-    token: usize,
+    token: u64,
     host: *CliHost,
     operation: AsyncOperation,
     thread: ?std.Thread = null,
@@ -1884,7 +1919,13 @@ fn runTestFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8, stdou
     defer ir_program.deinit();
     var runtime = lnako.runtime.value.Runtime.init(allocator);
     defer runtime.deinit();
-    var cli_host = CliHost{ .writer = stdout, .error_writer = stderr, .io = io, .http_server_enabled = ir_program.http_server_plugin_imported };
+    var cli_host = CliHost{
+        .writer = stdout,
+        .error_writer = stderr,
+        .io = io,
+        .http_server_enabled = ir_program.http_server_plugin_imported,
+        .async_task_map = std.AutoHashMap(u64, *AsyncOperationTask).init(std.heap.page_allocator),
+    };
     defer cli_host.deinit();
     var interpreter = lnako.runtime.interpreter.Interpreter.init(allocator, &runtime, ir_program, cli_host.host());
     defer interpreter.deinit();
@@ -1909,6 +1950,15 @@ fn runTestFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8, stdou
 fn hasArgument(arguments: []const []const u8, expected: []const u8) bool {
     for (arguments) |argument| if (std.mem.eql(u8, argument, expected)) return true;
     return false;
+}
+
+fn splitRunArguments(arguments: []const []const u8) struct { lnako: []const []const u8, program: []const []const u8 } {
+    for (arguments, 0..) |argument, index| {
+        if (std.mem.eql(u8, argument, "--")) {
+            return .{ .lnako = arguments[0..index], .program = arguments[index + 1 ..] };
+        }
+    }
+    return .{ .lnako = arguments, .program = &.{} };
 }
 
 fn lessThanString(_: void, left: []const u8, right: []const u8) bool {
