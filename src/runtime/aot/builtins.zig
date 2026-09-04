@@ -16,84 +16,9 @@ pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, le
 /// Dedicated ABI for timer commands. Timer registration updates the shared
 /// `対象` value, so generated LLVM passes that global explicitly instead of
 /// relying on a runtime-local lookup.
-pub export fn lnako_aot_timer_call_site(
-    out: *Value,
-    target: *Value,
-    arguments: ?[*]const Value,
-    len: usize,
-    opcode: u16,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (state.active_runtime) |*active| active else return;
-    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
-        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "timer", site_id);
-        runtime.setFailure(error.UnknownCommand);
-        runtime.dispatch_trace.result(call_id, "unknown", opcode, "timer", site_id, false);
-        return;
-    };
-    if (command != .timer_after and command != .timer_every and command != .timer_stop and command != .timer_stop_all) {
-        runtime.setFailure(error.UnknownCommand);
-        return;
-    }
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "timer", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "timer", site_id, success);
-    if (arguments == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-    out.* = state.timerBuiltin(runtime, command, actual, target) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    success = runtime.failure_epoch == start_epoch;
-}
-
 /// Dedicated ABI for promise commands. The last promise and callback target
 /// are explicit globals so asynchronous callbacks cannot be redirected by a
 /// local variable with the same source-level name.
-pub export fn lnako_aot_promise_call_site(
-    out: *Value,
-    last_promise: *Value,
-    target: *Value,
-    arguments: ?[*]const Value,
-    len: usize,
-    opcode: u16,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (state.active_runtime) |*active| active else return;
-    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
-        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "promise", site_id);
-        runtime.setFailure(error.UnknownCommand);
-        runtime.dispatch_trace.result(call_id, "unknown", opcode, "promise", site_id, false);
-        return;
-    };
-    if (command != .promise_create and command != .promise_success and command != .promise_settled and command != .promise_failure and command != .promise_finally and command != .promise_all) {
-        runtime.setFailure(error.UnknownCommand);
-        return;
-    }
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "promise", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "promise", site_id, success);
-    if (arguments == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-    out.* = state.promiseAotBuiltin(runtime, command, actual, last_promise, target) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    success = runtime.failure_epoch == start_epoch;
-}
-
 /// Dedicated ABI for `__DEBUG_BP_WAIT`. The debugger-facing system globals
 /// are generated values rather than runtime-owned name lookups, so LLVM passes
 /// their storage explicitly. This preserves the official immediate-return,
@@ -141,123 +66,13 @@ pub export fn lnako_aot_debug_breakpoint_wait_call(
 
 /// Dedicated ABI for synchronous Node file operations. The copy default is a
 /// mutable system global, so generated LLVM passes its storage explicitly.
-pub export fn lnako_aot_file_operation_call(
-    out: *Value,
-    file_copy_default: *Value,
-    arguments: ?[*]const Value,
-    len: usize,
-    opcode: u16,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (state.active_runtime) |*active| active else return;
-    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
-        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "node-file-operation", site_id);
-        runtime.setFailure(error.UnknownCommand);
-        runtime.dispatch_trace.result(call_id, "unknown", opcode, "node-file-operation", site_id, false);
-        return;
-    };
-    if (!state.isNodeFileOperationCommand(command)) {
-        runtime.setFailure(error.UnknownCommand);
-        return;
-    }
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "node-file-operation", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "node-file-operation", site_id, success);
-    if (arguments == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-    out.* = state.nodeFileOperationBuiltin(runtime, command, actual, file_copy_default) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    success = runtime.failure_epoch == start_epoch;
-}
-
 /// Dedicated ABI for Node process and desktop-launch commands.  Process
 /// callbacks are retained by the native event queue, so this path never
 /// falls back to a JavaScript runtime in normal AOT mode.
-pub export fn lnako_aot_node_process_call(
-    out: *Value,
-    arguments: ?[*]const Value,
-    len: usize,
-    opcode: u16,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (state.active_runtime) |*active| active else return;
-    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
-        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "node-process", site_id);
-        runtime.setFailure(error.UnknownCommand);
-        runtime.dispatch_trace.result(call_id, "unknown", opcode, "node-process", site_id, false);
-        return;
-    };
-    if (!state.isNodeProcessCommand(command)) {
-        runtime.setFailure(error.UnknownCommand);
-        return;
-    }
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "node-process", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "node-process", site_id, success);
-    if (arguments == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-    out.* = state.nodeProcessBuiltin(runtime, command, actual) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    success = runtime.failure_epoch == start_epoch;
-}
-
 /// Dedicated ABI for Node file-operation callback and progress commands. The
 /// current `対象` storage is explicit so progress callbacks observe the same
 /// dictionary value as the interpreter, while worker threads retain only
 /// copied paths and the callback Value.
-pub export fn lnako_aot_node_file_callback_call(
-    out: *Value,
-    target: *Value,
-    arguments: ?[*]const Value,
-    len: usize,
-    opcode: u16,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (state.active_runtime) |*active| active else return;
-    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
-        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "node-file-callback", site_id);
-        runtime.setFailure(error.UnknownCommand);
-        runtime.dispatch_trace.result(call_id, "unknown", opcode, "node-file-callback", site_id, false);
-        return;
-    };
-    if (!state.isNodeFileCallbackCommand(command)) {
-        runtime.setFailure(error.UnknownCommand);
-        return;
-    }
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "node-file-callback", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "node-file-callback", site_id, success);
-    if (arguments == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-    out.* = state.nodeFileCallbackBuiltin(runtime, target, command, actual) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    success = runtime.failure_epoch == start_epoch;
-}
-
 pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Value, len: usize, opcode: u16, site_id: u64) callconv(.c) void {
     out.* = .{};
     const runtime = if (state.active_runtime) |*active| active else return;
@@ -1347,6 +1162,3 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
     }
     success = runtime.failure_epoch == start_epoch;
 }
-
-pub const lnako_aot_regexp_call = state.lnako_aot_regexp_call;
-pub const lnako_aot_regexp_call_site = state.lnako_aot_regexp_call_site;

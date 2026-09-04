@@ -63,44 +63,6 @@ pub export fn lnako_aot_display_value(value: *const state.Value, newline: bool, 
 
 /// AOT版`デバッグ表示`は、LLVMが保持しているソース位置をABIで受け取り、
 /// 公式命令のJSON化と「ファイル名(行): 値」形式を純Zigで再現する。
-pub export fn lnako_aot_debug_display(
-    out: *state.Value,
-    value: ?*const state.Value,
-    line: u64,
-    source_path: ?[*]const u8,
-    source_len: usize,
-    display_log: ?*state.Value,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (state.active_runtime) |*active| active else return;
-    const path = if (source_path) |pointer| pointer[0..source_len] else if (source_len == 0) &.{} else {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    };
-    const command = state.aot_builtin.Command.system_debug_display;
-    const command_name = state.aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, @intFromEnum(command), "debug-display", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, @intFromEnum(command), "debug-display", site_id, success);
-    state.debugDisplayBuiltin(runtime, if (value) |pointer| pointer.* else .{}, line, path, display_log) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    success = runtime.failure_epoch == start_epoch;
-}
-
-pub export fn lnako_aot_display_many(values: ?[*]const state.Value, len: usize, display_log: ?*state.Value) callconv(.c) void {
-    const runtime = if (state.active_runtime) |*active| active else return;
-    if (values == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const actual = if (values) |pointer| pointer[0..len] else &.{};
-    state.displayMany(runtime, actual, display_log) catch |failure| runtime.setFailure(failure);
-}
-
 pub export fn lnako_aot_array_new(out: *state.Value, values: ?[*]const state.Value, len: usize) callconv(.c) void {
     out.* = .{};
     const runtime = if (state.active_runtime) |*value| value else return;

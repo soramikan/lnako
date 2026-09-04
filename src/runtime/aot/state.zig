@@ -26,13 +26,8 @@ pub const toml_temporal = shared.toml_temporal;
 
 pub const lnako_aot_builtin_call = builtins.lnako_aot_builtin_call;
 pub const lnako_aot_builtin_call_site = builtins.lnako_aot_builtin_call_site;
-pub const lnako_aot_timer_call_site = builtins.lnako_aot_timer_call_site;
-pub const lnako_aot_promise_call_site = builtins.lnako_aot_promise_call_site;
 pub const lnako_aot_debug_breakpoint_wait_call = builtins.lnako_aot_debug_breakpoint_wait_call;
-pub const lnako_aot_file_operation_call = builtins.lnako_aot_file_operation_call;
-pub const lnako_aot_node_process_call = builtins.lnako_aot_node_process_call;
-pub const lnako_aot_node_file_callback_call = builtins.lnako_aot_node_file_callback_call;
-extern "c" fn fflush(stream: ?*std.c.FILE) c_int;
+pub extern "c" fn fflush(stream: ?*std.c.FILE) c_int;
 extern "c" fn time(timer: ?*i64) i64;
 
 const AotWindowsStdout = shared.AotWindowsStdout;
@@ -571,7 +566,7 @@ const AotHttpServerState = struct {
     }
 };
 
-const AotArchiveOperation = enum { create, extract };
+pub const AotArchiveOperation = enum { create, extract };
 
 const AotArchiveTask = struct {
     operation: AotArchiveOperation,
@@ -2730,40 +2725,6 @@ pub fn regexpBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments:
 
 /// Dedicated ABI because regexp match/extract update the system global
 /// `抽出文字列` in addition to returning their normal value.
-pub export fn lnako_aot_regexp_call(out: *Value, captures: ?*Value, arguments: ?[*]const Value, len: usize, opcode: u16) callconv(.c) void {
-    lnako_aot_regexp_call_site(out, captures, arguments, len, opcode, 0);
-}
-
-pub export fn lnako_aot_regexp_call_site(out: *Value, captures: ?*Value, arguments: ?[*]const Value, len: usize, opcode: u16, site_id: u64) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    const start_epoch = runtime.failure_epoch;
-    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
-        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "regexp", site_id);
-        runtime.setFailure(error.UnknownCommand);
-        runtime.dispatch_trace.result(call_id, "unknown", opcode, "regexp", site_id, false);
-        return;
-    };
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "regexp", site_id);
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "regexp", site_id, success);
-    if (arguments == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const values = if (arguments) |pointer| pointer[0..len] else &.{};
-    const result = regexpBuiltin(runtime, command, values) catch |failure| {
-        if (!runtime.has_pending_exception) runtime.setFailure(failure);
-        return;
-    };
-    out.* = result.value;
-    if (captures) |target| {
-        if (result.captures) |value| target.* = value;
-    }
-    success = runtime.failure_epoch == start_epoch;
-}
-
 const JsonAotPath = union(enum) {
     array_index: usize,
     property: Value,
@@ -4537,7 +4498,7 @@ fn invokeHatenaNamedCallback(
     return result;
 }
 
-fn invokeHatenaCallbacks(
+pub fn invokeHatenaCallbacks(
     runtime: *Runtime,
     parameter: Value,
     line: u64,
@@ -4569,7 +4530,7 @@ fn writeAllValues(runtime: *Runtime, values: []const Value) !void {
     writeBytes("", true);
 }
 
-fn isStdioCommand(command: aot_builtin.Command) bool {
+pub fn isStdioCommand(command: aot_builtin.Command) bool {
     return switch (command) {
         .stdio_continue_display, .stdio_continue_display_many, .stdio_clear_log, .stdio_write_all => true,
         else => false,
@@ -4590,7 +4551,7 @@ pub fn isNodeProcessCommand(command: aot_builtin.Command) bool {
     };
 }
 
-fn isNodeHttpCommand(command: aot_builtin.Command) bool {
+pub fn isNodeHttpCommand(command: aot_builtin.Command) bool {
     return switch (command) {
         .node_ajax_send_callback, .node_ajax_receive_callback, .node_get_send_callback, .node_post_send_callback, .node_post_form_send_callback, .node_ajax_response_promise, .node_http_response_promise, .node_get_response_promise, .node_post_response_promise, .node_post_form_response_promise, .node_ajax_content_get, .node_ajax_receive, .node_post_send, .node_post_form_send, .node_ajax_text_get, .node_ajax_json_get, .node_ajax_binary_get, .node_discord_send, .node_discord_file_send => true,
         else => false,
@@ -4677,14 +4638,14 @@ pub fn nodeProcessBuiltin(runtime: *Runtime, command: aot_builtin.Command, argum
     }
 }
 
-fn isArchiveCommand(command: aot_builtin.Command) bool {
+pub fn isArchiveCommand(command: aot_builtin.Command) bool {
     return switch (command) {
         .node_archive_extract, .node_archive_extract_callback, .node_archive_create, .node_archive_create_callback => true,
         else => false,
     };
 }
 
-fn isPluginManagementCommand(command: aot_builtin.Command) bool {
+pub fn isPluginManagementCommand(command: aot_builtin.Command) bool {
     return switch (command) {
         .plugin_name_set, .namespace_set, .namespace_pop => true,
         else => false,
@@ -4717,7 +4678,7 @@ fn pluginManagementArgument(runtime: *Runtime, values: []const Value) !Value {
     return runtime.createString(units);
 }
 
-fn pluginManagementBuiltin(
+pub fn pluginManagementBuiltin(
     runtime: *Runtime,
     command: aot_builtin.Command,
     values: []const Value,
@@ -4891,7 +4852,7 @@ fn writeAotAjaxReceiveError(status: u16, failure: ?anyerror) void {
     }
 }
 
-fn drainAotProcessTasks(runtime: *Runtime) !void {
+pub fn drainAotProcessTasks(runtime: *Runtime) !void {
     while (readyAotProcessTaskIndex(runtime)) |index| {
         try countAotEvent(runtime);
         const task = runtime.process_tasks.orderedRemove(index);
@@ -4915,7 +4876,7 @@ fn drainAotProcessTasks(runtime: *Runtime) !void {
     }
 }
 
-fn drainAotFileTasks(runtime: *Runtime) !void {
+pub fn drainAotFileTasks(runtime: *Runtime) !void {
     while (readyAotFileTaskIndex(runtime)) |index| {
         try countAotEvent(runtime);
         const task = runtime.file_tasks.orderedRemove(index);
@@ -4965,7 +4926,7 @@ fn executeAotTimer(runtime: *Runtime, index: usize) !void {
     _ = try invokeAotCallback(runtime, callback, @ptrCast(&id), 1);
 }
 
-fn aotArchiveExecute(
+pub fn aotArchiveExecute(
     runtime: *Runtime,
     operation: AotArchiveOperation,
     use_external_tool: bool,
@@ -5022,7 +4983,7 @@ fn aotArchiveExecute(
     return result.stdout;
 }
 
-fn drainAotArchiveTasks(runtime: *Runtime) !void {
+pub fn drainAotArchiveTasks(runtime: *Runtime) !void {
     while (runtime.archive_tasks.items.len > 0) {
         try countAotEvent(runtime);
         var task = runtime.archive_tasks.orderedRemove(0);
@@ -5041,7 +5002,7 @@ fn drainAotArchiveTasks(runtime: *Runtime) !void {
     }
 }
 
-fn drainAotPromiseTasks(runtime: *Runtime) !void {
+pub fn drainAotPromiseTasks(runtime: *Runtime) !void {
     while (runtime.promise_tasks.items.len > 0) {
         try countAotEvent(runtime);
         const task = runtime.promise_tasks.orderedRemove(0);
@@ -5164,7 +5125,7 @@ pub fn drainAotEvents(runtime: *Runtime) !void {
     }
 }
 
-fn drainAotTimers(runtime: *Runtime) !void {
+pub fn drainAotTimers(runtime: *Runtime) !void {
     try drainAotEvents(runtime);
 }
 
@@ -5579,8 +5540,8 @@ test "AOTタイマーはコールバックを保持し順序・停止・周期�
 
     var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{} };
     var frame = RootFrame{};
-    lnako_aot_push_roots(&frame, &roots, roots.len);
-    defer lnako_aot_pop_roots(&frame);
+    active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    defer active_runtime.?.popRoots(&frame);
 
     roots[0] = try active_runtime.?.createBindingCell(numberValue(0));
     roots[1] = try active_runtime.?.createFunction(testAotCapturedIncrement, 0, &.{roots[0]});
@@ -5619,8 +5580,8 @@ test "AOT Promiseは解決・連鎖・失敗・束ねをマイクロタスクで
 
     var roots = [_]Value{.{}} ** 16;
     var frame = RootFrame{};
-    lnako_aot_push_roots(&frame, &roots, roots.len);
-    defer lnako_aot_pop_roots(&frame);
+    active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    defer active_runtime.?.popRoots(&frame);
 
     roots[0] = try createAotPromise(&active_runtime.?);
     roots[1] = try createAotPromiseResolver(&active_runtime.?, roots[0].object().?, false);
@@ -5728,8 +5689,8 @@ test "AOTシステムカタログ命令は一覧の順序と存在判定を保�
     }
     var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
     var frame = RootFrame{};
-    lnako_aot_push_roots(&frame, &roots, roots.len);
-    defer lnako_aot_pop_roots(&frame);
+    active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    defer active_runtime.?.popRoots(&frame);
 
     lnako_aot_builtin_call(&roots[0], null, 0, @intFromEnum(aot_builtin.Command.system_function_names));
     try std.testing.expectEqual(builtin_catalog.default_names.len, roots[0].object().?.payload.array.items.len);
@@ -5765,8 +5726,8 @@ test "AOTグローバル関数一覧取得は登録済み関数を作成順で�
     }
     var roots = [_]Value{ .{}, .{}, .{}, .{} };
     var frame = RootFrame{};
-    lnako_aot_push_roots(&frame, &roots, roots.len);
-    defer lnako_aot_pop_roots(&frame);
+    active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    defer active_runtime.?.popRoots(&frame);
 
     roots[0] = try active_runtime.?.createNamedFunction(testAotFunction, 1, "module__甲", &.{});
     roots[1] = try active_runtime.?.createNamedFunction(testAotFunction, 1, "module__乙", &.{});
@@ -5802,8 +5763,8 @@ test "AOTデバッグ表示はオブジェクトをJSON化して位置付き表�
     }
     var roots = [_]Value{ .{}, .{}, .{}, .{} };
     var frame = RootFrame{};
-    lnako_aot_push_roots(&frame, &roots, roots.len);
-    defer lnako_aot_pop_roots(&frame);
+    active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    defer active_runtime.?.popRoots(&frame);
 
     roots[0] = try active_runtime.?.createDictionary(&.{ staticStringValue("a"), numberValue(1) });
     roots[1] = try active_runtime.?.createString(&.{});
@@ -5827,12 +5788,13 @@ test "AOTハテナ関数実行は既定のデバッグ表示として位置と�
     }
     var roots = [_]Value{ .{}, .{}, .{} };
     var frame = RootFrame{};
-    lnako_aot_push_roots(&frame, &roots, roots.len);
-    defer lnako_aot_pop_roots(&frame);
+    active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    defer active_runtime.?.popRoots(&frame);
 
     roots[0] = try active_runtime.?.createArray(&.{ numberValue(1), numberValue(2) });
     roots[1] = try active_runtime.?.createString(&.{});
-    lnako_aot_hatena_execute(&roots[2], &roots[0], 7, "main.nako3", "main.nako3".len, &roots[1], 0);
+    roots[2] = .{};
+    try debugDisplayBuiltin(active_runtime.?, roots[0], 7, "main.nako3", &roots[1]);
     try expectUtf16String(&active_runtime.?, roots[1], "main.nako3(7): [1,2]\n");
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[2].tag)));
 }
@@ -5847,8 +5809,8 @@ test "AOTハテナ関数設定は関数値と命令名配列を保持して実�
     }
     var roots = [_]Value{ .{}, .{}, .{}, .{} };
     var frame = RootFrame{};
-    lnako_aot_push_roots(&frame, &roots, roots.len);
-    defer lnako_aot_pop_roots(&frame);
+    active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    defer active_runtime.?.popRoots(&frame);
 
     roots[0] = try active_runtime.?.createFunction(testAotFunction, 1, &.{});
     var function_setting = [_]Value{roots[0]};
@@ -5883,8 +5845,8 @@ test "AOT強制終了時はコールバックを保持し偽の結果で継続�
     }
     var roots = [_]Value{ .{}, .{} };
     var frame = RootFrame{};
-    lnako_aot_push_roots(&frame, &roots, roots.len);
-    defer lnako_aot_pop_roots(&frame);
+    active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    defer active_runtime.?.popRoots(&frame);
 
     roots[0] = try active_runtime.?.createFunction(testAotFunction, 1, &.{});
     var arguments = [_]Value{roots[0]};
@@ -5910,8 +5872,8 @@ test "AOT __DEBUG_BP_WAITは即時復帰と非メイン待機を保つ" {
     }
     var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{} };
     var frame = RootFrame{};
-    lnako_aot_push_roots(&frame, &roots, roots.len);
-    defer lnako_aot_pop_roots(&frame);
+    active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    defer active_runtime.?.popRoots(&frame);
 
     roots[0] = try active_runtime.?.createArray(&.{numberValue(99)});
     roots[1] = numberValue(0);
@@ -5958,8 +5920,8 @@ test "AOT ASSERT等はNodeのSameValue境界と戻り値を保つ" {
     }
     var roots = [_]Value{ .{}, .{}, .{}, .{}, .{} };
     var frame = RootFrame{};
-    lnako_aot_push_roots(&frame, &roots, roots.len);
-    defer lnako_aot_pop_roots(&frame);
+    active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    defer active_runtime.?.popRoots(&frame);
 
     var equal_arguments = [_]Value{ numberValue(1), numberValue(1) };
     lnako_aot_builtin_call(&roots[0], &equal_arguments, equal_arguments.len, @intFromEnum(aot_builtin.Command.assert_strict_equal));
@@ -5974,7 +5936,7 @@ test "AOT ASSERT等はNodeのSameValue境界と戻り値を保つ" {
     var signed_zero_arguments = [_]Value{ numberValue(0), numberValue(-0.0) };
     lnako_aot_builtin_call(&roots[2], &signed_zero_arguments, signed_zero_arguments.len, @intFromEnum(aot_builtin.Command.assert_strict_equal));
     try std.testing.expect(active_runtime.?.has_pending_exception);
-    lnako_aot_exception_take(&roots[3]);
+    roots[3] = active_runtime.?.takeException();
     try std.testing.expect(!active_runtime.?.has_pending_exception);
 }
 
@@ -6235,7 +6197,7 @@ fn aotHttpStatusPhrase(status: u16) []const u8 {
     };
 }
 
-fn pollAotHttpServer(runtime: *Runtime) !bool {
+pub fn pollAotHttpServer(runtime: *Runtime) !bool {
     if (!runtime.http_server_state.started) return false;
     var request = try aotHttpReceiveRequest(runtime);
     defer request.deinit(runtime.allocator);
@@ -6671,7 +6633,7 @@ pub fn runtimeFailure(failure: anyerror) noreturn {
 }
 
 pub var active_runtime: ?Runtime = null;
-var aot_interrupt_requested = std.atomic.Value(bool).init(false);
+pub var aot_interrupt_requested = std.atomic.Value(bool).init(false);
 
 const AotPosixInterrupt = if (builtin.os.tag == .windows) struct {} else struct {
     fn handler(_: std.posix.SIG) callconv(.c) void {
@@ -6702,7 +6664,7 @@ fn installAotInterrupt() !void {
     }
 }
 
-fn pollAotInterrupt(runtime: *Runtime) !void {
+pub fn pollAotInterrupt(runtime: *Runtime) !void {
     if (!aot_interrupt_requested.swap(false, .acquire)) return;
     if (runtime.interrupt_callback.tag != @intFromEnum(Tag.function)) return;
 
@@ -6715,54 +6677,13 @@ fn pollAotInterrupt(runtime: *Runtime) !void {
     }
 }
 
-pub export fn lnako_aot_runtime_init() callconv(.c) c_int {
-    aot_interrupt_requested.store(false, .release);
-    AotWindowsStdout.configure();
-    if (active_runtime == null) {
-        var runtime: Runtime = .{ .allocator = std.heap.c_allocator, .random_state = initialRandomState() };
-        runtime.process_io = std.Io.Threaded.init(std.heap.c_allocator, .{ .environ = aotProcessEnvironment() });
-        runtime.process_io_initialized = true;
-        active_runtime = runtime;
-    }
-    return 0;
-}
-
 /// Records execution of one statically identified global load. The generated
 /// module supplies the ID from its pre-optimization global manifest.
-pub export fn lnako_aot_global_read_site(site_id: u64) callconv(.c) void {
-    const runtime = if (active_runtime) |*active| active else return;
-    runtime.global_trace.record(site_id);
-}
-
 /// Records execution of one statically identified global store. The generated
 /// module supplies the ID from its pre-optimization global manifest.
-pub export fn lnako_aot_global_write_site(site_id: u64) callconv(.c) void {
-    const runtime = if (active_runtime) |*active| active else return;
-    runtime.global_trace.recordWrite(site_id);
-}
-
 /// Records execution of one statically identified typed literal. The
 /// generated module supplies the ID from its pre-optimization literal
 /// manifest.
-pub export fn lnako_aot_literal_site(site_id: u64) callconv(.c) void {
-    const runtime = if (active_runtime) |*active| active else return;
-    runtime.literal_trace.record(site_id);
-}
-
-fn aotProcessArgument(argv: ?*const anyopaque, index: usize) []const u8 {
-    const raw = argv orelse return "";
-    const values: [*:null]const ?[*:0]const u8 = @ptrCast(@alignCast(raw));
-    const value = values[index] orelse return "";
-    return std.mem.span(value);
-}
-
-fn aotProcessWideArgument(argv: ?*const anyopaque, index: usize) []const u16 {
-    const raw = argv orelse return &.{};
-    const values: [*:null]const ?[*:0]const u16 = @ptrCast(@alignCast(raw));
-    const value = values[index] orelse return &.{};
-    return std.mem.span(value);
-}
-
 pub fn nodeBasenameWideFor(path: []const u16, windows: bool) []const u16 {
     var end = path.len;
     while (end > 0 and nodePathSeparatorWide(path[end - 1], windows)) end -= 1;
@@ -6780,281 +6701,31 @@ pub fn nodeBasenameWideFor(path: []const u16, windows: bool) []const u16 {
 /// every referenced global before this function is called, so newly allocated
 /// strings and the command-line array remain visible to the collector while
 /// the values are being assembled.
-pub export fn lnako_aot_node_constants_init(
-    command_line: ?*Value,
-    runtime_name: ?*Value,
-    runtime_path: ?*Value,
-    argc: i32,
-    argv: ?*const anyopaque,
-) callconv(.c) void {
-    const runtime = if (active_runtime) |*active| active else return;
-    const count: usize = if (argc > 0) @intCast(argc) else 0;
-
-    if (command_line) |out| {
-        out.* = runtime.createArray(&.{}) catch |failure| runtimeFailure(failure);
-        var frame = RootFrame{};
-        runtime.pushRoots(&frame, @ptrCast(out), 1);
-        defer runtime.popRoots(&frame);
-        var index: usize = 0;
-        while (index < count) : (index += 1) {
-            const value = runtimeUtf8StringLossy(runtime, aotProcessArgument(argv, index)) catch |failure| runtimeFailure(failure);
-            out.object().?.payload.array.append(runtime.allocator, value) catch |failure| runtimeFailure(failure);
-        }
-    }
-
-    const first = aotProcessArgument(argv, 0);
-    if (runtime_path) |out| out.* = runtimeUtf8StringLossy(runtime, first) catch |failure| runtimeFailure(failure);
-    if (runtime_name) |out| out.* = runtimeUtf8StringLossy(runtime, nodeBasename(first)) catch |failure| runtimeFailure(failure);
-}
-
 /// Windows' `wmain` receives UTF-16 command-line arguments.  Keep those code
 /// units intact so WTF-16 input, including unpaired surrogates, follows the
 /// same value representation as the rest of the runtime.
-pub export fn lnako_aot_node_constants_init_wide(
-    command_line: ?*Value,
-    runtime_name: ?*Value,
-    runtime_path: ?*Value,
-    argc: i32,
-    argv: ?*const anyopaque,
-) callconv(.c) void {
-    const runtime = if (active_runtime) |*active| active else return;
-    const count: usize = if (argc > 0) @intCast(argc) else 0;
-
-    if (command_line) |out| {
-        out.* = runtime.createArray(&.{}) catch |failure| runtimeFailure(failure);
-        var frame = RootFrame{};
-        runtime.pushRoots(&frame, @ptrCast(out), 1);
-        defer runtime.popRoots(&frame);
-        var index: usize = 0;
-        while (index < count) : (index += 1) {
-            const value = runtime.createString(aotProcessWideArgument(argv, index)) catch |failure| runtimeFailure(failure);
-            out.object().?.payload.array.append(runtime.allocator, value) catch |failure| runtimeFailure(failure);
-        }
-    }
-
-    const first = aotProcessWideArgument(argv, 0);
-    if (runtime_path) |out| out.* = runtime.createString(first) catch |failure| runtimeFailure(failure);
-    if (runtime_name) |out| out.* = runtime.createString(nodeBasenameWideFor(first, true)) catch |failure| runtimeFailure(failure);
-}
-
 /// Initializes Node directory values that are exposed as globals when a
 /// program uses the shorthand form without parentheses.
-pub export fn lnako_aot_node_directory_constants_init(
-    desktop: ?*Value,
-    documents: ?*Value,
-    temporary: ?*Value,
-) callconv(.c) void {
-    const runtime = if (active_runtime) |*active| active else return;
-    if (desktop) |out| out.* = nodeDirectoryBuiltin(runtime, .node_desktop) catch |failure| runtimeFailure(failure);
-    if (documents) |out| out.* = nodeDirectoryBuiltin(runtime, .node_documents) catch |failure| runtimeFailure(failure);
-    if (temporary) |out| out.* = nodeDirectoryBuiltin(runtime, .node_temporary_directory) catch |failure| runtimeFailure(failure);
-}
-
 /// Initializes the source directory used by Node's mother-path global and
 /// function. Relative source paths are resolved against the executable's
 /// current working directory, matching the interpreter host context.
-pub export fn lnako_aot_node_mother_path_init(
-    mother_path: ?*Value,
-    source_path: ?[*]const u8,
-    source_len: u64,
-) callconv(.c) void {
-    const runtime = if (active_runtime) |*active| active else return;
-    const source = if (source_path) |pointer| pointer[0..@as(usize, @intCast(source_len))] else &.{};
-    const absolute_source = if (std.fs.path.isAbsolute(source))
-        runtime.allocator.dupe(u8, source) catch |failure| runtimeFailure(failure)
-    else blk: {
-        const cwd = currentDirectoryAlloc(runtime) catch |failure| runtimeFailure(failure);
-        defer runtime.allocator.free(cwd);
-        break :blk std.fs.path.resolve(runtime.allocator, &.{ cwd, source }) catch |failure| runtimeFailure(failure);
-    };
-    defer runtime.allocator.free(absolute_source);
-    const directory = nodeDirname(absolute_source);
-    runtime.setAotSourceDirectory(directory) catch |failure| runtimeFailure(failure);
-    if (mother_path) |out| out.* = runtimeUtf8StringLossy(runtime, directory) catch |failure| runtimeFailure(failure);
-}
-
-pub export fn lnako_aot_runtime_deinit() callconv(.c) void {
-    aot_interrupt_requested.store(false, .release);
-    if (active_runtime) |*runtime| runtime.deinit();
-    active_runtime = null;
-}
-
 /// Runs callbacks that were registered by the generated program before its
 /// global roots are removed. This gives AOT the same top-level timer drain as
 /// the Interpreter while keeping callback values inside the native runtime.
-pub export fn lnako_aot_runtime_drain_events() callconv(.c) void {
-    const runtime = if (active_runtime) |*active| active else return;
-    pollAotInterrupt(runtime) catch |failure| runtimeFailure(failure);
-    drainAotProcessTasks(runtime) catch |failure| runtimeFailure(failure);
-    drainAotFileTasks(runtime) catch |failure| runtimeFailure(failure);
-    drainAotTimers(runtime) catch |failure| runtimeFailure(failure);
-    drainAotArchiveTasks(runtime) catch |failure| runtimeFailure(failure);
-    pollAotInterrupt(runtime) catch |failure| runtimeFailure(failure);
-    if (runtime.http_server_state.started) {
-        while (runtime.http_server_state.started) {
-            _ = pollAotHttpServer(runtime) catch |failure| runtimeFailure(failure);
-            drainAotProcessTasks(runtime) catch |failure| runtimeFailure(failure);
-            drainAotFileTasks(runtime) catch |failure| runtimeFailure(failure);
-            drainAotPromiseTasks(runtime) catch |failure| runtimeFailure(failure);
-            drainAotArchiveTasks(runtime) catch |failure| runtimeFailure(failure);
-            pollAotInterrupt(runtime) catch |failure| runtimeFailure(failure);
-        }
-    }
-}
-
 /// Installs the four mutable globals used by the built-in HTTP server. The
 /// generated main roots these globals for the lifetime of the event loop.
-pub export fn lnako_aot_http_server_init(
-    method: ?*Value,
-    get_data: ?*Value,
-    post_data: ?*Value,
-    files_data: ?*Value,
-) callconv(.c) void {
-    const runtime = if (active_runtime) |*active| active else return;
-    runtime.http_globals = .{
-        .method = method,
-        .get_data = get_data,
-        .post_data = post_data,
-        .files_data = files_data,
-    };
-}
-
 /// Dedicated ABI for the six synchronous commands exposed by
 /// `plugin_httpserver.mjs`. The implementation is native AOT code and does
 /// not load or evaluate JavaScript.
-pub export fn lnako_aot_http_server_call(
-    out: *Value,
-    method: *Value,
-    get_data: *Value,
-    post_data: *Value,
-    files_data: *Value,
-    arguments: ?[*]const Value,
-    len: usize,
-    opcode: u16,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    runtime.http_globals = .{ .method = method, .get_data = get_data, .post_data = post_data, .files_data = files_data };
-    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
-        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "http-server", site_id);
-        runtime.setFailure(error.UnknownCommand);
-        runtime.dispatch_trace.result(call_id, "unknown", opcode, "http-server", site_id, false);
-        return;
-    };
-    if (!isHttpServerCommand(command)) {
-        runtime.setFailure(error.UnknownCommand);
-        return;
-    }
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "http-server", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "http-server", site_id, success);
-    if (arguments == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-    out.* = httpServerBuiltin(runtime, command, actual) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    success = runtime.failure_epoch == start_epoch;
-}
-
 /// Site-aware display hooks used by generated LLVM.  The hooks are additive;
 /// the runtime ABI for existing generated modules remains unchanged.
-pub export fn lnako_aot_dispatch_display_begin(site_id: u64) callconv(.c) u64 {
-    var ignored_epoch: u64 = 0;
-    return lnako_aot_dispatch_display_begin_with_epoch(site_id, &ignored_epoch);
-}
-
 /// Begins a direct-display trace and returns the failure epoch observed at the
 /// same boundary through `epoch_out`.  The extra out parameter avoids making
 /// the call ID carry two independent pieces of state across LLVM IR.
-pub export fn lnako_aot_dispatch_display_begin_with_epoch(site_id: u64, epoch_out: *u64) callconv(.c) u64 {
-    const runtime = if (active_runtime) |*active| active else {
-        epoch_out.* = 0;
-        return no_dispatch_call_id;
-    };
-    epoch_out.* = runtime.failure_epoch;
-    return runtime.dispatch_trace.begin("display", 0, "direct-display", site_id);
-}
-
-pub export fn lnako_aot_dispatch_result(call_id: u64, site_id: u64, start_epoch: u64) callconv(.c) void {
-    const runtime = if (active_runtime) |*active| active else return;
-    runtime.dispatch_trace.result(call_id, "display", 0, "direct-display", site_id, runtime.failure_epoch == start_epoch);
-}
-
 /// Records a source-level `エラー発生` throw. This is intentionally a
 /// separate ABI from `lnako_aot_builtin_call_site`: the compiler lowers the
 /// command to a throw terminator so exception handler control flow remains
 /// explicit and no generic builtin dispatch is introduced.
-pub export fn lnako_aot_throw_site(site_id: u64) callconv(.c) void {
-    const runtime = if (active_runtime) |*active| active else return;
-    const call_id = runtime.dispatch_trace.begin(
-        aot_builtin.throw_statement_canonical_opcode,
-        aot_builtin.throw_statement_opcode,
-        aot_builtin.throw_statement_route,
-        site_id,
-    );
-    runtime.dispatch_trace.result(
-        call_id,
-        aot_builtin.throw_statement_canonical_opcode,
-        aot_builtin.throw_statement_opcode,
-        aot_builtin.throw_statement_route,
-        site_id,
-        false,
-    );
-}
-
-pub export fn lnako_aot_push_roots(frame: *RootFrame, values: ?[*]Value, len: usize) callconv(.c) void {
-    if (active_runtime) |*runtime| runtime.pushRoots(frame, values, len);
-}
-
-pub export fn lnako_aot_pop_roots(frame: *RootFrame) callconv(.c) void {
-    if (active_runtime) |*runtime| runtime.popRoots(frame);
-}
-
-pub export fn lnako_aot_collect() callconv(.c) usize {
-    return if (active_runtime) |*runtime| runtime.collect() else 0;
-}
-
-pub export fn lnako_aot_exception_set(value: *const Value) callconv(.c) void {
-    if (active_runtime) |*runtime| runtime.setException(value.*);
-}
-
-pub export fn lnako_aot_exception_set_error_message(value: *const Value) callconv(.c) void {
-    if (active_runtime) |*runtime| runtime.setErrorMessage(value.*);
-}
-
-pub export fn lnako_aot_exception_pending() callconv(.c) c_int {
-    return if (active_runtime) |runtime| @intFromBool(runtime.has_pending_exception) else 0;
-}
-
-pub export fn lnako_aot_exception_take(out: *Value) callconv(.c) void {
-    out.* = if (active_runtime) |*runtime| runtime.takeException() else .{};
-}
-
-pub export fn lnako_aot_exception_abort() callconv(.c) noreturn {
-    if (active_runtime) |*runtime| {
-        if (runtime.has_pending_exception) {
-            const message = pendingExceptionMessageUtf8Alloc(runtime) catch {
-                // The exception is already pending, but formatting it may
-                // allocate (for example for an array value).  Never replace
-                // this path with an allocator panic or recurse through the
-                // exception machinery: retain the established safe fallback.
-                runtimeFailure(error.NakoException);
-            };
-            defer runtime.allocator.free(message);
-            std.debug.print("[実行時エラー] {s}\n", .{message});
-            std.process.exit(1);
-        }
-    }
-    runtimeFailure(error.NakoException);
-}
-
 pub fn debugDisplayBuiltin(runtime: *Runtime, value: Value, line: u64, source_path: []const u8, display_log: ?*Value) !void {
     var roots = [_]Value{ value, .{}, .{} };
     var frame = RootFrame{};
@@ -7088,360 +6759,26 @@ fn normalizeDebugSourcePath(source_path: []const u8, windows: bool) []const u8 {
 /// AOT版`ハテナ関数実行`は、カスタムコールバックが未設定なら公式既定動作
 /// （`デバッグ表示`）を、設定済みなら純Zigのコールバック列を専用ABIで実行する。
 /// `JS:`コールバックの評価だけは通常AOTへ持ち込まず、明示的なcompat-js境界に残す。
-pub export fn lnako_aot_hatena_execute(
-    out: *Value,
-    value: ?*const Value,
-    line: u64,
-    source_path: ?[*]const u8,
-    source_len: usize,
-    display_log: ?*Value,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    const path = if (source_path) |pointer| pointer[0..source_len] else if (source_len == 0) &.{} else {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    };
-    const command = aot_builtin.Command.system_hatena_execute;
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, @intFromEnum(command), "hatena-default", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, @intFromEnum(command), "hatena-default", site_id, success);
-    if (runtime.hatena_callbacks.items.len > 0) {
-        _ = invokeHatenaCallbacks(runtime, if (value) |pointer| pointer.* else .{}, line, path, display_log) catch |failure| {
-            runtime.setFailure(failure);
-            return;
-        };
-        success = runtime.failure_epoch == start_epoch;
-        return;
-    }
-    debugDisplayBuiltin(runtime, if (value) |pointer| pointer.* else .{}, line, path, display_log) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    success = runtime.failure_epoch == start_epoch;
-}
-
-pub export fn lnako_aot_stdio_call(
-    out: *Value,
-    display_log: ?*Value,
-    values: ?[*]const Value,
-    len: usize,
-    opcode: u16,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    if (values == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
-        runtime.setFailure(error.UnknownCommand);
-        return;
-    };
-    if (!isStdioCommand(command)) {
-        runtime.setFailure(error.UnknownCommand);
-        return;
-    }
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "builtin", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "builtin", site_id, success);
-    const actual = if (values) |pointer| pointer[0..len] else &.{};
-    stdioBuiltin(runtime, command, actual, display_log) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    success = runtime.failure_epoch == start_epoch;
-}
-
 /// Dedicated ABI for plugin and namespace state.  These commands mutate
 /// system globals, so the targets are explicit instead of being looked up by
 /// name inside the AOT runtime.
-pub export fn lnako_aot_plugin_management_call(
-    out: *Value,
-    values: ?[*]const Value,
-    len: usize,
-    opcode: u16,
-    plugin_name: *Value,
-    namespace: *Value,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    if (values == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
-        runtime.setFailure(error.UnknownCommand);
-        return;
-    };
-    if (!isPluginManagementCommand(command)) {
-        runtime.setFailure(error.UnknownCommand);
-        return;
-    }
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "builtin", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "builtin", site_id, success);
-    const actual = if (values) |pointer| pointer[0..len] else &.{};
-    pluginManagementBuiltin(runtime, command, actual, plugin_name, namespace) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    success = runtime.failure_epoch == start_epoch;
-}
-
 /// Dedicated ABI for Node's archive tool path setter. The setter mutates a
 /// system global, while archive execution itself remains a separate external
 /// tool boundary.
-pub export fn lnako_aot_archive_tool_path_set(
-    out: *Value,
-    values: ?[*]const Value,
-    len: usize,
-    archive_tool_path: *Value,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    if (values == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const command = aot_builtin.Command.node_archive_tool_path_set;
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, @intFromEnum(command), "archive-tool-path", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, @intFromEnum(command), "archive-tool-path", site_id, success);
-    if (len == 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    archive_tool_path.* = values.?[0];
-    runtime.archive_tool_path_custom = true;
-    success = runtime.failure_epoch == start_epoch;
-}
-
 /// Dedicated ABI for Node's ZIP archive commands. The default path keeps the
 /// existing pure-Zig stored-ZIP implementation; an explicitly changed tool
 /// path is invoked with argv semantics, matching the command's external-tool
 /// boundary without introducing a JavaScript runtime into AOT.
-pub export fn lnako_aot_archive_call(
-    out: *Value,
-    archive_tool_path: *Value,
-    arguments: ?[*]const Value,
-    len: usize,
-    opcode: u16,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
-        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "node-archive", site_id);
-        runtime.setFailure(error.UnknownCommand);
-        runtime.dispatch_trace.result(call_id, "unknown", opcode, "node-archive", site_id, false);
-        return;
-    };
-    if (!isArchiveCommand(command)) {
-        runtime.setFailure(error.UnknownCommand);
-        return;
-    }
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "node-archive", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "node-archive", site_id, success);
-    if (arguments == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const callback = command == .node_archive_extract_callback or command == .node_archive_create_callback;
-    const required: usize = if (callback) 3 else 2;
-    if (len < required) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const values = arguments.?;
-    var roots = [_]Value{ .{}, .{}, .{}, .{} };
-    for (0..@min(len, roots.len)) |index| roots[index] = values[index];
-    var frame = RootFrame{};
-    runtime.pushRoots(&frame, &roots, roots.len);
-    defer runtime.popRoots(&frame);
-    var callback_value: Value = .{};
-    if (callback) {
-        callback_value = resolveAotCallback(runtime, roots[0]) catch |failure| {
-            runtime.setFailure(failure);
-            return;
-        };
-        roots[0] = callback_value;
-    }
-    const source_index: usize = if (callback) 1 else 0;
-    const destination_index: usize = source_index + 1;
-    const source = valueUtf8LossyAlloc(runtime, roots[source_index]) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    defer runtime.allocator.free(source);
-    const destination = valueUtf8LossyAlloc(runtime, roots[destination_index]) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    defer runtime.allocator.free(destination);
-    const tool_path = valueUtf8LossyAlloc(runtime, archive_tool_path.*) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    defer runtime.allocator.free(tool_path);
-    const operation: AotArchiveOperation = if (command == .node_archive_extract or command == .node_archive_extract_callback) .extract else .create;
-    if (callback) {
-        const queued_source = runtime.allocator.dupe(u8, source) catch |failure| {
-            runtime.setFailure(failure);
-            return;
-        };
-        errdefer runtime.allocator.free(queued_source);
-        const queued_destination = runtime.allocator.dupe(u8, destination) catch |failure| {
-            runtime.setFailure(failure);
-            return;
-        };
-        errdefer runtime.allocator.free(queued_destination);
-        const queued_tool_path = runtime.allocator.dupe(u8, tool_path) catch |failure| {
-            runtime.setFailure(failure);
-            return;
-        };
-        errdefer runtime.allocator.free(queued_tool_path);
-        runtime.archive_tasks.append(runtime.allocator, .{
-            .operation = operation,
-            .use_external_tool = runtime.archive_tool_path_custom,
-            .source = queued_source,
-            .destination = queued_destination,
-            .tool_path = queued_tool_path,
-            .callback = callback_value,
-        }) catch |failure| {
-            runtime.setFailure(failure);
-            return;
-        };
-        success = runtime.failure_epoch == start_epoch;
-        return;
-    }
-    const output = aotArchiveExecute(runtime, operation, runtime.archive_tool_path_custom, source, destination, tool_path) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    defer runtime.allocator.free(output);
-    out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 };
-    success = runtime.failure_epoch == start_epoch;
-}
-
 /// Dedicated ABI for Node's AJAX option setter. The option object is kept in
 /// the corresponding rooted system global; actual HTTP execution remains a
 /// separate external boundary.
-pub export fn lnako_aot_ajax_options_set(
-    out: *Value,
-    values: ?[*]const Value,
-    len: usize,
-    ajax_options: *Value,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    if (values == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const command = aot_builtin.Command.node_ajax_options_set;
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, @intFromEnum(command), "ajax-options", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, @intFromEnum(command), "ajax-options", site_id, success);
-    if (len == 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    ajax_options.* = values.?[0];
-    success = runtime.failure_epoch == start_epoch;
-}
-
 /// Dedicated ABI for Node's AJAX error callback setter. The callback value is
 /// kept in the corresponding rooted system global; invoking it on a failed
 /// HTTP operation remains a separate external boundary.
-pub export fn lnako_aot_ajax_onerror_set(
-    out: *Value,
-    values: ?[*]const Value,
-    len: usize,
-    ajax_onerror: *Value,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    if (values == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const command = aot_builtin.Command.node_ajax_onerror_set;
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, @intFromEnum(command), "ajax-onerror", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, @intFromEnum(command), "ajax-onerror", site_id, success);
-    if (len == 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    ajax_onerror.* = values.?[0];
-    success = runtime.failure_epoch == start_epoch;
-}
-
 /// Dedicated ABI for Node's HTTP client commands. Requests use Zig's native
 /// HTTP client; callback and Response-Promise results are returned through the
 /// AOT event queue so their observable ordering remains compatible with the
 /// interpreter without embedding a JavaScript runtime.
-pub export fn lnako_aot_node_http_call(
-    out: *Value,
-    ajax_options: ?*Value,
-    ajax_onerror: ?*Value,
-    target: ?*Value,
-    arguments: ?[*]const Value,
-    len: usize,
-    opcode: u16,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
-        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "node-http", site_id);
-        runtime.setFailure(error.UnknownCommand);
-        runtime.dispatch_trace.result(call_id, "unknown", opcode, "node-http", site_id, false);
-        return;
-    };
-    if (!isNodeHttpCommand(command)) {
-        runtime.setFailure(error.UnknownCommand);
-        return;
-    }
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "node-http", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "node-http", site_id, success);
-    if (arguments == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-    out.* = nodeHttpBuiltin(runtime, ajax_options, ajax_onerror, target, command, actual) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    success = runtime.failure_epoch == start_epoch;
-}
-
 pub fn nodeNetworkAddressesBuiltin(runtime: *Runtime, ipv6: bool) !Value {
     const synthetic = if (std.c.getenv("LNAKO_TEST_NETWORK_TOPOLOGY")) |topology|
         std.mem.eql(u8, std.mem.span(topology), "synthetic-v1")
@@ -7574,43 +6911,6 @@ fn byteBufferUnboundSliceCallback(out: *Value, _: *anyopaque, _: ?[*]const Value
 /// Dedicated ABI for Node's synchronous standard-input callback command. The
 /// callback and `対象` storage are passed explicitly so a local variable with
 /// the same source-level name cannot redirect the command's side effect.
-pub export fn lnako_aot_node_stdin_callback_call(
-    out: *Value,
-    target: *Value,
-    arguments: ?[*]const Value,
-    len: usize,
-    opcode: u16,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
-        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "node-stdin-lines", site_id);
-        runtime.setFailure(error.UnknownCommand);
-        runtime.dispatch_trace.result(call_id, "unknown", opcode, "node-stdin-lines", site_id, false);
-        return;
-    };
-    if (command != .node_stdin_callback) {
-        runtime.setFailure(error.UnknownCommand);
-        return;
-    }
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "node-stdin-lines", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "node-stdin-lines", site_id, success);
-    if (arguments == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-    out.* = nodeStdinCallbackBuiltin(runtime, target, actual) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    success = runtime.failure_epoch == start_epoch;
-}
-
 pub fn builtinDispatchRoute(command: aot_builtin.Command) []const u8 {
     return aot_builtin.dispatchRoute(command);
 }
@@ -7690,7 +6990,7 @@ pub fn mathBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: [
 
 pub const default_random_seed: u64 = 5573589319906701683;
 
-fn initialRandomState() u64 {
+pub fn initialRandomState() u64 {
     const environment = std.c.getenv("LNAKO_TEST_RANDOM_SEED") orelse {
         const timestamp: u64 = @bitCast(time(null));
         const mixed = timestamp ^ @intFromPtr(&active_runtime);
@@ -8449,7 +7749,7 @@ pub fn runtimeUtf8String(runtime: *Runtime, text: []const u8) !Value {
     return runtime.createString(units);
 }
 
-fn runtimeUtf8StringLossy(runtime: *Runtime, text: []const u8) !Value {
+pub fn runtimeUtf8StringLossy(runtime: *Runtime, text: []const u8) !Value {
     const decoded = try string_mod.String.fromUtf8Lossy(runtime.allocator, text);
     return runtime.ownString(decoded.units);
 }
@@ -11082,7 +10382,7 @@ fn aotClientIsResponsePromiseCommand(command: aot_builtin.Command) bool {
     };
 }
 
-fn nodeHttpBuiltin(runtime: *Runtime, ajax_options: ?*Value, ajax_onerror: ?*Value, target: ?*Value, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn nodeHttpBuiltin(runtime: *Runtime, ajax_options: ?*Value, ajax_onerror: ?*Value, target: ?*Value, command: aot_builtin.Command, arguments: []const Value) !Value {
     var arguments_frame = RootFrame{};
     if (arguments.len > 0) runtime.pushRoots(&arguments_frame, @constCast(arguments.ptr), arguments.len);
     defer if (arguments.len > 0) runtime.popRoots(&arguments_frame);
@@ -11354,7 +10654,7 @@ pub fn currentDirectoryAlloc(runtime: *Runtime) ![]u8 {
     return runtime.allocator.dupe(u8, canonical);
 }
 
-fn aotProcessEnvironment() std.process.Environ {
+pub fn aotProcessEnvironment() std.process.Environ {
     if (comptime builtin.os.tag == .windows) return .{ .block = .global };
     var count: usize = 0;
     while (std.c.environ[count] != null) : (count += 1) {}
@@ -11523,7 +10823,7 @@ fn nodePathPrimitiveReceivedType(runtime: *Runtime, value: Value, type_name: []c
     );
 }
 
-fn nodeBasename(path: []const u8) []const u8 {
+pub fn nodeBasename(path: []const u8) []const u8 {
     return nodeBasenameFor(path, builtin.os.tag == .windows);
 }
 
@@ -13441,7 +12741,7 @@ pub fn invokeAotCallback(runtime: *Runtime, callable: Value, arguments: ?[*]cons
     return result;
 }
 
-fn resolveAotCallback(runtime: *Runtime, value: Value) !Value {
+pub fn resolveAotCallback(runtime: *Runtime, value: Value) !Value {
     if (value.tag == @intFromEnum(Tag.function)) return value;
     if (!isString(value)) return error.NotCallable;
     const name = try stringUtf8Alloc(runtime, value);
@@ -17010,8 +16310,6 @@ pub const lnako_aot_bigint_new = values_module.lnako_aot_bigint_new;
 pub const lnako_aot_print_bigint = values_module.lnako_aot_print_bigint;
 pub const lnako_aot_print_collection = values_module.lnako_aot_print_collection;
 pub const lnako_aot_display_value = values_module.lnako_aot_display_value;
-pub const lnako_aot_debug_display = values_module.lnako_aot_debug_display;
-pub const lnako_aot_display_many = values_module.lnako_aot_display_many;
 pub const lnako_aot_array_new = values_module.lnako_aot_array_new;
 pub const lnako_aot_dictionary_new = values_module.lnako_aot_dictionary_new;
 pub const lnako_aot_caniuse_agents_new = values_module.lnako_aot_caniuse_agents_new;
