@@ -1097,6 +1097,8 @@ const CliHost = struct {
         var request_parts = std.mem.splitScalar(u8, request_line, ' ');
         const method_source = request_parts.next() orelse return error.InvalidHttpRequest;
         const target_source = request_parts.next() orelse return error.InvalidHttpRequest;
+        if (method_source.len == 0 or std.mem.indexOfAny(u8, method_source, "\r\n\x00") != null) return error.InvalidHttpRequest;
+        if (target_source.len == 0 or std.mem.indexOfAny(u8, target_source, "\r\n\x00") != null) return error.InvalidHttpRequest;
         const method = try allocator.dupe(u8, method_source);
         errdefer allocator.free(method);
         for (method) |*byte| byte.* = std.ascii.toUpper(byte.*);
@@ -1113,6 +1115,7 @@ const CliHost = struct {
             const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
             const header_name = std.mem.trim(u8, line[0..colon], " \t");
             const header_value = std.mem.trim(u8, line[colon + 1 ..], " \t");
+            if (header_name.len == 0 or std.mem.indexOfAny(u8, header_name, "\r\n\x00") != null or std.mem.indexOfAny(u8, header_value, "\r\n\x00") != null) return error.InvalidHttpHeader;
             if (std.ascii.eqlIgnoreCase(header_name, "content-length")) {
                 content_length = try std.fmt.parseInt(usize, header_value, 10);
             } else if (std.ascii.eqlIgnoreCase(header_name, "transfer-encoding")) {
@@ -1122,6 +1125,7 @@ const CliHost = struct {
                 content_type = try allocator.dupe(u8, header_value);
             }
         }
+        if (transfer_chunked and content_length > 0) return error.InvalidHttpRequest;
         self.http_connection = stream;
         self.http_head_request = std.ascii.eqlIgnoreCase(method, "HEAD");
         if (transfer_chunked) {
@@ -1164,7 +1168,7 @@ const CliHost = struct {
         try writer.interface.print("HTTP/1.1 {d} {s}\r\n", .{ status_code, status.phrase() orelse "" });
         var has_content_length = false;
         for (headers) |header| {
-            if (std.mem.indexOf(u8, header.name, "\r\n") != null or std.mem.indexOf(u8, header.value, "\r\n") != null) return error.InvalidHttpHeader;
+            if (header.name.len == 0 or std.mem.indexOfAny(u8, header.name, "\r\n\x00") != null or std.mem.indexOfAny(u8, header.value, "\r\n\x00") != null) return error.InvalidHttpHeader;
             if (std.ascii.eqlIgnoreCase(header.name, "content-length")) has_content_length = true;
             try writer.interface.print("{s}: {s}\r\n", .{ header.name, header.value });
         }
@@ -1747,27 +1751,88 @@ fn httpMethod(source: []const u8) !std.http.Method {
 }
 
 fn httpRequest(host: *CliHost, allocator: std.mem.Allocator, operation: anytype) !lnako.plugins.node.CommandResult {
+    const max_http_body_size = 1024 * 1024 * 1024;
+    const connect_timeout_ms = 30000;
+
     var client: std.http.Client = .{ .allocator = allocator, .io = host.io };
     defer client.deinit();
+
     const headers = try allocator.alloc(std.http.Header, operation.headers.len);
     defer allocator.free(headers);
-    for (operation.headers, headers) |source, *target| target.* = .{ .name = source.name, .value = source.value };
-    var output: std.Io.Writer.Allocating = .init(allocator);
-    errdefer output.deinit();
-    const fetched = try client.fetch(.{
-        .location = .{ .url = operation.url },
-        .method = try httpMethod(operation.method),
-        .payload = if (operation.has_body) operation.body else null,
-        .extra_headers = headers,
-        .response_writer = &output.writer,
+    for (operation.headers, headers) |source, *target| {
+        if (std.mem.indexOfAny(u8, source.name, "\r\n\x00") != null or std.mem.indexOfAny(u8, source.value, "\r\n\x00") != null) return error.InvalidHttpHeader;
+        target.* = .{ .name = source.name, .value = source.value };
+    }
+
+    const uri = try std.Uri.parse(operation.url);
+    const protocol = std.http.Client.Protocol.fromUri(uri) orelse return error.UnsupportedUriScheme;
+    var host_name_buffer: [std.http.Client.HostName.max_len]u8 = undefined;
+    const host_name = try uri.getHost(&host_name_buffer);
+    const port = uri.port orelse protocol.port();
+
+    const connection = try client.connectTcpOptions(&client, .{
+        .host = host_name,
+        .port = port,
+        .protocol = protocol,
+        .timeout = .{ .duration = .{
+            .raw = std.Io.Duration.fromMilliseconds(connect_timeout_ms),
+            .clock = .awake,
+        } },
     });
-    const stdout_bytes = try output.toOwnedSlice();
+
+    const method = try httpMethod(operation.method);
+    var req = try client.request(method, uri, .{
+        .connection = connection,
+        .keep_alive = false,
+        .extra_headers = headers,
+        .redirect_behavior = @enumFromInt(3),
+    });
+    defer req.deinit();
+
+    if (operation.has_body) {
+        req.transfer_encoding = .{ .content_length = operation.body.len };
+        var body = try req.sendBodyUnflushed(&.{});
+        try body.writer.writeAll(operation.body);
+        try body.end();
+        try req.connection.?.flush();
+    } else {
+        try req.sendBodiless();
+    }
+
+    var redirect_buffer: [8 * 1024]u8 = undefined;
+    var response = try req.receiveHead(&redirect_buffer);
+
+    const decompress_buffer: []u8 = switch (response.head.content_encoding) {
+        .identity => &.{},
+        .zstd => try allocator.alloc(u8, std.compress.zstd.default_window_len),
+        .deflate, .gzip => try allocator.alloc(u8, std.compress.flate.max_window_len),
+        .compress => return error.UnsupportedCompressionMethod,
+    };
+    defer allocator.free(decompress_buffer);
+
+    var transfer_buffer: [64]u8 = undefined;
+    var decompress: std.http.Decompress = undefined;
+    const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
+
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(allocator);
+    var total: usize = 0;
+    while (true) {
+        var chunk: [16 * 1024]u8 = undefined;
+        const n = try reader.readSliceShort(&chunk);
+        if (n == 0) break;
+        total = std.math.add(usize, total, n) catch return error.HttpBodyTooLarge;
+        if (total > max_http_body_size) return error.HttpBodyTooLarge;
+        try output.appendSlice(allocator, chunk[0..n]);
+    }
+
+    const stdout_bytes = try output.toOwnedSlice(allocator);
     errdefer allocator.free(stdout_bytes);
     return .{
         .stdout = stdout_bytes,
         .stderr = try allocator.alloc(u8, 0),
         .exit_code = 0,
-        .http_status = @intFromEnum(fetched.status),
+        .http_status = @intFromEnum(response.head.status),
     };
 }
 
