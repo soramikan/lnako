@@ -204,10 +204,21 @@ pub fn build(b: *std.Build) void {
     const aot_runtime_tests = b.addTest(.{ .root_module = aot_runtime.root_module });
     const run_aot_runtime_tests = b.addRunArtifact(aot_runtime_tests);
 
+    const all_tests_module = b.createModule(.{
+        .root_source_file = b.path("src/all_tests.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = compat_js or target.result.os.tag == .linux,
+    });
+    all_tests_module.addImport("lnako", lnako);
+    const all_tests = b.addTest(.{ .root_module = all_tests_module });
+    const run_all_tests = b.addRunArtifact(all_tests);
+
     const test_step = b.step("test", "全ての単体テストを実行する");
     test_step.dependOn(&run_module_tests.step);
     test_step.dependOn(&run_exe_tests.step);
     test_step.dependOn(&run_aot_runtime_tests.step);
+    test_step.dependOn(&run_all_tests.step);
 
     const fmt_step = b.step("fmt-check", "Zigソースのフォーマットを検査する");
     const fmt = b.addFmt(.{
