@@ -18,6 +18,7 @@ pub const lnako_aot_node_directory_constants_init = debug.lnako_aot_node_directo
 const AotClientHttpBodyKind = state.AotClientHttpBodyKind;
 const AotClientHttpResult = state.AotClientHttpResult;
 const AotHttpRoute = state.AotHttpRoute;
+const AotPromiseState = state.AotPromiseState;
 const Arithmetic = state.Arithmetic;
 const BigInt = state.BigInt;
 const ByteKind = state.ByteKind;
@@ -90,6 +91,9 @@ const dictionaryRemoveBuiltin = state.dictionaryRemoveBuiltin;
 const dictionaryToPrimitive = state.dictionaryToPrimitive;
 const dictionaryValuesBuiltin = state.dictionaryValuesBuiltin;
 const drainAotEvents = state.drainAotEvents;
+const drainAotNativePluginTasks = state.drainAotNativePluginTasks;
+const drainAotTimers = state.drainAotTimers;
+const dynamicPromiseToAotValue = state.dynamicPromiseToAotValue;
 const eraDataBuiltin = state.eraDataBuiltin;
 const expectAotNodePathArgumentFailure = state.expectAotNodePathArgumentFailure;
 const expectAotReferenceStringRangeMessage = state.expectAotReferenceStringRangeMessage;
@@ -99,6 +103,7 @@ const incrementNumber = state.incrementNumber;
 const incrementValue = state.incrementValue;
 const indexOfUnitsBuiltin = state.indexOfUnitsBuiltin;
 const invokeAotCallback = state.invokeAotCallback;
+const invokeHatenaCallbacks = state.invokeHatenaCallbacks;
 const isAotHttpResponse = state.isAotHttpResponse;
 const isNegativeZero = state.isNegativeZero;
 const jsonDecodeBuiltin = state.jsonDecodeBuiltin;
@@ -212,6 +217,7 @@ const testAotKanaSubstringPlain = state.testAotKanaSubstringPlain;
 const testAotKanaSubstringVoiced = state.testAotKanaSubstringVoiced;
 const testAotSecondArgument = state.testAotSecondArgument;
 const testAotSortOrder = state.testAotSortOrder;
+const testAotTimerStop = state.testAotTimerStop;
 const testAotToPrimitiveObject = state.testAotToPrimitiveObject;
 const toml_temporal = state.toml_temporal;
 const urlBuiltin = state.urlBuiltin;
@@ -221,6 +227,28 @@ const valueToNumber = state.valueToNumber;
 const valueToPrimitive = state.valueToPrimitive;
 const valueUtf16Alloc = state.valueUtf16Alloc;
 const valueUtf8LossyAlloc = state.valueUtf8LossyAlloc;
+const appendAsciiUnits = state.appendAsciiUnits;
+const builtinDispatchRoute = state.builtinDispatchRoute;
+const builtin_catalog = shared.builtin_catalog;
+const configureHatenaBuiltin = state.configureHatenaBuiltin;
+const default_plugin_names = state.default_plugin_names;
+const createAotPromise = state.createAotPromise;
+const createAotPromiseResolver = state.createAotPromiseResolver;
+const chainAotPromise = state.chainAotPromise;
+const bundleAotPromises = state.bundleAotPromises;
+const aotToDynamicValue = state.aotToDynamicValue;
+const debugDisplayBuiltin = state.debugDisplayBuiltin;
+const DynamicInterpreterState = state.DynamicInterpreterState;
+const jsonAotContainerCount = state.jsonAotContainerCount;
+const jsonTestDictionaryGet = state.jsonTestDictionaryGet;
+const josi = shared.josi;
+const lexer = shared.lexer;
+const lnako_aot_debug_breakpoint_wait_call = state.lnako_aot_debug_breakpoint_wait_call;
+const normalizeDebugSourcePath = state.normalizeDebugSourcePath;
+const pluginManagementBuiltin = state.pluginManagementBuiltin;
+const pollAotInterrupt = state.pollAotInterrupt;
+const timerBuiltin = state.timerBuiltin;
+const timerWaitBuiltin = state.timerWaitBuiltin;
 
 test "UTF-16文字列をルートから正確にmark-and-sweepする" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
@@ -5746,4 +5774,586 @@ test "AOT HTTP routeと静的配信の補助判定は公式境界を保つ" {
     try std.testing.expectEqualStrings("text/plain", aotHttpMimeType("hello.txt"));
     try std.testing.expectEqualStrings("text/javascript", aotHttpMimeType("module.mjs"));
     try std.testing.expectEqualStrings("hello.txt", aotHttpUploadBasename("/tmp/hello.txt"));
+}
+
+test "AOT JSONデコードはUTF-16・数値境界・重複キーを保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    runtime.next_collection = 1;
+    var roots = [_]Value{.{}} ** 12;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try createJsonTestString(&runtime, "{\"a\":1,\"b\":[true,null,-0,9007199254740993,1e400,1e-4000],\"a\":3,\"s\":\"\\ud800\\udc00\\ud800\"}");
+    roots[1] = try jsonDecodeBuiltin(&runtime, roots[0]);
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(roots[1].tag)));
+    try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(jsonTestDictionaryGet(roots[1], &.{'a'}).payload)));
+    roots[2] = jsonTestDictionaryGet(roots[1], &.{'b'});
+    try std.testing.expectEqual(@as(usize, 6), roots[2].object().?.payload.array.items.len);
+    try std.testing.expectEqual(@as(u64, 0x8000_0000_0000_0000), roots[2].object().?.payload.array.items[2].payload);
+    try std.testing.expect(std.math.isInf(@as(f64, @bitCast(roots[2].object().?.payload.array.items[4].payload))));
+    try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast(roots[2].object().?.payload.array.items[5].payload)));
+    roots[3] = jsonTestDictionaryGet(roots[1], &.{'s'});
+    try std.testing.expectEqualSlices(u16, &.{ 0xd800, 0xdc00, 0xd800 }, roots[3].object().?.payload.utf16_string);
+
+    roots[4] = try createJsonTestString(&runtime, "[1,2]");
+    roots[5] = try jsonDecodeBuiltin(&runtime, roots[4]);
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(roots[5].object().?.payload.array.items[0].payload)));
+    try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(roots[5].object().?.payload.array.items[1].payload)));
+
+    roots[6] = try createJsonTestString(&runtime, "x");
+    try std.testing.expectError(error.InvalidJsonCloneValue, jsonDecodeBuiltin(&runtime, roots[6]));
+    const invalid_message = runtime.takeException();
+    try expectUtf16String(&runtime, invalid_message, "Unexpected token 'x', \"x\" is not valid JSON");
+    roots[7] = try createJsonTestString(&runtime, "");
+    try std.testing.expectError(error.InvalidJsonCloneValue, jsonDecodeBuiltin(&runtime, roots[7]));
+    const empty_message = runtime.takeException();
+    try expectUtf16String(&runtime, empty_message, "Unexpected end of JSON input");
+    try std.testing.expectError(error.InvalidJsonCloneValue, jsonDecodeBuiltin(&runtime, .{}));
+    const undefined_message = runtime.takeException();
+    try expectUtf16String(&runtime, undefined_message, "\"undefined\" is not valid JSON");
+
+    const invalid_cases = [_]struct { source: []const u8, message: []const u8 }{
+        .{ .source = "[1", .message = "Expected ',' or ']' after array element in JSON at position 2 (line 1 column 3)" },
+        .{ .source = "{", .message = "Expected property name or '}' in JSON at position 1 (line 1 column 2)" },
+        .{ .source = "{\"a\"}", .message = "Expected ':' after property name in JSON at position 4 (line 1 column 5)" },
+        .{ .source = "{\"a\":1", .message = "Expected ',' or '}' after property value in JSON at position 6 (line 1 column 7)" },
+        .{ .source = "1.", .message = "Unterminated fractional number in JSON at position 2 (line 1 column 3)" },
+        .{ .source = "1e+", .message = "Exponent part is missing a number in JSON at position 3 (line 1 column 4)" },
+        .{ .source = "-Infinity", .message = "No number after minus sign in JSON at position 1 (line 1 column 2)" },
+        .{ .source = "NaN", .message = "\"NaN\" is not valid JSON" },
+        .{ .source = "[object Object]", .message = "\"[object Object]\" is not valid JSON" },
+        .{ .source = "01", .message = "Unexpected number in JSON at position 1 (line 1 column 2)" },
+        .{ .source = "-01", .message = "Unexpected number in JSON at position 2 (line 1 column 3)" },
+        .{ .source = "{\"a\":1,}", .message = "Expected double-quoted property name in JSON at position 7 (line 1 column 8)" },
+        .{ .source = "{\"a\":1,", .message = "Expected double-quoted property name in JSON at position 7 (line 1 column 8)" },
+        .{ .source = "{\"a\":1, x:2}", .message = "Expected double-quoted property name in JSON at position 8 (line 1 column 9)" },
+        .{ .source = "\"\x1f\"", .message = "Bad control character in string literal in JSON at position 1 (line 1 column 2)" },
+        .{ .source = "\"\\u12\"", .message = "Bad Unicode escape in JSON at position 5 (line 1 column 6)" },
+        .{ .source = "\"\\u12x4\"", .message = "Bad Unicode escape in JSON at position 5 (line 1 column 6)" },
+        .{ .source = "あ", .message = "Unexpected token 'あ', \"あ\" is not valid JSON" },
+        .{ .source = "\"abc", .message = "Unterminated string in JSON at position 4 (line 1 column 5)" },
+        .{ .source = "\"\\x00\"", .message = "Bad escaped character in JSON at position 2 (line 1 column 3)" },
+        .{ .source = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaax", .message = "Unexpected token 'a', \"aaaaaaaaaa\"... is not valid JSON" },
+        .{ .source = "          xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", .message = "Unexpected token 'x', ...\"          xbbbbbbbbb\"... is not valid JSON" },
+        .{ .source = "           xbbbbbbbb", .message = "Unexpected token 'x', \"           xbbbbbbbb\" is not valid JSON" },
+        .{ .source = "          xbbbbbbbbbb", .message = "Unexpected token 'x', ...\"          xbbbbbbbbb\"... is not valid JSON" },
+        .{ .source = "         xbbbbbbbbbbb", .message = "Unexpected token 'x', \"         xbbbbbbbbb\"... is not valid JSON" },
+        .{ .source = "x\n", .message = "Unexpected token 'x', \"x\n\" is not valid JSON" },
+        .{ .source = "x\"q", .message = "Unexpected token 'x', \"x\"q\" is not valid JSON" },
+        .{ .source = "x\\q", .message = "Unexpected token 'x', \"x\\q\" is not valid JSON" },
+    };
+    for (invalid_cases) |case| {
+        roots[8] = try createJsonTestString(&runtime, case.source);
+        try std.testing.expectError(error.InvalidJsonCloneValue, jsonDecodeBuiltin(&runtime, roots[8]));
+        const message = runtime.takeException();
+        try expectUtf16String(&runtime, message, case.message);
+    }
+}
+
+test "AOT JSONエラー文言は孤立サロゲートをUTF-16で保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 2;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createString(&.{ 0xd83d, 0xde00 });
+    try std.testing.expectError(error.InvalidJsonCloneValue, jsonDecodeBuiltin(&runtime, roots[0]));
+    const message = runtime.takeException();
+
+    var expected: std.ArrayList(u16) = .empty;
+    defer expected.deinit(runtime.allocator);
+    try appendAsciiUnits(&expected, runtime.allocator, "Unexpected token '");
+    try expected.append(runtime.allocator, 0xd83d);
+    try appendAsciiUnits(&expected, runtime.allocator, "', \"");
+    try expected.appendSlice(runtime.allocator, &.{ 0xd83d, 0xde00 });
+    try appendAsciiUnits(&expected, runtime.allocator, "\" is not valid JSON");
+    try std.testing.expectEqualSlices(u16, expected.items, message.object().?.payload.utf16_string);
+}
+
+test "AOT JSONデコードは深い配列と辞書を明示スタックで処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    // Keep collections frequent enough to exercise the parser's root slice,
+    // while avoiding a collection for every single nested container.
+    runtime.next_collection = 128;
+    const depth: usize = 100_000;
+    var roots = [_]Value{ .{}, .{} };
+    var root_frame = RootFrame{};
+    runtime.pushRoots(&root_frame, &roots, roots.len);
+    defer runtime.popRoots(&root_frame);
+
+    var array_source: std.ArrayList(u8) = .empty;
+    defer array_source.deinit(runtime.allocator);
+    try array_source.appendNTimes(runtime.allocator, '[', depth);
+    try array_source.append(runtime.allocator, '0');
+    try array_source.appendNTimes(runtime.allocator, ']', depth);
+    roots[0] = try createJsonTestString(&runtime, array_source.items);
+    roots[1] = try jsonDecodeBuiltin(&runtime, roots[0]);
+    var array_current = roots[1];
+    for (0..depth) |_| {
+        try std.testing.expectEqual(Tag.array, @as(Tag, @enumFromInt(array_current.tag)));
+        const items = array_current.object().?.payload.array.items;
+        try std.testing.expectEqual(@as(usize, 1), items.len);
+        array_current = items[0];
+    }
+    try std.testing.expectEqual(Tag.number, @as(Tag, @enumFromInt(array_current.tag)));
+    try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast(array_current.payload)));
+
+    var dictionary_source: std.ArrayList(u8) = .empty;
+    defer dictionary_source.deinit(runtime.allocator);
+    try dictionary_source.ensureTotalCapacity(runtime.allocator, depth * 5 + 1);
+    for (0..depth) |_| try dictionary_source.appendSlice(runtime.allocator, "{\"a\":");
+    try dictionary_source.append(runtime.allocator, '0');
+    try dictionary_source.appendNTimes(runtime.allocator, '}', depth);
+    roots[0] = try createJsonTestString(&runtime, dictionary_source.items);
+    roots[1] = try jsonDecodeBuiltin(&runtime, roots[0]);
+    var dictionary_current = roots[1];
+    for (0..depth) |_| {
+        try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(dictionary_current.tag)));
+        dictionary_current = jsonTestDictionaryGet(dictionary_current, &.{'a'});
+    }
+    try std.testing.expectEqual(Tag.number, @as(Tag, @enumFromInt(dictionary_current.tag)));
+    try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast(dictionary_current.payload)));
+}
+
+test "AOT JSONデコードのフレーム数は文字列内の括弧を除外する" {
+    try std.testing.expectEqual(@as(usize, 2), jsonAotContainerCount(&.{ '[', '{', '"', '[', '{', '"', '}', ']' }));
+    try std.testing.expectEqual(@as(usize, 1), jsonAotContainerCount(&.{ '[', '"', '\\', '"', '[', '"', ']' }));
+}
+
+test "AOT秒待は0秒・負数・非数をundefinedで完了する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+
+    try std.testing.expectEqual(Value{}, try timerWaitBuiltin(&runtime, &.{}));
+    try std.testing.expectEqual(Value{}, try timerWaitBuiltin(&runtime, &.{numberValue(-1)}));
+    try std.testing.expectEqual(Value{}, try timerWaitBuiltin(&runtime, &.{numberValue(std.math.nan(f64))}));
+}
+
+test "AOTタイマーはコールバックを保持し順序・停止・周期を処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    state.active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    defer state.active_runtime.?.popRoots(&frame);
+
+    roots[0] = try state.active_runtime.?.createBindingCell(numberValue(0));
+    roots[1] = try state.active_runtime.?.createFunction(testAotCapturedIncrement, 0, &.{roots[0]});
+    var target = Value{};
+    var one_shot_arguments = [_]Value{ roots[1], numberValue(0) };
+    const active = &state.active_runtime.?;
+    roots[2] = try timerBuiltin(active, .timer_after, &one_shot_arguments, &target);
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(target));
+    roots[1] = .{};
+    try std.testing.expectEqual(@as(usize, 1), state.active_runtime.?.timers.items.len);
+    _ = active.collect();
+    try drainAotTimers(active);
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(roots[0].object().?.payload.binding_cell));
+    try std.testing.expectEqual(@as(usize, 0), state.active_runtime.?.timers.items.len);
+
+    roots[3] = try state.active_runtime.?.createFunction(testAotTimerStop, 1, &.{});
+    var repeating_arguments = [_]Value{ roots[3], numberValue(0) };
+    _ = try timerBuiltin(active, .timer_every, &repeating_arguments, null);
+    try drainAotTimers(active);
+    try std.testing.expectEqual(@as(usize, 0), state.active_runtime.?.timers.items.len);
+
+    var pending_arguments = [_]Value{ roots[3], numberValue(1) };
+    _ = try timerBuiltin(active, .timer_after, &pending_arguments, null);
+    _ = try timerBuiltin(active, .timer_stop_all, &.{}, null);
+    try std.testing.expectEqual(@as(usize, 0), state.active_runtime.?.timers.items.len);
+}
+
+test "AOT Promiseは解決・連鎖・失敗・束ねをマイクロタスクで処理する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+
+    var roots = [_]Value{.{}} ** 16;
+    var frame = RootFrame{};
+    state.active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    defer state.active_runtime.?.popRoots(&frame);
+
+    roots[0] = try createAotPromise(&state.active_runtime.?);
+    roots[1] = try createAotPromiseResolver(&state.active_runtime.?, roots[0].object().?, false);
+    var seven = numberValue(7);
+    var ignored = Value{};
+    lnako_aot_function_call(&ignored, &roots[1], @ptrCast(&seven), 1);
+    try std.testing.expectEqual(AotPromiseState.fulfilled, roots[0].object().?.payload.promise.state);
+
+    roots[2] = try state.active_runtime.?.createFunction(testAotFunction, 1, &.{});
+    roots[3] = try chainAotPromise(&state.active_runtime.?, &.{ roots[2], roots[0] }, .success, null, &roots[4]);
+    try drainAotEvents(&state.active_runtime.?);
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[3].object().?.payload.promise.result));
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[4]));
+
+    roots[5] = try createAotPromise(&state.active_runtime.?);
+    roots[6] = try createAotPromiseResolver(&state.active_runtime.?, roots[5].object().?, true);
+    roots[7] = try state.active_runtime.?.createFunction(testAotFunction, 1, &.{});
+    roots[8] = try chainAotPromise(&state.active_runtime.?, &.{ roots[7], roots[5] }, .failure, null, &roots[9]);
+    var five = numberValue(5);
+    lnako_aot_function_call(&ignored, &roots[6], @ptrCast(&five), 1);
+    try drainAotEvents(&state.active_runtime.?);
+    try std.testing.expectEqual(@as(f64, 5), valueToNumber(roots[8].object().?.payload.promise.result));
+    try std.testing.expectEqual(@as(f64, 5), valueToNumber(roots[9]));
+
+    roots[10] = try createAotPromise(&state.active_runtime.?);
+    roots[11] = try createAotPromiseResolver(&state.active_runtime.?, roots[10].object().?, false);
+    var one = numberValue(1);
+    lnako_aot_function_call(&ignored, &roots[11], @ptrCast(&one), 1);
+    roots[12] = try bundleAotPromises(&state.active_runtime.?, &.{ roots[0], numberValue(2), roots[10] }, null);
+    try drainAotEvents(&state.active_runtime.?);
+    const bundled = roots[12].object().?.payload.promise.result;
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(bundled.object().?.payload.array.items[0]));
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(bundled.object().?.payload.array.items[1]));
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(bundled.object().?.payload.array.items[2]));
+}
+
+test "AOTネイティブABI橋渡しは関数とPromiseをAOT値へ変換する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    const aot_state = try DynamicInterpreterState.init(std.testing.allocator, active);
+    active.dynamic_state = aot_state;
+
+    var dynamic_roots = aot_state.value_runtime.rootFrame();
+    defer dynamic_roots.deinit();
+    var dynamic_promise = try aot_state.value_runtime.createPromise();
+    try dynamic_roots.protect(&dynamic_promise);
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+
+    roots[0] = try dynamicPromiseToAotValue(aot_state, dynamic_promise.promise);
+    try aot_state.value_runtime.resolvePromise(dynamic_promise.promise, .{ .number = 42 });
+    _ = try drainAotNativePluginTasks(active);
+    try std.testing.expectEqual(AotPromiseState.fulfilled, roots[0].object().?.payload.promise.aot_state);
+    try std.testing.expectEqual(@as(f64, 42), valueToNumber(roots[0].object().?.payload.promise.result));
+    try std.testing.expectEqual(@as(usize, 0), active.dynamic_promise_bridges.items.len);
+
+    roots[1] = try active.createNamedFunction(testAotFunction, 1, "main__native_bridge", &.{});
+    var dynamic_function = try aotToDynamicValue(aot_state, roots[1]);
+    try dynamic_roots.protect(&dynamic_function);
+    const dynamic_result = try aot_state.value_runtime.call(dynamic_function, &.{.{ .number = 7 }});
+    try std.testing.expectEqual(@as(f64, 7), dynamic_result.number);
+    _ = active.collect();
+    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[1].tag)));
+}
+
+test "AOTシステムカタログ命令は一覧の順序と存在判定を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    state.active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    defer state.active_runtime.?.popRoots(&frame);
+
+    lnako_aot_builtin_call(&roots[0], null, 0, @intFromEnum(aot_builtin.Command.system_function_names));
+    try std.testing.expectEqual(builtin_catalog.default_names.len, roots[0].object().?.payload.array.items.len);
+    try expectUtf16String(&state.active_runtime.?, roots[0].object().?.payload.array.items[0], "ナデシコバージョン");
+    try expectUtf16String(&state.active_runtime.?, roots[0].object().?.payload.array.items[builtin_catalog.default_names.len - 1], "AJAX:ONERROR");
+
+    roots[1] = try runtimeUtf8String(&state.active_runtime.?, "表示");
+    var existing_arguments = [_]Value{ numberValue(0), roots[1] };
+    lnako_aot_builtin_call(&roots[2], &existing_arguments, existing_arguments.len, @intFromEnum(aot_builtin.Command.system_function_exists));
+    try std.testing.expectEqual(Tag.boolean, @as(Tag, @enumFromInt(roots[2].tag)));
+    try std.testing.expectEqual(@as(u64, 1), roots[2].payload);
+
+    roots[3] = try runtimeUtf8String(&state.active_runtime.?, "不存在");
+    lnako_aot_builtin_call(&roots[4], @ptrCast(&roots[3]), 1, @intFromEnum(aot_builtin.Command.system_function_exists));
+    try std.testing.expectEqual(@as(u64, 0), roots[4].payload);
+
+    lnako_aot_builtin_call(&roots[5], null, 0, @intFromEnum(aot_builtin.Command.plugin_names));
+    try std.testing.expectEqual(default_plugin_names.len, roots[5].object().?.payload.array.items.len);
+    try expectUtf16String(&state.active_runtime.?, roots[5].object().?.payload.array.items[0], "plugin_system");
+    lnako_aot_builtin_call(&roots[6], null, 0, @intFromEnum(aot_builtin.Command.josi_names));
+    try std.testing.expectEqual(josi.exported_list.len, roots[6].object().?.payload.array.items.len);
+    lnako_aot_builtin_call(&roots[7], null, 0, @intFromEnum(aot_builtin.Command.reserved_words));
+    try std.testing.expectEqual(lexer.exported_reserved_words.len, roots[7].object().?.payload.array.items.len);
+}
+
+test "AOTグローバル関数一覧取得は登録済み関数を作成順で返す" {
+    var runtime = Runtime{ .allocator = std.testing.allocator, .next_collection = 1 };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    state.active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    defer state.active_runtime.?.popRoots(&frame);
+
+    roots[0] = try state.active_runtime.?.createNamedFunction(testAotFunction, 1, "module__甲", &.{});
+    roots[1] = try state.active_runtime.?.createNamedFunction(testAotFunction, 1, "module__乙", &.{});
+    roots[2] = try state.active_runtime.?.createNamedFunction(testAotFunction, 1, "module__lambda$0", &.{});
+    lnako_aot_builtin_call(&roots[3], null, 0, @intFromEnum(aot_builtin.Command.system_global_function_names));
+    const names = roots[3].object().?.payload.array.items;
+    try std.testing.expectEqual(@as(usize, 2), names.len);
+    try expectUtf16String(&state.active_runtime.?, names[0], "module__甲");
+    try expectUtf16String(&state.active_runtime.?, names[1], "module__乙");
+}
+
+test "AOT __DEBUGはデバッグ状態を有効化して値を返さない" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var result = Value{};
+    lnako_aot_builtin_call(&result, null, 0, @intFromEnum(aot_builtin.Command.system_debug_enable));
+    try std.testing.expect(state.active_runtime.?.debug_enabled);
+    try std.testing.expectEqual(@intFromEnum(Tag.undefined), result.tag);
+}
+
+test "AOTデバッグ表示はオブジェクトをJSON化して位置付き表示ログへ書き込む" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    state.active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    defer state.active_runtime.?.popRoots(&frame);
+
+    roots[0] = try state.active_runtime.?.createDictionary(&.{ staticStringValue("a"), numberValue(1) });
+    roots[1] = try state.active_runtime.?.createString(&.{});
+    debugDisplayBuiltin(&state.active_runtime.?, roots[0], 4, "main.nako3", &roots[1]) catch |failure| return failure;
+    try expectUtf16String(&state.active_runtime.?, roots[1], "main.nako3(4): {\"a\":1}\n");
+}
+
+test "AOTデバッグ表示はWindowsのドライブ付きソースpathをドライブ名へ正規化する" {
+    try std.testing.expectEqualStrings("D", normalizeDebugSourcePath("D:\\tmp\\fixture.nako3", true));
+    try std.testing.expectEqualStrings("/tmp/fixture.nako3", normalizeDebugSourcePath("/tmp/fixture.nako3", false));
+    try std.testing.expectEqualStrings("relative.nako3", normalizeDebugSourcePath("relative.nako3", true));
+}
+
+test "AOTハテナ関数実行は既定のデバッグ表示として位置と値を保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame = RootFrame{};
+    state.active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    defer state.active_runtime.?.popRoots(&frame);
+
+    roots[0] = try state.active_runtime.?.createArray(&.{ numberValue(1), numberValue(2) });
+    roots[1] = try state.active_runtime.?.createString(&.{});
+    roots[2] = .{};
+    try debugDisplayBuiltin(&state.active_runtime.?, roots[0], 7, "main.nako3", &roots[1]);
+    try expectUtf16String(&state.active_runtime.?, roots[1], "main.nako3(7): [1,2]\n");
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[2].tag)));
+}
+
+test "AOTハテナ関数設定は関数値と命令名配列を保持して実行する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    state.active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    defer state.active_runtime.?.popRoots(&frame);
+
+    roots[0] = try state.active_runtime.?.createFunction(testAotFunction, 1, &.{});
+    var function_setting = [_]Value{roots[0]};
+    roots[1] = try configureHatenaBuiltin(&state.active_runtime.?, &function_setting);
+    roots[0] = .{};
+    try std.testing.expectEqual(@as(usize, 1), state.active_runtime.?.hatena_callbacks.items.len);
+    _ = state.active_runtime.?.collect();
+    roots[2] = try invokeHatenaCallbacks(&state.active_runtime.?, numberValue(7), 4, "main.nako3", null);
+    try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[2]));
+
+    roots[3] = try state.active_runtime.?.createArray(&.{staticStringValue("文字列変換")});
+    var named_setting = [_]Value{roots[3]};
+    roots[1] = try configureHatenaBuiltin(&state.active_runtime.?, &named_setting);
+    roots[3] = .{};
+    _ = state.active_runtime.?.collect();
+    roots[2] = try invokeHatenaCallbacks(&state.active_runtime.?, numberValue(8), 4, "main.nako3", null);
+    try expectUtf16String(&state.active_runtime.?, roots[2], "8");
+
+    roots[3] = try state.active_runtime.?.createArray(&.{staticStringValue("JS:callback")});
+    var js_setting = [_]Value{roots[3]};
+    try std.testing.expectError(error.JavaScriptCompatibilityRequired, configureHatenaBuiltin(&state.active_runtime.?, &js_setting));
+}
+
+test "AOT強制終了時はコールバックを保持し偽の結果で継続する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+        state.aot_interrupt_requested.store(false, .release);
+    }
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    state.active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    defer state.active_runtime.?.popRoots(&frame);
+
+    roots[0] = try state.active_runtime.?.createFunction(testAotFunction, 1, &.{});
+    var arguments = [_]Value{roots[0]};
+    lnako_aot_builtin_call_site(&roots[1], &arguments, arguments.len, @intFromEnum(aot_builtin.Command.node_interrupt_callback), 0x1234);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(state.active_runtime.?.interrupt_callback.tag)));
+
+    roots[0] = .{};
+    _ = state.active_runtime.?.collect();
+    try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(state.active_runtime.?.interrupt_callback.tag)));
+    state.aot_interrupt_requested.store(true, .release);
+    try pollAotInterrupt(&state.active_runtime.?);
+    try std.testing.expect(!state.aot_interrupt_requested.load(.acquire));
+}
+
+test "AOT __DEBUG_BP_WAITは即時復帰と非メイン待機を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    state.active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    defer state.active_runtime.?.popRoots(&frame);
+
+    roots[0] = try state.active_runtime.?.createArray(&.{numberValue(99)});
+    roots[1] = numberValue(0);
+    roots[2] = numberValue(0);
+    roots[3] = staticStringValue("メイン");
+    var arguments = [_]Value{numberValue(12)};
+    lnako_aot_debug_breakpoint_wait_call(
+        &roots[4],
+        &roots[0],
+        &roots[1],
+        &roots[2],
+        &roots[3],
+        &arguments,
+        arguments.len,
+        @intFromEnum(aot_builtin.Command.system_debug_breakpoint_wait),
+        0,
+    );
+    try std.testing.expectEqual(@as(f64, 12), valueToNumber(roots[4]));
+    try std.testing.expectEqual(@as(f64, 0), valueToNumber(roots[1]));
+
+    try state.active_runtime.?.indexSet(roots[0], numberValue(0), numberValue(12));
+    roots[3] = staticStringValue("副");
+    lnako_aot_debug_breakpoint_wait_call(
+        &roots[5],
+        &roots[0],
+        &roots[1],
+        &roots[2],
+        &roots[3],
+        &arguments,
+        arguments.len,
+        @intFromEnum(aot_builtin.Command.system_debug_breakpoint_wait),
+        0,
+    );
+    try std.testing.expectEqual(Tag.promise, @as(Tag, @enumFromInt(roots[5].tag)));
+}
+
+test "AOT ASSERT等はNodeのSameValue境界と戻り値を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    state.active_runtime.?.pushRoots(&frame, &roots, roots.len);
+    defer state.active_runtime.?.popRoots(&frame);
+
+    var equal_arguments = [_]Value{ numberValue(1), numberValue(1) };
+    lnako_aot_builtin_call(&roots[0], &equal_arguments, equal_arguments.len, @intFromEnum(aot_builtin.Command.assert_strict_equal));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[0].tag)));
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+
+    var nan_arguments = [_]Value{ numberValue(std.math.nan(f64)), numberValue(std.math.nan(f64)) };
+    lnako_aot_builtin_call(&roots[1], &nan_arguments, nan_arguments.len, @intFromEnum(aot_builtin.Command.assert_strict_equal));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[1].tag)));
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+
+    var signed_zero_arguments = [_]Value{ numberValue(0), numberValue(-0.0) };
+    lnako_aot_builtin_call(&roots[2], &signed_zero_arguments, signed_zero_arguments.len, @intFromEnum(aot_builtin.Command.assert_strict_equal));
+    try std.testing.expect(state.active_runtime.?.has_pending_exception);
+    roots[3] = state.active_runtime.?.takeException();
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+}
+
+test "AOTプラグイン管理命令は文字列化と名前空間スタックをGC越しに保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtimeUtf8String(&runtime, "メイン");
+    roots[1] = try runtimeUtf8String(&runtime, "main");
+    try pluginManagementBuiltin(&runtime, .plugin_name_set, &.{numberValue(123)}, &roots[0], &roots[1]);
+    try expectUtf16String(&runtime, roots[0], "123");
+    try pluginManagementBuiltin(&runtime, .namespace_set, &.{numberValue(456)}, &roots[0], &roots[1]);
+    try pluginManagementBuiltin(&runtime, .plugin_name_set, &.{staticStringValue("孫")}, &roots[0], &roots[1]);
+    try pluginManagementBuiltin(&runtime, .namespace_set, &.{staticStringValue("二階")}, &roots[0], &roots[1]);
+    try std.testing.expectEqual(@as(usize, 2), runtime.namespace_stack.items.len);
+
+    _ = runtime.collect();
+    try pluginManagementBuiltin(&runtime, .namespace_pop, &.{}, &roots[0], &roots[1]);
+    try expectUtf16String(&runtime, roots[0], "孫");
+    try expectUtf16String(&runtime, roots[1], "456");
+    try pluginManagementBuiltin(&runtime, .namespace_pop, &.{}, &roots[0], &roots[1]);
+    try expectUtf16String(&runtime, roots[0], "123");
+    try expectUtf16String(&runtime, roots[1], "main");
+    try pluginManagementBuiltin(&runtime, .namespace_pop, &.{}, &roots[0], &roots[1]);
+    try std.testing.expectEqual(@as(usize, 0), runtime.namespace_stack.items.len);
+    try expectUtf16String(&runtime, roots[0], "123");
+    try expectUtf16String(&runtime, roots[1], "main");
+}
+
+test "AOT generic builtin dispatch routeはmanifestと一致する" {
+    try std.testing.expectEqualStrings("hatena-configure", builtinDispatchRoute(.system_hatena_configure));
+    try std.testing.expectEqualStrings("node-interrupt", builtinDispatchRoute(.node_interrupt_callback));
+    try std.testing.expectEqualStrings("node-encoding", builtinDispatchRoute(.node_encoding_sjis_encode));
+    try std.testing.expectEqualStrings("builtin", builtinDispatchRoute(.to_string));
 }
