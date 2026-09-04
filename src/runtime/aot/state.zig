@@ -3533,24 +3533,6 @@ pub fn jsonDecodeBuiltin(runtime: *Runtime, source: Value) !Value {
     return parser.parse();
 }
 
-pub fn expectUtf16String(runtime: *Runtime, value: Value, expected: []const u8) !void {
-    const actual = try valueUtf16Alloc(runtime, value);
-    defer runtime.allocator.free(actual);
-    const expected_units = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, expected);
-    defer runtime.allocator.free(expected_units);
-    try std.testing.expectEqualSlices(u16, expected_units, actual);
-}
-
-pub fn createJsonTestString(runtime: *Runtime, text: []const u8) !Value {
-    const units = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, text);
-    defer runtime.allocator.free(units);
-    return runtime.createString(units);
-}
-
-pub fn jsonTestDictionaryGet(value: Value, key: []const u16) Value {
-    return dictionaryProperty(value, key);
-}
-
 pub fn valueUtf16Alloc(runtime: *Runtime, value: Value) anyerror![]u16 {
     if (value.tag == @intFromEnum(Tag.utf16_string)) return runtime.allocator.dupe(u16, value.object().?.payload.utf16_string);
     const utf8 = switch (@as(Tag, @enumFromInt(value.tag))) {

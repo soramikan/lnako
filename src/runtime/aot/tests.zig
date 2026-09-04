@@ -71,7 +71,6 @@ const caniuseBrowsersBuiltin = state.caniuseBrowsersBuiltin;
 const codePointFindBuiltin = state.codePointFindBuiltin;
 const compareValues = state.compareValues;
 const concat = state.concat;
-const createJsonTestString = state.createJsonTestString;
 const crypto = state.crypto;
 const currentDirectoryAlloc = state.currentDirectoryAlloc;
 const cutEndIndex = state.cutEndIndex;
@@ -94,7 +93,6 @@ const drainAotTimers = state.drainAotTimers;
 const dynamicPromiseToAotValue = state.dynamicPromiseToAotValue;
 const eraDataBuiltin = state.eraDataBuiltin;
 const expectJsonAotString = state.expectJsonAotString;
-const expectUtf16String = state.expectUtf16String;
 const incrementNumber = state.incrementNumber;
 const incrementValue = state.incrementValue;
 const indexOfUnitsBuiltin = state.indexOfUnitsBuiltin;
@@ -220,7 +218,6 @@ const aotToDynamicValue = state.aotToDynamicValue;
 const debugDisplayBuiltin = state.debugDisplayBuiltin;
 const DynamicInterpreterState = state.DynamicInterpreterState;
 const jsonAotContainerCount = state.jsonAotContainerCount;
-const jsonTestDictionaryGet = state.jsonTestDictionaryGet;
 const josi = shared.josi;
 const lexer = shared.lexer;
 const lnako_aot_debug_breakpoint_wait_call = state.lnako_aot_debug_breakpoint_wait_call;
@@ -6574,4 +6571,22 @@ pub fn aotDictionaryBigIntPropertyKeyAllocationTest(allocator: std.mem.Allocator
     try std.testing.expectEqual(@as(usize, 2), entries.len);
     try std.testing.expectEqual(@as(f64, 2), valueToNumber(entries[0].value));
     try std.testing.expectEqual(@as(f64, 4), valueToNumber(entries[1].value));
+}
+
+pub fn expectUtf16String(runtime: *Runtime, value: Value, expected: []const u8) !void {
+    const actual = try valueUtf16Alloc(runtime, value);
+    defer runtime.allocator.free(actual);
+    const expected_units = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, expected);
+    defer runtime.allocator.free(expected_units);
+    try std.testing.expectEqualSlices(u16, expected_units, actual);
+}
+
+pub fn createJsonTestString(runtime: *Runtime, text: []const u8) !Value {
+    const units = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, text);
+    defer runtime.allocator.free(units);
+    return runtime.createString(units);
+}
+
+pub fn jsonTestDictionaryGet(value: Value, key: []const u16) Value {
+    return dictionaryProperty(value, key);
 }
