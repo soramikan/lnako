@@ -9,3 +9,6 @@ pub const parseOptionalI64 = environment.parseOptionalI64;
 pub const parseOptionalU64 = environment.parseOptionalU64;
 pub const parseOptionalF64 = environment.parseOptionalF64;
 pub const runStoredZipArchive = archive.runStoredZipArchive;
+pub const state = @import("host/state.zig");
+pub const CliHost = state.CliHost;
+pub const AsyncOperationTask = state.AsyncOperationTask;

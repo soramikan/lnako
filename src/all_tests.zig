@@ -15,4 +15,5 @@ test {
     _ = @import("host/archive.zig");
     _ = @import("host/network.zig");
     _ = @import("host/http_client.zig");
+    _ = @import("host/state.zig");
 }
