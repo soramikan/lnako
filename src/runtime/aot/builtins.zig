@@ -123,7 +123,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
             } else 0;
             runtime.dispatch_trace.result(call_id, command_name, opcode, "builtin", site_id, true);
             runtime.dispatch_trace.finishTerminal("process-exit", exit_code);
-            _ = std.c.fflush(null);
+            _ = state.fflush(null);
             std.process.exit(exit_code);
         },
         .node_interrupt_callback => {

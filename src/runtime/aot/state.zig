@@ -28,7 +28,7 @@ pub const lnako_aot_builtin_call = builtins.lnako_aot_builtin_call;
 pub const lnako_aot_builtin_call_site = builtins.lnako_aot_builtin_call_site;
 pub const lnako_aot_debug_breakpoint_wait_call = builtins.lnako_aot_debug_breakpoint_wait_call;
 pub extern "c" fn fflush(stream: ?*std.c.FILE) c_int;
-extern "c" fn time(timer: ?*i64) i64;
+pub extern "c" fn time(timer: ?*i64) i64;
 
 const AotWindowsStdout = shared.AotWindowsStdout;
 pub const Tag = shared.Tag;
@@ -45,15 +45,15 @@ const DispatchTrace = struct {
     next_call_id: u64 = 0,
     locked: std.atomic.Value(bool) = .init(false),
 
-    fn lock(self: *DispatchTrace) void {
+    pub fn lock(self: *DispatchTrace) void {
         while (self.locked.swap(true, .acquire)) std.atomic.spinLoopHint();
     }
 
-    fn unlock(self: *DispatchTrace) void {
+    pub fn unlock(self: *DispatchTrace) void {
         self.locked.store(false, .release);
     }
 
-    fn deinit(self: *DispatchTrace) void {
+    pub fn deinit(self: *DispatchTrace) void {
         self.finish();
         self.lock();
         defer self.unlock();
@@ -61,7 +61,7 @@ const DispatchTrace = struct {
         self.file = null;
     }
 
-    fn ensureFile(self: *DispatchTrace) ?*std.c.FILE {
+    pub fn ensureFile(self: *DispatchTrace) ?*std.c.FILE {
         if (self.disabled) return null;
         if (!self.initialized) {
             self.initialized = true;
@@ -75,7 +75,7 @@ const DispatchTrace = struct {
         return self.file;
     }
 
-    fn writeLine(self: *DispatchTrace, file: *std.c.FILE, rendered: []const u8) bool {
+    pub fn writeLine(self: *DispatchTrace, file: *std.c.FILE, rendered: []const u8) bool {
         if (std.c.fwrite(rendered.ptr, 1, rendered.len, file) != rendered.len or fflush(file) != 0) {
             _ = std.c.fclose(file);
             self.file = null;
@@ -86,7 +86,7 @@ const DispatchTrace = struct {
         return true;
     }
 
-    fn begin(self: *DispatchTrace, command: []const u8, opcode: u16, route: []const u8, site_id: u64) u64 {
+    pub fn begin(self: *DispatchTrace, command: []const u8, opcode: u16, route: []const u8, site_id: u64) u64 {
         self.lock();
         defer self.unlock();
         const file = self.ensureFile() orelse return no_dispatch_call_id;
@@ -111,7 +111,7 @@ const DispatchTrace = struct {
         return call_id;
     }
 
-    fn result(self: *DispatchTrace, call_id: u64, command: []const u8, opcode: u16, route: []const u8, site_id: u64, success: bool) void {
+    pub fn result(self: *DispatchTrace, call_id: u64, command: []const u8, opcode: u16, route: []const u8, site_id: u64, success: bool) void {
         if (call_id == no_dispatch_call_id) return;
         self.lock();
         defer self.unlock();
@@ -130,7 +130,7 @@ const DispatchTrace = struct {
         _ = self.writeLine(file, rendered);
     }
 
-    fn finish(self: *DispatchTrace) void {
+    pub fn finish(self: *DispatchTrace) void {
         self.lock();
         defer self.unlock();
         if (self.disabled) return;
@@ -153,7 +153,7 @@ const DispatchTrace = struct {
         if (self.writeLine(file, rendered)) self.disabled = true;
     }
 
-    fn finishTerminal(self: *DispatchTrace, reason: []const u8, exit_code: u8) void {
+    pub fn finishTerminal(self: *DispatchTrace, reason: []const u8, exit_code: u8) void {
         self.lock();
         defer self.unlock();
         if (self.disabled) return;
@@ -187,15 +187,15 @@ const GlobalTrace = struct {
     sequence: u64 = 0,
     locked: std.atomic.Value(bool) = .init(false),
 
-    fn lock(self: *GlobalTrace) void {
+    pub fn lock(self: *GlobalTrace) void {
         while (self.locked.swap(true, .acquire)) std.atomic.spinLoopHint();
     }
 
-    fn unlock(self: *GlobalTrace) void {
+    pub fn unlock(self: *GlobalTrace) void {
         self.locked.store(false, .release);
     }
 
-    fn deinit(self: *GlobalTrace) void {
+    pub fn deinit(self: *GlobalTrace) void {
         self.finish();
         self.lock();
         defer self.unlock();
@@ -203,7 +203,7 @@ const GlobalTrace = struct {
         self.file = null;
     }
 
-    fn ensureFile(self: *GlobalTrace) ?*std.c.FILE {
+    pub fn ensureFile(self: *GlobalTrace) ?*std.c.FILE {
         if (self.disabled) return null;
         if (!self.initialized) {
             self.initialized = true;
@@ -217,7 +217,7 @@ const GlobalTrace = struct {
         return self.file;
     }
 
-    fn writeLine(self: *GlobalTrace, file: *std.c.FILE, rendered: []const u8) bool {
+    pub fn writeLine(self: *GlobalTrace, file: *std.c.FILE, rendered: []const u8) bool {
         if (std.c.fwrite(rendered.ptr, 1, rendered.len, file) != rendered.len or fflush(file) != 0) {
             _ = std.c.fclose(file);
             self.file = null;
@@ -228,15 +228,15 @@ const GlobalTrace = struct {
         return true;
     }
 
-    fn record(self: *GlobalTrace, site_id: u64) void {
+    pub fn record(self: *GlobalTrace, site_id: u64) void {
         self.recordPhase(site_id, "global-read");
     }
 
-    fn recordWrite(self: *GlobalTrace, site_id: u64) void {
+    pub fn recordWrite(self: *GlobalTrace, site_id: u64) void {
         self.recordPhase(site_id, "global-write");
     }
 
-    fn recordPhase(self: *GlobalTrace, site_id: u64, phase: []const u8) void {
+    pub fn recordPhase(self: *GlobalTrace, site_id: u64, phase: []const u8) void {
         self.lock();
         defer self.unlock();
         const file = self.ensureFile() orelse return;
@@ -252,7 +252,7 @@ const GlobalTrace = struct {
         _ = self.writeLine(file, rendered);
     }
 
-    fn finish(self: *GlobalTrace) void {
+    pub fn finish(self: *GlobalTrace) void {
         self.lock();
         defer self.unlock();
         if (self.disabled) return;
@@ -287,15 +287,15 @@ const LiteralTrace = struct {
     sequence: u64 = 0,
     locked: std.atomic.Value(bool) = .init(false),
 
-    fn lock(self: *LiteralTrace) void {
+    pub fn lock(self: *LiteralTrace) void {
         while (self.locked.swap(true, .acquire)) std.atomic.spinLoopHint();
     }
 
-    fn unlock(self: *LiteralTrace) void {
+    pub fn unlock(self: *LiteralTrace) void {
         self.locked.store(false, .release);
     }
 
-    fn deinit(self: *LiteralTrace) void {
+    pub fn deinit(self: *LiteralTrace) void {
         self.finish();
         self.lock();
         defer self.unlock();
@@ -303,7 +303,7 @@ const LiteralTrace = struct {
         self.file = null;
     }
 
-    fn ensureFile(self: *LiteralTrace) ?*std.c.FILE {
+    pub fn ensureFile(self: *LiteralTrace) ?*std.c.FILE {
         if (self.disabled) return null;
         if (!self.initialized) {
             self.initialized = true;
@@ -317,7 +317,7 @@ const LiteralTrace = struct {
         return self.file;
     }
 
-    fn writeLine(self: *LiteralTrace, file: *std.c.FILE, rendered: []const u8) bool {
+    pub fn writeLine(self: *LiteralTrace, file: *std.c.FILE, rendered: []const u8) bool {
         if (std.c.fwrite(rendered.ptr, 1, rendered.len, file) != rendered.len or fflush(file) != 0) {
             _ = std.c.fclose(file);
             self.file = null;
@@ -328,7 +328,7 @@ const LiteralTrace = struct {
         return true;
     }
 
-    fn record(self: *LiteralTrace, site_id: u64) void {
+    pub fn record(self: *LiteralTrace, site_id: u64) void {
         self.lock();
         defer self.unlock();
         const file = self.ensureFile() orelse return;
@@ -344,7 +344,7 @@ const LiteralTrace = struct {
         _ = self.writeLine(file, rendered);
     }
 
-    fn finish(self: *LiteralTrace) void {
+    pub fn finish(self: *LiteralTrace) void {
         self.lock();
         defer self.unlock();
         if (self.disabled) return;
@@ -393,7 +393,7 @@ const AotTomlTemporal = struct {
     json_text: []u8,
     toml_text: []u8,
 
-    fn deinit(self: *AotTomlTemporal, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *AotTomlTemporal, allocator: std.mem.Allocator) void {
         allocator.free(self.json_text);
         allocator.free(self.toml_text);
         self.* = undefined;
@@ -408,12 +408,12 @@ const ByteStorage = struct {
     /// The Value is traced from each live byte-buffer object below.
     backing: Value = .{},
 
-    fn retain(self: *ByteStorage) void {
+    pub fn retain(self: *ByteStorage) void {
         std.debug.assert(self.ref_count > 0);
         self.ref_count += 1;
     }
 
-    fn release(self: *ByteStorage) void {
+    pub fn release(self: *ByteStorage) void {
         std.debug.assert(self.ref_count > 0);
         self.ref_count -= 1;
         if (self.ref_count != 0) return;
@@ -527,7 +527,7 @@ pub const AotHttpRoute = struct {
     path: []u8 = &.{},
     callback: Value = .{},
 
-    fn deinit(self: *AotHttpRoute, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *AotHttpRoute, allocator: std.mem.Allocator) void {
         allocator.free(self.prefix);
         if (self.path.len > 0) allocator.free(self.path);
         self.* = undefined;
@@ -538,7 +538,7 @@ const AotHttpHeader = struct {
     name: []u8,
     value: []u8,
 
-    fn deinit(self: *AotHttpHeader, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *AotHttpHeader, allocator: std.mem.Allocator) void {
         allocator.free(self.name);
         allocator.free(self.value);
         self.* = undefined;
@@ -552,7 +552,7 @@ const AotHttpServerState = struct {
     request_active: bool = false,
     response_status: u16 = 200,
 
-    fn deinit(self: *AotHttpServerState, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *AotHttpServerState, allocator: std.mem.Allocator) void {
         for (self.routes.items) |*route| route.deinit(allocator);
         self.routes.deinit(allocator);
         self.clearHeaders(allocator);
@@ -560,7 +560,7 @@ const AotHttpServerState = struct {
         self.* = undefined;
     }
 
-    fn clearHeaders(self: *AotHttpServerState, allocator: std.mem.Allocator) void {
+    pub fn clearHeaders(self: *AotHttpServerState, allocator: std.mem.Allocator) void {
         for (self.response_headers.items) |*header| header.deinit(allocator);
         self.response_headers.clearRetainingCapacity();
     }
@@ -576,7 +576,7 @@ const AotArchiveTask = struct {
     tool_path: []u8,
     callback: Value,
 
-    fn deinit(self: *AotArchiveTask, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *AotArchiveTask, allocator: std.mem.Allocator) void {
         allocator.free(self.source);
         allocator.free(self.destination);
         allocator.free(self.tool_path);
@@ -591,7 +591,7 @@ const AotCommandResult = struct {
     stderr: []u8,
     exit_code: u8,
 
-    fn deinit(self: *AotCommandResult, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *AotCommandResult, allocator: std.mem.Allocator) void {
         allocator.free(self.stdout);
         allocator.free(self.stderr);
         self.* = undefined;
@@ -610,7 +610,7 @@ const AotProcessTask = struct {
     result: ?AotCommandResult = null,
     failure: ?anyerror = null,
 
-    fn run(self: *@This()) void {
+    pub fn run(self: *@This()) void {
         const result = runAotShellCommand(self.runtime, self.command, self.cwd) catch |failure| {
             self.failure = failure;
             self.completion_order = self.runtime.process_completion_sequence.fetchAdd(1, .monotonic);
@@ -622,7 +622,7 @@ const AotProcessTask = struct {
         self.complete.store(true, .release);
     }
 
-    fn deinit(self: *@This(), allocator: std.mem.Allocator, join: bool) void {
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator, join: bool) void {
         if (join) if (self.thread) |thread| thread.join();
         if (self.result) |*result| result.deinit(allocator);
         allocator.free(self.command);
@@ -645,7 +645,7 @@ const AotFileTask = struct {
     completion_order: u64 = 0,
     failure: ?anyerror = null,
 
-    fn run(self: *@This()) void {
+    pub fn run(self: *@This()) void {
         const io = aotRuntimeIo(self.runtime);
         const result = switch (self.operation) {
             .copy => aotFileCopyMoveWithIo(self.runtime, io, self.source, self.destination, self.overwrite, false),
@@ -657,7 +657,7 @@ const AotFileTask = struct {
         self.complete.store(true, .release);
     }
 
-    fn deinit(self: *@This(), allocator: std.mem.Allocator, join: bool) void {
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator, join: bool) void {
         if (join) if (self.thread) |thread| thread.join();
         allocator.free(self.source);
         allocator.free(self.destination);
@@ -678,7 +678,7 @@ const AotClientHttpRequest = struct {
     body: []u8,
     has_body: bool,
 
-    fn init(allocator: std.mem.Allocator, method: []const u8, url: []const u8, body: []const u8, has_body: bool) !AotClientHttpRequest {
+    pub fn init(allocator: std.mem.Allocator, method: []const u8, url: []const u8, body: []const u8, has_body: bool) !AotClientHttpRequest {
         const owned_method = try allocator.dupe(u8, method);
         errdefer allocator.free(owned_method);
         const owned_url = try allocator.dupe(u8, url);
@@ -694,7 +694,7 @@ const AotClientHttpRequest = struct {
         };
     }
 
-    fn deinit(self: *AotClientHttpRequest) void {
+    pub fn deinit(self: *AotClientHttpRequest) void {
         self.allocator.free(self.method);
         self.allocator.free(self.url);
         for (self.headers.items) |header| {
@@ -706,7 +706,7 @@ const AotClientHttpRequest = struct {
         self.* = undefined;
     }
 
-    fn addHeader(self: *AotClientHttpRequest, name: []const u8, value: []const u8) !void {
+    pub fn addHeader(self: *AotClientHttpRequest, name: []const u8, value: []const u8) !void {
         const owned_name = try self.allocator.dupe(u8, name);
         errdefer self.allocator.free(owned_name);
         const owned_value = try self.allocator.dupe(u8, value);
@@ -721,7 +721,7 @@ pub const AotClientHttpResult = struct {
     content_length_zero: bool = false,
     failure: ?anyerror = null,
 
-    fn deinit(self: *AotClientHttpResult, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *AotClientHttpResult, allocator: std.mem.Allocator) void {
         allocator.free(self.body);
         self.* = undefined;
     }
@@ -739,7 +739,7 @@ const AotClientHttpTask = struct {
     target: ?*Value = null,
     onerror: ?*Value = null,
 
-    fn deinit(self: *AotClientHttpTask, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *AotClientHttpTask, allocator: std.mem.Allocator) void {
         self.result.deinit(allocator);
         self.* = undefined;
     }
@@ -759,7 +759,7 @@ const AotHttpRequest = struct {
     body: []u8,
     too_large: bool = false,
 
-    fn deinit(self: *AotHttpRequest, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *AotHttpRequest, allocator: std.mem.Allocator) void {
         allocator.free(self.method);
         allocator.free(self.target);
         allocator.free(self.content_type);
@@ -798,36 +798,36 @@ const AotCsvState = struct {
     delimiter_default: AotCsvDelimiterDefault = .comma,
     auto_convert_number: bool = true,
 
-    fn deinit(self: *AotCsvState, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *AotCsvState, allocator: std.mem.Allocator) void {
         if (self.custom_delimiter) |value| allocator.free(value);
         if (self.custom_eol) |value| allocator.free(value);
         self.* = undefined;
     }
 
-    fn delimiter(self: *const AotCsvState) []const u16 {
+    pub fn delimiter(self: *const AotCsvState) []const u16 {
         return self.custom_delimiter orelse switch (self.delimiter_default) {
             .comma => &aot_csv_comma,
             .tab => &aot_csv_tab,
         };
     }
 
-    fn eol(self: *const AotCsvState) []const u16 {
+    pub fn eol(self: *const AotCsvState) []const u16 {
         return self.custom_eol orelse &aot_csv_crlf;
     }
 
-    fn useDelimiter(self: *AotCsvState, allocator: std.mem.Allocator, value: AotCsvDelimiterDefault) void {
+    pub fn useDelimiter(self: *AotCsvState, allocator: std.mem.Allocator, value: AotCsvDelimiterDefault) void {
         if (self.custom_delimiter) |owned| allocator.free(owned);
         self.custom_delimiter = null;
         self.delimiter_default = value;
     }
 
-    fn setDelimiter(self: *AotCsvState, allocator: std.mem.Allocator, value: []const u16) !void {
+    pub fn setDelimiter(self: *AotCsvState, allocator: std.mem.Allocator, value: []const u16) !void {
         const owned = try allocator.dupe(u16, value);
         if (self.custom_delimiter) |old| allocator.free(old);
         self.custom_delimiter = owned;
     }
 
-    fn setEol(self: *AotCsvState, allocator: std.mem.Allocator, value: []const u16) !void {
+    pub fn setEol(self: *AotCsvState, allocator: std.mem.Allocator, value: []const u16) !void {
         const owned = try allocator.dupe(u16, value);
         if (self.custom_eol) |old| allocator.free(old);
         self.custom_eol = owned;
@@ -997,7 +997,7 @@ pub const Runtime = struct {
     dynamic_function_bridges: std.ArrayList(*AotFunctionBridge) = .empty,
     standard_property_cache: std.ArrayList(StandardPropertyCacheEntry) = .empty,
 
-    fn deinit(self: *Runtime) void {
+    pub fn deinit(self: *Runtime) void {
         self.dispatch_trace.deinit();
         self.global_trace.deinit();
         self.literal_trace.deinit();
@@ -1054,54 +1054,54 @@ pub const Runtime = struct {
         self.* = undefined;
     }
 
-    fn cachedStandardProperty(self: *Runtime, kind: u8, name: []const u8) ?Value {
+    pub fn cachedStandardProperty(self: *Runtime, kind: u8, name: []const u8) ?Value {
         for (self.standard_property_cache.items) |entry| {
             if (entry.kind == kind and std.mem.eql(u8, entry.name, name)) return entry.value;
         }
         return null;
     }
 
-    fn cacheStandardProperty(self: *Runtime, kind: u8, name: []const u8, value: Value) !void {
+    pub fn cacheStandardProperty(self: *Runtime, kind: u8, name: []const u8, value: Value) !void {
         if (self.cachedStandardProperty(kind, name) != null) return;
         const owned_name = try self.allocator.dupe(u8, name);
         errdefer self.allocator.free(owned_name);
         try self.standard_property_cache.append(self.allocator, .{ .kind = kind, .name = owned_name, .value = value });
     }
 
-    fn createString(self: *Runtime, units: []const u16) !Value {
+    pub fn createString(self: *Runtime, units: []const u16) !Value {
         try self.beforeAllocation();
         const owned = try self.allocator.dupe(u16, units);
         errdefer self.allocator.free(owned);
         return self.createObject(.{ .utf16_string = owned }, .utf16_string);
     }
 
-    fn createBytes(self: *Runtime, bytes: []const u8) !Value {
+    pub fn createBytes(self: *Runtime, bytes: []const u8) !Value {
         return self.createByteBuffer(bytes, .buffer);
     }
 
-    fn createUint8Array(self: *Runtime, bytes: []const u8) !Value {
+    pub fn createUint8Array(self: *Runtime, bytes: []const u8) !Value {
         return self.createByteBuffer(bytes, .uint8_array);
     }
 
-    fn createArrayBuffer(self: *Runtime, bytes: []const u8) !Value {
+    pub fn createArrayBuffer(self: *Runtime, bytes: []const u8) !Value {
         return self.createByteBuffer(bytes, .array_buffer);
     }
 
-    fn createByteStorage(self: *Runtime, bytes: []const u8) !*ByteStorage {
+    pub fn createByteStorage(self: *Runtime, bytes: []const u8) !*ByteStorage {
         const storage = try self.allocator.create(ByteStorage);
         errdefer self.allocator.destroy(storage);
         storage.* = .{ .allocator = self.allocator, .bytes = try self.allocator.dupe(u8, bytes) };
         return storage;
     }
 
-    fn createByteBuffer(self: *Runtime, bytes: []const u8, kind: ByteKind) !Value {
+    pub fn createByteBuffer(self: *Runtime, bytes: []const u8, kind: ByteKind) !Value {
         try self.beforeAllocation();
         const storage = try self.createByteStorage(bytes);
         errdefer storage.release();
         return self.createObject(.{ .byte_buffer = .{ .bytes = storage.bytes, .kind = kind, .storage = storage } }, .byte_buffer);
     }
 
-    fn createByteBufferView(self: *Runtime, buffer: ByteBuffer, start: usize, end: usize) !Value {
+    pub fn createByteBufferView(self: *Runtime, buffer: ByteBuffer, start: usize, end: usize) !Value {
         if (start > end or end > buffer.bytes.len) return error.InvalidByteBufferSlice;
         const storage = buffer.storage;
         const bytes = buffer.bytes[start..end];
@@ -1118,7 +1118,7 @@ pub const Runtime = struct {
     /// Return the complete backing allocation as an ArrayBuffer view.  Keep
     /// the storage shared so a Buffer/Uint8Array and its `.buffer` observe the
     /// same bytes; the caller's GC roots keep the source live while allocating.
-    fn createByteBufferBackingBuffer(self: *Runtime, buffer: ByteBuffer) !Value {
+    pub fn createByteBufferBackingBuffer(self: *Runtime, buffer: ByteBuffer) !Value {
         const storage = buffer.storage;
         if (storage.backing.tag != @intFromEnum(Tag.undefined)) return storage.backing;
         storage.retain();
@@ -1129,33 +1129,33 @@ pub const Runtime = struct {
         return result;
     }
 
-    fn setAotSourceDirectory(self: *Runtime, path: []const u8) !void {
+    pub fn setAotSourceDirectory(self: *Runtime, path: []const u8) !void {
         const owned = try self.allocator.dupe(u8, path);
         if (self.aot_source_directory) |previous| self.allocator.free(previous);
         self.aot_source_directory = owned;
     }
 
-    fn ownString(self: *Runtime, source: []u16) !Value {
+    pub fn ownString(self: *Runtime, source: []u16) !Value {
         errdefer self.allocator.free(source);
         try self.beforeAllocation();
         return self.createObject(.{ .utf16_string = source }, .utf16_string);
     }
 
-    fn createBigInt(self: *Runtime, source: []const u8) !Value {
+    pub fn createBigInt(self: *Runtime, source: []const u8) !Value {
         try self.beforeAllocation();
         var value = try BigInt.parseLiteral(self.allocator, source);
         errdefer value.deinit();
         return self.createObject(.{ .bigint = value }, .bigint);
     }
 
-    fn ownBigInt(self: *Runtime, source: BigInt) !Value {
+    pub fn ownBigInt(self: *Runtime, source: BigInt) !Value {
         var value = source;
         errdefer value.deinit();
         try self.beforeAllocation();
         return self.createObject(.{ .bigint = value }, .bigint);
     }
 
-    fn createArray(self: *Runtime, values: []const Value) !Value {
+    pub fn createArray(self: *Runtime, values: []const Value) !Value {
         try self.beforeAllocation();
         var items: std.ArrayList(Value) = .empty;
         errdefer items.deinit(self.allocator);
@@ -1163,7 +1163,7 @@ pub const Runtime = struct {
         return self.createObject(.{ .array = items }, .array);
     }
 
-    fn createDictionary(self: *Runtime, values: []const Value) !Value {
+    pub fn createDictionary(self: *Runtime, values: []const Value) !Value {
         var source_frame = RootFrame{};
         self.pushRoots(&source_frame, if (values.len == 0) null else @constCast(values.ptr), values.len);
         defer self.popRoots(&source_frame);
@@ -1182,7 +1182,7 @@ pub const Runtime = struct {
         return roots[0];
     }
 
-    fn createTomlTemporal(self: *Runtime, kind: toml_temporal.Kind, json_text: []const u8, toml_text: []const u8) !Value {
+    pub fn createTomlTemporal(self: *Runtime, kind: toml_temporal.Kind, json_text: []const u8, toml_text: []const u8) !Value {
         try self.beforeAllocation();
         const owned_json = try self.allocator.dupe(u8, json_text);
         errdefer self.allocator.free(owned_json);
@@ -1193,7 +1193,7 @@ pub const Runtime = struct {
         return result;
     }
 
-    fn createObjectLiteral(self: *Runtime, values: []const Value) !Value {
+    pub fn createObjectLiteral(self: *Runtime, values: []const Value) !Value {
         var source_frame = RootFrame{};
         self.pushRoots(&source_frame, if (values.len == 0) null else @constCast(values.ptr), values.len);
         defer self.popRoots(&source_frame);
@@ -1215,7 +1215,7 @@ pub const Runtime = struct {
         return roots[0];
     }
 
-    fn createIterator(self: *Runtime, values: []const Value, is_range: bool, direction: u8) !Value {
+    pub fn createIterator(self: *Runtime, values: []const Value, is_range: bool, direction: u8) !Value {
         if (values.len == 0) return error.InvalidIterator;
         try self.beforeAllocation();
         const iterator: Iterator = if (is_range) blk: {
@@ -1241,19 +1241,19 @@ pub const Runtime = struct {
         return self.createObject(.{ .iterator = iterator }, .iterator);
     }
 
-    fn createFunction(self: *Runtime, callback: FunctionCallback, arity: usize, captures: []const Value) !Value {
+    pub fn createFunction(self: *Runtime, callback: FunctionCallback, arity: usize, captures: []const Value) !Value {
         return self.createNamedFunction(callback, arity, &.{}, captures);
     }
 
-    fn createNamedFunction(self: *Runtime, callback: FunctionCallback, arity: usize, name: []const u8, captures: []const Value) !Value {
+    pub fn createNamedFunction(self: *Runtime, callback: FunctionCallback, arity: usize, name: []const u8, captures: []const Value) !Value {
         return self.createFunctionObject(callback, arity, name, captures, true, .none);
     }
 
-    fn createMethodFunction(self: *Runtime, callback: FunctionCallback, arity: usize, name: []const u8, captures: []const Value) !Value {
+    pub fn createMethodFunction(self: *Runtime, callback: FunctionCallback, arity: usize, name: []const u8, captures: []const Value) !Value {
         return self.createFunctionObject(callback, arity, name, captures, false, .none);
     }
 
-    fn createFunctionObject(
+    pub fn createFunctionObject(
         self: *Runtime,
         callback: FunctionCallback,
         arity: usize,
@@ -1281,11 +1281,11 @@ pub const Runtime = struct {
         return result;
     }
 
-    fn createPromiseSpecialFunction(self: *Runtime, name: []const u8, promise_kind: PromiseFunctionKind) !Value {
+    pub fn createPromiseSpecialFunction(self: *Runtime, name: []const u8, promise_kind: PromiseFunctionKind) !Value {
         return self.createFunctionObject(promiseSentinel, 1, name, &.{}, false, promise_kind);
     }
 
-    fn createBindingCell(self: *Runtime, initial: Value) !Value {
+    pub fn createBindingCell(self: *Runtime, initial: Value) !Value {
         var rooted = initial;
         var frame: RootFrame = .{};
         self.pushRoots(&frame, @ptrCast(&rooted), 1);
@@ -1294,7 +1294,7 @@ pub const Runtime = struct {
         return self.createObject(.{ .binding_cell = rooted }, .binding_cell);
     }
 
-    fn createObject(self: *Runtime, payload: Payload, tag: Tag) !Value {
+    pub fn createObject(self: *Runtime, payload: Payload, tag: Tag) !Value {
         const object = try self.allocator.create(Object);
         errdefer {
             object.array_presence.deinit(self.allocator);
@@ -1313,24 +1313,24 @@ pub const Runtime = struct {
         return .{ .tag = @intFromEnum(tag), .payload = @intFromPtr(object) };
     }
 
-    fn beforeAllocation(self: *Runtime) !void {
+    pub fn beforeAllocation(self: *Runtime) !void {
         if (self.object_count < self.next_collection) return;
         _ = self.collect();
         self.next_collection = @max(@as(usize, 64), self.object_count * 2);
     }
 
-    fn pushRoots(self: *Runtime, frame: *RootFrame, values: ?[*]Value, len: usize) void {
+    pub fn pushRoots(self: *Runtime, frame: *RootFrame, values: ?[*]Value, len: usize) void {
         frame.* = .{ .previous = self.roots, .values = values, .len = len };
         self.roots = frame;
     }
 
-    fn popRoots(self: *Runtime, frame: *RootFrame) void {
+    pub fn popRoots(self: *Runtime, frame: *RootFrame) void {
         if (self.roots != frame) return;
         self.roots = frame.previous;
         frame.* = .{};
     }
 
-    fn collect(self: *Runtime) usize {
+    pub fn collect(self: *Runtime) usize {
         var frame = self.roots;
         while (frame) |current| : (frame = current.previous) {
             if (current.values) |values| for (values[0..current.len]) |value| self.markValue(value);
@@ -1449,7 +1449,7 @@ pub const Runtime = struct {
         return reclaimed;
     }
 
-    fn markValue(self: *Runtime, value: Value) void {
+    pub fn markValue(self: *Runtime, value: Value) void {
         const object = value.object() orelse return;
         if (object.marked) return;
         object.marked = true;
@@ -1457,27 +1457,27 @@ pub const Runtime = struct {
         self.grey = object;
     }
 
-    fn setException(self: *Runtime, value: Value) void {
+    pub fn setException(self: *Runtime, value: Value) void {
         self.pending_exception = value;
         self.has_pending_exception = true;
         self.failure_epoch +%= 1;
     }
 
-    fn setFailure(self: *Runtime, failure: anyerror) void {
+    pub fn setFailure(self: *Runtime, failure: anyerror) void {
         self.setFailureText(error_message.forFailure(failure));
     }
 
-    fn setFailureText(self: *Runtime, text: []const u8) void {
+    pub fn setFailureText(self: *Runtime, text: []const u8) void {
         const units = std.unicode.utf8ToUtf16LeAlloc(self.allocator, text) catch |allocation_failure| runtimeFailure(allocation_failure);
         defer self.allocator.free(units);
         self.setException(self.createString(units) catch |allocation_failure| runtimeFailure(allocation_failure));
     }
 
-    fn setFailureUnits(self: *Runtime, units: []const u16) void {
+    pub fn setFailureUnits(self: *Runtime, units: []const u16) void {
         self.setException(self.createString(units) catch |allocation_failure| runtimeFailure(allocation_failure));
     }
 
-    fn setErrorMessage(self: *Runtime, value: Value) void {
+    pub fn setErrorMessage(self: *Runtime, value: Value) void {
         // JavaScript's Error(undefined).message is the empty string.  The
         // other cases use the same String(value) conversion as ordinary AOT
         // text operations, including arrays and dictionaries.
@@ -1490,7 +1490,7 @@ pub const Runtime = struct {
         self.setFailureUnits(units);
     }
 
-    fn setIndexAssignmentFailure(self: *Runtime, container: Value, key: Value) void {
+    pub fn setIndexAssignmentFailure(self: *Runtime, container: Value, key: Value) void {
         const key_units = valueUtf16Alloc(self, key) catch |failure| runtimeFailure(failure);
         defer self.allocator.free(key_units);
         const key_utf8 = std.unicode.utf16LeToUtf8Alloc(self.allocator, key_units) catch |failure| runtimeFailure(failure);
@@ -1501,12 +1501,12 @@ pub const Runtime = struct {
         self.setFailureText(message);
     }
 
-    fn systemContext(self: *Runtime) !Value {
+    pub fn systemContext(self: *Runtime) !Value {
         if (self.system_context.tag == @intFromEnum(Tag.undefined)) self.system_context = try self.createDictionary(&.{});
         return self.system_context;
     }
 
-    fn takeException(self: *Runtime) Value {
+    pub fn takeException(self: *Runtime) Value {
         if (!self.has_pending_exception) return .{};
         const result = self.pending_exception;
         self.pending_exception = .{};
@@ -1514,7 +1514,7 @@ pub const Runtime = struct {
         return result;
     }
 
-    fn destroyObject(self: *Runtime, object: *Object) void {
+    pub fn destroyObject(self: *Runtime, object: *Object) void {
         if (object.toml_temporal) |*temporal| temporal.deinit(self.allocator);
         switch (object.payload) {
             .utf16_string => |units| self.allocator.free(units),
@@ -1552,7 +1552,7 @@ pub const Runtime = struct {
         self.allocator.destroy(object);
     }
 
-    fn indexGet(self: *Runtime, container: Value, key: Value) Value {
+    pub fn indexGet(self: *Runtime, container: Value, key: Value) Value {
         if (container.tag == @intFromEnum(Tag.utf16_string)) {
             const index = valueIndex(key) orelse return .{};
             return self.stringAt(container, index);
@@ -1637,7 +1637,7 @@ pub const Runtime = struct {
         };
     }
 
-    fn destructureGet(_: *Runtime, source: Value, index: usize) Value {
+    pub fn destructureGet(_: *Runtime, source: Value, index: usize) Value {
         if (source.tag == @intFromEnum(Tag.array)) {
             const items = source.object().?.payload.array.items;
             return if (index < items.len) items[index] else .{};
@@ -1645,7 +1645,7 @@ pub const Runtime = struct {
         return if (index == 0) source else .{};
     }
 
-    fn indexSet(self: *Runtime, container: Value, key: Value, value: Value) !void {
+    pub fn indexSet(self: *Runtime, container: Value, key: Value, value: Value) !void {
         const object = container.object() orelse return switch (@as(Tag, @enumFromInt(container.tag))) {
             .undefined, .null_value => error.InvalidContainer,
             else => {},
@@ -1705,7 +1705,7 @@ pub const Runtime = struct {
         }
     }
 
-    fn setAotOwnProperty(self: *Runtime, container: Value, object: *Object, key: Value, value: Value) !void {
+    pub fn setAotOwnProperty(self: *Runtime, container: Value, object: *Object, key: Value, value: Value) !void {
         var rooted = [_]Value{ container, key, value, .{} };
         var frame = RootFrame{};
         self.pushRoots(&frame, &rooted, rooted.len);
@@ -1714,7 +1714,7 @@ pub const Runtime = struct {
         try self.setDictionary(&object.array_properties, rooted[3], rooted[2]);
     }
 
-    fn setAotFunctionProperty(self: *Runtime, container: Value, object: *Object, key: Value, value: Value) !void {
+    pub fn setAotFunctionProperty(self: *Runtime, container: Value, object: *Object, key: Value, value: Value) !void {
         var rooted = [_]Value{ container, key, value, .{} };
         var frame = RootFrame{};
         self.pushRoots(&frame, &rooted, rooted.len);
@@ -1727,7 +1727,7 @@ pub const Runtime = struct {
         try self.setDictionary(&object.array_properties, rooted[3], rooted[2]);
     }
 
-    fn aotArrayPropertyGet(self: *Runtime, object: *const Object, key: Value) Value {
+    pub fn aotArrayPropertyGet(self: *Runtime, object: *const Object, key: Value) Value {
         var rooted = [_]Value{
             .{ .tag = @intFromEnum(Tag.array), .payload = @intFromPtr(object) },
             key,
@@ -1740,12 +1740,12 @@ pub const Runtime = struct {
         return self.aotArrayPropertyGetUnits(rooted[0].object().?, key_units);
     }
 
-    fn aotArrayIsPresent(_: *Runtime, object: *const Object, index: usize) bool {
+    pub fn aotArrayIsPresent(_: *Runtime, object: *const Object, index: usize) bool {
         if (object.payload.array.items.len <= index) return false;
         return if (index < object.array_presence.items.len) object.array_presence.items[index] else true;
     }
 
-    fn normalizeAotArrayPresence(self: *Runtime, object: *Object) !void {
+    pub fn normalizeAotArrayPresence(self: *Runtime, object: *Object) !void {
         if (object.array_presence.items.len >= object.payload.array.items.len) return;
         const previous_len = object.array_presence.items.len;
         try object.array_presence.resize(self.allocator, object.payload.array.items.len);
@@ -1754,7 +1754,7 @@ pub const Runtime = struct {
         @memset(object.array_presence.items[previous_len..], true);
     }
 
-    fn aotArraySetIndex(self: *Runtime, object: *Object, index: usize, value: Value) !void {
+    pub fn aotArraySetIndex(self: *Runtime, object: *Object, index: usize, value: Value) !void {
         try self.normalizeAotArrayPresence(object);
         if (index >= object.payload.array.items.len) {
             const previous_len = object.payload.array.items.len;
@@ -1767,7 +1767,7 @@ pub const Runtime = struct {
         object.array_presence.items[index] = true;
     }
 
-    fn aotArrayDeleteIndex(self: *Runtime, object: *Object, index: usize) !bool {
+    pub fn aotArrayDeleteIndex(self: *Runtime, object: *Object, index: usize) !bool {
         if (index >= object.payload.array.items.len) return false;
         try self.normalizeAotArrayPresence(object);
         object.payload.array.items[index] = .{};
@@ -1775,14 +1775,14 @@ pub const Runtime = struct {
         return true;
     }
 
-    fn aotArrayAppend(self: *Runtime, object: *Object, value: Value) !void {
+    pub fn aotArrayAppend(self: *Runtime, object: *Object, value: Value) !void {
         try self.normalizeAotArrayPresence(object);
         try object.payload.array.append(self.allocator, value);
         errdefer _ = object.payload.array.pop();
         try object.array_presence.append(self.allocator, true);
     }
 
-    fn aotArrayPropertySet(self: *Runtime, object: *Object, key: Value, value: Value) !void {
+    pub fn aotArrayPropertySet(self: *Runtime, object: *Object, key: Value, value: Value) !void {
         var rooted = [_]Value{
             .{ .tag = @intFromEnum(Tag.array), .payload = @intFromPtr(object) },
             key,
@@ -1808,7 +1808,7 @@ pub const Runtime = struct {
         try self.setDictionary(&rooted[0].object().?.array_properties, normalized, rooted[2]);
     }
 
-    fn aotArrayPropertyGetUnits(self: *Runtime, object: *const Object, key_units: []const u16) Value {
+    pub fn aotArrayPropertyGetUnits(self: *Runtime, object: *const Object, key_units: []const u16) Value {
         if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return numberValue(@floatFromInt(object.payload.array.items.len));
         if (self.aotArrayOwnPropertyGetUnits(object, key_units)) |value| return value;
         const source = Value{ .tag = @intFromEnum(Tag.array), .payload = @intFromPtr(object) };
@@ -1818,7 +1818,7 @@ pub const Runtime = struct {
         }) orelse .{};
     }
 
-    fn aotArrayOwnPropertyGetUnits(self: *Runtime, object: *const Object, key_units: []const u16) ?Value {
+    pub fn aotArrayOwnPropertyGetUnits(self: *Runtime, object: *const Object, key_units: []const u16) ?Value {
         if (self.aotCanonicalArrayIndexUnits(key_units)) |index| return if (index < object.payload.array.items.len) object.payload.array.items[index] else null;
         return self.aotObjectOwnPropertyGetUnits(object, key_units);
     }
@@ -1826,14 +1826,14 @@ pub const Runtime = struct {
     /// Resolve an own named property shared by all extensible AOT objects.
     /// Array indices remain handled by `aotArrayOwnPropertyGetUnits` before
     /// reaching this helper.
-    fn aotObjectOwnPropertyGetUnits(self: *Runtime, object: *const Object, key_units: []const u16) ?Value {
+    pub fn aotObjectOwnPropertyGetUnits(self: *Runtime, object: *const Object, key_units: []const u16) ?Value {
         for (object.array_properties.items) |property| {
             if (self.aotPropertyKeyMatchesUnits(property.key, key_units)) return property.value;
         }
         return null;
     }
 
-    fn aotPropertyKeyMatchesUnits(_: *Runtime, key: Value, units: []const u16) bool {
+    pub fn aotPropertyKeyMatchesUnits(_: *Runtime, key: Value, units: []const u16) bool {
         return switch (@as(Tag, @enumFromInt(key.tag))) {
             .static_utf8_string => staticUtf8EqualsUtf16(staticUtf8(key), units),
             .utf16_string => std.mem.eql(u16, key.object().?.payload.utf16_string, units),
@@ -1841,7 +1841,7 @@ pub const Runtime = struct {
         };
     }
 
-    fn aotCanonicalArrayIndexUnits(_: *Runtime, units: []const u16) ?usize {
+    pub fn aotCanonicalArrayIndexUnits(_: *Runtime, units: []const u16) ?usize {
         if (units.len == 0 or (units.len > 1 and units[0] == '0')) return null;
         var result: usize = 0;
         for (units) |unit| {
@@ -1852,7 +1852,7 @@ pub const Runtime = struct {
         return if (result <= 4_294_967_294) result else null;
     }
 
-    fn iteratorHasNext(_: *Runtime, value: Value) bool {
+    pub fn iteratorHasNext(_: *Runtime, value: Value) bool {
         const object = value.object() orelse return false;
         if (object.payload != .iterator) return false;
         const iterator = object.payload.iterator;
@@ -1862,7 +1862,7 @@ pub const Runtime = struct {
         };
     }
 
-    fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_target: ?*Value, key_target: ?*Value, range_target: ?*Value) Value {
+    pub fn iteratorNext(self: *Runtime, value: Value, repeat_target: ?*Value, value_target: ?*Value, key_target: ?*Value, range_target: ?*Value) Value {
         const object = value.object() orelse return .{};
         if (object.payload != .iterator) return .{};
         const iterator = &object.payload.iterator;
@@ -1911,7 +1911,7 @@ pub const Runtime = struct {
         };
     }
 
-    fn stringAt(self: *Runtime, source: Value, index: usize) Value {
+    pub fn stringAt(self: *Runtime, source: Value, index: usize) Value {
         const object = source.object() orelse return .{};
         if (object.payload != .utf16_string) return .{};
         const units = object.payload.utf16_string;
@@ -1919,7 +1919,7 @@ pub const Runtime = struct {
         return self.createString(units[index .. index + 1]) catch .{};
     }
 
-    fn setDictionary(self: *Runtime, entries: *std.ArrayList(DictionaryEntry), key: Value, value: Value) !void {
+    pub fn setDictionary(self: *Runtime, entries: *std.ArrayList(DictionaryEntry), key: Value, value: Value) !void {
         for (entries.items) |*entry| if (sameKey(entry.key, key)) {
             entry.value = value;
             return;
@@ -1927,7 +1927,7 @@ pub const Runtime = struct {
         try entries.append(self.allocator, .{ .key = key, .value = value });
     }
 
-    fn propertyKey(self: *Runtime, key: Value) !Value {
+    pub fn propertyKey(self: *Runtime, key: Value) !Value {
         return switch (@as(Tag, @enumFromInt(key.tag))) {
             .static_utf8_string, .utf16_string => key,
             else => blk: {
@@ -1942,7 +1942,7 @@ pub const Runtime = struct {
 const DynamicHostContext = struct {
     owner: *Runtime,
 
-    fn host(self: *DynamicHostContext) dynamic_interpreter.Host {
+    pub fn host(self: *DynamicHostContext) dynamic_interpreter.Host {
         return .{
             .context = self,
             .writeFn = write,
@@ -1953,28 +1953,28 @@ const DynamicHostContext = struct {
         };
     }
 
-    fn write(context: *anyopaque, bytes: []const u8) !void {
+    pub fn write(context: *anyopaque, bytes: []const u8) !void {
         const self: *DynamicHostContext = @ptrCast(@alignCast(context));
         _ = self;
         writeBytes(bytes, false);
     }
 
-    fn sleepMilliseconds(context: *anyopaque, milliseconds: u64) !void {
+    pub fn sleepMilliseconds(context: *anyopaque, milliseconds: u64) !void {
         const self: *DynamicHostContext = @ptrCast(@alignCast(context));
         self.owner.elapsed_milliseconds = std.math.add(u64, self.owner.elapsed_milliseconds, milliseconds) catch return error.TimerOverflow;
     }
 
-    fn nowMilliseconds(context: *anyopaque) !i64 {
+    pub fn nowMilliseconds(context: *anyopaque) !i64 {
         const self: *DynamicHostContext = @ptrCast(@alignCast(context));
         return currentTimeMilliseconds(self.owner);
     }
 
-    fn monotonicMilliseconds(context: *anyopaque) !f64 {
+    pub fn monotonicMilliseconds(context: *anyopaque) !f64 {
         const self: *DynamicHostContext = @ptrCast(@alignCast(context));
         return monotonicTimeMilliseconds(self.owner);
     }
 
-    fn random(context: *anyopaque) !f64 {
+    pub fn random(context: *anyopaque) !f64 {
         const self: *DynamicHostContext = @ptrCast(@alignCast(context));
         return nextRandom(self.owner);
     }
@@ -1989,7 +1989,7 @@ const DynamicInterpreterState = struct {
     host_context: DynamicHostContext,
     reset_display_log: bool = false,
 
-    fn init(allocator: std.mem.Allocator, owner: *Runtime) !*@This() {
+    pub fn init(allocator: std.mem.Allocator, owner: *Runtime) !*@This() {
         const state = try allocator.create(@This());
         errdefer allocator.destroy(state);
         state.* = undefined;
@@ -2029,7 +2029,7 @@ const DynamicInterpreterState = struct {
         return state;
     }
 
-    fn deinit(self: *@This()) void {
+    pub fn deinit(self: *@This()) void {
         self.interpreter.deactivateExternalRuntime();
         self.interpreter.deinit();
         self.value_runtime.unregisterRootProvider(self);
@@ -2039,7 +2039,7 @@ const DynamicInterpreterState = struct {
     }
 };
 
-fn traceDynamicBridges(context: *anyopaque, runtime: *dynamic_value.Runtime) !void {
+pub fn traceDynamicBridges(context: *anyopaque, runtime: *dynamic_value.Runtime) !void {
     const state: *DynamicInterpreterState = @ptrCast(@alignCast(context));
     for (state.owner.dynamic_promise_bridges.items) |bridge| {
         if (bridge.state == state) try runtime.traceExternal(.{ .promise = bridge.promise });
@@ -2051,7 +2051,7 @@ pub fn dynamicGlobal(runtime: *Runtime, name: []const u8) ?*DynamicGlobal {
     return null;
 }
 
-fn upsertDynamicGlobal(runtime: *Runtime, name: []const u8, value: Value) !void {
+pub fn upsertDynamicGlobal(runtime: *Runtime, name: []const u8, value: Value) !void {
     if (dynamicGlobal(runtime, name)) |entry| {
         entry.value = value;
         if (entry.slot) |slot| slot.* = value;
@@ -2062,7 +2062,7 @@ fn upsertDynamicGlobal(runtime: *Runtime, name: []const u8, value: Value) !void 
     try runtime.dynamic_globals.append(runtime.allocator, .{ .name = owned_name, .value = value });
 }
 
-fn removeAotFunctionBridge(owner: *Runtime, bridge: *AotFunctionBridge) void {
+pub fn removeAotFunctionBridge(owner: *Runtime, bridge: *AotFunctionBridge) void {
     for (owner.dynamic_function_bridges.items, 0..) |candidate, index| {
         if (candidate != bridge) continue;
         _ = owner.dynamic_function_bridges.swapRemove(index);
@@ -2071,13 +2071,13 @@ fn removeAotFunctionBridge(owner: *Runtime, bridge: *AotFunctionBridge) void {
     }
 }
 
-fn releaseAotFunctionBridge(context: *anyopaque, handle: *anyopaque) void {
+pub fn releaseAotFunctionBridge(context: *anyopaque, handle: *anyopaque) void {
     const owner: *Runtime = @ptrCast(@alignCast(context));
     const bridge: *AotFunctionBridge = @ptrCast(@alignCast(handle));
     removeAotFunctionBridge(owner, bridge);
 }
 
-fn callAotFunctionBridge(
+pub fn callAotFunctionBridge(
     context: *anyopaque,
     handle: *anyopaque,
     _: *dynamic_value.Runtime,
@@ -2096,7 +2096,7 @@ fn callAotFunctionBridge(
     return aotToDynamicValue(bridge.state, result);
 }
 
-fn aotFunctionToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror!dynamic_value.Value {
+pub fn aotFunctionToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror!dynamic_value.Value {
     const object = value.object() orelse return error.DynamicValueUnsupported;
     if (object.payload != .function) return error.DynamicValueUnsupported;
     const function = object.payload.function;
@@ -2123,7 +2123,7 @@ fn aotFunctionToDynamicValue(state: *DynamicInterpreterState, value: Value) anye
     );
 }
 
-fn dynamicPromiseToAotValue(state: *DynamicInterpreterState, promise: *dynamic_value.Promise) !Value {
+pub fn dynamicPromiseToAotValue(state: *DynamicInterpreterState, promise: *dynamic_value.Promise) !Value {
     for (state.owner.dynamic_promise_bridges.items) |bridge| {
         if (bridge.state == state and bridge.promise == promise) return bridge.aot_promise;
     }
@@ -2140,7 +2140,7 @@ fn dynamicPromiseToAotValue(state: *DynamicInterpreterState, promise: *dynamic_v
     return aot_promise;
 }
 
-fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror!dynamic_value.Value {
+pub fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror!dynamic_value.Value {
     const owner = state.owner;
     switch (@as(Tag, @enumFromInt(value.tag))) {
         .undefined => return .undefined,
@@ -2204,7 +2204,7 @@ fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror!dyn
     }
 }
 
-fn dynamicToAotValue(state: *DynamicInterpreterState, value: dynamic_value.Value) anyerror!Value {
+pub fn dynamicToAotValue(state: *DynamicInterpreterState, value: dynamic_value.Value) anyerror!Value {
     const owner = state.owner;
     return switch (value) {
         .undefined => .{},
@@ -2269,7 +2269,7 @@ fn dynamicToAotValue(state: *DynamicInterpreterState, value: dynamic_value.Value
     };
 }
 
-fn prepareDynamic(context: *anyopaque, interpreter: *dynamic_interpreter.Interpreter) anyerror!void {
+pub fn prepareDynamic(context: *anyopaque, interpreter: *dynamic_interpreter.Interpreter) anyerror!void {
     const state: *DynamicInterpreterState = @ptrCast(@alignCast(context));
     const owner = state.owner;
     for (owner.dynamic_globals.items) |*entry| {
@@ -2294,7 +2294,7 @@ fn prepareDynamic(context: *anyopaque, interpreter: *dynamic_interpreter.Interpr
     }
 }
 
-fn syncDynamicGlobals(state: *DynamicInterpreterState) anyerror!void {
+pub fn syncDynamicGlobals(state: *DynamicInterpreterState) anyerror!void {
     var iterator = state.interpreter.globals.iterator();
     while (iterator.next()) |entry| {
         const value = dynamicToAotValue(state, entry.value_ptr.*) catch |failure| switch (failure) {
@@ -2305,7 +2305,7 @@ fn syncDynamicGlobals(state: *DynamicInterpreterState) anyerror!void {
     }
 }
 
-fn dynamicInterpreterState(runtime: *Runtime) !*DynamicInterpreterState {
+pub fn dynamicInterpreterState(runtime: *Runtime) !*DynamicInterpreterState {
     return if (runtime.dynamic_state) |existing| existing else blk: {
         const created = try DynamicInterpreterState.init(runtime.allocator, runtime);
         runtime.dynamic_state = created;
@@ -2366,7 +2366,7 @@ pub fn dynamicBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments
     return returned;
 }
 
-fn concatAotValues(runtime: *Runtime, left: Value, right: Value) !Value {
+pub fn concatAotValues(runtime: *Runtime, left: Value, right: Value) !Value {
     const left_units = if (left.tag == @intFromEnum(Tag.undefined)) &.{} else try valueUtf16Alloc(runtime, left);
     defer if (left.tag != @intFromEnum(Tag.undefined)) runtime.allocator.free(left_units);
     const right_units = if (right.tag == @intFromEnum(Tag.undefined)) &.{} else try valueUtf16Alloc(runtime, right);
@@ -2389,8 +2389,8 @@ const AotPosixIfAddrs = if (builtin.os.tag == .windows) opaque {} else extern st
 };
 
 const AotPosixInterfaces = if (builtin.os.tag == .windows) struct {} else struct {
-    extern "c" fn getifaddrs(result: *?*AotPosixIfAddrs) c_int;
-    extern "c" fn freeifaddrs(result: ?*AotPosixIfAddrs) void;
+    pub extern "c" fn getifaddrs(result: *?*AotPosixIfAddrs) c_int;
+    pub extern "c" fn freeifaddrs(result: ?*AotPosixIfAddrs) void;
 };
 
 const AotWindowsSocketAddress = extern struct {
@@ -2412,7 +2412,7 @@ const AotWindowsAdapterAddresses = extern struct {
 };
 
 const AotWindowsInterfaces = if (builtin.os.tag == .windows) struct {
-    extern "iphlpapi" fn GetAdaptersAddresses(
+    pub extern "iphlpapi" fn GetAdaptersAddresses(
         family: u32,
         flags: u32,
         reserved: ?*anyopaque,
@@ -2421,14 +2421,14 @@ const AotWindowsInterfaces = if (builtin.os.tag == .windows) struct {
     ) callconv(.winapi) u32;
 } else struct {};
 
-fn valueIndex(value: Value) ?usize {
+pub fn valueIndex(value: Value) ?usize {
     if (value.tag != @intFromEnum(Tag.number)) return null;
     const number: f64 = @bitCast(value.payload);
     if (!std.math.isFinite(number) or number < 0 or @trunc(number) != number or number > @as(f64, @floatFromInt(std.math.maxInt(usize)))) return null;
     return @intFromFloat(number);
 }
 
-fn aotByteBufferAllowsStandardPrototype(value: Value) bool {
+pub fn aotByteBufferAllowsStandardPrototype(value: Value) bool {
     const object = value.object() orelse return true;
     if (object.payload != .byte_buffer) return true;
     return switch (@as(Tag, @enumFromInt(object.prototype.tag))) {
@@ -2438,7 +2438,7 @@ fn aotByteBufferAllowsStandardPrototype(value: Value) bool {
     };
 }
 
-fn aotByteBufferScalarProperty(buffer: ByteBuffer, key: Value) ?Value {
+pub fn aotByteBufferScalarProperty(buffer: ByteBuffer, key: Value) ?Value {
     if (sameKey(key, staticStringValue("byteLength"))) return numberValue(@floatFromInt(buffer.bytes.len));
     if (sameKey(key, staticStringValue("byteOffset"))) {
         if (buffer.kind == .array_buffer) return null;
@@ -2457,7 +2457,7 @@ fn aotByteBufferScalarProperty(buffer: ByteBuffer, key: Value) ?Value {
     return null;
 }
 
-fn aotByteBufferReadOnlyProperty(kind: ByteKind, units: []const u16) bool {
+pub fn aotByteBufferReadOnlyProperty(kind: ByteKind, units: []const u16) bool {
     return (kind != .array_buffer and std.mem.eql(u16, units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) or
         std.mem.eql(u16, units, &.{ 'b', 'y', 't', 'e', 'L', 'e', 'n', 'g', 't', 'h' }) or
         std.mem.eql(u16, units, &.{ 'b', 'y', 't', 'e', 'O', 'f', 'f', 's', 'e', 't' }) or
@@ -2494,12 +2494,12 @@ pub fn valueToNumberRuntime(runtime: *Runtime, value: Value) !f64 {
 
 /// `Number(i['末尾'])` 相当。暗黙のBigInt数値変換は他の演算で拒否し、
 /// 明示的な範囲終端の変換だけBigInt.toF64を許可する。
-fn explicitRangeNumber(runtime: *Runtime, value: Value) !f64 {
+pub fn explicitRangeNumber(runtime: *Runtime, value: Value) !f64 {
     if (value.tag == @intFromEnum(Tag.bigint)) return value.object().?.payload.bigint.toF64();
     return valueToNumberRuntime(runtime, value);
 }
 
-fn valueToParseFloatRuntime(runtime: *Runtime, value: Value) !f64 {
+pub fn valueToParseFloatRuntime(runtime: *Runtime, value: Value) !f64 {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
         .number => @bitCast(value.payload),
         .static_utf8_string, .utf16_string => blk: {
@@ -2514,7 +2514,7 @@ fn valueToParseFloatRuntime(runtime: *Runtime, value: Value) !f64 {
     };
 }
 
-fn parseStringNumber(runtime: *Runtime, value: Value) !f64 {
+pub fn parseStringNumber(runtime: *Runtime, value: Value) !f64 {
     const units = try valueUtf16Alloc(runtime, value);
     defer runtime.allocator.free(units);
     const trimmed = string_mod.trimWhitespace(units);
@@ -2543,7 +2543,7 @@ fn parseStringNumber(runtime: *Runtime, value: Value) !f64 {
     return std.fmt.parseFloat(f64, ascii) catch std.math.nan(f64);
 }
 
-fn validDecimalNumber(text: []const u8) bool {
+pub fn validDecimalNumber(text: []const u8) bool {
     var index: usize = 0;
     if (index < text.len and (text[index] == '+' or text[index] == '-')) index += 1;
     var digits: usize = 0;
@@ -2580,16 +2580,16 @@ pub fn incrementValue(runtime: *Runtime, old: Value, amount: Value) Value {
     return numberValue(old_number + incrementNumber(runtime, amount));
 }
 
-fn isString(value: Value) bool {
+pub fn isString(value: Value) bool {
     return value.tag == @intFromEnum(Tag.static_utf8_string) or value.tag == @intFromEnum(Tag.utf16_string);
 }
 
-fn isObject(value: Value) bool {
+pub fn isObject(value: Value) bool {
     return value.tag == @intFromEnum(Tag.byte_buffer) or value.tag == @intFromEnum(Tag.array) or value.tag == @intFromEnum(Tag.dictionary) or
         value.tag == @intFromEnum(Tag.iterator) or value.tag == @intFromEnum(Tag.function) or value.tag == @intFromEnum(Tag.promise);
 }
 
-fn stringUtf8Alloc(runtime: *Runtime, value: Value) ![]u8 {
+pub fn stringUtf8Alloc(runtime: *Runtime, value: Value) ![]u8 {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
         .static_utf8_string => runtime.allocator.dupe(u8, staticUtf8(value)),
         .utf16_string => (string_mod.String{
@@ -2602,7 +2602,7 @@ fn stringUtf8Alloc(runtime: *Runtime, value: Value) ![]u8 {
 
 const RegexpCallResult = struct { value: Value, captures: ?Value = null };
 
-fn regexpCommandName(command: aot_builtin.Command) ?[]const u8 {
+pub fn regexpCommandName(command: aot_builtin.Command) ?[]const u8 {
     return switch (command) {
         .regexp_match => "正規表現マッチ",
         .regexp_extract => "正規表現抽出",
@@ -2612,7 +2612,7 @@ fn regexpCommandName(command: aot_builtin.Command) ?[]const u8 {
     };
 }
 
-fn setRegexpCompileFailureMessage(runtime: *Runtime, specification: []const u16, default_global: bool, failure: anyerror) !void {
+pub fn setRegexpCompileFailureMessage(runtime: *Runtime, specification: []const u16, default_global: bool, failure: anyerror) !void {
     const message = try regexp.compileFailureMessageAlloc(runtime.allocator, specification, default_global, failure) orelse return;
     defer runtime.allocator.free(message);
     runtime.setFailureText(message);
@@ -2756,7 +2756,7 @@ pub fn jsonEncodeBuiltin(runtime: *Runtime, value: Value, pretty: bool) !Value {
     return runtime.ownString(try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, output.written()));
 }
 
-fn jsonWriteValue(
+pub fn jsonWriteValue(
     runtime: *Runtime,
     writer: *std.Io.Writer,
     value: Value,
@@ -2876,7 +2876,7 @@ fn jsonWriteValue(
     }
 }
 
-fn jsonWriteByteBuffer(writer: *std.Io.Writer, buffer: ByteBuffer, pretty: bool, depth: usize) !void {
+pub fn jsonWriteByteBuffer(writer: *std.Io.Writer, buffer: ByteBuffer, pretty: bool, depth: usize) !void {
     if (buffer.kind == .array_buffer) return writer.writeAll("{}");
     try writer.writeByte('{');
     if (buffer.kind == .uint8_array) {
@@ -2926,12 +2926,12 @@ fn jsonWriteByteBuffer(writer: *std.Io.Writer, buffer: ByteBuffer, pretty: bool,
     try writer.writeByte('}');
 }
 
-fn jsonActiveIndex(objects: []JsonAotActive, object: *Object) ?usize {
+pub fn jsonActiveIndex(objects: []JsonAotActive, object: *Object) ?usize {
     for (objects, 0..) |active, index| if (active.object == object) return index;
     return null;
 }
 
-fn jsonAotArrayIndex(runtime: *Runtime, key: Value) ?u32 {
+pub fn jsonAotArrayIndex(runtime: *Runtime, key: Value) ?u32 {
     const units = jsonAotKeyUnits(runtime, key) catch return null;
     defer runtime.allocator.free(units);
     if (units.len == 0 or (units.len > 1 and units[0] == '0')) return null;
@@ -2947,7 +2947,7 @@ fn jsonAotArrayIndex(runtime: *Runtime, key: Value) ?u32 {
     return @intCast(number);
 }
 
-fn jsonAotKeyUnits(runtime: *Runtime, key: Value) ![]u16 {
+pub fn jsonAotKeyUnits(runtime: *Runtime, key: Value) ![]u16 {
     return switch (@as(Tag, @enumFromInt(key.tag))) {
         .static_utf8_string => std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, staticUtf8(key)),
         .utf16_string => runtime.allocator.dupe(u16, key.object().?.payload.utf16_string),
@@ -2955,11 +2955,11 @@ fn jsonAotKeyUnits(runtime: *Runtime, key: Value) ![]u16 {
     };
 }
 
-fn jsonAotPropertyKey(runtime: *Runtime, key: Value) !Value {
+pub fn jsonAotPropertyKey(runtime: *Runtime, key: Value) !Value {
     return runtime.ownString(try valueUtf16Alloc(runtime, key));
 }
 
-fn lessJsonAotEntry(_: void, left: JsonAotEntry, right: JsonAotEntry) bool {
+pub fn lessJsonAotEntry(_: void, left: JsonAotEntry, right: JsonAotEntry) bool {
     if (left.array_index) |left_index| {
         if (right.array_index) |right_index| return left_index < right_index;
         return true;
@@ -2968,13 +2968,13 @@ fn lessJsonAotEntry(_: void, left: JsonAotEntry, right: JsonAotEntry) bool {
     return left.insertion_index < right.insertion_index;
 }
 
-fn jsonWriteKey(runtime: *Runtime, writer: *std.Io.Writer, key: Value) !void {
+pub fn jsonWriteKey(runtime: *Runtime, writer: *std.Io.Writer, key: Value) !void {
     const units = try jsonAotKeyUnits(runtime, key);
     defer runtime.allocator.free(units);
     try jsonWriteQuotedString(writer, units);
 }
 
-fn jsonWriteQuotedString(writer: *std.Io.Writer, units: []const u16) !void {
+pub fn jsonWriteQuotedString(writer: *std.Io.Writer, units: []const u16) !void {
     try writer.writeByte('"');
     var index: usize = 0;
     while (index < units.len) {
@@ -3009,7 +3009,7 @@ fn jsonWriteQuotedString(writer: *std.Io.Writer, units: []const u16) !void {
     try writer.writeByte('"');
 }
 
-fn jsonWriteUnicodeEscape(writer: *std.Io.Writer, unit: u16) !void {
+pub fn jsonWriteUnicodeEscape(writer: *std.Io.Writer, unit: u16) !void {
     const digits = "0123456789abcdef";
     try writer.writeAll("\\u");
     try writer.writeByte(digits[(unit >> 12) & 0xf]);
@@ -3018,12 +3018,12 @@ fn jsonWriteUnicodeEscape(writer: *std.Io.Writer, unit: u16) !void {
     try writer.writeByte(digits[unit & 0xf]);
 }
 
-fn jsonWriteIndent(writer: *std.Io.Writer, depth: usize) !void {
+pub fn jsonWriteIndent(writer: *std.Io.Writer, depth: usize) !void {
     var index: usize = 0;
     while (index < depth) : (index += 1) try writer.writeAll("  ");
 }
 
-fn jsonSetCircularFailureMessage(runtime: *Runtime, active: []JsonAotActive, cycle_start: usize, closing_path: ?JsonAotPath) !void {
+pub fn jsonSetCircularFailureMessage(runtime: *Runtime, active: []JsonAotActive, cycle_start: usize, closing_path: ?JsonAotPath) !void {
     var output: std.Io.Writer.Allocating = .init(runtime.allocator);
     defer output.deinit();
     const start_constructor = if (cycle_start < active.len) active[cycle_start].constructor else "Object";
@@ -3041,7 +3041,7 @@ fn jsonSetCircularFailureMessage(runtime: *Runtime, active: []JsonAotActive, cyc
     runtime.setFailureText(output.written());
 }
 
-fn jsonWritePath(writer: *std.Io.Writer, runtime: *Runtime, path: ?JsonAotPath, closing: bool) !void {
+pub fn jsonWritePath(writer: *std.Io.Writer, runtime: *Runtime, path: ?JsonAotPath, closing: bool) !void {
     if (path) |cycle_path| switch (cycle_path) {
         .array_index => |index| try writer.print("index {d}{s}", .{ index, if (closing) " closes the circle" else "" }),
         .property => |key| {
@@ -3092,7 +3092,7 @@ const JsonAotParser = struct {
     units: []const u16,
     index: usize = 0,
 
-    fn parse(self: *JsonAotParser) anyerror!Value {
+    pub fn parse(self: *JsonAotParser) anyerror!Value {
         if (jsonAsciiEquals(self.units, "undefined") or jsonAsciiEquals(self.units, "Infinity") or jsonAsciiEquals(self.units, "NaN") or jsonAsciiEquals(self.units, "[object Object]")) {
             return self.failWholeSourceInvalid();
         }
@@ -3193,7 +3193,7 @@ const JsonAotParser = struct {
     /// Start a scalar or container at `result_index`.  A container gets an
     /// explicit frame; a scalar is left for parseScalar so the caller can
     /// store it in a GC root before any append/set operation.
-    fn beginValue(self: *JsonAotParser, roots: []Value, frames: []JsonAotFrame, frame_count: *usize, result_index: usize) !bool {
+    pub fn beginValue(self: *JsonAotParser, roots: []Value, frames: []JsonAotFrame, frame_count: *usize, result_index: usize) !bool {
         if (self.index >= self.units.len) return self.failEnd();
         switch (self.units[self.index]) {
             '[' => {
@@ -3214,7 +3214,7 @@ const JsonAotParser = struct {
         }
     }
 
-    fn parseScalar(self: *JsonAotParser) anyerror!Value {
+    pub fn parseScalar(self: *JsonAotParser) anyerror!Value {
         if (self.index >= self.units.len) return self.failEnd();
         return switch (self.units[self.index]) {
             'n' => try self.parseLiteral("null", .{ .tag = @intFromEnum(Tag.null_value) }),
@@ -3226,7 +3226,7 @@ const JsonAotParser = struct {
         };
     }
 
-    fn attachValue(self: *JsonAotParser, roots: []Value, frames: []JsonAotFrame, frame_count: usize, value_index: usize) !void {
+    pub fn attachValue(self: *JsonAotParser, roots: []Value, frames: []JsonAotFrame, frame_count: usize, value_index: usize) !void {
         const parent_index = frame_count - 1;
         const parent = frames[parent_index];
         const parent_base = parent.root_base;
@@ -3242,7 +3242,7 @@ const JsonAotParser = struct {
         }
     }
 
-    fn closeFrame(self: *JsonAotParser, roots: []Value, frames: []JsonAotFrame, frame_count: *usize) !void {
+    pub fn closeFrame(self: *JsonAotParser, roots: []Value, frames: []JsonAotFrame, frame_count: *usize) !void {
         const child_index = frame_count.* - 1;
         const child_base = frames[child_index].result_index;
         frame_count.* -= 1;
@@ -3253,20 +3253,20 @@ const JsonAotParser = struct {
         try self.attachValue(roots, frames, frame_count.*, child_base);
     }
 
-    fn parseLiteral(self: *JsonAotParser, comptime literal: []const u8, value: Value) anyerror!Value {
+    pub fn parseLiteral(self: *JsonAotParser, comptime literal: []const u8, value: Value) anyerror!Value {
         if (self.index + literal.len > self.units.len) return self.failEnd();
         for (literal, 0..) |byte, offset| if (self.units[self.index + offset] != byte) return self.failToken(self.index + offset);
         self.index += literal.len;
         return value;
     }
 
-    fn parseStringValue(self: *JsonAotParser) anyerror!Value {
+    pub fn parseStringValue(self: *JsonAotParser) anyerror!Value {
         const units = try self.parseStringUnits();
         defer self.runtime.allocator.free(units);
         return self.runtime.createString(units);
     }
 
-    fn parseStringUnits(self: *JsonAotParser) anyerror![]u16 {
+    pub fn parseStringUnits(self: *JsonAotParser) anyerror![]u16 {
         if (self.index >= self.units.len or self.units[self.index] != '"') return self.failToken(self.index);
         self.index += 1;
         var result: std.ArrayList(u16) = .empty;
@@ -3309,7 +3309,7 @@ const JsonAotParser = struct {
         return self.failJsonMessage("Unterminated string");
     }
 
-    fn parseNumber(self: *JsonAotParser) anyerror!Value {
+    pub fn parseNumber(self: *JsonAotParser) anyerror!Value {
         const start = self.index;
         if (self.consume('-') and (self.index >= self.units.len or !isJsonDigit(self.units[self.index]))) return self.failJsonMessage("No number after minus sign");
         if (self.consume('0')) {
@@ -3336,7 +3336,7 @@ const JsonAotParser = struct {
         return .{ .tag = @intFromEnum(Tag.number), .payload = @bitCast(number) };
     }
 
-    fn consume(self: *JsonAotParser, expected: u16) bool {
+    pub fn consume(self: *JsonAotParser, expected: u16) bool {
         if (self.index < self.units.len and self.units[self.index] == expected) {
             self.index += 1;
             return true;
@@ -3344,23 +3344,23 @@ const JsonAotParser = struct {
         return false;
     }
 
-    fn skipWhitespace(self: *JsonAotParser) void {
+    pub fn skipWhitespace(self: *JsonAotParser) void {
         while (self.index < self.units.len) switch (self.units[self.index]) {
             ' ', '\n', '\r', '\t' => self.index += 1,
             else => return,
         };
     }
 
-    fn failEnd(self: *JsonAotParser) anyerror {
+    pub fn failEnd(self: *JsonAotParser) anyerror {
         self.runtime.setFailureText("Unexpected end of JSON input");
         return error.InvalidJsonCloneValue;
     }
 
-    fn failJsonMessage(self: *JsonAotParser, prefix: []const u8) anyerror {
+    pub fn failJsonMessage(self: *JsonAotParser, prefix: []const u8) anyerror {
         return self.failJsonMessageAt(prefix, self.index);
     }
 
-    fn failJsonMessageAt(self: *JsonAotParser, prefix: []const u8, position: usize) anyerror {
+    pub fn failJsonMessageAt(self: *JsonAotParser, prefix: []const u8, position: usize) anyerror {
         var line: usize = 1;
         var column: usize = 1;
         const bounded = @min(position, self.units.len);
@@ -3384,7 +3384,7 @@ const JsonAotParser = struct {
         return error.InvalidJsonCloneValue;
     }
 
-    fn failToken(self: *JsonAotParser, position: usize) anyerror {
+    pub fn failToken(self: *JsonAotParser, position: usize) anyerror {
         if (position >= self.units.len) return self.failEnd();
         var message: std.ArrayList(u16) = .empty;
         errdefer message.deinit(self.runtime.allocator);
@@ -3397,7 +3397,7 @@ const JsonAotParser = struct {
         return error.InvalidJsonCloneValue;
     }
 
-    fn failWholeSourceInvalid(self: *JsonAotParser) anyerror {
+    pub fn failWholeSourceInvalid(self: *JsonAotParser) anyerror {
         var message: std.ArrayList(u16) = .empty;
         errdefer message.deinit(self.runtime.allocator);
         try self.appendJsonErrorSourceUnits(&message, false, 0);
@@ -3409,7 +3409,7 @@ const JsonAotParser = struct {
     /// V8 shows a UTF-16 window of at most ten code units on either side of
     /// the invalid token.  Diagnostic source text is not JSON-escaped: raw
     /// quotes, backslashes, and control units are retained by Node 24.
-    fn appendJsonErrorSourceUnits(self: *JsonAotParser, output: *std.ArrayList(u16), truncate: bool, position: usize) !void {
+    pub fn appendJsonErrorSourceUnits(self: *JsonAotParser, output: *std.ArrayList(u16), truncate: bool, position: usize) !void {
         const bounded = @min(position, self.units.len);
         const should_truncate = truncate and self.units.len > 20;
         const start = if (should_truncate and bounded > 10) bounded - 10 else 0;
@@ -3422,7 +3422,7 @@ const JsonAotParser = struct {
         if (should_truncate and end < self.units.len) try appendAsciiUnits(output, self.runtime.allocator, "...");
     }
 
-    fn failTrailing(self: *JsonAotParser) anyerror {
+    pub fn failTrailing(self: *JsonAotParser) anyerror {
         const position = self.index;
         var line: usize = 1;
         var column: usize = 1;
@@ -3445,25 +3445,25 @@ const JsonAotParser = struct {
     }
 };
 
-fn appendAsciiUnits(output: *std.ArrayList(u16), allocator: std.mem.Allocator, ascii: []const u8) !void {
+pub fn appendAsciiUnits(output: *std.ArrayList(u16), allocator: std.mem.Allocator, ascii: []const u8) !void {
     for (ascii) |byte| try output.append(allocator, byte);
 }
 
-fn appendUtf8Units(output: *std.ArrayList(u16), allocator: std.mem.Allocator, text: []const u8) !void {
+pub fn appendUtf8Units(output: *std.ArrayList(u16), allocator: std.mem.Allocator, text: []const u8) !void {
     const units = try std.unicode.utf8ToUtf16LeAlloc(allocator, text);
     defer allocator.free(units);
     try output.appendSlice(allocator, units);
 }
 
-fn jsonHexDigit(unit: u16) ?u16 {
+pub fn jsonHexDigit(unit: u16) ?u16 {
     return if (unit >= '0' and unit <= '9') unit - '0' else if (unit >= 'a' and unit <= 'f') unit - 'a' + 10 else if (unit >= 'A' and unit <= 'F') unit - 'A' + 10 else null;
 }
 
-fn isJsonDigit(unit: u16) bool {
+pub fn isJsonDigit(unit: u16) bool {
     return unit >= '0' and unit <= '9';
 }
 
-fn jsonAsciiEquals(units: []const u16, ascii: []const u8) bool {
+pub fn jsonAsciiEquals(units: []const u16, ascii: []const u8) bool {
     if (units.len != ascii.len) return false;
     for (units, ascii) |unit, byte| if (unit != byte) return false;
     return true;
@@ -3473,7 +3473,7 @@ fn jsonAsciiEquals(units: []const u16, ascii: []const u8) bool {
 /// not validation: malformed input may still be rejected by the parser, but
 /// every opening token the parser could process is counted unless it is inside
 /// the same string/escape state that parseStringUnits uses.
-fn jsonAotContainerCount(units: []const u16) usize {
+pub fn jsonAotContainerCount(units: []const u16) usize {
     var count: usize = 0;
     var in_string = false;
     var escaped = false;
@@ -3497,7 +3497,7 @@ fn jsonAotContainerCount(units: []const u16) usize {
     return @max(count, 1);
 }
 
-fn jsonParseDecimal(units: []const u16) f64 {
+pub fn jsonParseDecimal(units: []const u16) f64 {
     var index: usize = 0;
     const negative = units.len > 0 and units[0] == '-';
     if (negative) index += 1;
@@ -3696,7 +3696,7 @@ pub fn createJsonTestString(runtime: *Runtime, text: []const u8) !Value {
     return runtime.createString(units);
 }
 
-fn jsonTestDictionaryGet(value: Value, key: []const u16) Value {
+pub fn jsonTestDictionaryGet(value: Value, key: []const u16) Value {
     return dictionaryProperty(value, key);
 }
 
@@ -3737,7 +3737,7 @@ pub fn valueUtf16Alloc(runtime: *Runtime, value: Value) anyerror![]u16 {
     return std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, utf8);
 }
 
-fn byteBufferUtf16Alloc(runtime: *Runtime, buffer: ByteBuffer) ![]u16 {
+pub fn byteBufferUtf16Alloc(runtime: *Runtime, buffer: ByteBuffer) ![]u16 {
     return switch (buffer.kind) {
         .buffer => blk: {
             var string = try string_mod.String.fromUtf8Lossy(runtime.allocator, buffer.bytes);
@@ -3759,13 +3759,13 @@ fn byteBufferUtf16Alloc(runtime: *Runtime, buffer: ByteBuffer) ![]u16 {
     };
 }
 
-fn functionStringUtf16Alloc(runtime: *Runtime, name: []const u8) ![]u16 {
+pub fn functionStringUtf16Alloc(runtime: *Runtime, name: []const u8) ![]u16 {
     const utf8 = try std.fmt.allocPrint(runtime.allocator, "function {s}() {{ [native code] }}", .{name});
     defer runtime.allocator.free(utf8);
     return std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, utf8);
 }
 
-fn arrayUtf16Alloc(runtime: *Runtime, object: *Object) anyerror![]u16 {
+pub fn arrayUtf16Alloc(runtime: *Runtime, object: *Object) anyerror![]u16 {
     for (runtime.stringifying_arrays.items) |active| if (active == object) return runtime.allocator.alloc(u16, 0);
     try runtime.stringifying_arrays.append(runtime.allocator, object);
     defer _ = runtime.stringifying_arrays.pop();
@@ -3781,7 +3781,7 @@ fn arrayUtf16Alloc(runtime: *Runtime, object: *Object) anyerror![]u16 {
     return output.toOwnedSlice(runtime.allocator);
 }
 
-fn isAotObjectValue(value: Value) bool {
+pub fn isAotObjectValue(value: Value) bool {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
         .byte_buffer, .array, .dictionary, .iterator, .function, .promise => true,
         else => false,
@@ -3798,7 +3798,7 @@ pub fn valueToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint)
     };
 }
 
-fn hostObjectToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint) !Value {
+pub fn hostObjectToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint) !Value {
     const to_string_name: []const u16 = &.{ 't', 'o', 'S', 't', 'r', 'i', 'n', 'g' };
     const value_of_name: []const u16 = &.{ 'v', 'a', 'l', 'u', 'e', 'O', 'f' };
     const first = if (hint == .string) to_string_name else value_of_name;
@@ -3846,13 +3846,13 @@ fn hostObjectToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint
 /// prototype.  The synthesized standard Buffer/TypedArray/ArrayBuffer
 /// methods are deliberately excluded: hostObjectToPrimitive handles their
 /// built-in conversion itself when no custom override exists.
-fn aotCustomObjectPrototypeProperty(value: Value, key: []const u16) ?Value {
+pub fn aotCustomObjectPrototypeProperty(value: Value, key: []const u16) ?Value {
     const object = value.object() orelse return null;
     if (object.prototype.tag != @intFromEnum(Tag.dictionary)) return null;
     return dictionaryOwnProperty(object.prototype, key) orelse dictionaryPrototypeProperty(object.prototype, key);
 }
 
-fn arrayToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint) !Value {
+pub fn arrayToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitiveHint) !Value {
     const to_string_name: []const u16 = &.{ 't', 'o', 'S', 't', 'r', 'i', 'n', 'g' };
     const value_of_name: []const u16 = &.{ 'v', 'a', 'l', 'u', 'e', 'O', 'f' };
     const first = if (hint == .string) to_string_name else value_of_name;
@@ -3908,7 +3908,7 @@ pub fn dictionaryToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitive
     return error.CannotConvertObjectToPrimitive;
 }
 
-fn stringEqual(runtime: *Runtime, left: Value, right: Value) !bool {
+pub fn stringEqual(runtime: *Runtime, left: Value, right: Value) !bool {
     const left_units = try valueUtf16Alloc(runtime, left);
     defer runtime.allocator.free(left_units);
     const right_units = try valueUtf16Alloc(runtime, right);
@@ -3916,7 +3916,7 @@ fn stringEqual(runtime: *Runtime, left: Value, right: Value) !bool {
     return std.mem.eql(u16, left_units, right_units);
 }
 
-fn stringOrder(runtime: *Runtime, left: Value, right: Value) !std.math.Order {
+pub fn stringOrder(runtime: *Runtime, left: Value, right: Value) !std.math.Order {
     const left_units = try valueUtf16Alloc(runtime, left);
     defer runtime.allocator.free(left_units);
     const right_units = try valueUtf16Alloc(runtime, right);
@@ -3960,7 +3960,7 @@ pub fn sameValue(runtime: *Runtime, left: Value, right: Value) !bool {
 
 /// Array.prototype.includes uses SameValueZero: NaN matches NaN and signed
 /// zeroes compare equal, while objects retain reference identity.
-fn sameValueZero(runtime: *Runtime, left: Value, right: Value) !bool {
+pub fn sameValueZero(runtime: *Runtime, left: Value, right: Value) !bool {
     if (isString(left) and isString(right)) return stringEqual(runtime, left, right);
     if (left.tag != right.tag) return false;
     return switch (@as(Tag, @enumFromInt(left.tag))) {
@@ -3973,7 +3973,7 @@ fn sameValueZero(runtime: *Runtime, left: Value, right: Value) !bool {
     };
 }
 
-fn abstractEqual(runtime: *Runtime, left: Value, right: Value) !bool {
+pub fn abstractEqual(runtime: *Runtime, left: Value, right: Value) !bool {
     if ((isString(left) and isString(right)) or left.tag == right.tag) return strictEqual(runtime, left, right);
     const left_tag: Tag = @enumFromInt(left.tag);
     const right_tag: Tag = @enumFromInt(right.tag);
@@ -3992,7 +3992,7 @@ fn abstractEqual(runtime: *Runtime, left: Value, right: Value) !bool {
     return false;
 }
 
-fn relationalOrder(runtime: *Runtime, left: Value, right: Value) !?std.math.Order {
+pub fn relationalOrder(runtime: *Runtime, left: Value, right: Value) !?std.math.Order {
     var roots = [_]Value{ left, right, .{}, .{} };
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -4021,7 +4021,7 @@ fn relationalOrder(runtime: *Runtime, left: Value, right: Value) !?std.math.Orde
     return std.math.order(left_number, right_number);
 }
 
-fn deepEqual(runtime: *Runtime, left: Value, right: Value) !bool {
+pub fn deepEqual(runtime: *Runtime, left: Value, right: Value) !bool {
     // plugin_system_math uses JSON.stringify only when the left operand is an
     // object. Preserve that asymmetric dispatch and let the shared AOT JSON
     // serializer provide omission, NaN, byte-buffer, and cycle semantics.
@@ -4037,7 +4037,7 @@ fn deepEqual(runtime: *Runtime, left: Value, right: Value) !bool {
     return strictEqual(runtime, left, right);
 }
 
-fn isJsonStringifyObject(value: Value) bool {
+pub fn isJsonStringifyObject(value: Value) bool {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
         .null_value, .byte_buffer, .array, .dictionary, .iterator, .promise => true,
         else => false,
@@ -4136,19 +4136,19 @@ pub fn arithmetic(runtime: *Runtime, operator: Arithmetic, left: Value, right: V
     return numberValue(result);
 }
 
-fn bigIntEqualsString(runtime: *Runtime, bigint: BigInt, string: Value) !bool {
+pub fn bigIntEqualsString(runtime: *Runtime, bigint: BigInt, string: Value) !bool {
     var converted = bigIntFromString(runtime, string) catch return false;
     defer converted.deinit();
     return BigInt.eql(bigint, converted);
 }
 
-fn compareBigIntString(runtime: *Runtime, bigint: BigInt, string: Value) !?std.math.Order {
+pub fn compareBigIntString(runtime: *Runtime, bigint: BigInt, string: Value) !?std.math.Order {
     var converted = bigIntFromString(runtime, string) catch return null;
     defer converted.deinit();
     return BigInt.order(bigint, converted);
 }
 
-fn bigIntFromString(runtime: *Runtime, string: Value) !BigInt {
+pub fn bigIntFromString(runtime: *Runtime, string: Value) !BigInt {
     const units = try valueUtf16Alloc(runtime, string);
     defer runtime.allocator.free(units);
     const trimmed = string_mod.trimWhitespace(units);
@@ -4226,7 +4226,7 @@ pub fn valueTruthy(value: Value) bool {
     };
 }
 
-fn toInt32(number: f64) i32 {
+pub fn toInt32(number: f64) i32 {
     if (!std.math.isFinite(number) or number == 0) return 0;
     var value = @mod(@trunc(number), 4294967296.0);
     if (value < 0) value += 4294967296.0;
@@ -4234,21 +4234,21 @@ fn toInt32(number: f64) i32 {
     return @intFromFloat(value);
 }
 
-fn toUint32(number: f64) u32 {
+pub fn toUint32(number: f64) u32 {
     if (!std.math.isFinite(number) or number == 0) return 0;
     var value = @mod(@trunc(number), 4294967296.0);
     if (value < 0) value += 4294967296.0;
     return @intFromFloat(value);
 }
 
-fn bigIntEqualsNumber(runtime: *Runtime, bigint: BigInt, number: f64) !bool {
+pub fn bigIntEqualsNumber(runtime: *Runtime, bigint: BigInt, number: f64) !bool {
     if (!std.math.isFinite(number) or @trunc(number) != number) return false;
     var converted = try BigInt.fromF64(runtime.allocator, number);
     defer converted.deinit();
     return BigInt.eql(bigint, converted);
 }
 
-fn compareBigIntNumber(runtime: *Runtime, bigint: BigInt, number: f64) !?std.math.Order {
+pub fn compareBigIntNumber(runtime: *Runtime, bigint: BigInt, number: f64) !?std.math.Order {
     if (std.math.isNan(number)) return null;
     if (number == std.math.inf(f64)) return .lt;
     if (number == -std.math.inf(f64)) return .gt;
@@ -4262,7 +4262,7 @@ fn compareBigIntNumber(runtime: *Runtime, bigint: BigInt, number: f64) !?std.mat
     return .eq;
 }
 
-fn invertOrder(order: std.math.Order) std.math.Order {
+pub fn invertOrder(order: std.math.Order) std.math.Order {
     return switch (order) {
         .lt => .gt,
         .eq => .eq,
@@ -4270,13 +4270,13 @@ fn invertOrder(order: std.math.Order) std.math.Order {
     };
 }
 
-fn repeatCount(number: f64) !usize {
+pub fn repeatCount(number: f64) !usize {
     if (std.math.isNan(number) or number <= 0) return 0;
     if (!std.math.isFinite(number) or number >= @as(f64, @floatFromInt(std.math.maxInt(usize)))) return error.IteratorCountTooLarge;
     return @intFromFloat(@trunc(number));
 }
 
-fn sameKey(left: Value, right: Value) bool {
+pub fn sameKey(left: Value, right: Value) bool {
     const left_tag: Tag = @enumFromInt(left.tag);
     const right_tag: Tag = @enumFromInt(right.tag);
     if ((left_tag == .static_utf8_string or left_tag == .utf16_string) and
@@ -4300,7 +4300,7 @@ fn sameKey(left: Value, right: Value) bool {
     };
 }
 
-fn staticUtf8EqualsUtf16(text: []const u8, units: []const u16) bool {
+pub fn staticUtf8EqualsUtf16(text: []const u8, units: []const u16) bool {
     var text_index: usize = 0;
     var unit_index: usize = 0;
     while (text_index < text.len) {
@@ -4327,7 +4327,7 @@ pub fn staticUtf8(value: Value) []const u8 {
     return std.mem.span(pointer);
 }
 
-extern "c" fn putchar(character: c_int) c_int;
+pub extern "c" fn putchar(character: c_int) c_int;
 
 pub fn writeUtf16(units: []const u16, newline: bool) void {
     var index: usize = 0;
@@ -4355,7 +4355,7 @@ pub fn valueUtf8LossyAlloc(runtime: *Runtime, value: Value) ![]u8 {
     return utf16UnitsToUtf8LossyAlloc(runtime.allocator, units);
 }
 
-fn utf16UnitsToUtf8LossyAlloc(allocator: std.mem.Allocator, units: []const u16) ![]u8 {
+pub fn utf16UnitsToUtf8LossyAlloc(allocator: std.mem.Allocator, units: []const u16) ![]u8 {
     var output: std.ArrayList(u8) = .empty;
     errdefer output.deinit(allocator);
     var index: usize = 0;
@@ -4389,7 +4389,7 @@ pub fn appendDisplayLog(runtime: *Runtime, display_log: ?*Value, line: []const u
     pointer.* = try runtimeUtf8String(runtime, output.items);
 }
 
-fn emitDisplayLine(runtime: *Runtime, text: []const u8, newline: bool, display_log: ?*Value) !void {
+pub fn emitDisplayLine(runtime: *Runtime, text: []const u8, newline: bool, display_log: ?*Value) !void {
     var output: std.ArrayList(u8) = .empty;
     defer output.deinit(runtime.allocator);
     try output.appendSlice(runtime.allocator, runtime.print_pool.items);
@@ -4405,13 +4405,13 @@ pub fn displayValue(runtime: *Runtime, value: Value, newline: bool, display_log:
     try emitDisplayLine(runtime, text, newline, display_log);
 }
 
-fn continueDisplayValue(runtime: *Runtime, value: Value) !void {
+pub fn continueDisplayValue(runtime: *Runtime, value: Value) !void {
     const text = try valueUtf8LossyAlloc(runtime, value);
     defer runtime.allocator.free(text);
     try runtime.print_pool.appendSlice(runtime.allocator, text);
 }
 
-fn joinValuesUtf8Alloc(runtime: *Runtime, values: []const Value) ![]u8 {
+pub fn joinValuesUtf8Alloc(runtime: *Runtime, values: []const Value) ![]u8 {
     var output: std.ArrayList(u8) = .empty;
     errdefer output.deinit(runtime.allocator);
     for (values) |value| {
@@ -4467,7 +4467,7 @@ pub fn configureInterruptBuiltin(runtime: *Runtime, arguments: []const Value) !V
     return .{};
 }
 
-fn invokeHatenaNamedCallback(
+pub fn invokeHatenaNamedCallback(
     runtime: *Runtime,
     name_value: Value,
     parameter: Value,
@@ -4521,7 +4521,7 @@ pub fn invokeHatenaCallbacks(
     return roots[0];
 }
 
-fn writeAllValues(runtime: *Runtime, values: []const Value) !void {
+pub fn writeAllValues(runtime: *Runtime, values: []const Value) !void {
     for (values) |value| {
         const text = try valueUtf8LossyAlloc(runtime, value);
         defer runtime.allocator.free(text);
@@ -4537,7 +4537,7 @@ pub fn isStdioCommand(command: aot_builtin.Command) bool {
     };
 }
 
-fn isHttpServerCommand(command: aot_builtin.Command) bool {
+pub fn isHttpServerCommand(command: aot_builtin.Command) bool {
     return switch (command) {
         .http_server_start, .http_server_static, .http_server_receive, .http_server_output, .http_server_headers, .http_server_redirect => true,
         else => false,
@@ -4558,7 +4558,7 @@ pub fn isNodeHttpCommand(command: aot_builtin.Command) bool {
     };
 }
 
-fn runAotExternal(runtime: *Runtime, target: []const u8, reveal: bool) !void {
+pub fn runAotExternal(runtime: *Runtime, target: []const u8, reveal: bool) !void {
     const argv: []const []const u8 = switch (builtin.os.tag) {
         .macos => if (reveal) &.{ "/usr/bin/open", "-R", target } else &.{ "/usr/bin/open", target },
         .windows => if (reveal)
@@ -4668,7 +4668,7 @@ pub fn stdioBuiltin(runtime: *Runtime, command: aot_builtin.Command, values: []c
     }
 }
 
-fn pluginManagementArgument(runtime: *Runtime, values: []const Value) !Value {
+pub fn pluginManagementArgument(runtime: *Runtime, values: []const Value) !Value {
     var source = if (values.len > 0) values[values.len - 1] else Value{};
     var frame = RootFrame{};
     runtime.pushRoots(&frame, @ptrCast(&source), 1);
@@ -4706,7 +4706,7 @@ pub fn pluginManagementBuiltin(
     }
 }
 
-fn aotDelayMilliseconds(runtime: *Runtime, value: Value) !u64 {
+pub fn aotDelayMilliseconds(runtime: *Runtime, value: Value) !u64 {
     const seconds = try valueToNumberRuntime(runtime, value);
     if (!std.math.isFinite(seconds) or seconds <= 0) return 0;
     const milliseconds = @floor(seconds * 1000.0);
@@ -4714,7 +4714,7 @@ fn aotDelayMilliseconds(runtime: *Runtime, value: Value) !u64 {
     return @intFromFloat(milliseconds);
 }
 
-fn sleepAotUntil(runtime: *Runtime, target: u64) !void {
+pub fn sleepAotUntil(runtime: *Runtime, target: u64) !void {
     if (target <= runtime.elapsed_milliseconds) return;
     const delay = target - runtime.elapsed_milliseconds;
     if (delay > @as(u64, std.math.maxInt(i64))) return error.TimerOverflow;
@@ -4736,7 +4736,7 @@ fn sleepAotUntil(runtime: *Runtime, target: u64) !void {
     }
 }
 
-fn runAotShellCommand(runtime: *Runtime, command: []const u8, cwd: []const u8) !AotCommandResult {
+pub fn runAotShellCommand(runtime: *Runtime, command: []const u8, cwd: []const u8) !AotCommandResult {
     const argv: []const []const u8 = if (builtin.os.tag == .windows)
         &.{ "cmd.exe", "/d", "/s", "/c", command }
     else
@@ -4757,11 +4757,11 @@ fn runAotShellCommand(runtime: *Runtime, command: []const u8, cwd: []const u8) !
     };
 }
 
-fn aotRuntimeIo(runtime: *Runtime) std.Io {
+pub fn aotRuntimeIo(runtime: *Runtime) std.Io {
     return if (runtime.process_io_initialized) runtime.process_io.io() else std.Io.Threaded.global_single_threaded.io();
 }
 
-fn queueAotProcess(runtime: *Runtime, command: []const u8, mode: AotProcessMode, callback: Value) !void {
+pub fn queueAotProcess(runtime: *Runtime, command: []const u8, mode: AotProcessMode, callback: Value) !void {
     const allocator = runtime.allocator;
     const task = try allocator.create(AotProcessTask);
     const owned_command = allocator.dupe(u8, command) catch |failure| {
@@ -4791,7 +4791,7 @@ fn queueAotProcess(runtime: *Runtime, command: []const u8, mode: AotProcessMode,
     };
 }
 
-fn queueAotFileTask(runtime: *Runtime, operation: AotFileTaskOperation, source: []const u8, destination: []const u8, overwrite: bool, callback: Value) !void {
+pub fn queueAotFileTask(runtime: *Runtime, operation: AotFileTaskOperation, source: []const u8, destination: []const u8, overwrite: bool, callback: Value) !void {
     const allocator = runtime.allocator;
     const task = try allocator.create(AotFileTask);
     const owned_source = allocator.dupe(u8, source) catch |failure| {
@@ -4822,7 +4822,7 @@ fn queueAotFileTask(runtime: *Runtime, operation: AotFileTaskOperation, source: 
     };
 }
 
-fn readyAotProcessTaskIndex(runtime: *const Runtime) ?usize {
+pub fn readyAotProcessTaskIndex(runtime: *const Runtime) ?usize {
     var selected: ?usize = null;
     for (runtime.process_tasks.items, 0..) |task, index| {
         if (!task.complete.load(.acquire)) continue;
@@ -4831,7 +4831,7 @@ fn readyAotProcessTaskIndex(runtime: *const Runtime) ?usize {
     return selected;
 }
 
-fn readyAotFileTaskIndex(runtime: *const Runtime) ?usize {
+pub fn readyAotFileTaskIndex(runtime: *const Runtime) ?usize {
     var selected: ?usize = null;
     for (runtime.file_tasks.items, 0..) |task, index| {
         if (!task.complete.load(.acquire)) continue;
@@ -4840,11 +4840,11 @@ fn readyAotFileTaskIndex(runtime: *const Runtime) ?usize {
     return selected;
 }
 
-fn writeAotStderr(bytes: []const u8) void {
+pub fn writeAotStderr(bytes: []const u8) void {
     if (bytes.len > 0) std.debug.print("{s}", .{bytes});
 }
 
-fn writeAotAjaxReceiveError(status: u16, failure: ?anyerror) void {
+pub fn writeAotAjaxReceiveError(status: u16, failure: ?anyerror) void {
     if (failure) |err| {
         std.debug.print("[AJAX受信のエラー] Error: {s}\n", .{error_message.forFailure(err)});
     } else {
@@ -4890,7 +4890,7 @@ pub fn drainAotFileTasks(runtime: *Runtime) !void {
     }
 }
 
-fn earliestAotTimerIndex(runtime: *const Runtime) ?usize {
+pub fn earliestAotTimerIndex(runtime: *const Runtime) ?usize {
     if (runtime.timers.items.len == 0) return null;
     var earliest: usize = 0;
     for (runtime.timers.items[1..], 1..) |timer, index| {
@@ -4899,12 +4899,12 @@ fn earliestAotTimerIndex(runtime: *const Runtime) ?usize {
     return earliest;
 }
 
-fn countAotEvent(runtime: *Runtime) !void {
+pub fn countAotEvent(runtime: *Runtime) !void {
     if (runtime.timer_event_count >= aot_timer_event_limit) return error.EventLoopLimitExceeded;
     runtime.timer_event_count += 1;
 }
 
-fn executeAotTimer(runtime: *Runtime, index: usize) !void {
+pub fn executeAotTimer(runtime: *Runtime, index: usize) !void {
     try countAotEvent(runtime);
     const timer = runtime.timers.orderedRemove(index);
     var callback = timer.callback;
@@ -5010,7 +5010,7 @@ pub fn drainAotPromiseTasks(runtime: *Runtime) !void {
     }
 }
 
-fn drainAotNativePluginTasks(runtime: *Runtime) !bool {
+pub fn drainAotNativePluginTasks(runtime: *Runtime) !bool {
     const state = runtime.dynamic_state orelse return false;
     const native_pending = try state.interpreter.pollExternalPlugins();
     var pending_bridge = false;
@@ -5039,7 +5039,7 @@ fn drainAotNativePluginTasks(runtime: *Runtime) !bool {
     return native_pending or pending_bridge;
 }
 
-fn drainAotClientHttpTasks(runtime: *Runtime) !void {
+pub fn drainAotClientHttpTasks(runtime: *Runtime) !void {
     while (runtime.client_http_tasks.items.len > 0) {
         try countAotEvent(runtime);
         var task = runtime.client_http_tasks.orderedRemove(0);
@@ -5129,7 +5129,7 @@ pub fn drainAotTimers(runtime: *Runtime) !void {
     try drainAotEvents(runtime);
 }
 
-fn waitAotMilliseconds(runtime: *Runtime, milliseconds: u64) !void {
+pub fn waitAotMilliseconds(runtime: *Runtime, milliseconds: u64) !void {
     const target = std.math.add(u64, runtime.elapsed_milliseconds, milliseconds) catch return error.TimerOverflow;
     while (true) {
         try drainAotProcessTasks(runtime);
@@ -5155,7 +5155,7 @@ fn waitAotMilliseconds(runtime: *Runtime, milliseconds: u64) !void {
     _ = try drainAotNativePluginTasks(runtime);
 }
 
-fn scheduleAotTimer(runtime: *Runtime, arguments: []const Value, repeating: bool, target: ?*Value) !Value {
+pub fn scheduleAotTimer(runtime: *Runtime, arguments: []const Value, repeating: bool, target: ?*Value) !Value {
     if (arguments.len < 2) return error.InvalidArgumentCount;
     var values = [_]Value{ arguments[0], arguments[1], .{} };
     var root = RootFrame{};
@@ -5213,22 +5213,22 @@ pub fn timerWaitBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     return .{};
 }
 
-fn aotPromiseValue(object: *Object) Value {
+pub fn aotPromiseValue(object: *Object) Value {
     return .{ .tag = @intFromEnum(Tag.promise), .payload = @intFromPtr(object) };
 }
 
-fn aotPromiseObject(value: Value) ?*Object {
+pub fn aotPromiseObject(value: Value) ?*Object {
     if (value.tag != @intFromEnum(Tag.promise)) return null;
     const object = value.object() orelse return null;
     return if (object.payload == .promise) object else null;
 }
 
-fn createAotPromise(runtime: *Runtime) !Value {
+pub fn createAotPromise(runtime: *Runtime) !Value {
     try runtime.beforeAllocation();
     return runtime.createObject(.{ .promise = .{} }, .promise);
 }
 
-fn enqueueAotPromiseReaction(runtime: *Runtime, promise: *Object, reaction: AotPromiseReaction) !void {
+pub fn enqueueAotPromiseReaction(runtime: *Runtime, promise: *Object, reaction: AotPromiseReaction) !void {
     const state = &promise.payload.promise;
     try runtime.promise_tasks.append(runtime.allocator, .{
         .callback = if (state.state == .rejected) reaction.on_rejected else reaction.on_fulfilled,
@@ -5240,12 +5240,12 @@ fn enqueueAotPromiseReaction(runtime: *Runtime, promise: *Object, reaction: AotP
     });
 }
 
-fn enqueueAotPromiseReactions(runtime: *Runtime, promise: *Object) !void {
+pub fn enqueueAotPromiseReactions(runtime: *Runtime, promise: *Object) !void {
     for (promise.payload.promise.reactions.items) |reaction| try enqueueAotPromiseReaction(runtime, promise, reaction);
     promise.payload.promise.reactions.clearRetainingCapacity();
 }
 
-fn aotPromiseThen(
+pub fn aotPromiseThen(
     runtime: *Runtime,
     source: *Object,
     on_fulfilled: Value,
@@ -5296,17 +5296,17 @@ pub fn rejectAotPromise(runtime: *Runtime, promise: *Object, reason: Value) !voi
     try enqueueAotPromiseReactions(runtime, promise);
 }
 
-fn forwardAotPromiseTask(runtime: *Runtime, task: AotPromiseTask) !void {
+pub fn forwardAotPromiseTask(runtime: *Runtime, task: AotPromiseTask) !void {
     if (task.rejected) return rejectAotPromise(runtime, task.next, task.settled_value);
     return resolveAotPromise(runtime, task.next, task.settled_value);
 }
 
-fn callbackFailureReason(runtime: *Runtime, failure: anyerror) !Value {
+pub fn callbackFailureReason(runtime: *Runtime, failure: anyerror) !Value {
     if (runtime.has_pending_exception) return runtime.takeException();
     return runtimeUtf8String(runtime, error_message.forFailure(failure));
 }
 
-fn executeAotPromiseTask(runtime: *Runtime, task: AotPromiseTask) !void {
+pub fn executeAotPromiseTask(runtime: *Runtime, task: AotPromiseTask) !void {
     var roots = [_]Value{ task.callback, task.settled_value, aotPromiseValue(task.next), .{}, .{} };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -5350,14 +5350,14 @@ fn executeAotPromiseTask(runtime: *Runtime, task: AotPromiseTask) !void {
     return resolveAotPromise(runtime, task.next, roots[3]);
 }
 
-fn createAotPromiseResolver(runtime: *Runtime, promise: *Object, rejected: bool) !Value {
+pub fn createAotPromiseResolver(runtime: *Runtime, promise: *Object, rejected: bool) !Value {
     return runtime.createPromiseSpecialFunction(
         if (rejected) "reject" else "resolve",
         .{ .resolver = .{ .promise = promise, .rejected = rejected } },
     );
 }
 
-fn createAotPromiseWithExecutor(runtime: *Runtime, arguments: []const Value, last_promise: ?*Value) !Value {
+pub fn createAotPromiseWithExecutor(runtime: *Runtime, arguments: []const Value, last_promise: ?*Value) !Value {
     if (arguments.len == 0 or arguments[0].tag != @intFromEnum(Tag.function)) return error.NotCallable;
     var roots = [_]Value{ arguments[0], .{}, .{}, .{}, .{} };
     var frame = RootFrame{};
@@ -5377,7 +5377,7 @@ fn createAotPromiseWithExecutor(runtime: *Runtime, arguments: []const Value, las
     return roots[1];
 }
 
-fn chainAotPromise(
+pub fn chainAotPromise(
     runtime: *Runtime,
     arguments: []const Value,
     kind: AotPromiseChainKind,
@@ -5401,7 +5401,7 @@ fn chainAotPromise(
     return roots[2];
 }
 
-fn destroyAotPromiseAllState(runtime: *Runtime, state: *AotPromiseAllState) void {
+pub fn destroyAotPromiseAllState(runtime: *Runtime, state: *AotPromiseAllState) void {
     for (runtime.promise_all_states.items, 0..) |candidate, index| {
         if (candidate != state) continue;
         _ = runtime.promise_all_states.orderedRemove(index);
@@ -5426,14 +5426,14 @@ pub fn handleAotPromiseAll(runtime: *Runtime, handler: AotPromiseAllHandler, set
     return .{};
 }
 
-fn createAotPromiseAllHandler(runtime: *Runtime, state: *AotPromiseAllState, index: usize, rejected: bool) !Value {
+pub fn createAotPromiseAllHandler(runtime: *Runtime, state: *AotPromiseAllState, index: usize, rejected: bool) !Value {
     return runtime.createPromiseSpecialFunction(
         if (rejected) "Promise.all rejected" else "Promise.all fulfilled",
         .{ .all_handler = .{ .state = state, .index = index, .rejected = rejected } },
     );
 }
 
-fn bundleAotPromises(runtime: *Runtime, arguments: []const Value, last_promise: ?*Value) !Value {
+pub fn bundleAotPromises(runtime: *Runtime, arguments: []const Value, last_promise: ?*Value) !Value {
     const root_count = std.math.add(usize, arguments.len, 4) catch return error.ArrayTooLarge;
     const roots = try runtime.allocator.alloc(Value, root_count);
     defer runtime.allocator.free(roots);
@@ -5494,7 +5494,7 @@ pub fn promiseAotBuiltin(
     };
 }
 
-fn awaitAotPromise(runtime: *Runtime, value: Value) !Value {
+pub fn awaitAotPromise(runtime: *Runtime, value: Value) !Value {
     const promise = aotPromiseObject(value) orelse return value;
     var rooted = value;
     var frame = RootFrame{};
@@ -5794,7 +5794,7 @@ test "AOTハテナ関数実行は既定のデバッグ表示として位置と�
     roots[0] = try active_runtime.?.createArray(&.{ numberValue(1), numberValue(2) });
     roots[1] = try active_runtime.?.createString(&.{});
     roots[2] = .{};
-    try debugDisplayBuiltin(active_runtime.?, roots[0], 7, "main.nako3", &roots[1]);
+    try debugDisplayBuiltin(&active_runtime.?, roots[0], 7, "main.nako3", &roots[1]);
     try expectUtf16String(&active_runtime.?, roots[1], "main.nako3(7): [1,2]\n");
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[2].tag)));
 }
@@ -6012,11 +6012,11 @@ pub fn writeBytes(bytes: []const u8, newline: bool) void {
 
 const AotHttpPathStat = enum { file, directory, missing };
 
-fn aotHttpIo() std.Io {
+pub fn aotHttpIo() std.Io {
     return std.Io.Threaded.global_single_threaded.io();
 }
 
-fn aotHttpDictionarySetUtf8(runtime: *Runtime, dictionary: Value, key: []const u8, value: Value) !void {
+pub fn aotHttpDictionarySetUtf8(runtime: *Runtime, dictionary: Value, key: []const u8, value: Value) !void {
     var roots = [_]Value{ dictionary, value, .{} };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -6108,16 +6108,16 @@ pub fn httpServerBuiltin(runtime: *Runtime, command: aot_builtin.Command, argume
     return .{};
 }
 
-fn requireAotHttpStarted(runtime: *Runtime) !void {
+pub fn requireAotHttpStarted(runtime: *Runtime) !void {
     if (!runtime.http_server_state.started or runtime.http_server == null) return error.HttpServerNotStarted;
 }
 
-fn requireAotHttpActive(runtime: *Runtime) !void {
+pub fn requireAotHttpActive(runtime: *Runtime) !void {
     try requireAotHttpStarted(runtime);
     if (!runtime.http_server_state.request_active or runtime.http_connection == null) return error.HttpServerResponseOutsideRequest;
 }
 
-fn aotHttpNormalizedPrefix(runtime: *Runtime, value: Value) ![]u8 {
+pub fn aotHttpNormalizedPrefix(runtime: *Runtime, value: Value) ![]u8 {
     const source = try valueUtf8LossyAlloc(runtime, value);
     defer runtime.allocator.free(source);
     if (source.len == 0) return runtime.allocator.dupe(u8, "/");
@@ -6125,7 +6125,7 @@ fn aotHttpNormalizedPrefix(runtime: *Runtime, value: Value) ![]u8 {
     return std.fmt.allocPrint(runtime.allocator, "/{s}", .{source});
 }
 
-fn aotHttpAppendHeader(runtime: *Runtime, name: []const u8, value: []const u8) !void {
+pub fn aotHttpAppendHeader(runtime: *Runtime, name: []const u8, value: []const u8) !void {
     const owned_name = try runtime.allocator.dupe(u8, name);
     errdefer runtime.allocator.free(owned_name);
     const owned_value = try runtime.allocator.dupe(u8, value);
@@ -6133,7 +6133,7 @@ fn aotHttpAppendHeader(runtime: *Runtime, name: []const u8, value: []const u8) !
     try runtime.http_server_state.response_headers.append(runtime.allocator, .{ .name = owned_name, .value = owned_value });
 }
 
-fn aotHttpRespond(runtime: *Runtime, body: []const u8) !void {
+pub fn aotHttpRespond(runtime: *Runtime, body: []const u8) !void {
     const stream = runtime.http_connection orelse return error.HttpServerResponseOutsideRequest;
     const io = aotHttpIo();
     defer {
@@ -6157,19 +6157,19 @@ fn aotHttpRespond(runtime: *Runtime, body: []const u8) !void {
     try writer.interface.flush();
 }
 
-fn aotHttpHold(runtime: *Runtime) !void {
+pub fn aotHttpHold(runtime: *Runtime) !void {
     const stream = runtime.http_connection orelse return error.HttpServerResponseOutsideRequest;
     try runtime.held_http_connections.append(runtime.allocator, stream);
     runtime.http_connection = null;
     runtime.http_head_request = false;
 }
 
-fn aotHttpWrite(bytes: []const u8) void {
+pub fn aotHttpWrite(bytes: []const u8) void {
     writeBytes(bytes, false);
     _ = fflush(null);
 }
 
-fn aotHttpStatusPhrase(status: u16) []const u8 {
+pub fn aotHttpStatusPhrase(status: u16) []const u8 {
     return switch (status) {
         100 => "Continue",
         101 => "Switching Protocols",
@@ -6249,7 +6249,7 @@ pub fn pollAotHttpServer(runtime: *Runtime) !bool {
     return true;
 }
 
-fn aotHttpReceiveRequest(runtime: *Runtime) !AotHttpRequest {
+pub fn aotHttpReceiveRequest(runtime: *Runtime) !AotHttpRequest {
     const server = if (runtime.http_server) |*value| value else return error.HttpServerNotStarted;
     const io = aotHttpIo();
     if (runtime.http_connection != null) return error.PreviousHttpResponseNotFinished;
@@ -6303,7 +6303,7 @@ fn aotHttpReceiveRequest(runtime: *Runtime) !AotHttpRequest {
     return .{ .method = method, .target = target, .content_type = content_type, .body = body };
 }
 
-fn aotHttpReadChunkedBody(allocator: std.mem.Allocator, reader: *std.Io.Reader, maximum_size: usize) !AotHttpChunkedBody {
+pub fn aotHttpReadChunkedBody(allocator: std.mem.Allocator, reader: *std.Io.Reader, maximum_size: usize) !AotHttpChunkedBody {
     var body: std.ArrayList(u8) = .empty;
     errdefer body.deinit(allocator);
     var too_large = false;
@@ -6338,7 +6338,7 @@ fn aotHttpReadChunkedBody(allocator: std.mem.Allocator, reader: *std.Io.Reader, 
     return .{ .body = try body.toOwnedSlice(allocator), .too_large = false };
 }
 
-fn aotHttpPathOnly(target: []const u8) []const u8 {
+pub fn aotHttpPathOnly(target: []const u8) []const u8 {
     return target[0 .. std.mem.indexOfScalar(u8, target, '?') orelse target.len];
 }
 
@@ -6415,7 +6415,7 @@ pub fn aotHttpMultipartBoundary(content_type: []const u8) ?[]const u8 {
     return null;
 }
 
-fn aotHttpParseUrlEncoded(runtime: *Runtime, body: []const u8) !Value {
+pub fn aotHttpParseUrlEncoded(runtime: *Runtime, body: []const u8) !Value {
     var roots = [_]Value{ try runtime.createDictionary(&.{}), .{}, .{} };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -6434,7 +6434,7 @@ fn aotHttpParseUrlEncoded(runtime: *Runtime, body: []const u8) !Value {
     return roots[0];
 }
 
-fn aotHttpParseMultipart(runtime: *Runtime, body: []const u8, boundary: []const u8, files: Value) !Value {
+pub fn aotHttpParseMultipart(runtime: *Runtime, body: []const u8, boundary: []const u8, files: Value) !Value {
     var roots = [_]Value{ try runtime.createDictionary(&.{}), files, .{} };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -6472,7 +6472,7 @@ fn aotHttpParseMultipart(runtime: *Runtime, body: []const u8, boundary: []const 
     return roots[0];
 }
 
-fn aotHttpFindHeader(head: []const u8, expected: []const u8) ?[]const u8 {
+pub fn aotHttpFindHeader(head: []const u8, expected: []const u8) ?[]const u8 {
     var lines = std.mem.splitScalar(u8, head, '\n');
     while (lines.next()) |raw_line| {
         var line = raw_line;
@@ -6499,7 +6499,7 @@ pub fn aotHttpDispositionParameter(disposition: []const u8, expected: []const u8
     return null;
 }
 
-fn aotHttpPercentDecode(allocator: std.mem.Allocator, source: []const u8, plus_as_space: bool, strict: bool) ![]u8 {
+pub fn aotHttpPercentDecode(allocator: std.mem.Allocator, source: []const u8, plus_as_space: bool, strict: bool) ![]u8 {
     var result: std.ArrayList(u8) = .empty;
     errdefer result.deinit(allocator);
     var index: usize = 0;
@@ -6527,7 +6527,7 @@ fn aotHttpPercentDecode(allocator: std.mem.Allocator, source: []const u8, plus_a
     return decoded;
 }
 
-fn aotHttpServeStatic(runtime: *Runtime, route: AotHttpRoute, path: []const u8) !void {
+pub fn aotHttpServeStatic(runtime: *Runtime, route: AotHttpRoute, path: []const u8) !void {
     const relative_raw = path[@min(route.prefix.len, path.len)..];
     const sanitized = try aotHttpRemoveParentSegments(runtime.allocator, relative_raw);
     defer runtime.allocator.free(sanitized);
@@ -6553,7 +6553,7 @@ fn aotHttpServeStatic(runtime: *Runtime, route: AotHttpRoute, path: []const u8) 
     return aotHttpRespond(runtime, body);
 }
 
-fn aotHttpRespondWith(runtime: *Runtime, status: u16, headers: []const AotHttpHeader, body: []const u8) !void {
+pub fn aotHttpRespondWith(runtime: *Runtime, status: u16, headers: []const AotHttpHeader, body: []const u8) !void {
     const saved_status = runtime.http_server_state.response_status;
     runtime.http_server_state.response_status = status;
     runtime.http_server_state.clearHeaders(runtime.allocator);
@@ -6564,7 +6564,7 @@ fn aotHttpRespondWith(runtime: *Runtime, status: u16, headers: []const AotHttpHe
     return aotHttpRespond(runtime, body);
 }
 
-fn aotHttpRemoveParentSegments(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
+pub fn aotHttpRemoveParentSegments(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
     var result: std.ArrayList(u8) = .empty;
     errdefer result.deinit(allocator);
     var index: usize = 0;
@@ -6579,7 +6579,7 @@ fn aotHttpRemoveParentSegments(allocator: std.mem.Allocator, source: []const u8)
     return result.toOwnedSlice(allocator);
 }
 
-fn aotHttpStatPath(path: []const u8) !AotHttpPathStat {
+pub fn aotHttpStatPath(path: []const u8) !AotHttpPathStat {
     const stat = std.Io.Dir.cwd().statFile(aotHttpIo(), path, .{}) catch |err| return switch (err) {
         error.FileNotFound, error.NotDir => .missing,
         else => err,
@@ -6603,7 +6603,7 @@ pub fn aotHttpMimeType(path: []const u8) []const u8 {
     return "text/plain";
 }
 
-fn aotHttpSaveUpload(runtime: *Runtime, filename: []const u8, body: []const u8) ![]u8 {
+pub fn aotHttpSaveUpload(runtime: *Runtime, filename: []const u8, body: []const u8) ![]u8 {
     const prefix = try nodeTemporaryDirectoryPrefixAlloc(runtime);
     defer runtime.allocator.free(prefix);
     const upload_directory = try std.fs.path.join(runtime.allocator, &.{ prefix, "nako3-plugin_httpserver_upload" });
@@ -6636,22 +6636,22 @@ pub var active_runtime: ?Runtime = null;
 pub var aot_interrupt_requested = std.atomic.Value(bool).init(false);
 
 const AotPosixInterrupt = if (builtin.os.tag == .windows) struct {} else struct {
-    fn handler(_: std.posix.SIG) callconv(.c) void {
+    pub fn handler(_: std.posix.SIG) callconv(.c) void {
         aot_interrupt_requested.store(true, .release);
     }
 };
 
 const AotWindowsInterrupt = if (builtin.os.tag == .windows) struct {
-    extern "kernel32" fn SetConsoleCtrlHandler(handler_fn: ?*const fn (u32) callconv(.winapi) i32, add: i32) callconv(.winapi) i32;
+    pub extern "kernel32" fn SetConsoleCtrlHandler(handler_fn: ?*const fn (u32) callconv(.winapi) i32, add: i32) callconv(.winapi) i32;
 
-    fn handler(control_type: u32) callconv(.winapi) i32 {
+    pub fn handler(control_type: u32) callconv(.winapi) i32 {
         if (control_type != 0 and control_type != 1) return 0;
         aot_interrupt_requested.store(true, .release);
         return 1;
     }
 } else struct {};
 
-fn installAotInterrupt() !void {
+pub fn installAotInterrupt() !void {
     if (builtin.os.tag == .windows) {
         if (AotWindowsInterrupt.SetConsoleCtrlHandler(AotWindowsInterrupt.handler, 1) == 0) return error.InterruptHandlingUnavailable;
     } else {
@@ -6749,7 +6749,7 @@ pub fn debugDisplayBuiltin(runtime: *Runtime, value: Value, line: u64, source_pa
     try displayValue(runtime, roots[2], true, display_log);
 }
 
-fn normalizeDebugSourcePath(source_path: []const u8, windows: bool) []const u8 {
+pub fn normalizeDebugSourcePath(source_path: []const u8, windows: bool) []const u8 {
     if (windows) {
         if (std.mem.indexOfScalar(u8, source_path, ':')) |separator| return source_path[0..separator];
     }
@@ -6803,7 +6803,7 @@ pub fn nodeNetworkAddressesBuiltin(runtime: *Runtime, ipv6: bool) !Value {
     return result;
 }
 
-fn syntheticAotNetworkAddresses(allocator: std.mem.Allocator, ipv6: bool) !std.ArrayList([]u8) {
+pub fn syntheticAotNetworkAddresses(allocator: std.mem.Allocator, ipv6: bool) !std.ArrayList([]u8) {
     // Keep the AOT test route byte-for-byte aligned with the CLI host's
     // synthetic topology. The marker is injected only by oracle fixtures.
     const addresses: []const []const u8 = if (ipv6)
@@ -6816,7 +6816,7 @@ fn syntheticAotNetworkAddresses(allocator: std.mem.Allocator, ipv6: bool) !std.A
     return items;
 }
 
-fn aotPosixNetworkAddresses(allocator: std.mem.Allocator, ipv6: bool) !std.ArrayList([]u8) {
+pub fn aotPosixNetworkAddresses(allocator: std.mem.Allocator, ipv6: bool) !std.ArrayList([]u8) {
     if (builtin.os.tag == .windows) return error.NetworkInterfacesUnavailable;
     var first: ?*AotPosixIfAddrs = null;
     if (AotPosixInterfaces.getifaddrs(&first) != 0) return error.NetworkInterfacesUnavailable;
@@ -6837,7 +6837,7 @@ fn aotPosixNetworkAddresses(allocator: std.mem.Allocator, ipv6: bool) !std.Array
     return items;
 }
 
-fn aotWindowsNetworkAddresses(allocator: std.mem.Allocator, ipv6: bool) !std.ArrayList([]u8) {
+pub fn aotWindowsNetworkAddresses(allocator: std.mem.Allocator, ipv6: bool) !std.ArrayList([]u8) {
     if (builtin.os.tag != .windows) return error.NetworkInterfacesUnavailable;
     const overflow_code = 111;
     var size: u32 = 15 * 1024;
@@ -6865,12 +6865,12 @@ fn aotWindowsNetworkAddresses(allocator: std.mem.Allocator, ipv6: bool) !std.Arr
     return items;
 }
 
-fn deinitAotNetworkAddressList(allocator: std.mem.Allocator, items: *std.ArrayList([]u8)) void {
+pub fn deinitAotNetworkAddressList(allocator: std.mem.Allocator, items: *std.ArrayList([]u8)) void {
     for (items.items) |item| allocator.free(item);
     items.deinit(allocator);
 }
 
-fn aotFormatSockAddress(allocator: std.mem.Allocator, address: *const std.posix.sockaddr) ![]u8 {
+pub fn aotFormatSockAddress(allocator: std.mem.Allocator, address: *const std.posix.sockaddr) ![]u8 {
     if (address.family == std.posix.AF.INET) {
         const source: *const std.posix.sockaddr.in = @ptrCast(@alignCast(address));
         const bytes: *const [4]u8 = @ptrCast(&source.addr);
@@ -6880,7 +6880,7 @@ fn aotFormatSockAddress(allocator: std.mem.Allocator, address: *const std.posix.
     return aotFormatIpv6Address(allocator, source.addr);
 }
 
-fn aotFormatWindowsSockAddress(allocator: std.mem.Allocator, address: *const std.os.windows.ws2_32.sockaddr) ![]u8 {
+pub fn aotFormatWindowsSockAddress(allocator: std.mem.Allocator, address: *const std.os.windows.ws2_32.sockaddr) ![]u8 {
     if (address.family == std.os.windows.ws2_32.AF.INET) {
         const source: *const std.os.windows.ws2_32.sockaddr.in = @ptrCast(@alignCast(address));
         const bytes: *const [4]u8 = @ptrCast(&source.addr);
@@ -6890,7 +6890,7 @@ fn aotFormatWindowsSockAddress(allocator: std.mem.Allocator, address: *const std
     return aotFormatIpv6Address(allocator, source.addr);
 }
 
-fn aotFormatIpv6Address(allocator: std.mem.Allocator, bytes: [16]u8) ![]u8 {
+pub fn aotFormatIpv6Address(allocator: std.mem.Allocator, bytes: [16]u8) ![]u8 {
     var output: std.Io.Writer.Allocating = .init(allocator);
     errdefer output.deinit();
     const unresolved: std.Io.net.Ip6Address.Unresolved = .{ .bytes = bytes, .interface_name = null };
@@ -6898,11 +6898,11 @@ fn aotFormatIpv6Address(allocator: std.mem.Allocator, bytes: [16]u8) ![]u8 {
     return output.toOwnedSlice();
 }
 
-fn promiseSentinel(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+pub fn promiseSentinel(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
     out.* = .{};
 }
 
-fn byteBufferUnboundSliceCallback(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+pub fn byteBufferUnboundSliceCallback(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
     out.* = .{};
     const runtime = if (active_runtime) |*active| active else return;
     runtime.setFailureText("Cannot read properties of undefined (reading 'subarray')");
@@ -7000,7 +7000,7 @@ pub fn initialRandomState() u64 {
     return if (parsed == 0) default_random_seed else parsed;
 }
 
-fn nextRandom(runtime: *Runtime) f64 {
+pub fn nextRandom(runtime: *Runtime) f64 {
     if (runtime.random_state == 0) runtime.random_state = initialRandomState();
     var value = runtime.random_state;
     value ^= value >> 12;
@@ -7011,7 +7011,7 @@ fn nextRandom(runtime: *Runtime) f64 {
     return @as(f64, @floatFromInt(bits)) / 9007199254740992.0;
 }
 
-fn mathRandom(runtime: *Runtime, source: Value) !Value {
+pub fn mathRandom(runtime: *Runtime, source: Value) !Value {
     const random = nextRandom(runtime);
     if (source.tag == @intFromEnum(Tag.number)) return numberValue(@floor(random * @as(f64, @bitCast(source.payload))));
 
@@ -7034,7 +7034,7 @@ fn mathRandom(runtime: *Runtime, source: Value) !Value {
     return numberValue(@floor(random * (upper - lower + 1)) + lower);
 }
 
-fn mathRandomRange(runtime: *Runtime, minimum: Value, maximum: Value) !Value {
+pub fn mathRandomRange(runtime: *Runtime, minimum: Value, maximum: Value) !Value {
     const random = nextRandom(runtime);
     const lower = try valueToNumberRuntime(runtime, minimum);
     const upper = try valueToNumberRuntime(runtime, maximum);
@@ -7240,7 +7240,7 @@ pub fn datetimeBuiltin(runtime: *Runtime, command: aot_builtin.Command, argument
     };
 }
 
-fn currentTimeMilliseconds(runtime: *Runtime) i64 {
+pub fn currentTimeMilliseconds(runtime: *Runtime) i64 {
     if (runtime.clock_milliseconds) |value| return value;
     if (std.c.getenv("LNAKO_TEST_NOW_MS")) |environment| {
         return std.fmt.parseInt(i64, std.mem.span(environment), 10) catch hostWallClockMilliseconds();
@@ -7248,12 +7248,12 @@ fn currentTimeMilliseconds(runtime: *Runtime) i64 {
     return hostWallClockMilliseconds();
 }
 
-fn datetimePluginRouteEnabled() bool {
+pub fn datetimePluginRouteEnabled() bool {
     const route = std.c.getenv("LNAKO_PLUGIN_ROUTE") orelse return false;
     return std.mem.eql(u8, std.mem.span(route), "plugin_datetime");
 }
 
-fn hostWallClockMilliseconds() i64 {
+pub fn hostWallClockMilliseconds() i64 {
     const seconds = time(null);
     return std.math.mul(i64, seconds, datetime_milliseconds_per_second) catch if (seconds < 0) std.math.minInt(i64) else std.math.maxInt(i64);
 }
@@ -7275,13 +7275,13 @@ pub fn datetimeFieldsFromEpoch(milliseconds: i64) AotDateFields {
     };
 }
 
-fn datetimeValueUtf8Alloc(runtime: *Runtime, value: Value) ![]u8 {
+pub fn datetimeValueUtf8Alloc(runtime: *Runtime, value: Value) ![]u8 {
     const units = try valueUtf16Alloc(runtime, value);
     defer runtime.allocator.free(units);
     return (string_mod.String{ .allocator = runtime.allocator, .units = units }).toUtf8Lossy(runtime.allocator);
 }
 
-fn datetimeParseDate(runtime: *Runtime, source: Value, now: i64) !f64 {
+pub fn datetimeParseDate(runtime: *Runtime, source: Value, now: i64) !f64 {
     const utf8 = try datetimeValueUtf8Alloc(runtime, source);
     defer runtime.allocator.free(utf8);
     const text = std.mem.trim(u8, utf8, " \t\r\n");
@@ -7308,13 +7308,13 @@ fn datetimeParseDate(runtime: *Runtime, source: Value, now: i64) !f64 {
     return @floatFromInt(datetimeConstructLocal(parts[0], parts[1] - 1, parts[2], parts[3], parts[4], parts[5], 0, true));
 }
 
-fn datetimeWeekdayName(runtime: *Runtime, milliseconds: f64) !Value {
+pub fn datetimeWeekdayName(runtime: *Runtime, milliseconds: f64) !Value {
     if (!std.math.isFinite(milliseconds)) return runtimeUtf8String(runtime, "日");
     const names = [_][]const u8{ "日", "月", "火", "水", "木", "金", "土" };
     return runtimeUtf8String(runtime, names[datetimeFieldsFromEpoch(datetimeFloatToEpoch(milliseconds)).weekday]);
 }
 
-fn datetimeWeekdayNumber(runtime: *Runtime, source: Value) !Value {
+pub fn datetimeWeekdayNumber(runtime: *Runtime, source: Value) !Value {
     const text = try datetimeValueUtf8Alloc(runtime, source);
     defer runtime.allocator.free(text);
     var iterator = std.mem.splitScalar(u8, text, '/');
@@ -7333,7 +7333,7 @@ pub fn datetimeConstructLocal(year_input: i64, month_zero_input: i64, day: i64, 
     return days * datetime_milliseconds_per_day + hour * datetime_milliseconds_per_hour + minute * datetime_milliseconds_per_minute + second * datetime_milliseconds_per_second + millisecond - datetime_tokyo_offset_milliseconds;
 }
 
-fn datetimeDaysFromCivil(year_input: i64, month: i64, day: i64) i64 {
+pub fn datetimeDaysFromCivil(year_input: i64, month: i64, day: i64) i64 {
     var year = year_input;
     year -= @intFromBool(month <= 2);
     const era = @divFloor(year, 400);
@@ -7344,7 +7344,7 @@ fn datetimeDaysFromCivil(year_input: i64, month: i64, day: i64) i64 {
     return era * 146097 + day_of_era - 719468;
 }
 
-fn datetimeParseDelimited(text: []const u8, delimiter: u8) ![3]i64 {
+pub fn datetimeParseDelimited(text: []const u8, delimiter: u8) ![3]i64 {
     var result = [_]i64{ 0, 0, 0 };
     var iterator = std.mem.splitScalar(u8, text, delimiter);
     var index: usize = 0;
@@ -7357,7 +7357,7 @@ fn datetimeParseDelimited(text: []const u8, delimiter: u8) ![3]i64 {
     return result;
 }
 
-fn datetimeParseIntPrefix(text: []const u8) ?i64 {
+pub fn datetimeParseIntPrefix(text: []const u8) ?i64 {
     if (text.len == 0) return null;
     var index: usize = 0;
     var negative = false;
@@ -7375,7 +7375,7 @@ fn datetimeParseIntPrefix(text: []const u8) ?i64 {
     return if (negative) -value else value;
 }
 
-fn datetimeIsUnsignedDecimal(text: []const u8) bool {
+pub fn datetimeIsUnsignedDecimal(text: []const u8) bool {
     if (text.len == 0) return false;
     var dot = false;
     for (text) |byte| {
@@ -7386,7 +7386,7 @@ fn datetimeIsUnsignedDecimal(text: []const u8) bool {
     return text[0] != '.' and text[text.len - 1] != '.';
 }
 
-fn datetimeIsTimeText(text: []const u8) bool {
+pub fn datetimeIsTimeText(text: []const u8) bool {
     var separators: usize = 0;
     if (text.len == 0) return false;
     for (text) |byte| {
@@ -7395,25 +7395,25 @@ fn datetimeIsTimeText(text: []const u8) bool {
     return separators == 1 or separators == 2;
 }
 
-fn datetimeFloatToEpoch(value: f64) i64 {
+pub fn datetimeFloatToEpoch(value: f64) i64 {
     if (!std.math.isFinite(value)) return 0;
     const clipped = std.math.clamp(std.math.trunc(value), @as(f64, @floatFromInt(std.math.minInt(i64) + 1)), @as(f64, @floatFromInt(std.math.maxInt(i64))));
     return @intFromFloat(clipped);
 }
 
-fn datetimeDateString(runtime: *Runtime, fields: AotDateFields) !Value {
+pub fn datetimeDateString(runtime: *Runtime, fields: AotDateFields) !Value {
     const text = try std.fmt.allocPrint(runtime.allocator, "{d}/{:02}/{:02}", .{ fields.year, @as(u64, @intCast(fields.month)), @as(u64, @intCast(fields.day)) });
     defer runtime.allocator.free(text);
     return runtimeUtf8String(runtime, text);
 }
 
-fn datetimeTimeString(runtime: *Runtime, fields: AotDateFields) !Value {
+pub fn datetimeTimeString(runtime: *Runtime, fields: AotDateFields) !Value {
     const text = try std.fmt.allocPrint(runtime.allocator, "{:02}:{:02}:{:02}", .{ @as(u64, @intCast(fields.hour)), @as(u64, @intCast(fields.minute)), @as(u64, @intCast(fields.second)) });
     defer runtime.allocator.free(text);
     return runtimeUtf8String(runtime, text);
 }
 
-fn datetimeDateTimeString(runtime: *Runtime, milliseconds: f64) !Value {
+pub fn datetimeDateTimeString(runtime: *Runtime, milliseconds: f64) !Value {
     const fields = datetimeFieldsFromEpoch(datetimeFloatToEpoch(milliseconds));
     const text = try std.fmt.allocPrint(runtime.allocator, "{d}/{:02}/{:02} {:02}:{:02}:{:02}", .{ fields.year, @as(u64, @intCast(fields.month)), @as(u64, @intCast(fields.day)), @as(u64, @intCast(fields.hour)), @as(u64, @intCast(fields.minute)), @as(u64, @intCast(fields.second)) });
     defer runtime.allocator.free(text);
@@ -7422,7 +7422,7 @@ fn datetimeDateTimeString(runtime: *Runtime, milliseconds: f64) !Value {
 
 const AotDateOutputShape = enum { date_time, date, time };
 
-fn datetimeFormatDateTimeFor(runtime: *Runtime, fields: AotDateFields, shape: AotDateOutputShape) !Value {
+pub fn datetimeFormatDateTimeFor(runtime: *Runtime, fields: AotDateFields, shape: AotDateOutputShape) !Value {
     return switch (shape) {
         .date => datetimeDateString(runtime, fields),
         .time => datetimeTimeString(runtime, fields),
@@ -7434,7 +7434,7 @@ fn datetimeFormatDateTimeFor(runtime: *Runtime, fields: AotDateFields, shape: Ao
     };
 }
 
-fn datetimeOutputShape(runtime: *Runtime, original: Value) !AotDateOutputShape {
+pub fn datetimeOutputShape(runtime: *Runtime, original: Value) !AotDateOutputShape {
     const text = try datetimeValueUtf8Alloc(runtime, original);
     defer runtime.allocator.free(text);
     if (datetimeLooksDateTime(text)) return .date_time;
@@ -7443,7 +7443,7 @@ fn datetimeOutputShape(runtime: *Runtime, original: Value) !AotDateOutputShape {
     return .date_time;
 }
 
-fn datetimeFormatCustom(runtime: *Runtime, milliseconds: f64, format_value: Value) !Value {
+pub fn datetimeFormatCustom(runtime: *Runtime, milliseconds: f64, format_value: Value) !Value {
     if (!std.math.isFinite(milliseconds)) return runtimeUtf8String(runtime, "Invalid Date");
     const fields = datetimeFieldsFromEpoch(datetimeFloatToEpoch(milliseconds));
     const format = try datetimeValueUtf8Alloc(runtime, format_value);
@@ -7516,7 +7516,7 @@ fn datetimeFormatCustom(runtime: *Runtime, milliseconds: f64, format_value: Valu
     return runtimeUtf8String(runtime, output.written());
 }
 
-fn datetimeJapaneseEra(runtime: *Runtime, milliseconds: f64) !Value {
+pub fn datetimeJapaneseEra(runtime: *Runtime, milliseconds: f64) !Value {
     if (!std.math.isFinite(milliseconds)) return error.InvalidDate;
     const fields = datetimeFieldsFromEpoch(datetimeFloatToEpoch(milliseconds));
     const day_number = datetimeDaysFromCivil(fields.year, fields.month, fields.day);
@@ -7534,7 +7534,7 @@ fn datetimeJapaneseEra(runtime: *Runtime, milliseconds: f64) !Value {
     return error.DateBeforeMeiji;
 }
 
-fn datetimeEraDateFields(date: []const u8) struct { year: i64, month: i64, day: i64 } {
+pub fn datetimeEraDateFields(date: []const u8) struct { year: i64, month: i64, day: i64 } {
     var iterator = std.mem.splitScalar(u8, date, '/');
     return .{
         .year = datetimeParseIntPrefix(iterator.next() orelse "0") orelse 0,
@@ -7543,7 +7543,7 @@ fn datetimeEraDateFields(date: []const u8) struct { year: i64, month: i64, day: 
     };
 }
 
-fn datetimeDifferenceBuiltin(runtime: *Runtime, unit: AotDateDifferenceUnit, arguments: []const Value, now: i64) !Value {
+pub fn datetimeDifferenceBuiltin(runtime: *Runtime, unit: AotDateDifferenceUnit, arguments: []const Value, now: i64) !Value {
     if (arguments.len < 2) return error.InvalidArgumentCount;
     const first = try datetimeParseDate(runtime, arguments[0], now);
     const second = try datetimeParseDate(runtime, arguments[1], now);
@@ -7569,12 +7569,12 @@ fn datetimeDifferenceBuiltin(runtime: *Runtime, unit: AotDateDifferenceUnit, arg
     return numberValue(@ceil((second_seconds - first_seconds) / divisor));
 }
 
-fn datetimeDifferenceWithUnitBuiltin(runtime: *Runtime, arguments: []const Value, now: i64) !Value {
+pub fn datetimeDifferenceWithUnitBuiltin(runtime: *Runtime, arguments: []const Value, now: i64) !Value {
     const unit = try datetimeDifferenceUnit(runtime, arguments[2]);
     return datetimeDifferenceBuiltin(runtime, unit, arguments[0..2], now);
 }
 
-fn datetimeDifferenceUnit(runtime: *Runtime, value: Value) !AotDateDifferenceUnit {
+pub fn datetimeDifferenceUnit(runtime: *Runtime, value: Value) !AotDateDifferenceUnit {
     const text = try datetimeValueUtf8Alloc(runtime, value);
     defer runtime.allocator.free(text);
     if (std.mem.eql(u8, text, "年")) return .year;
@@ -7586,14 +7586,14 @@ fn datetimeDifferenceUnit(runtime: *Runtime, value: Value) !AotDateDifferenceUni
     return error.UnknownDateUnit;
 }
 
-fn datetimeAddTimeBuiltin(runtime: *Runtime, arguments: []const Value, now: i64) !Value {
+pub fn datetimeAddTimeBuiltin(runtime: *Runtime, arguments: []const Value, now: i64) !Value {
     if (arguments.len < 2) return error.InvalidArgumentCount;
     const addition = try datetimeValueUtf8Alloc(runtime, arguments[1]);
     defer runtime.allocator.free(addition);
     return datetimeAddTimeText(runtime, arguments[0], addition, now);
 }
 
-fn datetimeAddTimeText(runtime: *Runtime, source: Value, addition: []const u8, now: i64) !Value {
+pub fn datetimeAddTimeText(runtime: *Runtime, source: Value, addition: []const u8, now: i64) !Value {
     var text = addition;
     var sign: i64 = 1;
     if (text.len > 0 and (text[0] == '+' or text[0] == '-')) {
@@ -7607,14 +7607,14 @@ fn datetimeAddTimeText(runtime: *Runtime, source: Value, addition: []const u8, n
     return datetimeFormatDateTimeFor(runtime, datetimeFieldsFromEpoch(datetimeFloatToEpoch(original) + seconds * 1000), try datetimeOutputShape(runtime, source));
 }
 
-fn datetimeAddDateBuiltin(runtime: *Runtime, arguments: []const Value, now: i64) !Value {
+pub fn datetimeAddDateBuiltin(runtime: *Runtime, arguments: []const Value, now: i64) !Value {
     if (arguments.len < 2) return error.InvalidArgumentCount;
     const addition = try datetimeValueUtf8Alloc(runtime, arguments[1]);
     defer runtime.allocator.free(addition);
     return datetimeAddDateText(runtime, arguments[0], addition, now);
 }
 
-fn datetimeAddDateText(runtime: *Runtime, source: Value, addition: []const u8, now: i64) !Value {
+pub fn datetimeAddDateText(runtime: *Runtime, source: Value, addition: []const u8, now: i64) !Value {
     var text = addition;
     var sign: i64 = 1;
     if (text.len > 0 and (text[0] == '+' or text[0] == '-')) {
@@ -7652,7 +7652,7 @@ pub fn datetimeAddDatePluginEpoch(original: i64, parts: [3]i64, sign: i64) i64 {
     return epoch + parts[2] * sign * datetime_milliseconds_per_day;
 }
 
-fn datetimeAddCalendarClamped(fields: AotDateFields, year_delta: i64, month_delta: i64) i64 {
+pub fn datetimeAddCalendarClamped(fields: AotDateFields, year_delta: i64, month_delta: i64) i64 {
     const month_zero = fields.month - 1 + month_delta;
     const year = fields.year + year_delta + @divFloor(month_zero, 12);
     const normalized_month_zero = @mod(month_zero, 12);
@@ -7660,7 +7660,7 @@ fn datetimeAddCalendarClamped(fields: AotDateFields, year_delta: i64, month_delt
     return datetimeConstructLocal(year, normalized_month_zero, day, fields.hour, fields.minute, fields.second, fields.millisecond, false);
 }
 
-fn datetimeDaysInMonth(year: i64, month: i64) i64 {
+pub fn datetimeDaysInMonth(year: i64, month: i64) i64 {
     return switch (month) {
         2 => if (datetimeIsLeapYear(year)) 29 else 28,
         4, 6, 9, 11 => 30,
@@ -7668,11 +7668,11 @@ fn datetimeDaysInMonth(year: i64, month: i64) i64 {
     };
 }
 
-fn datetimeIsLeapYear(year: i64) bool {
+pub fn datetimeIsLeapYear(year: i64) bool {
     return @mod(year, 4) == 0 and (@mod(year, 100) != 0 or @mod(year, 400) == 0);
 }
 
-fn datetimeAddDateTimeBuiltin(runtime: *Runtime, arguments: []const Value, now: i64) !Value {
+pub fn datetimeAddDateTimeBuiltin(runtime: *Runtime, arguments: []const Value, now: i64) !Value {
     if (arguments.len < 2) return error.InvalidArgumentCount;
     const addition = try datetimeValueUtf8Alloc(runtime, arguments[1]);
     defer runtime.allocator.free(addition);
@@ -7698,7 +7698,7 @@ fn datetimeAddDateTimeBuiltin(runtime: *Runtime, arguments: []const Value, now: 
     return error.InvalidDateAddition;
 }
 
-fn datetimeAddDateTimeWithAffix(runtime: *Runtime, source: Value, now: i64, amount: i64, prefix_or_suffix: []const u8, is_time: bool) !Value {
+pub fn datetimeAddDateTimeWithAffix(runtime: *Runtime, source: Value, now: i64, amount: i64, prefix_or_suffix: []const u8, is_time: bool) !Value {
     const text = if (prefix_or_suffix.len > 0 and (prefix_or_suffix[0] == '/' or prefix_or_suffix[0] == ':'))
         try std.fmt.allocPrint(runtime.allocator, "{d}{s}", .{ amount, prefix_or_suffix })
     else
@@ -7707,13 +7707,13 @@ fn datetimeAddDateTimeWithAffix(runtime: *Runtime, source: Value, now: i64, amou
     return if (is_time) datetimeAddTimeText(runtime, source, text, now) else datetimeAddDateText(runtime, source, text, now);
 }
 
-fn datetimeAddDateTimeAround(runtime: *Runtime, source: Value, now: i64, amount: i64, prefix: []const u8, suffix: []const u8, is_time: bool) !Value {
+pub fn datetimeAddDateTimeAround(runtime: *Runtime, source: Value, now: i64, amount: i64, prefix: []const u8, suffix: []const u8, is_time: bool) !Value {
     const text = try std.fmt.allocPrint(runtime.allocator, "{s}{d}{s}", .{ prefix, amount, suffix });
     defer runtime.allocator.free(text);
     return if (is_time) datetimeAddTimeText(runtime, source, text, now) else datetimeAddDateText(runtime, source, text, now);
 }
 
-fn monotonicTimeMilliseconds(runtime: *Runtime) f64 {
+pub fn monotonicTimeMilliseconds(runtime: *Runtime) f64 {
     if (runtime.monotonic_milliseconds) |value| return value;
     if (std.c.getenv("LNAKO_TEST_MONOTONIC_MS")) |environment| {
         if (std.fmt.parseFloat(f64, std.mem.span(environment))) |value| return value else |_| {}
@@ -7722,7 +7722,7 @@ fn monotonicTimeMilliseconds(runtime: *Runtime) f64 {
     return @as(f64, @floatFromInt(timestamp.nanoseconds)) / 1_000_000.0;
 }
 
-fn datetimeLooksDate(text: []const u8) bool {
+pub fn datetimeLooksDate(text: []const u8) bool {
     var separators: usize = 0;
     for (text) |byte| {
         if (byte == '/') separators += 1 else if (!std.ascii.isDigit(byte)) return false;
@@ -7730,16 +7730,16 @@ fn datetimeLooksDate(text: []const u8) bool {
     return separators == 2;
 }
 
-fn datetimeLooksDateTime(text: []const u8) bool {
+pub fn datetimeLooksDateTime(text: []const u8) bool {
     const space = std.mem.indexOfAny(u8, text, " \t") orelse return false;
     return datetimeLooksDate(text[0..space]) and datetimeIsTimeText(std.mem.trim(u8, text[space..], " \t"));
 }
 
-fn datetimeIsTwoToken(token: []const u8) bool {
+pub fn datetimeIsTwoToken(token: []const u8) bool {
     return std.mem.eql(u8, token, "YY") or std.mem.eql(u8, token, "MM") or std.mem.eql(u8, token, "DD") or std.mem.eql(u8, token, "HH") or std.mem.eql(u8, token, "mm") or std.mem.eql(u8, token, "ss");
 }
 
-fn datetimeMatchToken(text: []const u8, index: usize, token: []const u8) bool {
+pub fn datetimeMatchToken(text: []const u8, index: usize, token: []const u8) bool {
     return index + token.len <= text.len and std.mem.eql(u8, text[index .. index + token.len], token);
 }
 
@@ -7779,7 +7779,7 @@ pub fn pathBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: [
     };
 }
 
-fn pathExtractExtensionBuiltin(runtime: *Runtime, source: Value) !Value {
+pub fn pathExtractExtensionBuiltin(runtime: *Runtime, source: Value) !Value {
     const source_tag: Tag = @enumFromInt(source.tag);
     if (source_tag == .undefined or source_tag == .null_value) return runtimeUtf8String(runtime, "");
     if (!isString(source)) return error.InvalidPathSource;
@@ -7791,7 +7791,7 @@ fn pathExtractExtensionBuiltin(runtime: *Runtime, source: Value) !Value {
     return runtime.createString(filename[dot..]);
 }
 
-fn pathChangeExtensionBuiltin(runtime: *Runtime, source: Value, extension: Value) !Value {
+pub fn pathChangeExtensionBuiltin(runtime: *Runtime, source: Value, extension: Value) !Value {
     const source_tag: Tag = @enumFromInt(source.tag);
     if (source_tag == .undefined or source_tag == .null_value) return extension;
     if (!isString(source)) return error.InvalidPathSource;
@@ -7806,7 +7806,7 @@ fn pathChangeExtensionBuiltin(runtime: *Runtime, source: Value, extension: Value
     return pathChangeExtensionUnits(runtime, source_units, extension_units);
 }
 
-fn pathChangeExtensionUnits(runtime: *Runtime, source: []const u16, extension: []const u16) !Value {
+pub fn pathChangeExtensionUnits(runtime: *Runtime, source: []const u16, extension: []const u16) !Value {
     const raw_extension = string_mod.trimWhitespace(extension);
     const separator = pathSeparatorUnit();
     const last_separator = std.mem.lastIndexOfScalar(u16, source, separator);
@@ -7828,7 +7828,7 @@ fn pathChangeExtensionUnits(runtime: *Runtime, source: []const u16, extension: [
     return runtime.createString(output.items);
 }
 
-fn pathAddTrailingSeparatorBuiltin(runtime: *Runtime, source: Value) !Value {
+pub fn pathAddTrailingSeparatorBuiltin(runtime: *Runtime, source: Value) !Value {
     const source_tag: Tag = @enumFromInt(source.tag);
     if (source_tag == .undefined or source_tag == .null_value) return runtimeUtf8String(runtime, "");
     if (!isString(source)) return error.InvalidPathSource;
@@ -7842,7 +7842,7 @@ fn pathAddTrailingSeparatorBuiltin(runtime: *Runtime, source: Value) !Value {
     return runtime.createString(output);
 }
 
-fn pathRemoveTrailingSeparatorBuiltin(runtime: *Runtime, source: Value) !Value {
+pub fn pathRemoveTrailingSeparatorBuiltin(runtime: *Runtime, source: Value) !Value {
     const source_tag: Tag = @enumFromInt(source.tag);
     if (source_tag == .undefined or source_tag == .null_value or
         source_tag == .boolean and source.payload == 0 or
@@ -7857,16 +7857,16 @@ fn pathRemoveTrailingSeparatorBuiltin(runtime: *Runtime, source: Value) !Value {
     return runtime.createString(units[0 .. units.len - 1]);
 }
 
-fn pathSeparatorUnit() u16 {
+pub fn pathSeparatorUnit() u16 {
     return if (std.fs.path.sep_str.len > 0) std.fs.path.sep_str[0] else '/';
 }
 
-fn pathBasenameUnits(path: []const u16, separator: u16) []const u16 {
+pub fn pathBasenameUnits(path: []const u16, separator: u16) []const u16 {
     const index = std.mem.lastIndexOfScalar(u16, path, separator) orelse return path;
     return path[index + 1 ..];
 }
 
-fn pathAllExtensionUnits(units: []const u16) bool {
+pub fn pathAllExtensionUnits(units: []const u16) bool {
     for (units) |unit| switch (unit) {
         'a'...'z', 'A'...'Z', '0'...'9', '_', '-', '+' => {},
         else => return false,
@@ -7905,13 +7905,13 @@ pub fn kansujiBuiltin(runtime: *Runtime, command: aot_builtin.Command, input: Va
     };
 }
 
-fn kansujiInputUtf8(runtime: *Runtime, input: Value) ![]u8 {
+pub fn kansujiInputUtf8(runtime: *Runtime, input: Value) ![]u8 {
     const units = try valueUtf16Alloc(runtime, input);
     defer runtime.allocator.free(units);
     return (string_mod.String{ .allocator = runtime.allocator, .units = units }).toUtf8Lossy(runtime.allocator);
 }
 
-fn kansujiToKanjiBuiltin(runtime: *Runtime, input: Value) !Value {
+pub fn kansujiToKanjiBuiltin(runtime: *Runtime, input: Value) !Value {
     const raw = try kansujiInputUtf8(runtime, input);
     defer runtime.allocator.free(raw);
     const ascii = try kansujiFullwidthDigits(runtime.allocator, raw);
@@ -7971,7 +7971,7 @@ fn kansujiToKanjiBuiltin(runtime: *Runtime, input: Value) !Value {
     return runtimeUtf8String(runtime, output.items);
 }
 
-fn kansujiToArabicBuiltin(runtime: *Runtime, input: Value) !Value {
+pub fn kansujiToArabicBuiltin(runtime: *Runtime, input: Value) !Value {
     const source = try kansujiInputUtf8(runtime, input);
     defer runtime.allocator.free(source);
     var total = try BigInt.init(runtime.allocator, 0);
@@ -8075,7 +8075,7 @@ fn kansujiToArabicBuiltin(runtime: *Runtime, input: Value) !Value {
 
 const KansujiMatch = struct { index: usize, text: []const u8 };
 
-fn kansujiMatchAny(source: []const u8, options: []const []const u8) ?KansujiMatch {
+pub fn kansujiMatchAny(source: []const u8, options: []const []const u8) ?KansujiMatch {
     var best: ?KansujiMatch = null;
     for (options, 0..) |option, index| {
         if (!std.mem.startsWith(u8, source, option)) continue;
@@ -8086,20 +8086,20 @@ fn kansujiMatchAny(source: []const u8, options: []const []const u8) ?KansujiMatc
 
 const KansujiDigitMatch = struct { value: u8, length: usize };
 
-fn kansujiMatchDigit(source: []const u8) ?KansujiDigitMatch {
+pub fn kansujiMatchDigit(source: []const u8) ?KansujiDigitMatch {
     for (kansujiBasicKanji, 0..) |digit, value| if (std.mem.startsWith(u8, source, digit)) {
         return .{ .value = @intCast(value), .length = digit.len };
     };
     return null;
 }
 
-fn kansujiAddDefaultedBase(allocator: std.mem.Allocator, target: *BigInt, base: *std.ArrayList(u64)) !void {
+pub fn kansujiAddDefaultedBase(allocator: std.mem.Allocator, target: *BigInt, base: *std.ArrayList(u64)) !void {
     if (base.items.len == 0) try base.appendSlice(allocator, &.{ 0, 1 }) else if (base.items.len == 1) try base.append(allocator, 1);
     try kansujiAddPair(allocator, target, base.items);
     base.clearRetainingCapacity();
 }
 
-fn kansujiAddFinalBase(allocator: std.mem.Allocator, target: *BigInt, base: *std.ArrayList(u64)) !void {
+pub fn kansujiAddFinalBase(allocator: std.mem.Allocator, target: *BigInt, base: *std.ArrayList(u64)) !void {
     if (base.items.len == 1) {
         try base.append(allocator, 1);
         try kansujiAddPair(allocator, target, base.items);
@@ -8107,7 +8107,7 @@ fn kansujiAddFinalBase(allocator: std.mem.Allocator, target: *BigInt, base: *std
     base.clearRetainingCapacity();
 }
 
-fn kansujiAddPair(allocator: std.mem.Allocator, target: *BigInt, pair: []const u64) !void {
+pub fn kansujiAddPair(allocator: std.mem.Allocator, target: *BigInt, pair: []const u64) !void {
     if (pair.len < 2) return;
     var value = try BigInt.init(allocator, pair[0] * pair[1]);
     defer value.deinit();
@@ -8116,13 +8116,13 @@ fn kansujiAddPair(allocator: std.mem.Allocator, target: *BigInt, pair: []const u
     target.* = sum;
 }
 
-fn kansujiAddBig(allocator: std.mem.Allocator, target: *BigInt, value: BigInt) !void {
+pub fn kansujiAddBig(allocator: std.mem.Allocator, target: *BigInt, value: BigInt) !void {
     const sum = try target.add(allocator, value);
     target.deinit();
     target.* = sum;
 }
 
-fn kansujiFullwidthDigits(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
+pub fn kansujiFullwidthDigits(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
     var output: std.ArrayList(u8) = .empty;
     errdefer output.deinit(allocator);
     var index: usize = 0;
@@ -8137,7 +8137,7 @@ fn kansujiFullwidthDigits(allocator: std.mem.Allocator, source: []const u8) ![]u
     return output.toOwnedSlice(allocator);
 }
 
-fn kansujiExpandDecimal(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
+pub fn kansujiExpandDecimal(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
     if (source.len > 0 and (source[0] == '+' or source[0] == '-')) {
         if (!kansujiValidDecimal(source)) return error.InvalidKansujiInput;
         return allocator.dupe(u8, source);
@@ -8176,7 +8176,7 @@ fn kansujiExpandDecimal(allocator: std.mem.Allocator, source: []const u8) ![]u8 
     return output.toOwnedSlice(allocator);
 }
 
-fn kansujiValidExponentMantissa(source: []const u8) bool {
+pub fn kansujiValidExponentMantissa(source: []const u8) bool {
     if (source.len == 0) return false;
     var index: usize = 0;
     while (index < source.len and std.ascii.isDigit(source[index])) : (index += 1) {}
@@ -8189,7 +8189,7 @@ fn kansujiValidExponentMantissa(source: []const u8) bool {
     return index == source.len and index > fraction_start;
 }
 
-fn kansujiValidDecimal(source: []const u8) bool {
+pub fn kansujiValidDecimal(source: []const u8) bool {
     if (source.len == 0) return false;
     var index: usize = 0;
     if (source[index] == '+' or source[index] == '-') index += 1;
@@ -8202,7 +8202,7 @@ fn kansujiValidDecimal(source: []const u8) bool {
     return digits > 0 and index == source.len;
 }
 
-fn kansujiIsJsNumberString(source: []const u8) bool {
+pub fn kansujiIsJsNumberString(source: []const u8) bool {
     const trimmed = kansujiTrimJsWhitespace(source);
     if (trimmed.len == 0) return true;
     if (std.mem.eql(u8, trimmed, "Infinity") or std.mem.eql(u8, trimmed, "+Infinity") or std.mem.eql(u8, trimmed, "-Infinity")) return true;
@@ -8229,7 +8229,7 @@ fn kansujiIsJsNumberString(source: []const u8) bool {
     return false;
 }
 
-fn kansujiTrimJsWhitespace(source: []const u8) []const u8 {
+pub fn kansujiTrimJsWhitespace(source: []const u8) []const u8 {
     var start: usize = 0;
     while (start < source.len) {
         const length = std.unicode.utf8ByteSequenceLength(source[start]) catch break;
@@ -8249,28 +8249,28 @@ fn kansujiTrimJsWhitespace(source: []const u8) []const u8 {
     return source[start..end];
 }
 
-fn kansujiIsJsWhitespace(codepoint: u21) bool {
+pub fn kansujiIsJsWhitespace(codepoint: u21) bool {
     return switch (codepoint) {
         0x0009...0x000d, 0x0020, 0x00a0, 0x1680, 0x2000...0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff => true,
         else => false,
     };
 }
 
-fn kansujiKanjiDigit(unit: u16) []const u8 {
+pub fn kansujiKanjiDigit(unit: u16) []const u8 {
     return if (unit >= '0' and unit <= '9') kansujiBasicKanji[unit - '0'] else "undefined";
 }
 
-fn kansujiAllAsciiDigits(source: []const u8) bool {
+pub fn kansujiAllAsciiDigits(source: []const u8) bool {
     for (source) |byte| if (!std.ascii.isDigit(byte)) return false;
     return true;
 }
 
-fn kansujiAllAsciiDigitUnits(source: []const u16) bool {
+pub fn kansujiAllAsciiDigitUnits(source: []const u16) bool {
     for (source) |unit| if (unit < '0' or unit > '9') return false;
     return true;
 }
 
-fn urlEncodeBuiltin(runtime: *Runtime, source: Value) !Value {
+pub fn urlEncodeBuiltin(runtime: *Runtime, source: Value) !Value {
     const units = try valueUtf16Alloc(runtime, source);
     defer runtime.allocator.free(units);
     var output: std.ArrayList(u8) = .empty;
@@ -8304,13 +8304,13 @@ fn urlEncodeBuiltin(runtime: *Runtime, source: Value) !Value {
     return runtimeUtf8String(runtime, output.items);
 }
 
-fn urlDecodeBuiltin(runtime: *Runtime, source: Value) !Value {
+pub fn urlDecodeBuiltin(runtime: *Runtime, source: Value) !Value {
     const units = try valueUtf16Alloc(runtime, source);
     defer runtime.allocator.free(units);
     return urlDecodeUnits(runtime, units);
 }
 
-fn urlDecodeUnits(runtime: *Runtime, units: []const u16) !Value {
+pub fn urlDecodeUnits(runtime: *Runtime, units: []const u16) !Value {
     var output: std.ArrayList(u8) = .empty;
     defer output.deinit(runtime.allocator);
     var index: usize = 0;
@@ -8349,7 +8349,7 @@ fn urlDecodeUnits(runtime: *Runtime, units: []const u16) !Value {
     return runtimeUtf8String(runtime, output.items);
 }
 
-fn urlParametersBuiltin(runtime: *Runtime, source: Value) !Value {
+pub fn urlParametersBuiltin(runtime: *Runtime, source: Value) !Value {
     var protected = [_]Value{ source, try runtime.createDictionary(&.{}) };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &protected, protected.len);
@@ -8380,7 +8380,7 @@ fn urlParametersBuiltin(runtime: *Runtime, source: Value) !Value {
     return protected[1];
 }
 
-fn base64EncodeBuiltin(runtime: *Runtime, source: Value) !Value {
+pub fn base64EncodeBuiltin(runtime: *Runtime, source: Value) !Value {
     var bytes: []u8 = undefined;
     var owned = false;
     switch (@as(Tag, @enumFromInt(source.tag))) {
@@ -8414,7 +8414,7 @@ fn base64EncodeBuiltin(runtime: *Runtime, source: Value) !Value {
     return runtimeUtf8String(runtime, encoded);
 }
 
-fn base64DecodeBuiltin(runtime: *Runtime, source: Value) !Value {
+pub fn base64DecodeBuiltin(runtime: *Runtime, source: Value) !Value {
     if (!isString(source)) return error.InvalidBase64Source;
     const units = try valueUtf16Alloc(runtime, source);
     defer runtime.allocator.free(units);
@@ -8441,25 +8441,25 @@ fn base64DecodeBuiltin(runtime: *Runtime, source: Value) !Value {
     return runtimeUtf8StringLossy(runtime, decoded.items);
 }
 
-fn urlIsComponentByte(byte: u8) bool {
+pub fn urlIsComponentByte(byte: u8) bool {
     return std.ascii.isAlphanumeric(byte) or switch (byte) {
         '-', '_', '.', '!', '~', '*', '\'', '(', ')' => true,
         else => false,
     };
 }
 
-fn urlHexDigit(value: u8) u8 {
+pub fn urlHexDigit(value: u8) u8 {
     return if (value < 10) '0' + value else 'A' + value - 10;
 }
 
-fn urlHexValue(unit: u16) ?u8 {
+pub fn urlHexValue(unit: u16) ?u8 {
     if (unit >= '0' and unit <= '9') return @intCast(unit - '0');
     if (unit >= 'a' and unit <= 'f') return @intCast(unit - 'a' + 10);
     if (unit >= 'A' and unit <= 'F') return @intCast(unit - 'A' + 10);
     return null;
 }
 
-fn base64Digit(unit: u16) ?u8 {
+pub fn base64Digit(unit: u16) ?u8 {
     return switch (unit) {
         'A'...'Z' => @intCast(unit - 'A'),
         'a'...'z' => @intCast(unit - 'a' + 26),
@@ -8497,7 +8497,7 @@ pub fn csvBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []
     };
 }
 
-fn csvParse(runtime: *Runtime, state: *const AotCsvState, source: Value) !Value {
+pub fn csvParse(runtime: *Runtime, state: *const AotCsvState, source: Value) !Value {
     var rooted = [_]Value{ source, .{}, .{} };
     var roots = RootFrame{};
     runtime.pushRoots(&roots, &rooted, rooted.len);
@@ -8600,7 +8600,7 @@ fn csvParse(runtime: *Runtime, state: *const AotCsvState, source: Value) !Value 
     return rooted[1];
 }
 
-fn csvAppendCell(runtime: *Runtime, row: *std.ArrayList(Value), units: []const u16, auto_convert: bool) !void {
+pub fn csvAppendCell(runtime: *Runtime, row: *std.ArrayList(Value), units: []const u16, auto_convert: bool) !void {
     if (auto_convert and csvIsNumeric(units)) {
         var ascii = try runtime.allocator.alloc(u8, units.len);
         defer runtime.allocator.free(ascii);
@@ -8611,7 +8611,7 @@ fn csvAppendCell(runtime: *Runtime, row: *std.ArrayList(Value), units: []const u
     try row.append(runtime.allocator, try runtime.createString(units));
 }
 
-fn csvStringify(runtime: *Runtime, state: *const AotCsvState, source: Value) !Value {
+pub fn csvStringify(runtime: *Runtime, state: *const AotCsvState, source: Value) !Value {
     if (source.tag == @intFromEnum(Tag.undefined)) return runtime.createString(&.{});
     if (source.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
     var rooted = [_]Value{ source, .{} };
@@ -8652,7 +8652,7 @@ fn csvStringify(runtime: *Runtime, state: *const AotCsvState, source: Value) !Va
     return runtime.createString(normalized.items);
 }
 
-fn csvQuoteCell(runtime: *Runtime, source: Value, delimiter: []const u16) !Value {
+pub fn csvQuoteCell(runtime: *Runtime, source: Value, delimiter: []const u16) !Value {
     const text = try valueUtf16Alloc(runtime, source);
     defer runtime.allocator.free(text);
     const needs_quote = std.mem.indexOfScalar(u16, text, '\n') != null or
@@ -8671,7 +8671,7 @@ fn csvQuoteCell(runtime: *Runtime, source: Value, delimiter: []const u16) !Value
     return runtime.createString(output.items);
 }
 
-fn csvSetOptions(runtime: *Runtime, state: *AotCsvState, source: Value) !void {
+pub fn csvSetOptions(runtime: *Runtime, state: *AotCsvState, source: Value) !void {
     if (source.tag != @intFromEnum(Tag.dictionary)) return;
     for (source.object().?.payload.dictionary.items) |entry| {
         const key_units = try valueUtf16Alloc(runtime, entry.key);
@@ -8690,7 +8690,7 @@ fn csvSetOptions(runtime: *Runtime, state: *AotCsvState, source: Value) !void {
     }
 }
 
-fn csvIsNumeric(units: []const u16) bool {
+pub fn csvIsNumeric(units: []const u16) bool {
     if (units.len == 0) return false;
     var index: usize = 0;
     if (units[index] == '-') index += 1;
@@ -8713,7 +8713,7 @@ fn csvIsNumeric(units: []const u16) bool {
     return index == units.len;
 }
 
-fn csvIsWhitespace(unit: u16) bool {
+pub fn csvIsWhitespace(unit: u16) bool {
     return switch (unit) {
         ' ', '\t', '\n', '\r', 0x0b, 0x0c, 0x00a0, 0x3000 => true,
         else => false,
@@ -8728,7 +8728,7 @@ pub fn tomlBuiltin(runtime: *Runtime, command: aot_builtin.Command, value: Value
     };
 }
 
-fn tomlParse(runtime: *Runtime, source: Value) !Value {
+pub fn tomlParse(runtime: *Runtime, source: Value) !Value {
     const units = try valueUtf16Alloc(runtime, source);
     defer runtime.allocator.free(units);
     const input = try (string_mod.String{ .allocator = runtime.allocator, .units = units }).toUtf8Lossy(runtime.allocator);
@@ -8743,7 +8743,7 @@ const TomlAotKeyPath = struct {
     allocator: std.mem.Allocator,
     items: std.ArrayList([]u8) = .empty,
 
-    fn deinit(self: *TomlAotKeyPath) void {
+    pub fn deinit(self: *TomlAotKeyPath) void {
         for (self.items.items) |item| self.allocator.free(item);
         self.items.deinit(self.allocator);
     }
@@ -8754,7 +8754,7 @@ const TomlAotParser = struct {
     input: []const u8,
     index: usize = 0,
 
-    fn document(self: *TomlAotParser) !Value {
+    pub fn document(self: *TomlAotParser) !Value {
         var result = try self.runtime.createDictionary(&.{});
         var roots = RootFrame{};
         self.runtime.pushRoots(&roots, @ptrCast(&result), 1);
@@ -8785,7 +8785,7 @@ const TomlAotParser = struct {
         return result;
     }
 
-    fn keyPath(self: *TomlAotParser, terminator: TomlAotTerminator) !TomlAotKeyPath {
+    pub fn keyPath(self: *TomlAotParser, terminator: TomlAotTerminator) !TomlAotKeyPath {
         var result = TomlAotKeyPath{ .allocator = self.runtime.allocator };
         errdefer result.deinit();
         while (true) {
@@ -8821,7 +8821,7 @@ const TomlAotParser = struct {
         }
     }
 
-    fn value(self: *TomlAotParser) anyerror!Value {
+    pub fn value(self: *TomlAotParser) anyerror!Value {
         self.skipHorizontal();
         if (self.index >= self.input.len) return error.InvalidTomlValue;
         return switch (self.input[self.index]) {
@@ -8833,14 +8833,14 @@ const TomlAotParser = struct {
         };
     }
 
-    fn stringValue(self: *TomlAotParser, quote: u8) !Value {
+    pub fn stringValue(self: *TomlAotParser, quote: u8) !Value {
         const multiline = self.index + 2 < self.input.len and self.input[self.index + 1] == quote and self.input[self.index + 2] == quote;
         const bytes = try self.stringBytes(quote, multiline);
         defer self.runtime.allocator.free(bytes);
         return runtimeUtf8String(self.runtime, bytes);
     }
 
-    fn stringBytes(self: *TomlAotParser, quote: u8, multiline: bool) ![]u8 {
+    pub fn stringBytes(self: *TomlAotParser, quote: u8, multiline: bool) ![]u8 {
         self.index += if (multiline) 3 else 1;
         if (multiline) {
             if (self.consume('\r')) _ = self.consume('\n') else _ = self.consume('\n');
@@ -8887,7 +8887,7 @@ const TomlAotParser = struct {
         return error.UnterminatedTomlString;
     }
 
-    fn appendUnicode(self: *TomlAotParser, output: *std.ArrayList(u8), digits: usize) !void {
+    pub fn appendUnicode(self: *TomlAotParser, output: *std.ArrayList(u8), digits: usize) !void {
         if (self.index + digits > self.input.len) return error.InvalidTomlEscape;
         const codepoint = std.fmt.parseInt(u21, self.input[self.index .. self.index + digits], 16) catch return error.InvalidTomlEscape;
         self.index += digits;
@@ -8897,7 +8897,7 @@ const TomlAotParser = struct {
         try output.appendSlice(self.runtime.allocator, buffer[0..length]);
     }
 
-    fn array(self: *TomlAotParser) !Value {
+    pub fn array(self: *TomlAotParser) !Value {
         self.index += 1;
         var result = try self.runtime.createArray(&.{});
         var roots = RootFrame{};
@@ -8916,7 +8916,7 @@ const TomlAotParser = struct {
         }
     }
 
-    fn inlineTable(self: *TomlAotParser) !Value {
+    pub fn inlineTable(self: *TomlAotParser) !Value {
         self.index += 1;
         var result = try self.runtime.createDictionary(&.{});
         var roots = RootFrame{};
@@ -8939,7 +8939,7 @@ const TomlAotParser = struct {
         }
     }
 
-    fn bareValue(self: *TomlAotParser) !Value {
+    pub fn bareValue(self: *TomlAotParser) !Value {
         const start = self.index;
         while (self.index < self.input.len) {
             const byte = self.input[self.index];
@@ -8971,7 +8971,7 @@ const TomlAotParser = struct {
         return numberValue(number);
     }
 
-    fn table(self: *TomlAotParser, root: Value, path: []const []const u8, array_table: bool) !Value {
+    pub fn table(self: *TomlAotParser, root: Value, path: []const []const u8, array_table: bool) !Value {
         var current = root;
         for (path, 0..) |segment, index| {
             const last = index + 1 == path.len;
@@ -9006,7 +9006,7 @@ const TomlAotParser = struct {
         return current;
     }
 
-    fn assign(self: *TomlAotParser, base: Value, path: []const []const u8, assigned_value: Value) !void {
+    pub fn assign(self: *TomlAotParser, base: Value, path: []const []const u8, assigned_value: Value) !void {
         if (path.len == 0) return error.InvalidTomlKey;
         var current = base;
         for (path[0 .. path.len - 1]) |segment| {
@@ -9023,7 +9023,7 @@ const TomlAotParser = struct {
         try tomlAotPut(self.runtime, current, path[path.len - 1], assigned_value);
     }
 
-    fn skipDocumentSpace(self: *TomlAotParser) void {
+    pub fn skipDocumentSpace(self: *TomlAotParser) void {
         while (self.index < self.input.len) switch (self.input[self.index]) {
             ' ', '\t', '\n', '\r' => self.index += 1,
             '#' => self.skipComment(),
@@ -9031,7 +9031,7 @@ const TomlAotParser = struct {
         };
     }
 
-    fn skipValueSpace(self: *TomlAotParser) void {
+    pub fn skipValueSpace(self: *TomlAotParser) void {
         while (self.index < self.input.len) switch (self.input[self.index]) {
             ' ', '\t', '\n', '\r' => self.index += 1,
             '#' => self.skipComment(),
@@ -9039,33 +9039,33 @@ const TomlAotParser = struct {
         };
     }
 
-    fn skipHorizontal(self: *TomlAotParser) void {
+    pub fn skipHorizontal(self: *TomlAotParser) void {
         while (self.index < self.input.len and (self.input[self.index] == ' ' or self.input[self.index] == '\t')) self.index += 1;
     }
 
-    fn skipComment(self: *TomlAotParser) void {
+    pub fn skipComment(self: *TomlAotParser) void {
         while (self.index < self.input.len and self.input[self.index] != '\n') self.index += 1;
     }
 
-    fn consume(self: *TomlAotParser, byte: u8) bool {
+    pub fn consume(self: *TomlAotParser, byte: u8) bool {
         if (self.index >= self.input.len or self.input[self.index] != byte) return false;
         self.index += 1;
         return true;
     }
 };
 
-fn tomlAotDictionaryGet(runtime: *Runtime, entries: []const DictionaryEntry, key: []const u8) !?Value {
+pub fn tomlAotDictionaryGet(runtime: *Runtime, entries: []const DictionaryEntry, key: []const u8) !?Value {
     for (entries) |entry| if (try tomlAotKeyEquals(runtime, entry.key, key)) return entry.value;
     return null;
 }
 
-fn tomlAotKeyEquals(runtime: *Runtime, key: Value, expected: []const u8) !bool {
+pub fn tomlAotKeyEquals(runtime: *Runtime, key: Value, expected: []const u8) !bool {
     const actual = try tomlAotValueUtf8Alloc(runtime, key);
     defer runtime.allocator.free(actual);
     return std.mem.eql(u8, actual, expected);
 }
 
-fn tomlAotPut(runtime: *Runtime, dictionary: Value, key: []const u8, value: Value) !void {
+pub fn tomlAotPut(runtime: *Runtime, dictionary: Value, key: []const u8, value: Value) !void {
     var rooted = [_]Value{ value, .{} };
     var roots = RootFrame{};
     runtime.pushRoots(&roots, &rooted, rooted.len);
@@ -9074,7 +9074,7 @@ fn tomlAotPut(runtime: *Runtime, dictionary: Value, key: []const u8, value: Valu
     try runtime.setDictionary(&dictionary.object().?.payload.dictionary, rooted[1], rooted[0]);
 }
 
-fn tomlAotParseInteger(token: []const u8) !f64 {
+pub fn tomlAotParseInteger(token: []const u8) !f64 {
     var sign: f64 = 1;
     var digits = token;
     if (digits.len > 0 and (digits[0] == '+' or digits[0] == '-')) {
@@ -9095,7 +9095,7 @@ fn tomlAotParseInteger(token: []const u8) !f64 {
     return sign * @as(f64, @floatFromInt(integer));
 }
 
-fn tomlAotRemoveUnderscores(allocator: std.mem.Allocator, token: []const u8) ![]u8 {
+pub fn tomlAotRemoveUnderscores(allocator: std.mem.Allocator, token: []const u8) ![]u8 {
     var output: std.ArrayList(u8) = .empty;
     errdefer output.deinit(allocator);
     for (token, 0..) |byte, index| {
@@ -9108,11 +9108,11 @@ fn tomlAotRemoveUnderscores(allocator: std.mem.Allocator, token: []const u8) ![]
     return output.toOwnedSlice(allocator);
 }
 
-fn tomlAotIsBareKey(byte: u8) bool {
+pub fn tomlAotIsBareKey(byte: u8) bool {
     return std.ascii.isAlphanumeric(byte) or byte == '_' or byte == '-';
 }
 
-fn tomlAotLastArrayDictionary(value: Value) ?Value {
+pub fn tomlAotLastArrayDictionary(value: Value) ?Value {
     if (value.tag != @intFromEnum(Tag.array)) return null;
     const object = value.object() orelse return null;
     if (object.payload != .array or object.payload.array.items.len == 0) return null;
@@ -9120,12 +9120,12 @@ fn tomlAotLastArrayDictionary(value: Value) ?Value {
     return if (tomlAotIsTableDictionary(item)) item else null;
 }
 
-fn tomlAotIsTableDictionary(value: Value) bool {
+pub fn tomlAotIsTableDictionary(value: Value) bool {
     if (value.tag != @intFromEnum(Tag.dictionary)) return false;
     return value.object().?.toml_temporal == null;
 }
 
-fn tomlStringify(runtime: *Runtime, source: Value) !Value {
+pub fn tomlStringify(runtime: *Runtime, source: Value) !Value {
     if (source.tag != @intFromEnum(Tag.dictionary)) return error.DictionaryExpected;
     var rooted_source = source;
     var roots = RootFrame{};
@@ -9143,7 +9143,7 @@ fn tomlStringify(runtime: *Runtime, source: Value) !Value {
     return runtimeUtf8String(runtime, output.items);
 }
 
-fn tomlAotWriteTable(runtime: *Runtime, output: *std.ArrayList(u8), dictionary: *Object, path: *std.ArrayList(Value), emit_header: bool, active_dictionaries: *std.AutoHashMapUnmanaged(*Object, void), active_arrays: *std.AutoHashMapUnmanaged(*Object, void)) !void {
+pub fn tomlAotWriteTable(runtime: *Runtime, output: *std.ArrayList(u8), dictionary: *Object, path: *std.ArrayList(Value), emit_header: bool, active_dictionaries: *std.AutoHashMapUnmanaged(*Object, void), active_arrays: *std.AutoHashMapUnmanaged(*Object, void)) !void {
     if (active_dictionaries.contains(dictionary)) return error.CircularTomlValue;
     try active_dictionaries.put(runtime.allocator, dictionary, {});
     defer _ = active_dictionaries.remove(dictionary);
@@ -9182,7 +9182,7 @@ fn tomlAotWriteTable(runtime: *Runtime, output: *std.ArrayList(u8), dictionary: 
     }
 }
 
-fn tomlAotWriteHeader(runtime: *Runtime, output: *std.ArrayList(u8), path: []const Value, array_table: bool) !void {
+pub fn tomlAotWriteHeader(runtime: *Runtime, output: *std.ArrayList(u8), path: []const Value, array_table: bool) !void {
     try output.appendSlice(runtime.allocator, if (array_table) "[[" else "[");
     for (path, 0..) |key, index| {
         if (index > 0) try output.append(runtime.allocator, '.');
@@ -9191,13 +9191,13 @@ fn tomlAotWriteHeader(runtime: *Runtime, output: *std.ArrayList(u8), path: []con
     try output.appendSlice(runtime.allocator, if (array_table) "]]" else "]");
 }
 
-fn tomlAotValueUtf8Alloc(runtime: *Runtime, value: Value) ![]u8 {
+pub fn tomlAotValueUtf8Alloc(runtime: *Runtime, value: Value) ![]u8 {
     const units = try valueUtf16Alloc(runtime, value);
     defer runtime.allocator.free(units);
     return (string_mod.String{ .allocator = runtime.allocator, .units = units }).toUtf8Lossy(runtime.allocator);
 }
 
-fn tomlAotWriteKey(runtime: *Runtime, output: *std.ArrayList(u8), key: Value) !void {
+pub fn tomlAotWriteKey(runtime: *Runtime, output: *std.ArrayList(u8), key: Value) !void {
     const utf8 = try tomlAotValueUtf8Alloc(runtime, key);
     defer runtime.allocator.free(utf8);
     var bare = utf8.len > 0;
@@ -9206,7 +9206,7 @@ fn tomlAotWriteKey(runtime: *Runtime, output: *std.ArrayList(u8), key: Value) !v
     try tomlAotWriteQuoted(runtime, output, utf8);
 }
 
-fn tomlAotWriteValue(runtime: *Runtime, output: *std.ArrayList(u8), value: Value, active_dictionaries: *std.AutoHashMapUnmanaged(*Object, void), active_arrays: *std.AutoHashMapUnmanaged(*Object, void)) !void {
+pub fn tomlAotWriteValue(runtime: *Runtime, output: *std.ArrayList(u8), value: Value, active_dictionaries: *std.AutoHashMapUnmanaged(*Object, void), active_arrays: *std.AutoHashMapUnmanaged(*Object, void)) !void {
     switch (@as(Tag, @enumFromInt(value.tag))) {
         .boolean => try output.appendSlice(runtime.allocator, if (value.payload != 0) "true" else "false"),
         .number => {
@@ -9256,7 +9256,7 @@ fn tomlAotWriteValue(runtime: *Runtime, output: *std.ArrayList(u8), value: Value
     }
 }
 
-fn tomlAotWriteQuoted(runtime: *Runtime, output: *std.ArrayList(u8), bytes: []const u8) !void {
+pub fn tomlAotWriteQuoted(runtime: *Runtime, output: *std.ArrayList(u8), bytes: []const u8) !void {
     try output.append(runtime.allocator, '"');
     for (bytes) |byte| switch (byte) {
         '\n' => try output.appendSlice(runtime.allocator, "\\n"),
@@ -9274,7 +9274,7 @@ fn tomlAotWriteQuoted(runtime: *Runtime, output: *std.ArrayList(u8), bytes: []co
     try output.append(runtime.allocator, '"');
 }
 
-fn tomlAotIsArrayOfDictionaries(value: Value) bool {
+pub fn tomlAotIsArrayOfDictionaries(value: Value) bool {
     if (value.tag != @intFromEnum(Tag.array)) return false;
     const object = value.object() orelse return false;
     return switch (object.payload) {
@@ -9403,7 +9403,7 @@ pub fn measureCallableBuiltin(runtime: *Runtime, arguments: []const Value) !Valu
     return numberValue(finished - started);
 }
 
-fn shouldRegisterNamedFunction(name: []const u8) bool {
+pub fn shouldRegisterNamedFunction(name: []const u8) bool {
     // HIR gives anonymous functions an internal name for calls and debug
     // metadata, but the official global-function list exposes named language
     // functions only.  Closures must therefore not enter named_functions.
@@ -9544,7 +9544,7 @@ pub fn nodeFileSaveBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     return .{};
 }
 
-fn nodeEncodingName(command: aot_builtin.Command) []const u8 {
+pub fn nodeEncodingName(command: aot_builtin.Command) []const u8 {
     return switch (command) {
         .node_file_sjis_read, .node_file_sjis_save, .node_encoding_sjis_encode, .node_encoding_sjis_decode => "shift_jis",
         .node_file_euc_read, .node_file_euc_save => "euc-jp",
@@ -9552,7 +9552,7 @@ fn nodeEncodingName(command: aot_builtin.Command) []const u8 {
     };
 }
 
-fn nodeEncodingValueBytesAlloc(runtime: *Runtime, value: Value) ![]u8 {
+pub fn nodeEncodingValueBytesAlloc(runtime: *Runtime, value: Value) ![]u8 {
     if (value.tag == @intFromEnum(Tag.byte_buffer)) return runtime.allocator.dupe(u8, value.object().?.payload.byte_buffer.bytes);
     if (value.tag == @intFromEnum(Tag.array)) {
         const items = value.object().?.payload.array.items;
@@ -9707,7 +9707,7 @@ pub fn nodeFileOperationBuiltin(runtime: *Runtime, command: aot_builtin.Command,
     };
 }
 
-fn nodeFileListBuiltin(runtime: *Runtime, arguments: []const Value, recursive: bool) !Value {
+pub fn nodeFileListBuiltin(runtime: *Runtime, arguments: []const Value, recursive: bool) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
     const pattern = try valueUtf8LossyAlloc(runtime, arguments[0]);
     defer runtime.allocator.free(pattern);
@@ -9756,7 +9756,7 @@ fn nodeFileListBuiltin(runtime: *Runtime, arguments: []const Value, recursive: b
     return result;
 }
 
-fn nodeWildcardMatches(runtime: *Runtime, pattern: []const u8, name: []const u8) !bool {
+pub fn nodeWildcardMatches(runtime: *Runtime, pattern: []const u8, name: []const u8) !bool {
     var expression: std.ArrayList(u8) = .empty;
     defer expression.deinit(runtime.allocator);
     const multiple = std.mem.indexOfScalar(u8, pattern, ';') != null;
@@ -9776,11 +9776,11 @@ fn nodeWildcardMatches(runtime: *Runtime, pattern: []const u8, name: []const u8)
     return regexp.testRaw(runtime.allocator, pattern_string.units, name_string.units, true);
 }
 
-fn lessThanNodeAotFileName(_: void, left: []u8, right: []u8) bool {
+pub fn lessThanNodeAotFileName(_: void, left: []u8, right: []u8) bool {
     return std.mem.order(u8, left, right) == .lt;
 }
 
-fn nodeFolderCreateBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+pub fn nodeFolderCreateBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
     const path = try valueUtf8LossyAlloc(runtime, arguments[0]);
     defer runtime.allocator.free(path);
@@ -9788,7 +9788,7 @@ fn nodeFolderCreateBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     return .{};
 }
 
-fn nodeFileDeleteBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+pub fn nodeFileDeleteBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
     const path = try valueUtf8LossyAlloc(runtime, arguments[0]);
     defer runtime.allocator.free(path);
@@ -9796,7 +9796,7 @@ fn nodeFileDeleteBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     return .{};
 }
 
-fn nodeFileCopyDefaultOverwrite(runtime: *Runtime, value: Value) !bool {
+pub fn nodeFileCopyDefaultOverwrite(runtime: *Runtime, value: Value) !bool {
     const mode = try valueUtf8LossyAlloc(runtime, value);
     defer runtime.allocator.free(mode);
     return std.mem.eql(u8, mode, "上書き") or std.mem.eql(u8, mode, "上書") or std.mem.eql(u8, mode, "overwrite");
@@ -9821,7 +9821,7 @@ pub fn nodeFileCopyMoveBuiltin(runtime: *Runtime, command: aot_builtin.Command, 
     return .{};
 }
 
-fn aotFileCopyMoveWithIo(runtime: *Runtime, io: std.Io, source: []const u8, destination: []const u8, overwrite: bool, move: bool) !void {
+pub fn aotFileCopyMoveWithIo(runtime: *Runtime, io: std.Io, source: []const u8, destination: []const u8, overwrite: bool, move: bool) !void {
     const stat = try std.Io.Dir.cwd().statFile(io, source, .{});
     if (stat.kind != .directory) {
         try std.Io.Dir.cwd().copyFile(source, std.Io.Dir.cwd(), destination, io, .{ .replace = overwrite, .make_path = true });
@@ -9846,7 +9846,7 @@ fn aotFileCopyMoveWithIo(runtime: *Runtime, io: std.Io, source: []const u8, dest
     if (move) try std.Io.Dir.cwd().deleteTree(io, source);
 }
 
-fn aotFileCopyMoveWithProgress(runtime: *Runtime, io: std.Io, source: []const u8, destination: []const u8, overwrite: bool, move: bool) !void {
+pub fn aotFileCopyMoveWithProgress(runtime: *Runtime, io: std.Io, source: []const u8, destination: []const u8, overwrite: bool, move: bool) !void {
     const stat = try std.Io.Dir.cwd().statFile(io, source, .{});
     if (stat.kind != .directory) {
         try std.Io.Dir.cwd().copyFile(source, std.Io.Dir.cwd(), destination, io, .{ .replace = overwrite, .make_path = true });
@@ -9883,7 +9883,7 @@ fn aotFileCopyMoveWithProgress(runtime: *Runtime, io: std.Io, source: []const u8
     if (move and !runtime.file_process_stop) try std.Io.Dir.cwd().deleteTree(io, source);
 }
 
-fn emitAotFileProgress(runtime: *Runtime, total: usize, current: usize) !void {
+pub fn emitAotFileProgress(runtime: *Runtime, total: usize, current: usize) !void {
     if (runtime.file_process_stop) return;
     var rooted = [_]Value{ runtime.file_process_callback, .{}, .{}, .{}, .{} };
     var frame = RootFrame{};
@@ -9898,7 +9898,7 @@ fn emitAotFileProgress(runtime: *Runtime, total: usize, current: usize) !void {
     _ = try invokeAotCallback(runtime, rooted[0], @ptrCast(&rooted[1]), 1);
 }
 
-fn nodeAotPathExists(io: std.Io, path: []const u8) bool {
+pub fn nodeAotPathExists(io: std.Io, path: []const u8) bool {
     _ = std.Io.Dir.cwd().statFile(io, path, .{}) catch return false;
     return true;
 }
@@ -9937,7 +9937,7 @@ pub fn nodeFileInfoBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     return result;
 }
 
-fn setNodeFileInfoValue(runtime: *Runtime, dictionary: Value, name: []const u8, value: Value) !void {
+pub fn setNodeFileInfoValue(runtime: *Runtime, dictionary: Value, name: []const u8, value: Value) !void {
     var rooted = [_]Value{ dictionary, value, .{} };
     var roots = RootFrame{};
     runtime.pushRoots(&roots, &rooted, rooted.len);
@@ -9946,7 +9946,7 @@ fn setNodeFileInfoValue(runtime: *Runtime, dictionary: Value, name: []const u8, 
     try runtime.setDictionary(&rooted[0].object().?.payload.dictionary, rooted[2], rooted[1]);
 }
 
-fn setNodeFileInfoMethod(runtime: *Runtime, dictionary: Value, name: []const u8, result: bool) !void {
+pub fn setNodeFileInfoMethod(runtime: *Runtime, dictionary: Value, name: []const u8, result: bool) !void {
     var rooted = [_]Value{ dictionary, .{}, .{} };
     var roots = RootFrame{};
     runtime.pushRoots(&roots, &rooted, rooted.len);
@@ -9956,11 +9956,11 @@ fn setNodeFileInfoMethod(runtime: *Runtime, dictionary: Value, name: []const u8,
     try runtime.setDictionary(&rooted[0].object().?.payload.dictionary, rooted[2], rooted[1]);
 }
 
-fn nodeFileInfoTrue(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+pub fn nodeFileInfoTrue(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
     out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 };
 }
 
-fn nodeFileInfoFalse(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+pub fn nodeFileInfoFalse(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
     out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
 }
 
@@ -9971,7 +9971,7 @@ pub fn nodeEncodingSupportsBuiltin(runtime: *Runtime, arguments: []const Value) 
     return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(encoding.supports(name)) };
 }
 
-fn ensureAotStdin(runtime: *Runtime) ![]const u8 {
+pub fn ensureAotStdin(runtime: *Runtime) ![]const u8 {
     if (runtime.stdin_bytes == null) {
         var buffer: [4096]u8 = undefined;
         var reader = std.Io.File.stdin().readerStreaming(std.Io.Threaded.global_single_threaded.io(), &buffer);
@@ -9980,7 +9980,7 @@ fn ensureAotStdin(runtime: *Runtime) ![]const u8 {
     return runtime.stdin_bytes.?;
 }
 
-fn nextAotStdinLine(runtime: *Runtime) []const u8 {
+pub fn nextAotStdinLine(runtime: *Runtime) []const u8 {
     const bytes = runtime.stdin_bytes orelse return "";
     if (runtime.stdin_offset >= bytes.len) return "";
     const start = runtime.stdin_offset;
@@ -10050,7 +10050,7 @@ pub fn nodePostDataBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     return runtimeUtf8String(runtime, output.written());
 }
 
-fn aotClientDictionaryGetAscii(value: Value, name: []const u8) ?Value {
+pub fn aotClientDictionaryGetAscii(value: Value, name: []const u8) ?Value {
     if (value.tag != @intFromEnum(Tag.dictionary)) return null;
     const object = value.object() orelse return null;
     if (object.payload != .dictionary) return null;
@@ -10070,7 +10070,7 @@ fn aotClientDictionaryGetAscii(value: Value, name: []const u8) ?Value {
     return null;
 }
 
-fn aotClientValueBytes(runtime: *Runtime, value: Value) ![]u8 {
+pub fn aotClientValueBytes(runtime: *Runtime, value: Value) ![]u8 {
     if (value.tag == @intFromEnum(Tag.byte_buffer)) {
         const object = value.object() orelse return error.InvalidByteBuffer;
         if (object.payload != .byte_buffer) return error.InvalidByteBuffer;
@@ -10113,7 +10113,7 @@ pub fn aotClientPrepareAjax(runtime: *Runtime, ajax_options: ?*Value, url_value:
     return request;
 }
 
-fn aotClientAppendUriComponent(writer: *std.Io.Writer, source: []const u8) !void {
+pub fn aotClientAppendUriComponent(writer: *std.Io.Writer, source: []const u8) !void {
     const hex = "0123456789ABCDEF";
     for (source) |byte| {
         if (std.ascii.isAlphanumeric(byte) or std.mem.indexOfScalar(u8, "-_.!~*'()", byte) != null) {
@@ -10126,7 +10126,7 @@ fn aotClientAppendUriComponent(writer: *std.Io.Writer, source: []const u8) !void
     }
 }
 
-fn aotClientFormEncodedBody(runtime: *Runtime, parameters: Value) ![]u8 {
+pub fn aotClientFormEncodedBody(runtime: *Runtime, parameters: Value) ![]u8 {
     var output: std.Io.Writer.Allocating = .init(runtime.allocator);
     defer output.deinit();
     if (parameters.tag == @intFromEnum(Tag.dictionary)) {
@@ -10146,7 +10146,7 @@ fn aotClientFormEncodedBody(runtime: *Runtime, parameters: Value) ![]u8 {
     return output.toOwnedSlice();
 }
 
-fn aotClientMultipartFields(runtime: *Runtime, parameters: Value, boundary: []const u8) ![]u8 {
+pub fn aotClientMultipartFields(runtime: *Runtime, parameters: Value, boundary: []const u8) ![]u8 {
     var output: std.Io.Writer.Allocating = .init(runtime.allocator);
     defer output.deinit();
     if (parameters.tag == @intFromEnum(Tag.dictionary)) {
@@ -10190,7 +10190,7 @@ pub fn aotClientPreparePost(runtime: *Runtime, url_value: Value, parameters: Val
     return request;
 }
 
-fn aotClientPrepareDiscord(runtime: *Runtime, url_value: Value, message_value: Value) !AotClientHttpRequest {
+pub fn aotClientPrepareDiscord(runtime: *Runtime, url_value: Value, message_value: Value) !AotClientHttpRequest {
     const url = try valueUtf8LossyAlloc(runtime, url_value);
     defer runtime.allocator.free(url);
     var roots = [_]Value{ message_value, .{}, .{} };
@@ -10208,7 +10208,7 @@ fn aotClientPrepareDiscord(runtime: *Runtime, url_value: Value, message_value: V
     return request;
 }
 
-fn aotClientPrepareDiscordFile(runtime: *Runtime, url_value: Value, file_value: Value, message_value: Value) !AotClientHttpRequest {
+pub fn aotClientPrepareDiscordFile(runtime: *Runtime, url_value: Value, file_value: Value, message_value: Value) !AotClientHttpRequest {
     const url = try valueUtf8LossyAlloc(runtime, url_value);
     defer runtime.allocator.free(url);
     const path = try valueUtf8LossyAlloc(runtime, file_value);
@@ -10232,14 +10232,14 @@ fn aotClientPrepareDiscordFile(runtime: *Runtime, url_value: Value, file_value: 
     return request;
 }
 
-fn aotClientHttpMethod(source: []const u8) !std.http.Method {
+pub fn aotClientHttpMethod(source: []const u8) !std.http.Method {
     inline for (@typeInfo(std.http.Method).@"enum".fields) |field| {
         if (std.ascii.eqlIgnoreCase(source, field.name)) return @enumFromInt(field.value);
     }
     return error.UnsupportedHttpMethod;
 }
 
-fn aotClientHttpRequest(runtime: *Runtime, request: *const AotClientHttpRequest) !AotClientHttpResult {
+pub fn aotClientHttpRequest(runtime: *Runtime, request: *const AotClientHttpRequest) !AotClientHttpResult {
     var client: std.http.Client = .{ .allocator = runtime.allocator, .io = aotRuntimeIo(runtime) };
     defer client.deinit();
     const headers = try runtime.allocator.alloc(std.http.Header, request.headers.items.len);
@@ -10262,7 +10262,7 @@ fn aotClientHttpRequest(runtime: *Runtime, request: *const AotClientHttpRequest)
     };
 }
 
-fn aotClientHttpBodyValue(runtime: *Runtime, body: []const u8, kind: AotClientHttpBodyKind, status: u16, content_length_zero: bool) !Value {
+pub fn aotClientHttpBodyValue(runtime: *Runtime, body: []const u8, kind: AotClientHttpBodyKind, status: u16, content_length_zero: bool) !Value {
     return switch (kind) {
         .text => runtimeUtf8StringLossy(runtime, body),
         .binary => runtime.createArrayBuffer(body),
@@ -10322,7 +10322,7 @@ pub fn aotClientHttpBodyKind(runtime: *Runtime, value: Value) !?AotClientHttpBod
     return error.InvalidAjaxContentType;
 }
 
-fn aotClientPrepareHttpCommand(runtime: *Runtime, ajax_options: ?*Value, command: aot_builtin.Command, arguments: []const Value) !AotClientHttpRequest {
+pub fn aotClientPrepareHttpCommand(runtime: *Runtime, ajax_options: ?*Value, command: aot_builtin.Command, arguments: []const Value) !AotClientHttpRequest {
     return switch (command) {
         .node_ajax_send_callback, .node_ajax_receive_callback, .node_get_send_callback => blk: {
             if (arguments.len < 2) return error.InvalidArgumentCount;
@@ -10368,14 +10368,14 @@ fn aotClientPrepareHttpCommand(runtime: *Runtime, ajax_options: ?*Value, command
     };
 }
 
-fn aotClientIsCallbackCommand(command: aot_builtin.Command) bool {
+pub fn aotClientIsCallbackCommand(command: aot_builtin.Command) bool {
     return switch (command) {
         .node_ajax_send_callback, .node_ajax_receive_callback, .node_get_send_callback, .node_post_send_callback, .node_post_form_send_callback => true,
         else => false,
     };
 }
 
-fn aotClientIsResponsePromiseCommand(command: aot_builtin.Command) bool {
+pub fn aotClientIsResponsePromiseCommand(command: aot_builtin.Command) bool {
     return switch (command) {
         .node_ajax_response_promise, .node_http_response_promise, .node_get_response_promise, .node_post_response_promise, .node_post_form_response_promise => true,
         else => false,
@@ -10493,7 +10493,7 @@ pub fn nodeHttpBuiltin(runtime: *Runtime, ajax_options: ?*Value, ajax_onerror: ?
     return error.UnknownCommand;
 }
 
-fn appendNodeUriComponent(writer: *std.Io.Writer, source: []const u8) !void {
+pub fn appendNodeUriComponent(writer: *std.Io.Writer, source: []const u8) !void {
     const hex = "0123456789ABCDEF";
     for (source) |byte| {
         if (std.ascii.isAlphanumeric(byte) or std.mem.indexOfScalar(u8, "-_.!~*'()", byte) != null) {
@@ -10532,7 +10532,7 @@ pub fn nodeDirectoryBuiltin(runtime: *Runtime, command: aot_builtin.Command) !Va
     return runtimeUtf8StringLossy(runtime, path);
 }
 
-fn nodeTemporaryDirectoryPrefixAlloc(runtime: *Runtime) ![]u8 {
+pub fn nodeTemporaryDirectoryPrefixAlloc(runtime: *Runtime) ![]u8 {
     const fallback = if (builtin.os.tag == .windows) "." else "/tmp";
     const raw = if (builtin.os.tag == .windows)
         std.c.getenv("TEMP") orelse std.c.getenv("TMP") orelse fallback
@@ -10694,7 +10694,7 @@ const AotNodeChangeDirectoryErrorInfo = struct {
     description: []const u8,
 };
 
-fn aotNodeChangeDirectoryErrorInfo(failure: anyerror) ?AotNodeChangeDirectoryErrorInfo {
+pub fn aotNodeChangeDirectoryErrorInfo(failure: anyerror) ?AotNodeChangeDirectoryErrorInfo {
     return switch (failure) {
         error.FileNotFound => .{ .code = "ENOENT", .description = "no such file or directory" },
         error.NotDir => .{ .code = "ENOTDIR", .description = "not a directory" },
@@ -10706,14 +10706,14 @@ fn aotNodeChangeDirectoryErrorInfo(failure: anyerror) ?AotNodeChangeDirectoryErr
     };
 }
 
-fn aotNodeErrorPathAlloc(runtime: *Runtime, path: []const u8) ![]u8 {
+pub fn aotNodeErrorPathAlloc(runtime: *Runtime, path: []const u8) ![]u8 {
     if (comptime builtin.os.tag == .windows) {
         return std.unicode.wtf8ToUtf8LossyAlloc(runtime.allocator, path);
     }
     return runtime.allocator.dupe(u8, path);
 }
 
-fn setAotNodeChangeDirectoryFailure(runtime: *Runtime, cwd: []const u8, path: []const u8, failure: anyerror) !void {
+pub fn setAotNodeChangeDirectoryFailure(runtime: *Runtime, cwd: []const u8, path: []const u8, failure: anyerror) !void {
     const info = aotNodeChangeDirectoryErrorInfo(failure) orelse return;
     const message = try std.fmt.allocPrint(
         runtime.allocator,
@@ -10777,7 +10777,7 @@ pub fn systemPathComponentBuiltin(runtime: *Runtime, command: aot_builtin.Comman
     return runtime.createString(component);
 }
 
-fn nodePathArgument(runtime: *Runtime, label: []const u8, value: Value) ![]u8 {
+pub fn nodePathArgument(runtime: *Runtime, label: []const u8, value: Value) ![]u8 {
     if (!isString(value)) {
         const received = try nodePathReceivedType(runtime, value);
         defer runtime.allocator.free(received);
@@ -10793,7 +10793,7 @@ fn nodePathArgument(runtime: *Runtime, label: []const u8, value: Value) ![]u8 {
     return stringUtf8Alloc(runtime, value);
 }
 
-fn nodePathReceivedType(runtime: *Runtime, value: Value) ![]u8 {
+pub fn nodePathReceivedType(runtime: *Runtime, value: Value) ![]u8 {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
         .undefined => runtime.allocator.dupe(u8, "undefined"),
         .null_value => runtime.allocator.dupe(u8, "null"),
@@ -10813,7 +10813,7 @@ fn nodePathReceivedType(runtime: *Runtime, value: Value) ![]u8 {
     };
 }
 
-fn nodePathPrimitiveReceivedType(runtime: *Runtime, value: Value, type_name: []const u8, bigint_suffix: bool) ![]u8 {
+pub fn nodePathPrimitiveReceivedType(runtime: *Runtime, value: Value, type_name: []const u8, bigint_suffix: bool) ![]u8 {
     const text = try valueUtf8LossyAlloc(runtime, value);
     defer runtime.allocator.free(text);
     return std.fmt.allocPrint(
@@ -10873,7 +10873,7 @@ pub fn nodeDirnameFor(path: []const u8, windows: bool) []const u8 {
     return path[0 .. start - 1];
 }
 
-fn nodeDirnameWindowsFor(path: []const u8) []const u8 {
+pub fn nodeDirnameWindowsFor(path: []const u8) []const u8 {
     // Port the root scan used by Node 24's path.win32.dirname.  A matched
     // UNC root is only special when it has a server, share, and a leftover
     // component; a root-only path is returned unchanged.  This matters for
@@ -10929,19 +10929,19 @@ fn nodeDirnameWindowsFor(path: []const u8) []const u8 {
     return path[0..end.?];
 }
 
-fn isWindowsDriveLetter(byte: u8) bool {
+pub fn isWindowsDriveLetter(byte: u8) bool {
     return byte >= 'A' and byte <= 'Z' or byte >= 'a' and byte <= 'z';
 }
 
-fn nodePathSeparator(byte: u8, windows: bool) bool {
+pub fn nodePathSeparator(byte: u8, windows: bool) bool {
     return byte == std.fs.path.sep or (windows and (byte == '/' or byte == '\\'));
 }
 
-fn nodePathSeparatorWide(unit: u16, windows: bool) bool {
+pub fn nodePathSeparatorWide(unit: u16, windows: bool) bool {
     return unit == @as(u16, std.fs.path.sep) or (windows and (unit == '/' or unit == '\\'));
 }
 
-fn isWindowsDriveLetterWide(unit: u16) bool {
+pub fn isWindowsDriveLetterWide(unit: u16) bool {
     return unit >= 'A' and unit <= 'Z' or unit >= 'a' and unit <= 'z';
 }
 
@@ -10963,7 +10963,7 @@ pub fn aotArchitectureName() []const u8 {
     };
 }
 
-fn datetimeCivilFromDays(days_input: i64) struct { year: i64, month: i64, day: i64 } {
+pub fn datetimeCivilFromDays(days_input: i64) struct { year: i64, month: i64, day: i64 } {
     const days = days_input + 719468;
     const era = @divFloor(days, 146097);
     const day_of_era = days - era * 146097;
@@ -10977,7 +10977,7 @@ fn datetimeCivilFromDays(days_input: i64) struct { year: i64, month: i64, day: i
     return .{ .year = year, .month = month, .day = day };
 }
 
-fn mathCoordinateAngle(runtime: *Runtime, source: Value) !f64 {
+pub fn mathCoordinateAngle(runtime: *Runtime, source: Value) !f64 {
     if (source.tag != @intFromEnum(Tag.array)) return std.math.nan(f64);
     const items = source.object().?.payload.array.items;
     const x = try valueToNumberRuntime(runtime, if (items.len > 0) items[0] else .{});
@@ -10985,7 +10985,7 @@ fn mathCoordinateAngle(runtime: *Runtime, source: Value) !f64 {
     return std.math.atan2(y, x) / std.math.pi * 180;
 }
 
-fn mathParseFloat(runtime: *Runtime, value: Value) !f64 {
+pub fn mathParseFloat(runtime: *Runtime, value: Value) !f64 {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
         .number => @bitCast(value.payload),
         .bigint => value.object().?.payload.bigint.toF64(),
@@ -10997,14 +10997,14 @@ fn mathParseFloat(runtime: *Runtime, value: Value) !f64 {
     };
 }
 
-fn mathSign(runtime: *Runtime, source: Value) !f64 {
+pub fn mathSign(runtime: *Runtime, source: Value) !f64 {
     const parsed = try mathParseFloat(runtime, source);
     if (parsed == 0) return 0;
     const coerced = try valueToNumberRuntime(runtime, source);
     return if (coerced > 0) 1 else -1;
 }
 
-fn mathLogarithm(runtime: *Runtime, base_value: Value, source_value: Value) !f64 {
+pub fn mathLogarithm(runtime: *Runtime, base_value: Value, source_value: Value) !f64 {
     const base = try valueToNumberRuntime(runtime, base_value);
     const source = try valueToNumberRuntime(runtime, source_value);
     if (base == 2) return std.math.log2e * @log(source);
@@ -11014,7 +11014,7 @@ fn mathLogarithm(runtime: *Runtime, base_value: Value, source_value: Value) !f64
 
 const MathDecimalMode = enum { ceil, floor, round };
 
-fn mathDecimalRound(runtime: *Runtime, source: Value, digits_value: Value, mode: MathDecimalMode) !f64 {
+pub fn mathDecimalRound(runtime: *Runtime, source: Value, digits_value: Value, mode: MathDecimalMode) !f64 {
     const value = try valueToNumberRuntime(runtime, source);
     const digits = try valueToNumberRuntime(runtime, digits_value);
     const base = std.math.pow(f64, 10, digits);
@@ -11027,7 +11027,7 @@ fn mathDecimalRound(runtime: *Runtime, source: Value, digits_value: Value, mode:
     return rounded / base;
 }
 
-fn mathRound(value: f64) f64 {
+pub fn mathRound(value: f64) f64 {
     if (!std.math.isFinite(value) or value == 0) return value;
     const result = @floor(value + 0.5);
     if (result == 0 and value < 0) return -0.0;
@@ -11102,7 +11102,7 @@ pub fn codePointCount(units: []const u16) usize {
     return count;
 }
 
-fn codePointLength(units: []const u16, index: usize) usize {
+pub fn codePointLength(units: []const u16, index: usize) usize {
     return if (index + 1 < units.len and units[index] >= 0xd800 and units[index] <= 0xdbff and units[index + 1] >= 0xdc00 and units[index + 1] <= 0xdfff) 2 else 1;
 }
 
@@ -11111,7 +11111,7 @@ fn codePointLength(units: []const u16, index: usize) usize {
 /// is enough.  The window width is measured in Array.from elements rather
 /// than UTF-16 units; this is important for a lone high surrogate not to
 /// match the prefix of a supplementary pair.
-fn codePointFindStringBuiltin(runtime: *Runtime, source: Value, needle: Value) !usize {
+pub fn codePointFindStringBuiltin(runtime: *Runtime, source: Value, needle: Value) !usize {
     const source_units = try valueUtf16Alloc(runtime, source);
     defer runtime.allocator.free(source_units);
     const needle_units = try valueUtf16Alloc(runtime, needle);
@@ -11149,19 +11149,19 @@ const SearchElements = struct {
     array_buffer: ?Value = null,
     array_buffer_length: usize = 0,
 
-    fn deinit(self: *SearchElements) void {
+    pub fn deinit(self: *SearchElements) void {
         for (self.items.items) |units| if (units.len != 0) self.runtime.allocator.free(units);
         self.items.deinit(self.runtime.allocator);
         self.* = undefined;
     }
 
-    fn len(self: SearchElements) usize {
+    pub fn len(self: SearchElements) usize {
         if (self.dictionary != null) return self.dictionary_length;
         if (self.array_buffer != null) return self.array_buffer_length;
         return self.items.items.len;
     }
 
-    fn element(self: *const SearchElements, index: usize) !SearchElement {
+    pub fn element(self: *const SearchElements, index: usize) !SearchElement {
         if (self.dictionary) |dictionary| {
             var key_buffer: [32]u16 = undefined;
             const key = searchIndexKey(&key_buffer, index);
@@ -11175,16 +11175,16 @@ const SearchElements = struct {
         return .{ .units = self.items.items[index] };
     }
 
-    fn appendEmpty(self: *SearchElements) !void {
+    pub fn appendEmpty(self: *SearchElements) !void {
         try self.items.append(self.runtime.allocator, &.{});
     }
 
-    fn appendOwned(self: *SearchElements, units: []u16) !void {
+    pub fn appendOwned(self: *SearchElements, units: []u16) !void {
         errdefer if (units.len != 0) self.runtime.allocator.free(units);
         try self.items.append(self.runtime.allocator, units);
     }
 
-    fn appendValue(self: *SearchElements, value: Value) !void {
+    pub fn appendValue(self: *SearchElements, value: Value) !void {
         const tag: Tag = @enumFromInt(value.tag);
         switch (tag) {
             .undefined, .null_value => try self.appendEmpty(),
@@ -11198,7 +11198,7 @@ const SearchElement = struct {
     units: []const u16,
     owned: ?[]u16 = null,
 
-    fn fromValue(runtime: *Runtime, value: Value) !SearchElement {
+    pub fn fromValue(runtime: *Runtime, value: Value) !SearchElement {
         return switch (@as(Tag, @enumFromInt(value.tag))) {
             .undefined, .null_value => .{ .units = &.{} },
             .binding_cell => try fromValue(runtime, value.object().?.payload.binding_cell),
@@ -11209,20 +11209,20 @@ const SearchElement = struct {
         };
     }
 
-    fn deinit(self: *SearchElement, runtime: *Runtime) void {
+    pub fn deinit(self: *SearchElement, runtime: *Runtime) void {
         if (self.owned) |units| runtime.allocator.free(units);
         self.* = undefined;
     }
 };
 
-fn searchArrayFromLength(runtime: *Runtime, value: Value) !usize {
+pub fn searchArrayFromLength(runtime: *Runtime, value: Value) !usize {
     const number = try valueToNumberRuntime(runtime, value);
     if (std.math.isNan(number) or number <= 0) return 0;
     if (!std.math.isFinite(number) or number > @as(f64, @floatFromInt(search_element_limit))) return error.ArraySizeLimitExceeded;
     return @intFromFloat(@trunc(number));
 }
 
-fn appendStringSearchElements(elements: *SearchElements, value: Value) !void {
+pub fn appendStringSearchElements(elements: *SearchElements, value: Value) !void {
     const units = try valueUtf16Alloc(elements.runtime, value);
     defer elements.runtime.allocator.free(units);
     var index: usize = 0;
@@ -11233,25 +11233,25 @@ fn appendStringSearchElements(elements: *SearchElements, value: Value) !void {
     }
 }
 
-fn appendDictionarySearchElements(elements: *SearchElements, value: Value) !void {
+pub fn appendDictionarySearchElements(elements: *SearchElements, value: Value) !void {
     const length = searchArrayFromLength(elements.runtime, dictionaryProperty(value, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) catch |failure| return failure;
     elements.dictionary = value;
     elements.dictionary_length = length;
 }
 
-fn byteBufferArrayLikeProperty(runtime: *Runtime, value: Value, key_units: []const u16) !Value {
+pub fn byteBufferArrayLikeProperty(runtime: *Runtime, value: Value, key_units: []const u16) !Value {
     const object = value.object() orelse return .{};
     if (runtime.aotObjectOwnPropertyGetUnits(object, key_units)) |property| return property;
     return (try tableInheritedProperty(runtime, value, .byte_buffer, key_units)) orelse .{};
 }
 
-fn appendArrayBufferSearchElements(elements: *SearchElements, value: Value) !void {
+pub fn appendArrayBufferSearchElements(elements: *SearchElements, value: Value) !void {
     const length = searchArrayFromLength(elements.runtime, elements.runtime.indexGet(value, staticStringValue("length"))) catch |failure| return failure;
     elements.array_buffer = value;
     elements.array_buffer_length = length;
 }
 
-fn searchIndexKey(buffer: *[32]u16, index: usize) []const u16 {
+pub fn searchIndexKey(buffer: *[32]u16, index: usize) []const u16 {
     var utf8: [32]u8 = undefined;
     const text = std.fmt.bufPrint(&utf8, "{d}", .{index}) catch unreachable;
     const length = std.unicode.utf8ToUtf16Le(buffer, text) catch unreachable;
@@ -11289,7 +11289,7 @@ pub fn appendSearchElements(runtime: *Runtime, value: Value) !SearchElements {
     return elements;
 }
 
-fn joinedSearchElementsEqual(runtime: *Runtime, source: SearchElements, start: usize, count: usize, needle: SearchElements) !bool {
+pub fn joinedSearchElementsEqual(runtime: *Runtime, source: SearchElements, start: usize, count: usize, needle: SearchElements) !bool {
     const source_end = start + count;
     var source_index = start;
     var source_offset: usize = 0;
@@ -11367,7 +11367,7 @@ pub fn stringBoundaryBuiltin(runtime: *Runtime, source: Value, needle: Value, st
     return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(matches) };
 }
 
-fn requireStringReceiver(value: Value, starts: bool) !void {
+pub fn requireStringReceiver(value: Value, starts: bool) !void {
     if (isString(value)) return;
     const tag: Tag = @enumFromInt(value.tag);
     if (starts) return switch (tag) {
@@ -11441,7 +11441,7 @@ pub fn sumParsedBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     return roots[0];
 }
 
-fn toBigIntBuiltin(runtime: *Runtime, value: Value) !Value {
+pub fn toBigIntBuiltin(runtime: *Runtime, value: Value) !Value {
     var roots = [_]Value{ value, .{} };
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -11462,7 +11462,7 @@ fn toBigIntBuiltin(runtime: *Runtime, value: Value) !Value {
     };
 }
 
-fn jsAdd(runtime: *Runtime, left: Value, right: Value) !Value {
+pub fn jsAdd(runtime: *Runtime, left: Value, right: Value) !Value {
     var roots = [_]Value{ left, right, .{}, .{} };
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -11481,7 +11481,7 @@ const CutResult = struct { result: Value, remainder: Value };
 /// `substring(index + delimiter.length)` reads the original value's property.
 /// Keep this helper in the AOT runtime so the generated executable does not
 /// need a JavaScript compatibility layer.
-fn cutLengthProperty(runtime: *Runtime, value: Value) !Value {
+pub fn cutLengthProperty(runtime: *Runtime, value: Value) !Value {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
         .undefined => error.CutUndefinedDelimiterLength,
         .null_value => error.CutNullDelimiterLength,
@@ -11498,7 +11498,7 @@ fn cutLengthProperty(runtime: *Runtime, value: Value) !Value {
     };
 }
 
-fn dictionaryLengthValue(value: Value) Value {
+pub fn dictionaryLengthValue(value: Value) Value {
     const entries = value.object().?.payload.dictionary.items;
     for (entries) |entry| {
         const is_length = switch (@as(Tag, @enumFromInt(entry.key.tag))) {
@@ -11601,7 +11601,7 @@ pub fn chrBuiltin(runtime: *Runtime, value: Value) !Value {
     return roots[1];
 }
 
-fn codePointStringBuiltin(runtime: *Runtime, number: f64) !Value {
+pub fn codePointStringBuiltin(runtime: *Runtime, number: f64) !Value {
     if (!std.math.isFinite(number) or @trunc(number) != number or number < 0 or number > 0x10ffff) {
         const number_text = try number_mod.toStringAlloc(runtime.allocator, number);
         defer runtime.allocator.free(number_text);
@@ -11629,7 +11629,7 @@ pub fn ascBuiltin(runtime: *Runtime, value: Value) !Value {
     return roots[1];
 }
 
-fn firstCodePointBuiltin(runtime: *Runtime, value: Value) !u21 {
+pub fn firstCodePointBuiltin(runtime: *Runtime, value: Value) !u21 {
     const units = try valueUtf16Alloc(runtime, value);
     defer runtime.allocator.free(units);
     if (units.len == 0) return 0;
@@ -11674,14 +11674,14 @@ pub fn stringSearchBuiltin(runtime: *Runtime, source_value: Value, start_value: 
     return 0;
 }
 
-fn codePointOffsetBuiltin(units: []const u16, target: usize) usize {
+pub fn codePointOffsetBuiltin(units: []const u16, target: usize) usize {
     var count: usize = 0;
     var index: usize = 0;
     while (index < units.len and count < target) : (count += 1) index += codePointLength(units, index);
     return index;
 }
 
-fn stringCollectionIndex(number: f64, length: usize) usize {
+pub fn stringCollectionIndex(number: f64, length: usize) usize {
     if (std.math.isNan(number) or number <= 0) return 0;
     if (!std.math.isFinite(number) or number >= @as(f64, @floatFromInt(length))) return length;
     return @intFromFloat(@trunc(number));
@@ -11809,7 +11809,7 @@ pub fn arrayOrderingBuiltin(runtime: *Runtime, command: aot_builtin.Command, sou
     }
 }
 
-fn arrayShuffleBuiltin(runtime: *Runtime, source: Value) !Value {
+pub fn arrayShuffleBuiltin(runtime: *Runtime, source: Value) !Value {
     if (source.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
     const object = source.object() orelse return error.InvalidArray;
     if (object.payload != .array) return error.InvalidArray;
@@ -11851,7 +11851,7 @@ pub fn arrayCallbackBuiltin(runtime: *Runtime, command: aot_builtin.Command, arg
     return roots[2];
 }
 
-fn stableArrayCallbackSort(runtime: *Runtime, source: Value, callable: Value) !Value {
+pub fn stableArrayCallbackSort(runtime: *Runtime, source: Value, callable: Value) !Value {
     const items = try arrayItems(source);
     const original_length = items.items.len;
     if (original_length < 2) return source;
@@ -11927,7 +11927,7 @@ const V8SortContext = union(enum) {
     table: V8TableSortContext,
 };
 
-fn compareV8Sort(
+pub fn compareV8Sort(
     runtime: *Runtime,
     left: Value,
     left_present: bool,
@@ -11959,7 +11959,7 @@ fn compareV8Sort(
     };
 }
 
-fn v8SmallArrayCallbackSort(
+pub fn v8SmallArrayCallbackSort(
     runtime: *Runtime,
     items: []Value,
     presence: []bool,
@@ -12016,7 +12016,7 @@ fn v8SmallArrayCallbackSort(
     }
 }
 
-fn v8CopyArrayRange(comptime T: type, destination: []T, destination_index: usize, source: []const T, source_index: usize, length: usize) void {
+pub fn v8CopyArrayRange(comptime T: type, destination: []T, destination_index: usize, source: []const T, source_index: usize, length: usize) void {
     if (length == 0) return;
     if (@intFromPtr(destination.ptr) == @intFromPtr(source.ptr) and destination_index > source_index) {
         var offset = length;
@@ -12029,7 +12029,7 @@ fn v8CopyArrayRange(comptime T: type, destination: []T, destination_index: usize
     }
 }
 
-fn v8ComputeMinRunLengthArray(length: usize) usize {
+pub fn v8ComputeMinRunLengthArray(length: usize) usize {
     var n = length;
     var remainder: usize = 0;
     while (n >= 64) {
@@ -12039,7 +12039,7 @@ fn v8ComputeMinRunLengthArray(length: usize) usize {
     return n + remainder;
 }
 
-fn v8CountAndMakeRunArrayCallback(
+pub fn v8CountAndMakeRunArrayCallback(
     runtime: *Runtime,
     items: []Value,
     presence: []bool,
@@ -12082,7 +12082,7 @@ fn v8CountAndMakeRunArrayCallback(
     return run_length;
 }
 
-fn v8BinaryInsertionSortArrayCallback(
+pub fn v8BinaryInsertionSortArrayCallback(
     runtime: *Runtime,
     items: []Value,
     presence: []bool,
@@ -12113,7 +12113,7 @@ fn v8BinaryInsertionSortArrayCallback(
     }
 }
 
-fn v8GallopLeftArrayCallback(
+pub fn v8GallopLeftArrayCallback(
     runtime: *Runtime,
     items: []Value,
     presence: []bool,
@@ -12169,7 +12169,7 @@ fn v8GallopLeftArrayCallback(
     return @intCast(offset);
 }
 
-fn v8GallopRightArrayCallback(
+pub fn v8GallopRightArrayCallback(
     runtime: *Runtime,
     items: []Value,
     presence: []bool,
@@ -12225,7 +12225,7 @@ fn v8GallopRightArrayCallback(
     return @intCast(offset);
 }
 
-fn v8MergeLowArrayCallback(
+pub fn v8MergeLowArrayCallback(
     runtime: *Runtime,
     items: []Value,
     presence: []bool,
@@ -12389,7 +12389,7 @@ fn v8MergeLowArrayCallback(
     }
 }
 
-fn v8MergeHighArrayCallback(
+pub fn v8MergeHighArrayCallback(
     runtime: *Runtime,
     items: []Value,
     presence: []bool,
@@ -12580,7 +12580,7 @@ fn v8MergeHighArrayCallback(
     }
 }
 
-fn v8MergeAtArrayCallback(
+pub fn v8MergeAtArrayCallback(
     runtime: *Runtime,
     items: []Value,
     presence: []bool,
@@ -12634,13 +12634,13 @@ fn v8MergeAtArrayCallback(
     }
 }
 
-fn v8RunInvariantEstablishedArray(runs: []const V8ArraySortRun, index: usize) bool {
+pub fn v8RunInvariantEstablishedArray(runs: []const V8ArraySortRun, index: usize) bool {
     if (index < 2) return true;
     if (runs[index - 2].length <= runs[index - 1].length) return false;
     return runs[index - 2].length - runs[index - 1].length > runs[index].length;
 }
 
-fn v8MergeCollapseArrayCallback(
+pub fn v8MergeCollapseArrayCallback(
     runtime: *Runtime,
     items: []Value,
     presence: []bool,
@@ -12664,7 +12664,7 @@ fn v8MergeCollapseArrayCallback(
     }
 }
 
-fn v8MergeForceCollapseArrayCallback(
+pub fn v8MergeForceCollapseArrayCallback(
     runtime: *Runtime,
     items: []Value,
     presence: []bool,
@@ -12682,7 +12682,7 @@ fn v8MergeForceCollapseArrayCallback(
     }
 }
 
-fn v8TimSortArrayCallback(
+pub fn v8TimSortArrayCallback(
     runtime: *Runtime,
     items: []Value,
     presence: []bool,
@@ -12715,7 +12715,7 @@ fn v8TimSortArrayCallback(
     try v8MergeForceCollapseArrayCallback(runtime, items, presence, temp, temp_presence, &runs, &run_count, context, &min_gallop);
 }
 
-fn compareAotCallback(runtime: *Runtime, callable: Value, left: Value, left_present: bool, right: Value, right_present: bool, result_root: *Value) !std.math.Order {
+pub fn compareAotCallback(runtime: *Runtime, callable: Value, left: Value, left_present: bool, right: Value, right_present: bool, result_root: *Value) !std.math.Order {
     if (!left_present) return if (!right_present) .eq else .gt;
     if (!right_present) return .lt;
     if (left.tag == @intFromEnum(Tag.undefined)) return if (right.tag == @intFromEnum(Tag.undefined)) .eq else .gt;
@@ -12756,13 +12756,13 @@ pub fn resolveAotCallback(runtime: *Runtime, value: Value) !Value {
     return match orelse error.UnknownFunction;
 }
 
-fn registeredFunctionMatches(registered_name: []const u8, requested_name: []const u8) bool {
+pub fn registeredFunctionMatches(registered_name: []const u8, requested_name: []const u8) bool {
     if (std.mem.eql(u8, registered_name, requested_name)) return true;
     const separator = std.mem.lastIndexOf(u8, registered_name, "__") orelse return false;
     return std.mem.eql(u8, registered_name[separator + 2 ..], requested_name);
 }
 
-fn stableArraySort(runtime: *Runtime, source: Value, numeric: bool) !Value {
+pub fn stableArraySort(runtime: *Runtime, source: Value, numeric: bool) !Value {
     const object = source.object() orelse return error.InvalidArray;
     if (object.payload != .array) return error.InvalidArray;
     const items = &object.payload.array;
@@ -12838,7 +12838,7 @@ fn stableArraySort(runtime: *Runtime, source: Value, numeric: bool) !Value {
     return source;
 }
 
-fn compareArraySortValues(runtime: *Runtime, left: Value, left_present: bool, right: Value, right_present: bool, numeric: bool) !std.math.Order {
+pub fn compareArraySortValues(runtime: *Runtime, left: Value, left_present: bool, right: Value, right_present: bool, numeric: bool) !std.math.Order {
     if (!left_present) return if (!right_present) .eq else .gt;
     if (!right_present) return .lt;
     if (left.tag == @intFromEnum(Tag.undefined)) return if (right.tag == @intFromEnum(Tag.undefined)) .eq else .gt;
@@ -12857,7 +12857,7 @@ fn compareArraySortValues(runtime: *Runtime, left: Value, left_present: bool, ri
     return utf16Order(left_text, right_text);
 }
 
-fn utf16Order(left: []const u16, right: []const u16) std.math.Order {
+pub fn utf16Order(left: []const u16, right: []const u16) std.math.Order {
     return std.mem.order(u16, left, right);
 }
 
@@ -12873,11 +12873,11 @@ pub fn arrayItems(value: Value) !*std.ArrayList(Value) {
 /// JavaScript's Array splice uses ToIntegerOrInfinity for the start argument.
 /// In particular, strings are converted with Number (not parseInt), NaN and
 /// -Infinity become zero, and +Infinity becomes the current array length.
-fn spliceIndexRuntime(runtime: *Runtime, value: Value, length: usize) !usize {
+pub fn spliceIndexRuntime(runtime: *Runtime, value: Value, length: usize) !usize {
     return spliceIndexNumber(try valueToNumberRuntime(runtime, value), length);
 }
 
-fn spliceIndexNumber(number: f64, length: usize) usize {
+pub fn spliceIndexNumber(number: f64, length: usize) usize {
     if (std.math.isNan(number) or number == -std.math.inf(f64)) return 0;
     if (number == std.math.inf(f64)) return length;
     const integer = @trunc(number);
@@ -12889,17 +12889,17 @@ fn spliceIndexNumber(number: f64, length: usize) usize {
     return @intFromFloat(integer);
 }
 
-fn spliceCountRuntime(runtime: *Runtime, value: Value, maximum: usize) !usize {
+pub fn spliceCountRuntime(runtime: *Runtime, value: Value, maximum: usize) !usize {
     return spliceCountNumber(try valueToNumberRuntime(runtime, value), maximum);
 }
 
-fn spliceCountNumber(number: f64, maximum: usize) usize {
+pub fn spliceCountNumber(number: f64, maximum: usize) usize {
     if (std.math.isNan(number) or number <= 0) return 0;
     if (number == std.math.inf(f64)) return maximum;
     return @min(@as(usize, @intFromFloat(@min(@floor(number), @as(f64, @floatFromInt(maximum))))), maximum);
 }
 
-fn dictionaryOwnProperty(value: Value, key: []const u16) ?Value {
+pub fn dictionaryOwnProperty(value: Value, key: []const u16) ?Value {
     if (value.tag != @intFromEnum(Tag.dictionary)) return null;
     const object = value.object() orelse return null;
     if (object.payload != .dictionary) return null;
@@ -12920,7 +12920,7 @@ fn dictionaryOwnProperty(value: Value, key: []const u16) ?Value {
     return null;
 }
 
-fn dictionaryPrototypeProperty(value: Value, key: []const u16) ?Value {
+pub fn dictionaryPrototypeProperty(value: Value, key: []const u16) ?Value {
     const object = value.object() orelse return null;
     if (object.payload != .dictionary) return null;
     var current = object.prototype;
@@ -12936,7 +12936,7 @@ fn dictionaryPrototypeProperty(value: Value, key: []const u16) ?Value {
     return null;
 }
 
-fn dictionaryPrototypeBlocksStandard(value: Value) bool {
+pub fn dictionaryPrototypeBlocksStandard(value: Value) bool {
     const object = value.object() orelse return false;
     if (object.payload != .dictionary) return false;
     var current = object.prototype;
@@ -12952,7 +12952,7 @@ fn dictionaryPrototypeBlocksStandard(value: Value) bool {
     return true;
 }
 
-fn arrayPrototypeProperty(value: Value, key: []const u16) ?Value {
+pub fn arrayPrototypeProperty(value: Value, key: []const u16) ?Value {
     if (value.tag != @intFromEnum(Tag.array)) return null;
     const object = value.object() orelse return null;
     if (object.payload != .array) return null;
@@ -12969,7 +12969,7 @@ fn arrayPrototypeProperty(value: Value, key: []const u16) ?Value {
     return null;
 }
 
-fn arrayPrototypeBlocksStandard(value: Value) bool {
+pub fn arrayPrototypeBlocksStandard(value: Value) bool {
     if (value.tag != @intFromEnum(Tag.array)) return false;
     const object = value.object() orelse return false;
     if (object.payload != .array) return false;
@@ -12990,7 +12990,7 @@ pub fn dictionaryProperty(value: Value, key: []const u16) Value {
     return dictionaryOwnProperty(value, key) orelse dictionaryPrototypeProperty(value, key) orelse .{};
 }
 
-fn aotCanonicalArrayIndex(value: Value) ?usize {
+pub fn aotCanonicalArrayIndex(value: Value) ?usize {
     switch (@as(Tag, @enumFromInt(value.tag))) {
         .number => {
             const number: f64 = @bitCast(value.payload);
@@ -13031,14 +13031,14 @@ fn aotCanonicalArrayIndex(value: Value) ?usize {
     return if (number <= 4_294_967_294) number else null;
 }
 
-fn aotDictionaryOrder(runtime: *Runtime, entries: []const DictionaryEntry) ![]usize {
+pub fn aotDictionaryOrder(runtime: *Runtime, entries: []const DictionaryEntry) ![]usize {
     const order = try runtime.allocator.alloc(usize, entries.len);
     for (order, 0..) |*entry, index| entry.* = index;
     std.sort.pdq(usize, order, entries, aotDictionaryOrderBefore);
     return order;
 }
 
-fn aotDictionaryOrderBefore(entries: []const DictionaryEntry, left_index: usize, right_index: usize) bool {
+pub fn aotDictionaryOrderBefore(entries: []const DictionaryEntry, left_index: usize, right_index: usize) bool {
     const left = aotCanonicalArrayIndex(entries[left_index].key);
     const right = aotCanonicalArrayIndex(entries[right_index].key);
     return if (left) |left_number| if (right) |right_number| left_number < right_number else true else if (right != null) false else left_index < right_index;
@@ -13049,7 +13049,7 @@ const AotEnumerableDictionaryEntry = struct {
     value: Value,
 };
 
-fn aotPropertyKeysEqual(runtime: *Runtime, left: Value, right: Value) !bool {
+pub fn aotPropertyKeysEqual(runtime: *Runtime, left: Value, right: Value) !bool {
     const left_units = try valueUtf16Alloc(runtime, left);
     defer runtime.allocator.free(left_units);
     const right_units = try valueUtf16Alloc(runtime, right);
@@ -13057,7 +13057,7 @@ fn aotPropertyKeysEqual(runtime: *Runtime, left: Value, right: Value) !bool {
     return std.mem.eql(u16, left_units, right_units);
 }
 
-fn aotEnumerableKeyWasYielded(runtime: *Runtime, yielded: []const Value, key: Value) !bool {
+pub fn aotEnumerableKeyWasYielded(runtime: *Runtime, yielded: []const Value, key: Value) !bool {
     for (yielded) |candidate| if (try aotPropertyKeysEqual(runtime, candidate, key)) return true;
     return false;
 }
@@ -13065,7 +13065,7 @@ fn aotEnumerableKeyWasYielded(runtime: *Runtime, yielded: []const Value, key: Va
 /// Collect a dictionary's enumerable own keys and custom prototype keys in
 /// ECMAScript `for...in` order.  Standard prototype methods are non-enumerable
 /// and are synthesized only by property lookup, not by this command.
-fn aotEnumerableDictionaryEntries(runtime: *Runtime, source: Value) ![]AotEnumerableDictionaryEntry {
+pub fn aotEnumerableDictionaryEntries(runtime: *Runtime, source: Value) ![]AotEnumerableDictionaryEntry {
     var entries: std.ArrayList(AotEnumerableDictionaryEntry) = .empty;
     errdefer entries.deinit(runtime.allocator);
     var yielded: std.ArrayList(Value) = .empty;
@@ -13090,7 +13090,7 @@ fn aotEnumerableDictionaryEntries(runtime: *Runtime, source: Value) ![]AotEnumer
     return entries.toOwnedSlice(runtime.allocator);
 }
 
-fn aotPropertyKeyEqual(runtime: *Runtime, key: Value, units: []const u16) !bool {
+pub fn aotPropertyKeyEqual(runtime: *Runtime, key: Value, units: []const u16) !bool {
     const key_units = try valueUtf16Alloc(runtime, key);
     defer runtime.allocator.free(key_units);
     return std.mem.eql(u16, key_units, units);
@@ -13280,7 +13280,7 @@ pub fn dictionaryRemoveBuiltin(runtime: *Runtime, source: Value, key: Value) !Va
     }
 }
 
-fn byteBufferIndexDeleteFailure(runtime: *Runtime, key_units: []const u16) !void {
+pub fn byteBufferIndexDeleteFailure(runtime: *Runtime, key_units: []const u16) !void {
     const key_utf8 = try utf16FailureMessageUtf8Alloc(runtime.allocator, key_units);
     defer runtime.allocator.free(key_utf8);
     const message = try std.fmt.allocPrint(runtime.allocator, "Cannot delete property '{s}' of [object Uint8Array]", .{key_utf8});
@@ -13352,12 +13352,12 @@ pub fn dictionaryHasBuiltin(runtime: *Runtime, source: Value, key: Value) !bool 
     }
 }
 
-fn stringValuesEqual(runtime: *Runtime, left: Value, right: Value) !bool {
+pub fn stringValuesEqual(runtime: *Runtime, left: Value, right: Value) !bool {
     if (!isString(left) or !isString(right)) return false;
     return stringEqual(runtime, left, right);
 }
 
-fn arrayRange(runtime: *Runtime, index: Value, length: usize) !?ArrayRange {
+pub fn arrayRange(runtime: *Runtime, index: Value, length: usize) !?ArrayRange {
     // The official implementation checks `typeof i === 'object'` before
     // reading i['先頭'].  Accessing a null value therefore throws, while an
     // array or dictionary without a numeric 先頭 simply falls through to the
@@ -13380,7 +13380,7 @@ fn arrayRange(runtime: *Runtime, index: Value, length: usize) !?ArrayRange {
     };
 }
 
-fn spliceArrayBuiltin(runtime: *Runtime, source: Value, start: usize, count: usize) !Value {
+pub fn spliceArrayBuiltin(runtime: *Runtime, source: Value, start: usize, count: usize) !Value {
     var roots = [_]Value{ source, .{} };
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -13411,7 +13411,7 @@ fn spliceArrayBuiltin(runtime: *Runtime, source: Value, start: usize, count: usi
     return roots[1];
 }
 
-fn insertValuesAssumeCapacity(items: *std.ArrayList(Value), start: usize, values: []const Value) void {
+pub fn insertValuesAssumeCapacity(items: *std.ArrayList(Value), start: usize, values: []const Value) void {
     const old_length = items.items.len;
     _ = items.addManyAtAssumeCapacity(start, values.len);
     @memcpy(items.items[start .. start + values.len], values);
@@ -13421,7 +13421,7 @@ fn insertValuesAssumeCapacity(items: *std.ArrayList(Value), start: usize, values
     std.debug.assert(items.items.len == old_length + values.len);
 }
 
-fn insertPresenceAssumeCapacity(presence: *std.ArrayList(bool), start: usize, count: usize) void {
+pub fn insertPresenceAssumeCapacity(presence: *std.ArrayList(bool), start: usize, count: usize) void {
     const old_length = presence.items.len;
     _ = presence.addManyAtAssumeCapacity(start, count);
     @memset(presence.items[start .. start + count], true);
@@ -13538,7 +13538,7 @@ pub fn arrayTakeBuiltin(runtime: *Runtime, source: Value, index: Value, count: V
     return spliceArrayBuiltin(runtime, roots[0], start, delete_count);
 }
 
-fn arrayPopBuiltin(_: *Runtime, source: Value) !Value {
+pub fn arrayPopBuiltin(_: *Runtime, source: Value) !Value {
     if (source.tag != @intFromEnum(Tag.array)) return error.ArrayPopReceiver;
     const object = source.object() orelse return error.InvalidArray;
     if (object.payload != .array) return error.InvalidArray;
@@ -13550,7 +13550,7 @@ fn arrayPopBuiltin(_: *Runtime, source: Value) !Value {
     return result;
 }
 
-fn arrayPushBuiltin(runtime: *Runtime, source: Value, item: Value) !Value {
+pub fn arrayPushBuiltin(runtime: *Runtime, source: Value, item: Value) !Value {
     if (source.tag != @intFromEnum(Tag.array)) return error.ArrayPushReceiver;
     const object = source.object() orelse return error.InvalidArray;
     if (object.payload != .array) return error.InvalidArray;
@@ -13884,18 +13884,18 @@ const table_byte_buffer_array_buffer_method_names = [_][]const u8{
     "transferToFixedLength",
 };
 
-fn tableAsciiUnitsEqual(units: []const u16, ascii: []const u8) bool {
+pub fn tableAsciiUnitsEqual(units: []const u16, ascii: []const u8) bool {
     if (units.len != ascii.len) return false;
     for (units, ascii) |unit, byte| if (unit != byte) return false;
     return true;
 }
 
-fn tableInheritedMethodName(units: []const u16, names: []const []const u8) ?[]const u8 {
+pub fn tableInheritedMethodName(units: []const u16, names: []const []const u8) ?[]const u8 {
     for (names) |name| if (tableAsciiUnitsEqual(units, name)) return name;
     return null;
 }
 
-fn tableBufferEnumerableFunctionName(name: []const u8) []const u8 {
+pub fn tableBufferEnumerableFunctionName(name: []const u8) []const u8 {
     if (std.mem.eql(u8, name, "readBigUint64LE")) return "readBigUInt64LE";
     if (std.mem.eql(u8, name, "readBigUint64BE")) return "readBigUInt64BE";
     if (std.mem.eql(u8, name, "writeBigUint64LE")) return "writeBigUInt64LE";
@@ -13926,7 +13926,7 @@ fn tableBufferEnumerableFunctionName(name: []const u8) []const u8 {
     return name;
 }
 
-fn tableInheritedFunctionWithCallback(
+pub fn tableInheritedFunctionWithCallback(
     runtime: *Runtime,
     cache_kind: u8,
     cache_name: []const u8,
@@ -13939,11 +13939,11 @@ fn tableInheritedFunctionWithCallback(
     return result;
 }
 
-fn tableInheritedFunction(runtime: *Runtime, cache_kind: u8, name: []const u8) !Value {
+pub fn tableInheritedFunction(runtime: *Runtime, cache_kind: u8, name: []const u8) !Value {
     return tableInheritedFunctionWithCallback(runtime, cache_kind, name, name, promiseSentinel);
 }
 
-fn tableInheritedByteBufferMethod(runtime: *Runtime, receiver: Value, name: []const u8) !Value {
+pub fn tableInheritedByteBufferMethod(runtime: *Runtime, receiver: Value, name: []const u8) !Value {
     const cache_kind: u8 = switch (receiver.object().?.payload.byte_buffer.kind) {
         .buffer => table_standard_property_cache_buffer,
         .uint8_array => table_standard_property_cache_uint8_array,
@@ -13955,7 +13955,7 @@ fn tableInheritedByteBufferMethod(runtime: *Runtime, receiver: Value, name: []co
     return tableInheritedFunction(runtime, cache_kind, name);
 }
 
-fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []const u16) !?Value {
+pub fn tableInheritedProperty(runtime: *Runtime, row: Value, row_tag: Tag, units: []const u16) !?Value {
     if (row_tag == .dictionary and row.object().?.prototype.tag != @intFromEnum(Tag.undefined)) {
         if (tableAsciiUnitsEqual(units, "__proto__")) return row.object().?.prototype;
         if (dictionaryPrototypeProperty(row, units)) |value| return value;
@@ -14191,7 +14191,7 @@ pub fn tableRowProperty(runtime: *Runtime, row: Value, column: Value) !Value {
     return .{};
 }
 
-fn setTableRowPropertyFailure(runtime: *Runtime, row: Value, column: Value) !void {
+pub fn setTableRowPropertyFailure(runtime: *Runtime, row: Value, column: Value) !void {
     var rooted = [_]Value{ row, column };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &rooted, rooted.len);
@@ -14206,7 +14206,7 @@ fn setTableRowPropertyFailure(runtime: *Runtime, row: Value, column: Value) !voi
     runtime.setFailureText(message);
 }
 
-fn tablePropertyKeyEqual(runtime: *Runtime, key: Value, units: []const u16) !bool {
+pub fn tablePropertyKeyEqual(runtime: *Runtime, key: Value, units: []const u16) !bool {
     const key_units = try valueUtf16Alloc(runtime, key);
     defer runtime.allocator.free(key_units);
     return std.mem.eql(u16, key_units, units);
@@ -14245,7 +14245,7 @@ pub fn tableColumnCountBuiltin(runtime: *Runtime, source: Value) !Value {
     return roots[1];
 }
 
-fn tableSearchBuiltin(runtime: *Runtime, source: Value, column: Value, row_value: Value, needle: Value) !Value {
+pub fn tableSearchBuiltin(runtime: *Runtime, source: Value, column: Value, row_value: Value, needle: Value) !Value {
     var roots = [_]Value{ source, column, row_value, needle, row_value, .{} };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -14260,7 +14260,7 @@ fn tableSearchBuiltin(runtime: *Runtime, source: Value, column: Value, row_value
     return numberValue(-1);
 }
 
-fn tableColumnIterationCount(runtime: *Runtime, value: Value) !usize {
+pub fn tableColumnIterationCount(runtime: *Runtime, value: Value) !usize {
     const number = if (value.tag == @intFromEnum(Tag.bigint))
         value.object().?.payload.bigint.toF64()
     else
@@ -14270,7 +14270,7 @@ fn tableColumnIterationCount(runtime: *Runtime, value: Value) !usize {
     return @intFromFloat(@ceil(number));
 }
 
-fn tableTransposeBuiltin(runtime: *Runtime, source: Value, rotate: bool) !Value {
+pub fn tableTransposeBuiltin(runtime: *Runtime, source: Value, rotate: bool) !Value {
     var roots = [_]Value{ source, .{}, .{}, .{}, .{} };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -14298,13 +14298,13 @@ fn tableTransposeBuiltin(runtime: *Runtime, source: Value, rotate: bool) !Value 
     return roots[2];
 }
 
-fn tableDictionaryHasKey(runtime: *Runtime, dictionary: Value, key: Value) !bool {
+pub fn tableDictionaryHasKey(runtime: *Runtime, dictionary: Value, key: Value) !bool {
     const entries = &dictionary.object().?.payload.dictionary;
     for (entries.items) |entry| if (try strictEqual(runtime, entry.key, key)) return true;
     return false;
 }
 
-fn tableIsObjectPrototypeKey(units: []const u16) bool {
+pub fn tableIsObjectPrototypeKey(units: []const u16) bool {
     const keys = [_][]const u8{
         "constructor",
         "__defineGetter__",
@@ -14331,7 +14331,7 @@ fn tableIsObjectPrototypeKey(units: []const u16) bool {
     return false;
 }
 
-fn tableUniqueBuiltin(runtime: *Runtime, source: Value, column: Value) !Value {
+pub fn tableUniqueBuiltin(runtime: *Runtime, source: Value, column: Value) !Value {
     var roots = [_]Value{ source, column, .{}, .{}, .{}, .{} };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -14353,7 +14353,7 @@ fn tableUniqueBuiltin(runtime: *Runtime, source: Value, column: Value) !Value {
     return roots[2];
 }
 
-fn tableInsertColumnBuiltin(runtime: *Runtime, source: Value, column: Value, values: Value) !Value {
+pub fn tableInsertColumnBuiltin(runtime: *Runtime, source: Value, column: Value, values: Value) !Value {
     var roots = [_]Value{ source, column, values, .{}, .{}, .{}, .{} };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -14438,7 +14438,7 @@ pub fn aotByteBufferSlice(runtime: *Runtime, buffer: ByteBuffer, start: usize, e
     };
 }
 
-fn tableDeleteColumnBuiltin(runtime: *Runtime, source: Value, column: Value) !Value {
+pub fn tableDeleteColumnBuiltin(runtime: *Runtime, source: Value, column: Value) !Value {
     var roots = [_]Value{ source, column, .{}, .{} };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -14463,7 +14463,7 @@ fn tableDeleteColumnBuiltin(runtime: *Runtime, source: Value, column: Value) !Va
     return roots[2];
 }
 
-fn tableColumnSumBuiltin(runtime: *Runtime, source: Value, column: Value) !Value {
+pub fn tableColumnSumBuiltin(runtime: *Runtime, source: Value, column: Value) !Value {
     var roots = [_]Value{ source, column, numberValue(0), .{} };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -14482,12 +14482,12 @@ fn tableColumnSumBuiltin(runtime: *Runtime, source: Value, column: Value) !Value
 /// commands whose `/pattern/flags` notation is part of their public API.
 /// Keep this validation outside the row loop so an invalid pattern fails even
 /// for an empty table or an already-out-of-range start row.
-fn tableRegexpPatternUnitsAlloc(runtime: *Runtime, pattern: Value) ![]u16 {
+pub fn tableRegexpPatternUnitsAlloc(runtime: *Runtime, pattern: Value) ![]u16 {
     if (pattern.tag == @intFromEnum(Tag.undefined)) return runtime.allocator.alloc(u16, 0);
     return valueUtf16Alloc(runtime, pattern);
 }
 
-fn tableRegexpSearchBuiltin(runtime: *Runtime, source: Value, row_value: Value, column: Value, pattern: Value) !Value {
+pub fn tableRegexpSearchBuiltin(runtime: *Runtime, source: Value, row_value: Value, column: Value, pattern: Value) !Value {
     var roots = [_]Value{ source, column, row_value, pattern, row_value, .{}, .{} };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -14511,7 +14511,7 @@ fn tableRegexpSearchBuiltin(runtime: *Runtime, source: Value, row_value: Value, 
     return numberValue(-1);
 }
 
-fn tableRegexpPickupBuiltin(runtime: *Runtime, source: Value, column: Value, pattern: Value) !Value {
+pub fn tableRegexpPickupBuiltin(runtime: *Runtime, source: Value, column: Value, pattern: Value) !Value {
     var roots = [_]Value{ source, column, pattern, .{}, .{}, .{} };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -14558,7 +14558,7 @@ fn tableRegexpPickupBuiltin(runtime: *Runtime, source: Value, column: Value, pat
     return roots[3];
 }
 
-fn incrementTableSearchRow(runtime: *Runtime, row: Value) !Value {
+pub fn incrementTableSearchRow(runtime: *Runtime, row: Value) !Value {
     if (row.tag == @intFromEnum(Tag.bigint)) {
         var one = try BigInt.init(runtime.allocator, 1);
         defer one.deinit();
@@ -14567,7 +14567,7 @@ fn incrementTableSearchRow(runtime: *Runtime, row: Value) !Value {
     return numberValue(try valueToNumberRuntime(runtime, row) + 1);
 }
 
-fn compareTableRowsBuiltin(
+pub fn compareTableRowsBuiltin(
     runtime: *Runtime,
     left: Value,
     left_present: bool,
@@ -14603,7 +14603,7 @@ fn compareTableRowsBuiltin(
     return (try relationalOrder(runtime, left_cell.*, right_cell.*)) orelse .gt;
 }
 
-fn tableSortBuiltin(runtime: *Runtime, source: Value, column: Value, numeric: bool) !Value {
+pub fn tableSortBuiltin(runtime: *Runtime, source: Value, column: Value, numeric: bool) !Value {
     // The official commands mutate and return the original table.  Keep the
     // current row and both compared cells rooted because property lookup and
     // ToPrimitive/Number conversion may allocate and trigger collection.
@@ -14709,7 +14709,7 @@ fn tableSortBuiltin(runtime: *Runtime, source: Value, column: Value, numeric: bo
     return root_values[0];
 }
 
-fn v8SmallTableSortBuiltin(
+pub fn v8SmallTableSortBuiltin(
     runtime: *Runtime,
     items: []Value,
     presence: []bool,
@@ -14902,7 +14902,7 @@ pub fn tableBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: 
 const CloneState = struct {
     active: std.ArrayList(*Object) = .empty,
 
-    fn deinit(self: *CloneState, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *CloneState, allocator: std.mem.Allocator) void {
         self.active.deinit(allocator);
     }
 };
@@ -14918,7 +14918,7 @@ pub fn deepCloneBuiltin(runtime: *Runtime, source: Value) !Value {
     return deepCloneValue(runtime, source, &state);
 }
 
-fn deepCloneValue(runtime: *Runtime, source: Value, state: *CloneState) !Value {
+pub fn deepCloneValue(runtime: *Runtime, source: Value, state: *CloneState) !Value {
     return switch (@as(Tag, @enumFromInt(source.tag))) {
         .undefined, .function => .{},
         .null_value, .boolean => source,
@@ -14985,7 +14985,7 @@ fn deepCloneValue(runtime: *Runtime, source: Value, state: *CloneState) !Value {
 
 const SliceRange = struct { start: usize, end: usize };
 
-fn sliceIndex(number: f64, length: usize) usize {
+pub fn sliceIndex(number: f64, length: usize) usize {
     if (std.math.isNan(number) or number == 0) return 0;
     if (number == std.math.inf(f64)) return length;
     if (number == -std.math.inf(f64)) return 0;
@@ -14998,20 +14998,20 @@ fn sliceIndex(number: f64, length: usize) usize {
     return @intFromFloat(integer);
 }
 
-fn directIndex(number: f64) ?usize {
+pub fn directIndex(number: f64) ?usize {
     if (!std.math.isFinite(number) or number < 0 or @trunc(number) != number) return null;
     if (number >= @as(f64, @floatFromInt(std.math.maxInt(usize)))) return null;
     return @intFromFloat(number);
 }
 
-fn bigIntPropertyIndex(value: BigInt, length: usize) ?usize {
+pub fn bigIntPropertyIndex(value: BigInt, length: usize) ?usize {
     const integer = value.toI64() catch return null;
     if (integer < 0) return null;
     const index = std.math.cast(usize, integer) orelse return null;
     return if (index < length) index else null;
 }
 
-fn charAtIndex(number: f64, length: usize) ?usize {
+pub fn charAtIndex(number: f64, length: usize) ?usize {
     if (std.math.isNan(number) or number == 0) return if (length > 0) 0 else null;
     if (!std.math.isFinite(number)) return null;
     const integer = @trunc(number);
@@ -15019,7 +15019,7 @@ fn charAtIndex(number: f64, length: usize) ?usize {
     return @intFromFloat(integer);
 }
 
-fn sliceRange(runtime: *Runtime, index: Value, length: usize) !?SliceRange {
+pub fn sliceRange(runtime: *Runtime, index: Value, length: usize) !?SliceRange {
     if (index.tag == @intFromEnum(Tag.null_value)) return error.ArrayCutNullIndex;
     if (index.tag != @intFromEnum(Tag.dictionary) and index.tag != @intFromEnum(Tag.array)) return null;
     const first = dictionaryProperty(index, &.{ 0x5148, 0x982d });
@@ -15031,7 +15031,7 @@ fn sliceRange(runtime: *Runtime, index: Value, length: usize) !?SliceRange {
     return .{ .start = start, .end = end };
 }
 
-fn substringRange(runtime: *Runtime, index: Value, length: usize) !?SliceRange {
+pub fn substringRange(runtime: *Runtime, index: Value, length: usize) !?SliceRange {
     if (index.tag == @intFromEnum(Tag.null_value)) return error.ArrayCutNullIndex;
     if (index.tag != @intFromEnum(Tag.dictionary) and index.tag != @intFromEnum(Tag.array)) return null;
     const first = dictionaryProperty(index, &.{ 0x5148, 0x982d });
@@ -15040,7 +15040,7 @@ fn substringRange(runtime: *Runtime, index: Value, length: usize) !?SliceRange {
     const first_number: f64 = @bitCast(first.payload);
     const last_number = try explicitRangeNumber(runtime, last) + 1;
     const normalize = struct {
-        fn apply(number: f64, size: usize) usize {
+        pub fn apply(number: f64, size: usize) usize {
             if (std.math.isNan(number) or number <= 0 or number == -std.math.inf(f64)) return 0;
             if (number == std.math.inf(f64)) return size;
             if (number >= @as(f64, @floatFromInt(size))) return size;
@@ -15137,7 +15137,7 @@ pub fn referenceBuiltin(runtime: *Runtime, source: Value, index: Value) !Value {
     return error.IndexableValueExpected;
 }
 
-fn invalidStringRangeBuiltin(runtime: *Runtime, index: Value) !Value {
+pub fn invalidStringRangeBuiltin(runtime: *Runtime, index: Value) !Value {
     const encoded = try jsonEncodeBuiltin(runtime, index, false);
     var roots = [_]Value{encoded};
     var frame: RootFrame = .{};
@@ -15156,7 +15156,7 @@ fn invalidStringRangeBuiltin(runtime: *Runtime, index: Value) !Value {
     return error.InvalidStringRange;
 }
 
-fn appendAotArraySlot(runtime: *Runtime, object: *Object, value: Value, present: bool) !void {
+pub fn appendAotArraySlot(runtime: *Runtime, object: *Object, value: Value, present: bool) !void {
     const index = object.payload.array.items.len;
     try runtime.aotArrayAppend(object, value);
     if (!present) object.array_presence.items[index] = false;
@@ -15271,7 +15271,7 @@ pub fn arraySwapBuiltin(runtime: *Runtime, source: Value, first_value: Value, se
     return roots[0];
 }
 
-fn fillArrayLength(number: f64, maximum: usize) !usize {
+pub fn fillArrayLength(number: f64, maximum: usize) !usize {
     if (std.math.isNan(number) or number <= 0) return 0;
     if (!std.math.isFinite(number) or number > @as(f64, @floatFromInt(maximum))) return error.ArrayFillSizeLimit;
     return @intFromFloat(@floor(number));
@@ -15287,7 +15287,7 @@ pub fn arraySequenceBuiltin(runtime: *Runtime, first_value: Value, last_value: V
     const result_items = try arrayItems(roots[2]);
     var count: usize = 0;
     const lessEqual = struct {
-        fn check(rt: *Runtime, left: Value, right: Value) !bool {
+        pub fn check(rt: *Runtime, left: Value, right: Value) !bool {
             if (left.tag == @intFromEnum(Tag.bigint) and right.tag == @intFromEnum(Tag.bigint)) {
                 return BigInt.order(left.object().?.payload.bigint, right.object().?.payload.bigint) != .gt;
             }
@@ -15333,7 +15333,7 @@ pub fn validateFillDimensions(runtime: *Runtime, shape: Value) !void {
     }
 }
 
-fn cloneFillValue(runtime: *Runtime, value: Value) !Value {
+pub fn cloneFillValue(runtime: *Runtime, value: Value) !Value {
     if (value.tag != @intFromEnum(Tag.array)) return switch (@as(Tag, @enumFromInt(value.tag))) {
         .dictionary, .byte_buffer, .iterator, .promise => deepCloneBuiltin(runtime, value),
         else => value,
@@ -15353,7 +15353,7 @@ fn cloneFillValue(runtime: *Runtime, value: Value) !Value {
     return roots[1];
 }
 
-fn arrayFillAtDepth(runtime: *Runtime, value: Value, shape: Value, depth: usize) !Value {
+pub fn arrayFillAtDepth(runtime: *Runtime, value: Value, shape: Value, depth: usize) !Value {
     if (shape.tag != @intFromEnum(Tag.array)) {
         const count = try fillArrayLength(try valueToNumberRuntime(runtime, shape), safe_array_element_limit - 1);
         const result = try runtime.createArray(&.{});
@@ -15471,11 +15471,11 @@ pub fn substringBuiltin(runtime: *Runtime, command: aot_builtin.Command, argumen
     return runtime.createString(source[codePointOffsetBuiltin(source, start)..codePointOffsetBuiltin(source, end)]);
 }
 
-fn substringNumberBuiltin(runtime: *Runtime, value: Value) !f64 {
+pub fn substringNumberBuiltin(runtime: *Runtime, value: Value) !f64 {
     return if (isString(value)) parseIntBuiltin(runtime, value) else valueToNumberRuntime(runtime, value);
 }
 
-fn sliceIndexBuiltin(number: f64, length: usize) usize {
+pub fn sliceIndexBuiltin(number: f64, length: usize) usize {
     if (std.math.isNan(number) or number == 0) return 0;
     const length_number: f64 = @floatFromInt(length);
     if (number >= length_number) return length;
@@ -15514,7 +15514,7 @@ pub fn splitBuiltin(runtime: *Runtime, source_value: Value, delimiter_value: Val
     return roots[0];
 }
 
-fn appendStringPart(runtime: *Runtime, roots: *[2]Value, units: []const u16) !void {
+pub fn appendStringPart(runtime: *Runtime, roots: *[2]Value, units: []const u16) !void {
     roots[1] = try runtime.createString(units);
     try roots[0].object().?.payload.array.append(runtime.allocator, roots[1]);
 }
@@ -15533,7 +15533,7 @@ pub fn stringRemoveBuiltin(runtime: *Runtime, source_value: Value, start_value: 
     return runtime.ownString(output);
 }
 
-fn spliceDeleteCountBuiltin(number: f64, remaining: usize) usize {
+pub fn spliceDeleteCountBuiltin(number: f64, remaining: usize) usize {
     if (std.math.isNan(number) or number <= 0) return 0;
     if (!std.math.isFinite(number) or number >= @as(f64, @floatFromInt(remaining))) return remaining;
     return @intFromFloat(@trunc(number));
@@ -15586,7 +15586,7 @@ pub fn unicodeCaseBuiltin(runtime: *Runtime, value: Value, uppercase: bool) !Val
     return runtime.ownString(try output.toOwnedSlice(runtime.allocator));
 }
 
-fn isFinalSigmaBuiltin(codepoints: []const u21, index: usize) bool {
+pub fn isFinalSigmaBuiltin(codepoints: []const u21, index: usize) bool {
     var before = index;
     var has_cased_before = false;
     while (before > 0) {
@@ -15604,7 +15604,7 @@ fn isFinalSigmaBuiltin(codepoints: []const u21, index: usize) bool {
     return true;
 }
 
-fn appendCodePointBuiltin(allocator: std.mem.Allocator, output: *std.ArrayList(u16), codepoint: u21) !void {
+pub fn appendCodePointBuiltin(allocator: std.mem.Allocator, output: *std.ArrayList(u16), codepoint: u21) !void {
     if (codepoint <= 0xffff) return output.append(allocator, @intCast(codepoint));
     const offset: u32 = codepoint - 0x10000;
     try output.append(allocator, @intCast(0xd800 + (offset >> 10)));
@@ -15756,7 +15756,7 @@ pub fn stringPredicateBuiltin(runtime: *Runtime, value: Value, command: aot_buil
     return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(result) };
 }
 
-fn numberSequenceBuiltin(units: []const u16) bool {
+pub fn numberSequenceBuiltin(units: []const u16) bool {
     var index: usize = 0;
     if (index < units.len and isSequenceSignBuiltin(units[index])) index += 1;
     while (index < units.len and isSequenceDigitBuiltin(units[index])) : (index += 1) {}
@@ -15777,15 +15777,15 @@ fn numberSequenceBuiltin(units: []const u16) bool {
     return index == units.len;
 }
 
-fn isAsciiDigitBuiltin(unit: u16) bool {
+pub fn isAsciiDigitBuiltin(unit: u16) bool {
     return unit >= '0' and unit <= '9';
 }
 
-fn isSequenceDigitBuiltin(unit: u16) bool {
+pub fn isSequenceDigitBuiltin(unit: u16) bool {
     return isAsciiDigitBuiltin(unit) or (unit >= 0xff10 and unit <= 0xff19);
 }
 
-fn isSequenceSignBuiltin(unit: u16) bool {
+pub fn isSequenceSignBuiltin(unit: u16) bool {
     return unit == '+' or unit == '-' or unit == 0xff0b or unit == 0xff0d;
 }
 
@@ -15877,7 +15877,7 @@ pub fn kanaMapBuiltin(runtime: *Runtime, value: Value, to_full: bool) !Value {
     return runtime.ownString(try output.toOwnedSlice(runtime.allocator));
 }
 
-fn kanaMapDictionaryFullWidthBuiltin(runtime: *Runtime, source: Value, length: Value, roots: []Value) !Value {
+pub fn kanaMapDictionaryFullWidthBuiltin(runtime: *Runtime, source: Value, length: Value, roots: []Value) !Value {
     const length_number = try explicitRangeNumber(runtime, length);
     if (!std.math.isFinite(length_number) or length_number > @as(f64, @floatFromInt(safe_array_element_limit))) return error.ArraySizeLimitExceeded;
     const iterations: usize = @intFromFloat(@ceil(length_number));
@@ -15932,7 +15932,7 @@ fn kanaMapDictionaryFullWidthBuiltin(runtime: *Runtime, source: Value, length: V
     return runtime.ownString(try output.toOwnedSlice(runtime.allocator));
 }
 
-fn kanaMapDictionaryHalfWidthBuiltin(runtime: *Runtime, source: Value, roots: []Value) !Value {
+pub fn kanaMapDictionaryHalfWidthBuiltin(runtime: *Runtime, source: Value, roots: []Value) !Value {
     roots[1] = dictionaryProperty(source, &.{ 's', 'p', 'l', 'i', 't' });
     if (roots[1].tag != @intFromEnum(Tag.function)) return error.KatakanaHalfWidthSplitReceiver;
     roots[2] = try invokeAotCallback(runtime, roots[1], @ptrCast(&[_]Value{staticStringValue("")}), 1);
@@ -15971,7 +15971,7 @@ fn kanaMapDictionaryHalfWidthBuiltin(runtime: *Runtime, source: Value, roots: []
     return runtime.ownString(try output.toOwnedSlice(runtime.allocator));
 }
 
-fn unitIndexBuiltin(units: []const u16, needle: u16) ?usize {
+pub fn unitIndexBuiltin(units: []const u16, needle: u16) ?usize {
     for (units, 0..) |unit, index| if (unit == needle) return index;
     return null;
 }
@@ -16030,7 +16030,7 @@ pub fn replaceBuiltin(runtime: *Runtime, source_value: Value, needle_value: Valu
     return runtime.ownString(try output.toOwnedSlice(runtime.allocator));
 }
 
-fn appendFirstReplacementBuiltin(runtime: *Runtime, output: *std.ArrayList(u16), source: []const u16, match_start: usize, match_end: usize, replacement: []const u16) !void {
+pub fn appendFirstReplacementBuiltin(runtime: *Runtime, output: *std.ArrayList(u16), source: []const u16, match_start: usize, match_end: usize, replacement: []const u16) !void {
     var index: usize = 0;
     while (index < replacement.len) {
         if (replacement[index] != '$' or index + 1 >= replacement.len) {
