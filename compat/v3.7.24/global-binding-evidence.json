@@ -111,8 +111,8 @@
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
     "lnako": {
-      "binarySha256": "e780aedf95ec2d13137ccf05dcac4c3f497509597588a0423a997afde1c91530",
-      "commit": "6fbe9bb94547fe7db6d5827c3340ff3bd259fdb9",
+      "binarySha256": "7e547667351e52f7880b4b3a1a77a8ce0fc32cf660c492204f4bade5a37bf7c9",
+      "commit": "06069aaa6a830eefd6d0a1c7922f20ac67ffc84a",
       "dirty": false
     },
     "raw": {
