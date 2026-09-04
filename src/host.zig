@@ -1,0 +1,8 @@
+pub const environment = @import("host/environment.zig");
+pub const archive = @import("host/archive.zig");
+pub const homeDirectory = environment.homeDirectory;
+pub const temporaryDirectory = environment.temporaryDirectory;
+pub const parseOptionalI64 = environment.parseOptionalI64;
+pub const parseOptionalU64 = environment.parseOptionalU64;
+pub const parseOptionalF64 = environment.parseOptionalF64;
+pub const runStoredZipArchive = archive.runStoredZipArchive;

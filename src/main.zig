@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const lnako = @import("lnako");
-const zip_archive = @import("archive/zip.zig");
+const host = @import("host.zig");
 const benchmark = @import("benchmark.zig");
 const compiler_pipeline = @import("compiler_pipeline.zig");
 
@@ -46,11 +46,11 @@ pub fn main(init: std.process.Init) !void {
             .source_path = package.entry_path,
             .environment_names = init.environ_map.keys(),
             .environment_values = init.environ_map.values(),
-            .home_directory = homeDirectory(init.environ_map),
-            .temporary_directory = temporaryDirectory(init.environ_map),
-            .fixed_now_milliseconds = parseOptionalI64(init.environ_map.get("LNAKO_TEST_NOW_MS")),
-            .fixed_monotonic_milliseconds = parseOptionalF64(init.environ_map.get("LNAKO_TEST_MONOTONIC_MS")),
-            .random_state = parseOptionalU64(init.environ_map.get("LNAKO_TEST_RANDOM_SEED")) orelse 0,
+            .home_directory = host.homeDirectory(init.environ_map),
+            .temporary_directory = host.temporaryDirectory(init.environ_map),
+            .fixed_now_milliseconds = host.parseOptionalI64(init.environ_map.get("LNAKO_TEST_NOW_MS")),
+            .fixed_monotonic_milliseconds = host.parseOptionalF64(init.environ_map.get("LNAKO_TEST_MONOTONIC_MS")),
+            .random_state = host.parseOptionalU64(init.environ_map.get("LNAKO_TEST_RANDOM_SEED")) orelse 0,
             .http_server_enabled = ir_program.http_server_plugin_imported,
             .async_task_map = std.AutoHashMap(u64, *AsyncOperationTask).init(std.heap.page_allocator),
         };
@@ -172,11 +172,11 @@ pub fn main(init: std.process.Init) !void {
                 .source_path = args[1],
                 .environment_names = init.environ_map.keys(),
                 .environment_values = init.environ_map.values(),
-                .home_directory = homeDirectory(init.environ_map),
-                .temporary_directory = temporaryDirectory(init.environ_map),
-                .fixed_now_milliseconds = parseOptionalI64(init.environ_map.get("LNAKO_TEST_NOW_MS")),
-                .fixed_monotonic_milliseconds = parseOptionalF64(init.environ_map.get("LNAKO_TEST_MONOTONIC_MS")),
-                .random_state = parseOptionalU64(init.environ_map.get("LNAKO_TEST_RANDOM_SEED")) orelse 0,
+                .home_directory = host.homeDirectory(init.environ_map),
+                .temporary_directory = host.temporaryDirectory(init.environ_map),
+                .fixed_now_milliseconds = host.parseOptionalI64(init.environ_map.get("LNAKO_TEST_NOW_MS")),
+                .fixed_monotonic_milliseconds = host.parseOptionalF64(init.environ_map.get("LNAKO_TEST_MONOTONIC_MS")),
+                .random_state = host.parseOptionalU64(init.environ_map.get("LNAKO_TEST_RANDOM_SEED")) orelse 0,
                 .http_server_enabled = ir_program.http_server_plugin_imported,
                 .async_task_map = std.AutoHashMap(u64, *AsyncOperationTask).init(std.heap.page_allocator),
             };
@@ -219,7 +219,7 @@ pub fn main(init: std.process.Init) !void {
                 try benchmark.writeUsage(stdout);
                 return;
             }
-            const temp_dir = temporaryDirectory(init.environ_map);
+            const temp_dir = host.temporaryDirectory(init.environ_map);
             benchmark.run(allocator, init.io, executable_path, init.environ_map, temp_dir, options, stdout, stderr) catch |err| {
                 try stderr.print("benchmark: 性能計測に失敗しました: {s}\n", .{@errorName(err)});
                 try stderr.flush();
@@ -1058,11 +1058,11 @@ const CliHost = struct {
             // depending on a host-installed 7-Zip executable. Normal runs
             // still invoke the configured external tool unchanged.
             if (self.environmentValue("LNAKO_TEST_ARCHIVE_HELPER")) |helper| {
-                if (std.mem.eql(u8, helper, tool)) return runStoredZipArchive(allocator, self.io, operation, source, destination);
+                if (std.mem.eql(u8, helper, tool)) return @import("root").host.archive.runStoredZipArchive(allocator, self.io, operation, source, destination);
             }
             return runArchiveTool(allocator, self.io, tool, operation, source, destination);
         }
-        return runStoredZipArchive(allocator, self.io, operation, source, destination);
+        return @import("root").host.archive.runStoredZipArchive(allocator, self.io, operation, source, destination);
     }
 
     fn installInterrupt(_: *anyopaque) !void {
@@ -1403,11 +1403,11 @@ fn httpMethod(source: []const u8) !std.http.Method {
     return error.UnsupportedHttpMethod;
 }
 
-fn httpRequest(host: *CliHost, allocator: std.mem.Allocator, operation: anytype) !lnako.plugins.node.CommandResult {
+fn httpRequest(cli_host: *CliHost, allocator: std.mem.Allocator, operation: anytype) !lnako.plugins.node.CommandResult {
     const max_http_body_size = 1024 * 1024 * 1024;
     const connect_timeout_ms = 30000;
 
-    var client: std.http.Client = .{ .allocator = allocator, .io = host.io };
+    var client: std.http.Client = .{ .allocator = allocator, .io = cli_host.io };
     defer client.deinit();
 
     const headers = try allocator.alloc(std.http.Header, operation.headers.len);
@@ -1542,45 +1542,8 @@ fn runArchiveTool(allocator: std.mem.Allocator, io: std.Io, tool: []const u8, op
     return result.stdout;
 }
 
-fn runStoredZipArchive(allocator: std.mem.Allocator, io: std.Io, operation: lnako.plugins.node.ArchiveOperation, source: []const u8, destination: []const u8) ![]u8 {
-    switch (operation) {
-        .compress => try zip_archive.create(allocator, io, source, destination),
-        .extract => try zip_archive.extract(io, source, destination),
-    }
-    return allocator.alloc(u8, 0);
-}
-
-test {
-    std.testing.refAllDecls(zip_archive);
-}
-
 fn lessThanNodeFileEntry(_: void, left: lnako.plugins.node.FileEntry, right: lnako.plugins.node.FileEntry) bool {
     return std.mem.order(u8, left.name, right.name) == .lt;
-}
-
-fn homeDirectory(environment: *const std.process.Environ.Map) ?[]const u8 {
-    return environment.get(if (builtin.os.tag == .windows) "USERPROFILE" else "HOME");
-}
-
-fn temporaryDirectory(environment: *const std.process.Environ.Map) []const u8 {
-    const value = if (builtin.os.tag == .windows)
-        environment.get("TEMP") orelse environment.get("TMP") orelse "."
-    else
-        environment.get("TMPDIR") orelse "/tmp";
-    const trimmed = std.mem.trimEnd(u8, value, "/\\");
-    return if (trimmed.len == 0) value else trimmed;
-}
-
-fn parseOptionalI64(value: ?[]const u8) ?i64 {
-    return std.fmt.parseInt(i64, value orelse return null, 10) catch null;
-}
-
-fn parseOptionalU64(value: ?[]const u8) ?u64 {
-    return std.fmt.parseInt(u64, value orelse return null, 10) catch null;
-}
-
-fn parseOptionalF64(value: ?[]const u8) ?f64 {
-    return std.fmt.parseFloat(f64, value orelse return null) catch null;
 }
 
 fn runTestTarget(allocator: std.mem.Allocator, io: std.Io, path: []const u8, stdout: *std.Io.Writer, stderr: *std.Io.Writer) !bool {

@@ -8,4 +8,8 @@ test {
     _ = @import("compiler_pipeline.zig");
     _ = @import("compiler_pipeline/compile.zig");
     _ = @import("compiler_pipeline/embedded.zig");
+
+    _ = @import("host.zig");
+    _ = @import("host/environment.zig");
+    _ = @import("host/archive.zig");
 }
