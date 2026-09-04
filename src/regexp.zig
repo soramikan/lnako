@@ -1,0 +1,24 @@
+pub const api = @import("regexp/api.zig");
+pub const types = @import("regexp/types.zig");
+pub const syntax = @import("regexp/types.zig");
+pub const parser = @import("regexp/parser.zig");
+pub const character_class = @import("regexp/character_class.zig");
+pub const unicode = @import("regexp/unicode.zig");
+pub const matcher = @import("regexp/matcher.zig");
+pub const captures = @import("regexp/captures.zig");
+pub const replacement = @import("regexp/replacement.zig");
+pub const error_message = @import("regexp/error_message.zig");
+
+pub const Compiled = api.Compiled;
+pub const Flags = api.Flags;
+pub const Match = api.Match;
+pub const Span = api.Span;
+pub const compile = api.compile;
+pub const find = api.find;
+pub const replace = api.replace;
+pub const compilePattern = api.compilePattern;
+pub const findMatches = api.findMatches;
+pub const replaceUnits = api.replaceUnits;
+pub const compileFailureMessageAlloc = api.compileFailureMessageAlloc;
+pub const RawPattern = api.RawPattern;
+pub const testRaw = api.testRaw;

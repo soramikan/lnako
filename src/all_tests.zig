@@ -21,4 +21,6 @@ test {
     _ = @import("cli/app.zig");
     _ = @import("cli/arguments.zig");
     _ = @import("cli/commands/test.zig");
+
+    _ = @import("regexp");
 }
