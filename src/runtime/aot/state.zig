@@ -2051,7 +2051,7 @@ fn traceDynamicBridges(context: *anyopaque, runtime: *dynamic_value.Runtime) !vo
     }
 }
 
-fn dynamicGlobal(runtime: *Runtime, name: []const u8) ?*DynamicGlobal {
+pub fn dynamicGlobal(runtime: *Runtime, name: []const u8) ?*DynamicGlobal {
     for (runtime.dynamic_globals.items) |*entry| if (std.mem.eql(u8, entry.name, name)) return entry;
     return null;
 }
@@ -2318,7 +2318,7 @@ fn dynamicInterpreterState(runtime: *Runtime) !*DynamicInterpreterState {
     };
 }
 
-fn nativePluginBuiltin(runtime: *Runtime, name: []const u8, arguments: []const Value) !Value {
+pub fn nativePluginBuiltin(runtime: *Runtime, name: []const u8, arguments: []const Value) !Value {
     const state = try dynamicInterpreterState(runtime);
     const dynamic_arguments = try runtime.allocator.alloc(dynamic_value.Value, arguments.len);
     defer runtime.allocator.free(dynamic_arguments);
@@ -4108,7 +4108,7 @@ pub fn compareValues(runtime: *Runtime, operator: Comparison, left: Value, right
     };
 }
 
-fn numberString(allocator: std.mem.Allocator, number: f64) ![]u8 {
+pub fn numberString(allocator: std.mem.Allocator, number: f64) ![]u8 {
     return number_mod.toStringAlloc(allocator, number);
 }
 
@@ -4438,7 +4438,7 @@ fn emitDisplayLine(runtime: *Runtime, text: []const u8, newline: bool, display_l
     if (newline) try appendDisplayLog(runtime, display_log, output.items);
 }
 
-fn displayValue(runtime: *Runtime, value: Value, newline: bool, display_log: ?*Value) !void {
+pub fn displayValue(runtime: *Runtime, value: Value, newline: bool, display_log: ?*Value) !void {
     const text = try valueUtf8LossyAlloc(runtime, value);
     defer runtime.allocator.free(text);
     try emitDisplayLine(runtime, text, newline, display_log);
@@ -4461,7 +4461,7 @@ fn joinValuesUtf8Alloc(runtime: *Runtime, values: []const Value) ![]u8 {
     return output.toOwnedSlice(runtime.allocator);
 }
 
-fn displayMany(runtime: *Runtime, values: []const Value, display_log: ?*Value) !void {
+pub fn displayMany(runtime: *Runtime, values: []const Value, display_log: ?*Value) !void {
     const text = try joinValuesUtf8Alloc(runtime, values);
     defer runtime.allocator.free(text);
     try emitDisplayLine(runtime, text, true, display_log);
@@ -5311,7 +5311,7 @@ fn aotPromiseThen(
     return roots[3];
 }
 
-fn resolveAotPromise(runtime: *Runtime, promise: *Object, value: Value) !void {
+pub fn resolveAotPromise(runtime: *Runtime, promise: *Object, value: Value) !void {
     const state = &promise.payload.promise;
     if (state.state != .pending) return;
     if (aotPromiseObject(value)) |source| {
@@ -5327,7 +5327,7 @@ fn resolveAotPromise(runtime: *Runtime, promise: *Object, value: Value) !void {
     try enqueueAotPromiseReactions(runtime, promise);
 }
 
-fn rejectAotPromise(runtime: *Runtime, promise: *Object, reason: Value) !void {
+pub fn rejectAotPromise(runtime: *Runtime, promise: *Object, reason: Value) !void {
     const state = &promise.payload.promise;
     if (state.state != .pending) return;
     state.state = .rejected;
@@ -5449,7 +5449,7 @@ fn destroyAotPromiseAllState(runtime: *Runtime, state: *AotPromiseAllState) void
     }
 }
 
-fn handleAotPromiseAll(runtime: *Runtime, handler: AotPromiseAllHandler, settled: Value) !Value {
+pub fn handleAotPromiseAll(runtime: *Runtime, handler: AotPromiseAllHandler, settled: Value) !Value {
     const state = handler.state;
     if (handler.rejected) {
         try rejectAotPromise(runtime, state.promise, settled);
@@ -6043,7 +6043,7 @@ pub fn pendingExceptionMessageUtf8Alloc(runtime: *Runtime) anyerror![]u8 {
     return utf16FailureMessageUtf8Alloc(runtime.allocator, units);
 }
 
-fn writeBytes(bytes: []const u8, newline: bool) void {
+pub fn writeBytes(bytes: []const u8, newline: bool) void {
     for (bytes) |byte| _ = putchar(byte);
     if (newline) _ = putchar('\n');
 }
@@ -6665,7 +6665,7 @@ pub fn aotHttpUploadBasename(path: []const u8) []const u8 {
     return path[start..];
 }
 
-fn runtimeFailure(failure: anyerror) noreturn {
+pub fn runtimeFailure(failure: anyerror) noreturn {
     std.debug.print("[実行時エラー] {s}\n", .{@errorName(failure)});
     std.process.exit(1);
 }
@@ -6747,62 +6747,6 @@ pub export fn lnako_aot_global_write_site(site_id: u64) callconv(.c) void {
 pub export fn lnako_aot_literal_site(site_id: u64) callconv(.c) void {
     const runtime = if (active_runtime) |*active| active else return;
     runtime.literal_trace.record(site_id);
-}
-
-/// Registers one absolute native-plugin path embedded by the LLVM module.
-/// Loading is deferred until the first plugin command so AOT startup retains
-/// the same lazy behavior as the Interpreter while keeping the normal path
-/// free of JavaScript runtime code.
-pub export fn lnako_aot_native_plugin_register(path: ?[*]const u8, len: usize) callconv(.c) void {
-    const runtime = if (active_runtime) |*active| active else return;
-    const path_pointer = path orelse {
-        if (len != 0) runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    };
-    const path_slice = path_pointer[0..len];
-    if (path_slice.len == 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    for (runtime.native_plugin_paths.items) |candidate| if (std.mem.eql(u8, candidate, path_slice)) return;
-    const owned_path = runtime.allocator.dupe(u8, path_slice) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    runtime.native_plugin_paths.append(runtime.allocator, owned_path) catch |failure| {
-        runtime.allocator.free(owned_path);
-        runtime.setFailure(failure);
-    };
-}
-
-/// Registers a generated global with the embedded Zig interpreter used by
-/// `ナデシコ` and `ナデシコ続`. The pointer remains valid for the generated
-/// program lifetime and lets dynamic code observe and update ordinary AOT
-/// globals without crossing the JavaScript compatibility boundary.
-pub export fn lnako_aot_dynamic_global_register(name: ?[*]const u8, len: usize, slot: ?*Value) callconv(.c) void {
-    const runtime = if (active_runtime) |*active| active else return;
-    const name_pointer = name orelse {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    };
-    const value_slot = slot orelse {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    };
-    const name_slice = name_pointer[0..len];
-    if (dynamicGlobal(runtime, name_slice)) |entry| {
-        entry.slot = value_slot;
-        entry.value = value_slot.*;
-        return;
-    }
-    const owned_name = runtime.allocator.dupe(u8, name_slice) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    runtime.dynamic_globals.append(runtime.allocator, .{ .name = owned_name, .value = value_slot.*, .slot = value_slot }) catch |failure| {
-        runtime.allocator.free(owned_name);
-        runtime.setFailure(failure);
-    };
 }
 
 fn aotProcessArgument(argv: ?*const anyopaque, index: usize) []const u8 {
@@ -6958,80 +6902,6 @@ pub export fn lnako_aot_runtime_drain_events() callconv(.c) void {
     }
 }
 
-/// Dedicated ABI for the two runtime-source commands. The source is parsed,
-/// lowered, verified, and executed by the normal Zig interpreter in a
-/// persistent per-process state; no JavaScript engine is loaded in this path.
-pub export fn lnako_aot_dynamic_call(
-    out: *Value,
-    arguments: ?[*]const Value,
-    len: usize,
-    opcode: u16,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
-        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "dynamic-execute", site_id);
-        runtime.setFailure(error.UnknownCommand);
-        runtime.dispatch_trace.result(call_id, "unknown", opcode, "dynamic-execute", site_id, false);
-        return;
-    };
-    if (command != .system_nadesiko and command != .system_nadesiko_continue) {
-        runtime.setFailure(error.UnknownCommand);
-        return;
-    }
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "dynamic-execute", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "dynamic-execute", site_id, success);
-    if (arguments == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-    out.* = dynamicBuiltin(runtime, command, actual) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    success = runtime.failure_epoch == start_epoch;
-}
-
-/// Invokes a named native-plugin command through the same `lnako_plugin_v1`
-/// ABI used by the Interpreter. The adapter owns a persistent ordinary Zig
-/// Interpreter for plugin host callbacks, while values and settled promises
-/// are copied into the AOT heap; no JavaScript compatibility runtime is used.
-pub export fn lnako_aot_native_plugin_call(
-    out: *Value,
-    arguments: ?[*]const Value,
-    len: usize,
-    name: ?[*]const u8,
-    name_len: usize,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    const name_pointer = name orelse {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    };
-    const command_name = name_pointer[0..name_len];
-    const call_id = runtime.dispatch_trace.begin(command_name, 0, "native-plugin", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, 0, "native-plugin", site_id, success);
-    if (arguments == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-    out.* = nativePluginBuiltin(runtime, command_name, actual) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    success = runtime.failure_epoch == start_epoch;
-}
-
 /// Installs the four mutable globals used by the built-in HTTP server. The
 /// generated main roots these globals for the lifetime of the event loop.
 pub export fn lnako_aot_http_server_init(
@@ -7185,59 +7055,6 @@ pub export fn lnako_aot_exception_abort() callconv(.c) noreturn {
     runtimeFailure(error.NakoException);
 }
 
-pub export fn lnako_aot_string_new(out: *Value, units: ?[*]const u16, len: usize) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*value| value else return;
-    const source = if (units) |pointer| pointer[0..len] else if (len == 0) &.{} else return;
-    out.* = runtime.createString(source) catch return;
-}
-
-pub export fn lnako_aot_print_utf16(value: *const Value, newline: bool) callconv(.c) void {
-    const object = value.object() orelse return;
-    if (object.payload != .utf16_string) return;
-    writeUtf16(object.payload.utf16_string, newline);
-}
-
-pub export fn lnako_aot_print_number(value: *const Value, newline: bool) callconv(.c) void {
-    const runtime = if (active_runtime) |*active| active else return;
-    if (value.tag != @intFromEnum(Tag.number)) return;
-    const text = numberString(runtime.allocator, @bitCast(value.payload)) catch return;
-    defer runtime.allocator.free(text);
-    writeBytes(text, newline);
-}
-
-pub export fn lnako_aot_bigint_new(out: *Value, source: ?[*]const u8, len: usize) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*value| value else return;
-    const text = if (source) |pointer| pointer[0..len] else if (len == 0) &.{} else return;
-    out.* = runtime.createBigInt(text) catch return;
-}
-
-pub export fn lnako_aot_print_bigint(value: *const Value, newline: bool) callconv(.c) void {
-    const runtime = if (active_runtime) |*active| active else return;
-    const object = value.object() orelse return;
-    if (object.payload != .bigint) return;
-    const text = object.payload.bigint.toString(runtime.allocator, 10) catch return;
-    defer runtime.allocator.free(text);
-    writeBytes(text, newline);
-}
-
-pub export fn lnako_aot_print_collection(value: *const Value, newline: bool) callconv(.c) void {
-    const runtime = if (active_runtime) |*active| active else return;
-    if (value.tag != @intFromEnum(Tag.array) and value.tag != @intFromEnum(Tag.dictionary)) return;
-    const units = valueUtf16Alloc(runtime, value.*) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    defer runtime.allocator.free(units);
-    writeUtf16(units, newline);
-}
-
-pub export fn lnako_aot_display_value(value: *const Value, newline: bool, display_log: ?*Value) callconv(.c) void {
-    const runtime = if (active_runtime) |*active| active else return;
-    displayValue(runtime, value.*, newline, display_log) catch |failure| runtime.setFailure(failure);
-}
-
 pub fn debugDisplayBuiltin(runtime: *Runtime, value: Value, line: u64, source_path: []const u8, display_log: ?*Value) !void {
     var roots = [_]Value{ value, .{}, .{} };
     var frame = RootFrame{};
@@ -7266,36 +7083,6 @@ fn normalizeDebugSourcePath(source_path: []const u8, windows: bool) []const u8 {
         if (std.mem.indexOfScalar(u8, source_path, ':')) |separator| return source_path[0..separator];
     }
     return source_path;
-}
-
-/// AOT版`デバッグ表示`は、LLVMが保持しているソース位置をABIで受け取り、
-/// 公式命令のJSON化と「ファイル名(行): 値」形式を純Zigで再現する。
-pub export fn lnako_aot_debug_display(
-    out: *Value,
-    value: ?*const Value,
-    line: u64,
-    source_path: ?[*]const u8,
-    source_len: usize,
-    display_log: ?*Value,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    const path = if (source_path) |pointer| pointer[0..source_len] else if (source_len == 0) &.{} else {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    };
-    const command = aot_builtin.Command.system_debug_display;
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, @intFromEnum(command), "debug-display", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, @intFromEnum(command), "debug-display", site_id, success);
-    debugDisplayBuiltin(runtime, if (value) |pointer| pointer.* else .{}, line, path, display_log) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    success = runtime.failure_epoch == start_epoch;
 }
 
 /// AOT版`ハテナ関数実行`は、カスタムコールバックが未設定なら公式既定動作
@@ -7335,16 +7122,6 @@ pub export fn lnako_aot_hatena_execute(
         return;
     };
     success = runtime.failure_epoch == start_epoch;
-}
-
-pub export fn lnako_aot_display_many(values: ?[*]const Value, len: usize, display_log: ?*Value) callconv(.c) void {
-    const runtime = if (active_runtime) |*active| active else return;
-    if (values == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const actual = if (values) |pointer| pointer[0..len] else &.{};
-    displayMany(runtime, actual, display_log) catch |failure| runtime.setFailure(failure);
 }
 
 pub export fn lnako_aot_stdio_call(
@@ -7784,236 +7561,6 @@ fn aotFormatIpv6Address(allocator: std.mem.Allocator, bytes: [16]u8) ![]u8 {
     return output.toOwnedSlice();
 }
 
-pub export fn lnako_aot_bigint_truthy(value: *const Value) callconv(.c) c_int {
-    const object = value.object() orelse return 0;
-    if (object.payload != .bigint) return 0;
-    return @intFromBool(!object.payload.bigint.isZero());
-}
-
-pub export fn lnako_aot_arithmetic(out: *Value, left: *const Value, right: *const Value, opcode: u8) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    const operator = std.enums.fromInt(Arithmetic, opcode) orelse {
-        runtime.setFailure(error.InvalidArithmeticOperator);
-        return;
-    };
-    out.* = arithmetic(runtime, operator, left.*, right.*) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-}
-
-pub export fn lnako_aot_compare(out: *Value, left: *const Value, right: *const Value, opcode: u8) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    const operator = std.enums.fromInt(Comparison, opcode) orelse {
-        runtime.setFailure(error.InvalidComparison);
-        return;
-    };
-    out.* = .{
-        .tag = @intFromEnum(Tag.boolean),
-        .payload = @intFromBool(compareValues(runtime, operator, left.*, right.*) catch |failure| {
-            runtime.setFailure(failure);
-            return;
-        }),
-    };
-}
-
-pub export fn lnako_aot_shift(out: *Value, left: *const Value, right: *const Value, opcode: u8) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    const operator = std.enums.fromInt(ShiftOperator, opcode) orelse {
-        runtime.setFailure(error.InvalidShiftOperator);
-        return;
-    };
-    out.* = shift(runtime, operator, left.*, right.*) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-}
-
-pub export fn lnako_aot_concat(out: *Value, left: *const Value, right: *const Value) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    out.* = concat(runtime, left.*, right.*) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-}
-
-pub export fn lnako_aot_increment(target: *Value, amount: *const Value) callconv(.c) void {
-    const runtime = if (active_runtime) |*active| active else return;
-    target.* = incrementValue(runtime, target.*, amount.*);
-}
-
-pub export fn lnako_aot_array_new(out: *Value, values: ?[*]const Value, len: usize) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*value| value else return;
-    const source = if (values) |pointer| pointer[0..len] else if (len == 0) &.{} else return;
-    out.* = runtime.createArray(source) catch return;
-}
-
-pub export fn lnako_aot_dictionary_new(out: *Value, values: ?[*]const Value, len: usize) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*value| value else return;
-    const source = if (values) |pointer| pointer[0..len] else if (len == 0) &.{} else return;
-    out.* = runtime.createObjectLiteral(source) catch return;
-}
-
-pub export fn lnako_aot_caniuse_agents_new(out: *Value) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*value| value else return;
-    out.* = caniuseAgentsBuiltin(runtime) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-}
-
-pub export fn lnako_aot_era_data_new(out: *Value) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*value| value else return;
-    out.* = eraDataBuiltin(runtime) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-}
-
-pub export fn lnako_aot_index_get(out: *Value, container: *const Value, key: *const Value) callconv(.c) void {
-    const container_value = container.*;
-    const key_value = key.*;
-    out.* = if (active_runtime) |*runtime| runtime.indexGet(container_value, key_value) else .{};
-}
-
-pub export fn lnako_aot_index_set(container: *const Value, key: *const Value, value: *const Value) callconv(.c) c_int {
-    const runtime = if (active_runtime) |*active| active else return -1;
-    if (container.tag == @intFromEnum(Tag.undefined) or container.tag == @intFromEnum(Tag.null_value)) {
-        runtime.setIndexAssignmentFailure(container.*, key.*);
-        return -1;
-    }
-    runtime.indexSet(container.*, key.*, value.*) catch return -1;
-    return 0;
-}
-
-pub export fn lnako_aot_destructure_get(out: *Value, source: *const Value, index: usize) callconv(.c) void {
-    out.* = if (active_runtime) |*runtime| runtime.destructureGet(source.*, index) else .{};
-}
-
-pub export fn lnako_aot_iterator_new(out: *Value, values: ?[*]const Value, len: usize, is_range: bool, direction: u8) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*value| value else return;
-    const source = if (values) |pointer| pointer[0..len] else if (len == 0) &.{} else return;
-    out.* = runtime.createIterator(source, is_range, direction) catch |failure| runtimeFailure(failure);
-}
-
-pub export fn lnako_aot_iterator_has_next(iterator: *const Value) callconv(.c) c_int {
-    return if (active_runtime) |*runtime| @intFromBool(runtime.iteratorHasNext(iterator.*)) else 0;
-}
-
-pub export fn lnako_aot_iterator_next(out: *Value, iterator: *const Value, repeat_target: ?*Value, value_target: ?*Value, key_target: ?*Value, range_target: ?*Value) callconv(.c) void {
-    out.* = if (active_runtime) |*runtime| runtime.iteratorNext(iterator.*, repeat_target, value_target, key_target, range_target) else .{};
-}
-
-pub export fn lnako_aot_binding_cell_new(out: *Value, initial: ?*const Value) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*value| value else return;
-    out.* = runtime.createBindingCell(if (initial) |value| value.* else .{}) catch |failure| runtimeFailure(failure);
-}
-
-pub export fn lnako_aot_binding_cell_value(cell: *Value) callconv(.c) *Value {
-    if (cell.tag != @intFromEnum(Tag.binding_cell)) runtimeFailure(error.InvalidBindingCell);
-    const object = cell.object() orelse runtimeFailure(error.InvalidBindingCell);
-    if (object.payload != .binding_cell) runtimeFailure(error.InvalidBindingCell);
-    return &object.payload.binding_cell;
-}
-
-pub export fn lnako_aot_function_new(out: *Value, callback: FunctionCallback, arity: usize, captures: ?[*]const Value, capture_count: usize) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*value| value else return;
-    const source = if (captures) |pointer| pointer[0..capture_count] else if (capture_count == 0) &.{} else runtimeFailure(error.InvalidCaptures);
-    for (source) |capture| if (capture.tag != @intFromEnum(Tag.binding_cell)) runtimeFailure(error.InvalidBindingCell);
-    out.* = runtime.createFunction(callback, arity, source) catch |failure| runtimeFailure(failure);
-}
-
-/// Named variant used by LLVM-generated functions. The original ABI remains
-/// available for embedders and unit tests that intentionally create an
-/// anonymous native function.
-pub export fn lnako_aot_function_new_named(
-    out: *Value,
-    callback: FunctionCallback,
-    arity: usize,
-    name: ?[*]const u8,
-    name_len: usize,
-    captures: ?[*]const Value,
-    capture_count: usize,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*value| value else return;
-    const function_name = if (name) |pointer| pointer[0..name_len] else if (name_len == 0) &.{} else runtimeFailure(error.InvalidFunctionName);
-    const source = if (captures) |pointer| pointer[0..capture_count] else if (capture_count == 0) &.{} else runtimeFailure(error.InvalidCaptures);
-    for (source) |capture| if (capture.tag != @intFromEnum(Tag.binding_cell)) runtimeFailure(error.InvalidBindingCell);
-    out.* = runtime.createNamedFunction(callback, arity, function_name, source) catch |failure| runtimeFailure(failure);
-}
-
-pub export fn lnako_aot_function_capture(out: *Value, context: *anyopaque, index: usize) callconv(.c) void {
-    const object: *Object = @ptrCast(@alignCast(context));
-    if (object.payload != .function or index >= object.payload.function.captures.len) runtimeFailure(error.InvalidClosureCapture);
-    out.* = object.payload.function.captures[index];
-}
-
-pub export fn lnako_aot_function_call(out: *Value, callable: *const Value, arguments: ?[*]const Value, len: usize) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    if (callable.tag != @intFromEnum(Tag.function)) runtimeFailure(error.NotCallable);
-    const object = callable.object() orelse runtimeFailure(error.NotCallable);
-    if (object.payload != .function) runtimeFailure(error.NotCallable);
-    const function = object.payload.function;
-    if (arguments == null and len != 0) runtimeFailure(error.InvalidArguments);
-    switch (function.promise_kind) {
-        .none => {},
-        .resolver => |resolver| {
-            const settled = if (len > 0) arguments.?[0] else Value{};
-            if (resolver.rejected) {
-                rejectAotPromise(runtime, resolver.promise, settled) catch |failure| {
-                    runtime.setFailure(failure);
-                    return;
-                };
-            } else {
-                resolveAotPromise(runtime, resolver.promise, settled) catch |failure| {
-                    runtime.setFailure(failure);
-                    return;
-                };
-            }
-            return;
-        },
-        .all_handler => |handler| {
-            const settled = if (len > 0) arguments.?[0] else Value{};
-            out.* = handleAotPromiseAll(runtime, handler, settled) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-            return;
-        },
-    }
-    var padded: ?[]Value = null;
-    defer if (padded) |values| runtime.allocator.free(values);
-    var call_arguments = arguments;
-    if (len < function.arity) {
-        const values = runtime.allocator.alloc(Value, function.arity) catch |failure| {
-            runtime.setFailure(failure);
-            return;
-        };
-        padded = values;
-        if (arguments) |source| @memcpy(values[0..len], source[0..len]);
-        values[len] = runtime.systemContext() catch |failure| {
-            runtime.setFailure(failure);
-            return;
-        };
-        @memset(values[len + 1 ..], .{});
-        call_arguments = values.ptr;
-    }
-    function.callback(out, @ptrCast(object), call_arguments, function.arity);
-}
-
 fn promiseSentinel(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
     out.* = .{};
 }
@@ -8022,44 +7569,6 @@ fn byteBufferUnboundSliceCallback(out: *Value, _: *anyopaque, _: ?[*]const Value
     out.* = .{};
     const runtime = if (active_runtime) |*active| active else return;
     runtime.setFailureText("Cannot read properties of undefined (reading 'subarray')");
-}
-
-/// Dedicated ABI for the two commands that update the system `対象` value.
-/// The target is explicit so a local variable named 対象 can never shadow the
-/// command's side effect in generated LLVM.
-pub export fn lnako_aot_cut(out: *Value, target: *Value, arguments: ?[*]const Value, len: usize, mode: u8) callconv(.c) void {
-    lnako_aot_cut_site(out, target, arguments, len, mode, 0);
-}
-
-pub export fn lnako_aot_cut_site(out: *Value, target: *Value, arguments: ?[*]const Value, len: usize, mode: u8, site_id: u64) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    const start_epoch = runtime.failure_epoch;
-    const command: aot_builtin.Command = if (mode == 0) .cut else .cut_range;
-    const opcode = @intFromEnum(command);
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "cut", site_id);
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "cut", site_id, success);
-    if (arguments == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const required: usize = if (mode == 0) 2 else if (mode == 1) 3 else 0;
-    if (required == 0 or len < required) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const values = arguments.?;
-    const result = cutBuiltin(runtime, values[0], values[1], if (mode == 1) values[2] else null, mode == 1) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    // cutBuiltin roots both values until this point; assign only after both
-    // allocations and all delayed property accesses have succeeded.
-    out.* = result.result;
-    target.* = result.remainder;
-    success = runtime.failure_epoch == start_epoch;
 }
 
 /// Dedicated ABI for Node's synchronous standard-input callback command. The
@@ -12711,7 +12220,7 @@ pub fn cutEndIndex(runtime: *Runtime, match_index: usize, delimiter: Value, sour
     return @intFromFloat(@trunc(number));
 }
 
-fn cutBuiltin(runtime: *Runtime, source: Value, first: Value, last: ?Value, range: bool) !CutResult {
+pub fn cutBuiltin(runtime: *Runtime, source: Value, first: Value, last: ?Value, range: bool) !CutResult {
     var roots = [_]Value{ source, first, last orelse .{}, .{}, .{}, .{} };
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -17489,3 +16998,47 @@ pub fn numberValue(number: f64) Value {
 pub fn staticStringValue(comptime text: [:0]const u8) Value {
     return .{ .tag = @intFromEnum(Tag.static_utf8_string), .payload = @intFromPtr(text.ptr) };
 }
+
+const values_module = @import("values.zig");
+const instructions_module = @import("instructions.zig");
+const functions_module = @import("functions.zig");
+
+pub const lnako_aot_string_new = values_module.lnako_aot_string_new;
+pub const lnako_aot_print_utf16 = values_module.lnako_aot_print_utf16;
+pub const lnako_aot_print_number = values_module.lnako_aot_print_number;
+pub const lnako_aot_bigint_new = values_module.lnako_aot_bigint_new;
+pub const lnako_aot_print_bigint = values_module.lnako_aot_print_bigint;
+pub const lnako_aot_print_collection = values_module.lnako_aot_print_collection;
+pub const lnako_aot_display_value = values_module.lnako_aot_display_value;
+pub const lnako_aot_debug_display = values_module.lnako_aot_debug_display;
+pub const lnako_aot_display_many = values_module.lnako_aot_display_many;
+pub const lnako_aot_array_new = values_module.lnako_aot_array_new;
+pub const lnako_aot_dictionary_new = values_module.lnako_aot_dictionary_new;
+pub const lnako_aot_caniuse_agents_new = values_module.lnako_aot_caniuse_agents_new;
+pub const lnako_aot_era_data_new = values_module.lnako_aot_era_data_new;
+
+pub const lnako_aot_bigint_truthy = instructions_module.lnako_aot_bigint_truthy;
+pub const lnako_aot_arithmetic = instructions_module.lnako_aot_arithmetic;
+pub const lnako_aot_compare = instructions_module.lnako_aot_compare;
+pub const lnako_aot_shift = instructions_module.lnako_aot_shift;
+pub const lnako_aot_concat = instructions_module.lnako_aot_concat;
+pub const lnako_aot_increment = instructions_module.lnako_aot_increment;
+pub const lnako_aot_index_get = instructions_module.lnako_aot_index_get;
+pub const lnako_aot_index_set = instructions_module.lnako_aot_index_set;
+pub const lnako_aot_destructure_get = instructions_module.lnako_aot_destructure_get;
+pub const lnako_aot_iterator_new = instructions_module.lnako_aot_iterator_new;
+pub const lnako_aot_iterator_has_next = instructions_module.lnako_aot_iterator_has_next;
+pub const lnako_aot_iterator_next = instructions_module.lnako_aot_iterator_next;
+pub const lnako_aot_binding_cell_new = instructions_module.lnako_aot_binding_cell_new;
+pub const lnako_aot_binding_cell_value = instructions_module.lnako_aot_binding_cell_value;
+pub const lnako_aot_cut = instructions_module.lnako_aot_cut;
+pub const lnako_aot_cut_site = instructions_module.lnako_aot_cut_site;
+
+pub const lnako_aot_native_plugin_register = functions_module.lnako_aot_native_plugin_register;
+pub const lnako_aot_dynamic_global_register = functions_module.lnako_aot_dynamic_global_register;
+pub const lnako_aot_dynamic_call = functions_module.lnako_aot_dynamic_call;
+pub const lnako_aot_native_plugin_call = functions_module.lnako_aot_native_plugin_call;
+pub const lnako_aot_function_new = functions_module.lnako_aot_function_new;
+pub const lnako_aot_function_new_named = functions_module.lnako_aot_function_new_named;
+pub const lnako_aot_function_capture = functions_module.lnako_aot_function_capture;
+pub const lnako_aot_function_call = functions_module.lnako_aot_function_call;
