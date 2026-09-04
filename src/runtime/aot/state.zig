@@ -1,4 +1,5 @@
 const shared = @import("shared.zig");
+const builtins = @import("builtins.zig");
 
 const std = shared.std;
 const builtin = shared.builtin;
@@ -23,6 +24,14 @@ const dynamic_interpreter = shared.dynamic_interpreter;
 const dynamic_value = shared.dynamic_value;
 const toml_temporal = shared.toml_temporal;
 
+pub const lnako_aot_builtin_call = builtins.lnako_aot_builtin_call;
+pub const lnako_aot_builtin_call_site = builtins.lnako_aot_builtin_call_site;
+pub const lnako_aot_timer_call_site = builtins.lnako_aot_timer_call_site;
+pub const lnako_aot_promise_call_site = builtins.lnako_aot_promise_call_site;
+pub const lnako_aot_debug_breakpoint_wait_call = builtins.lnako_aot_debug_breakpoint_wait_call;
+pub const lnako_aot_file_operation_call = builtins.lnako_aot_file_operation_call;
+pub const lnako_aot_node_process_call = builtins.lnako_aot_node_process_call;
+pub const lnako_aot_node_file_callback_call = builtins.lnako_aot_node_file_callback_call;
 extern "c" fn fflush(stream: ?*std.c.FILE) c_int;
 extern "c" fn time(timer: ?*i64) i64;
 
@@ -775,7 +784,7 @@ const aot_csv_comma = [_]u16{','};
 const aot_csv_tab = [_]u16{'\t'};
 const aot_csv_crlf = [_]u16{ '\r', '\n' };
 
-const default_plugin_names = [_][]const u8{
+pub const default_plugin_names = [_][]const u8{
     "plugin_system",
     "plugin_math",
     "plugin_promise",
@@ -830,7 +839,7 @@ const AotCsvState = struct {
     }
 };
 
-const Arithmetic = enum(u8) {
+pub const Arithmetic = enum(u8) {
     add,
     subtract,
     multiply,
@@ -843,7 +852,7 @@ const Arithmetic = enum(u8) {
     bit_xor,
 };
 
-const Comparison = enum(u8) {
+pub const Comparison = enum(u8) {
     abstract_equal,
     strict_equal,
     abstract_not_equal,
@@ -856,7 +865,7 @@ const Comparison = enum(u8) {
     deep_not_equal,
 };
 
-const ShiftOperator = enum(u8) {
+pub const ShiftOperator = enum(u8) {
     left,
     right,
     right_unsigned,
@@ -927,7 +936,7 @@ const StandardPropertyCacheEntry = struct {
     value: Value,
 };
 
-const Runtime = struct {
+pub const Runtime = struct {
     allocator: std.mem.Allocator,
     objects: ?*Object = null,
     roots: ?*RootFrame = null,
@@ -2325,7 +2334,7 @@ fn nativePluginBuiltin(runtime: *Runtime, name: []const u8, arguments: []const V
     return dynamicToAotValue(state, result);
 }
 
-fn dynamicBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn dynamicBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     if (arguments.len == 0) return .{};
     const state = try dynamicInterpreterState(runtime);
     const source = try valueUtf8LossyAlloc(runtime, arguments[arguments.len - 1]);
@@ -2475,7 +2484,7 @@ fn valueToNumber(value: Value) f64 {
     };
 }
 
-fn valueToNumberRuntime(runtime: *Runtime, value: Value) !f64 {
+pub fn valueToNumberRuntime(runtime: *Runtime, value: Value) !f64 {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
         .undefined => std.math.nan(f64),
         .null_value => 0,
@@ -2776,7 +2785,7 @@ const JsonAotEntry = struct {
 /// Pure AOT implementation of the JSON.stringify-backed command family.
 /// Keep this serializer independent from QuickJS: the generated executable
 /// must retain the same ECMAScript JSON boundary without a JavaScript engine.
-fn jsonEncodeBuiltin(runtime: *Runtime, value: Value, pretty: bool) !Value {
+pub fn jsonEncodeBuiltin(runtime: *Runtime, value: Value, pretty: bool) !Value {
     if (value.tag == @intFromEnum(Tag.undefined) or value.tag == @intFromEnum(Tag.function)) return .{};
     var output: std.Io.Writer.Allocating = .init(runtime.allocator);
     defer output.deinit();
@@ -3556,7 +3565,7 @@ fn jsonParseDecimal(units: []const u16) f64 {
     return if (negative) -result else result;
 }
 
-fn jsonDecodeBuiltin(runtime: *Runtime, source: Value) !Value {
+pub fn jsonDecodeBuiltin(runtime: *Runtime, source: Value) !Value {
     const units = try valueUtf16Alloc(runtime, source);
     defer runtime.allocator.free(units);
     var parser = JsonAotParser{ .runtime = runtime, .units = units };
@@ -3730,7 +3739,7 @@ fn jsonTestDictionaryGet(value: Value, key: []const u16) Value {
     return dictionaryProperty(value, key);
 }
 
-fn valueUtf16Alloc(runtime: *Runtime, value: Value) anyerror![]u16 {
+pub fn valueUtf16Alloc(runtime: *Runtime, value: Value) anyerror![]u16 {
     if (value.tag == @intFromEnum(Tag.utf16_string)) return runtime.allocator.dupe(u16, value.object().?.payload.utf16_string);
     const utf8 = switch (@as(Tag, @enumFromInt(value.tag))) {
         .undefined => try runtime.allocator.dupe(u8, "undefined"),
@@ -3976,7 +3985,7 @@ fn strictEqual(runtime: *Runtime, left: Value, right: Value) !bool {
 /// Node's `assert.strictEqual` uses SameValue semantics rather than the
 /// language `===` operator: NaN compares equal to NaN and signed zeroes stay
 /// distinct. Objects retain reference identity just like strictEqual.
-fn sameValue(runtime: *Runtime, left: Value, right: Value) !bool {
+pub fn sameValue(runtime: *Runtime, left: Value, right: Value) !bool {
     if (isString(left) and isString(right)) return stringEqual(runtime, left, right);
     if (left.tag != right.tag) return false;
     if (@as(Tag, @enumFromInt(left.tag)) == .number) {
@@ -4074,7 +4083,7 @@ fn isJsonStringifyObject(value: Value) bool {
     };
 }
 
-fn compareValues(runtime: *Runtime, operator: Comparison, left: Value, right: Value) !bool {
+pub fn compareValues(runtime: *Runtime, operator: Comparison, left: Value, right: Value) !bool {
     var roots = [_]Value{ left, right, .{}, .{} };
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -4136,7 +4145,7 @@ fn bigIntArithmetic(runtime: *Runtime, operator: Arithmetic, left: Value, right:
     return runtime.ownBigInt(result);
 }
 
-fn arithmetic(runtime: *Runtime, operator: Arithmetic, left: Value, right: Value) !Value {
+pub fn arithmetic(runtime: *Runtime, operator: Arithmetic, left: Value, right: Value) !Value {
     var roots = [_]Value{ left, right, .{}, .{} };
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -4191,7 +4200,7 @@ fn bigIntFromString(runtime: *Runtime, string: Value) !BigInt {
     return BigInt.parseString(runtime.allocator, ascii);
 }
 
-fn shift(runtime: *Runtime, operator: ShiftOperator, left: Value, right: Value) !Value {
+pub fn shift(runtime: *Runtime, operator: ShiftOperator, left: Value, right: Value) !Value {
     var roots = [_]Value{ left, right, .{}, .{} };
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -4226,7 +4235,7 @@ fn shift(runtime: *Runtime, operator: ShiftOperator, left: Value, right: Value) 
     return numberValue(shifted);
 }
 
-fn bitNot(runtime: *Runtime, value: Value) !Value {
+pub fn bitNot(runtime: *Runtime, value: Value) !Value {
     var roots = [_]Value{ value, .{} };
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -4240,7 +4249,7 @@ fn bitNot(runtime: *Runtime, value: Value) !Value {
     return numberValue(@floatFromInt(~toInt32(try valueToNumberRuntime(runtime, primitive))));
 }
 
-fn valueTruthy(value: Value) bool {
+pub fn valueTruthy(value: Value) bool {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
         .undefined, .null_value => false,
         .boolean => value.payload != 0,
@@ -4359,7 +4368,7 @@ fn staticUtf8(value: Value) []const u8 {
 
 extern "c" fn putchar(character: c_int) c_int;
 
-fn writeUtf16(units: []const u16, newline: bool) void {
+pub fn writeUtf16(units: []const u16, newline: bool) void {
     var index: usize = 0;
     while (index < units.len) {
         const first = units[index];
@@ -4458,7 +4467,7 @@ fn displayMany(runtime: *Runtime, values: []const Value, display_log: ?*Value) !
     try emitDisplayLine(runtime, text, true, display_log);
 }
 
-fn configureHatenaBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+pub fn configureHatenaBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     runtime.hatena_callbacks.clearRetainingCapacity();
     if (arguments.len == 0) return .{};
 
@@ -4484,7 +4493,7 @@ fn configureHatenaBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     return .{};
 }
 
-fn configureInterruptBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+pub fn configureInterruptBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     if (arguments.len == 0) return error.InvalidArgumentCount;
 
     var callback = arguments[0];
@@ -4574,7 +4583,7 @@ fn isHttpServerCommand(command: aot_builtin.Command) bool {
     };
 }
 
-fn isNodeProcessCommand(command: aot_builtin.Command) bool {
+pub fn isNodeProcessCommand(command: aot_builtin.Command) bool {
     return switch (command) {
         .node_process_run_wait, .node_process_run, .node_process_start, .node_process_run_wait_output, .node_process_start_callback, .node_open_external_browser, .node_open_external_explorer => true,
         else => false,
@@ -4618,7 +4627,7 @@ fn runAotExternal(runtime: *Runtime, target: []const u8, reveal: bool) !void {
     if (result.term != .exited or result.term.exited != 0) return error.OpenExternalFailed;
 }
 
-fn nodeProcessBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn nodeProcessBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     switch (command) {
         .node_open_external_browser, .node_open_external_explorer => {
             if (arguments.len < 1) return error.InvalidArgumentCount;
@@ -4682,7 +4691,7 @@ fn isPluginManagementCommand(command: aot_builtin.Command) bool {
     };
 }
 
-fn stdioBuiltin(runtime: *Runtime, command: aot_builtin.Command, values: []const Value, display_log: ?*Value) !void {
+pub fn stdioBuiltin(runtime: *Runtime, command: aot_builtin.Command, values: []const Value, display_log: ?*Value) !void {
     switch (command) {
         .stdio_continue_display => try continueDisplayValue(runtime, if (values.len > 0) values[values.len - 1] else .{}),
         .stdio_continue_display_many => {
@@ -5208,7 +5217,7 @@ fn scheduleAotTimer(runtime: *Runtime, arguments: []const Value, repeating: bool
     return values[2];
 }
 
-fn timerBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value, target: ?*Value) !Value {
+pub fn timerBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value, target: ?*Value) !Value {
     switch (command) {
         .timer_after => return scheduleAotTimer(runtime, arguments, false, target),
         .timer_every => return scheduleAotTimer(runtime, arguments, true, target),
@@ -5236,7 +5245,7 @@ fn timerBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []co
     }
 }
 
-fn timerWaitBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+pub fn timerWaitBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     const source = if (arguments.len > 0) arguments[arguments.len - 1] else Value{};
     const delay = try aotDelayMilliseconds(runtime, source);
     try waitAotMilliseconds(runtime, delay);
@@ -5506,7 +5515,7 @@ fn bundleAotPromises(runtime: *Runtime, arguments: []const Value, last_promise: 
     return roots[promise_index];
 }
 
-fn promiseAotBuiltin(
+pub fn promiseAotBuiltin(
     runtime: *Runtime,
     command: aot_builtin.Command,
     arguments: []const Value,
@@ -5685,7 +5694,7 @@ test "AOTネイティブABI橋渡しは関数とPromiseをAOT値へ変換する"
     try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[1].tag)));
 }
 
-fn stringArrayBuiltin(runtime: *Runtime, names: []const []const u8) !Value {
+pub fn stringArrayBuiltin(runtime: *Runtime, names: []const []const u8) !Value {
     var roots = [_]Value{ .{}, .{} };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -5699,7 +5708,7 @@ fn stringArrayBuiltin(runtime: *Runtime, names: []const []const u8) !Value {
     return roots[0];
 }
 
-fn systemFunctionExistsBuiltin(runtime: *Runtime, values: []const Value) !Value {
+pub fn systemFunctionExistsBuiltin(runtime: *Runtime, values: []const Value) !Value {
     const source = if (values.len > 0) values[values.len - 1] else Value{};
     const text = try valueUtf8LossyAlloc(runtime, source);
     defer runtime.allocator.free(text);
@@ -6054,7 +6063,7 @@ fn aotHttpDictionarySetUtf8(runtime: *Runtime, dictionary: Value, key: []const u
     try runtime.setDictionary(&roots[0].object().?.payload.dictionary, roots[2], roots[1]);
 }
 
-fn httpServerBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn httpServerBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     var frame = RootFrame{};
     if (arguments.len > 0) runtime.pushRoots(&frame, @constCast(arguments.ptr), arguments.len);
     defer if (arguments.len > 0) runtime.popRoots(&frame);
@@ -6661,7 +6670,7 @@ fn runtimeFailure(failure: anyerror) noreturn {
     std.process.exit(1);
 }
 
-var active_runtime: ?Runtime = null;
+pub var active_runtime: ?Runtime = null;
 var aot_interrupt_requested = std.atomic.Value(bool).init(false);
 
 const AotPosixInterrupt = if (builtin.os.tag == .windows) struct {} else struct {
@@ -7229,7 +7238,7 @@ pub export fn lnako_aot_display_value(value: *const Value, newline: bool, displa
     displayValue(runtime, value.*, newline, display_log) catch |failure| runtime.setFailure(failure);
 }
 
-fn debugDisplayBuiltin(runtime: *Runtime, value: Value, line: u64, source_path: []const u8, display_log: ?*Value) !void {
+pub fn debugDisplayBuiltin(runtime: *Runtime, value: Value, line: u64, source_path: []const u8, display_log: ?*Value) !void {
     var roots = [_]Value{ value, .{}, .{} };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -7656,7 +7665,7 @@ pub export fn lnako_aot_node_http_call(
     success = runtime.failure_epoch == start_epoch;
 }
 
-fn nodeNetworkAddressesBuiltin(runtime: *Runtime, ipv6: bool) !Value {
+pub fn nodeNetworkAddressesBuiltin(runtime: *Runtime, ipv6: bool) !Value {
     const synthetic = if (std.c.getenv("LNAKO_TEST_NETWORK_TOPOLOGY")) |topology|
         std.mem.eql(u8, std.mem.span(topology), "synthetic-v1")
     else
@@ -8093,1346 +8102,7 @@ pub export fn lnako_aot_node_stdin_callback_call(
     success = runtime.failure_epoch == start_epoch;
 }
 
-pub export fn lnako_aot_builtin_call(out: *Value, arguments: ?[*]const Value, len: usize, opcode: u16) callconv(.c) void {
-    lnako_aot_builtin_call_site(out, arguments, len, opcode, 0);
-}
-
-/// Dedicated ABI for timer commands. Timer registration updates the shared
-/// `対象` value, so generated LLVM passes that global explicitly instead of
-/// relying on a runtime-local lookup.
-pub export fn lnako_aot_timer_call_site(
-    out: *Value,
-    target: *Value,
-    arguments: ?[*]const Value,
-    len: usize,
-    opcode: u16,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
-        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "timer", site_id);
-        runtime.setFailure(error.UnknownCommand);
-        runtime.dispatch_trace.result(call_id, "unknown", opcode, "timer", site_id, false);
-        return;
-    };
-    if (command != .timer_after and command != .timer_every and command != .timer_stop and command != .timer_stop_all) {
-        runtime.setFailure(error.UnknownCommand);
-        return;
-    }
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "timer", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "timer", site_id, success);
-    if (arguments == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-    out.* = timerBuiltin(runtime, command, actual, target) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    success = runtime.failure_epoch == start_epoch;
-}
-
-/// Dedicated ABI for promise commands. The last promise and callback target
-/// are explicit globals so asynchronous callbacks cannot be redirected by a
-/// local variable with the same source-level name.
-pub export fn lnako_aot_promise_call_site(
-    out: *Value,
-    last_promise: *Value,
-    target: *Value,
-    arguments: ?[*]const Value,
-    len: usize,
-    opcode: u16,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
-        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "promise", site_id);
-        runtime.setFailure(error.UnknownCommand);
-        runtime.dispatch_trace.result(call_id, "unknown", opcode, "promise", site_id, false);
-        return;
-    };
-    if (command != .promise_create and command != .promise_success and command != .promise_settled and command != .promise_failure and command != .promise_finally and command != .promise_all) {
-        runtime.setFailure(error.UnknownCommand);
-        return;
-    }
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "promise", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "promise", site_id, success);
-    if (arguments == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-    out.* = promiseAotBuiltin(runtime, command, actual, last_promise, target) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    success = runtime.failure_epoch == start_epoch;
-}
-
-/// Dedicated ABI for `__DEBUG_BP_WAIT`. The debugger-facing system globals
-/// are generated values rather than runtime-owned name lookups, so LLVM passes
-/// their storage explicitly. This preserves the official immediate-return,
-/// main-plugin wait, and non-main pending-Promise branches without adding a
-/// JavaScript runtime to normal AOT execution.
-pub export fn lnako_aot_debug_breakpoint_wait_call(
-    out: *Value,
-    breakpoints: *Value,
-    force_wait: *Value,
-    wait_flag: *Value,
-    plugin_name: *Value,
-    arguments: ?[*]const Value,
-    len: usize,
-    opcode: u16,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
-        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "debug-breakpoint-wait", site_id);
-        runtime.setFailure(error.UnknownCommand);
-        runtime.dispatch_trace.result(call_id, "unknown", opcode, "debug-breakpoint-wait", site_id, false);
-        return;
-    };
-    if (command != .system_debug_breakpoint_wait) {
-        runtime.setFailure(error.UnknownCommand);
-        return;
-    }
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "debug-breakpoint-wait", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "debug-breakpoint-wait", site_id, success);
-    if (arguments == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-    out.* = debugBreakpointWaitBuiltin(runtime, breakpoints, force_wait, wait_flag, plugin_name, actual) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    success = runtime.failure_epoch == start_epoch;
-}
-
-/// Dedicated ABI for synchronous Node file operations. The copy default is a
-/// mutable system global, so generated LLVM passes its storage explicitly.
-pub export fn lnako_aot_file_operation_call(
-    out: *Value,
-    file_copy_default: *Value,
-    arguments: ?[*]const Value,
-    len: usize,
-    opcode: u16,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
-        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "node-file-operation", site_id);
-        runtime.setFailure(error.UnknownCommand);
-        runtime.dispatch_trace.result(call_id, "unknown", opcode, "node-file-operation", site_id, false);
-        return;
-    };
-    if (!isNodeFileOperationCommand(command)) {
-        runtime.setFailure(error.UnknownCommand);
-        return;
-    }
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "node-file-operation", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "node-file-operation", site_id, success);
-    if (arguments == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-    out.* = nodeFileOperationBuiltin(runtime, command, actual, file_copy_default) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    success = runtime.failure_epoch == start_epoch;
-}
-
-/// Dedicated ABI for Node process and desktop-launch commands.  Process
-/// callbacks are retained by the native event queue, so this path never
-/// falls back to a JavaScript runtime in normal AOT mode.
-pub export fn lnako_aot_node_process_call(
-    out: *Value,
-    arguments: ?[*]const Value,
-    len: usize,
-    opcode: u16,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
-        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "node-process", site_id);
-        runtime.setFailure(error.UnknownCommand);
-        runtime.dispatch_trace.result(call_id, "unknown", opcode, "node-process", site_id, false);
-        return;
-    };
-    if (!isNodeProcessCommand(command)) {
-        runtime.setFailure(error.UnknownCommand);
-        return;
-    }
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "node-process", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "node-process", site_id, success);
-    if (arguments == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-    out.* = nodeProcessBuiltin(runtime, command, actual) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    success = runtime.failure_epoch == start_epoch;
-}
-
-/// Dedicated ABI for Node file-operation callback and progress commands. The
-/// current `対象` storage is explicit so progress callbacks observe the same
-/// dictionary value as the interpreter, while worker threads retain only
-/// copied paths and the callback Value.
-pub export fn lnako_aot_node_file_callback_call(
-    out: *Value,
-    target: *Value,
-    arguments: ?[*]const Value,
-    len: usize,
-    opcode: u16,
-    site_id: u64,
-) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
-        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "node-file-callback", site_id);
-        runtime.setFailure(error.UnknownCommand);
-        runtime.dispatch_trace.result(call_id, "unknown", opcode, "node-file-callback", site_id, false);
-        return;
-    };
-    if (!isNodeFileCallbackCommand(command)) {
-        runtime.setFailure(error.UnknownCommand);
-        return;
-    }
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "node-file-callback", site_id);
-    const start_epoch = runtime.failure_epoch;
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "node-file-callback", site_id, success);
-    if (arguments == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-    out.* = nodeFileCallbackBuiltin(runtime, target, command, actual) catch |failure| {
-        runtime.setFailure(failure);
-        return;
-    };
-    success = runtime.failure_epoch == start_epoch;
-}
-
-pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Value, len: usize, opcode: u16, site_id: u64) callconv(.c) void {
-    out.* = .{};
-    const runtime = if (active_runtime) |*active| active else return;
-    const start_epoch = runtime.failure_epoch;
-    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
-        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "builtin", site_id);
-        runtime.setFailure(error.UnknownCommand);
-        runtime.dispatch_trace.result(call_id, "unknown", opcode, "builtin", site_id, false);
-        return;
-    };
-    const command_name = aot_builtin.canonicalOpcodeName(command);
-    const route = builtinDispatchRoute(command);
-    const call_id = runtime.dispatch_trace.begin(command_name, opcode, route, site_id);
-    var success = false;
-    defer runtime.dispatch_trace.result(call_id, command_name, opcode, route, site_id, success);
-    if (arguments == null and len != 0) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    if (len == 0 and command != .empty_array and command != .empty_dictionary and command != .sum_parsed and command != .sequential_add and command != .concat_join and command != .json_decode and command != .math_random and command != .datetime_now and command != .datetime_system_time and command != .datetime_system_time_milliseconds and command != .datetime_today and command != .datetime_tomorrow and command != .datetime_yesterday and command != .datetime_current_year and command != .datetime_next_year and command != .datetime_last_year and command != .datetime_current_month and command != .datetime_next_month and command != .datetime_previous_month and command != .caniuse_browsers and command != .node_os and command != .node_architecture and command != .node_environment_list and command != .node_current_directory and command != .node_home_directory and command != .node_desktop and command != .node_documents and command != .node_temporary_directory and command != .node_mother_path and command != .datetime_monotonic_milliseconds and command != .courtesy_increment and command != .courtesy_begin and command != .courtesy_end and command != .courtesy_level and command != .stdio_continue_display and command != .stdio_continue_display_many and command != .stdio_clear_log and command != .namespace_pop and command != .timer_wait and command != .timer_stop_all and command != .promise_all and command != .async_noop and command != .node_console_clear and command != .node_file_process_stop and command != .system_debug_breakpoint_wait and command != .system_debug_display and command != .system_debug_enable and command != .system_global_function_names and command != .system_function_names and command != .system_function_exists and command != .plugin_names and command != .josi_names and command != .reserved_words and command != .line_notify_discontinued and command != .line_image_notify_discontinued and command != .node_exit and command != .system_end and command != .node_hash_names and command != .node_random_uuid and command != .node_stdin_all and command != .node_stdin_line and command != .node_stdin_character and command != .node_network_ipv4 and command != .node_network_ipv6 and command != .system_hatena_configure and command != .system_nadesiko and command != .system_nadesiko_continue) {
-        runtime.setFailure(error.InvalidArgumentCount);
-        return;
-    }
-    const value = if (len > 0) arguments.?[0] else Value{};
-    switch (command) {
-        .line_notify_discontinued, .line_image_notify_discontinued => {
-            const source_name = if (command == .line_notify_discontinued) "LINE送信" else "LINE画像送信";
-            const message = std.fmt.allocPrint(
-                runtime.allocator,
-                "『{s}』は2025年4月で使えなくなりました。[詳細URL] https://nadesi.com/v3/doc/go.php?4670",
-                .{source_name},
-            ) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-            defer runtime.allocator.free(message);
-            runtime.setFailureText(message);
-            return;
-        },
-        .system_end => {
-            runtime.setFailureText("__終わる__");
-            return;
-        },
-        .node_exit, .node_process_exit => {
-            const exit_code = if (command == .node_process_exit) nodeProcessExitCode(runtime, value) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            } else 0;
-            runtime.dispatch_trace.result(call_id, command_name, opcode, "builtin", site_id, true);
-            runtime.dispatch_trace.finishTerminal("process-exit", exit_code);
-            _ = fflush(null);
-            std.process.exit(exit_code);
-        },
-        .node_interrupt_callback => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = configureInterruptBuiltin(runtime, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .http_server_start, .http_server_static, .http_server_receive, .http_server_output, .http_server_headers, .http_server_redirect => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = httpServerBuiltin(runtime, command, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .regexp_match, .regexp_extract, .regexp_replace, .regexp_split => {
-            runtime.setFailure(error.UnknownCommand);
-            return;
-        },
-        .json_encode, .json_encode_pretty => {
-            out.* = jsonEncodeBuiltin(runtime, value, command == .json_encode_pretty) catch |failure| {
-                if (!runtime.has_pending_exception) runtime.setFailure(failure);
-                return;
-            };
-        },
-        .json_decode => {
-            out.* = jsonDecodeBuiltin(runtime, value) catch |failure| {
-                if (!runtime.has_pending_exception) runtime.setFailure(failure);
-                return;
-            };
-        },
-        .math_sin, .math_cos, .math_tan, .math_arcsin, .math_arccos, .math_arctan, .math_atan2, .math_coordinate_angle, .math_rad2deg, .math_deg2rad, .math_sign, .math_abs, .math_exp, .math_hypot, .math_log, .math_logn, .math_frac, .math_integer, .math_sqrt, .math_round, .math_decimal_ceil, .math_decimal_floor, .math_decimal_round, .math_ceil, .math_floor, .math_random, .math_random_range => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = mathBuiltin(runtime, command, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .datetime_now, .datetime_system_time, .datetime_system_time_milliseconds, .datetime_today, .datetime_tomorrow, .datetime_yesterday, .datetime_current_year, .datetime_next_year, .datetime_last_year, .datetime_current_month, .datetime_next_month, .datetime_previous_month, .datetime_weekday, .datetime_weekday_number, .datetime_unix_time, .datetime_date_time, .datetime_format, .datetime_era, .datetime_year_difference, .datetime_month_difference, .datetime_day_difference, .datetime_hour_difference, .datetime_minute_difference, .datetime_second_difference, .datetime_difference, .datetime_add_time, .datetime_add_date, .datetime_add_datetime, .datetime_monotonic_milliseconds => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = datetimeBuiltin(runtime, command, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .url_encode, .url_decode, .url_parameters, .base64_encode, .base64_decode => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = urlBuiltin(runtime, command, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .path_extract_extension, .path_change_extension, .path_add_trailing_separator, .path_remove_trailing_separator, .path_delete_trailing_separator => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = pathBuiltin(runtime, command, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .kansuji_to_kanji, .kansuji_to_arabic => {
-            out.* = kansujiBuiltin(runtime, command, value) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .csv_parse, .tsv_parse, .table_csv_stringify, .csv_stringify, .table_tsv_stringify, .tsv_stringify, .csv_options => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = csvBuiltin(runtime, command, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .toml_parse, .toml_stringify => {
-            out.* = tomlBuiltin(runtime, command, value) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .markdown_to_html, .html_pretty => {
-            out.* = markupBuiltin(runtime, command, value) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .courtesy_increment, .courtesy_begin, .courtesy_end, .courtesy_level => {
-            out.* = courtesyBuiltin(runtime, command);
-        },
-        .stdio_continue_display, .stdio_continue_display_many, .stdio_clear_log, .stdio_write_all => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            stdioBuiltin(runtime, command, actual, null) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .plugin_name_set, .namespace_set, .namespace_pop => {
-            runtime.setFailure(error.PluginManagementRequiresTargets);
-            return;
-        },
-        .timer_wait => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = timerWaitBuiltin(runtime, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .timer_after, .timer_every, .timer_stop, .timer_stop_all => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = timerBuiltin(runtime, command, actual, null) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .promise_create, .promise_success, .promise_settled, .promise_failure, .promise_finally, .promise_all => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = promiseAotBuiltin(runtime, command, actual, null, null) catch |failure| {
-                if (!runtime.has_pending_exception) runtime.setFailure(failure);
-                return;
-            };
-        },
-        .async_noop, .node_console_clear => out.* = .{},
-        .system_debug_breakpoint_wait => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            var breakpoints = Value{};
-            var force_wait = numberValue(0);
-            var wait_flag = numberValue(0);
-            var plugin_name = staticStringValue("メイン");
-            out.* = debugBreakpointWaitBuiltin(runtime, &breakpoints, &force_wait, &wait_flag, &plugin_name, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .system_await_execute, .system_execute => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = systemExecutionBuiltin(runtime, command, actual) catch |failure| {
-                if (!runtime.has_pending_exception) runtime.setFailure(failure);
-                return;
-            };
-        },
-        .system_nadesiko, .system_nadesiko_continue => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = dynamicBuiltin(runtime, command, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .system_measure_time => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = measureCallableBuiltin(runtime, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .system_hatena_configure => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = configureHatenaBuiltin(runtime, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .system_debug_display => debugDisplayBuiltin(runtime, value, 1, &.{}, null) catch |failure| {
-            runtime.setFailure(failure);
-            return;
-        },
-        .system_hatena_execute => {
-            runtime.setFailure(error.UnknownCommand);
-            return;
-        },
-        .node_archive_tool_path_set, .node_ajax_options_set, .node_ajax_onerror_set => {
-            runtime.setFailure(error.UnknownCommand);
-            return;
-        },
-        .node_ajax_send_callback, .node_ajax_receive_callback, .node_get_send_callback, .node_post_send_callback, .node_post_form_send_callback, .node_ajax_response_promise, .node_http_response_promise, .node_get_response_promise, .node_post_response_promise, .node_post_form_response_promise, .node_ajax_content_get, .node_ajax_receive, .node_post_send, .node_post_form_send, .node_ajax_text_get, .node_ajax_json_get, .node_ajax_binary_get, .node_discord_send, .node_discord_file_send => {
-            runtime.setFailure(error.UnknownCommand);
-            return;
-        },
-        .node_archive_extract, .node_archive_extract_callback, .node_archive_create, .node_archive_create_callback => {
-            runtime.setFailure(error.UnknownCommand);
-            return;
-        },
-        .node_process_run_wait, .node_process_run, .node_process_start, .node_process_run_wait_output, .node_process_start_callback, .node_open_external_browser, .node_open_external_explorer => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = nodeProcessBuiltin(runtime, command, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_file_process_callback, .node_file_process_stop, .node_file_copy_callback, .node_file_move_callback, .node_file_delete_callback => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = nodeFileCallbackBuiltin(runtime, null, command, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_stdin_callback => {
-            runtime.setFailure(error.UnknownCommand);
-            return;
-        },
-        .system_debug_enable => runtime.debug_enabled = true,
-        .system_global_function_names => {
-            out.* = systemGlobalFunctionNamesBuiltin(runtime) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .system_function_names => {
-            out.* = stringArrayBuiltin(runtime, &builtin_catalog.default_names) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .system_function_exists => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = systemFunctionExistsBuiltin(runtime, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .plugin_names => {
-            out.* = stringArrayBuiltin(runtime, &default_plugin_names) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .josi_names => {
-            out.* = stringArrayBuiltin(runtime, &josi.exported_list) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .reserved_words => {
-            out.* = stringArrayBuiltin(runtime, &lexer.exported_reserved_words) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .assert_strict_equal => {
-            if (len < 2) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            const values = arguments.?;
-            const equal = sameValue(runtime, values[0], values[1]) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-            if (!equal) {
-                runtime.setFailure(error.AssertionFailed);
-                return;
-            }
-        },
-        .node_os, .node_architecture => {
-            out.* = nodeEnvironmentBuiltin(runtime, command) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_environment_get => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = nodeEnvironmentValueBuiltin(runtime, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_environment_list => {
-            out.* = nodeEnvironmentListBuiltin(runtime) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_current_directory => {
-            out.* = nodeCurrentDirectoryBuiltin(runtime) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_change_directory => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = nodeChangeDirectoryBuiltin(runtime, actual) catch |failure| {
-                if (!runtime.has_pending_exception) runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_file_exists, .node_folder_exists => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = nodeFileExistenceBuiltin(runtime, command, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_file_size => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = nodeFileSizeBuiltin(runtime, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_file_open, .node_file_read, .node_file_binary_read => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = nodeFileReadBuiltin(runtime, command, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_file_save => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = nodeFileSaveBuiltin(runtime, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_file_list, .node_file_list_all, .node_folder_create, .node_file_copy, .node_file_copy_overwrite, .node_file_move, .node_file_move_overwrite, .node_file_delete => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            var default_copy_mode = staticStringValue("上書禁止");
-            out.* = nodeFileOperationBuiltin(runtime, command, actual, &default_copy_mode) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_file_sjis_read, .node_file_euc_read => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = nodeEncodedFileReadBuiltin(runtime, command, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_file_sjis_save, .node_file_euc_save => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = nodeEncodedFileSaveBuiltin(runtime, command, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_encoding_sjis_encode, .node_encoding_sjis_decode, .node_encoding_encode, .node_encoding_decode => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = nodeEncodingBuiltin(runtime, command, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_file_info => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = nodeFileInfoBuiltin(runtime, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_encoding_supports => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = nodeEncodingSupportsBuiltin(runtime, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_stdin_all => {
-            out.* = nodeStdinAllBuiltin(runtime) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_stdin_line, .node_stdin_character => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = nodeStdinLineBuiltin(runtime, command, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_post_data => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = nodePostDataBuiltin(runtime, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_network_ipv4, .node_network_ipv6 => {
-            out.* = nodeNetworkAddressesBuiltin(runtime, command == .node_network_ipv6) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_home_directory, .node_desktop, .node_documents, .node_temporary_directory => {
-            out.* = nodeDirectoryBuiltin(runtime, command) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_mother_path => {
-            out.* = nodeMotherPathBuiltin(runtime) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_temporary_directory_create => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = nodeCreateTemporaryDirectoryBuiltin(runtime, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_hash_names => {
-            out.* = stringArrayBuiltin(runtime, &crypto.hash_names) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_hash_value, .node_random_uuid, .node_random_array => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = nodeCryptoBuiltin(runtime, command, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_path_basename, .node_path_dirname => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = nodePathComponentBuiltin(runtime, command, actual) catch |failure| {
-                if (!runtime.has_pending_exception) runtime.setFailure(failure);
-                return;
-            };
-        },
-        .system_path_basename, .system_path_dirname => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = systemPathComponentBuiltin(runtime, command, actual) catch |failure| {
-                if (!runtime.has_pending_exception) runtime.setFailure(failure);
-                return;
-            };
-        },
-        .node_path_absolute, .node_path_resolve => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = nodePathBuiltin(runtime, command, actual) catch |failure| {
-                if (!runtime.has_pending_exception) runtime.setFailure(failure);
-                return;
-            };
-        },
-        .caniuse_browsers => {
-            out.* = caniuseBrowsersBuiltin(runtime) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .to_string => {
-            const units = valueUtf16Alloc(runtime, value) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-            defer runtime.allocator.free(units);
-            out.* = runtime.createString(units) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .type_of => out.* = typeNameValue(value),
-        .to_int => {
-            out.* = numberValue(parseIntBuiltin(runtime, value) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            });
-        },
-        .to_float => {
-            out.* = numberValue(parseFloatBuiltin(runtime, value) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            });
-        },
-        .is_nan => {
-            const number = valueToNumberRuntime(runtime, value) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-            out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(std.math.isNan(number)) };
-        },
-        .is_number_nan => {
-            const is_nan = value.tag == @intFromEnum(Tag.number) and std.math.isNan(@as(f64, @bitCast(value.payload)));
-            out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(is_nan) };
-        },
-        .radix16, .radix, .radix2, .radix2_display => {
-            if (command == .radix and len < 2) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            const radix_value = if (command == .radix) arguments.?[1] else numberValue(if (command == .radix16) 16 else 2);
-            const result = radixBuiltin(runtime, value, radix_value) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-            if (command == .radix2_display) {
-                writeUtf16(result.object().?.payload.utf16_string, true);
-            } else out.* = result;
-        },
-        .rgb => {
-            if (len < 3) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            out.* = rgbBuiltin(runtime, arguments.?[0..3]) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .bit_or, .bit_and, .bit_xor => {
-            if (len < 2) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            const operator: Arithmetic = switch (command) {
-                .bit_or => .bit_or,
-                .bit_and => .bit_and,
-                .bit_xor => .bit_xor,
-                else => unreachable,
-            };
-            out.* = arithmetic(runtime, operator, arguments.?[0], arguments.?[1]) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .bit_not => {
-            out.* = bitNot(runtime, value) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .shift_left, .shift_right, .shift_right_unsigned => {
-            if (len < 2) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            const operator: ShiftOperator = switch (command) {
-                .shift_left => .left,
-                .shift_right => .right,
-                .shift_right_unsigned => .right_unsigned,
-                else => unreachable,
-            };
-            out.* = shift(runtime, operator, arguments.?[0], arguments.?[1]) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .subtract, .multiply, .divide, .remainder => {
-            if (len < 2) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            const operator: Arithmetic = switch (command) {
-                .subtract => .subtract,
-                .multiply => .multiply,
-                .divide => .divide,
-                .remainder => .remainder,
-                else => unreachable,
-            };
-            out.* = arithmetic(runtime, operator, arguments.?[0], arguments.?[1]) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .square => {
-            out.* = arithmetic(runtime, .multiply, value, value) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .power_number => {
-            if (len < 2) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            const left = valueToNumberRuntime(runtime, arguments.?[0]) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-            const right = valueToNumberRuntime(runtime, arguments.?[1]) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-            out.* = numberValue(std.math.pow(f64, left, right));
-        },
-        .is_even, .is_odd => {
-            const integer = parseIntBuiltin(runtime, value) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-            const expected: f64 = if (command == .is_even) 0 else 1;
-            out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(@rem(integer, 2) == expected) };
-        },
-        .greater_equal, .less_equal, .less, .greater, .strict_equal, .strict_not_equal, .deep_equal, .deep_not_equal => {
-            if (len < 2) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            const comparison: Comparison = switch (command) {
-                .greater_equal => .greater_equal,
-                .less_equal => .less_equal,
-                .less => .less,
-                .greater => .greater,
-                .strict_equal => .strict_equal,
-                .strict_not_equal => .strict_not_equal,
-                .deep_equal => .deep_equal,
-                .deep_not_equal => .deep_not_equal,
-                else => unreachable,
-            };
-            const result = compareValues(runtime, comparison, arguments.?[0], arguments.?[1]) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-            out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(result) };
-        },
-        .in_range => {
-            if (len < 3) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            const lower = compareValues(runtime, .greater_equal, arguments.?[0], arguments.?[1]) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-            const upper = compareValues(runtime, .less_equal, arguments.?[0], arguments.?[2]) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-            out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(lower and upper) };
-        },
-        .maximum, .minimum => {
-            var result = valueToNumberRuntime(runtime, value) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-            var has_nan = std.math.isNan(result);
-            for (arguments.?[1..len]) |argument| {
-                const number = valueToNumberRuntime(runtime, argument) catch |failure| {
-                    runtime.setFailure(failure);
-                    return;
-                };
-                if (std.math.isNan(number)) {
-                    has_nan = true;
-                } else if (!has_nan) {
-                    result = if (command == .maximum) @max(result, number) else @min(result, number);
-                }
-            }
-            out.* = numberValue(if (has_nan) std.math.nan(f64) else result);
-        },
-        .clamp => {
-            if (len < 3) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            const number = valueToNumberRuntime(runtime, arguments.?[0]) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-            const minimum = valueToNumberRuntime(runtime, arguments.?[1]) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-            const maximum = valueToNumberRuntime(runtime, arguments.?[2]) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-            out.* = numberValue(@min(@max(number, minimum), maximum));
-        },
-        .logical_or => {
-            if (len < 2) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            out.* = if (valueTruthy(arguments.?[0])) arguments.?[0] else arguments.?[1];
-        },
-        .logical_and => {
-            if (len < 2) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            out.* = if (valueTruthy(arguments.?[0])) arguments.?[1] else arguments.?[0];
-        },
-        .logical_not => out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(!valueTruthy(value)) },
-        .range => {
-            if (len < 2) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            out.* = rangeBuiltin(runtime, arguments.?[0], arguments.?[1]) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .empty_array => {
-            out.* = runtime.createArray(&.{}) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .empty_dictionary => {
-            out.* = runtime.createDictionary(&.{}) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .dictionary_keys, .hash_keys => {
-            if (len < 1) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            out.* = dictionaryKeysBuiltin(runtime, value) catch |failure| {
-                if (!runtime.has_pending_exception) runtime.setFailure(failure);
-                return;
-            };
-        },
-        .hash_values => {
-            if (len < 1) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            out.* = dictionaryValuesBuiltin(runtime, value) catch |failure| {
-                if (!runtime.has_pending_exception) runtime.setFailure(failure);
-                return;
-            };
-        },
-        .dictionary_remove, .hash_remove => {
-            if (len < 2) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            out.* = dictionaryRemoveBuiltin(runtime, arguments.?[0], arguments.?[1]) catch |failure| {
-                if (!runtime.has_pending_exception) runtime.setFailure(failure);
-                return;
-            };
-        },
-        .dictionary_has, .hash_has => {
-            if (len < 2) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            const found = dictionaryHasBuiltin(runtime, arguments.?[0], arguments.?[1]) catch |failure| {
-                if (!runtime.has_pending_exception) runtime.setFailure(failure);
-                return;
-            };
-            out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(found) };
-        },
-        .truth_label => {
-            out.* = runtime.createString(if (valueTruthy(value)) &.{0x771f} else &.{0x507d}) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .repeat_multiply => {
-            if (len < 2) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            out.* = repeatMultiplyBuiltin(runtime, arguments.?[0], arguments.?[1]) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .unicode_length => {
-            const units = valueUtf16Alloc(runtime, value) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-            defer runtime.allocator.free(units);
-            out.* = numberValue(@floatFromInt(codePointCount(units)));
-        },
-        .codepoint_find => {
-            if (len < 2) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            out.* = numberValue(@floatFromInt(codePointFindBuiltin(runtime, arguments.?[0], arguments.?[1]) catch |failure| {
-                if (!runtime.has_pending_exception) runtime.setFailure(failure);
-                return;
-            }));
-        },
-        .string_starts, .string_ends => {
-            if (len < 2) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            out.* = stringBoundaryBuiltin(runtime, arguments.?[0], arguments.?[1], command == .string_starts) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .element_count => {
-            out.* = numberValue(@floatFromInt(elementCountBuiltin(runtime, value) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            }));
-        },
-        .array_join, .array_join_only => {
-            const source: Value = if (len > 0) arguments.?[0] else .{};
-            const separator: Value = if (len > 1) arguments.?[1] else .{};
-            out.* = arrayJoinBuiltin(runtime, source, separator, command == .array_join_only) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .array_search => {
-            const source: Value = if (len > 0) arguments.?[0] else .{};
-            const needle: Value = if (len > 1) arguments.?[1] else .{};
-            out.* = numberValue(arraySearchBuiltin(runtime, source, needle) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            });
-        },
-        .array_sort, .array_numeric_convert, .array_numeric_sort, .array_reverse, .array_shuffle => {
-            const source: Value = if (len > 0) arguments.?[0] else .{};
-            out.* = arrayOrderingBuiltin(runtime, command, source) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .array_custom_sort, .array_function_apply, .array_map, .array_filter => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = arrayCallbackBuiltin(runtime, command, actual) catch |failure| {
-                if (!runtime.has_pending_exception) runtime.setFailure(failure);
-                return;
-            };
-        },
-        .array_insert, .array_insert_many, .array_cut, .array_take, .array_pop, .array_push, .array_clone, .array_range_copy, .reference, .array_add, .array_maximum, .array_minimum, .array_sum, .array_swap, .array_sequence, .array_fill => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = arrayMutationBuiltin(runtime, command, actual) catch |failure| {
-                if (!runtime.has_pending_exception) runtime.setFailure(failure);
-                return;
-            };
-        },
-        .table_sort, .table_numeric_sort, .table_pickup, .table_exact_pickup, .table_search, .table_column_count, .table_row_count, .table_column, .table_transpose, .table_rotate, .table_unique, .table_insert_column, .table_delete_column, .table_column_sum, .table_regexp_search, .table_regexp_pickup => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = tableBuiltin(runtime, command, actual) catch |failure| {
-                if (!runtime.has_pending_exception) runtime.setFailure(failure);
-                return;
-            };
-        },
-        .add_parsed => {
-            if (len < 2) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            out.* = addParsedBuiltin(runtime, arguments.?[0], arguments.?[1]) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .sum_parsed => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = sumParsedBuiltin(runtime, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .sequential_add => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = sequentialAddBuiltin(runtime, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .chr => {
-            out.* = chrBuiltin(runtime, value) catch |failure| {
-                if (!runtime.has_pending_exception) runtime.setFailure(failure);
-                return;
-            };
-        },
-        .asc => {
-            out.* = ascBuiltin(runtime, value) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .string_insert, .string_search => {
-            if (len < 3) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            if (command == .string_insert) {
-                out.* = stringInsertBuiltin(runtime, arguments.?[0], arguments.?[1], arguments.?[2]) catch |failure| {
-                    runtime.setFailure(failure);
-                    return;
-                };
-            } else {
-                out.* = numberValue(stringSearchBuiltin(runtime, arguments.?[0], arguments.?[1], arguments.?[2]) catch |failure| {
-                    runtime.setFailure(failure);
-                    return;
-                });
-            }
-        },
-        .append, .append_line => {
-            if (len < 2) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            out.* = appendBuiltin(runtime, arguments.?[0], arguments.?[1], command == .append_line) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .concat_join => {
-            const actual = if (arguments) |pointer| pointer[0..len] else &.{};
-            out.* = joinBuiltin(runtime, actual) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .explode => {
-            out.* = explodeBuiltin(runtime, value) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .refrain, .occurrence_count => {
-            if (len < 2) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            if (command == .refrain) {
-                out.* = refrainBuiltin(runtime, arguments.?[0], arguments.?[1]) catch |failure| {
-                    runtime.setFailure(failure);
-                    return;
-                };
-            } else {
-                out.* = numberValue(@floatFromInt(occurrenceCountBuiltin(runtime, arguments.?[0], arguments.?[1]) catch |failure| {
-                    runtime.setFailure(failure);
-                    return;
-                }));
-            }
-        },
-        .occurrence => {
-            if (len < 2) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            const found = occurrenceBuiltin(runtime, arguments.?[0], arguments.?[1]) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-            out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(found) };
-        },
-        // LLVM lowers these side-effecting commands through lnako_aot_cut,
-        // which receives the mandatory global 対象 pointer.  Keep the generic
-        // dispatcher explicit so an accidental ABI mismatch fails safely.
-        .cut, .cut_range => runtime.setFailure(error.CutRequiresTarget),
-        .substring_mid, .substring_left, .substring_right => {
-            const required: usize = if (command == .substring_mid) 3 else 2;
-            if (len < required) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            out.* = substringBuiltin(runtime, command, arguments.?[0..required]) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .split_all, .split_first, .string_remove => {
-            const required: usize = if (command == .string_remove) 3 else 2;
-            if (len < required) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            out.* = if (command == .string_remove)
-                stringRemoveBuiltin(runtime, arguments.?[0], arguments.?[1], arguments.?[2]) catch |failure| {
-                    runtime.setFailure(failure);
-                    return;
-                }
-            else
-                splitBuiltin(runtime, arguments.?[0], arguments.?[1], command == .split_first) catch |failure| {
-                    runtime.setFailure(failure);
-                    return;
-                };
-        },
-        .trim_both, .trim_right, .trim_left => {
-            out.* = trimBuiltin(runtime, value, command != .trim_right, command != .trim_left) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .replace_all, .replace_first => {
-            if (len < 3) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            out.* = replaceBuiltin(runtime, arguments.?[0], arguments.?[1], arguments.?[2], command == .replace_all) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .uppercase, .lowercase => {
-            out.* = unicodeCaseBuiltin(runtime, value, command == .uppercase) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .hiragana, .katakana => {
-            out.* = kanaOffsetBuiltin(runtime, value, command == .katakana) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .ascii_full_width, .ascii_half_width, .ascii_symbol_full_width, .ascii_symbol_half_width => {
-            const to_full = command == .ascii_full_width or command == .ascii_symbol_full_width;
-            const symbols = command == .ascii_symbol_full_width or command == .ascii_symbol_half_width;
-            out.* = asciiWidthBuiltin(runtime, value, to_full, symbols) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .katakana_full_width, .katakana_half_width => {
-            out.* = kanaWidthBuiltin(runtime, value, command == .katakana_full_width) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .full_width, .half_width => {
-            out.* = widthBuiltin(runtime, value, command == .full_width) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .currency_format => {
-            out.* = currencyBuiltin(runtime, value) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .zero_pad, .space_pad => {
-            if (len < 2) {
-                runtime.setFailure(error.InvalidArgumentCount);
-                return;
-            }
-            out.* = padBuiltin(runtime, arguments.?[0], arguments.?[1], if (command == .zero_pad) '0' else ' ') catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-        .hiragana_predicate, .katakana_predicate, .digit_predicate, .number_sequence_predicate => {
-            out.* = stringPredicateBuiltin(runtime, value, command) catch |failure| {
-                runtime.setFailure(failure);
-                return;
-            };
-        },
-    }
-    success = runtime.failure_epoch == start_epoch;
-}
-
-fn builtinDispatchRoute(command: aot_builtin.Command) []const u8 {
+pub fn builtinDispatchRoute(command: aot_builtin.Command) []const u8 {
     return aot_builtin.dispatchRoute(command);
 }
 
@@ -9443,7 +8113,7 @@ test "AOT generic builtin dispatch routeはmanifestと一致する" {
     try std.testing.expectEqualStrings("builtin", builtinDispatchRoute(.to_string));
 }
 
-fn typeNameValue(value: Value) Value {
+pub fn typeNameValue(value: Value) Value {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
         .undefined => staticStringValue("undefined"),
         .null_value, .byte_buffer, .array, .dictionary, .iterator, .promise => staticStringValue("object"),
@@ -9456,13 +8126,13 @@ fn typeNameValue(value: Value) Value {
     };
 }
 
-fn parseIntBuiltin(runtime: *Runtime, value: Value) !f64 {
+pub fn parseIntBuiltin(runtime: *Runtime, value: Value) !f64 {
     const units = try valueUtf16Alloc(runtime, value);
     defer runtime.allocator.free(units);
     return number_mod.parseIntPrefix(units, null);
 }
 
-fn parseFloatBuiltin(runtime: *Runtime, value: Value) !f64 {
+pub fn parseFloatBuiltin(runtime: *Runtime, value: Value) !f64 {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
         .number => @bitCast(value.payload),
         .bigint => value.object().?.payload.bigint.toF64(),
@@ -9474,7 +8144,7 @@ fn parseFloatBuiltin(runtime: *Runtime, value: Value) !f64 {
     };
 }
 
-fn mathBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn mathBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     const a: Value = if (arguments.len > 0) arguments[0] else .{};
     const b: Value = if (arguments.len > 1) arguments[1] else .{};
     return switch (command) {
@@ -9562,7 +8232,7 @@ fn mathRandomRange(runtime: *Runtime, minimum: Value, maximum: Value) !Value {
     return numberValue(@floor(random * (upper - lower + 1)) + lower);
 }
 
-fn caniuseBrowsersBuiltin(runtime: *Runtime) !Value {
+pub fn caniuseBrowsersBuiltin(runtime: *Runtime) !Value {
     if (runtime.caniuse_browsers.tag != @intFromEnum(Tag.undefined)) return runtime.caniuse_browsers;
 
     var roots = [_]Value{ .{}, .{}, .{} };
@@ -9704,7 +8374,7 @@ const AotDateFields = struct {
 
 const AotDateDifferenceUnit = enum { year, month, day, hour, minute, second };
 
-fn datetimeBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn datetimeBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     const now = currentTimeMilliseconds(runtime);
     return switch (command) {
         .datetime_now => datetimeTimeString(runtime, datetimeFieldsFromEpoch(now)),
@@ -10275,7 +8945,7 @@ fn runtimeUtf8StringLossy(runtime: *Runtime, text: []const u8) !Value {
     return runtime.ownString(decoded.units);
 }
 
-fn urlBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn urlBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
     return switch (command) {
         .url_encode => urlEncodeBuiltin(runtime, arguments[0]),
@@ -10287,7 +8957,7 @@ fn urlBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []cons
     };
 }
 
-fn pathBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn pathBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     const required: usize = if (command == .path_change_extension) 2 else 1;
     if (arguments.len < required) return error.InvalidArgumentCount;
     return switch (command) {
@@ -10418,7 +9088,7 @@ const kansujiUnits = [_][]const u8{
     "無量大数",
 };
 
-fn kansujiBuiltin(runtime: *Runtime, command: aot_builtin.Command, input: Value) !Value {
+pub fn kansujiBuiltin(runtime: *Runtime, command: aot_builtin.Command, input: Value) !Value {
     return switch (command) {
         .kansuji_to_kanji => kansujiToKanjiBuiltin(runtime, input),
         .kansuji_to_arabic => kansujiToArabicBuiltin(runtime, input),
@@ -10991,7 +9661,7 @@ fn base64Digit(unit: u16) ?u8 {
     };
 }
 
-fn csvBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn csvBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
     return switch (command) {
         .csv_parse => blk: {
@@ -11241,7 +9911,7 @@ fn csvIsWhitespace(unit: u16) bool {
     };
 }
 
-fn tomlBuiltin(runtime: *Runtime, command: aot_builtin.Command, value: Value) !Value {
+pub fn tomlBuiltin(runtime: *Runtime, command: aot_builtin.Command, value: Value) !Value {
     return switch (command) {
         .toml_parse => tomlParse(runtime, value),
         .toml_stringify => tomlStringify(runtime, value),
@@ -11804,7 +10474,7 @@ fn tomlAotIsArrayOfDictionaries(value: Value) bool {
     };
 }
 
-fn markupBuiltin(runtime: *Runtime, command: aot_builtin.Command, value: Value) !Value {
+pub fn markupBuiltin(runtime: *Runtime, command: aot_builtin.Command, value: Value) !Value {
     const units = try valueUtf16Alloc(runtime, value);
     defer runtime.allocator.free(units);
     const source = try (string_mod.String{ .allocator = runtime.allocator, .units = units }).toUtf8Lossy(runtime.allocator);
@@ -11818,7 +10488,7 @@ fn markupBuiltin(runtime: *Runtime, command: aot_builtin.Command, value: Value) 
     return runtimeUtf8String(runtime, output);
 }
 
-fn courtesyBuiltin(runtime: *Runtime, command: aot_builtin.Command) Value {
+pub fn courtesyBuiltin(runtime: *Runtime, command: aot_builtin.Command) Value {
     switch (command) {
         .courtesy_increment => {
             if (!std.math.isFinite(runtime.courtesy_level) or runtime.courtesy_level == 0) runtime.courtesy_level = 0;
@@ -11841,7 +10511,7 @@ fn courtesyBuiltin(runtime: *Runtime, command: aot_builtin.Command) Value {
     }
 }
 
-fn systemExecutionBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn systemExecutionBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     switch (command) {
         .system_execute => {
             if (arguments.len == 0) return .{};
@@ -11872,7 +10542,7 @@ fn systemExecutionBuiltin(runtime: *Runtime, command: aot_builtin.Command, argum
     }
 }
 
-fn debugBreakpointWaitBuiltin(
+pub fn debugBreakpointWaitBuiltin(
     runtime: *Runtime,
     breakpoints: *Value,
     force_wait: *Value,
@@ -11911,7 +10581,7 @@ fn debugBreakpointWaitBuiltin(
     }
 }
 
-fn measureCallableBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+pub fn measureCallableBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     if (arguments.len == 0) return error.NotCallable;
     var roots = [_]Value{ arguments[arguments.len - 1], .{}, .{} };
     var frame = RootFrame{};
@@ -11931,7 +10601,7 @@ fn shouldRegisterNamedFunction(name: []const u8) bool {
     return name.len > 0 and std.mem.indexOf(u8, name, "__lambda$") == null;
 }
 
-fn systemGlobalFunctionNamesBuiltin(runtime: *Runtime) !Value {
+pub fn systemGlobalFunctionNamesBuiltin(runtime: *Runtime) !Value {
     var roots = [_]Value{ .{}, .{} };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -11945,17 +10615,17 @@ fn systemGlobalFunctionNamesBuiltin(runtime: *Runtime) !Value {
     return roots[0];
 }
 
-fn nodeEnvironmentBuiltin(runtime: *Runtime, command: aot_builtin.Command) !Value {
+pub fn nodeEnvironmentBuiltin(runtime: *Runtime, command: aot_builtin.Command) !Value {
     return runtimeUtf8String(runtime, if (command == .node_os) aotOsName() else aotArchitectureName());
 }
 
-fn nodeProcessExitCode(runtime: *Runtime, value: Value) !u8 {
+pub fn nodeProcessExitCode(runtime: *Runtime, value: Value) !u8 {
     const number = try valueToNumberRuntime(runtime, value);
     if (!std.math.isFinite(number)) return 0;
     return @intFromFloat(@mod(@trunc(number), 256.0));
 }
 
-fn nodeCryptoBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn nodeCryptoBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     switch (command) {
         .node_hash_value => {
             if (arguments.len < 2) return error.InvalidArgumentCount;
@@ -12023,7 +10693,7 @@ fn nodeCryptoBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments:
     }
 }
 
-fn nodeFileExistenceBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn nodeFileExistenceBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
     const path = try valueUtf8LossyAlloc(runtime, arguments[0]);
     defer runtime.allocator.free(path);
@@ -12034,7 +10704,7 @@ fn nodeFileExistenceBuiltin(runtime: *Runtime, command: aot_builtin.Command, arg
     return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(result) };
 }
 
-fn nodeFileReadBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn nodeFileReadBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
     const path = try valueUtf8LossyAlloc(runtime, arguments[0]);
     defer runtime.allocator.free(path);
@@ -12048,7 +10718,7 @@ fn nodeFileReadBuiltin(runtime: *Runtime, command: aot_builtin.Command, argument
     return if (command == .node_file_binary_read) runtime.createBytes(bytes) else runtimeUtf8StringLossy(runtime, bytes);
 }
 
-fn nodeFileSaveBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+pub fn nodeFileSaveBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     if (arguments.len < 2) return error.InvalidArgumentCount;
     const path = try valueUtf8LossyAlloc(runtime, arguments[1]);
     defer runtime.allocator.free(path);
@@ -12088,7 +10758,7 @@ fn nodeEncodingValueBytesAlloc(runtime: *Runtime, value: Value) ![]u8 {
     return valueUtf8LossyAlloc(runtime, value);
 }
 
-fn nodeEncodingBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn nodeEncodingBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
     if ((command == .node_encoding_encode or command == .node_encoding_decode) and arguments.len < 2) {
         return error.InvalidArgumentCount;
@@ -12118,7 +10788,7 @@ fn nodeEncodingBuiltin(runtime: *Runtime, command: aot_builtin.Command, argument
     };
 }
 
-fn nodeEncodedFileReadBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn nodeEncodedFileReadBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
     const path = try valueUtf8LossyAlloc(runtime, arguments[0]);
     defer runtime.allocator.free(path);
@@ -12134,7 +10804,7 @@ fn nodeEncodedFileReadBuiltin(runtime: *Runtime, command: aot_builtin.Command, a
     return runtime.createString(units);
 }
 
-fn nodeEncodedFileSaveBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn nodeEncodedFileSaveBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     if (arguments.len < 2) return error.InvalidArgumentCount;
     const units = try valueUtf16Alloc(runtime, arguments[0]);
     defer runtime.allocator.free(units);
@@ -12146,21 +10816,21 @@ fn nodeEncodedFileSaveBuiltin(runtime: *Runtime, command: aot_builtin.Command, a
     return .{};
 }
 
-fn isNodeFileOperationCommand(command: aot_builtin.Command) bool {
+pub fn isNodeFileOperationCommand(command: aot_builtin.Command) bool {
     return switch (command) {
         .node_file_list, .node_file_list_all, .node_folder_create, .node_file_copy, .node_file_copy_overwrite, .node_file_move, .node_file_move_overwrite, .node_file_delete => true,
         else => false,
     };
 }
 
-fn isNodeFileCallbackCommand(command: aot_builtin.Command) bool {
+pub fn isNodeFileCallbackCommand(command: aot_builtin.Command) bool {
     return switch (command) {
         .node_file_process_callback, .node_file_process_stop, .node_file_copy_callback, .node_file_move_callback, .node_file_delete_callback => true,
         else => false,
     };
 }
 
-fn nodeFileCallbackBuiltin(runtime: *Runtime, target: ?*Value, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn nodeFileCallbackBuiltin(runtime: *Runtime, target: ?*Value, command: aot_builtin.Command, arguments: []const Value) !Value {
     switch (command) {
         .node_file_process_callback => {
             if (arguments.len < 1) return error.InvalidArgumentCount;
@@ -12217,7 +10887,7 @@ fn nodeFileCallbackBuiltin(runtime: *Runtime, target: ?*Value, command: aot_buil
     }
 }
 
-fn nodeFileOperationBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value, file_copy_default: *Value) !Value {
+pub fn nodeFileOperationBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value, file_copy_default: *Value) !Value {
     return switch (command) {
         .node_file_list => nodeFileListBuiltin(runtime, arguments, false),
         .node_file_list_all => nodeFileListBuiltin(runtime, arguments, true),
@@ -12424,7 +11094,7 @@ fn nodeAotPathExists(io: std.Io, path: []const u8) bool {
     return true;
 }
 
-fn nodeFileSizeBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+pub fn nodeFileSizeBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
     const path = try valueUtf8LossyAlloc(runtime, arguments[0]);
     defer runtime.allocator.free(path);
@@ -12432,7 +11102,7 @@ fn nodeFileSizeBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     return numberValue(@floatFromInt(stat.size));
 }
 
-fn nodeFileInfoBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+pub fn nodeFileInfoBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
     const path = try valueUtf8LossyAlloc(runtime, arguments[0]);
     defer runtime.allocator.free(path);
@@ -12485,7 +11155,7 @@ fn nodeFileInfoFalse(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) c
     out.* = .{ .tag = @intFromEnum(Tag.boolean), .payload = 0 };
 }
 
-fn nodeEncodingSupportsBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+pub fn nodeEncodingSupportsBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
     const name = try valueUtf8LossyAlloc(runtime, arguments[0]);
     defer runtime.allocator.free(name);
@@ -12528,7 +11198,7 @@ fn nodeStdinCallbackBuiltin(runtime: *Runtime, target: *Value, arguments: []cons
     return .{};
 }
 
-fn nodeStdinLineBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn nodeStdinLineBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     _ = try ensureAotStdin(runtime);
     const prompt_value = if (arguments.len > 0) arguments[0] else Value{};
     const prompt = try valueUtf8LossyAlloc(runtime, prompt_value);
@@ -12542,7 +11212,7 @@ fn nodeStdinLineBuiltin(runtime: *Runtime, command: aot_builtin.Command, argumen
     return if (std.math.isNan(number)) text else numberValue(number);
 }
 
-fn nodeStdinAllBuiltin(runtime: *Runtime) !Value {
+pub fn nodeStdinAllBuiltin(runtime: *Runtime) !Value {
     const bytes = try ensureAotStdin(runtime);
     return runtimeUtf8StringLossy(runtime, bytes);
 }
@@ -12551,7 +11221,7 @@ fn nodeStdinValueBuiltin(runtime: *Runtime, bytes: []const u8) !Value {
     return runtimeUtf8StringLossy(runtime, bytes);
 }
 
-fn nodePostDataBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+pub fn nodePostDataBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
     var output: std.Io.Writer.Allocating = .init(runtime.allocator);
     defer output.deinit();
@@ -13027,7 +11697,7 @@ fn appendNodeUriComponent(writer: *std.Io.Writer, source: []const u8) !void {
     }
 }
 
-fn nodeDirectoryBuiltin(runtime: *Runtime, command: aot_builtin.Command) !Value {
+pub fn nodeDirectoryBuiltin(runtime: *Runtime, command: aot_builtin.Command) !Value {
     if (command == .node_temporary_directory) {
         const fallback = if (builtin.os.tag == .windows) "." else "/tmp";
         const raw = if (builtin.os.tag == .windows)
@@ -13064,7 +11734,7 @@ fn nodeTemporaryDirectoryPrefixAlloc(runtime: *Runtime) ![]u8 {
     return runtime.allocator.dupe(u8, if (trimmed.len == 0) value else trimmed);
 }
 
-fn nodeCreateTemporaryDirectoryBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+pub fn nodeCreateTemporaryDirectoryBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
     const prefix = try valueUtf8LossyAlloc(runtime, arguments[0]);
     defer runtime.allocator.free(prefix);
@@ -13111,12 +11781,12 @@ fn nodeCreateTemporaryDirectoryBuiltin(runtime: *Runtime, arguments: []const Val
     return error.TemporaryDirectoryCollision;
 }
 
-fn nodeMotherPathBuiltin(runtime: *Runtime) !Value {
+pub fn nodeMotherPathBuiltin(runtime: *Runtime) !Value {
     const path = runtime.aot_source_directory orelse return error.SourcePathUnavailable;
     return runtimeUtf8StringLossy(runtime, path);
 }
 
-fn nodeEnvironmentValueBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+pub fn nodeEnvironmentValueBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
     const key_units = try valueUtf16Alloc(runtime, arguments[0]);
     defer runtime.allocator.free(key_units);
@@ -13128,7 +11798,7 @@ fn nodeEnvironmentValueBuiltin(runtime: *Runtime, arguments: []const Value) !Val
     return runtimeUtf8String(runtime, std.mem.span(environment));
 }
 
-fn nodeEnvironmentListBuiltin(runtime: *Runtime) !Value {
+pub fn nodeEnvironmentListBuiltin(runtime: *Runtime) !Value {
     var roots = [_]Value{ .{}, .{}, .{} };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -13159,7 +11829,7 @@ fn nodeEnvironmentListBuiltin(runtime: *Runtime) !Value {
     return roots[0];
 }
 
-fn nodeCurrentDirectoryBuiltin(runtime: *Runtime) !Value {
+pub fn nodeCurrentDirectoryBuiltin(runtime: *Runtime) !Value {
     const path = try currentDirectoryAlloc(runtime);
     defer runtime.allocator.free(path);
     return runtimeUtf8StringLossy(runtime, path);
@@ -13182,7 +11852,7 @@ fn aotProcessEnvironment() std.process.Environ {
     return .{ .block = .{ .slice = std.c.environ[0..count :null] } };
 }
 
-fn nodeChangeDirectoryBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+pub fn nodeChangeDirectoryBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
     const units = try valueUtf16Alloc(runtime, arguments[0]);
     defer runtime.allocator.free(units);
@@ -13245,7 +11915,7 @@ fn setAotNodeChangeDirectoryFailure(runtime: *Runtime, cwd: []const u8, path: []
     runtime.setFailureText(message);
 }
 
-fn nodePathBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn nodePathBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     const required: usize = if (command == .node_path_resolve) 2 else 1;
     if (arguments.len < required) return error.InvalidArgumentCount;
 
@@ -13270,7 +11940,7 @@ fn nodePathBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: [
     return runtimeUtf8StringLossy(runtime, resolved);
 }
 
-fn nodePathComponentBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn nodePathComponentBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
     const path = try nodePathArgument(runtime, "path", arguments[0]);
     defer runtime.allocator.free(path);
@@ -13282,7 +11952,7 @@ fn nodePathComponentBuiltin(runtime: *Runtime, command: aot_builtin.Command, arg
     return runtimeUtf8StringLossy(runtime, component);
 }
 
-fn systemPathComponentBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn systemPathComponentBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     if (arguments.len < 1) return error.InvalidArgumentCount;
     if (!isString(arguments[0])) return error.InvalidPathSource;
     const path = try valueUtf16Alloc(runtime, arguments[0]);
@@ -13555,7 +12225,7 @@ fn mathRound(value: f64) f64 {
     return result;
 }
 
-fn radixBuiltin(runtime: *Runtime, value: Value, radix_value: Value) !Value {
+pub fn radixBuiltin(runtime: *Runtime, value: Value, radix_value: Value) !Value {
     const number = try parseIntBuiltin(runtime, value);
     const radix_number: f64 = if (radix_value.tag == @intFromEnum(Tag.undefined)) 10 else try valueToNumberRuntime(runtime, radix_value);
     const truncated = @trunc(radix_number);
@@ -13566,7 +12236,7 @@ fn radixBuiltin(runtime: *Runtime, value: Value, radix_value: Value) !Value {
     return runtime.ownString(units);
 }
 
-fn rgbBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+pub fn rgbBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     var components: [3]f64 = undefined;
     for (0..3) |index| components[index] = try parseIntBuiltin(runtime, arguments[index]);
     const text = try number_mod.rgbAlloc(runtime.allocator, components);
@@ -13575,7 +12245,7 @@ fn rgbBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     return runtime.ownString(units);
 }
 
-fn rangeBuiltin(runtime: *Runtime, first: Value, last: Value) !Value {
+pub fn rangeBuiltin(runtime: *Runtime, first: Value, last: Value) !Value {
     var roots = [_]Value{ first, last, .{}, .{}, .{} };
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -13586,7 +12256,7 @@ fn rangeBuiltin(runtime: *Runtime, first: Value, last: Value) !Value {
     return roots[4];
 }
 
-fn repeatMultiplyBuiltin(runtime: *Runtime, left: Value, right: Value) !Value {
+pub fn repeatMultiplyBuiltin(runtime: *Runtime, left: Value, right: Value) !Value {
     var roots = [_]Value{ left, right, .{} };
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -13616,7 +12286,7 @@ fn repeatMultiplyBuiltin(runtime: *Runtime, left: Value, right: Value) !Value {
     return roots[2];
 }
 
-fn codePointCount(units: []const u16) usize {
+pub fn codePointCount(units: []const u16) usize {
     var count: usize = 0;
     var index: usize = 0;
     while (index < units.len) : (count += 1) index += codePointLength(units, index);
@@ -13853,7 +12523,7 @@ fn joinedSearchElementsEqual(runtime: *Runtime, source: SearchElements, start: u
     }
 }
 
-fn codePointFindBuiltin(runtime: *Runtime, source: Value, needle: Value) !usize {
+pub fn codePointFindBuiltin(runtime: *Runtime, source: Value, needle: Value) !usize {
     var roots = [_]Value{ source, needle };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -13875,7 +12545,7 @@ fn codePointFindBuiltin(runtime: *Runtime, source: Value, needle: Value) !usize 
     return 0;
 }
 
-fn stringBoundaryBuiltin(runtime: *Runtime, source: Value, needle: Value, starts: bool) !Value {
+pub fn stringBoundaryBuiltin(runtime: *Runtime, source: Value, needle: Value, starts: bool) !Value {
     try requireStringReceiver(source, starts);
     const source_units = try valueUtf16Alloc(runtime, source);
     defer runtime.allocator.free(source_units);
@@ -13903,7 +12573,7 @@ fn requireStringReceiver(value: Value, starts: bool) !void {
     };
 }
 
-fn elementCountBuiltin(runtime: *Runtime, value: Value) !usize {
+pub fn elementCountBuiltin(runtime: *Runtime, value: Value) !usize {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
         .byte_buffer => value.object().?.payload.byte_buffer.bytes.len,
         .array => value.object().?.payload.array.items.len,
@@ -13919,7 +12589,7 @@ fn elementCountBuiltin(runtime: *Runtime, value: Value) !usize {
     };
 }
 
-fn addParsedBuiltin(runtime: *Runtime, left: Value, right: Value) !Value {
+pub fn addParsedBuiltin(runtime: *Runtime, left: Value, right: Value) !Value {
     var roots = [_]Value{ left, right, .{}, .{} };
     var frame: RootFrame = .{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -13932,7 +12602,7 @@ fn addParsedBuiltin(runtime: *Runtime, left: Value, right: Value) !Value {
     return bigIntArithmetic(runtime, .add, roots[2], roots[3]);
 }
 
-fn sumParsedBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+pub fn sumParsedBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     if (arguments.len > 0 and arguments[0].tag == @intFromEnum(Tag.array)) {
         var total: f64 = 0;
         for (arguments[0].object().?.payload.array.items) |item| {
@@ -14096,7 +12766,7 @@ fn cutBuiltin(runtime: *Runtime, source: Value, first: Value, last: ?Value, rang
     return .{ .result = roots[3], .remainder = roots[4] };
 }
 
-fn sequentialAddBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
+pub fn sequentialAddBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     if (arguments.len == 0) return runtime.systemContext();
     if (arguments.len == 1) return arguments[0];
     var roots = [_]Value{ arguments[1], .{} };
@@ -14108,7 +12778,7 @@ fn sequentialAddBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     return roots[1];
 }
 
-fn chrBuiltin(runtime: *Runtime, value: Value) !Value {
+pub fn chrBuiltin(runtime: *Runtime, value: Value) !Value {
     if (value.tag != @intFromEnum(Tag.array)) return codePointStringBuiltin(runtime, try valueToNumberRuntime(runtime, value));
     var roots = [_]Value{ value, .{}, .{} };
     var frame: RootFrame = .{};
@@ -14137,7 +12807,7 @@ fn codePointStringBuiltin(runtime: *Runtime, number: f64) !Value {
     return runtime.createString(&.{ @intCast(0xd800 + (offset >> 10)), @intCast(0xdc00 + (offset & 0x3ff)) });
 }
 
-fn ascBuiltin(runtime: *Runtime, value: Value) !Value {
+pub fn ascBuiltin(runtime: *Runtime, value: Value) !Value {
     if (value.tag != @intFromEnum(Tag.array)) return numberValue(@floatFromInt(try firstCodePointBuiltin(runtime, value)));
     var roots = [_]Value{ value, .{} };
     var frame: RootFrame = .{};
@@ -14160,7 +12830,7 @@ fn firstCodePointBuiltin(runtime: *Runtime, value: Value) !u21 {
     return @intCast(units[0]);
 }
 
-fn stringInsertBuiltin(runtime: *Runtime, source_value: Value, position_value: Value, addition_value: Value) !Value {
+pub fn stringInsertBuiltin(runtime: *Runtime, source_value: Value, position_value: Value, addition_value: Value) !Value {
     const source = try valueUtf16Alloc(runtime, source_value);
     defer runtime.allocator.free(source);
     const addition = try valueUtf16Alloc(runtime, addition_value);
@@ -14176,7 +12846,7 @@ fn stringInsertBuiltin(runtime: *Runtime, source_value: Value, position_value: V
     return runtime.ownString(output);
 }
 
-fn stringSearchBuiltin(runtime: *Runtime, source_value: Value, start_value: Value, needle_value: Value) !f64 {
+pub fn stringSearchBuiltin(runtime: *Runtime, source_value: Value, start_value: Value, needle_value: Value) !f64 {
     const source = try valueUtf16Alloc(runtime, source_value);
     defer runtime.allocator.free(source);
     const needle = try valueUtf16Alloc(runtime, needle_value);
@@ -14208,7 +12878,7 @@ fn stringCollectionIndex(number: f64, length: usize) usize {
     return @intFromFloat(@trunc(number));
 }
 
-fn appendBuiltin(runtime: *Runtime, source: Value, addition: Value, newline: bool) !Value {
+pub fn appendBuiltin(runtime: *Runtime, source: Value, addition: Value, newline: bool) !Value {
     if (source.tag == @intFromEnum(Tag.array)) {
         try source.object().?.payload.array.append(runtime.allocator, addition);
         return source;
@@ -14227,7 +12897,7 @@ fn appendBuiltin(runtime: *Runtime, source: Value, addition: Value, newline: boo
     return runtime.ownString(output);
 }
 
-fn joinBuiltin(runtime: *Runtime, values: []const Value) !Value {
+pub fn joinBuiltin(runtime: *Runtime, values: []const Value) !Value {
     var units: std.ArrayList(u16) = .empty;
     errdefer units.deinit(runtime.allocator);
     for (values) |value| switch (@as(Tag, @enumFromInt(value.tag))) {
@@ -14246,7 +12916,7 @@ fn joinBuiltin(runtime: *Runtime, values: []const Value) !Value {
 /// official plugin also accepts other values by splitting their String form
 /// at LF before joining.  `配列只結合` is the same operation with an empty
 /// separator.
-fn arrayJoinBuiltin(runtime: *Runtime, source: Value, separator: Value, only: bool) !Value {
+pub fn arrayJoinBuiltin(runtime: *Runtime, source: Value, separator: Value, only: bool) !Value {
     var separator_units: []const u16 = &.{};
     var allocated_separator: ?[]u16 = null;
     defer if (allocated_separator) |units| runtime.allocator.free(units);
@@ -14287,7 +12957,7 @@ fn arrayJoinBuiltin(runtime: *Runtime, source: Value, separator: Value, only: bo
     return runtime.ownString(try output.toOwnedSlice(runtime.allocator));
 }
 
-fn arraySearchBuiltin(runtime: *Runtime, source: Value, needle: Value) !f64 {
+pub fn arraySearchBuiltin(runtime: *Runtime, source: Value, needle: Value) !f64 {
     if (source.tag != @intFromEnum(Tag.array)) return -1;
     const object = source.object() orelse return error.InvalidArray;
     if (object.payload != .array) return error.InvalidArray;
@@ -14298,7 +12968,7 @@ fn arraySearchBuiltin(runtime: *Runtime, source: Value, needle: Value) !f64 {
     return -1;
 }
 
-fn arrayOrderingBuiltin(runtime: *Runtime, command: aot_builtin.Command, source: Value) !Value {
+pub fn arrayOrderingBuiltin(runtime: *Runtime, command: aot_builtin.Command, source: Value) !Value {
     if (source.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
     const object = source.object() orelse return error.InvalidArray;
     if (object.payload != .array) return error.InvalidArray;
@@ -14348,7 +13018,7 @@ fn arrayShuffleBuiltin(runtime: *Runtime, source: Value) !Value {
     return source;
 }
 
-fn arrayCallbackBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn arrayCallbackBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     if (arguments.len < 2) return error.InvalidArgumentCount;
     var roots = [_]Value{ arguments[0], arguments[1], .{}, .{} };
     var frame = RootFrame{};
@@ -15617,7 +14287,7 @@ fn aotPropertyKeyEqual(runtime: *Runtime, key: Value, units: []const u16) !bool 
     return std.mem.eql(u16, key_units, units);
 }
 
-fn dictionaryKeysBuiltin(runtime: *Runtime, source: Value) !Value {
+pub fn dictionaryKeysBuiltin(runtime: *Runtime, source: Value) !Value {
     var roots = [_]Value{ source, .{} };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -15680,7 +14350,7 @@ fn dictionaryKeysBuiltin(runtime: *Runtime, source: Value) !Value {
     return roots[1];
 }
 
-fn dictionaryValuesBuiltin(runtime: *Runtime, source: Value) !Value {
+pub fn dictionaryValuesBuiltin(runtime: *Runtime, source: Value) !Value {
     var roots = [_]Value{ source, .{} };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -15728,7 +14398,7 @@ fn dictionaryValuesBuiltin(runtime: *Runtime, source: Value) !Value {
     return roots[1];
 }
 
-fn dictionaryRemoveBuiltin(runtime: *Runtime, source: Value, key: Value) !Value {
+pub fn dictionaryRemoveBuiltin(runtime: *Runtime, source: Value, key: Value) !Value {
     var roots = [_]Value{ source, key };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -15809,7 +14479,7 @@ fn byteBufferIndexDeleteFailure(runtime: *Runtime, key_units: []const u16) !void
     runtime.setFailureText(message);
 }
 
-fn dictionaryHasBuiltin(runtime: *Runtime, source: Value, key: Value) !bool {
+pub fn dictionaryHasBuiltin(runtime: *Runtime, source: Value, key: Value) !bool {
     var roots = [_]Value{ source, key };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &roots, roots.len);
@@ -16079,7 +14749,7 @@ fn arrayPushBuiltin(runtime: *Runtime, source: Value, item: Value) !Value {
     return source;
 }
 
-fn arrayMutationBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn arrayMutationBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     const source: Value = if (arguments.len > 0) arguments[0] else .{};
     const index: Value = if (arguments.len > 1) arguments[1] else .{};
     const item: Value = if (arguments.len > 2) arguments[2] else .{};
@@ -17329,7 +15999,7 @@ fn v8SmallTableSortBuiltin(
     }
 }
 
-fn tableBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn tableBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     const source: Value = if (arguments.len > 0) arguments[0] else .{};
     if (source.tag != @intFromEnum(Tag.array)) return error.ArrayExpected;
     switch (command) {
@@ -17902,7 +16572,7 @@ fn arrayFillAtDepth(runtime: *Runtime, value: Value, shape: Value, depth: usize)
     return roots[2];
 }
 
-fn explodeBuiltin(runtime: *Runtime, value: Value) !Value {
+pub fn explodeBuiltin(runtime: *Runtime, value: Value) !Value {
     const units = try valueUtf16Alloc(runtime, value);
     defer runtime.allocator.free(units);
     var roots = [_]Value{ .{}, .{} };
@@ -17920,7 +16590,7 @@ fn explodeBuiltin(runtime: *Runtime, value: Value) !Value {
     return roots[0];
 }
 
-fn refrainBuiltin(runtime: *Runtime, value: Value, count_value: Value) !Value {
+pub fn refrainBuiltin(runtime: *Runtime, value: Value, count_value: Value) !Value {
     const count_number = try valueToNumberRuntime(runtime, count_value);
     if (std.math.isNan(count_number) or count_number <= 0) return runtime.createString(&.{});
     if (!std.math.isFinite(count_number) or count_number > @as(f64, @floatFromInt(std.math.maxInt(usize)))) return error.RepetitionTooLarge;
@@ -17933,7 +16603,7 @@ fn refrainBuiltin(runtime: *Runtime, value: Value, count_value: Value) !Value {
     return runtime.ownString(output);
 }
 
-fn occurrenceBuiltin(runtime: *Runtime, source: Value, needle: Value) !bool {
+pub fn occurrenceBuiltin(runtime: *Runtime, source: Value, needle: Value) !bool {
     if (source.tag == @intFromEnum(Tag.array)) {
         for (source.object().?.payload.array.items) |item| {
             if (try sameValueZero(runtime, item, needle)) return true;
@@ -17947,7 +16617,7 @@ fn occurrenceBuiltin(runtime: *Runtime, source: Value, needle: Value) !bool {
     return indexOfUnitsBuiltin(source_units, needle_units, 0) != null;
 }
 
-fn occurrenceCountBuiltin(runtime: *Runtime, source_value: Value, needle_value: Value) !i64 {
+pub fn occurrenceCountBuiltin(runtime: *Runtime, source_value: Value, needle_value: Value) !i64 {
     const source = try valueUtf16Alloc(runtime, source_value);
     defer runtime.allocator.free(source);
     const needle = try valueUtf16Alloc(runtime, needle_value);
@@ -17962,7 +16632,7 @@ fn occurrenceCountBuiltin(runtime: *Runtime, source_value: Value, needle_value: 
     return count;
 }
 
-fn substringBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
+pub fn substringBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
     const source = try valueUtf16Alloc(runtime, arguments[0]);
     defer runtime.allocator.free(source);
     const length = codePointCount(source);
@@ -18005,7 +16675,7 @@ fn sliceIndexBuiltin(number: f64, length: usize) usize {
     return @intFromFloat(@trunc(number));
 }
 
-fn splitBuiltin(runtime: *Runtime, source_value: Value, delimiter_value: Value, first_only: bool) !Value {
+pub fn splitBuiltin(runtime: *Runtime, source_value: Value, delimiter_value: Value, first_only: bool) !Value {
     const source = try valueUtf16Alloc(runtime, source_value);
     defer runtime.allocator.free(source);
     const delimiter = try valueUtf16Alloc(runtime, delimiter_value);
@@ -18040,7 +16710,7 @@ fn appendStringPart(runtime: *Runtime, roots: *[2]Value, units: []const u16) !vo
     try roots[0].object().?.payload.array.append(runtime.allocator, roots[1]);
 }
 
-fn stringRemoveBuiltin(runtime: *Runtime, source_value: Value, start_value: Value, count_value: Value) !Value {
+pub fn stringRemoveBuiltin(runtime: *Runtime, source_value: Value, start_value: Value, count_value: Value) !Value {
     const source = try valueUtf16Alloc(runtime, source_value);
     defer runtime.allocator.free(source);
     const length = codePointCount(source);
@@ -18060,7 +16730,7 @@ fn spliceDeleteCountBuiltin(number: f64, remaining: usize) usize {
     return @intFromFloat(@trunc(number));
 }
 
-fn trimBuiltin(runtime: *Runtime, value: Value, trim_left: bool, trim_right: bool) !Value {
+pub fn trimBuiltin(runtime: *Runtime, value: Value, trim_left: bool, trim_right: bool) !Value {
     const units = try valueUtf16Alloc(runtime, value);
     defer runtime.allocator.free(units);
     var start: usize = 0;
@@ -18074,7 +16744,7 @@ fn trimBuiltin(runtime: *Runtime, value: Value, trim_left: bool, trim_right: boo
     return runtime.createString(units[start..end]);
 }
 
-fn unicodeCaseBuiltin(runtime: *Runtime, value: Value, uppercase: bool) !Value {
+pub fn unicodeCaseBuiltin(runtime: *Runtime, value: Value, uppercase: bool) !Value {
     const units = try valueUtf16Alloc(runtime, value);
     defer runtime.allocator.free(units);
     var codepoints: std.ArrayList(u21) = .empty;
@@ -18132,7 +16802,7 @@ fn appendCodePointBuiltin(allocator: std.mem.Allocator, output: *std.ArrayList(u
     try output.append(allocator, @intCast(0xdc00 + (offset & 0x3ff)));
 }
 
-fn kanaOffsetBuiltin(runtime: *Runtime, value: Value, to_katakana: bool) !Value {
+pub fn kanaOffsetBuiltin(runtime: *Runtime, value: Value, to_katakana: bool) !Value {
     const units = try valueUtf16Alloc(runtime, value);
     defer runtime.allocator.free(units);
     const output = try runtime.allocator.dupe(u16, units);
@@ -18146,7 +16816,7 @@ fn kanaOffsetBuiltin(runtime: *Runtime, value: Value, to_katakana: bool) !Value 
     return runtime.ownString(output);
 }
 
-fn asciiWidthBuiltin(runtime: *Runtime, value: Value, to_full: bool, symbols: bool) !Value {
+pub fn asciiWidthBuiltin(runtime: *Runtime, value: Value, to_full: bool, symbols: bool) !Value {
     const units = try valueUtf16Alloc(runtime, value);
     defer runtime.allocator.free(units);
     const output = try runtime.allocator.dupe(u16, units);
@@ -18174,11 +16844,11 @@ fn asciiWidthBuiltin(runtime: *Runtime, value: Value, to_full: bool, symbols: bo
     return runtime.ownString(output);
 }
 
-fn kanaWidthBuiltin(runtime: *Runtime, value: Value, to_full: bool) !Value {
+pub fn kanaWidthBuiltin(runtime: *Runtime, value: Value, to_full: bool) !Value {
     return kanaMapBuiltin(runtime, value, to_full);
 }
 
-fn widthBuiltin(runtime: *Runtime, value: Value, to_full: bool) !Value {
+pub fn widthBuiltin(runtime: *Runtime, value: Value, to_full: bool) !Value {
     // 公式実装と同じく、全角化はカナ→英数記号、半角化もカナ→英数記号の順に行う。
     var roots = [_]Value{.{}};
     var frame: RootFrame = .{};
@@ -18188,7 +16858,7 @@ fn widthBuiltin(runtime: *Runtime, value: Value, to_full: bool) !Value {
     return asciiWidthBuiltin(runtime, roots[0], to_full, true);
 }
 
-fn currencyBuiltin(runtime: *Runtime, value: Value) !Value {
+pub fn currencyBuiltin(runtime: *Runtime, value: Value) !Value {
     const units = try valueUtf16Alloc(runtime, value);
     defer runtime.allocator.free(units);
     var output: std.ArrayList(u16) = .empty;
@@ -18222,7 +16892,7 @@ fn currencyBuiltin(runtime: *Runtime, value: Value) !Value {
     return runtime.ownString(try output.toOwnedSlice(runtime.allocator));
 }
 
-fn padBuiltin(runtime: *Runtime, value: Value, width_value: Value, fill: u16) !Value {
+pub fn padBuiltin(runtime: *Runtime, value: Value, width_value: Value, fill: u16) !Value {
     const units = try valueUtf16Alloc(runtime, value);
     defer runtime.allocator.free(units);
     const original_number = switch (@as(Tag, @enumFromInt(width_value.tag))) {
@@ -18263,7 +16933,7 @@ fn padBuiltin(runtime: *Runtime, value: Value, width_value: Value, fill: u16) !V
     return runtime.ownString(output);
 }
 
-fn stringPredicateBuiltin(runtime: *Runtime, value: Value, command: aot_builtin.Command) !Value {
+pub fn stringPredicateBuiltin(runtime: *Runtime, value: Value, command: aot_builtin.Command) !Value {
     const units = try valueUtf16Alloc(runtime, value);
     defer runtime.allocator.free(units);
     const first = if (units.len == 0) 0 else units[0];
@@ -18507,7 +17177,7 @@ fn indexOfUnitsBuiltin(haystack: []const u16, needle: []const u16, start: usize)
     return null;
 }
 
-fn replaceBuiltin(runtime: *Runtime, source_value: Value, needle_value: Value, replacement_value: Value, all: bool) !Value {
+pub fn replaceBuiltin(runtime: *Runtime, source_value: Value, needle_value: Value, replacement_value: Value, all: bool) !Value {
     const source = try valueUtf16Alloc(runtime, source_value);
     defer runtime.allocator.free(source);
     // split(undefined) returns the source as its sole element, so join never
@@ -24338,10 +23008,10 @@ test "AOT HTTP routeと静的配信の補助判定は公式境界を保つ" {
     try std.testing.expectEqualStrings("hello.txt", aotHttpUploadBasename("/tmp/hello.txt"));
 }
 
-fn numberValue(number: f64) Value {
+pub fn numberValue(number: f64) Value {
     return .{ .tag = @intFromEnum(Tag.number), .payload = @bitCast(number) };
 }
 
-fn staticStringValue(comptime text: [:0]const u8) Value {
+pub fn staticStringValue(comptime text: [:0]const u8) Value {
     return .{ .tag = @intFromEnum(Tag.static_utf8_string), .payload = @intFromPtr(text.ptr) };
 }
