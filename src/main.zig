@@ -1378,17 +1378,17 @@ const CliHost = struct {
         switch (builtin.os.tag) {
             .windows => return WindowsShell.openExternal(allocator, target, reveal),
             .macos => {
-                const argv = if (reveal) &.{ "/usr/bin/open", "-R", target } else &.{ "/usr/bin/open", target };
+                const argv: []const []const u8 = if (reveal) &[_][]const u8{ "/usr/bin/open", "-R", target } else &[_][]const u8{ "/usr/bin/open", target };
                 const result = try std.process.run(allocator, self.io, .{ .argv = argv, .stdout_limit = .limited(1024 * 1024), .stderr_limit = .limited(1024 * 1024) });
                 defer allocator.free(result.stdout);
                 defer allocator.free(result.stderr);
                 if (result.term != .exited or result.term.exited != 0) return error.OpenExternalFailed;
             },
             else => {
-                const argv = if (reveal)
-                    &.{ "xdg-open", std.fs.path.dirname(target) orelse "." }
+                const argv: []const []const u8 = if (reveal)
+                    &[_][]const u8{ "xdg-open", std.fs.path.dirname(target) orelse "." }
                 else
-                    &.{ "xdg-open", target };
+                    &[_][]const u8{ "xdg-open", target };
                 const result = try std.process.run(allocator, self.io, .{ .argv = argv, .stdout_limit = .limited(1024 * 1024), .stderr_limit = .limited(1024 * 1024) });
                 defer allocator.free(result.stdout);
                 defer allocator.free(result.stderr);
@@ -1766,11 +1766,14 @@ fn httpRequest(host: *CliHost, allocator: std.mem.Allocator, operation: anytype)
 
     const uri = try std.Uri.parse(operation.url);
     const protocol = std.http.Client.Protocol.fromUri(uri) orelse return error.UnsupportedUriScheme;
-    var host_name_buffer: [std.http.Client.HostName.max_len]u8 = undefined;
+    var host_name_buffer: [std.Io.net.HostName.max_len]u8 = undefined;
     const host_name = try uri.getHost(&host_name_buffer);
-    const port = uri.port orelse protocol.port();
+    const port = uri.port orelse switch (protocol) {
+        .plain => @as(u16, 80),
+        .tls => @as(u16, 443),
+    };
 
-    const connection = try client.connectTcpOptions(&client, .{
+    const connection = try client.connectTcpOptions(.{
         .host = host_name,
         .port = port,
         .protocol = protocol,
