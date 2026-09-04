@@ -660,7 +660,7 @@ const CliHost = struct {
 
     fn runCommand(context: *anyopaque, allocator: std.mem.Allocator, command: []const u8) !lnako.plugins.node.CommandResult {
         const self: *CliHost = @ptrCast(@alignCast(context));
-        return runShellCommand(allocator, self.io, command, null);
+        return host.process.runShellCommand(allocator, self.io, command, null);
     }
 
     fn startCommand(context: *anyopaque, command: []const u8) !u64 {
@@ -1058,7 +1058,7 @@ const CliHost = struct {
             if (self.environmentValue("LNAKO_TEST_ARCHIVE_HELPER")) |helper| {
                 if (std.mem.eql(u8, helper, tool)) return host.archive.runStoredZipArchive(allocator, self.io, operation, source, destination);
             }
-            return runArchiveTool(allocator, self.io, tool, operation, source, destination);
+            return host.archive.runArchiveTool(allocator, self.io, tool, operation, source, destination);
         }
         return host.archive.runStoredZipArchive(allocator, self.io, operation, source, destination);
     }
@@ -1149,14 +1149,14 @@ const AsyncOperationTask = struct {
     fn execute(self: *@This()) !lnako.plugins.node.CommandResult {
         const allocator = std.heap.page_allocator;
         return switch (self.operation) {
-            .command => |operation| runShellCommand(allocator, self.host.io, operation.command, operation.cwd),
+            .command => |operation| host.process.runShellCommand(allocator, self.host.io, operation.command, operation.cwd),
             .file => |operation| blk: {
                 switch (operation.operation) {
                     .copy => try CliHost.copyPath(self.host, allocator, operation.source, operation.destination orelse return error.MissingFileDestination, operation.overwrite),
                     .move => try CliHost.movePath(self.host, allocator, operation.source, operation.destination orelse return error.MissingFileDestination, operation.overwrite),
                     .delete => try CliHost.deletePath(self.host, operation.source),
                 }
-                break :blk try emptyCommandResult(allocator);
+                break :blk try host.process.emptyCommandResult(allocator);
             },
             .archive => |operation| blk: {
                 const stdout_bytes = try CliHost.archive(self.host, allocator, operation.operation, operation.source, operation.destination, operation.external_tool);
@@ -1261,54 +1261,11 @@ fn httpRequest(cli_host: *CliHost, allocator: std.mem.Allocator, operation: anyt
     };
 }
 
-fn emptyCommandResult(allocator: std.mem.Allocator) !lnako.plugins.node.CommandResult {
-    const stdout_bytes = try allocator.alloc(u8, 0);
-    errdefer allocator.free(stdout_bytes);
-    return .{ .stdout = stdout_bytes, .stderr = try allocator.alloc(u8, 0), .exit_code = 0 };
-}
-
 fn destroyAsyncTask(task: *AsyncOperationTask, join: bool) void {
     if (join) if (task.thread) |thread| thread.join();
     if (task.result) |*result| result.deinit(std.heap.page_allocator);
     task.operation.deinit();
     std.heap.page_allocator.destroy(task);
-}
-
-fn runShellCommand(allocator: std.mem.Allocator, io: std.Io, command: []const u8, cwd: ?[]const u8) !lnako.plugins.node.CommandResult {
-    const argv: []const []const u8 = if (builtin.os.tag == .windows)
-        &.{ "cmd.exe", "/d", "/s", "/c", command }
-    else
-        &.{ "/bin/sh", "-c", command };
-    const result = try std.process.run(allocator, io, .{
-        .argv = argv,
-        .cwd = if (cwd) |path| .{ .path = path } else .inherit,
-        .stdout_limit = .limited(64 * 1024 * 1024),
-        .stderr_limit = .limited(64 * 1024 * 1024),
-    });
-    return .{
-        .stdout = result.stdout,
-        .stderr = result.stderr,
-        .exit_code = switch (result.term) {
-            .exited => |code| code,
-            else => 1,
-        },
-    };
-}
-
-fn runArchiveTool(allocator: std.mem.Allocator, io: std.Io, tool: []const u8, operation: lnako.plugins.node.ArchiveOperation, source: []const u8, destination: []const u8) ![]u8 {
-    const output_option = if (operation == .extract) try std.fmt.allocPrint(allocator, "-o{s}", .{destination}) else null;
-    defer if (output_option) |option| allocator.free(option);
-    const argv: []const []const u8 = switch (operation) {
-        .compress => &.{ tool, "a", "-r", destination, source, "-y" },
-        .extract => &.{ tool, "x", source, output_option.?, "-y" },
-    };
-    const result = try std.process.run(allocator, io, .{ .argv = argv, .stdout_limit = .limited(64 * 1024 * 1024), .stderr_limit = .limited(64 * 1024 * 1024) });
-    allocator.free(result.stderr);
-    if (result.term != .exited or result.term.exited != 0) {
-        allocator.free(result.stdout);
-        return error.ArchiveToolFailed;
-    }
-    return result.stdout;
 }
 
 fn lessThanNodeFileEntry(_: void, left: lnako.plugins.node.FileEntry, right: lnako.plugins.node.FileEntry) bool {
