@@ -92,11 +92,12 @@ git add compat/
 # Try to sign the commit. If GPG signing is unavailable, fall back to an
 # unsigned commit; the project rule prefers signed commits, but a hook should
 # not block pushes when the signing key is not available.
-if git commit -S -m "互換性証拠のprovenanceを現行HEADへfast-forward" >/dev/null 2>&1; then
-    echo "pre-push: created signed fast-forward commit" >&2
-elif git commit -m "互換性証拠のprovenanceを現行HEADへfast-forward" >/dev/null 2>&1; then
-    echo "pre-push: created unsigned fast-forward commit (GPG signing not configured)" >&2
+EVIDENCE_MSG="compat: 互換性証拠を更新"
+if git commit -S -m "$EVIDENCE_MSG" >/dev/null 2>&1; then
+    echo "pre-push: created signed evidence commit" >&2
+elif git commit -m "$EVIDENCE_MSG" >/dev/null 2>&1; then
+    echo "pre-push: created unsigned evidence commit (GPG signing not configured)" >&2
 else
-    echo "pre-push: failed to create fast-forward commit" >&2
+    echo "pre-push: failed to create evidence commit" >&2
     exit 1
 fi
