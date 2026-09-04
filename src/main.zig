@@ -695,8 +695,8 @@ const CliHost = struct {
                 .receiveFn = receiveHttpServerRequest,
                 .respondFn = respondHttpServer,
                 .holdFn = holdHttpServerResponse,
-                .readFileFn = readFile,
-                .statPathFn = statHttpServerPath,
+                .resolveStaticPathFn = resolveHttpServerStaticPath,
+                .readStaticFileFn = readHttpServerStaticFile,
                 .saveUploadFn = saveHttpServerUpload,
                 .writeFn = write,
             } else null,
@@ -1208,6 +1208,89 @@ const CliHost = struct {
         errdefer allocator.free(path);
         try std.Io.Dir.cwd().writeFile(self.io, .{ .sub_path = path, .data = body });
         return path;
+    }
+
+    fn resolveHttpServerStaticPath(context: *anyopaque, allocator: std.mem.Allocator, root: []const u8, components: []const []const u8) !?lnako.plugins.http_server.ResolvedPath {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const root_real = std.Io.Dir.cwd().realPathFileAlloc(self.io, root, allocator) catch |err| switch (err) {
+            error.FileNotFound => return null,
+            else => return err,
+        };
+        defer allocator.free(root_real);
+
+        var relative: std.ArrayList(u8) = .empty;
+        errdefer relative.deinit(allocator);
+        for (components) |component| {
+            if (relative.items.len > 0) try relative.append(allocator, std.fs.path.sep);
+            try relative.appendSlice(allocator, component);
+            if (relative.items.len > std.fs.max_path_bytes) return null;
+        }
+
+        if (relative.items.len == 0) {
+            const index_path = try std.fs.path.join(allocator, &.{ root_real, "index.html" });
+            defer allocator.free(index_path);
+            const resolved = std.Io.Dir.cwd().realPathFileAlloc(self.io, index_path, allocator) catch |err| switch (err) {
+                error.FileNotFound => return null,
+                else => return err,
+            };
+            if (!isUnderRoot(resolved, root_real)) {
+                allocator.free(resolved);
+                return null;
+            }
+            return .{ .path = resolved, .kind = .file };
+        }
+
+        const full = try std.fs.path.join(allocator, &.{ root, relative.items });
+        defer allocator.free(full);
+        const resolved = std.Io.Dir.cwd().realPathFileAlloc(self.io, full, allocator) catch |err| switch (err) {
+            error.FileNotFound => return null,
+            else => return err,
+        };
+        if (!isUnderRoot(resolved, root_real)) {
+            allocator.free(resolved);
+            return null;
+        }
+        const stat = std.Io.Dir.cwd().statFile(self.io, resolved, .{}) catch |err| switch (err) {
+            error.FileNotFound => {
+                allocator.free(resolved);
+                return null;
+            },
+            else => return err,
+        };
+        if (stat.kind == .directory) {
+            const index_path = try std.fs.path.join(allocator, &.{ resolved, "index.html" });
+            defer allocator.free(index_path);
+            const index_resolved = std.Io.Dir.cwd().realPathFileAlloc(self.io, index_path, allocator) catch |err| switch (err) {
+                error.FileNotFound => {
+                    allocator.free(resolved);
+                    return null;
+                },
+                else => |e| return e,
+            };
+            if (!isUnderRoot(index_resolved, root_real)) {
+                allocator.free(resolved);
+                allocator.free(index_resolved);
+                return null;
+            }
+            allocator.free(resolved);
+            return .{ .path = index_resolved, .kind = .file };
+        }
+        if (stat.kind == .file) return .{ .path = resolved, .kind = .file };
+        allocator.free(resolved);
+        return null;
+    }
+
+    fn readHttpServerStaticFile(context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+        const self: *CliHost = @ptrCast(@alignCast(context));
+        const max_size = 1024 * 1024 * 1024;
+        return std.Io.Dir.cwd().readFileAlloc(self.io, path, allocator, .limited(max_size));
+    }
+
+    fn isUnderRoot(resolved: []const u8, root: []const u8) bool {
+        if (resolved.len < root.len) return false;
+        if (!std.mem.startsWith(u8, resolved, root)) return false;
+        if (resolved.len == root.len) return true;
+        return std.fs.path.isSep(resolved[root.len]);
     }
 
     fn startAsyncOperation(self: *CliHost, operation: AsyncOperation) !u64 {

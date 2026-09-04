@@ -27,14 +27,19 @@ pub const Request = struct {
 
 pub const PathStat = enum { file, directory, missing };
 
+pub const ResolvedPath = struct {
+    path: []u8,
+    kind: PathStat,
+};
+
 pub const Context = struct {
     context: *anyopaque,
     startFn: *const fn (context: *anyopaque, port: u16) anyerror!u16,
     receiveFn: *const fn (context: *anyopaque, allocator: std.mem.Allocator) anyerror!Request,
     respondFn: *const fn (context: *anyopaque, status: u16, headers: []const Header, body: []const u8) anyerror!void,
     holdFn: *const fn (context: *anyopaque) anyerror!void,
-    readFileFn: *const fn (context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) anyerror![]u8,
-    statPathFn: *const fn (context: *anyopaque, path: []const u8) anyerror!PathStat,
+    resolveStaticPathFn: *const fn (context: *anyopaque, allocator: std.mem.Allocator, root: []const u8, components: []const []const u8) anyerror!?ResolvedPath,
+    readStaticFileFn: *const fn (context: *anyopaque, allocator: std.mem.Allocator, path: []const u8) anyerror![]u8,
     saveUploadFn: *const fn (context: *anyopaque, allocator: std.mem.Allocator, filename: []const u8, body: []const u8) anyerror![]u8,
     writeFn: ?*const fn (context: *anyopaque, bytes: []const u8) anyerror!void = null,
 
@@ -462,38 +467,48 @@ fn percentDecode(allocator: std.mem.Allocator, source: []const u8, plus_as_space
 
 fn serveStatic(runtime: *Runtime, context: Context, route: Route, path: []const u8) !void {
     const relative_raw = path[@min(route.prefix.len, path.len)..];
-    const sanitized = try removeParentSegments(runtime.allocator(), relative_raw);
-    defer runtime.allocator().free(sanitized);
-    var full_path = try std.fs.path.join(runtime.allocator(), &.{ route.path, std.mem.trimStart(u8, sanitized, "/\\") });
-    defer runtime.allocator().free(full_path);
-    switch (try context.statPathFn(context.context, full_path)) {
-        .missing => return context.respond(404, &.{}, "<html><meta charset=\"utf-8\"><body><h1>404 見当たりません。</h1></body></html>"),
-        .directory => {
-            const index_path = try std.fs.path.join(runtime.allocator(), &.{ full_path, "index.html" });
-            runtime.allocator().free(full_path);
-            full_path = index_path;
-            if (try context.statPathFn(context.context, full_path) != .file) return context.respond(404, &.{}, "<html><meta charset=\"utf-8\"><body><h1>404 見当たりません。</h1></body></html>");
-        },
-        .file => {},
-    }
-    const body = try context.readFileFn(context.context, runtime.allocator(), full_path);
+    var components = try staticPathComponents(runtime.allocator(), relative_raw);
+    defer freeStaticPathComponents(runtime.allocator(), &components);
+    const resolved = (try context.resolveStaticPathFn(context.context, runtime.allocator(), route.path, components.items)) orelse {
+        return context.respond(404, &.{}, "<html><meta charset=\"utf-8\"><body><h1>404 見当たりません。</h1></body></html>");
+    };
+    defer runtime.allocator().free(resolved.path);
+    if (resolved.kind != .file) return context.respond(404, &.{}, "<html><meta charset=\"utf-8\"><body><h1>404 見当たりません。</h1></body></html>");
+    const body = context.readStaticFileFn(context.context, runtime.allocator(), resolved.path) catch |err| switch (err) {
+        error.StreamTooLong => return context.respond(413, &.{}, "<html><meta charset=\"utf-8\"><body><h1>413 要求が大きすぎます。</h1></body></html>"),
+        else => return err,
+    };
     defer runtime.allocator().free(body);
-    try context.respond(200, &.{.{ .name = "Content-Type", .value = mimeType(full_path) }}, body);
+    try context.respond(200, &.{.{ .name = "Content-Type", .value = mimeType(resolved.path) }}, body);
 }
 
-fn removeParentSegments(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
-    var result: std.ArrayList(u8) = .empty;
-    errdefer result.deinit(allocator);
-    var index: usize = 0;
-    while (index < source.len) {
-        if (index + 1 < source.len and source[index] == '.' and source[index + 1] == '.') {
-            index += 2;
-            continue;
+fn staticPathComponents(allocator: std.mem.Allocator, source: []const u8) !std.ArrayList([]u8) {
+    var result: std.ArrayList([]u8) = .empty;
+    errdefer freeStaticPathComponents(allocator, &result);
+    var it = std.mem.splitScalar(u8, source, '/');
+    while (it.next()) |raw| {
+        if (raw.len == 0) continue;
+        const decoded = try percentDecode(allocator, raw, false, true);
+        if (decoded.len == 0 or std.mem.eql(u8, decoded, ".") or std.mem.eql(u8, decoded, "..")) {
+            allocator.free(decoded);
+            return error.InvalidHttpStaticPath;
         }
-        try result.append(allocator, source[index]);
-        index += 1;
+        if (std.mem.indexOfAny(u8, decoded, "\\\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f") != null) {
+            allocator.free(decoded);
+            return error.InvalidHttpStaticPath;
+        }
+        if (decoded.len > 255) {
+            allocator.free(decoded);
+            return error.InvalidHttpStaticPath;
+        }
+        try result.append(allocator, decoded);
     }
-    return result.toOwnedSlice(allocator);
+    return result;
+}
+
+fn freeStaticPathComponents(allocator: std.mem.Allocator, components: *std.ArrayList([]u8)) void {
+    for (components.items) |item| allocator.free(item);
+    components.deinit(allocator);
 }
 
 fn mimeType(path: []const u8) []const u8 {
@@ -600,6 +615,16 @@ test "HTTP multipartのContent-Dispositionは公式の引用正規表現境界�
     try std.testing.expect(dispositionParameter("form-data; Name=\"title\"", "name") == null);
     try std.testing.expect(dispositionParameter("form-data; name=title", "name") == null);
     try std.testing.expect(dispositionParameter("form-data; name=\"\"", "name") == null);
+}
+
+test "静的ファイル配信のパス成分は..や制御文字、空を拒否する" {
+    var components = try staticPathComponents(std.testing.allocator, "/foo/bar/baz");
+    defer freeStaticPathComponents(std.testing.allocator, &components);
+    try std.testing.expectEqual(3, components.items.len);
+    try std.testing.expectError(error.InvalidHttpStaticPath, staticPathComponents(std.testing.allocator, "/foo/%2E%2E/bar"));
+    try std.testing.expectError(error.InvalidHttpStaticPath, staticPathComponents(std.testing.allocator, "/foo/.."));
+    try std.testing.expectError(error.InvalidHttpStaticPath, staticPathComponents(std.testing.allocator, "/foo/%00"));
+    try std.testing.expectError(error.InvalidHttpStaticPath, staticPathComponents(std.testing.allocator, "/foo/bar%0a"));
 }
 
 fn dictionaryUtf8(runtime: *Runtime, dictionary: *value_mod.Dictionary, expected: []const u8) ![]const u8 {
