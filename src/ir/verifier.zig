@@ -212,6 +212,19 @@ fn countPredecessors(predecessors: []const bool, count: usize, block: ir.BlockId
 }
 
 fn computeDominators(allocator: std.mem.Allocator, predecessors: []const bool, count: usize, entry: ir.BlockId) ![]bool {
+    // The CFG is usually sparse. Build predecessor lists once so each
+    // intersection visits actual edges instead of scanning all blocks.
+    var offsets = try allocator.alloc(usize, count + 1);
+    defer allocator.free(offsets);
+    var incoming: std.ArrayList(usize) = .empty;
+    defer incoming.deinit(allocator);
+    for (0..count) |block| {
+        offsets[block] = incoming.items.len;
+        for (0..count) |predecessor| {
+            if (predecessors[block * count + predecessor]) try incoming.append(allocator, predecessor);
+        }
+    }
+    offsets[count] = incoming.items.len;
     const dominators = try allocator.alloc(bool, count * count);
     for (0..count) |block| for (0..count) |candidate| {
         dominators[block * count + candidate] = block != entry or candidate == entry;
@@ -223,14 +236,15 @@ fn computeDominators(allocator: std.mem.Allocator, predecessors: []const bool, c
         changed = false;
         for (0..count) |block| {
             if (block == entry) continue;
-            const has_predecessor = countPredecessors(predecessors, count, @intCast(block)) > 0;
+            const block_predecessors = incoming.items[offsets[block]..offsets[block + 1]];
+            const has_predecessor = block_predecessors.len > 0;
             for (0..count) |candidate| {
                 var value = candidate == block;
                 if (candidate != block and has_predecessor) {
                     value = true;
-                    for (0..count) |predecessor| if (predecessors[block * count + predecessor]) {
+                    for (block_predecessors) |predecessor| {
                         value = value and dominators[predecessor * count + candidate];
-                    };
+                    }
                 }
                 const index = block * count + candidate;
                 if (dominators[index] != value) {
@@ -253,6 +267,24 @@ fn makeTestProgram(allocator: std.mem.Allocator) !struct { hir_program: @import(
     const hir_program = try hir.lowerSingle(allocator, parsed.root.?, "main", "main.nako3", analyzed);
     const ir_program = try lower_ssa.lower(allocator, hir_program);
     return .{ .hir_program = hir_program, .ir_program = ir_program, .parsed = parsed, .analyzed = analyzed };
+}
+
+test "支配関係は分岐合流・後方辺・到達不能ブロックを保持する" {
+    const count = 6;
+    var predecessors = [_]bool{false} ** (count * count);
+    const edges = [_][2]usize{ .{ 0, 4 }, .{ 4, 1 }, .{ 4, 2 }, .{ 1, 3 }, .{ 2, 3 }, .{ 3, 4 } };
+    for (edges) |edge| predecessors[edge[1] * count + edge[0]] = true;
+    const dominators = try computeDominators(std.testing.allocator, &predecessors, count, 0);
+    defer std.testing.allocator.free(dominators);
+    const expected = [_][count]bool{
+        .{ true, false, false, false, false, false },
+        .{ true, true, false, false, true, false },
+        .{ true, false, true, false, true, false },
+        .{ true, false, false, true, true, false },
+        .{ true, false, false, false, true, false },
+        .{ false, false, false, false, false, true },
+    };
+    for (expected, 0..) |row, block| try std.testing.expectEqualSlices(bool, &row, dominators[block * count .. (block + 1) * count]);
 }
 
 test "生成したSSA IRを検証する" {

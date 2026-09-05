@@ -1,0 +1,12 @@
+# A captured value is read through a closure on every iteration.
+●(Aを)加算器作成とは
+F=関数(B)それはA+B
+ここまで
+Fで戻る
+ここまで
+N=0
+G=加算器作成(3)
+60000回
+N=G(N)
+ここまで
+Nを表示

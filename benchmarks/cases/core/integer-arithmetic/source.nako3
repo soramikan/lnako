@@ -1,0 +1,10 @@
+# Runtime input: seed, iterations. The recurrence depends on both values.
+P=要素数(コマンドライン)
+X=INT(コマンドライン[P-2])
+N=INT(コマンドライン[P-1])
+S=0
+N回
+X=(X*1664525+1013904223)%2147483647
+S=S+(X%1000)
+ここまで
+Sを表示

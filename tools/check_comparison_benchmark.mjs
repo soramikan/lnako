@@ -1,59 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
-const options = parseArguments(process.argv.slice(2));
-const root = resolve(import.meta.dirname, "..");
+import { validateBenchmarkReport } from "./lib/benchmark_report.mjs";
 
-const json = JSON.parse(await readFile(resolve(root, options.json), "utf8"));
-const markdown = await readFile(resolve(root, options.markdown), "utf8");
+export const root = resolve(import.meta.dirname, "..");
 
-if (json.schema_version !== 1) throw new Error("未対応のschema_versionです");
-if (!json.project || !json.version || typeof json.git_commit !== "string") throw new Error("メタ情報が不足しています");
-if (!json.target?.os || !json.target?.arch) throw new Error("target情報が不足しています");
-if (!json.toolchain || typeof json.toolchain !== "object") throw new Error("toolchain情報が不足しています");
-if (typeof json.generated_at_unix_ms !== "number") throw new Error("generated_at_unix_msが不正です");
-if (!json.suite_name || !json.suite) throw new Error("suite情報が不足しています");
-if (typeof json.iterations !== "number" || json.iterations <= 0) throw new Error("iterationsが不正です");
-if (typeof json.warmup !== "number" || json.warmup < 0) throw new Error("warmupが不正です");
-if (!Array.isArray(json.cases) || json.cases.length === 0) throw new Error("casesが空です");
-
-for (const item of json.cases) {
-  if (!item.id || typeof item.expected_stdout !== "string") throw new Error(`case ${item.id ?? "?"} の基本情報が不足しています`);
-  if (!Array.isArray(item.measurements) || item.measurements.length === 0) {
-    throw new Error(`case ${item.id} に計測値がありません`);
-  }
-  for (const m of item.measurements) {
-    if (!m.runtime || !m.mode) throw new Error(`case ${item.id} のmeasurementにruntime/modeがありません`);
-    if (!Array.isArray(m.samples_ns) || m.samples_ns.length === 0) throw new Error(`case ${item.id}/${m.runtime}/${m.mode} のsamples_nsが空です`);
-    if (typeof m.min_ns !== "number" || typeof m.median_ns !== "number" || typeof m.max_ns !== "number") {
-      throw new Error(`case ${item.id}/${m.runtime}/${m.mode} の集計値が不正です`);
-    }
-    if (m.min_ns > m.median_ns || m.median_ns > m.max_ns) {
-      throw new Error(`case ${item.id}/${m.runtime}/${m.mode} のmin/median/maxの大小関係が不正です`);
-    }
-    if (m.samples_ns.some((s) => typeof s !== "number" || s < 0)) {
-      throw new Error(`case ${item.id}/${m.runtime}/${m.mode} に負のサンプル値が含まれています`);
-    }
-    const sorted = [...m.samples_ns].sort((a, b) => a - b);
-    if (sorted[0] !== m.min_ns) throw new Error(`case ${item.id}/${m.runtime}/${m.mode} のmin_nsが実際の最小値と一致しません`);
-    if (sorted[sorted.length - 1] !== m.max_ns) throw new Error(`case ${item.id}/${m.runtime}/${m.mode} のmax_nsが実際の最大値と一致しません`);
-  }
-}
-
-// Markdown sanity checks
-if (!markdown.startsWith("# lnako comparison benchmark")) throw new Error("Markdownの見出しが不正です");
-for (const item of json.cases) {
-  if (!markdown.includes(`## ${item.id}`)) throw new Error(`Markdownにcase ${item.id} の見出しがありません`);
-  if (!markdown.includes(item.expected_stdout.trimEnd())) throw new Error(`Markdownにcase ${item.id} の期待stdoutがありません`);
-  for (const m of item.measurements) {
-    const row = `| ${m.runtime} | ${m.mode} | ${m.samples_ns.length} | ${m.min_ns} | ${m.median_ns} | ${m.max_ns} |`;
-    if (!markdown.includes(row)) throw new Error(`Markdownにcase ${item.id}/${m.runtime}/${m.mode} の行がありません`);
-  }
-}
-
-console.log(`比較ベンチマーク結果を検証しました: ${json.cases.length} cases / ${json.suite_name}`);
-
-function parseArguments(arguments_) {
+export function parseArguments(arguments_) {
   const parsed = { json: null, markdown: null };
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index];
@@ -64,9 +16,128 @@ function parseArguments(arguments_) {
   if (!parsed.json || !parsed.markdown) throw new Error("--json と --markdown を指定してください");
   return parsed;
 }
-
 function nextValue(arguments_, index, argument) {
   const value = arguments_[index];
   if (value === undefined || value.startsWith("--")) throw new Error(`${argument}の値がありません`);
   return value;
+}
+
+export function validateMarkdown(markdown, report) {
+  if (typeof markdown !== "string" || !markdown.startsWith("# lnako comparison benchmark")) {
+    throw new Error("Markdownの見出しが不正です");
+  }
+  for (const item of report.cases) {
+    if (!markdown.includes(`## ${item.id}`)) throw new Error(`Markdownにcase ${item.id} の見出しがありません`);
+    const expectedJson = JSON.stringify(item.expected_stdout);
+    const expectedLegacy = item.expected_stdout.trimEnd();
+    const escapedJson = escapeMarkdownCell(expectedJson);
+    const escapedLegacy = escapeMarkdownCell(expectedLegacy);
+    if (!markdown.includes(`expected stdout: \`${escapedJson}\``) && !markdown.includes(`expected stdout: \`${escapedLegacy}\``)) {
+      throw new Error(`Markdownにcase ${item.id} の期待stdoutがありません`);
+    }
+  }
+  const rows = report.schema_version === 2 ? parseV2Rows(markdown) : parseV1Rows(markdown);
+  const expectedRows = report.cases.flatMap((item) => item.measurements.map((measurement) => ({ item, measurement })));
+  if (rows.length !== expectedRows.length) throw new Error(`Markdownの測定行数が不一致です: ${rows.length}/${expectedRows.length}`);
+  for (const [index, expected] of expectedRows.entries()) {
+    const actual = rows[index];
+    const measurement = expected.measurement;
+    if (report.schema_version === 1) {
+      const expectedRow = {
+        runtime: measurement.runtime,
+        mode: measurement.mode,
+        samples: measurement.samples_ns.length,
+        min: measurement.min_ns,
+        median: measurement.median_ns,
+        max: measurement.max_ns,
+      };
+      if (JSON.stringify(actual) !== JSON.stringify(expectedRow)) throw new Error(`Markdownの測定行がJSONと一致しません: ${expected.item.id}/${measurement.mode}`);
+    } else {
+      const expectedRow = {
+        runtime: measurement.runtime,
+        group: measurement.group,
+        measurement: measurement.measurement,
+        mode: measurement.mode,
+        samples: measurement.samples_ns.length,
+        min: measurement.min_ns,
+        p25: measurement.p25_ns,
+        median: measurement.median_ns,
+        p75: measurement.p75_ns,
+        max: measurement.max_ns,
+        iqr: measurement.iqr_ns,
+        mad: measurement.mad_ns,
+        mean: measurement.mean_ns,
+        stddev: measurement.stddev_ns,
+        cv: measurement.cv,
+        executable: measurement.executable_size_bytes ?? "N/A",
+      };
+      if (JSON.stringify(actual) !== JSON.stringify(expectedRow)) throw new Error(`Markdownの測定行がJSONと一致しません: ${expected.item.id}/${measurement.mode}`);
+    }
+  }
+}
+
+function escapeMarkdownCell(value) {
+  return String(value).replaceAll("|", "\\|").replaceAll("\n", "\\n");
+}
+
+function parseV1Rows(markdown) {
+  return [...markdown.matchAll(/^\| ([^|]+) \| ([^|]+) \| (\d+) \| ([0-9]+(?:\.[0-9]+)?) \| ([0-9]+(?:\.[0-9]+)?) \| ([0-9]+(?:\.[0-9]+)?) \|$/gm)].map((match) => ({
+    runtime: match[1],
+    mode: match[2],
+    samples: Number(match[3]),
+    min: Number(match[4]),
+    median: Number(match[5]),
+    max: Number(match[6]),
+  }));
+}
+
+function parseV2Rows(markdown) {
+  return [...markdown.matchAll(/^\| ([^|]+) \| ([^|]+) \| ([^|]+) \| ([^|]+) \| (\d+) \| ([0-9]+(?:\.[0-9]+)?) \| ([0-9]+(?:\.[0-9]+)?) \| ([0-9]+(?:\.[0-9]+)?) \| ([0-9]+(?:\.[0-9]+)?) \| ([0-9]+(?:\.[0-9]+)?) \| ([0-9]+(?:\.[0-9]+)?) \| ([0-9]+(?:\.[0-9]+)?) \| ([0-9]+(?:\.[0-9]+)?) \| ([0-9]+(?:\.[0-9]+)?) \| ([0-9]+(?:\.[0-9]+)?) \| ([^|]+) \|$/gm)].map((match) => ({
+    runtime: match[1],
+    group: match[2],
+    measurement: match[3],
+    mode: match[4],
+    samples: Number(match[5]),
+    min: Number(match[6]),
+    p25: Number(match[7]),
+    median: Number(match[8]),
+    p75: Number(match[9]),
+    max: Number(match[10]),
+    iqr: Number(match[11]),
+    mad: Number(match[12]),
+    mean: Number(match[13]),
+    stddev: Number(match[14]),
+    cv: Number(match[15]),
+    executable: match[16] === "N/A" ? "N/A" : Number(match[16]),
+  }));
+}
+
+export async function checkFiles(jsonPath, markdownPath) {
+  let report;
+  let markdown;
+  try {
+    report = JSON.parse(await readFile(jsonPath, "utf8"));
+  } catch (error) {
+    throw new Error(`benchmark JSONを読み込めません: ${error.message}`);
+  }
+  try {
+    markdown = await readFile(markdownPath, "utf8");
+  } catch (error) {
+    throw new Error(`benchmark Markdownを読み込めません: ${error.message}`);
+  }
+  validateBenchmarkReport(report);
+  validateMarkdown(markdown, report);
+  return report;
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.dirname, "check_comparison_benchmark.mjs")) {
+  try {
+    const options = parseArguments(process.argv.slice(2));
+    const report = await checkFiles(options.json, options.markdown);
+    const measured = report.cases.reduce((count, item) => count + item.measurements.length, 0);
+    console.log(`比較ベンチマーク結果を検証しました: ${report.cases.length} cases / ${measured} measurements`);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }

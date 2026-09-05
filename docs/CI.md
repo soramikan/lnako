@@ -72,3 +72,9 @@ gh run view <run-id> --log-failed
 - [`COMPATIBILITY.md`](COMPATIBILITY.md): 分類、canonical証拠、CI artifactの読み方
 - [`COMPATIBILITY_EVIDENCE.md`](COMPATIBILITY_EVIDENCE.md): 証拠stateとattestationの規則
 - [`docs/history/CI_PERFORMANCE_2026.md`](history/CI_PERFORMANCE_2026.md): 過去run、cache調整、分割の経緯
+
+## 性能の継続測定
+
+`comparison-benchmark.yml` は本体54-job CIとは別に、正式3 OSで共通のv2 suiteを測定します。PRはsmoke（warmup 1・3 samples）、main更新と夜間はnormal（3・10）、手動実行はfull（5・25）も選択できます。cnakoは互換基準3.7.24、Nodeは24.15.0に固定します。必須処理系の失敗や期待出力の不一致は失敗とし、短時間測定や速度のばらつきは警告として記録します。前回成功したmainのartifactを取得できる場合は、条件が一致する測定の中央値を比較して退行候補を警告します。artifactが期限切れ、または入力・環境などの条件が異なる場合は比較を見送ります。共有runnerの時間だけで性能退行を断定せず、同一環境での再測定を行います。
+
+JSONの生サンプルとMarkdownは90日保持します。リリース用のfull測定はリリース配布物に含めます。詳細な条件・ローカル実行方法は[`benchmarks/README.md`](../benchmarks/README.md)を参照してください。

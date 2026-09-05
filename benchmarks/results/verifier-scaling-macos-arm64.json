@@ -1,0 +1,44 @@
+{
+  "schema": "lnako.compile-scaling-experiment.v1",
+  "baseline_commit": "a7690d6895092e81222f5d7b4d1155c4472e0a2a",
+  "description": "1500 sequential dynamic additions; process wall time including frontend, SSA verification, optimization and LLVM IR emission; no linking",
+  "source_generator": "A=コマンドライン[0]\\n + 1500 lines of A=A+1 + Aを表示\\n",
+  "source_sha256": "61464e051cb0e08d0a8598712a3ce0c7a435fdb27a3a8076bfdf527900574bb1",
+  "candidate_verifier_sha256": "d36c2158378840678fd4e3aa8caecb6a151db1e78c99ae2430d526bbbd300c81",
+  "binary_sha256": {
+    "before": "0807baf2295451a20a361f3b693bd1b0a5848a65059eff5512b1eae42d2b028a",
+    "after": "492f36074f56a3f03924e1f5cedc605a03325bbcfee5e460a09be181d53b6599"
+  },
+  "platform": "Darwin arm64",
+  "optimization": "O1",
+  "warmup": 1,
+  "samples_seconds": {
+    "before": [
+      77.62184262496885,
+      73.86062062508427,
+      70.1344657089794
+    ],
+    "after": [
+      11.577021833974868,
+      9.334129000082612,
+      10.51730129099451
+    ]
+  },
+  "order": [
+    "after",
+    "before",
+    "before",
+    "after",
+    "after",
+    "before"
+  ],
+  "llvm_ir_sha256": {
+    "before": "2b4b0f752ed4e40d6b7dd4f2214748c8b46e30b860c5b2bde0b169191868d5bc",
+    "after": "2b4b0f752ed4e40d6b7dd4f2214748c8b46e30b860c5b2bde0b169191868d5bc"
+  },
+  "median_seconds": {
+    "before": 73.86062062508427,
+    "after": 10.51730129099451
+  },
+  "identical_llvm_ir": true
+}

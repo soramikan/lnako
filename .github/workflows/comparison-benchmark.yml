@@ -2,9 +2,27 @@ name: Comparison benchmark
 
 on:
   workflow_dispatch:
+    inputs:
+      profile:
+        description: Measurement profile
+        type: choice
+        options: [smoke, normal, full]
+        default: normal
+  pull_request:
+    paths: ['src/**', 'benchmarks/**', 'tools/*benchmark*', 'tools/lib/benchmark*', '.github/workflows/comparison-benchmark.yml']
+  push:
+    branches: [main]
+    paths: ['src/**', 'benchmarks/**', 'tools/*benchmark*', 'tools/lib/benchmark*', '.github/workflows/comparison-benchmark.yml']
+  schedule:
+    - cron: '23 18 * * *'
+
+concurrency:
+  group: comparison-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   benchmark:
@@ -46,27 +64,11 @@ jobs:
         with:
           node-version: 24.15.0
 
-      - uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
-        with:
-          go-version: 1.26.0
-          cache: false
+      - name: Install pinned cnako
+        run: npm install -g nadesiko3@3.7.24
 
-      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
-
-      - name: Install cnako
-        run: npm install -g nadesiko3
-
-      - name: Install gonako
-        run: go install github.com/kujirahand/nadesiko3go/cmd/gonako@latest
-
-      - name: Verify external runtimes
-        shell: bash
-        run: |
-          set -euo pipefail
-          cnako3 -v
-          gonako -e '1を表示'
-          go version
-          rustc --version
+      - name: Verify oracle version
+        run: cnako3 -v
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -86,15 +88,35 @@ jobs:
       - name: Build ReleaseSafe compiler
         run: zig build -Doptimize=ReleaseSafe
 
+      - name: Fetch previous successful benchmark
+        shell: bash
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          previous_run=$(gh run list --workflow comparison-benchmark.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "$previous_run" ]; then
+            if ! gh run download "$previous_run" --name "comparison-benchmark-${{ matrix.target }}" --dir "$RUNNER_TEMP/benchmark-baseline"; then
+              echo '::warning::Previous benchmark artifact unavailable; recording without a baseline.'
+            fi
+          fi
+
       - name: Run comparison benchmark
         env:
+          BENCHMARK_PROFILE: ${{ github.event_name == 'pull_request' && 'smoke' || inputs.profile || 'normal' }}
           LNAKO_BENCHMARK_LNAKO: ${{ github.workspace }}/zig-out/bin/${{ matrix.lnako_executable }}
         shell: bash
         run: |
           set -euo pipefail
-          node tools/run_comparison_benchmark.mjs \
-            --iterations 3 \
-            --warmup 1 \
+          baseline_args=()
+          if [ -f "$RUNNER_TEMP/benchmark-baseline/benchmark-${{ matrix.target }}.json" ]; then
+            baseline_args=(--baseline "$RUNNER_TEMP/benchmark-baseline/benchmark-${{ matrix.target }}.json")
+          fi
+          node tools/run_comparison_benchmark.mjs "${baseline_args[@]}" \
+            --suite benchmarks/suites/v2.json \
+            --profile "$BENCHMARK_PROFILE" \
+            --runtimes lnako,cnako \
             --lnako "$LNAKO_BENCHMARK_LNAKO" \
             --output "$RUNNER_TEMP/benchmark-${{ matrix.target }}.json" \
             --markdown "$RUNNER_TEMP/benchmark-${{ matrix.target }}.md"
@@ -115,4 +137,4 @@ jobs:
             ${{ runner.temp }}/benchmark-${{ matrix.target }}.json
             ${{ runner.temp }}/benchmark-${{ matrix.target }}.md
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90

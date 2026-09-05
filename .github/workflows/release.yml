@@ -148,8 +148,8 @@ jobs:
         shell: bash
         run: |
           ./zig-out/bin/${{ matrix.executable }} benchmark \
-            --iterations 3 \
-            --warmup 1 \
+            --suite benchmarks/suites/v2.json \
+            --profile full \
             --output "$RUNNER_TEMP/benchmark-${{ matrix.target }}.json" \
             --markdown "$RUNNER_TEMP/benchmark-${{ matrix.target }}.md"
       - name: Verify benchmark result

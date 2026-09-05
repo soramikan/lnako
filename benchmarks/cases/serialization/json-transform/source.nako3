@@ -1,0 +1,25 @@
+# Parse, filter, aggregate, and serialize a small nested JSON document.
+JTEXT=『{"items":[{"v":1},{"v":2},{"v":3},{"v":4},{"v":5},{"v":6},{"v":7},{"v":8},{"v":9},{"v":10},{"v":11},{"v":12}],"label":"bench"}』
+TOTAL=0
+SUM=0
+COUNT=0
+300回
+J=JSONデコード(JTEXT)
+ITEMS=J["items"]
+I=0
+N=要素数(ITEMS)
+SUM=0
+COUNT=0
+N回
+ITEM=ITEMS[I]
+V=ITEM["v"]
+もしV%2=0ならば
+SUM=SUM+V
+COUNT=COUNT+1
+ここまで
+I=I+1
+ここまで
+R={"sum":SUM,"count":COUNT}
+TOTAL=TOTAL+文字数(JSON変換(R))
+ここまで
+(TOTAL+SUM+COUNT)を表示

@@ -1,0 +1,22 @@
+# A repeated token stream is counted with a mutable associative array.
+A=[]
+3000回
+配列追加(A,"alpha beta gamma alpha delta ")
+ここまで
+T=配列結合(A,"")
+W=区切(T," ")
+H={}
+I=0
+N=要素数(W)
+N回
+K=W[I]
+もしK!=""ならば
+もしH[K]ならば
+H[K]=H[K]+1
+違えば
+H[K]=1
+ここまで
+ここまで
+I=I+1
+ここまで
+(H["alpha"]*1000+H["beta"]*100+H["gamma"]*10+H["delta"])を表示

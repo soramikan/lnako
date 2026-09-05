@@ -23,18 +23,19 @@ for (const [target, expectedTarget] of expectedTargets) {
   if (report.target?.os !== expectedTarget.os || report.target?.arch !== expectedTarget.arch) throw new Error(`benchmark targetが不一致です: ${target}`);
   if (options.version !== null && report.version !== options.version) throw new Error(`benchmark versionが不一致です: ${target}`);
   if (options.commit !== null && report.git_commit !== options.commit) throw new Error(`benchmark commitが不一致です: ${target}`);
-  verifyBenchmark(jsonPath, markdownPath);
+  verifyBenchmark(jsonPath, markdownPath, report.suite);
   reports.push({ target, report });
 }
 
 const first = reports[0].report;
 for (const { target, report } of reports.slice(1)) {
-  for (const key of ["version", "suite_name", "suite", "optimization", "iterations", "warmup"]) {
+  for (const key of ["schema_version", "version", "suite_name", "suite", "suite_sha256", "source", "profile", "git_dirty", "optimization", "iterations", "warmup"]) {
     if (JSON.stringify(report[key]) !== JSON.stringify(first[key])) throw new Error(`benchmark共通条件が不一致です: ${target}/${key}`);
   }
   if (JSON.stringify(report.toolchain) !== JSON.stringify(first.toolchain)) throw new Error(`benchmark toolchainが不一致です: ${target}`);
+  compareCaseDefinitions(first.cases, report.cases, target);
 }
-console.log(`3正式OSのbenchmark結果を検証しました: ${first.version} / suite ${first.suite_name} / ${reports.length} target`);
+console.log(`3正式OSのbenchmark結果を検証しました: ${first.version} / schema ${first.schema_version} / profile ${first.profile ?? "legacy"} / ${reports.length} target`);
 
 function parseArguments(arguments_) {
   const parsed = { directory: null, version: null, commit: null };
@@ -57,11 +58,25 @@ function nextValue(arguments_, index, argument) {
   return value;
 }
 
-function verifyBenchmark(jsonPath, markdownPath) {
-  const result = spawnSync(process.execPath, [resolve(root, "tools/check_benchmark_result.mjs"), "--json", jsonPath, "--markdown", markdownPath], {
+function verifyBenchmark(jsonPath, markdownPath, suitePath) {
+  const args = [resolve(root, "tools/check_benchmark_result.mjs"), "--json", jsonPath, "--markdown", markdownPath];
+  if (typeof suitePath === "string" && suitePath.length > 0) args.push("--suite", suitePath);
+  const result = spawnSync(process.execPath, args, {
     cwd: root,
     encoding: "utf8",
     maxBuffer: 8 * 1024 * 1024,
   });
   if (result.status !== 0) throw new Error(`benchmark結果検証に失敗しました: ${jsonPath}\n${result.stdout}\n${result.stderr}`);
+}
+
+function compareCaseDefinitions(firstCases, otherCases, target) {
+  if (!Array.isArray(firstCases) || !Array.isArray(otherCases) || firstCases.length !== otherCases.length) {
+    throw new Error(`benchmark case数が不一致です: ${target}`);
+  }
+  for (const [index, firstCase] of firstCases.entries()) {
+    const otherCase = otherCases[index];
+    for (const key of ["id", "category", "kind", "description", "measurement", "profiles", "tags", "source", "source_sha256", "input", "input_args", "expected_stdout"]) {
+      if (JSON.stringify(firstCase[key]) !== JSON.stringify(otherCase?.[key])) throw new Error(`benchmark case定義が不一致です: ${target}/${firstCase?.id ?? index}/${key}`);
+    }
+  }
 }

@@ -1,0 +1,8 @@
+# Runtime input: array-backed builder followed by one join.
+N=INT(コマンドライン[要素数(コマンドライン)-1])
+A=[]
+N回
+配列追加(A,"ab")
+ここまで
+S=配列結合(A,"")
+文字数(S)を表示

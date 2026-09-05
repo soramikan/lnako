@@ -1,0 +1,8 @@
+lnako benchmark fixture 01: こんにちは世界🍊
+lnako benchmark fixture 02: alpha beta gamma
+lnako benchmark fixture 03: 日本語とUTF-8を読む
+lnako benchmark fixture 04: deterministic input for file-read
+lnako benchmark fixture 05: 0123456789 abcdefghijklmnopqrstuvwxyz
+lnako benchmark fixture 06: なでしこ3互換ランタイム
+lnako benchmark fixture 07: alpha beta gamma
+lnako benchmark fixture 08: 文字列の走査と長さの計測

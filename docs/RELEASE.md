@@ -24,7 +24,7 @@ node tools/check_distribution.mjs \
 
 `.github/workflows/release.yml`は、通常の51 matrix CIへ負荷を追加せず、タグpushまたは手動実行でmacOS arm64、Linux x86_64、Windows x86_64をそれぞれbuildします。手動実行は指定versionの配布物・性能結果を検証してartifactへ保存するだけで、GitHub Releaseを作成しません。
 
-正式な`vX.Y.Z`タグpushでは、先にannotated tagとGitHubの署名検証、source version、同じcommitのCI成功runを確認します。CIは現行の51 matrix jobに加えてdispatch coverage verifier、native AOT aggregate verifier、attestationを含む**54 jobすべてが成功**しているrunだけを受理し、job不足・失敗・skipを許可しません。その後、各OSでReleaseSafe compiler／AOT runtimeをbuildし、`lnako benchmark`のJSON/MarkdownとLLVM/LLD同梱配布物を生成します。aggregate jobは`tools/check_benchmark_set.mjs`で3 OSの計測条件とtargetを、`tools/create_release_checksums.mjs`と`tools/check_release_assets.mjs`で3 archive・sidecar・SPDX 2.3 SBOM・`SHA256SUMS`を相互検証します。publish jobはタグpush時だけ、検証済みbundleを`gh release create --verify-tag`で公開します。
+正式な`vX.Y.Z`タグpushでは、先にannotated tagとGitHubの署名検証、source version、同じcommitのCI成功runを確認します。CIは現行の51 matrix jobに加えてdispatch coverage verifier、native AOT aggregate verifier、attestationを含む**54 jobすべてが成功**しているrunだけを受理し、job不足・失敗・skipを許可しません。その後、各OSでReleaseSafe compiler／AOT runtimeをbuildし、`lnako benchmark --suite benchmarks/suites/v2.json --profile full`のJSON/MarkdownとLLVM/LLD同梱配布物を生成します。aggregate jobは`tools/check_benchmark_set.mjs`で3 OSの計測条件とtargetを、`tools/create_release_checksums.mjs`と`tools/check_release_assets.mjs`で3 archive・sidecar・SPDX 2.3 SBOM・`SHA256SUMS`を相互検証します。publish jobはタグpush時だけ、検証済みbundleを`gh release create --verify-tag`で公開します。
 
 このworkflowはタグやReleaseを自動で先行作成しません。source versionが`build.zig.zon`と一致しない、同じcommitの54 job全成功CI runがない、署名を検証できない場合は配布build前に停止します。
 

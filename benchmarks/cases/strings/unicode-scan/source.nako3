@@ -1,0 +1,18 @@
+# Repeated Japanese and emoji text is split into code points and scanned.
+U="こんにちは世界🍊"
+A=[]
+6000回
+配列追加(A,U)
+ここまで
+T=配列結合(A,"")
+C=文字列分解(T)
+N=要素数(C)
+I=0
+H=0
+N回
+もしC[I]="🍊"ならば
+H=H+1
+ここまで
+I=I+1
+ここまで
+(文字数(T)+H)を表示

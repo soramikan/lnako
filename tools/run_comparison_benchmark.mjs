@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import {
   accessSync,
   constants,
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -9,49 +10,66 @@ import {
   writeFileSync,
 } from "node:fs";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
-import { tmpdir, platform, arch } from "node:os";
+import { arch as hostArch, cpus, platform, release as osRelease, tmpdir, totalmem } from "node:os";
 import { X_OK } from "node:constants";
+import { fileURLToPath } from "node:url";
 
-const root = resolve(import.meta.dirname, "..");
-const options = parseArguments(process.argv.slice(2));
+import {
+  PROFILE_NAMES,
+  parseNonNegativeInteger,
+  parsePositiveInteger,
+  resolveProfileOptions,
+  outputsMatch,
+  summarizeSamples,
+} from "./lib/benchmark_statistics.mjs";
+import {
+  CROSS_LANGUAGE_RUNTIMES,
+  NADESIKO_RUNTIMES,
+  RUNTIME_NAMES,
+  loadBenchmarkSuite,
+  resolveCaseInvocation,
+  runtimeComparisonGroup,
+  selectBenchmarkCases,
+  sourceForRuntime,
+} from "./lib/benchmark_suite.mjs";
+import {
+  BenchmarkProcessError,
+  assertSuccessfulProcess,
+  runMeasuredSamples,
+  runProcess,
+} from "./lib/benchmark_process.mjs";
+import {
+  compareBaseline,
+  executableSizeBytes,
+  renderBenchmarkMarkdown,
+  sha256File,
+  validateBenchmarkReport,
+} from "./lib/benchmark_report.mjs";
+
+export const root = resolve(import.meta.dirname, "..");
+export const DEFAULT_SUITE = "benchmarks/suites/v2.json";
+export const LEGACY_SUITE = "benchmarks/comparison/suite.json";
+export const DEFAULT_TIMEOUT_MS = 120_000;
 
 const isWindows = platform() === "win32";
 const isDarwin = platform() === "darwin";
 const executableSuffix = isWindows ? ".exe" : "";
-const darwinSysroot = isDarwin ? detectDarwinSysroot() : null;
 
-const runtimes = new Map([
-  ["cnako", { command: resolveSpawnCommand(options.cnako), versionFlag: "-v", sourceExtensions: [".nako3"] }],
-  ["gonako", { command: resolveSpawnCommand(options.gonako), versionFlag: null, sourceExtensions: [".nako3"] }],
-  ["python", { command: resolveSpawnCommand(options.python), versionFlag: "--version", sourceExtensions: [".py"] }],
-  ["c", { command: resolveSpawnCommand(options.clang), versionFlag: "--version", sourceExtensions: [".c"] }],
-  ["rust", { command: resolveSpawnCommand(options.rustc), versionFlag: "--version", sourceExtensions: [".rs"] }],
-  ["lnako", { command: resolveSpawnCommand(options.lnako), versionFlag: "--version", sourceExtensions: [".nako3"] }],
-]);
-
-const suite = loadSuite(resolve(root, options.suite));
-const tempDir = makeTempDir();
-try {
-  const report = buildReport(suite, tempDir);
-  writeJson(options.output, report);
-  writeMarkdown(options.markdown, report);
-} finally {
-  try {
-    rmSync(tempDir, { recursive: true, force: true });
-  } catch {
-    // ignore cleanup failure
-  }
-}
-
-console.log(`比較ベンチマークを完了しました: ${options.output}`);
-
-function parseArguments(arguments_) {
+export function parseArguments(arguments_) {
   const parsed = {
-    suite: "benchmarks/comparison/suite.json",
+    suite: DEFAULT_SUITE,
     output: "benchmarks/comparison/results/latest.json",
     markdown: "benchmarks/comparison/results/latest.md",
-    iterations: 5,
-    warmup: 1,
+    profile: "normal",
+    runtimes: null,
+    runtimesExplicit: false,
+    cases: null,
+    optimization: "O2",
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+    baseline: null,
+    baselineThreshold: 0.1,
+    iterations: undefined,
+    warmup: undefined,
     lnako: "lnako",
     python: "python3",
     clang: "clang",
@@ -64,8 +82,18 @@ function parseArguments(arguments_) {
     if (argument === "--suite") parsed.suite = nextValue(arguments_, ++index, argument);
     else if (argument === "--output") parsed.output = nextValue(arguments_, ++index, argument);
     else if (argument === "--markdown") parsed.markdown = nextValue(arguments_, ++index, argument);
-    else if (argument === "--iterations") parsed.iterations = parsePositiveInt(nextValue(arguments_, ++index, argument));
-    else if (argument === "--warmup") parsed.warmup = parsePositiveInt(nextValue(arguments_, ++index, argument));
+    else if (argument === "--profile") parsed.profile = nextValue(arguments_, ++index, argument);
+    else if (argument === "--runtimes") {
+      parsed.runtimes = parseList(nextValue(arguments_, ++index, argument), RUNTIME_NAMES, argument);
+      parsed.runtimesExplicit = true;
+    }
+    else if (argument === "--case") parsed.cases = appendList(parsed.cases, nextValue(arguments_, ++index, argument));
+    else if (argument === "--optimization") parsed.optimization = parseOptimization(nextValue(arguments_, ++index, argument));
+    else if (argument === "--timeout" || argument === "--timeout-ms") parsed.timeoutMs = parsePositiveInteger(nextValue(arguments_, ++index, argument), "timeout");
+    else if (argument === "--baseline") parsed.baseline = nextValue(arguments_, ++index, argument);
+    else if (argument === "--baseline-threshold") parsed.baselineThreshold = parsePercentage(nextValue(arguments_, ++index, argument));
+    else if (argument === "--iterations") parsed.iterations = parsePositiveInteger(nextValue(arguments_, ++index, argument), "iterations");
+    else if (argument === "--warmup") parsed.warmup = parseNonNegativeInteger(nextValue(arguments_, ++index, argument), "warmup");
     else if (argument === "--lnako") parsed.lnako = nextValue(arguments_, ++index, argument);
     else if (argument === "--python") parsed.python = nextValue(arguments_, ++index, argument);
     else if (argument === "--clang") parsed.clang = nextValue(arguments_, ++index, argument);
@@ -74,7 +102,7 @@ function parseArguments(arguments_) {
     else if (argument === "--rustc") parsed.rustc = nextValue(arguments_, ++index, argument);
     else throw new Error(`未知の引数です: ${argument}`);
   }
-  // Allow environment overrides.
+  if (!PROFILE_NAMES.includes(parsed.profile)) throw new Error(`未知のbenchmark profileです: ${parsed.profile}`);
   if (process.env.LNAKO_BENCHMARK_LNAKO) parsed.lnako = process.env.LNAKO_BENCHMARK_LNAKO;
   if (process.env.LNAKO_BENCHMARK_PYTHON) parsed.python = process.env.LNAKO_BENCHMARK_PYTHON;
   if (process.env.LNAKO_BENCHMARK_CLANG) parsed.clang = process.env.LNAKO_BENCHMARK_CLANG;
@@ -90,99 +118,398 @@ function nextValue(arguments_, index, argument) {
   return value;
 }
 
-function parsePositiveInt(value) {
-  const n = Number.parseInt(value, 10);
-  if (!Number.isFinite(n) || n <= 0) throw new Error(`正の整数が必要です: ${value}`);
-  return n;
+function appendList(list, value) {
+  const values = value.split(",").map((part) => part.trim()).filter(Boolean);
+  if (values.length === 0) throw new Error(`空のcase指定です: ${value}`);
+  return [...(list ?? []), ...values];
 }
 
-function loadSuite(path) {
-  const suite = JSON.parse(readFileSync(path, "utf8"));
-  if (suite.schema_version !== 1) throw new Error("未対応のsuite schema_versionです");
-  if (!suite.name || !Array.isArray(suite.cases) || suite.cases.length === 0) throw new Error("suiteが空です");
-  const ids = new Set();
-  for (const item of suite.cases) {
-    if (!item.id || !item.expected_stdout || typeof item.sources !== "object") {
-      throw new Error(`suiteのケース定義が不正です: ${JSON.stringify(item)}`);
-    }
-    if (ids.has(item.id)) throw new Error(`重複したcase idです: ${item.id}`);
-    ids.add(item.id);
+function parseList(value, allowed, argument) {
+  if (value === "all") return null;
+  const list = value.split(",").map((part) => part.trim()).filter(Boolean);
+  if (list.length === 0 || list.some((item) => !allowed.includes(item))) {
+    throw new Error(`${argument}に未知の値があります: ${value}`);
   }
-  return suite;
+  return [...new Set(list)];
 }
 
-function makeTempDir() {
-  const base = mkdtempSync(join(tmpdir(), "lnako-comparison-"));
-  return base;
+function parseOptimization(value) {
+  if (!/^O[0-3]$/.test(value)) throw new Error(`optimizationはO0〜O3で指定してください: ${value}`);
+  return value;
 }
 
-function buildReport(suite, tempDir) {
-  const generatedAt = Date.now();
-  const target = { os: platform(), arch: arch() };
-  const toolchain = collectToolchainVersions();
-  const availableRuntimes = new Map();
-  for (const [runtime, config] of runtimes) {
-    if (isCommandAvailable(config.command, config.versionFlag)) {
-      availableRuntimes.set(runtime, config);
-    } else {
-      console.warn(`コマンドが利用できません、スキップします: ${config.command}`);
+function parsePercentage(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) throw new Error(`baseline thresholdが不正です: ${value}`);
+  return number > 1 ? number / 100 : number;
+}
+
+export function resolveSuitePath(suiteOption) {
+  const requested = resolve(root, suiteOption);
+  if (suiteOption === DEFAULT_SUITE && !existsSync(requested)) {
+    const legacy = resolve(root, LEGACY_SUITE);
+    if (existsSync(legacy)) {
+      console.warn(`v2 suiteが見つからないため、v1 suiteへフォールバックします: ${LEGACY_SUITE}`);
+      return legacy;
     }
   }
+  return requested;
+}
+
+export function createRuntimeConfigs(options) {
+  return new Map([
+    ["cnako", { command: resolveSpawnCommand(options.cnako), versionFlag: "-v" }],
+    ["gonako", { command: resolveSpawnCommand(options.gonako), versionFlag: null }],
+    ["python", { command: resolveSpawnCommand(options.python), versionFlag: "--version" }],
+    ["c", { command: resolveSpawnCommand(options.clang), versionFlag: "--version" }],
+    ["rust", { command: resolveSpawnCommand(options.rustc), versionFlag: "--version" }],
+    ["lnako", { command: resolveSpawnCommand(options.lnako), versionFlag: "--version" }],
+  ]);
+}
+
+export function buildReport(suite, tempDir, options = {}, runtimeConfigs = null) {
+  options = { ...parseArguments([]), ...options };
+  runtimeConfigs ??= createRuntimeConfigs(options);
+  const profileOptions = resolveProfileOptions(options.profile, options);
+  const selectedRuntimes = options.runtimes ?? RUNTIME_NAMES;
+  const available = new Map();
+  const runtimeRecords = {};
+  for (const runtime of RUNTIME_NAMES) {
+    const config = runtimeConfigs.get(runtime);
+    const isAvailable = config !== undefined && isCommandAvailable(config.command, config.versionFlag);
+    if (isAvailable) available.set(runtime, config);
+    runtimeRecords[runtime] = {
+      command: config?.command ?? null,
+      version: config ? getCommandVersion(config.command, config.versionFlag) : null,
+      available: isAvailable,
+      selected: selectedRuntimes.includes(runtime),
+      group: runtimeComparisonGroup(runtime),
+    };
+  }
+  const selectedCases = selectBenchmarkCases(suite, { profile: options.profile, caseIds: options.cases });
+  const failures = [];
+  const warnings = [];
   const caseReports = [];
-  for (const item of suite.cases) {
+  for (const item of selectedCases) {
     const caseDir = join(tempDir, item.id);
     mkdirSync(caseDir, { recursive: true });
+    const invocation = resolveCaseInvocation(item, options.profile);
+    const sourceHashes = collectSourceHashes(item);
+    const runtimeStatus = {};
     const measurements = [];
-    for (const [runtime, config] of availableRuntimes) {
-      const source = item.sources[runtime];
-      if (!source) continue;
+    for (const runtime of RUNTIME_NAMES) {
+      const config = runtimeConfigs.get(runtime);
+      const source = sourceForRuntime(item, runtime);
+      const status = {
+        selected: selectedRuntimes.includes(runtime),
+        available: available.has(runtime),
+        status: "skipped",
+        reason: null,
+        group: runtimeComparisonGroup(runtime),
+      };
+      runtimeStatus[runtime] = status;
+      if (!status.selected) {
+        status.reason = "not_selected";
+        continue;
+      }
+      if (!status.available) {
+        status.reason = "runtime_unavailable";
+        if (options.runtimesExplicit) {
+          status.status = "failed";
+          failures.push(formatFailure(item, runtime, new Error(`指定されたruntimeが利用できません: ${runtime}`), "runtime_unavailable"));
+        }
+        continue;
+      }
+      if (source === undefined) {
+        status.reason = "source_unavailable";
+        continue;
+      }
       const sourcePath = resolve(root, source);
-      try {
-        accessSync(sourcePath, constants.R_OK);
-      } catch {
-        console.warn(`ソースファイルが存在しません、スキップします: ${source}`);
+      if (!isReadable(sourcePath)) {
+        status.status = "failed";
+        status.reason = "source_missing";
+        failures.push(formatFailure(item, runtime, new Error(`suiteに宣言されたsourceがありません: ${source}`), "source_missing"));
         continue;
       }
       try {
-        const runtimeMeasurements = runRuntimeBenchmark(item, runtime, config, sourcePath, caseDir);
-        for (const m of runtimeMeasurements) measurements.push(m);
+        const records = item.legacy
+          ? runLegacyRuntimeBenchmark(item, runtime, config, sourcePath, caseDir, profileOptions, options)
+          : runV2RuntimeBenchmark(item, runtime, config, sourcePath, caseDir, invocation, profileOptions, options);
+        measurements.push(...records);
+        status.status = records.length > 0 ? "measured" : "skipped";
+        if (records.length === 0) status.reason = "measurement_unsupported";
+        for (const record of records) {
+          if (record.measurement === "steady_state" && record.median_ns < 200_000_000) {
+            warnings.push({
+              case: item.id,
+              runtime,
+              mode: record.mode,
+              reason: "steady_state_batch_under_200ms",
+              median_ns: record.median_ns,
+            });
+          }
+        }
       } catch (error) {
-        console.warn(`case ${item.id} / runtime ${runtime} の計測に失敗しました: ${error.message}`);
+        status.status = "failed";
+        status.reason = error instanceof Error ? error.message : String(error);
+        failures.push(formatFailure(item, runtime, error));
       }
     }
     caseReports.push({
       id: item.id,
-      expected_stdout: item.expected_stdout,
+      category: item.category,
+      kind: item.kind,
+      description: item.description,
+      measurement: item.measurement,
+      profiles: [...item.profiles],
+      tags: [...item.tags],
+      source: item.source,
+      source_hashes: sourceHashes,
+      sources: { ...item.sources },
+      input: { args: [...invocation.args] },
+      expected_stdout: invocation.expected_stdout,
       measurements,
+      runtime_status: runtimeStatus,
     });
   }
-  return {
-    schema_version: 1,
+  const suiteOption = options.suite ?? (suite.legacy ? LEGACY_SUITE : DEFAULT_SUITE);
+  const report = {
+    schema_version: suite.schema_version,
     project: "lnako",
     version: getProjectVersion(),
     git_commit: getGitCommit(),
-    generated_at_unix_ms: generatedAt,
-    target,
-    toolchain,
+    git_dirty: getGitDirty(),
+    generated_at_unix_ms: Date.now(),
+    target: { os: normalizeTargetOs(platform()), arch: normalizeTargetArch(hostArch()) },
+    hardware: collectHardwareMetadata(),
+    toolchain: collectToolchainVersions(runtimeConfigs),
     suite_name: suite.name,
-    suite: options.suite,
-    optimization: "O2",
-    iterations: options.iterations,
-    warmup: options.warmup,
+    suite: suiteOption,
+    suite_sha256: hashSuiteIfAvailable(suiteOption),
+    optimization: options.optimization,
+    profile: options.profile,
+    iterations: profileOptions.samples,
+    warmup: profileOptions.warmup,
+    timeout_ms: options.timeoutMs,
+    selected_runtimes: [...selectedRuntimes],
+    runtime_selection_explicit: options.runtimesExplicit === true,
+    runtimes: runtimeRecords,
+    comparison_groups: {
+      "nadesiko-implementation": [...NADESIKO_RUNTIMES],
+      "cross-language-reference": [...CROSS_LANGUAGE_RUNTIMES],
+    },
+    warnings,
+    failures,
+    status: failures.length === 0 ? "success" : "failed",
     cases: caseReports,
+  };
+  if (options.baseline !== null && options.baseline !== undefined) addBaselineWarnings(report, options.baseline, options.baselineThreshold);
+  return report;
+}
+
+function runV2RuntimeBenchmark(item, runtime, config, sourcePath, caseDir, invocation, profileOptions, options) {
+  if (item.measurement === "compile") {
+    return supportsCompilation(runtime)
+      ? [runCompilationMeasurement(runtime, config, sourcePath, caseDir, invocation, profileOptions, options, "compile")]
+      : [];
+  }
+  const records = [];
+  if (runtime === "lnako") {
+    records.push(runExecutionMeasurement(runtime, "interpreter", config.command, lnakoRunArgs(sourcePath, invocation.args), invocation.expected_stdout, item.measurement, profileOptions, options));
+    const artifact = runCompilationMeasurement(runtime, config, sourcePath, caseDir, invocation, profileOptions, options, "compile");
+    records.push(artifact);
+    records.push(runExecutionMeasurement(runtime, "aot_run", executablePath(artifact.executable_path), invocation.args, invocation.expected_stdout, item.measurement, profileOptions, options, artifact.executable_size_bytes));
+    return records;
+  }
+  if (runtime === "c" || runtime === "rust") {
+    const artifact = runCompilationMeasurement(runtime, config, sourcePath, caseDir, invocation, profileOptions, options, "compile");
+    records.push(artifact);
+    records.push(runExecutionMeasurement(runtime, "run", executablePath(artifact.executable_path), invocation.args, invocation.expected_stdout, item.measurement, profileOptions, options, artifact.executable_size_bytes));
+    return records;
+  }
+  records.push(runExecutionMeasurement(runtime, "run", config.command, getSourceRunArgs(runtime, sourcePath, invocation.args), invocation.expected_stdout, item.measurement, profileOptions, options));
+  return records;
+}
+
+function runLegacyRuntimeBenchmark(item, runtime, config, sourcePath, caseDir, profileOptions, options) {
+  const records = [];
+  if (runtime === "lnako") {
+    records.push(runExecutionMeasurement(runtime, "interpreter", config.command, lnakoRunArgs(sourcePath, []), item.expected_stdout, "startup", profileOptions, options));
+    const artifact = runCompilationMeasurement(runtime, config, sourcePath, caseDir, { args: [], expected_stdout: item.expected_stdout }, profileOptions, options, "aot_compile");
+    artifact.mode = "aot_compile";
+    records.push(artifact);
+    records.push(runExecutionMeasurement(runtime, "aot_run", executablePath(artifact.executable_path), [], item.expected_stdout, "startup", profileOptions, options, artifact.executable_size_bytes));
+    return records;
+  }
+  if (runtime === "c" || runtime === "rust") {
+    const artifact = runCompilationMeasurement(runtime, config, sourcePath, caseDir, { args: [], expected_stdout: item.expected_stdout }, profileOptions, options, "compile");
+    records.push(artifact);
+    records.push(runExecutionMeasurement(runtime, "run", executablePath(artifact.executable_path), [], item.expected_stdout, "startup", profileOptions, options, artifact.executable_size_bytes));
+    return records;
+  }
+  records.push(runExecutionMeasurement(runtime, "run", config.command, getSourceRunArgs(runtime, sourcePath, []), item.expected_stdout, "startup", profileOptions, options));
+  return records;
+}
+
+function supportsCompilation(runtime) {
+  return runtime === "lnako" || runtime === "c" || runtime === "rust";
+}
+
+function runCompilationMeasurement(runtime, config, sourcePath, caseDir, invocation, profileOptions, options, mode) {
+  const filename = runtime === "lnako" ? "lnako-aot" : runtime === "c" ? "ref-c" : "ref-rust";
+  const outputPath = join(caseDir, `${filename}${executableSuffix}`);
+  const compileArgs = compilerArgs(runtime, sourcePath, outputPath, options.optimization);
+  const result = runMeasuredSamples({
+    command: config.command,
+    args: compileArgs,
+    cwd: root,
+    warmup: profileOptions.warmup,
+    samples: profileOptions.samples,
+    timeoutMs: options.timeoutMs,
+    shell: needsShell(config.command),
+  });
+  if (!canExecute(outputPath)) throw new Error(`コンパイル後の実行ファイルがありません: ${outputPath}`);
+  const executable = executablePath(outputPath);
+  const correctness = runProcess(executable, invocation.args, { cwd: root, timeoutMs: options.timeoutMs, shell: needsShell(executable) });
+  assertSuccessfulProcess(executable, invocation.args, correctness);
+  if (!outputsMatch(correctness.stdout, invocation.expected_stdout)) {
+    throw new BenchmarkProcessError(`コンパイル後の出力が一致しません: ${runtime}`, {
+      code: "output_mismatch",
+      expected_stdout: invocation.expected_stdout,
+      actual_stdout: correctness.stdout,
+      command: executable,
+      args: invocation.args,
+    });
+  }
+  const summary = summarizeSamples(result.samples_ns);
+  return {
+    runtime,
+    group: runtimeComparisonGroup(runtime),
+    measurement: "compile",
+    mode,
+    timing_scope: "process_wall",
+    correctness_checked: true,
+    executable_path: executable,
+    executable_size_bytes: executableSizeBytes(executable),
+    warnings: [],
+    ...summary,
   };
 }
 
-// Windowsでは拡張子なしのコマンド名（cnako3等のnpm .cmdシム）を
-// spawnSyncから直接起動できないため、PATH上のPATHEXT候補を解決する。
-function resolveSpawnCommand(command) {
+function runExecutionMeasurement(runtime, mode, command, args, expectedStdout, measurement, profileOptions, options, executableSize = null) {
+  const result = runMeasuredSamples({
+    command,
+    args,
+    cwd: root,
+    expectedStdout,
+    warmup: profileOptions.warmup,
+    samples: profileOptions.samples,
+    timeoutMs: options.timeoutMs,
+    shell: needsShell(command),
+  });
+  const summary = summarizeSamples(result.samples_ns);
+  const warnings = measurement === "steady_state" && summary.median_ns < 200_000_000
+    ? ["process-batched wall median is under 200ms; treat the result as startup-sensitive"]
+    : [];
+  return {
+    runtime,
+    group: runtimeComparisonGroup(runtime),
+    measurement,
+    mode,
+    timing_scope: measurement === "steady_state" ? "process_batched_wall" : "process_wall",
+    correctness_checked: true,
+    executable_size_bytes: executableSize,
+    warnings,
+    ...summary,
+  };
+}
+
+function compilerArgs(runtime, sourcePath, outputPath, optimization) {
+  const level = optimization.slice(1);
+  if (runtime === "lnako") return ["build", sourcePath, `-${optimization}`, "-o", outputPath];
+  if (runtime === "c") {
+    const sysroot = isDarwin ? detectDarwinSysroot() : null;
+    return [`-${optimization}`, ...(sysroot === null ? [] : ["-isysroot", sysroot]), sourcePath, "-o", outputPath];
+  }
+  return ["-C", `opt-level=${level}`, sourcePath, "-o", outputPath];
+}
+
+function getSourceRunArgs(runtime, sourcePath, inputArgs) {
+  if (runtime === "gonako") return ["run", sourcePath, ...inputArgs];
+  return [sourcePath, ...inputArgs];
+}
+
+function lnakoRunArgs(sourcePath, inputArgs) {
+  return ["run", sourcePath, ...inputArgs];
+}
+
+function formatFailure(item, runtime, error, explicitCode = null) {
+  const details = error?.details ?? {};
+  return {
+    case: item.id,
+    runtime,
+    code: explicitCode ?? error?.code ?? "process_failed",
+    reason: error instanceof Error ? error.message : String(error),
+    timeout: error?.code === "timeout",
+    expected_stdout: details.expected_stdout ?? null,
+    actual_stdout: details.actual_stdout ?? null,
+  };
+}
+
+function collectSourceHashes(item) {
+  const hashes = {};
+  for (const [runtime, source] of Object.entries(item.sources ?? {})) {
+    const path = resolve(root, source);
+    if (isReadable(path)) {
+      try {
+        hashes[runtime] = sha256File(path);
+      } catch {
+        // Keep the runtime status as the source of truth for unreadable files.
+      }
+    }
+  }
+  return hashes;
+}
+
+function addBaselineWarnings(report, baselineOption, threshold) {
+  try {
+    const baselinePath = resolve(root, baselineOption);
+    const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
+    report.baseline = { path: baselineOption, threshold, loaded: true };
+    report.warnings.push(...compareBaseline(report, baseline, { threshold }));
+  } catch (error) {
+    report.baseline = { path: baselineOption, threshold, loaded: false };
+    report.warnings.push({ reason: "baseline_unavailable", path: baselineOption, message: error.message });
+  }
+}
+
+function hashSuiteIfAvailable(suiteOption) {
+  try {
+    return sha256File(resolveSuitePath(suiteOption));
+  } catch {
+    return null;
+  }
+}
+
+function isReadable(path) {
+  try {
+    accessSync(path, constants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Windowsでは拡張子なしのコマンド名（npm .cmdシム等）をspawnSyncから
+// 直接起動できないため、PATH上のPATHEXT候補を解決する。
+export function resolveSpawnCommand(command) {
   if (!isWindows || isAbsolute(command) || dirname(command) !== ".") return command;
   const pathExts = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").toLowerCase().split(";");
   for (const rawDir of (process.env.PATH ?? "").split(delimiter)) {
     const dir = rawDir.replace(/^"+|"+$/g, "");
     if (!dir) continue;
-    for (const ext of pathExts) {
-      const candidate = join(dir, `${command}${ext}`);
+    for (const extension of pathExts) {
+      const candidate = join(dir, `${command}${extension}`);
       try {
         accessSync(candidate);
         return candidate;
@@ -198,18 +525,8 @@ function needsShell(command) {
   return isWindows && /\.(cmd|bat)$/i.test(command);
 }
 
-function spawnTool(command, args, options_ = {}) {
-  return spawnSync(command, args, { shell: needsShell(command), encoding: "utf8", ...options_ });
-}
-
-function detectDarwinSysroot() {
-  const result = spawnSync("xcrun", ["--show-sdk-path"], { encoding: "utf8", shell: false });
-  if (result.error || result.status !== 0) return null;
-  const sysroot = result.stdout.trim();
-  return sysroot.length > 0 ? sysroot : null;
-}
-
 function isCommandAvailable(command, versionFlag) {
+  if (!command) return false;
   if (isAbsolute(command)) {
     try {
       accessSync(command, X_OK);
@@ -218,85 +535,38 @@ function isCommandAvailable(command, versionFlag) {
       return false;
     }
   }
-  if (versionFlag) {
-    const result = spawnTool(command, [versionFlag]);
+  if (versionFlag !== null) {
+    const result = spawnSync(command, [versionFlag], { shell: needsShell(command), encoding: "utf8", timeout: 5_000 });
     if (result.status === 0) return true;
   }
-  return whichCommand(command);
-}
-
-function whichCommand(command) {
   const probe = platform() === "win32" ? "where" : "which";
-  const result = spawnSync(probe, [command], { shell: false, encoding: "utf8" });
-  return result.status === 0;
+  return spawnSync(probe, [command], { shell: false, encoding: "utf8" }).status === 0;
 }
 
-function collectToolchainVersions() {
+function getCommandVersion(command, versionFlag) {
+  if (versionFlag === null || !isCommandAvailable(command, versionFlag)) return null;
+  const result = spawnSync(command, [versionFlag], { shell: needsShell(command), encoding: "utf8", timeout: 5_000, maxBuffer: 8 * 1024 * 1024 });
+  if (result.status !== 0) return null;
+  const output = result.stdout || result.stderr || "";
+  return output.split(/\r?\n/)[0].trim() || null;
+}
+
+function collectToolchainVersions(runtimeConfigs) {
   const versions = {};
-  for (const [runtime, config] of runtimes) {
-    versions[runtime] = getCommandVersion(config.command, config.versionFlag);
+  for (const runtime of RUNTIME_NAMES) {
+    const config = runtimeConfigs.get(runtime);
+    versions[runtime] = config ? getCommandVersion(config.command, config.versionFlag) : null;
   }
   versions.zig = getCommandVersion("zig", "version");
+  versions.llvm = getCommandVersion("llvm-config", "--version");
   return versions;
 }
 
-function getCommandVersion(command, flag) {
-  if (!isCommandAvailable(command, flag)) return null;
-  if (!flag) return null;
-  const result = spawnTool(command, [flag], { maxBuffer: 8 * 1024 * 1024 });
-  if (result.error || result.status !== 0) {
-    if (flag !== "--version") {
-      return getCommandVersion(command, "--version");
-    }
-    return null;
-  }
-  const output = result.stdout || result.stderr;
-  const first = output.split(/\r?\n/)[0].trim();
-  return first || null;
-}
-
-function runRuntimeBenchmark(item, runtime, config, sourcePath, caseDir) {
-  const measurements = [];
-  if (runtime === "lnako") {
-      const interpreterSamples = collectSamples(
-      config.command,
-      ["run", sourcePath],
-      item.expected_stdout
-    );
-    measurements.push(summarizeSamples(runtime, "interpreter", interpreterSamples));
-
-    const binPath = join(caseDir, `lnako-aot${executableSuffix}`);
-    const compileSamples = collectSamples(
-      config.command,
-      ["build", sourcePath, "-O2", "-o", binPath],
-      null
-    );
-    measurements.push(summarizeSamples(runtime, "aot_compile", compileSamples));
-
-    if (canExecute(binPath)) {
-      const runSamples = collectSamples(executablePath(binPath), [], item.expected_stdout);
-      measurements.push(summarizeSamples(runtime, "aot_run", runSamples));
-    }
-  } else if (runtime === "c" || runtime === "rust") {
-    const binName = runtime === "c" ? "ref-c" : "ref-rust";
-    const binPath = join(caseDir, `${binName}${executableSuffix}`);
-    const compileArgs =
-      runtime === "c"
-        ? ["-O2", ...(darwinSysroot !== null ? ["-isysroot", darwinSysroot] : []), sourcePath, "-o", binPath]
-        : ["-O", sourcePath, "-o", binPath];
-    const compileSamples = collectSamples(config.command, compileArgs, null);
-    measurements.push(summarizeSamples(runtime, "compile", compileSamples));
-
-    if (canExecute(binPath)) {
-      const runSamples = collectSamples(executablePath(binPath), [], item.expected_stdout);
-      measurements.push(summarizeSamples(runtime, "run", runSamples));
-    }
-  } else {
-    const runArgs = runtime === "gonako" ? ["run", sourcePath] : [sourcePath];
-    const runSamples = collectSamples(config.command, runArgs, item.expected_stdout);
-    measurements.push(summarizeSamples(runtime, "run", runSamples));
-  }
-  return measurements;
+function detectDarwinSysroot() {
+  const result = spawnSync("xcrun", ["--show-sdk-path"], { encoding: "utf8", shell: false, timeout: 5_000 });
+  if (result.error || result.status !== 0) return null;
+  const sysroot = result.stdout.trim();
+  return sysroot.length > 0 ? sysroot : null;
 }
 
 function canExecute(path) {
@@ -323,58 +593,12 @@ function executablePath(path) {
   return path;
 }
 
-function collectSamples(command, args, expectedStdout) {
-  const samples = [];
-  for (let i = 0; i < options.warmup + options.iterations; i += 1) {
-    const started = process.hrtime.bigint();
-    const result = spawnTool(command, args, {
-      maxBuffer: 64 * 1024 * 1024,
-    });
-    const finished = process.hrtime.bigint();
-    const ns = Number(finished - started);
-
-    if (result.error) {
-      throw new Error(`プロセス起動失敗: ${command} ${args.join(" ")}: ${result.error.message}`);
-    }
-    if (result.status !== 0) {
-      const stdout = result.stdout ?? "";
-      const stderr = result.stderr ?? "";
-      throw new Error(`プロセスが終了コード0ではありません: ${command} ${args.join(" ")}\nstatus: ${result.status}\nstdout: ${stdout}\nstderr: ${stderr}`);
-    }
-    if (expectedStdout !== null && !outputsMatch(result.stdout ?? "", expectedStdout)) {
-      throw new Error(`出力が一致しません\n期待値: ${JSON.stringify(expectedStdout)}\n実際: ${JSON.stringify(result.stdout)}`);
-    }
-    if (i >= options.warmup) samples.push(ns);
-  }
-  return samples;
+function normalizeTargetOs(value) {
+  return value === "darwin" ? "macos" : value === "win32" ? "windows" : value;
 }
 
-function outputsMatch(actual, expected) {
-  return normalizeOutput(actual) === normalizeOutput(expected);
-}
-
-function normalizeOutput(output) {
-  return output.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n+$/, "\n");
-}
-
-function summarizeSamples(runtime, mode, samples) {
-  if (samples.length === 0) throw new Error("サンプルが空です");
-  const sorted = [...samples].sort((a, b) => a - b);
-  let median;
-  const mid = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 0) {
-    median = Math.floor((sorted[mid - 1] + sorted[mid]) / 2);
-  } else {
-    median = sorted[mid];
-  }
-  return {
-    runtime,
-    mode,
-    samples_ns: samples,
-    min_ns: sorted[0],
-    median_ns: median,
-    max_ns: sorted[sorted.length - 1],
-  };
+function normalizeTargetArch(value) {
+  return value === "arm64" ? "aarch64" : value === "x64" ? "x86_64" : value;
 }
 
 function getProjectVersion() {
@@ -388,58 +612,84 @@ function getProjectVersion() {
 }
 
 function getGitCommit() {
-  const result = spawnSync("git", ["rev-parse", "HEAD"], {
+  const result = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", shell: false, timeout: 5_000 });
+  return result.error || result.status !== 0 ? "" : result.stdout.trim();
+}
+
+function getGitDirty() {
+  const override = process.env.LNAKO_BENCHMARK_GIT_DIRTY;
+  if (override === "1" || override === "true") return true;
+  if (override === "0" || override === "false") return false;
+  const result = spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], {
     cwd: root,
     encoding: "utf8",
     shell: false,
+    timeout: 5_000,
+    maxBuffer: 4 * 1024 * 1024,
   });
-  if (result.error || result.status !== 0) return "";
-  return result.stdout.trim();
+  if (result.error || result.status !== 0) return true;
+  return result.stdout.trim().length !== 0;
 }
 
-function writeJson(path, report) {
+function collectHardwareMetadata() {
+  const processors = cpus();
+  return {
+    cpu_model: processors[0]?.model ?? null,
+    cpu_logical_count: processors.length,
+    total_memory_bytes: totalmem(),
+    os_release: osRelease(),
+  };
+}
+
+export function writeJson(path, report) {
   const absolutePath = resolve(root, path);
   mkdirSync(dirname(absolutePath), { recursive: true });
-  writeFileSync(absolutePath, JSON.stringify(report, null, 2) + "\n", "utf8");
+  writeFileSync(absolutePath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 }
 
-function writeMarkdown(path, report) {
-  const lines = [];
-  lines.push(`# lnako comparison benchmark`);
-  lines.push("");
-  lines.push(`- suite: \`${report.suite_name}\``);
-  lines.push(`- suite path: \`${report.suite}\``);
-  lines.push(`- git_commit: \`${report.git_commit}\``);
-  lines.push(`- target: \`${report.target.os}/${report.target.arch}\``);
-  lines.push(`- generated_at_unix_ms: \`${report.generated_at_unix_ms}\``);
-  lines.push(`- iterations: \`${report.iterations}\``);
-  lines.push(`- warmup: \`${report.warmup}\``);
-  lines.push(`- optimization: \`${report.optimization}\``);
-  lines.push("");
-  lines.push("## Toolchain versions");
-  lines.push("");
-  lines.push("| tool | version |");
-  lines.push("|---|---|");
-  for (const [name, version] of Object.entries(report.toolchain)) {
-    lines.push(`| ${name} | \`${version ?? "N/A"}\` |`);
-  }
-  lines.push("");
+export function writeMarkdown(path, report) {
+  const absolutePath = resolve(root, path);
+  mkdirSync(dirname(absolutePath), { recursive: true });
+  writeFileSync(absolutePath, renderBenchmarkMarkdown(report), "utf8");
+}
 
-  for (const item of report.cases) {
-    lines.push(`## ${item.id}`);
-    lines.push("");
-    lines.push(`expected stdout: \`${item.expected_stdout.trimEnd()}\``);
-    lines.push("");
-    lines.push("| runtime | mode | samples | min (ns) | median (ns) | max (ns) |");
-    lines.push("|---|---|---:|---:|---:|---:|");
-    for (const m of item.measurements) {
-      lines.push(`| ${m.runtime} | ${m.mode} | ${m.samples_ns.length} | ${m.min_ns} | ${m.median_ns} | ${m.max_ns} |`);
+export function main(arguments_ = process.argv.slice(2)) {
+  const options = parseArguments(arguments_);
+  const suitePath = resolveSuitePath(options.suite);
+  const suite = loadBenchmarkSuite(suitePath);
+  options.suite = relativeSuitePath(suitePath);
+  const tempDir = mkdtempSync(join(tmpdir(), "lnako-comparison-"));
+  let report;
+  try {
+    report = buildReport(suite, tempDir, options, createRuntimeConfigs(options));
+    validateBenchmarkReport(report, { allowFailed: true });
+    writeJson(options.output, report);
+    writeMarkdown(options.markdown, report);
+  } finally {
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // cleanup failure must not hide the benchmark result
     }
-    lines.push("");
   }
+  if (report.status === "failed") {
+    throw new Error(`比較ベンチマークが失敗しました: ${report.failures.length}件。結果: ${options.output}`);
+  }
+  console.log(`比較ベンチマークを完了しました: ${options.output}`);
+  return report;
+}
 
-  const md = lines.join("\n");
-  const absolutePath = resolve(root, path);
-  mkdirSync(dirname(absolutePath), { recursive: true });
-  writeFileSync(absolutePath, md, "utf8");
+function relativeSuitePath(path) {
+  const prefix = `${root}/`;
+  return path.startsWith(prefix) ? path.slice(prefix.length) : path;
+}
+
+const invokedPath = process.argv[1] ? resolve(process.argv[1]) : null;
+if (invokedPath === fileURLToPath(import.meta.url)) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }

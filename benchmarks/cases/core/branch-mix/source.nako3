@@ -1,0 +1,19 @@
+# Runtime input: seed, iterations. Three branches consume the evolving value.
+P=要素数(コマンドライン)
+X=INT(コマンドライン[P-2])
+N=INT(コマンドライン[P-1])
+S=0
+N回
+X=(X*1103515245+12345)%2147483647
+R=X%7
+もしR=0ならば
+S=S+X%11
+違えば
+もしR<3ならば
+S=S-X%5
+違えば
+S=S+X%3
+ここまで
+ここまで
+ここまで
+Sを表示
