@@ -40,7 +40,7 @@ await deleteIfExists(globalBindingEvidence);
 await deleteIfExists(directoryBindingEvidence);
 
 run("check_dispatch_trace.mjs", ["--no-build", "--evidence-output", dispatchEvidence]);
-run("check_dispatch_coverage.mjs", ["--no-build", "--output", dispatchCoverageEvidence]);
+run("check_dispatch_coverage.mjs", ["--no-build", "--include-native", "--output", dispatchCoverageEvidence]);
 run("check_node_exit_evidence.mjs", ["--no-build", "--output", expectedExitEvidence]);
 run("check_compat_js_evidence.mjs", ["--no-build", "--evidence-output", compatJsEvidence]);
 run("check_global_binding_evidence.mjs", ["--no-build", "--profile", "file-copy", "--evidence-output", globalBindingEvidence]);
