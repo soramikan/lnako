@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { evidenceEnv as env } from "./env.mjs";
 import { json, readJson, hashPattern, siteIdPattern, throwStatementOpcode, forbiddenEvidenceFields, runtimeFixtureFiles, dispatchEvidenceFollowUpPaths } from "./constants.mjs";
