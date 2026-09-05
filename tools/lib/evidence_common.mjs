@@ -93,3 +93,19 @@ export function validDispatchExpectationPlatforms(platforms) {
       platforms.every((platform) => ["darwin", "linux", "win32"].includes(platform)));
 }
 
+
+const dispatchCoverageAuditFiles = [
+  "tools/check_dispatch_coverage.mjs",
+  "tools/lib/coverage_env.mjs",
+  "tools/lib/coverage_fixtures.mjs",
+  "tools/lib/coverage_http.mjs",
+  "tools/lib/coverage_process.mjs",
+  "tools/lib/coverage_sites.mjs",
+  "tools/lib/evidence_common.mjs",
+];
+
+export async function dispatchCoverageAuditSha256(root) {
+  const hash = createHash("sha256");
+  for (const relative of dispatchCoverageAuditFiles) hash.update(await readFile(resolve(root, relative)));
+  return hash.digest("hex");
+}

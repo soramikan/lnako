@@ -2,13 +2,14 @@ import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { isAbsolute, join, resolve } from "node:path";
+import { dispatchCoverageAuditSha256 } from "./lib/evidence_common.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const arguments_ = parseArguments();
 const lock = JSON.parse(await readFile(resolve(root, "compat/upstream.lock.json"), "utf8"));
 const baseline = lock.nadesiko3;
 const currentCommit = readGitCommit();
-const auditScriptSha256 = sha256(await readFile(resolve(root, "tools/check_dispatch_coverage.mjs")));
+const auditScriptSha256 = await dispatchCoverageAuditSha256(root);
 const expectedSelection = "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, seven explicit plugin-route fixtures, and native-cut-commands, excluding explicit AOT gaps";
 const files = (await jsonFiles(arguments_.directory)).sort();
 const expectedShardCount = arguments_.shardCount;

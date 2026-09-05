@@ -303,7 +303,7 @@ export function resolveCatalogCommand(fixture, name) {
 }
 
 
-export function createReport({ fixtureReports, sites, unresolvedSites, oracle, git }) {
+export async function createReport({ fixtureReports, sites, unresolvedSites, oracle, git }) {
   const nativeCommands = env.catalog.commands.filter((command) => command.status === "native");
   const nativeIds = new Set(nativeCommands.map((command) => command.id));
   const nativeNames = new Set(nativeCommands.map((command) => command.name));
@@ -348,7 +348,7 @@ export function createReport({ fixtureReports, sites, unresolvedSites, oracle, g
         commit: git.commit,
         dirty: git.dirty,
       },
-      auditScriptSha256: evidence_common.sha256FileSync(resolve(env.root, "tools/check_dispatch_coverage.mjs")),
+      auditScriptSha256: await evidence_common.dispatchCoverageAuditSha256(env.root),
     },
     coverage: {
       unambiguousObservedNativeEntries: observedNativeIds.size,

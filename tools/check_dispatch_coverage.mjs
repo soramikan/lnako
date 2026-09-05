@@ -176,7 +176,7 @@ try {
     unresolvedSites.push(...result.unresolvedSites);
   }
 
-  const report = coverage_sites.createReport({ fixtureReports, sites, unresolvedSites, oracle, git: auditGitState });
+  const report = await coverage_sites.createReport({ fixtureReports, sites, unresolvedSites, oracle, git: auditGitState });
   if (arguments_.output !== null) await writeExclusive(arguments_.output, `${JSON.stringify(report, null, 2)}\n`);
   const nativeCoverage = report.coverage.unambiguousObservedNativeEntries;
   const nativeNames = report.coverage.unambiguousObservedNativeUniqueNames;

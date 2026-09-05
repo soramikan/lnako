@@ -7,7 +7,7 @@ import { evidenceEnv } from "./lib/evidence/env.mjs";
 import * as evidence_constants from "./lib/evidence/constants.mjs";
 import * as records_mod from "./lib/evidence/records.mjs";
 import * as validators from "./lib/evidence/validators.mjs";
-import { validDispatchExpectationPlatforms } from "./lib/evidence_common.mjs";
+import * as evidence_common from "./lib/evidence_common.mjs";
 
 
 const root = resolve(import.meta.dirname, "..");
@@ -91,9 +91,7 @@ const expectedExitEvidenceBytes = await readFile(expectedExitEvidencePath);
 const expectedExitEvidence = JSON.parse(expectedExitEvidenceBytes.toString("utf8"));
 const compatJsEvidenceBytes = await readFile(compatJsEvidencePath);
 const compatJsEvidence = JSON.parse(compatJsEvidenceBytes.toString("utf8"));
-const dispatchCoverageAuditScriptSha256 = createHash("sha256")
-  .update(await readFile(resolve(root, "tools/check_dispatch_coverage.mjs")))
-  .digest("hex");
+const dispatchCoverageAuditScriptSha256 = await evidence_common.dispatchCoverageAuditSha256(root);
 const staticConstantEvidenceRecords = await Promise.all(staticConstantEvidenceInputs.map(async (input) => ({
   ...input,
   evidence: JSON.parse((await readFile(input.path)).toString("utf8")),
