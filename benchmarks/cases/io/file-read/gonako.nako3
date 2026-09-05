@@ -1,0 +1,13 @@
+# Runtime input: repository-relative fixture path.
+ARGS=コマンドライン
+PATH=ARGS[要素数(ARGS)-1]
+T=読(PATH)
+C=文字列分解(T)
+N=要素数(C)
+I=0
+S=0
+N回
+S=S+文字数(C[I])
+I=I+1
+ここまで
+(S+文字数(T))を表示

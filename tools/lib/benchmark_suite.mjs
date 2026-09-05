@@ -48,6 +48,7 @@ export function validateBenchmarkSuite(raw, sourcePath = "suite") {
 
 function normalizeV1Suite(raw, sourcePath) {
   assertSuiteHeader(raw, sourcePath);
+  validateRuntimeSupport(raw.runtime_support, sourcePath);
   const cases = normalizeCases(raw.cases, sourcePath, (item, index) => {
     if (!isPlainObject(item)) throw new Error(`${sourcePath}: cases[${index}]はobjectである必要があります`);
     if (!nonEmptyString(item.id)) throw new Error(`${sourcePath}: cases[${index}].idが不正です`);
@@ -86,6 +87,7 @@ function normalizeV1Suite(raw, sourcePath) {
 
 function normalizeV2Suite(raw, sourcePath) {
   assertSuiteHeader(raw, sourcePath);
+  validateRuntimeSupport(raw.runtime_support, sourcePath);
   const cases = normalizeCases(raw.cases, sourcePath, (item, index) => {
     if (!isPlainObject(item)) throw new Error(`${sourcePath}: cases[${index}]はobjectである必要があります`);
     if (!nonEmptyString(item.id) || !CASE_ID_PATTERN.test(item.id)) {
@@ -111,6 +113,7 @@ function normalizeV2Suite(raw, sourcePath) {
     if (typeof item.expected_stdout !== "string") {
       throw new Error(`${sourcePath}: case ${item.id}.expected_stdoutはstringである必要があります`);
     }
+    validateRuntimeSupport(item.runtime_support, `${sourcePath}: case ${item.id}`);
     const commonSource = item.source === undefined ? null : validateSourcePath(item.source, `${sourcePath}: case ${item.id}.source`, ".nako3");
     const rawSources = isPlainObject(item.sources)
       ? Object.fromEntries(Object.entries(item.sources).map(([runtime, value]) => [runtime, value === "same" ? commonSource : value]))
@@ -154,6 +157,16 @@ function normalizeV2Suite(raw, sourcePath) {
     cases,
     legacy: false,
   };
+}
+
+function validateRuntimeSupport(support, label) {
+  if (support === undefined) return;
+  if (!isPlainObject(support)) throw new Error(`${label}: runtime_supportはobjectである必要があります`);
+  for (const [runtime, value] of Object.entries(support)) {
+    if (!RUNTIME_NAMES.includes(runtime) || !isPlainObject(value) || typeof value.supported !== "boolean" || (value.supported === false && !nonEmptyString(value.reason))) {
+      throw new Error(`${label}: runtime_support.${runtime}が不正です`);
+    }
+  }
 }
 
 function assertSuiteHeader(raw, sourcePath) {

@@ -1,0 +1,9 @@
+# Runtime input: immutable copy-on-concat operations.
+ARGS=コマンドライン
+N=ARGS[要素数(ARGS)-1]
+N=INT(N)
+S=""
+N回
+S=S&"ab"
+ここまで
+文字数(S)を表示

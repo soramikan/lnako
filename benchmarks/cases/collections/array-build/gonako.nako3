@@ -1,0 +1,9 @@
+# Runtime input: number of append operations.
+ARGS=コマンドライン
+N=ARGS[要素数(ARGS)-1]
+N=INT(N)
+A=[]
+N回
+配列追加(A,回数)
+ここまで
+(要素数(A)+A[N-1])を表示

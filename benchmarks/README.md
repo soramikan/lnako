@@ -52,13 +52,15 @@ Nako の実行時引数は runtime ごとに argv の先頭が異なるため、
 
 ## 比較対象
 
-Nadesiko 系の主比較は、同じ `source.nako3` を使う `lnako` と `cnako` です。Python/C/Rust の cross-language reference は、次の 3 ケースに限定しています。
+正式比較は `lnako`・`cnako`・`gonako` です。cnakoとlnakoは同じ `source.nako3` を使い、gonakoで構文差がある場合は、入力・反復数・処理・期待出力を保った専用ソースを使います。専用ソースの調整理由と未対応の理由を結果に記録します。C・Rust（および任意選択のPython）は別言語の参考値で、次の3ケースを測定します。
 
 - `integer-arithmetic`: 実行時 seed/count に依存する同一 LCG と checksum。
 - `string-concat`: 毎回新しい文字列を作る copy-on-concat。C と Rust も旧値を新 buffer へコピーします。
 - `string-builder`: Python の list/join、C の capacity buffer、Rust の `String::push_str`。Nako は配列 append と一括 join で、`string-concat` と異なる測定対象です。
 
-`gonako` は v2 の case source に登録していません。suite の `runtime_support.gonako.supported` を `false` とし、runner のコマンドおよび argv 契約を検証できた時点で追加します。未登録の runtime を、Nako 系の主比較から失敗値として扱わないでください。
+gonakoは[公式配布の3.8.1](https://github.com/kujirahand/nadesiko3go/releases/tag/3.8.1)を比較対象として固定しています。バイナリの自己表示は `gonako v3.6.0` であるため、配布版・自己表示・SHA-256を別々に記録します。これはlnakoの互換基準であるcnako 3.7.24を変更するものではありません。gonakoの `build` は実行ファイルへの梱包機能であり、今回のlnako AOTコンパイル時間との比較には含めません。
+
+実行対象19ケースはgonakoでも出力一致を検証済みです。6ケースは共通ソース、13ケースは引数の取得だけを調整した専用ソースで、専用ソースもcnako・lnako interpreterの両方で出力を照合しています。`runtime_support.gonako` で対応を宣言し、ケース固有の未対応は理由付きで明示します。対応するケースの失敗や期待出力の不一致は、比較を成功扱いにしません。C・Rustは実装のある3ケース以外を未測定として扱います。CIはCをClang 22.1.8、Rustを1.98.0へ固定し、いずれもO2で実行ファイルを生成します。実行時間とコンパイル時間は別に記録します。
 
 ## 実行
 
@@ -70,15 +72,15 @@ zig-out/bin/lnako benchmark --suite benchmarks/suites/v2.json --profile smoke
 
 `--profile normal` は通常の記録、`--profile full` はリリース前の確認に使います。`--case integer-arithmetic` のように case を絞り、`--optimization O0`〜`O3` で AOT 条件を指定できます。native runner は v2 の `sources` にある `"same"` を共通 `source` の別名として解決します。
 
-cross-language comparison は比較 runner から実行します。
+正式比較とC・Rustの参考値は比較runnerから実行します。まず `node tools/setup_benchmark_gonako.mjs` で固定配布版を取得します。CIでは出力される実行パスと配布証明を自動設定し、ローカルでは表示された実行パスを `--gonako` に、配布証明のパスを `LNAKO_BENCHMARK_GONAKO_PROVENANCE` 環境変数に設定してください。
 
 ```sh
 .cache/toolchains/node-24.15.0/bin/node tools/run_comparison_benchmark.mjs \
   --suite benchmarks/suites/v2.json --profile smoke \
-  --runtimes lnako,cnako,python,c,rust
+  --runtimes lnako,cnako,gonako,c,rust
 ```
 
-各 runtime の実行ファイルが PATH にない場合は `--lnako`、`--cnako`、`--python`、`--clang`、`--rustc` または対応する `LNAKO_BENCHMARK_*` 環境変数で指定します。通常の比較結果は環境依存のため作業ツリーへ固定しません。CI artifact や再現可能な compiler 実験の証拠として JSON/Markdown を意図的に保存する場合は、その workflow が指定する出力先・commit provenance・toolchain metadata と一緒に扱います。
+各 runtime の実行ファイルが PATH にない場合は `--lnako`、`--cnako`、`--gonako`、`--python`、`--clang`、`--rustc` または対応する `LNAKO_BENCHMARK_*` 環境変数で指定します。通常の比較結果は環境依存のため作業ツリーへ固定しません。CI artifact や再現可能な compiler 実験の証拠として JSON/Markdown を意図的に保存する場合は、その workflow が指定する出力先・commit provenance・toolchain metadata と一緒に扱います。
 
 ## 解釈上の注意
 
@@ -90,3 +92,11 @@ cross-language comparison は比較 runner から実行します。
 - `compile-stress-medium` は代表的な中規模ソースの compile growth を見るための負荷で、runtime の定常実行値と比較しません。
 
 v2 の JSON とケースソースは、固定 Node 24.15.0 の公式 `cnako3.mjs` と lnako interpreter/AOT の出力が一致することを確認してから runner へ渡します。測定結果の永続化は、通常の machine benchmark と、履歴比較・compiler 実験の evidence として保存するものを区別してください。
+
+結果JSONを読みやすいMarkdownへ転記する場合は、次のコマンドを使います。正式比較と参考値を別表にし、生データへのリンクを付けます。JSONとMarkdownは同じディレクトリに保存してください。
+
+```sh
+node tools/render_benchmark_snapshot.mjs \
+  --json docs/benchmarks/measurement.json \
+  --markdown docs/benchmarks/measurement.md
+```

@@ -7,6 +7,7 @@ import { test } from "node:test";
 import {
   buildReport,
   createRuntimeConfigs,
+  gonakoProvenance,
   parseArguments,
 } from "./run_comparison_benchmark.mjs";
 import { BenchmarkProcessError, runMeasuredSamples } from "./lib/benchmark_process.mjs";
@@ -253,4 +254,45 @@ test("v1 reports remain accepted by the v2 checker", () => {
   };
   validateBenchmarkReport(report);
   validateMarkdown(renderBenchmarkMarkdown(report), report);
+});
+
+test("gonako run preserves arguments, records identity, and distinguishes unsupported cases from missing sources", () => {
+  const fake = makeExecutable(`
+if (process.argv[2] === '--version') process.stdout.write('gonako v3.6.0\\n');
+else {
+  if (process.argv[2] !== 'run' || process.argv.slice(4).join(',') !== '19,80000') process.exit(2);
+  process.stdout.write('ok\\n');
+}`);
+  try {
+    const source = join(fake.directory, "source.nako3");
+    writeFileSync(source, "# probe\n");
+    const base = { id: "supported", category: "core", kind: "micro", description: "test", measurement: "steady_state", profiles: ["smoke"], tags: [], source, sources: { cnako: "same", lnako: "same", gonako: "same" }, input: { args: ["19", "80000"] }, expected_stdout: "ok\n" };
+    const suite = normalizeBenchmarkSuite({ schema_version: 2, name: "gonako-test", runtime_support: { gonako: { supported: true } }, cases: [base,
+      { ...base, id: "unsupported", sources: { cnako: "same", lnako: "same" }, runtime_support: { gonako: { supported: false, reason: "missing builtin" } } },
+      { ...base, id: "missing-source", sources: { cnako: "same", lnako: "same" } },
+    ] });
+    const options = { suite: join(fake.directory, "suite.json"), runtimes: ["gonako"], runtimesExplicit: true, iterations: 1, warmup: 0, profile: "smoke", timeoutMs: 2000 };
+    writeFileSync(options.suite, JSON.stringify(suite));
+    const configs = new Map([["gonako", { command: fake.path, versionFlag: "--version" }]]);
+    const report = buildReport(suite, fake.directory, options, configs);
+    assert.equal(report.runtimes.gonako.group, "nadesiko-implementation");
+    assert.equal(report.runtimes.gonako.version, "gonako v3.6.0");
+    assert.match(report.runtimes.gonako.provenance.sha256, /^[0-9a-f]{64}$/);
+    const receiptPath = join(fake.directory, "receipt.json");
+    const receipt = { sha256: report.runtimes.gonako.provenance.sha256, release: "3.8.1", url: "https://example.test/gonako" };
+    writeFileSync(receiptPath, JSON.stringify(receipt));
+    assert.deepEqual(gonakoProvenance(fake.path, receiptPath), receipt);
+    writeFileSync(receiptPath, JSON.stringify({ ...receipt, sha256: "0".repeat(64) }));
+    assert.throws(() => gonakoProvenance(fake.path, receiptPath), /一致しません/);
+    assert.equal(report.cases[0].runtime_status.gonako.status, "measured");
+    assert.equal(report.cases[1].runtime_status.gonako.reason, "unsupported: missing builtin");
+    assert.equal(report.cases[2].runtime_status.gonako.status, "failed");
+    assert.equal(report.failures.length, 1);
+    validateBenchmarkReport(report, { allowFailed: true });
+    const md = renderBenchmarkMarkdown(report);
+    assert.match(md, /正式比較/);
+    assert.match(md, /参考値/);
+    validateMarkdown(md, report);
+    assert.throws(() => normalizeBenchmarkSuite({ ...suite, runtime_support: { gonako: { supported: false } } }), /runtime_support/);
+  } finally { removeDirectory(fake.directory); }
 });

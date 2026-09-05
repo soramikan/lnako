@@ -64,6 +64,10 @@ jobs:
         with:
           node-version: 24.15.0
 
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable action, toolchain pinned below
+        with:
+          toolchain: 1.98.0
+
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/oracle
@@ -88,6 +92,30 @@ jobs:
       - name: Set up pinned LLVM and LLD
         shell: bash
         run: node tools/setup_llvm.mjs
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/benchmark-gonako
+          key: benchmark-gonako-3.8.1-${{ runner.os }}-${{ runner.arch }}-v1
+
+      - name: Set up pinned gonako
+        shell: bash
+        run: node tools/setup_benchmark_gonako.mjs
+
+      - name: Verify comparison compilers
+        shell: bash
+        run: |
+          set -euo pipefail
+          clang_path="$LNAKO_LLVM_DIR/bin/clang"
+          if [ "${RUNNER_OS:-}" = "Windows" ]; then clang_path="${clang_path}.exe"; fi
+          gonako_path="$LNAKO_BENCHMARK_GONAKO"
+          if command -v cygpath >/dev/null 2>&1; then
+            clang_path="$(cygpath -u "$clang_path")"
+            gonako_path="$(cygpath -u "$gonako_path")"
+          fi
+          "$clang_path" --version
+          "$gonako_path" --version
+          rustc --version
 
       - name: Prune LLVM toolchain cache
         shell: bash
@@ -121,12 +149,17 @@ jobs:
           if [ -f "$RUNNER_TEMP/benchmark-baseline/benchmark-${{ matrix.target }}.json" ]; then
             baseline_args=(--baseline "$RUNNER_TEMP/benchmark-baseline/benchmark-${{ matrix.target }}.json")
           fi
+          clang_path="$LNAKO_LLVM_DIR/bin/clang"
+          if [ "${RUNNER_OS:-}" = "Windows" ]; then clang_path="${clang_path}.exe"; fi
           node tools/run_comparison_benchmark.mjs "${baseline_args[@]}" \
             --suite benchmarks/suites/v2.json \
             --profile "$BENCHMARK_PROFILE" \
-            --runtimes lnako,cnako \
+            --runtimes lnako,cnako,gonako,c,rust \
             --lnako "$LNAKO_BENCHMARK_LNAKO" \
             --cnako "$LNAKO_BENCHMARK_CNAKO" \
+            --gonako "$LNAKO_BENCHMARK_GONAKO" \
+            --clang "$clang_path" \
+            --rustc rustc \
             --output "$RUNNER_TEMP/benchmark-${{ matrix.target }}.json" \
             --markdown "$RUNNER_TEMP/benchmark-${{ matrix.target }}.md"
 

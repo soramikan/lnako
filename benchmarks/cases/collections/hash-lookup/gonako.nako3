@@ -1,0 +1,19 @@
+# Runtime input: number of keys. Insert, then read every key in reverse order.
+ARGS=コマンドライン
+N=ARGS[要素数(ARGS)-1]
+N=INT(N)
+H={}
+I=1
+N回
+K="k"&I
+H[K]=I
+I=I+1
+ここまで
+I=N
+S=0
+N回
+K="k"&I
+S=S+H[K]
+I=I-1
+ここまで
+Sを表示

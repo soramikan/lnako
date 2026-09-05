@@ -1,0 +1,13 @@
+# Runtime input: seed, iterations. Copy command-line items through ARGS before integer conversion for gonako.
+P=要素数(コマンドライン)
+ARGS=コマンドライン
+X=ARGS[P-2]
+X=INT(X)
+N=ARGS[P-1]
+N=INT(N)
+S=0
+N回
+X=(X*1664525+1013904223)%2147483647
+S=S+(X%1000)
+ここまで
+Sを表示

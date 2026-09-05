@@ -84,6 +84,7 @@ function baselineCompatibilityDifferences(current, baseline) {
   if ((current.profile ?? null) !== (baseline.profile ?? null)) differences.push("profile");
   if (JSON.stringify(current.toolchain ?? null) !== JSON.stringify(baseline.toolchain ?? null)) differences.push("toolchain");
   if (runtimeVersions(current) !== runtimeVersions(baseline)) differences.push("runtime_versions");
+  if (JSON.stringify(current.runtimes?.gonako?.provenance ?? null) !== JSON.stringify(baseline.runtimes?.gonako?.provenance ?? null)) differences.push("gonako_provenance");
   const baselineCases = new Map((baseline.cases ?? []).map((item) => [item.id, item]));
   for (const item of current.cases ?? []) {
     const previous = baselineCases.get(item.id);
@@ -167,6 +168,12 @@ function validateV2Report(report, { allowFailed }) {
     const record = report.runtimes[runtime];
     if (!isPlainObject(record) || typeof record.available !== "boolean" || typeof record.selected !== "boolean" || typeof record.group !== "string") {
       throw new Error(`v2のruntime metadataが不正です: ${runtime}`);
+    }
+    if (record.provenance !== undefined) {
+      const provenance = record.provenance;
+      if (!isPlainObject(provenance) || !SHA256_PATTERN.test(provenance.sha256) || (provenance.release !== null && typeof provenance.release !== "string") || (provenance.url !== null && typeof provenance.url !== "string")) {
+        throw new Error(`v2のruntime provenanceが不正です: ${runtime}`);
+      }
     }
     if (record.group !== runtimeComparisonGroup(runtime)) throw new Error(`v2のruntime groupが不正です: ${runtime}`);
     if (record.selected !== report.selected_runtimes.includes(runtime)) throw new Error(`v2のruntime selectionが不一致です: ${runtime}`);
@@ -309,6 +316,8 @@ export function renderBenchmarkMarkdown(report) {
   for (const [name, version] of Object.entries(report.toolchain)) lines.push(`| ${name} | \`${escapeMarkdownCell(version ?? "N/A")}\` |`);
   lines.push("");
   if (report.schema_version === 2) {
+    lines.push("正式比較: cnako・gonako・lnako。C・Rust・Pythonは参考値で、未選択・未対応のケースは数値を記録しません。", "");
+    if (report.runtimes?.gonako?.provenance) lines.push(`gonako distribution: ${escapeMarkdownCell(JSON.stringify(report.runtimes.gonako.provenance))}`, "");
     lines.push("## Comparison groups", "", "| group | runtimes |", "|---|---|", `| nadesiko-implementation | ${report.comparison_groups["nadesiko-implementation"].join(", ")} |`, `| cross-language-reference | ${report.comparison_groups["cross-language-reference"].join(", ")} |`, "");
   }
   if (report.warnings?.length > 0) {
@@ -325,6 +334,11 @@ export function renderBenchmarkMarkdown(report) {
       lines.push("| runtime | group | measurement | mode | samples | min (ns) | p25 (ns) | median (ns) | p75 (ns) | max (ns) | IQR (ns) | MAD (ns) | mean (ns) | stddev (ns) | CV | executable bytes |", "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
       for (const measurement of item.measurements) {
         lines.push(`| ${measurement.runtime} | ${measurement.group} | ${measurement.measurement} | ${measurement.mode} | ${measurement.samples_ns.length} | ${measurement.min_ns} | ${measurement.p25_ns} | ${measurement.median_ns} | ${measurement.p75_ns} | ${measurement.max_ns} | ${measurement.iqr_ns} | ${measurement.mad_ns} | ${measurement.mean_ns} | ${measurement.stddev_ns} | ${measurement.cv} | ${measurement.executable_size_bytes ?? "N/A"} |`);
+      }
+      if (item.runtime_support) {
+        for (const [runtime, support] of Object.entries(item.runtime_support)) {
+          if (support.reason) lines.push("", `${runtime} source/support: ${escapeMarkdownCell(support.reason)}`);
+        }
       }
       if (item.runtime_status) {
         lines.push("", "Runtime status:", "");

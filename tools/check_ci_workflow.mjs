@@ -511,7 +511,7 @@ if (!workflow.includes(oracleCacheKey)) throw new Error(`公式オラクルの�
 
 checkFailFastShell(workflow, ".github/workflows/ci.yml");
 checkFailFastShell(comparisonBenchmarkWorkflow, ".github/workflows/comparison-benchmark.yml");
-for (const required of ["  pull_request:", "  push:", "  schedule:", "node tools/setup_oracle.mjs", "node tools/create_benchmark_oracle_shim.mjs", "--suite benchmarks/suites/v2.json", "--runtimes lnako,cnako", '--profile "$BENCHMARK_PROFILE"', "retention-days: 90"]) {
+for (const required of ["  pull_request:", "  push:", "  schedule:", "node tools/setup_oracle.mjs", "node tools/create_benchmark_oracle_shim.mjs", "--suite benchmarks/suites/v2.json", "node tools/setup_benchmark_gonako.mjs", "toolchain: 1.98.0", "--runtimes lnako,cnako,gonako,c,rust", '--profile "$BENCHMARK_PROFILE"', "retention-days: 90"]) {
   if (!comparisonBenchmarkWorkflow.includes(required)) throw new Error(`比較benchmarkの必須条件がありません: ${required}`);
 }
 if (comparisonBenchmarkWorkflow.includes("continue-on-error: true")) throw new Error("比較benchmarkの正しさ検証をcontinue-on-errorにできません");

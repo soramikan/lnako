@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "repository": "kujirahand/nadesiko3go",
+  "release": "3.8.1",
+  "releaseApi": "https://api.github.com/repos/kujirahand/nadesiko3go/releases/tags/3.8.1",
+  "artifacts": {
+    "darwin-arm64": {
+      "asset": "gonako-3.8.1-darwin-arm64",
+      "url": "https://github.com/kujirahand/nadesiko3go/releases/download/3.8.1/gonako-3.8.1-darwin-arm64",
+      "sha256": "dd6218bcb28e3406356b051350530c1082fae62b70399e429fed9de0f6ab9c27"
+    },
+    "linux-x64": {
+      "asset": "gonako-3.8.1-linux-amd64",
+      "url": "https://github.com/kujirahand/nadesiko3go/releases/download/3.8.1/gonako-3.8.1-linux-amd64",
+      "sha256": "1dcac44e6a9b1b42587d7824010dda5ce8e726521750c2ae18f1313acddfefa9"
+    },
+    "win32-x64": {
+      "asset": "gonako-3.8.1-windows-amd64.exe",
+      "url": "https://github.com/kujirahand/nadesiko3go/releases/download/3.8.1/gonako-3.8.1-windows-amd64.exe",
+      "sha256": "e8d064e6f82551118dc5b498d92083ec4ab978199bff9531522cc6d8be224ac7"
+    }
+  }
+}

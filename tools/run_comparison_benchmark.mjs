@@ -159,7 +159,7 @@ export function resolveSuitePath(suiteOption) {
 export function createRuntimeConfigs(options) {
   return new Map([
     ["cnako", { command: resolveSpawnCommand(options.cnako), versionFlag: "-v" }],
-    ["gonako", { command: resolveSpawnCommand(options.gonako), versionFlag: null }],
+    ["gonako", { command: resolveSpawnCommand(options.gonako), versionFlag: "--version" }],
     ["python", { command: resolveSpawnCommand(options.python), versionFlag: "--version" }],
     ["c", { command: resolveSpawnCommand(options.clang), versionFlag: "--version" }],
     ["rust", { command: resolveSpawnCommand(options.rustc), versionFlag: "--version" }],
@@ -184,6 +184,7 @@ export function buildReport(suite, tempDir, options = {}, runtimeConfigs = null)
       available: isAvailable,
       selected: selectedRuntimes.includes(runtime),
       group: runtimeComparisonGroup(runtime),
+      ...(runtime === "gonako" && isAvailable && selectedRuntimes.includes(runtime) ? { provenance: gonakoProvenance(config.command) } : {}),
     };
   }
   const selectedCases = selectBenchmarkCases(suite, { profile: options.profile, caseIds: options.cases });
@@ -220,8 +221,17 @@ export function buildReport(suite, tempDir, options = {}, runtimeConfigs = null)
         }
         continue;
       }
+      const support = item.runtime_support?.[runtime] ?? suite.runtime_support?.[runtime];
+      if (support?.supported === false) {
+        status.reason = `unsupported: ${support.reason}`;
+        continue;
+      }
       if (source === undefined) {
         status.reason = "source_unavailable";
+        if (support?.supported === true) {
+          status.status = "failed";
+          failures.push(formatFailure(item, runtime, new Error(`対応を宣言したruntimeのsourceがありません: ${runtime}`), "source_unavailable"));
+        }
         continue;
       }
       const sourcePath = resolve(root, source);
@@ -266,6 +276,7 @@ export function buildReport(suite, tempDir, options = {}, runtimeConfigs = null)
       source: item.source,
       source_hashes: sourceHashes,
       sources: { ...item.sources },
+      runtime_support: { ...item.runtime_support },
       input: { args: [...invocation.args] },
       expected_stdout: invocation.expected_stdout,
       measurements,
@@ -286,6 +297,7 @@ export function buildReport(suite, tempDir, options = {}, runtimeConfigs = null)
     suite_name: suite.name,
     suite: suiteOption,
     suite_sha256: hashSuiteIfAvailable(suiteOption),
+    runtime_support: { ...suite.runtime_support },
     optimization: options.optimization,
     profile: options.profile,
     iterations: profileOptions.samples,
@@ -525,6 +537,16 @@ function needsShell(command) {
   return isWindows && /\.(cmd|bat)$/i.test(command);
 }
 
+export function gonakoProvenance(command, receiptPath = process.env.LNAKO_BENCHMARK_GONAKO_PROVENANCE) {
+  const sha256 = sha256File(command);
+  if (!receiptPath) return { sha256, release: null, url: null };
+  const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+  if (receipt.sha256 !== sha256 || typeof receipt.release !== "string" || typeof receipt.url !== "string") {
+    throw new Error("gonakoの配布証明と実行バイナリが一致しません");
+  }
+  return { sha256, release: receipt.release, url: receipt.url };
+}
+
 function isCommandAvailable(command, versionFlag) {
   if (!command) return false;
   if (isAbsolute(command)) {
@@ -558,7 +580,10 @@ function collectToolchainVersions(runtimeConfigs) {
     versions[runtime] = config ? getCommandVersion(config.command, config.versionFlag) : null;
   }
   versions.zig = getCommandVersion("zig", "version");
-  versions.llvm = getCommandVersion("llvm-config", "--version");
+  // A system llvm-config may describe a different LLVM from the selected AOT toolchain.
+  versions.llvm = process.env.LNAKO_LLVM_DIR
+    ? getCommandVersion(join(process.env.LNAKO_LLVM_DIR, "bin", isWindows ? "llvm-config.exe" : "llvm-config"), "--version")
+    : null;
   return versions;
 }
 

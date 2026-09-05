@@ -1,0 +1,23 @@
+# Runtime input: seed, iterations. Keep the three branches and checksum equal
+# to source.nako3; copy コマンドライン before indexed access for gonako.
+ARGS=コマンドライン
+P=要素数(ARGS)
+X=ARGS[P-2]
+X=INT(X)
+N=ARGS[P-1]
+N=INT(N)
+S=0
+N回
+X=(X*1103515245+12345)%2147483647
+R=X%7
+もしR=0ならば
+S=S+X%11
+違えば
+もしR<3ならば
+S=S-X%5
+違えば
+S=S+X%3
+ここまで
+ここまで
+ここまで
+Sを表示

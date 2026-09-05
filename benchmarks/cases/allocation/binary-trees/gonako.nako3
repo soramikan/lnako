@@ -1,0 +1,26 @@
+# Runtime input: tree depth. Each iteration allocates and traverses a tree.
+●(Dを)木作成とは
+もしD<=0ならば
+{"v":1,"l":NULL,"r":NULL}で戻る
+ここまで
+{"v":D,"l":木作成(D-1),"r":木作成(D-1)}で戻る
+ここまで
+●(Tを)木合計とは
+S=T["v"]
+もしT["l"]!=NULLならば
+S=S+木合計(T["l"])
+ここまで
+もしT["r"]!=NULLならば
+S=S+木合計(T["r"])
+ここまで
+Sで戻る
+ここまで
+ARGS=コマンドライン
+D=ARGS[要素数(ARGS)-1]
+D=INT(D)
+S=0
+3回
+T=木作成(D)
+S=S+木合計(T)
+ここまで
+Sを表示

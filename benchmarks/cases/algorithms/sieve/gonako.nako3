@@ -1,0 +1,27 @@
+# Runtime input: inclusive upper bound for the sieve.
+ARGS=コマンドライン
+N=ARGS[要素数(ARGS)-1]
+N=INT(N)
+合成=[]
+P=2
+((P*P)<=N)の間
+もし合成[P]!=真ならば
+M=P*P
+(M<=N)の間
+合成[M]=真
+M=M+P
+ここまで
+ここまで
+P=P+1
+ここまで
+P=2
+C=0
+S=0
+(P<=N)の間
+もし合成[P]!=真ならば
+C=C+1
+S=S+P
+ここまで
+P=P+1
+ここまで
+(C+S)を表示

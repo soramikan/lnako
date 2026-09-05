@@ -1,0 +1,12 @@
+# Runtime input: number of user function calls.
+●(Xを)三倍加算とは
+X*3+1で戻る
+ここまで
+ARGS=コマンドライン
+N=ARGS[要素数(ARGS)-1]
+N=INT(N)
+S=0
+N回
+S=三倍加算((S+回数)%1000003)
+ここまで
+Sを表示
