@@ -1,0 +1,59 @@
+{
+  "comment": "巨大ファイル分割ガードレール（docs/REFACTORING_PLAN.md 参照）。tools/check_source_structure.mjs がこの設定を検査する。",
+  "size": {
+    "comment": "src/**/*.zig のサイズ上限。生成物・テスト集約・test専用ファイルは対象外。warnKb は警告のみ、limitKb 超過はCI失敗。",
+    "excludeDirectories": ["src/generated/"],
+    "excludeBasenames": ["all_tests.zig", "tests.zig"],
+    "excludeSuffixes": ["_test.zig"],
+    "classes": {
+      "default": { "warnKb": 60, "limitKb": 80 },
+      "facade": { "warnKb": 30, "limitKb": 50 },
+      "algorithm": { "warnKb": 80, "limitKb": 100 },
+      "abi": { "warnKb": 100, "limitKb": 120 }
+    },
+    "facades": [
+      "src/main.zig",
+      "src/cli.zig",
+      "src/compiler_pipeline.zig",
+      "src/host.zig",
+      "src/regexp.zig",
+      "src/plugins/node.zig",
+      "src/plugins/system.zig",
+      "src/plugins/system/arrays.zig",
+      "src/runtime/interpreter.zig",
+      "src/runtime/aot/state.zig",
+      "src/backend/llvm/api.zig"
+    ],
+    "exceptions": {
+      "src/frontend/parser.zig": {
+        "reason": "演算子優先順位・制御構文の停止条件・token cursorの相互依存が強いため早期分割しない（計画 二次対象）",
+        "limitKb": 90
+      },
+      "src/backend/llvm/module/emitter.zig": {
+        "reason": "emitter/context・operations分割が進行中（計画 backend/llvm）",
+        "limitKb": 140
+      },
+      "src/plugins/system/strings.zig": {
+        "reason": "strings/ への分割が進行中（計画 二次対象）",
+        "limitKb": 90
+      }
+    }
+  },
+  "layers": {
+    "comment": "src/<層>/ 内のファイルから他層への相対 @import 許可リスト。src直下のファイル（ルートファサード・テスト集約）は対象外。ここに無い層間依存の追加はCI失敗。",
+    "frontend": [],
+    "semantic": ["frontend"],
+    "ir": ["frontend", "semantic"],
+    "archive": [],
+    "regexp": [],
+    "plugins": ["runtime", "semantic", "generated"],
+    "compat": ["ir", "plugins", "runtime", "semantic"],
+    "backend": ["frontend", "ir", "semantic", "runtime"],
+    "runtime": ["archive", "compat", "frontend", "ir", "plugins", "semantic"],
+    "host": ["archive"],
+    "cli": ["benchmark", "compiler_pipeline", "host"],
+    "compiler_pipeline": [],
+    "benchmark": [],
+    "generated": []
+  }
+}
