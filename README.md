@@ -72,18 +72,18 @@ lnako benchmark
 
 ## 性能比較
 
-以下は同一アルゴリズムを `cnako` (Node.js 版なでしこ3)、`gonako` (Go 版なでしこ3)、Python、C、Rust、`lnako` (interpreter / AOT) で計測した結果です。単位はミリ秒（ms）で、各5サンプルの中央値を記載しています。
+以下は同一アルゴリズムを `cnako` (Node.js 版なでしこ3)、`gonako` (Go 版なでしこ3)、Python、C、Rust、`lnako` (interpreter / AOT) で計測した結果です。単位はミリ秒（ms）で、warmup 1回 + 3サンプルの中央値を記載しています。
 
-計測環境: macOS 15 / arm64、LLVM 23.1.0、Zig 0.16.0、`lnako` AOT および C / Rust は `-O2`。`gonako` はローカル未インストールのため表では未取得ですが、[`.github/workflows/comparison-benchmark.yml`](.github/workflows/comparison-benchmark.yml) では標準実行されます。
+計測環境: GitHub Actions `macos-15` / arm64（[`.github/workflows/comparison-benchmark.yml`](.github/workflows/comparison-benchmark.yml) 実行分、commit `c6348c9`）、LLVM/LLD 22.1.8、Zig 0.16.0、cnako 3.8.1、Python 3.14.7、rustc 1.98.1、`lnako` AOT および C / Rust は `-O2`。macOS環境では C は pinned LLVM clang が macOS SDK ヘッダを解決できないため未計測です。
 
 | ケース | cnako | gonako | Python | C (run) | Rust (run) | lnako interpreter | lnako AOT run |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| arithmetic-loop | 77.97 | - | 25.60 | 7.75 | 4.66 | 20.66 | 9.78 |
-| array-mutation | 75.48 | - | 25.21 | 6.33 | 5.32 | 8.15 | 4.30 |
-| closure-loop | 88.16 | - | 27.47 | 3.76 | 3.39 | 35.62 | 5.81 |
-| recursion | 3448.29 | - | 119.71 | 6.67 | 8.10 | 2357.54 | 322.42 |
-| string-bench | 79.19 | - | 28.52 | 7.38 | 9.07 | 97.22 | 139.44 |
-`lnako` は AOT 実行時にネイティブコンパイルを活かし、多くのケースで interpreter より高速に動作します。最新の結果は [`.github/workflows/comparison-benchmark.yml`](.github/workflows/comparison-benchmark.yml) から実行できます。
+| arithmetic-loop | 102.31 | 14.55 | 24.23 | - | 2.44 | 18.67 | 2.59 |
+| array-mutation | 92.09 | 15.66 | 20.36 | - | 1.99 | 4.63 | 2.28 |
+| closure-loop | 83.01 | 17.30 | 21.68 | - | 1.85 | 33.76 | 2.77 |
+| recursion | 4695.98 | 318.69 | 153.55 | - | 7.20 | 2774.51 | 367.76 |
+| string-bench | 81.49 | 21.06 | 22.85 | - | 1.93 | 109.40 | 149.34 |
+`lnako` は AOT 実行時にネイティブコンパイルを活かし、多くのケースで interpreter より高速に動作します。macOS arm64・Linux x64・Windows x64 の全ターゲット生データは [`benchmarks/comparison/results/`](benchmarks/comparison/results/) に保存しています。最新の結果は [`.github/workflows/comparison-benchmark.yml`](.github/workflows/comparison-benchmark.yml) から実行できます。
 
 ## 開発者向けドキュメント
 
