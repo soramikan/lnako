@@ -79,7 +79,7 @@
     "environment": {
       "platform": "darwin",
       "arch": "arm64",
-      "node": "v24.15.0"
+      "node": "v26.2.0"
     },
     "oracle": {
       "build": 4,
@@ -91,7 +91,7 @@
     },
     "lnako": {
       "binarySha256": "6514989d245262fbec0c63f54b2d142176f12f62f72c32b7904cccc1730eb0a7",
-      "commit": "f0528c46db0b2d70192247555e1a4f045de5f357",
+      "commit": "f56b3c1ac2a1becf68ecbcfb645833d251d03bba",
       "dirty": false
     },
     "raw": {
