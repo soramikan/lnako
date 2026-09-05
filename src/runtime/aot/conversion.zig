@@ -15,6 +15,7 @@ const BigInt = aot_state.BigInt;
 const RootFrame = aot_state.RootFrame;
 const AotPrimitiveHint = aot_state.AotPrimitiveHint;
 const Arithmetic = aot_state.Arithmetic;
+const UnaryOperator = aot_state.UnaryOperator;
 const ShiftOperator = aot_state.ShiftOperator;
 const Comparison = aot_state.Comparison;
 const numberValue = aot_state.numberValue;
@@ -643,6 +644,24 @@ pub fn arithmetic(runtime: *Runtime, operator: Arithmetic, left: Value, right: V
         .bit_xor => @floatFromInt(toInt32(left_number) ^ toInt32(right_number)),
     };
     return numberValue(result);
+}
+
+pub fn unary(runtime: *Runtime, operator: UnaryOperator, value: Value) !Value {
+    var roots = [_]Value{ value, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+    roots[1] = try valueToPrimitive(runtime, roots[0], .number);
+    const primitive = roots[1];
+    if (primitive.tag == @intFromEnum(Tag.bigint)) {
+        const bigint = primitive.object().?.payload.bigint;
+        return switch (operator) {
+            .minus => runtime.ownBigInt(try bigint.negate(runtime.allocator)),
+            .plus => error.CannotConvertBigIntToNumber,
+        };
+    }
+    const number = try valueToNumberRuntime(runtime, primitive);
+    return numberValue(if (operator == .minus) -number else number);
 }
 
 pub fn bigIntEqualsString(runtime: *Runtime, bigint: BigInt, string: Value) !bool {

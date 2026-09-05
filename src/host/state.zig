@@ -467,10 +467,17 @@ pub const CliHost = struct {
         if (self.http_connection != null) return error.PreviousHttpResponseNotFinished;
         const server = if (self.http_server) |*value| value else return error.HttpServerNotStarted;
         const stream = try server.accept(self.io);
-        errdefer stream.close(self.io);
+        // Keep the accepted stream local until the complete request has been
+        // read.  A truncated request must be closed by this errdefer without
+        // leaving a stale stream in `http_connection` for the next poll.
+        errdefer {
+            stream.close(self.io);
+            self.http_connection = null;
+            self.http_head_request = false;
+        }
         var buffer: [64 * 1024]u8 = undefined;
         var reader = stream.reader(self.io, &buffer);
-        const request_line_raw = (try reader.interface.takeDelimiter('\n')) orelse return error.InvalidHttpRequest;
+        const request_line_raw = (reader.interface.takeDelimiter('\n') catch |err| return mapHttpReadError(&reader, err)) orelse return error.InvalidHttpRequest;
         const request_line = std.mem.trimEnd(u8, request_line_raw, "\r");
         var request_parts = std.mem.splitScalar(u8, request_line, ' ');
         const method_source = request_parts.next() orelse return error.InvalidHttpRequest;
@@ -487,7 +494,7 @@ pub const CliHost = struct {
         var content_type: []u8 = try allocator.alloc(u8, 0);
         errdefer allocator.free(content_type);
         while (true) {
-            const line_raw = (try reader.interface.takeDelimiter('\n')) orelse return error.InvalidHttpRequest;
+            const line_raw = (reader.interface.takeDelimiter('\n') catch |err| return mapHttpReadError(&reader, err)) orelse return error.InvalidHttpRequest;
             const line = std.mem.trimEnd(u8, line_raw, "\r");
             if (line.len == 0) break;
             const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
@@ -495,19 +502,20 @@ pub const CliHost = struct {
             const header_value = std.mem.trim(u8, line[colon + 1 ..], " \t");
             if (header_name.len == 0 or std.mem.indexOfAny(u8, header_name, "\r\n\x00") != null or std.mem.indexOfAny(u8, header_value, "\r\n\x00") != null) return error.InvalidHttpHeader;
             if (std.ascii.eqlIgnoreCase(header_name, "content-length")) {
-                content_length = try std.fmt.parseInt(usize, header_value, 10);
+                content_length = std.fmt.parseInt(usize, header_value, 10) catch return error.InvalidHttpHeader;
             } else if (std.ascii.eqlIgnoreCase(header_name, "transfer-encoding")) {
                 transfer_chunked = std.ascii.indexOfIgnoreCase(header_value, "chunked") != null;
             } else if (std.ascii.eqlIgnoreCase(header_name, "content-type")) {
+                const replacement = try allocator.dupe(u8, header_value);
                 allocator.free(content_type);
-                content_type = try allocator.dupe(u8, header_value);
+                content_type = replacement;
             }
         }
         if (transfer_chunked and content_length > 0) return error.InvalidHttpRequest;
-        self.http_connection = stream;
-        self.http_head_request = std.ascii.eqlIgnoreCase(method, "HEAD");
         if (transfer_chunked) {
-            const chunked = try http_client.readChunkedHttpBody(allocator, &reader.interface, 10 * 1024 * 1024);
+            const chunked = http_client.readChunkedHttpBody(allocator, &reader.interface, 10 * 1024 * 1024) catch |err| return mapHttpReadError(&reader, err);
+            self.http_connection = stream;
+            self.http_head_request = std.ascii.eqlIgnoreCase(method, "HEAD");
             return .{
                 .method = method,
                 .target = target,
@@ -517,19 +525,33 @@ pub const CliHost = struct {
             };
         }
         if (content_length > 10 * 1024 * 1024) {
-            _ = try reader.interface.discardShort(content_length);
+            const discarded = reader.interface.discardShort(content_length) catch |err| return mapHttpReadError(&reader, err);
+            if (discarded != content_length) return error.InvalidHttpRequest;
+            const empty_body = try allocator.alloc(u8, 0);
+            self.http_connection = stream;
+            self.http_head_request = std.ascii.eqlIgnoreCase(method, "HEAD");
             return .{
                 .method = method,
                 .target = target,
                 .content_type = content_type,
-                .body = try allocator.alloc(u8, 0),
+                .body = empty_body,
                 .too_large = true,
             };
         }
         const body = try allocator.alloc(u8, content_length);
         errdefer allocator.free(body);
-        try reader.interface.readSliceAll(body);
+        reader.interface.readSliceAll(body) catch |err| return mapHttpReadError(&reader, err);
+        self.http_connection = stream;
+        self.http_head_request = std.ascii.eqlIgnoreCase(method, "HEAD");
         return .{ .method = method, .target = target, .content_type = content_type, .body = body };
+    }
+
+    fn mapHttpReadError(reader: *std.Io.net.Stream.Reader, err: anyerror) anyerror {
+        if (err != error.ReadFailed) return err;
+        return switch (reader.err orelse error.ReadFailed) {
+            error.ConnectionResetByPeer, error.Timeout, error.SocketUnconnected => error.HttpServerClientDisconnected,
+            else => |underlying| underlying,
+        };
     }
 
     fn respondHttpServer(context: *anyopaque, status_code: u16, headers: []const lnako.plugins.http_server.Header, body: []const u8) !void {
@@ -543,17 +565,25 @@ pub const CliHost = struct {
         var send_buffer: [16 * 1024]u8 = undefined;
         var writer = stream.writer(self.io, &send_buffer);
         const status: std.http.Status = @enumFromInt(status_code);
-        try writer.interface.print("HTTP/1.1 {d} {s}\r\n", .{ status_code, status.phrase() orelse "" });
+        writer.interface.print("HTTP/1.1 {d} {s}\r\n", .{ status_code, status.phrase() orelse "" }) catch |err| return mapHttpWriteError(&writer, err);
         var has_content_length = false;
         for (headers) |header| {
             if (header.name.len == 0 or std.mem.indexOfAny(u8, header.name, "\r\n\x00") != null or std.mem.indexOfAny(u8, header.value, "\r\n\x00") != null) return error.InvalidHttpHeader;
             if (std.ascii.eqlIgnoreCase(header.name, "content-length")) has_content_length = true;
-            try writer.interface.print("{s}: {s}\r\n", .{ header.name, header.value });
+            writer.interface.print("{s}: {s}\r\n", .{ header.name, header.value }) catch |err| return mapHttpWriteError(&writer, err);
         }
-        if (!has_content_length) try writer.interface.print("Content-Length: {d}\r\n", .{body.len});
-        try writer.interface.writeAll("Connection: close\r\n\r\n");
-        if (!self.http_head_request) try writer.interface.writeAll(body);
-        try writer.interface.flush();
+        if (!has_content_length) writer.interface.print("Content-Length: {d}\r\n", .{body.len}) catch |err| return mapHttpWriteError(&writer, err);
+        writer.interface.writeAll("Connection: close\r\n\r\n") catch |err| return mapHttpWriteError(&writer, err);
+        if (!self.http_head_request) writer.interface.writeAll(body) catch |err| return mapHttpWriteError(&writer, err);
+        writer.interface.flush() catch |err| return mapHttpWriteError(&writer, err);
+    }
+
+    fn mapHttpWriteError(writer: *std.Io.net.Stream.Writer, err: anyerror) anyerror {
+        if (err != error.WriteFailed) return err;
+        return switch (writer.err orelse error.WriteFailed) {
+            error.ConnectionResetByPeer, error.SocketUnconnected => error.HttpServerClientDisconnected,
+            else => |underlying| underlying,
+        };
     }
 
     fn holdHttpServerResponse(context: *anyopaque) !void {
@@ -601,7 +631,7 @@ pub const CliHost = struct {
         defer allocator.free(root_real);
 
         var relative: std.ArrayList(u8) = .empty;
-        errdefer relative.deinit(allocator);
+        defer relative.deinit(allocator);
         for (components) |component| {
             if (relative.items.len > 0) try relative.append(allocator, std.fs.path.sep);
             try relative.appendSlice(allocator, component);
@@ -628,6 +658,7 @@ pub const CliHost = struct {
             error.FileNotFound => return null,
             else => return err,
         };
+        errdefer allocator.free(resolved);
         if (!isUnderRoot(resolved, root_real)) {
             allocator.free(resolved);
             return null;
@@ -637,7 +668,9 @@ pub const CliHost = struct {
                 allocator.free(resolved);
                 return null;
             },
-            else => return err,
+            else => {
+                return err;
+            },
         };
         if (stat.kind == .directory) {
             const index_path = try std.fs.path.join(allocator, &.{ resolved, "index.html" });
@@ -647,8 +680,11 @@ pub const CliHost = struct {
                     allocator.free(resolved);
                     return null;
                 },
-                else => |e| return e,
+                else => |e| {
+                    return e;
+                },
             };
+            errdefer allocator.free(index_resolved);
             if (!isUnderRoot(index_resolved, root_real)) {
                 allocator.free(resolved);
                 allocator.free(index_resolved);
@@ -997,4 +1033,99 @@ fn destroyAsyncTask(task: *AsyncOperationTask, join: bool) void {
 
 fn lessThanNodeFileEntry(_: void, left: lnako.plugins.node.FileEntry, right: lnako.plugins.node.FileEntry) bool {
     return std.mem.order(u8, left.name, right.name) == .lt;
+}
+
+fn sendHttpTestRequest(io: std.Io, port: u16, bytes: []const u8, half_close: bool) !std.Io.net.Stream {
+    const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(port) };
+    var client = try address.connect(io, .{ .mode = .stream });
+    errdefer client.close(io);
+    var send_buffer: [4096]u8 = undefined;
+    var writer = client.writer(io, &send_buffer);
+    try writer.interface.writeAll(bytes);
+    try writer.interface.flush();
+    if (half_close) try client.shutdown(io, .send);
+    return client;
+}
+
+test "途中切断されたHTTP要求は接続を残さず次の要求を受け付ける" {
+    var output: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer output.deinit();
+    var errors: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer errors.deinit();
+    var cli_host = CliHost{
+        .writer = &output.writer,
+        .error_writer = &errors.writer,
+        .io = std.testing.io,
+        .async_task_map = std.AutoHashMap(u64, *AsyncOperationTask).init(std.heap.page_allocator),
+    };
+    defer cli_host.deinit();
+
+    const port = try CliHost.startHttpServer(&cli_host, 0);
+    var truncated = try sendHttpTestRequest(std.testing.io, port, "POST /truncated HTTP/1.1\r\nContent-Length: 4\r\n\r\nx", true);
+    defer truncated.close(std.testing.io);
+    try std.testing.expectError(error.EndOfStream, CliHost.receiveHttpServerRequest(&cli_host, std.testing.allocator));
+    try std.testing.expect(cli_host.http_connection == null);
+    try std.testing.expect(!cli_host.http_head_request);
+
+    var valid = try sendHttpTestRequest(std.testing.io, port, "GET /healthy HTTP/1.1\r\n\r\n", true);
+    defer valid.close(std.testing.io);
+    var request = try CliHost.receiveHttpServerRequest(&cli_host, std.testing.allocator);
+    defer request.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("GET", request.method);
+    try std.testing.expectEqualStrings("/healthy", request.target);
+    try std.testing.expect(cli_host.http_connection != null);
+    try CliHost.respondHttpServer(&cli_host, 200, &.{}, "ok");
+    try std.testing.expect(cli_host.http_connection == null);
+    try std.testing.expect(!cli_host.http_head_request);
+}
+
+test "静的パス解決は成功、404、index、ディレクトリの全経路を解放する" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "index.html", .data = "root" });
+    try temporary.dir.createDirPath(std.testing.io, "nested");
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "nested/index.html", .data = "nested" });
+    try temporary.dir.createDirPath(std.testing.io, "empty");
+
+    const root = try temporary.dir.realPathFileAlloc(std.testing.io, ".", std.testing.allocator);
+    defer std.testing.allocator.free(root);
+    var output: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer output.deinit();
+    var errors: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer errors.deinit();
+    var cli_host = CliHost{
+        .writer = &output.writer,
+        .error_writer = &errors.writer,
+        .io = std.testing.io,
+        .async_task_map = std.AutoHashMap(u64, *AsyncOperationTask).init(std.heap.page_allocator),
+    };
+    defer cli_host.deinit();
+
+    const root_components = [_][]const u8{};
+    const file_components = [_][]const u8{"index.html"};
+    const nested_components = [_][]const u8{"nested"};
+    const empty_components = [_][]const u8{"empty"};
+    const missing_components = [_][]const u8{"missing.txt"};
+    for (0..16) |_| {
+        {
+            const resolved = try CliHost.resolveHttpServerStaticPath(&cli_host, std.testing.allocator, root, &root_components);
+            try std.testing.expect(resolved != null);
+            try std.testing.expectEqual(lnako.plugins.http_server.PathStat.file, resolved.?.kind);
+            defer std.testing.allocator.free(resolved.?.path);
+        }
+        {
+            const resolved = try CliHost.resolveHttpServerStaticPath(&cli_host, std.testing.allocator, root, &file_components);
+            try std.testing.expect(resolved != null);
+            try std.testing.expectEqual(lnako.plugins.http_server.PathStat.file, resolved.?.kind);
+            defer std.testing.allocator.free(resolved.?.path);
+        }
+        {
+            const resolved = try CliHost.resolveHttpServerStaticPath(&cli_host, std.testing.allocator, root, &nested_components);
+            try std.testing.expect(resolved != null);
+            try std.testing.expectEqual(lnako.plugins.http_server.PathStat.file, resolved.?.kind);
+            defer std.testing.allocator.free(resolved.?.path);
+        }
+        try std.testing.expect((try CliHost.resolveHttpServerStaticPath(&cli_host, std.testing.allocator, root, &empty_components)) == null);
+        try std.testing.expect((try CliHost.resolveHttpServerStaticPath(&cli_host, std.testing.allocator, root, &missing_components)) == null);
+    }
 }

@@ -809,3 +809,63 @@ test "O1では証明済み数値と真偽判定をアンボックスしO0のIR�
     try std.testing.expect(std.mem.indexOf(u8, optimized_module.text, ".bits = extractvalue %lnako.Value") != null);
     try std.testing.expect(std.mem.indexOf(u8, optimized_module.text, ".number = bitcast i64") != null);
 }
+
+test "単項算術は動的ABIとNumberの高速経路をLLVM IRへ出力する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "1+2を表示\n", "unary-emission.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "unary-emission.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "unary-emission.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+
+    var dynamic_program = try program.clone(std.testing.allocator);
+    defer dynamic_program.deinit();
+    var dynamic_unary_found = false;
+    for (dynamic_program.functions) |*function| {
+        for (function.blocks) |*block| {
+            for (block.instructions) |*instruction| {
+                if (dynamic_unary_found or instruction.opcode != .binary or instruction.operands.len < 2) continue;
+                instruction.opcode = .unary;
+                instruction.operator = "-";
+                instruction.operands = instruction.operands[0..1];
+                instruction.type = .dynamic;
+                dynamic_unary_found = true;
+            }
+        }
+    }
+    try std.testing.expect(dynamic_unary_found);
+    var dynamic_module = try generate(std.testing.allocator, dynamic_program, "unary-emission.nako3", false);
+    defer dynamic_module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, dynamic_module.text, "declare void @lnako_aot_unary(ptr, ptr, i8)\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dynamic_module.text, "call void @lnako_aot_unary(ptr %root.slot.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dynamic_module.text, ", i8 0)") != null);
+
+    var number_program = try program.clone(std.testing.allocator);
+    defer number_program.deinit();
+    var number_unary_found = false;
+    for (number_program.functions) |*function| {
+        for (function.blocks) |*block| {
+            for (block.instructions) |*instruction| {
+                if (number_unary_found or instruction.opcode != .binary or instruction.operands.len < 2) continue;
+                instruction.opcode = .unary;
+                instruction.operator = "+";
+                instruction.operands = instruction.operands[0..1];
+                instruction.type = .number;
+                number_unary_found = true;
+            }
+        }
+    }
+    try std.testing.expect(number_unary_found);
+    var number_module = try generate(std.testing.allocator, number_program, "unary-emission.nako3", true);
+    defer number_module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, number_module.text, "select i1 true, %lnako.Value") != null);
+    try std.testing.expect(std.mem.indexOf(u8, number_module.text, "call void @lnako_aot_unary(ptr %root.slot.") == null);
+    try std.testing.expect(std.mem.indexOf(u8, number_module.text, "fadd double") == null);
+}

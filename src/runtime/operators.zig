@@ -6,6 +6,19 @@ pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
 pub const BigInt = value_mod.BigInt;
 
+const StressBigIntPrimitiveContext = struct {
+    next: u8 = 0,
+
+    pub fn invoke(raw_context: *anyopaque, runtime: *Runtime, value: Value, hint: value_mod.PrimitiveHint) anyerror!?Value {
+        _ = value;
+        _ = hint;
+        const context: *@This() = @ptrCast(@alignCast(raw_context));
+        const literal = if (context.next == 0) "1n" else "2n";
+        context.next += 1;
+        return try runtime.bigIntLiteral(literal);
+    }
+};
+
 pub const Binary = enum {
     add,
     subtract,
@@ -28,12 +41,16 @@ pub fn binary(runtime: *Runtime, operator: Binary, left: Value, right: Value) !V
     defer frame.deinit();
     try frame.protect(&left_root);
     try frame.protect(&right_root);
-    const left_primitive = try runtime.valueToPrimitive(left_root);
-    const right_primitive = try runtime.valueToPrimitive(right_root);
+    var left_primitive = try runtime.valueToPrimitive(left_root);
+    try frame.protect(&left_primitive);
+    var right_primitive = try runtime.valueToPrimitive(right_root);
+    try frame.protect(&right_primitive);
     if (operator == .add and (left_primitive == .string or right_primitive == .string)) {
-        const left_string = (try runtime.valueToString(left_primitive)).string;
-        const right_string = (try runtime.valueToString(right_primitive)).string;
-        return runtime.concatStrings(left_string, right_string);
+        var left_string_value = try runtime.valueToString(left_primitive);
+        try frame.protect(&left_string_value);
+        var right_string_value = try runtime.valueToString(right_primitive);
+        try frame.protect(&right_string_value);
+        return runtime.concatStrings(left_string_value.string, right_string_value.string);
     }
     if (left_primitive == .bigint or right_primitive == .bigint) {
         if (left_primitive != .bigint or right_primitive != .bigint) return error.CannotMixBigIntAndNumber;
@@ -69,8 +86,10 @@ pub fn nadesikoAdd(runtime: *Runtime, left: Value, right: Value) !Value {
     // それ以外のオブジェクトは公式のparseFloat(object)と同じく
     // 文字列hintのToPrimitiveを通してから数値化する。
     if (left_root == .bigint or right_root == .bigint) {
-        const left_primitive = try runtime.valueToPrimitive(left_root);
-        const right_primitive = try runtime.valueToPrimitive(right_root);
+        var left_primitive = try runtime.valueToPrimitive(left_root);
+        try frame.protect(&left_primitive);
+        var right_primitive = try runtime.valueToPrimitive(right_root);
+        try frame.protect(&right_primitive);
         if (left_primitive != .bigint or right_primitive != .bigint) return error.CannotMixBigIntAndNumber;
         return bigIntBinary(runtime, .add, left_primitive.bigint.*, right_primitive.bigint.*);
     }
@@ -130,19 +149,34 @@ fn bigIntBinary(runtime: *Runtime, operator: Binary, left: BigInt, right: BigInt
 }
 
 pub fn unaryMinus(runtime: *Runtime, value: Value) !Value {
-    const primitive = try runtime.valueToPrimitive(value);
+    var rooted_value = value;
+    var frame = runtime.rootFrame();
+    defer frame.deinit();
+    try frame.protect(&rooted_value);
+    var primitive = try runtime.valueToPrimitive(rooted_value);
+    try frame.protect(&primitive);
     if (primitive == .bigint) return runtime.ownBigInt(try primitive.bigint.negate(runtime.allocator()));
     return .{ .number = -(try primitive.toNumber(runtime.allocator())) };
 }
 
 pub fn unaryPlus(runtime: *Runtime, value: Value) !Value {
-    const primitive = try runtime.valueToPrimitive(value);
+    var rooted_value = value;
+    var frame = runtime.rootFrame();
+    defer frame.deinit();
+    try frame.protect(&rooted_value);
+    var primitive = try runtime.valueToPrimitive(rooted_value);
+    try frame.protect(&primitive);
     if (primitive == .bigint) return error.CannotConvertBigIntToNumber;
     return .{ .number = try primitive.toNumber(runtime.allocator()) };
 }
 
 pub fn bitNot(runtime: *Runtime, value: Value) !Value {
-    const primitive = try runtime.valueToPrimitive(value);
+    var rooted_value = value;
+    var frame = runtime.rootFrame();
+    defer frame.deinit();
+    try frame.protect(&rooted_value);
+    var primitive = try runtime.valueToPrimitive(rooted_value);
+    try frame.protect(&primitive);
     if (primitive == .bigint) return runtime.ownBigInt(try primitive.bigint.bitNot(runtime.allocator()));
     return .{ .number = @floatFromInt(~toInt32(try primitive.toNumber(runtime.allocator()))) };
 }
@@ -155,16 +189,20 @@ pub fn compare(runtime: *Runtime, left: Value, right: Value) !?std.math.Order {
     defer frame.deinit();
     try frame.protect(&left_root);
     try frame.protect(&right_root);
-    const left_primitive = try runtime.valueToPrimitive(left_root);
-    const right_primitive = try runtime.valueToPrimitive(right_root);
+    var left_primitive = try runtime.valueToPrimitive(left_root);
+    try frame.protect(&left_primitive);
+    var right_primitive = try runtime.valueToPrimitive(right_root);
+    try frame.protect(&right_primitive);
     if (left_primitive == .string and right_primitive == .string) return value_mod.String.order(left_primitive.string.*, right_primitive.string.*);
     if (left_primitive == .bigint and right_primitive == .bigint) return BigInt.order(left_primitive.bigint.*, right_primitive.bigint.*);
     if (left_primitive == .bigint and right_primitive == .string) {
-        const converted = runtime.bigIntString(right_primitive.string) catch return null;
+        var converted = runtime.bigIntString(right_primitive.string) catch return null;
+        try frame.protect(&converted);
         return BigInt.order(left_primitive.bigint.*, converted.bigint.*);
     }
     if (left_primitive == .string and right_primitive == .bigint) {
-        const converted = runtime.bigIntString(left_primitive.string) catch return null;
+        var converted = runtime.bigIntString(left_primitive.string) catch return null;
+        try frame.protect(&converted);
         return BigInt.order(converted.bigint.*, right_primitive.bigint.*);
     }
     if (left_primitive == .bigint) return compareBigIntNumber(left_primitive.bigint.*, try right_primitive.toNumber(runtime.allocator()));
@@ -239,6 +277,77 @@ test "なでしこ式の加算は文字列を連結せず数値へ変換する" 
     try std.testing.expectEqual(@as(f64, 7), (try nadesikoAdd(&runtime, try runtime.stringUtf8("5x"), .{ .number = 2 })).number);
     try std.testing.expect(std.math.isNan((try nadesikoAdd(&runtime, try runtime.createArray(), .{ .number = 1 })).number));
     try std.testing.expectError(error.CannotMixBigIntAndNumber, nadesikoAdd(&runtime, try runtime.bigIntLiteral("1n"), text));
+}
+
+test "GCストレス中のToPrimitive結果を二項演算で保持する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var left = try runtime.createArray();
+    try roots.protect(&left);
+    _ = try left.array.push(.{ .number = 1 });
+    var right = try runtime.createArray();
+    try roots.protect(&right);
+    _ = try right.array.push(.{ .number = 2 });
+
+    const result = try binary(&runtime, .subtract, left, right);
+    try std.testing.expectEqual(@as(f64, -1), result.number);
+}
+
+test "GCストレス中の文字列化結果を加算で保持する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var right = try runtime.createArray();
+    try roots.protect(&right);
+    _ = try right.array.push(.{ .number = 2 });
+
+    const result = try binary(&runtime, .add, .{ .number = 1 }, right);
+    const utf8 = try result.string.toUtf8Lossy(std.testing.allocator);
+    defer std.testing.allocator.free(utf8);
+    try std.testing.expectEqualStrings("12", utf8);
+}
+
+test "GCストレス中のToPrimitive結果を関係比較で保持する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    var left = try runtime.createArray();
+    try roots.protect(&left);
+    _ = try left.array.push(.{ .number = 1 });
+    var right = try runtime.createArray();
+    try roots.protect(&right);
+    _ = try right.array.push(.{ .number = 2 });
+
+    try std.testing.expectEqual(std.math.Order.lt, (try compare(&runtime, left, right)).?);
+}
+
+test "GCストレス中のToPrimitiveフック結果を関係比較で保持する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+
+    var left = try runtime.createDictionary();
+    var roots = runtime.rootFrame();
+    defer roots.deinit();
+    try roots.protect(&left);
+    var right = try runtime.createDictionary();
+    try roots.protect(&right);
+
+    var context = StressBigIntPrimitiveContext{};
+    runtime.setPrimitiveHook(.{ .context = &context, .callFn = StressBigIntPrimitiveContext.invoke });
+    defer runtime.clearPrimitiveHook(&context);
+
+    try std.testing.expectEqual(std.math.Order.lt, (try compare(&runtime, left, right)).?);
 }
 
 test "増減文は未定義・文字列・BigIntをNumberへ変換する" {

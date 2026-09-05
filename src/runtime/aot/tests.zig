@@ -23,6 +23,7 @@ const AotClientHttpResult = state.AotClientHttpResult;
 const AotHttpRoute = state.AotHttpRoute;
 const AotPromiseState = state.AotPromiseState;
 const Arithmetic = state.Arithmetic;
+const UnaryOperator = state.UnaryOperator;
 const BigInt = state.BigInt;
 const ByteKind = state.ByteKind;
 const FunctionCallback = state.FunctionCallback;
@@ -110,6 +111,8 @@ const lnako_aot_archive_tool_path_set = control_flow.lnako_aot_archive_tool_path
 const lnako_aot_arithmetic = state.lnako_aot_arithmetic;
 const lnako_aot_array_new = state.lnako_aot_array_new;
 const lnako_aot_bigint_truthy = state.lnako_aot_bigint_truthy;
+const lnako_aot_truthy = state.lnako_aot_truthy;
+const lnako_aot_unary = state.lnako_aot_unary;
 const lnako_aot_binding_cell_new = state.lnako_aot_binding_cell_new;
 const lnako_aot_binding_cell_value = state.lnako_aot_binding_cell_value;
 const lnako_aot_builtin_call = state.lnako_aot_builtin_call;
@@ -227,6 +230,20 @@ const pollAotInterrupt = state.pollAotInterrupt;
 const timerBuiltin = state.timerBuiltin;
 const timerWaitBuiltin = state.timerWaitBuiltin;
 
+fn expectAotUnaryNumber(value: Value, operator: UnaryOperator, expected: f64) !void {
+    var result: Value = .{};
+    lnako_aot_unary(&result, &value, @intFromEnum(operator));
+    try std.testing.expectEqual(Tag.number, @as(Tag, @enumFromInt(result.tag)));
+    const actual: f64 = @bitCast(result.payload);
+    if (std.math.isNan(expected)) {
+        try std.testing.expect(std.math.isNan(actual));
+    } else if (expected == 0) {
+        try std.testing.expectEqual(isNegativeZero(expected), isNegativeZero(actual));
+    } else {
+        try std.testing.expectEqual(expected, actual);
+    }
+}
+
 test "UTF-16文字列をルートから正確にmark-and-sweepする" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -257,6 +274,8 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value) callconv(.c) void, @TypeOf(&lnako_aot_index_get));
     try std.testing.expectEqual(*const fn (*const Value, *const Value, *const Value) callconv(.c) c_int, @TypeOf(&lnako_aot_index_set));
     try std.testing.expectEqual(*const fn (*Value, *const Value, usize) callconv(.c) void, @TypeOf(&lnako_aot_destructure_get));
+    try std.testing.expectEqual(*const fn (*const Value) callconv(.c) c_int, @TypeOf(&lnako_aot_truthy));
+    try std.testing.expectEqual(*const fn (*Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_unary));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_arithmetic));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_compare));
     try std.testing.expectEqual(*const fn (*Value, *const Value, *const Value, u8) callconv(.c) void, @TypeOf(&lnako_aot_shift));
@@ -3498,6 +3517,124 @@ test "AOT BigIntを任意精度で生成して真偽判定する" {
     try std.testing.expectEqual(@as(c_int, 0), lnako_aot_bigint_truthy(&zero));
 }
 
+test "AOT真偽判定は空文字列を偽として扱う" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var values = [_]Value{
+        staticStringValue(""),
+        staticStringValue("x"),
+        .{},
+        .{},
+    };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &values, values.len);
+    defer runtime.popRoots(&frame);
+    values[2] = try runtime.createString(&.{});
+    values[3] = try runtime.createString(&.{'x'});
+
+    try std.testing.expectEqual(@as(c_int, 0), lnako_aot_truthy(&values[0]));
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_truthy(&values[1]));
+    try std.testing.expectEqual(@as(c_int, 0), lnako_aot_truthy(&values[2]));
+    try std.testing.expectEqual(@as(c_int, 1), lnako_aot_truthy(&values[3]));
+}
+
+test "AOT単項演算はToPrimitive・BigInt・signed zero・callbackを保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    var roots = [_]Value{.{}} ** 12;
+    var frame: RootFrame = .{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+
+    roots[0] = try active.createString(&.{'5'});
+    lnako_aot_unary(&roots[1], &roots[0], @intFromEnum(UnaryOperator.minus));
+    try std.testing.expectEqual(Tag.number, @as(Tag, @enumFromInt(roots[1].tag)));
+    try std.testing.expectEqual(@as(f64, -5), @as(f64, @bitCast(roots[1].payload)));
+
+    roots[2] = try active.createBigInt("1n");
+    lnako_aot_unary(&roots[3], &roots[2], @intFromEnum(UnaryOperator.minus));
+    try std.testing.expectEqual(Tag.bigint, @as(Tag, @enumFromInt(roots[3].tag)));
+    const negative_text = try roots[3].object().?.payload.bigint.toString(std.testing.allocator, 10);
+    defer std.testing.allocator.free(negative_text);
+    try std.testing.expectEqualStrings("-1", negative_text);
+
+    lnako_aot_unary(&roots[4], &roots[2], @intFromEnum(UnaryOperator.plus));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[4].tag)));
+    try std.testing.expect(active.has_pending_exception);
+    roots[5] = active.takeException();
+    try expectUtf16String(active, roots[5], "Cannot convert a BigInt value to a number");
+
+    roots[6] = numberValue(-0.0);
+    lnako_aot_unary(&roots[7], &roots[6], @intFromEnum(UnaryOperator.plus));
+    try std.testing.expectEqual(Tag.number, @as(Tag, @enumFromInt(roots[7].tag)));
+    try std.testing.expect(isNegativeZero(@as(f64, @bitCast(roots[7].payload))));
+
+    roots[8] = try active.createDictionary(&.{});
+    roots[9] = try active.createFunction(testAotConstantSeven, 0, &.{});
+    try active.setDictionary(&roots[8].object().?.payload.dictionary, staticStringValue("valueOf"), roots[9]);
+    lnako_aot_unary(&roots[7], &roots[8], @intFromEnum(UnaryOperator.minus));
+    try std.testing.expectEqual(@as(f64, -7), @as(f64, @bitCast(roots[7].payload)));
+
+    roots[9] = try active.createBindingCell(numberValue(0));
+    roots[10] = try active.createFunction(testAotThrowAfterSideEffect, 0, &.{roots[9]});
+    try active.setDictionary(&roots[8].object().?.payload.dictionary, staticStringValue("valueOf"), roots[10]);
+    lnako_aot_unary(&roots[7], &roots[8], @intFromEnum(UnaryOperator.minus));
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[7].tag)));
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(roots[9].object().?.payload.binding_cell));
+    try std.testing.expect(active.has_pending_exception);
+    roots[11] = active.takeException();
+    try expectUtf16String(active, roots[11], "callback failure");
+}
+
+test "AOT単項演算は各プリミティブのNumber変換を維持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    var roots = [_]Value{.{}} ** 14;
+    var frame: RootFrame = .{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+
+    const values = [_]Value{
+        staticStringValue(""),
+        staticStringValue("5"),
+        staticStringValue("NaN"),
+        .{ .tag = @intFromEnum(Tag.null_value) },
+        .{},
+        .{ .tag = @intFromEnum(Tag.boolean), .payload = 1 },
+        numberValue(std.math.nan(f64)),
+        numberValue(std.math.inf(f64)),
+        numberValue(-std.math.inf(f64)),
+        numberValue(0),
+        numberValue(-0.0),
+    };
+    const minus_expected = [_]f64{ -0.0, -5, std.math.nan(f64), -0.0, std.math.nan(f64), -1, std.math.nan(f64), -std.math.inf(f64), std.math.inf(f64), -0.0, 0.0 };
+    const plus_expected = [_]f64{ 0.0, 5, std.math.nan(f64), 0.0, std.math.nan(f64), 1, std.math.nan(f64), std.math.inf(f64), -std.math.inf(f64), 0.0, -0.0 };
+    for (values, minus_expected, plus_expected) |value, minus, plus| {
+        try expectAotUnaryNumber(value, .minus, minus);
+        try expectAotUnaryNumber(value, .plus, plus);
+    }
+
+    roots[0] = try active.createArray(&.{});
+    roots[1] = try active.createArray(&.{numberValue(5)});
+    try expectAotUnaryNumber(roots[0], .minus, -0.0);
+    try expectAotUnaryNumber(roots[0], .plus, 0.0);
+    try expectAotUnaryNumber(roots[1], .minus, -5);
+    try expectAotUnaryNumber(roots[1], .plus, 5);
+    try std.testing.expect(!active.has_pending_exception);
+}
+
 test "AOT BigInt算術とNumber混在エラーを処理する" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
@@ -6375,6 +6512,18 @@ pub fn testAotTimerStop(out: *Value, _: *anyopaque, arguments: ?[*]const Value, 
 
 pub fn testAotConstantSeven(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
     out.* = numberValue(7);
+}
+
+pub fn testAotThrowAfterSideEffect(out: *Value, context: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
+    const function: *Object = @ptrCast(@alignCast(context));
+    const cell = function.payload.function.captures[0].object().?;
+    cell.payload.binding_cell = numberValue(valueToNumber(cell.payload.binding_cell) + 1);
+    const runtime = if (state.active_runtime) |*active| active else {
+        out.* = .{};
+        return;
+    };
+    runtime.setFailureText("callback failure");
+    out.* = .{};
 }
 
 pub fn testAotSecondArgument(out: *Value, _: *anyopaque, arguments: ?[*]const Value, len: usize) callconv(.c) void {

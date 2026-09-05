@@ -453,6 +453,11 @@ pub const Arithmetic = enum(u8) {
     bit_xor,
 };
 
+pub const UnaryOperator = enum(u8) {
+    minus,
+    plus,
+};
+
 pub const Comparison = enum(u8) {
     abstract_equal,
     strict_equal,

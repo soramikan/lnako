@@ -52,7 +52,7 @@ const expectedPlatforms = [
   },
 ];
 const expectedArtifactCount = expectedPlatforms.reduce((total, platform) => total + platform.shardCount * platform.groups.length, 0);
-if (!Array.isArray(fixtures) || fixtures.length !== 292 || fixtures.some((fixture) => fixture === null || typeof fixture !== "object" || Array.isArray(fixture))) {
+if (!Array.isArray(fixtures) || fixtures.length !== 294 || fixtures.some((fixture) => fixture === null || typeof fixture !== "object" || Array.isArray(fixture))) {
   throw new Error("native-cases.jsonのfixture集合が不正です");
 }
 if (fixtureIds.some((id) => typeof id !== "string" || id.length === 0) || fixtureIdSet.size !== fixtures.length) throw new Error("native-cases.jsonのfixture IDが不正です");

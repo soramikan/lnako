@@ -9,6 +9,26 @@ pub export fn lnako_aot_bigint_truthy(value: *const state.Value) callconv(.c) c_
     return @intFromBool(!object.payload.bigint.isZero());
 }
 
+pub export fn lnako_aot_truthy(value: *const state.Value) callconv(.c) c_int {
+    return @intFromBool(state.valueTruthy(value.*));
+}
+
+pub export fn lnako_aot_unary(out: *state.Value, value: *const state.Value, opcode: u8) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (state.active_runtime) |*active| active else return;
+    const operator = std.enums.fromInt(state.UnaryOperator, opcode) orelse {
+        runtime.setFailure(error.InvalidUnaryOperator);
+        return;
+    };
+    out.* = state.unary(runtime, operator, value.*) catch |failure| {
+        // A callback used by ToPrimitive may already have installed the
+        // original exception.  Keep that value so caught AOT errors observe
+        // the callback's message instead of the internal bridge error.
+        if (!runtime.has_pending_exception) runtime.setFailure(failure);
+        return;
+    };
+}
+
 pub export fn lnako_aot_arithmetic(out: *state.Value, left: *const state.Value, right: *const state.Value, opcode: u8) callconv(.c) void {
     out.* = .{};
     const runtime = if (state.active_runtime) |*active| active else return;

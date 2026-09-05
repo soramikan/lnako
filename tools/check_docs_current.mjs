@@ -73,7 +73,7 @@ requireText(await read("docs/COMPATIBILITY.md"), `| \`trace-confirmed-unattested
 requireText(await read("docs/COMPATIBILITY.md"), `| \`unverified\` | ${evidenceStates.unverified} |`, "COMPATIBILITY.md");
 
 const fixtureInventory = evidence.fixtureInventory;
-if (fixtureInventory?.total !== 414 || fixtureInventory?.nativeAot !== 312 || fixtureInventory?.interpreter !== 112 || fixtureInventory?.compatJs !== 9) {
+if (fixtureInventory?.total !== 416 || fixtureInventory?.nativeAot !== 314 || fixtureInventory?.interpreter !== 112 || fixtureInventory?.compatJs !== 9) {
   fail("evidence.jsonのfixture inventoryが不一致です");
 }
 if (dispatchCoverage.scope?.fixtureCount !== 227 || dispatchCoverage.sites?.length !== 4489 ||

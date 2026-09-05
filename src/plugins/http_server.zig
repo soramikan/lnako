@@ -28,7 +28,10 @@ pub const Request = struct {
 pub const PathStat = enum { file, directory, missing };
 
 pub const ResolvedPath = struct {
-    path: []u8,
+    // Host path resolvers use `realPathFileAlloc`, which returns a sentinel
+    // slice.  Keep that sentinel in the contract so callers can free the
+    // allocation with the exact size it was created with.
+    path: [:0]u8,
     kind: PathStat,
 };
 
@@ -202,10 +205,19 @@ pub fn call(runtime: *Runtime, state: *State, context: Context, effects: Effects
 
 pub fn poll(runtime: *Runtime, state: *State, context: Context, effects: Effects) !bool {
     if (!state.started) return false;
-    var request = try context.receiveFn(context.context, runtime.allocator());
+    var request = context.receiveFn(context.context, runtime.allocator()) catch |err| {
+        if (isRecoverableReceiveError(err)) {
+            // The host closes an accepted stream that cannot be parsed.  A
+            // malformed or truncated client request must not stop the event
+            // loop, while allocator and host failures remain visible.
+            state.request_active = false;
+            return true;
+        }
+        return err;
+    };
     defer request.deinit(runtime.allocator());
     if (request.too_large) {
-        try context.respond(413, &.{}, "Request entity too large.");
+        try respondConnectionSafe(state, context, 413, &.{}, "Request entity too large.");
         return true;
     }
     var log_buffer: std.Io.Writer.Allocating = .init(runtime.allocator());
@@ -233,7 +245,7 @@ pub fn poll(runtime: *Runtime, state: *State, context: Context, effects: Effects
         return true;
     };
     if (route.kind == .static) {
-        try serveStatic(runtime, context, route, path);
+        try serveStatic(runtime, state, context, route, path);
         return true;
     }
     state.request_active = true;
@@ -261,8 +273,49 @@ fn sendResponse(state: *State, context: Context, body: []const u8) !void {
     const headers = try std.heap.page_allocator.alloc(Header, state.response_headers.items.len);
     defer std.heap.page_allocator.free(headers);
     for (state.response_headers.items, headers) |source, *target| target.* = .{ .name = source.name, .value = source.value };
-    try context.respond(state.response_status, headers, body);
+    try respondConnectionSafe(state, context, state.response_status, headers, body);
     state.request_active = false;
+}
+
+fn respondConnectionSafe(state: *State, context: Context, status: u16, headers: []const Header, body: []const u8) !void {
+    context.respond(status, headers, body) catch |err| {
+        if (isRecoverableConnectionError(err)) {
+            state.request_active = false;
+            return;
+        }
+        return err;
+    };
+}
+
+fn isRecoverableReceiveError(err: anyerror) bool {
+    return switch (err) {
+        error.HttpServerClientDisconnected,
+        error.InvalidHttpRequest,
+        error.InvalidHttpHeader,
+        error.InvalidHttpChunk,
+        error.EndOfStream,
+        error.StreamTooLong,
+        error.ConnectionResetByPeer,
+        error.ConnectionAborted,
+        error.Timeout,
+        error.SocketUnconnected,
+        error.BrokenPipe,
+        => true,
+        else => false,
+    };
+}
+
+fn isRecoverableConnectionError(err: anyerror) bool {
+    return switch (err) {
+        error.HttpServerClientDisconnected,
+        error.ConnectionResetByPeer,
+        error.ConnectionAborted,
+        error.Timeout,
+        error.SocketUnconnected,
+        error.BrokenPipe,
+        => true,
+        else => false,
+    };
 }
 
 fn appendHeader(runtime: *Runtime, state: *State, name: []const u8, value: []const u8) !void {
@@ -465,21 +518,21 @@ fn percentDecode(allocator: std.mem.Allocator, source: []const u8, plus_as_space
     return decoded;
 }
 
-fn serveStatic(runtime: *Runtime, context: Context, route: Route, path: []const u8) !void {
+fn serveStatic(runtime: *Runtime, state: *State, context: Context, route: Route, path: []const u8) !void {
     const relative_raw = path[@min(route.prefix.len, path.len)..];
     var components = try staticPathComponents(runtime.allocator(), relative_raw);
     defer freeStaticPathComponents(runtime.allocator(), &components);
     const resolved = (try context.resolveStaticPathFn(context.context, runtime.allocator(), route.path, components.items)) orelse {
-        return context.respond(404, &.{}, "<html><meta charset=\"utf-8\"><body><h1>404 見当たりません。</h1></body></html>");
+        return respondConnectionSafe(state, context, 404, &.{}, "<html><meta charset=\"utf-8\"><body><h1>404 見当たりません。</h1></body></html>");
     };
     defer runtime.allocator().free(resolved.path);
-    if (resolved.kind != .file) return context.respond(404, &.{}, "<html><meta charset=\"utf-8\"><body><h1>404 見当たりません。</h1></body></html>");
+    if (resolved.kind != .file) return respondConnectionSafe(state, context, 404, &.{}, "<html><meta charset=\"utf-8\"><body><h1>404 見当たりません。</h1></body></html>");
     const body = context.readStaticFileFn(context.context, runtime.allocator(), resolved.path) catch |err| switch (err) {
-        error.StreamTooLong => return context.respond(413, &.{}, "<html><meta charset=\"utf-8\"><body><h1>413 要求が大きすぎます。</h1></body></html>"),
+        error.StreamTooLong => return respondConnectionSafe(state, context, 413, &.{}, "<html><meta charset=\"utf-8\"><body><h1>413 要求が大きすぎます。</h1></body></html>"),
         else => return err,
     };
     defer runtime.allocator().free(body);
-    try context.respond(200, &.{.{ .name = "Content-Type", .value = mimeType(resolved.path) }}, body);
+    try respondConnectionSafe(state, context, 200, &.{.{ .name = "Content-Type", .value = mimeType(resolved.path) }}, body);
 }
 
 fn staticPathComponents(allocator: std.mem.Allocator, source: []const u8) !std.ArrayList([]u8) {
@@ -625,6 +678,122 @@ test "静的ファイル配信のパス成分は..や制御文字、空を拒否
     try std.testing.expectError(error.InvalidHttpStaticPath, staticPathComponents(std.testing.allocator, "/foo/.."));
     try std.testing.expectError(error.InvalidHttpStaticPath, staticPathComponents(std.testing.allocator, "/foo/%00"));
     try std.testing.expectError(error.InvalidHttpStaticPath, staticPathComponents(std.testing.allocator, "/foo/bar%0a"));
+}
+
+const PollFixture = struct {
+    mode: enum { invalid_then_valid, out_of_memory, read_failed },
+    response_mode: enum { success, connection_reset, write_failed } = .success,
+    receive_count: usize = 0,
+    hold_count: usize = 0,
+    response_count: usize = 0,
+};
+
+fn pollFixtureContext(fixture: *PollFixture) Context {
+    return .{
+        .context = fixture,
+        .startFn = pollFixtureStart,
+        .receiveFn = pollFixtureReceive,
+        .respondFn = pollFixtureRespond,
+        .holdFn = pollFixtureHold,
+        .resolveStaticPathFn = pollFixtureResolveStaticPath,
+        .readStaticFileFn = pollFixtureReadStaticFile,
+        .saveUploadFn = pollFixtureSaveUpload,
+    };
+}
+
+fn pollFixtureEffects(fixture: *PollFixture) Effects {
+    return .{
+        .context = fixture,
+        .invokeFn = pollFixtureInvoke,
+        .resolveFn = pollFixtureResolve,
+        .setGlobalFn = pollFixtureSetGlobal,
+    };
+}
+
+fn pollFixtureStart(_: *anyopaque, _: u16) anyerror!u16 {
+    return 0;
+}
+
+fn pollFixtureReceive(context: *anyopaque, allocator: std.mem.Allocator) anyerror!Request {
+    const fixture: *PollFixture = @ptrCast(@alignCast(context));
+    fixture.receive_count += 1;
+    if (fixture.mode == .out_of_memory) return error.OutOfMemory;
+    if (fixture.mode == .read_failed) return error.ReadFailed;
+    if (fixture.receive_count == 1) return error.InvalidHttpRequest;
+    const method = try allocator.dupe(u8, "GET");
+    errdefer allocator.free(method);
+    const target = try allocator.dupe(u8, "/");
+    errdefer allocator.free(target);
+    const content_type = try allocator.alloc(u8, 0);
+    errdefer allocator.free(content_type);
+    const body = try allocator.alloc(u8, 0);
+    return .{ .method = method, .target = target, .content_type = content_type, .body = body };
+}
+
+fn pollFixtureRespond(context: *anyopaque, _: u16, _: []const Header, _: []const u8) anyerror!void {
+    const fixture: *PollFixture = @ptrCast(@alignCast(context));
+    fixture.response_count += 1;
+    if (fixture.response_mode == .connection_reset) return error.ConnectionResetByPeer;
+    if (fixture.response_mode == .write_failed) return error.WriteFailed;
+}
+
+fn pollFixtureHold(context: *anyopaque) anyerror!void {
+    const fixture: *PollFixture = @ptrCast(@alignCast(context));
+    fixture.hold_count += 1;
+}
+
+fn pollFixtureResolve(_: *anyopaque, value: Value) anyerror!Value {
+    return value;
+}
+
+fn pollFixtureInvoke(_: *anyopaque, _: Value, _: []const Value) anyerror!Value {
+    return .undefined;
+}
+
+fn pollFixtureSetGlobal(_: *anyopaque, _: []const u8, _: Value) anyerror!void {}
+
+fn pollFixtureResolveStaticPath(_: *anyopaque, _: std.mem.Allocator, _: []const u8, _: []const []const u8) anyerror!?ResolvedPath {
+    return null;
+}
+
+fn pollFixtureReadStaticFile(_: *anyopaque, _: std.mem.Allocator, _: []const u8) anyerror![]u8 {
+    return error.Unexpected;
+}
+
+fn pollFixtureSaveUpload(_: *anyopaque, _: std.mem.Allocator, _: []const u8, _: []const u8) anyerror![]u8 {
+    return error.Unexpected;
+}
+
+test "HTTP受信は接続単位エラー後に継続しOOMを伝播する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var state: State = .{ .started = true };
+    var fixture: PollFixture = .{ .mode = .invalid_then_valid };
+    const context = pollFixtureContext(&fixture);
+    const effects = pollFixtureEffects(&fixture);
+
+    try std.testing.expect(try poll(&runtime, &state, context, effects));
+    try std.testing.expectEqual(1, fixture.receive_count);
+    try std.testing.expect(try poll(&runtime, &state, context, effects));
+    try std.testing.expectEqual(2, fixture.receive_count);
+    try std.testing.expectEqual(1, fixture.hold_count);
+
+    fixture.mode = .out_of_memory;
+    try std.testing.expectError(error.OutOfMemory, poll(&runtime, &state, context, effects));
+    try std.testing.expectEqual(3, fixture.receive_count);
+
+    fixture.mode = .read_failed;
+    try std.testing.expectError(error.ReadFailed, poll(&runtime, &state, context, effects));
+    try std.testing.expectEqual(4, fixture.receive_count);
+
+    fixture.response_mode = .write_failed;
+    state.request_active = true;
+    try std.testing.expectError(error.WriteFailed, respondConnectionSafe(&state, context, 200, &.{}, "ok"));
+    try std.testing.expect(state.request_active);
+
+    fixture.response_mode = .connection_reset;
+    try respondConnectionSafe(&state, context, 200, &.{}, "ok");
+    try std.testing.expect(!state.request_active);
 }
 
 fn dictionaryUtf8(runtime: *Runtime, dictionary: *value_mod.Dictionary, expected: []const u8) ![]const u8 {

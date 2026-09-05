@@ -139,6 +139,7 @@ pub fn writeIncrement(emitter: *Emitter, locals: []const []const u8, instruction
 
 pub fn writeUnary(emitter: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize) !void {
     const result = instruction.result orelse return error.MissingInstructionResult;
+    if (instruction.operands.len < 1) return error.InvalidUnaryInstruction;
     if (std.mem.eql(u8, instruction.operator, "!") or std.mem.eql(u8, instruction.operator, "not")) {
         const truthy_label = try std.fmt.allocPrint(emitter.allocator, "truthy.{d}", .{result});
         defer emitter.allocator.free(truthy_label);
@@ -151,17 +152,32 @@ pub fn writeUnary(emitter: *Emitter, function: ir.Function, instruction: ir.Inst
         try emitter.debugSuffix(instruction.span, scope);
         return;
     }
+    const unary_opcode: u8 = if (std.mem.eql(u8, instruction.operator, "-")) 0 else if (std.mem.eql(u8, instruction.operator, "+")) 1 else return error.UnsupportedUnaryOperator;
+    const proven_number = emitter.optimized and valueType(function, instruction.operands[0]) == .number;
+    if (!proven_number) {
+        try emitter.output.writer.print("  call void @lnako_aot_unary(ptr %root.slot.{d}, ptr %root.slot.{d}, i8 {d})", .{ result, instruction.operands[0], unary_opcode });
+        try emitter.debugSuffix(instruction.span, scope);
+        try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+        try emitter.debugSuffix(instruction.span, scope);
+        return;
+    }
     const number_label = try std.fmt.allocPrint(emitter.allocator, "unary.number.{d}", .{result});
     defer emitter.allocator.free(number_label);
     try constants_mod.writeNumberOperand(emitter, function, instruction.operands[0], number_label, instruction.span, scope);
-    if (std.mem.eql(u8, instruction.operator, "-")) {
+    if (unary_opcode == 0) {
         try emitter.output.writer.print("  %unary.result.{d} = fneg double %unary.number.{d}", .{ result, result });
-    } else if (std.mem.eql(u8, instruction.operator, "+")) {
-        try emitter.output.writer.print("  %unary.result.{d} = fadd double %unary.number.{d}, 0.000000e+00", .{ result, result });
-    } else return error.UnsupportedUnaryOperator;
-    try emitter.debugSuffix(instruction.span, scope);
-    try emitter.output.writer.print("  %unary.bits.{d} = bitcast double %unary.result.{d} to i64", .{ result, result });
-    try emitter.debugSuffix(instruction.span, scope);
-    try emitter.output.writer.print("  %v{d} = insertvalue %lnako.Value {{ i8 3, i64 0 }}, i64 %unary.bits.{d}, 1", .{ result, result });
+        try emitter.debugSuffix(instruction.span, scope);
+        try emitter.output.writer.print("  %unary.bits.{d} = bitcast double %unary.result.{d} to i64", .{ result, result });
+        try emitter.debugSuffix(instruction.span, scope);
+        try emitter.output.writer.print("  %v{d} = insertvalue %lnako.Value {{ i8 3, i64 0 }}, i64 %unary.bits.{d}, 1", .{ result, result });
+        try emitter.debugSuffix(instruction.span, scope);
+        return;
+    }
+    // Unary plus is an identity operation for a proven Number. Copying the
+    // aggregate preserves the exact payload, including negative zero.
+    try emitter.output.writer.print("  %v{d} = select i1 true, %lnako.Value ", .{result});
+    try constants_mod.writeValueRef(emitter, function, instruction.operands[0]);
+    try emitter.output.writer.writeAll(", %lnako.Value ");
+    try constants_mod.writeValueRef(emitter, function, instruction.operands[0]);
     try emitter.debugSuffix(instruction.span, scope);
 }

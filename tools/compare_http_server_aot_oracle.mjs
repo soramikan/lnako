@@ -1,4 +1,5 @@
 import http from "node:http";
+import net from "node:net";
 import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -38,14 +39,14 @@ else await access(executable);
 
 try {
   const official = await runSuite("official", null);
-  for (const optimization of ["O0", "O1", "O2", "O3"]) {
+  for (const optimization of ["interpreter", "O0", "O1", "O2", "O3"]) {
     const actual = await runSuite(`lnako-${optimization}`, optimization);
     if (JSON.stringify(official) !== JSON.stringify(actual)) {
       console.error(`簡易HTTPサーバAOT差分 (${optimization}):\nofficial=${JSON.stringify(official, null, 2)}\nactual=${JSON.stringify(actual, null, 2)}`);
       throw new Error(`簡易HTTPサーバの公式差分があります (${optimization})`);
     }
   }
-  console.log(`簡易HTTPサーバ公式差分テスト: ${fixture.commands.length}命令・O0/O1/O2/O3の各${requestCount()}リクエスト成功`);
+  console.log(`簡易HTTPサーバ公式差分テスト: ${fixture.commands.length}命令・Interpreter/O0/O1/O2/O3の各${requestCount()}リクエスト成功（不正・途中切断後の回復を含む）`);
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }
@@ -60,7 +61,9 @@ async function runSuite(label, optimization) {
   await writeFile(sourcePath, source, "utf8");
 
   let command = [process.execPath, officialCli, sourcePath];
-  if (optimization !== null) {
+  if (optimization === "interpreter") {
+    command = [executable, "run", sourcePath];
+  } else if (optimization !== null) {
     const nativeExecutable = resolve(temporary, `${label}${process.platform === "win32" ? ".exe" : ""}`);
     const compile = spawnSync(executable, ["build", sourcePath, "-o", nativeExecutable, `-${optimization}`], {
       cwd: temporary,
@@ -84,6 +87,15 @@ async function runSuite(label, optimization) {
   child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
   try {
     await waitForServer(port, child, () => `stdout=${stdout}\nstderr=${stderr}`);
+    const recoveryResponses = [];
+    for (const malformed of [
+      "POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 20\r\n\r\nshort",
+      "POST /echo HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\nZZ\r\nbad\r\n",
+      "GET /echo HTTP/1.1\r\nHost: localhost\r\nX-Bad: \x00\r\n\r\n",
+    ]) {
+      await sendMalformedRequest(port, malformed);
+      recoveryResponses.push(await request(port, "/echo?recovered=yes", "GET"));
+    }
     const cases = [
       ["/echo?a=A%20B&plus=A+B", "GET"],
       ["/echo?duplicate=first&duplicate=last&flag&raw=a=b&empty=", "GET"],
@@ -107,7 +119,7 @@ async function runSuite(label, optimization) {
       ["/static/hello.txt?x=1", "GET"],
       ["/static/missing.txt", "GET"],
     ];
-    const requests = [];
+    const requests = recoveryResponses;
     for (const requestCase of cases) requests.push(await request(port, ...requestCase));
     requests.push(await expectTimeout(port, "/unregistered"));
     requests.push(await request(port, "/echo", "POST", "application/octet-stream", Buffer.alloc(10 * 1024 * 1024 + 1, 65)));
@@ -127,7 +139,33 @@ function suiteEnvironment() {
 }
 
 function requestCount() {
-  return 23;
+  return 26;
+}
+
+function sendMalformedRequest(port, payload) {
+  return new Promise((resolveRequest, reject) => {
+    const socket = net.createConnection({ host: "127.0.0.1", port });
+    let connected = false;
+    let failure = null;
+    const timer = setTimeout(() => {
+      failure = new Error("不正なHTTP要求の接続が5秒以内に閉じられませんでした");
+      socket.destroy();
+    }, 5000);
+    socket.on("connect", () => {
+      connected = true;
+      // Half-close after delivering the body, so the server observes EOF.
+      socket.end(payload);
+    });
+    socket.on("data", () => {});
+    socket.on("error", (error) => {
+      if (!connected || error.code !== "ECONNRESET") failure = error;
+    });
+    socket.on("close", () => {
+      clearTimeout(timer);
+      if (failure) reject(failure);
+      else resolveRequest();
+    });
+  });
 }
 
 function multipartBody(filename = "hello.txt") {

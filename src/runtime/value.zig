@@ -841,8 +841,10 @@ pub const Runtime = struct {
         const storage = buffer.storage;
         const bytes = buffer.bytes[start..end];
         const kind = buffer.kind;
-        // Retain before a possible collection so an unrooted source cannot
-        // release the backing allocation while the view is being created.
+        const byte_offset = std.math.add(usize, buffer.byte_offset, start) catch return error.InvalidByteBufferSlice;
+        // Snapshot all header-derived metadata before collection. Retain the
+        // backing storage before a possible collection so an unrooted source
+        // cannot release the allocation while the view is being created.
         storage.retain();
         errdefer storage.release();
         try self.beforeAllocation();
@@ -853,7 +855,7 @@ pub const Runtime = struct {
             .bytes = bytes,
             .kind = kind,
             .storage = storage,
-            .byte_offset = std.math.add(usize, buffer.byte_offset, start) catch return error.InvalidByteBufferSlice,
+            .byte_offset = byte_offset,
         };
         try self.objects.append(self.allocator(), .{ .bytes = result });
         return .{ .bytes = result };
@@ -1226,8 +1228,10 @@ pub const Runtime = struct {
         const left_is_object = isObjectValue(left_root);
         const right_is_object = isObjectValue(right_root);
         if (left_is_object and right_is_object) return false;
-        const left_primitive = if (left_is_object) try self.valueToPrimitive(left_root) else left_root;
-        const right_primitive = if (right_is_object) try self.valueToPrimitive(right_root) else right_root;
+        var left_primitive = if (left_is_object) try self.valueToPrimitive(left_root) else left_root;
+        try frame.protect(&left_primitive);
+        var right_primitive = if (right_is_object) try self.valueToPrimitive(right_root) else right_root;
+        try frame.protect(&right_primitive);
         return left_primitive.abstractEqual(self.allocator(), right_primitive);
     }
 
@@ -1658,6 +1662,22 @@ test "Uint8Arrayは添字アクセス・更新とカンマ区切り文字列化�
     const utf8 = try string.string.toUtf8Lossy(std.testing.allocator);
     defer std.testing.allocator.free(utf8);
     try std.testing.expectEqualStrings("1,7,255", utf8);
+}
+
+test "GCストレス中に非ゼロoffsetのByteBuffer viewからviewを作成する" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    runtime.setGcStress(true);
+
+    // どちらの元viewもrootへ登録せず、view生成中の収集でheaderが
+    // 解放されても、保存済みのstorageとoffsetだけで処理できることを確認する。
+    const source = try runtime.createUint8Array(&.{ 10, 20, 30, 40, 50 });
+    const first = try runtime.createByteBufferView(source.bytes, 1, 4);
+    const second = try runtime.createByteBufferView(first.bytes, 1, 2);
+
+    try std.testing.expectEqual(@as(usize, 2), second.bytes.byte_offset);
+    try std.testing.expectEqual(@as(usize, 1), second.bytes.bytes.len);
+    try std.testing.expectEqual(@as(u8, 30), second.bytes.bytes[0]);
 }
 
 test "深いオブジェクトグラフを再帰せずマークする" {

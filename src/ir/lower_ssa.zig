@@ -150,7 +150,10 @@ const FunctionBuilder = struct {
             .store_local => try self.lowerStore(.store_local, node),
             .destructure_store => try self.lowerVariadic(.destructure_store, .void, node),
             .binary => if (isLogicalOperator(node.operator)) try self.lowerLogical(node) else try self.lowerFallible(.binary, toType(node.type_hint), node),
-            .unary => try self.lowerVariadic(.unary, toType(node.type_hint), node),
+            .unary => if (std.mem.eql(u8, node.operator, "+") or std.mem.eql(u8, node.operator, "-"))
+                try self.lowerFallible(.unary, toType(node.type_hint), node)
+            else
+                try self.lowerVariadic(.unary, toType(node.type_hint), node),
             .call => try self.lowerCall(.call, node),
             .call_value => try self.lowerCall(.call_value, node),
             .make_array => try self.lowerVariadic(.make_array, .array, node),
@@ -669,6 +672,43 @@ test "失敗し得る添字代入の直後に例外分岐を生成する" {
         saw_checked_assignment = true;
     };
     try std.testing.expect(saw_checked_assignment);
+}
+
+test "単項演算の変換失敗を直後の例外分岐で捕捉する" {
+    const parser = @import("../frontend/parser.zig");
+    const semantic = @import("../semantic/analyzer.zig");
+    // The frontend rejects unary plus and lowers minus to multiplication.
+    // Substitute arithmetic unary HIR to exercise its exception boundary.
+    const source = "A=1n\nエラー監視\nB=!(A)\n「到達してはいけない」を表示\nエラーならば\nエラーメッセージを表示\nここまで\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "unary-exception.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "unary-exception.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "unary_exception", "unary-exception.nako3", analyzed);
+    defer hir_program.deinit();
+    for (hir_program.nodes) |*node| {
+        if (node.kind == .unary) {
+            node.operator = "+";
+            node.type_hint = .dynamic;
+        }
+    }
+    var program = try lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    const entry = program.findFunction("unary_exception__$entry").?;
+    var checked: usize = 0;
+    for (entry.blocks) |block| for (block.instructions, 0..) |instruction, index| {
+        if (instruction.opcode != .unary) continue;
+        try std.testing.expect(index + 1 < block.instructions.len);
+        try std.testing.expectEqual(ir.Opcode.exception_pending, block.instructions[index + 1].opcode);
+        try std.testing.expect(block.terminator == .conditional_branch);
+        const handler = entry.blocks[block.terminator.conditional_branch.then_block];
+        try std.testing.expect(handler.instructions.len > 0);
+        try std.testing.expectEqual(ir.Opcode.exception_take, handler.instructions[0].opcode);
+        checked += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 1), checked);
 }
 
 test "速度優先領域の本体と境界をIRへ保持する" {

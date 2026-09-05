@@ -100,7 +100,7 @@ fn inferFunctionValues(allocator: std.mem.Allocator, program: *ir.Program, funct
                 continue;
             }
             const inferred = if (instruction.opcode == .load_local)
-                inferParameterLoadType(function.*, instruction.*, types)
+                inferParameterLoadType(program.*, function.*, instruction.*, types)
             else
                 instructionType(program.*, instruction.*, types);
             if (inferred == .dynamic or inferred == .void) continue;
@@ -115,7 +115,7 @@ fn inferFunctionValues(allocator: std.mem.Allocator, program: *ir.Program, funct
     return changed;
 }
 
-fn inferParameterLoadType(function: ir.Function, instruction: ir.Instruction, types: []const ir.Type) ir.Type {
+fn inferParameterLoadType(program: ir.Program, function: ir.Function, instruction: ir.Instruction, types: []const ir.Type) ir.Type {
     var evidence: Evidence = .none;
     var parameter_found = false;
     for (function.parameters) |parameter| if (std.mem.eql(u8, parameter.name, instruction.name)) {
@@ -123,7 +123,27 @@ fn inferParameterLoadType(function: ir.Function, instruction: ir.Instruction, ty
         evidence.add(parameter.type);
     };
     if (!parameter_found) return .dynamic;
+    // Captured cells can be changed by another function, including callbacks.
+    // Until alias/effect analysis models those writes, do not narrow their loads.
+    for (function.captures) |name| {
+        if (std.mem.eql(u8, name, instruction.name)) return .dynamic;
+    }
+    for (function.blocks) |block| for (block.instructions) |creation| {
+        if (creation.opcode != .make_closure) continue;
+        for (program.functions) |candidate| {
+            if (!std.mem.eql(u8, candidate.name, creation.name)) continue;
+            for (candidate.captures) |name| {
+                if (std.mem.eql(u8, name, instruction.name)) return .dynamic;
+            }
+        }
+    };
     for (function.blocks) |block| for (block.instructions) |candidate| {
+        if (candidate.opcode == .destructure_store) {
+            for (candidate.names) |name| {
+                if (std.mem.eql(u8, name, instruction.name)) return .dynamic;
+            }
+        }
+        if (candidate.opcode == .increment and std.mem.eql(u8, candidate.name, instruction.name)) return .dynamic;
         if (candidate.opcode != .store_local or !std.mem.eql(u8, candidate.name, instruction.name) or candidate.operands.len == 0) continue;
         evidence.add(types[candidate.operands[0]]);
     };
@@ -706,6 +726,63 @@ test "異なる型を渡す再帰呼び出しでは引数型を狭めない" {
 
     _ = try optimize(std.testing.allocator, &program, .{});
     try std.testing.expectEqual(ir.Type.dynamic, program.findFunction("recursive__F").?.parameters[0].type);
+}
+
+test "分解代入と捕捉セルと増減がある引数のロードを数値へ狭めない" {
+    const parser = @import("../frontend/parser.zig");
+    const semantic = @import("../semantic/analyzer.zig");
+    const hir = @import("hir.zig");
+    const lower_ssa = @import("lower_ssa.zig");
+    const verifier = @import("verifier.zig");
+    const bodies = [_][]const u8{
+        "A=[\"5\",2]\n",
+        "F=関数()\nA=\"5\"\nここまで\nF()\n",
+        "Aを1増\n",
+    };
+    for (bodies, 0..) |body, body_index| {
+        const source = try std.fmt.allocPrint(std.testing.allocator, "●(Aを)変更とは\n{s}A+1で戻る\nここまで\n変更(1)を表示\n●(Aを)独立とは\nA+1で戻る\nここまで\n独立(2)を表示\n", .{body});
+        defer std.testing.allocator.free(source);
+        var parsed = try parser.parse(std.testing.allocator, source, "mutable.nako3");
+        defer parsed.deinit();
+        try std.testing.expect(parsed.succeeded());
+        var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "mutable.nako3");
+        defer analyzed.deinit();
+        try std.testing.expect(analyzed.succeeded());
+        var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "mutable.nako3", analyzed);
+        defer hir_program.deinit();
+        var program = try lower_ssa.lower(std.testing.allocator, hir_program);
+        defer program.deinit();
+        if (body_index == 0) {
+            // The frontend currently rejects redeclaring a parameter with
+            // `変数[A,B]`. Exercise the valid IR write independently of that
+            // frontend restriction, using the lowered array as the source.
+            for (program.functions) |*function| {
+                if (!std.mem.eql(u8, function.name, "mutable__変更")) continue;
+                for (function.blocks) |*block| for (block.instructions) |*instruction| {
+                    if (instruction.opcode != .store_local or !std.mem.eql(u8, instruction.name, "A")) continue;
+                    instruction.opcode = .destructure_store;
+                    instruction.names = &.{"A"};
+                    instruction.name = "";
+                };
+            }
+        }
+        _ = try optimize(std.testing.allocator, &program, .{});
+        const function = program.findFunction("mutable__変更").?;
+        var loads: usize = 0;
+        for (function.blocks) |block| for (block.instructions) |instruction| {
+            if (instruction.opcode == .load_local and std.mem.eql(u8, instruction.name, "A")) {
+                loads += 1;
+                try std.testing.expectEqual(ir.Type.dynamic, instruction.type);
+            }
+        };
+        try std.testing.expect(loads > 0);
+        try std.testing.expectEqual(ir.Type.dynamic, function.return_type);
+        // A captured name in another scope must not inhibit this function.
+        try std.testing.expectEqual(ir.Type.number, program.findFunction("mutable__独立").?.return_type);
+        var report = try verifier.verify(std.testing.allocator, program);
+        defer report.deinit();
+        try std.testing.expect(report.succeeded());
+    }
 }
 
 test "唯一の入力を持つphiへの定数分岐は保守的に維持する" {

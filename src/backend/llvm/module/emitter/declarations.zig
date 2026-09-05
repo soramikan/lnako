@@ -58,7 +58,7 @@ pub fn writeRuntimeHelpers(emitter: *Emitter) !void {
             "  %truthy.value = alloca %lnako.Value\n" ++
             "  store %lnako.Value %value, ptr %truthy.value\n" ++
             "  %tag = extractvalue %lnako.Value %value, 0\n" ++
-            "  switch i8 %tag, label %truthy [ i8 0, label %falsey i8 1, label %falsey i8 2, label %boolean i8 3, label %number i8 9, label %bigint ]\n" ++
+            "  switch i8 %tag, label %truthy [ i8 0, label %falsey i8 1, label %falsey i8 2, label %boolean i8 3, label %number i8 4, label %string i8 5, label %string i8 9, label %bigint i8 11, label %binding_cell ]\n" ++
             "boolean:\n" ++
             "  %bool.bits = extractvalue %lnako.Value %value, 1\n" ++
             "  %bool = icmp ne i64 %bool.bits, 0\n" ++
@@ -72,6 +72,14 @@ pub fn writeRuntimeHelpers(emitter: *Emitter) !void {
             "  %bigint.status = call i32 @lnako_aot_bigint_truthy(ptr %truthy.value)\n" ++
             "  %bigint.truthy = icmp ne i32 %bigint.status, 0\n" ++
             "  ret i1 %bigint.truthy\n" ++
+            "string:\n" ++
+            "  %string.status = call i32 @lnako_aot_truthy(ptr %truthy.value)\n" ++
+            "  %string.truthy = icmp ne i32 %string.status, 0\n" ++
+            "  ret i1 %string.truthy\n" ++
+            "binding_cell:\n" ++
+            "  %binding.status = call i32 @lnako_aot_truthy(ptr %truthy.value)\n" ++
+            "  %binding.truthy = icmp ne i32 %binding.status, 0\n" ++
+            "  ret i1 %binding.truthy\n" ++
             "falsey:\n" ++
             "  ret i1 false\n" ++
             "truthy:\n" ++

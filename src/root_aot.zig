@@ -58,6 +58,8 @@ export fn lnako_aot_runtime_keepalive() void {
     _ = aot.lnako_aot_string_new;
     _ = aot.lnako_aot_bigint_new;
     _ = aot.lnako_aot_bigint_truthy;
+    _ = aot.lnako_aot_truthy;
+    _ = aot.lnako_aot_unary;
     _ = aot.lnako_aot_arithmetic;
     _ = aot.lnako_aot_compare;
     _ = aot.lnako_aot_shift;

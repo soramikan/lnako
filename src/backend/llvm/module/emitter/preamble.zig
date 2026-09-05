@@ -78,6 +78,8 @@ pub fn emitPreamble(emitter: *Emitter) !void {
             "declare void @lnako_aot_http_server_init(ptr, ptr, ptr, ptr)\n" ++
             "declare void @lnako_aot_http_server_call(ptr, ptr, ptr, ptr, ptr, ptr, i64, i16, i64)\n" ++
             "declare i32 @lnako_aot_bigint_truthy(ptr)\n" ++
+            "declare i32 @lnako_aot_truthy(ptr)\n" ++
+            "declare void @lnako_aot_unary(ptr, ptr, i8)\n" ++
             "declare void @lnako_aot_arithmetic(ptr, ptr, ptr, i8)\n" ++
             "declare void @lnako_aot_compare(ptr, ptr, ptr, i8)\n" ++
             "declare void @lnako_aot_shift(ptr, ptr, ptr, i8)\n" ++
