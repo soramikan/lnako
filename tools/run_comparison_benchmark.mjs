@@ -8,20 +8,25 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { tmpdir, platform, arch } from "node:os";
 import { X_OK } from "node:constants";
 
 const root = resolve(import.meta.dirname, "..");
 const options = parseArguments(process.argv.slice(2));
 
+const isWindows = platform() === "win32";
+const isDarwin = platform() === "darwin";
+const executableSuffix = isWindows ? ".exe" : "";
+const darwinSysroot = isDarwin ? detectDarwinSysroot() : null;
+
 const runtimes = new Map([
-  ["cnako", { command: options.cnako, versionFlag: "-v", sourceExtensions: [".nako3"] }],
-  ["gonako", { command: options.gonako, versionFlag: null, sourceExtensions: [".nako3"] }],
-  ["python", { command: options.python, versionFlag: "--version", sourceExtensions: [".py"] }],
-  ["c", { command: options.clang, versionFlag: "--version", sourceExtensions: [".c"] }],
-  ["rust", { command: options.rustc, versionFlag: "--version", sourceExtensions: [".rs"] }],
-  ["lnako", { command: options.lnako, versionFlag: "--version", sourceExtensions: [".nako3"] }],
+  ["cnako", { command: resolveSpawnCommand(options.cnako), versionFlag: "-v", sourceExtensions: [".nako3"] }],
+  ["gonako", { command: resolveSpawnCommand(options.gonako), versionFlag: null, sourceExtensions: [".nako3"] }],
+  ["python", { command: resolveSpawnCommand(options.python), versionFlag: "--version", sourceExtensions: [".py"] }],
+  ["c", { command: resolveSpawnCommand(options.clang), versionFlag: "--version", sourceExtensions: [".c"] }],
+  ["rust", { command: resolveSpawnCommand(options.rustc), versionFlag: "--version", sourceExtensions: [".rs"] }],
+  ["lnako", { command: resolveSpawnCommand(options.lnako), versionFlag: "--version", sourceExtensions: [".nako3"] }],
 ]);
 
 const suite = loadSuite(resolve(root, options.suite));
@@ -168,6 +173,42 @@ function buildReport(suite, tempDir) {
   };
 }
 
+// Windowsでは拡張子なしのコマンド名（cnako3等のnpm .cmdシム）を
+// spawnSyncから直接起動できないため、PATH上のPATHEXT候補を解決する。
+function resolveSpawnCommand(command) {
+  if (!isWindows || isAbsolute(command) || dirname(command) !== ".") return command;
+  const pathExts = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").toLowerCase().split(";");
+  for (const rawDir of (process.env.PATH ?? "").split(delimiter)) {
+    const dir = rawDir.replace(/^"+|"+$/g, "");
+    if (!dir) continue;
+    for (const ext of pathExts) {
+      const candidate = join(dir, `${command}${ext}`);
+      try {
+        accessSync(candidate);
+        return candidate;
+      } catch {
+        // continue
+      }
+    }
+  }
+  return command;
+}
+
+function needsShell(command) {
+  return isWindows && /\.(cmd|bat)$/i.test(command);
+}
+
+function spawnTool(command, args, options_ = {}) {
+  return spawnSync(command, args, { shell: needsShell(command), encoding: "utf8", ...options_ });
+}
+
+function detectDarwinSysroot() {
+  const result = spawnSync("xcrun", ["--show-sdk-path"], { encoding: "utf8", shell: false });
+  if (result.error || result.status !== 0) return null;
+  const sysroot = result.stdout.trim();
+  return sysroot.length > 0 ? sysroot : null;
+}
+
 function isCommandAvailable(command, versionFlag) {
   if (isAbsolute(command)) {
     try {
@@ -178,7 +219,7 @@ function isCommandAvailable(command, versionFlag) {
     }
   }
   if (versionFlag) {
-    const result = spawnSync(command, [versionFlag], { shell: false, encoding: "utf8" });
+    const result = spawnTool(command, [versionFlag]);
     if (result.status === 0) return true;
   }
   return whichCommand(command);
@@ -202,11 +243,7 @@ function collectToolchainVersions() {
 function getCommandVersion(command, flag) {
   if (!isCommandAvailable(command, flag)) return null;
   if (!flag) return null;
-  const result = spawnSync(command, [flag], {
-    encoding: "utf8",
-    shell: false,
-    maxBuffer: 8 * 1024 * 1024,
-  });
+  const result = spawnTool(command, [flag], { maxBuffer: 8 * 1024 * 1024 });
   if (result.error || result.status !== 0) {
     if (flag !== "--version") {
       return getCommandVersion(command, "--version");
@@ -228,7 +265,7 @@ function runRuntimeBenchmark(item, runtime, config, sourcePath, caseDir) {
     );
     measurements.push(summarizeSamples(runtime, "interpreter", interpreterSamples));
 
-    const binPath = join(caseDir, "lnako-aot");
+    const binPath = join(caseDir, `lnako-aot${executableSuffix}`);
     const compileSamples = collectSamples(
       config.command,
       ["build", sourcePath, "-O2", "-o", binPath],
@@ -242,10 +279,10 @@ function runRuntimeBenchmark(item, runtime, config, sourcePath, caseDir) {
     }
   } else if (runtime === "c" || runtime === "rust") {
     const binName = runtime === "c" ? "ref-c" : "ref-rust";
-    const binPath = join(caseDir, binName);
+    const binPath = join(caseDir, `${binName}${executableSuffix}`);
     const compileArgs =
       runtime === "c"
-        ? ["-O2", sourcePath, "-o", binPath]
+        ? ["-O2", ...(darwinSysroot !== null ? ["-isysroot", darwinSysroot] : []), sourcePath, "-o", binPath]
         : ["-O", sourcePath, "-o", binPath];
     const compileSamples = collectSamples(config.command, compileArgs, null);
     measurements.push(summarizeSamples(runtime, "compile", compileSamples));
@@ -290,9 +327,7 @@ function collectSamples(command, args, expectedStdout) {
   const samples = [];
   for (let i = 0; i < options.warmup + options.iterations; i += 1) {
     const started = process.hrtime.bigint();
-    const result = spawnSync(command, args, {
-      encoding: "utf8",
-      shell: false,
+    const result = spawnTool(command, args, {
       maxBuffer: 64 * 1024 * 1024,
     });
     const finished = process.hrtime.bigint();
