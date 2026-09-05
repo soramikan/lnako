@@ -1,0 +1,245 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+
+export const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
+export const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
+
+export function buildGlobalBindingEvidenceInputs(root) {
+  return [
+  {
+    path: resolve(root, "compat/v3.7.24/global-binding-evidence.json"),
+    fixtureId: "native-node-file-copy-default",
+    catalogId: "command-0709",
+    name: "ファイルコピーデフォルト動作",
+    plugin: "plugin_node",
+    accessKinds: ["global-load", "global-store", "global-load", "global-store", "global-load"],
+  },
+  {
+    path: resolve(root, "compat/v3.7.24/directory-binding-evidence.json"),
+    schema: "lnako.global-binding-evidence.v2",
+    fixtureId: "native-node-directory-values",
+    bindings: [
+      { catalogId: "command-0731", name: "デスクトップ", plugin: "plugin_node", type: "関数" },
+      { catalogId: "command-0732", name: "マイドキュメント", plugin: "plugin_node", type: "関数" },
+      { catalogId: "command-0735", name: "テンポラリフォルダ", plugin: "plugin_node", type: "関数" },
+    ],
+    accesses: [
+      { catalogId: "command-0731", name: "デスクトップ", plugin: "plugin_node", kind: "global-load", phase: "global-read" },
+      { catalogId: "command-0732", name: "マイドキュメント", plugin: "plugin_node", kind: "global-load", phase: "global-read" },
+      { catalogId: "command-0735", name: "テンポラリフォルダ", plugin: "plugin_node", kind: "global-load", phase: "global-read" },
+    ],
+  },];
+}
+
+export function buildStaticConstantEvidenceInputs(root) {
+  return [
+  {
+    path: resolve(root, "compat/v3.7.24/static-constant-evidence.json"),
+    fixtureId: "native-scalar-system-constants",
+    globalReadCount: 17,
+    literalNames: new Set(["はい", "いいえ", "真", "偽", "オン", "オフ", "NULL"]),
+    plugin: "plugin_system",
+  },
+  {
+    path: resolve(root, "compat/v3.7.24/static-string-constant-evidence.json"),
+    fixtureId: "native-string-system-constants",
+    globalReadCount: 24,
+    literalNames: new Set(),
+    plugin: "plugin_system",
+  },
+  {
+    path: resolve(root, "compat/v3.7.24/static-array-constant-evidence.json"),
+    fixtureId: "native-array-system-constants",
+    globalReadCount: 2,
+    literalNames: new Set(),
+    plugin: "plugin_system",
+  },
+  {
+    path: resolve(root, "compat/v3.7.24/static-datetime-era-constant-evidence.json"),
+    fixtureId: "native-datetime-era-data",
+    catalogIds: new Map([["元号データ", "command-0227"]]),
+    globalReadCount: 1,
+    globalTraceCount: 3,
+    manifestGlobalReadNames: ["元号データ", "元号データ", "元号データ"],
+    manifestExtraGlobalReadNames: ["scalar-constants__A"],
+    literalNames: new Set(),
+    plugin: "plugin_system",
+  },
+  {
+    path: resolve(root, "compat/v3.7.24/static-datetime-plugin-era-constant-evidence.json"),
+    fixtureId: "native-datetime-plugin-era-data",
+    catalogIds: new Map([["元号データ", "command-0807"]]),
+    globalReadCount: 1,
+    globalTraceCount: 3,
+    manifestGlobalReadNames: ["元号データ", "元号データ", "元号データ"],
+    manifestExtraGlobalReadNames: ["scalar-constants__A"],
+    literalNames: new Set(),
+    plugin: "plugin_datetime",
+  },
+  {
+    path: resolve(root, "compat/v3.7.24/static-node-archive-constant-evidence.json"),
+    fixtureId: "native-node-archive-constant",
+    globalReadCount: 1,
+    literalNames: new Set(),
+    plugin: "plugin_node",
+  },
+  {
+    path: resolve(root, "compat/v3.7.24/static-node-command-line-constant-evidence.json"),
+    fixtureId: "native-node-command-line-constants",
+    globalReadCount: 3,
+    literalNames: new Set(),
+    plugin: "plugin_node",
+  },
+  {
+    path: resolve(root, "compat/v3.7.24/static-node-mother-path-constant-evidence.json"),
+    fixtureId: "native-node-mother-path",
+    constantNames: new Set(["母艦パス"]),
+    globalReadCount: 1,
+    literalNames: new Set(),
+    plugin: "plugin_node",
+  },
+  {
+    path: resolve(root, "compat/v3.7.24/static-promise-reject-constant-evidence.json"),
+    fixtureId: "native-system-promise-reject",
+    constantNames: new Set(["そ"]),
+    globalReadCount: 1,
+    manifestExtraGlobalReadNames: ["対象", "scalar-constants__F"],
+    literalNames: new Set(),
+    plugin: "plugin_promise",
+  },
+  {
+    path: resolve(root, "compat/v3.7.24/static-caniuse-agents-constant-evidence.json"),
+    fixtureId: "native-caniuse-agents",
+    globalReadCount: 1,
+    globalTraceCount: 3,
+    literalNames: new Set(),
+    manifestGlobalReadNames: ["ブラウザ名変換表", "ブラウザ名変換表", "ブラウザ名変換表"],
+    plugin: "plugin_caniuse",
+  },
+  {
+    path: resolve(root, "compat/v3.7.24/static-node-http-initial-constant-evidence.json"),
+    fixtureId: "native-node-http-initial-constants",
+    globalReadCount: 5,
+    literalNames: new Set(),
+    commandPlugins: {
+      "AJAXオプション": "plugin_node",
+      "HTTPメソッド": "plugin_httpserver",
+      "GETデータ": "plugin_httpserver",
+      "POSTデータ": "plugin_httpserver",
+      "FILESデータ": "plugin_httpserver",
+    },
+  },
+];
+}
+
+export const forbiddenEvidenceFields = new Set(["source", "sourceText", "sourcePath", "args", "arguments", "stdout", "stderr", "value", "values", "pointer", "address"]);
+export const hashPattern = /^[0-9a-f]{64}$/;
+export const siteIdPattern = /^0x[0-9a-f]{16}$/;
+export const throwStatementOpcode = 0xffff;
+export const runtimeFixtureFiles = new Set([
+  "compat-js-cases.json",
+  "http-server-cases.json",
+  "http-server-dispatch-cases.json",
+  "native-cases.json",
+  "node-crypto-cases.json",
+  "node-exit-cases.json",
+  "node-file-cases.json",
+  "node-http-cases.json",
+  "node-interrupt-case.json",
+  "node-native-cases.json",
+  "plugin-route-cases.json",
+  "plugin-system-cases.json",
+  "standard-plugin-cases.json",
+  "supplemental-plugin-cases.json",
+  "system-runtime-cases.json",
+]);
+// A clean dispatch evidence file is generated against the fixture/source
+// commit before it is copied into the tracked catalog. Later commits may
+// update only CI, documentation, catalog derivatives, or verification tools
+// that do not generate the dispatch trace; any product, fixture, catalog, or
+// dispatch-generator change requires a fresh dispatch run.
+
+export const dispatchEvidenceFollowUpPaths = new Set([
+  ".github/workflows/ci.yml",
+  ".github/workflows/release.yml",
+  ".github/workflows/comparison-benchmark.yml",
+  "README.md",
+  "benchmarks/results/latest.json",
+  "benchmarks/results/latest.md",
+  "docs/RELEASE.md",
+  "compat/v3.7.24/dispatch-evidence.json",
+  "compat/v3.7.24/dispatch-coverage-evidence.json",
+  "compat/v3.7.24/expected-exit-evidence.json",
+  "compat/v3.7.24/global-binding-evidence.json",
+  "compat/v3.7.24/directory-binding-evidence.json",
+  "compat/v3.7.24/static-constant-evidence.json",
+  "compat/v3.7.24/static-string-constant-evidence.json",
+  "compat/v3.7.24/static-array-constant-evidence.json",
+  "compat/v3.7.24/static-datetime-era-constant-evidence.json",
+  "compat/v3.7.24/static-datetime-plugin-era-constant-evidence.json",
+  "compat/v3.7.24/static-node-archive-constant-evidence.json",
+  "compat/v3.7.24/static-node-command-line-constant-evidence.json",
+  "compat/v3.7.24/static-node-mother-path-constant-evidence.json",
+  "compat/v3.7.24/static-promise-reject-constant-evidence.json",
+  "compat/v3.7.24/static-caniuse-agents-constant-evidence.json",
+  "compat/v3.7.24/static-node-http-initial-constant-evidence.json",
+  "compat/v3.7.24/compat-js-evidence.json",
+  "compat/v3.7.24/matrix.json",
+  "compat/v3.7.24/standard-cnako.json",
+  "compat/v3.7.24/evidence.json",
+  "compat/v3.7.24/interpreter-only-classification.json",
+  "docs/COMPATIBILITY_EVIDENCE.md",
+  "docs/COMPATIBILITY.md",
+  "docs/COMPATIBILITY_QUIRKS.md",
+  "docs/ARCHITECTURE.md",
+  "docs/CI.md",
+  "docs/DEVELOPMENT.md",
+  "docs/compatibility/AOT.md",
+  "docs/compatibility/COMPAT_JS.md",
+  "docs/compatibility/NODE_HOST.md",
+  "docs/compatibility/PARSER.md",
+  "docs/compatibility/QUIRKS.md",
+  "docs/compatibility/RUNTIME.md",
+  "docs/history/ARCHITECTURE_2026.md",
+  "docs/history/CI_PERFORMANCE_2026.md",
+  "docs/history/COMPATIBILITY_EVIDENCE_PROGRESS_2026.md",
+  "docs/history/COMPATIBILITY_QUIRKS_2026.md",
+  "docs/history/README.md",
+  "docs/history/UNVERIFIED_EVIDENCE_PLAN_2026.md",
+  "tools/check_ci_workflow.mjs",
+  "tools/check_release_workflow.mjs",
+  "tools/check_dispatch_coverage_shards.mjs",
+  "tools/check_aot_suite_parallel.mjs",
+  "tools/check_dispatch_coverage.mjs",
+  "tools/oracle/system_only.mjs",
+  "tools/compare_native_oracle.mjs",
+  "tools/check_static_constant_evidence.mjs",
+  "tools/check_global_binding_evidence.mjs",
+  "tools/check_node_exit_evidence.mjs",
+  "tools/check_compat_js_evidence.mjs",
+  "tools/check_distribution.mjs",
+  "tools/create_distribution.mjs",
+  "tools/prune_llvm_toolchain.mjs",
+  "tools/check_benchmark_result.mjs",
+  "tools/compare_interpreter_oracle.mjs",
+  "tools/check_native_aot_artifacts.mjs",
+  "tools/verify_native_aot_attestation.mjs",
+  // The former current path is retained here because the history move appears
+  // as a deletion when the provenance commit is compared with HEAD.
+  "docs/UNVERIFIED_EVIDENCE_PLAN.md",
+  "tools/sync_compat_evidence.mjs",
+  "tools/update_current_evidence.mjs",
+  "tools/fast_forward_evidence.mjs",
+  "tools/check_source_structure.mjs",
+  "tools/source_structure.json",
+  "tools/lib/coverage_env.mjs",
+  "tools/lib/coverage_process.mjs",
+  "tools/lib/coverage_http.mjs",
+  "tools/lib/coverage_fixtures.mjs",
+  "tools/lib/coverage_sites.mjs",
+  "tools/lib/evidence_common.mjs",
+  "tools/lib/evidence/env.mjs",
+  "tools/lib/evidence/constants.mjs",
+  "tools/lib/evidence/records.mjs",
+  "tools/lib/evidence/validators.mjs",
+]);

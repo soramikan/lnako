@@ -16,7 +16,8 @@ const httpAotScript = await readFile(resolve(root, "tools/compare_http_server_ao
 const dispatchSecurityScript = await readFile(resolve(root, "tools/check_dispatch_trace_security.mjs"), "utf8");
 const dispatchAuditsScript = await readFile(resolve(root, "tools/check_dispatch_audits_parallel.mjs"), "utf8");
 const aotSuiteScript = await readFile(resolve(root, "tools/check_aot_suite_parallel.mjs"), "utf8");
-const dispatchCoverageScript = await readFile(resolve(root, "tools/check_dispatch_coverage.mjs"), "utf8");
+const dispatchCoverageScript = await readFile(resolve(root, "tools/check_dispatch_coverage.mjs"), "utf8") +
+  (await readFile(resolve(root, "tools/lib/coverage_fixtures.mjs"), "utf8"));
 const dispatchCoverageShardsScript = await readFile(resolve(root, "tools/check_dispatch_coverage_shards.mjs"), "utf8");
 const nativeOracleScript = await readFile(resolve(root, "tools/compare_native_oracle.mjs"), "utf8");
 const nativeAotArtifactChecker = await readFile(resolve(root, "tools/check_native_aot_artifacts.mjs"), "utf8");
@@ -25,7 +26,10 @@ const interpreterOracleScript = await readFile(resolve(root, "tools/compare_inte
 const compatJsEvidenceScript = await readFile(resolve(root, "tools/check_compat_js_evidence.mjs"), "utf8");
 const pruneLlvmToolchainScript = await readFile(resolve(root, "tools/prune_llvm_toolchain.mjs"), "utf8");
 const trackedAttestationChecker = await readFile(resolve(root, "tools/check_tracked_dispatch_attestation.mjs"), "utf8");
-const syncEvidence = await readFile(resolve(root, "tools/sync_compat_evidence.mjs"), "utf8");
+const syncEvidence = await readFile(resolve(root, "tools/sync_compat_evidence.mjs"), "utf8") +
+  (await readFile(resolve(root, "tools/lib/evidence/validators.mjs"), "utf8")) +
+  (await readFile(resolve(root, "tools/lib/evidence/records.mjs"), "utf8")) +
+  (await readFile(resolve(root, "tools/lib/evidence/constants.mjs"), "utf8"));
 const verifyAttestation = await readFile(resolve(root, "tools/verify_dispatch_attestation.mjs"), "utf8");
 if (!trackedAttestationChecker.includes("gh") || !trackedAttestationChecker.includes("--cert-oidc-issuer") || !trackedAttestationChecker.includes("--deny-self-hosted-runners") || !syncEvidence.includes("--historical-commit") || !syncEvidence.includes("canonical --output")) {
   throw new Error("tracked dispatch attestation checkerのhistorical commit／公式gh厳格検証が不完全です");
