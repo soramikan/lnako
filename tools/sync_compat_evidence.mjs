@@ -81,6 +81,7 @@ const aotFixtureIds = new Set(records.filter((record) => record.aot).map((record
 const compatJsFixtureIds = new Set(records.filter((record) => record.file === "compat-js-cases.json").map((record) => record.id));
 const standardNames = new Set(standard.commands.map((command) => command.name));
 const duplicateNames = validators.duplicateNameSet(standard.commands);
+evidenceEnv.duplicateNames = duplicateNames;
 const unresolvedByName = new Map();
 const dispatchEvidenceBytes = await readFile(dispatchEvidenceInputPath);
 const dispatchEvidenceBase = JSON.parse(dispatchEvidenceBytes.toString("utf8"));

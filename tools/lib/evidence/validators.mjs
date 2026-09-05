@@ -874,7 +874,7 @@ export function validateExpectedExitEvidence(evidence, lock, standard, records) 
     const record = recordById.get(item.id);
     const command = standardById.get(item.catalogId);
     if (record === undefined || record.sourceSha256 !== item.sourceSha256 || command === undefined || command.name !== item.command || command.plugin !== "plugin_node" || command.status !== "native" ||
-        (duplicateNames.has(item.command) && record.catalogIds?.get(item.command) !== item.catalogId)) throw new Error(`expected-exit証拠のfixture caseがcatalog/fixtureと不一致です: ${item.id}`);
+        (env.duplicateNames.has(item.command) && record.catalogIds?.get(item.command) !== item.catalogId)) throw new Error(`expected-exit証拠のfixture caseがcatalog/fixtureと不一致です: ${item.id}`);
     casesById.set(item.id, item);
   }
   if (evidence.entries.length !== casesById.size) throw new Error("expected-exit証拠のentry数がfixture case数と一致しません");

@@ -159,8 +159,8 @@
     },
     "lnako": {
       "binarySha256": "6514989d245262fbec0c63f54b2d142176f12f62f72c32b7904cccc1730eb0a7",
-      "commit": "4b4ad1d24dc773d8810778dd0b5a1e0c1b3b4f49",
-      "dirty": true
+      "commit": "f0528c46db0b2d70192247555e1a4f045de5f357",
+      "dirty": false
     },
     "auditScriptSha256": "aae0ec8430abc0d82d5479c110938488a7db668f2354132549de11946c26cfc0"
   },
