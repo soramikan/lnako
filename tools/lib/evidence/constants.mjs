@@ -160,6 +160,12 @@ export const runtimeFixtureFiles = new Set([
 // dispatch-generator change requires a fresh dispatch run.
 
 export const dispatchEvidenceFollowUpPaths = new Set([
+  // These files only validate pushes, adapt the benchmark oracle command,
+  // or document historical measurements; they do not generate dispatch sites.
+  ".githooks/pre-push",
+  "tools/pre_push_hook_test.mjs",
+  "tools/create_benchmark_oracle_shim.mjs",
+  "benchmarks/comparison/README-v1.md",
   ".github/workflows/ci.yml",
   ".github/workflows/release.yml",
   ".github/workflows/comparison-benchmark.yml",

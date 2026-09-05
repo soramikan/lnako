@@ -212,7 +212,7 @@ jobs:
         run: zig build test
       - name: Benchmark runner tests
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
-        run: node --test tools/benchmark_runner_test.mjs
+        run: node --test tools/benchmark_runner_test.mjs tools/pre_push_hook_test.mjs
       - name: Test QuickJS build
         if: matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'
         run: zig build -Dcompat-js=true test

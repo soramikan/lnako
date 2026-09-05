@@ -76,3 +76,9 @@ OS依存値や外部通信を扱うfixtureは、固定入力、loopback、synthe
 ## コミットとpush
 
 機能とテストが完結した単位で、日本語の署名付きコミットを作成します。force push、rebaseによる履歴改変、未検証状態のコミットは行いません。push前に直前のmain CI runを確認し、push後は次の作業区切りで新runの失敗jobを確認します。CI完了待ちが次の作業の前提でない場合、無期限に待機しません。
+
+## 証拠更新とpush前検査
+
+pre-pushフックは整形・単体テスト・互換性証拠・interpreter-only分類の検査だけを行い、ファイルやコミットを自動生成しません。製品変更で証拠の再生成が必要な場合は、実装を検証して署名付きコミットにした後、cleanな状態で `node tools/update_current_evidence.mjs` を実行します。通常経路と明示的なcompat-js経路をそれぞれビルドし、全証拠が揃うまで追跡済みファイルを保持します。生成後の差分を確認・検証し、証拠更新を別の署名付きコミットにしてください。
+
+`tools/fast_forward_evidence.mjs`による、再実行を伴わないprovenanceの書き換えは廃止しました。既存の証拠は測定したcommitとbinary hashを保持し、検証ツール・文書だけの変更は明示的なfollow-up対象として扱います。

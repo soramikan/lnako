@@ -64,11 +64,19 @@ jobs:
         with:
           node-version: 24.15.0
 
-      - name: Install pinned cnako
-        run: npm install -g nadesiko3@3.7.24
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/oracle
+          key: nadesiko3-oracle-3.7.24-${{ runner.os }}-${{ runner.arch }}-ac3bedbf10111-v4
+
+      - name: Build pinned source oracle
+        run: node tools/setup_oracle.mjs
+
+      - name: Prepare oracle command
+        run: node tools/create_benchmark_oracle_shim.mjs
 
       - name: Verify oracle version
-        run: cnako3 -v
+        run: node .cache/oracle/nadesiko3-3.7.24/src/cnako3.mjs -v
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -118,6 +126,7 @@ jobs:
             --profile "$BENCHMARK_PROFILE" \
             --runtimes lnako,cnako \
             --lnako "$LNAKO_BENCHMARK_LNAKO" \
+            --cnako "$LNAKO_BENCHMARK_CNAKO" \
             --output "$RUNNER_TEMP/benchmark-${{ matrix.target }}.json" \
             --markdown "$RUNNER_TEMP/benchmark-${{ matrix.target }}.md"
 
