@@ -29,10 +29,6 @@
         "reason": "演算子優先順位・制御構文の停止条件・token cursorの相互依存が強いため早期分割しない（計画 二次対象）",
         "limitKb": 90
       },
-      "src/backend/llvm/module/emitter.zig": {
-        "reason": "emitter/context・operations分割が進行中（計画 backend/llvm）",
-        "limitKb": 140
-      },
       "src/plugins/system/strings.zig": {
         "reason": "strings/ への分割が進行中（計画 二次対象）",
         "limitKb": 90
