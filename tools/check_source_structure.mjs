@@ -20,7 +20,7 @@ async function* walkZigFiles(directory) {
 }
 
 const sizeRules = config.size;
-const excludeDirectories = sizeRules.excludeDirectories.map((entry) => resolve(root, entry));
+const excludeDirectories = sizeRules.excludeDirectories.map((entry) => `${entry.replaceAll("\\", "/").replace(/\/+$/, "")}/`);
 const excludeBasenames = new Set(sizeRules.excludeBasenames);
 const excludeSuffixes = sizeRules.excludeSuffixes;
 const facadeSet = new Set(sizeRules.facades);
@@ -56,7 +56,7 @@ for await (const path of walkZigFiles(resolve(root, "src"))) {
     }
   }
 
-  if (excludeDirectories.some((directory) => path.startsWith(`${directory}/`))) continue;
+  if (excludeDirectories.some((directory) => relativePath.startsWith(directory))) continue;
   if (excludeBasenames.has(basename(path)) || excludeSuffixes.some((suffix) => basename(path).endsWith(suffix))) continue;
 
   const sizeKb = (await stat(path)).size / 1024;
