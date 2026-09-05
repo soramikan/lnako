@@ -429,7 +429,7 @@
             "status": 0,
             "signal": null,
             "stdoutSha256": "38e0b9de817f645c4bec37c0d4a3e58baecccb040f5718dc069a72c7385a0bed",
-            "stderrSha256": "ed643dec852e63cada251099c84c785a064acc1c9179f71bb981f44276bb8a3f",
+            "stderrSha256": "891e03834c0c367b5233e3b6aecc38477fa8e803f2c7d524b6c1420121d0b2ec",
             "failed": true
           },
           "lnakoCompatJs": {
@@ -501,7 +501,7 @@
     "environment": {
       "platform": "darwin",
       "arch": "arm64",
-      "node": "v26.2.0"
+      "node": "v24.15.0"
     },
     "oracle": {
       "build": 4,
@@ -512,8 +512,8 @@
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
     "lnako": {
-      "binarySha256": "6514989d245262fbec0c63f54b2d142176f12f62f72c32b7904cccc1730eb0a7",
-      "commit": "31f61411c36560e7f58acef533961dffd182f9b3",
+      "binarySha256": "3ad61d65531f82e7671619df99b14f0dcc8b1ed96b6c10b52878c43be44e3f85",
+      "commit": "4caaa70b7305e3bacf5ab0de69a9ee990b018ce3",
       "dirty": false
     },
     "raw": {
