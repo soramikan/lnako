@@ -14,4 +14,3 @@
 | recursion | 3984.63 | 307.86 | 146.94 | 4.87 | 4.96 | 2557.03 | 358.36 |
 | string-bench | 78.03 | 24.60 | 22.82 | 1.93 | 2.06 | 105.79 | 150.24 |
 `lnako` は AOT 実行時にネイティブコンパイルを活かし、多くのケースで interpreter より高速に動作します。macOS arm64・Linux x64・Windows x64 の全ターゲット生データは各実行の Actions artifact（30日保持）から取得できます。最新の結果は [`.github/workflows/comparison-benchmark.yml`](.github/workflows/comparison-benchmark.yml) から実行できます。
-
