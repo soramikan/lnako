@@ -322,15 +322,15 @@ CLIファイルは引数解析と終了コードだけにし、検証関数を�
 
 | 領域 | 状態 |
 |---|---|
-| Wave 0 ガードレール | `src/all_tests.zig` 導入済み。`check_source_structure.mjs`（サイズ・import層・例外台帳）は未実装 |
+| Wave 0 ガードレール | 完了（`src/all_tests.zig` ＋ `tools/check_source_structure.mjs`／`tools/source_structure.json`：サイズ閾値・import層許可リスト・例外台帳をCI検査） |
 | `main.zig` / CLI / host / benchmark / compile pipeline | 完了（`main.zig` 20行、`src/cli/`・`src/compiler_pipeline/`・`src/benchmark/`・`src/host/` 稼働中） |
 | `regexp` 中立エンジン化 | 完了（`src/regexp/` + `plugins/system/regexp.zig` adapter） |
-| `arrays` 基本分割 | 完了（`arrays/` core/map/prototype/shared/sort/table）。表3分類・sort_v8分離は残課題 |
+| `arrays` | 完了（`arrays/` core/map/prototype/shared ＋ `sort.zig`→`sort_adapter`/`sort_v8`、`table.zig`→`table_projection`/`table_filtering`/`table_sort`/`table_structure`） |
 | `node` 分割 | 完了（`plugins/node/` call/filesystem/http/network/platform/process/shared） |
-| `backend/llvm` | 一部（`module.zig` 73KB + `module/emitter.zig` 136KB + `module/shared.zig`）。manifest/sites/unsupported/routes分離とemitter細分化が残課題 |
-| `interpreter` | 一部（`interpreter/` events/execute/plugins/shared/state/tests）。instruction_router/operations整理が残課題 |
-| `runtime/aot` | 完了（`state.zig` は728行の互換ファサード） |
-| `strings.zig`（82KB） | 未着手（二次対象） |
-| `parser.zig`（82KB） | 保留（指針上は早期分割しない） |
-| `value.zig`（75KB） | 保留（`traceChildren` 契約整備後） |
-| 検証ツール分割 | 未着手 |
+| `backend/llvm` | 完了（`module.zig`→`module/manifest.zig`＋`module/unsupported.zig`、`emitter.zig`→`emitter/{context,preamble,declarations,functions,terminators,instruction_router}.zig`＋`emitter/operations/*`。`Emitter`公開API維持） |
+| `interpreter` | 完了相当（`interpreter/` events/execute/plugins/shared/state/tests に責務分離済み。`execute.zig` 45KBで閾値内のため追加分割は保留） |
+| `runtime/aot` | 完了（`state.zig` は互換ファサード。`collection`/`runtime_core`/`table`/`aot_builtin`/`value` は例外台帳で監視中） |
+| `strings.zig` | 完了（`strings/{cutting,core,search_replace,trim_case,kana,format,units}.zig`へ分離。ファサード34.5KB） |
+| `parser.zig`（82KB） | 保留（指針上は早期分割しない・例外台帳登録済み） |
+| `value.zig`（75KB） | 保留（`traceChildren` 契約整備後・例外台帳登録済み） |
+| 検証ツール分割 | 完了（`check_dispatch_coverage.mjs`→`tools/lib/coverage_{process,http,fixtures,sites}.mjs`＋`evidence_common.mjs`、`sync_compat_evidence.mjs`→`tools/lib/evidence/{constants,records,validators,env}.mjs`。証拠フォーマット不変） |
