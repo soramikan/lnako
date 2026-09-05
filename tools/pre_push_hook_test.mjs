@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -40,7 +40,6 @@ exit "$HOOK_NODE_STATUS"
     log,
     env: {
       ...process.env,
-      PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
       HOOK_LOG: log,
       // A relative root keeps the fake hook portable under Git Bash on
       // Windows, where a native C:\ path is not a valid bash cd operand.
@@ -60,7 +59,13 @@ function writeExecutable(path, content) {
 
 function runHook(environment, input) {
   const shell = process.platform === "win32" ? "bash" : "sh";
-  const shellArgs = process.platform === "win32" ? ["--noprofile", "--norc", hook] : [hook];
+  // Git Bash converts the inherited Windows PATH and may discard or reorder
+  // injected entries. Set the fake command directory after the shell starts.
+  const launcher = 'export PATH="$PWD/bin:$PATH"; export HOOK_LOG="$PWD/commands.log"; exec sh "$1"';
+  const shellArgs = [
+    ...(process.platform === "win32" ? ["--noprofile", "--norc"] : []),
+    "-c", launcher, "hook-test", hook.replaceAll("\\", "/"),
+  ];
   return spawnSync(shell, shellArgs, {
     cwd: environment.cwd,
     env: environment.env,
