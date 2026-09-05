@@ -83,6 +83,7 @@ jobs:
       - name: Set up pinned LLVM and LLD
         shell: bash
         run: |
+          set -euo pipefail
           node --version
           node tools/setup_llvm.mjs
       - name: Prune LLVM toolchain cache
@@ -688,6 +689,7 @@ jobs:
       - name: Set up pinned LLVM and LLD
         shell: bash
         run: |
+          set -euo pipefail
           node --version
           node tools/setup_llvm.mjs
       - name: Prune LLVM toolchain cache
