@@ -2,6 +2,8 @@
 
 `benchmarks/suites/v2.json` は、起動・コア実行・コレクション・数値計算・文字列・allocation・アプリケーション・シリアライズ・I/O・toolchain を分けて測る 20 ケースのスイートです。旧 `benchmarks/suite.json` と `benchmarks/comparison` の結果はこのスイートから参照しません。
 
+保存済みの測定値は[ベンチマーク結果](../docs/benchmarks/RESULTS.md)を参照してください。全20ケースの結果をLinux・macOS・Windowsの個別文書にまとめています。
+
 ## ケースと固定 workload
 
 各ケースの `expected_stdout` は、最終的な checksum まで含む完全一致の stdout です。`startup-empty` だけは空文字列を期待します。
