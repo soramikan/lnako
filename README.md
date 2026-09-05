@@ -83,7 +83,7 @@ lnako benchmark
 | closure-loop | 83.01 | 17.30 | 21.68 | - | 1.85 | 33.76 | 2.77 |
 | recursion | 4695.98 | 318.69 | 153.55 | - | 7.20 | 2774.51 | 367.76 |
 | string-bench | 81.49 | 21.06 | 22.85 | - | 1.93 | 109.40 | 149.34 |
-`lnako` は AOT 実行時にネイティブコンパイルを活かし、多くのケースで interpreter より高速に動作します。macOS arm64・Linux x64・Windows x64 の全ターゲット生データは [`benchmarks/comparison/results/`](benchmarks/comparison/results/) に保存しています。最新の結果は [`.github/workflows/comparison-benchmark.yml`](.github/workflows/comparison-benchmark.yml) から実行できます。
+`lnako` は AOT 実行時にネイティブコンパイルを活かし、多くのケースで interpreter より高速に動作します。macOS arm64・Linux x64・Windows x64 の全ターゲット生データは各実行の Actions artifact（30日保持）から取得できます。最新の結果は [`.github/workflows/comparison-benchmark.yml`](.github/workflows/comparison-benchmark.yml) から実行できます。
 
 ## 開発者向けドキュメント
 
