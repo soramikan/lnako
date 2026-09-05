@@ -29,9 +29,33 @@
         "reason": "演算子優先順位・制御構文の停止条件・token cursorの相互依存が強いため早期分割しない（計画 二次対象）",
         "limitKb": 90
       },
-      "src/plugins/system/strings.zig": {
-        "reason": "strings/ への分割が進行中（計画 二次対象）",
-        "limitKb": 90
+      "src/plugins/system/arrays.zig": {
+        "reason": "命令dispatchファサード（arrays/へ実装移譲済み・テストはファサードに集約）",
+        "limitKb": 40
+      },
+      "src/runtime/aot/collection.zig": {
+        "reason": "コレクション操作群の密集した共有ヘルパー（監視対象・hard limit内）",
+        "limitKb": 80
+      },
+      "src/runtime/aot/runtime_core.zig": {
+        "reason": "Runtime型・コア値変換の中核（監視対象・hard limit内）",
+        "limitKb": 80
+      },
+      "src/runtime/aot/state.zig": {
+        "reason": "mutableグローバルと互換再エクスポートのファサード（hard limit内）",
+        "limitKb": 50
+      },
+      "src/runtime/aot/table.zig": {
+        "reason": "表・クローン等のAOT実装（監視対象・hard limit内）",
+        "limitKb": 80
+      },
+      "src/runtime/aot_builtin.zig": {
+        "reason": "命令カタログとcanonical opcodeの単一正本（監視対象・hard limit内）",
+        "limitKb": 80
+      },
+      "src/runtime/value.zig": {
+        "reason": "Value・Runtime中心のコア値表現（監視対象・hard limit内）",
+        "limitKb": 80
       }
     }
   },
