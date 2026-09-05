@@ -2307,48 +2307,87 @@ pub fn concatAotValues(runtime: *Runtime, left: Value, right: Value) !Value {
     return runtime.createString(units.items);
 }
 
-const AotPosixIfAddrs = if (builtin.os.tag == .windows) opaque {} else extern struct {
-    next: ?*AotPosixIfAddrs,
-    name: [*:0]const u8,
-    flags: c_uint,
-    address: ?*std.posix.sockaddr,
-    netmask: ?*std.posix.sockaddr,
-    destination: ?*std.posix.sockaddr,
-    data: ?*anyopaque,
-};
+const node_module = @import("node.zig");
 
-const AotPosixInterfaces = if (builtin.os.tag == .windows) struct {} else struct {
-    pub extern "c" fn getifaddrs(result: *?*AotPosixIfAddrs) c_int;
-    pub extern "c" fn freeifaddrs(result: ?*AotPosixIfAddrs) void;
-};
+pub const runAotExternal = node_module.runAotExternal;
+pub const nodeProcessBuiltin = node_module.nodeProcessBuiltin;
+pub const nodeBasenameWideFor = node_module.nodeBasenameWideFor;
+pub const nodeNetworkAddressesBuiltin = node_module.nodeNetworkAddressesBuiltin;
+pub const nodeEnvironmentBuiltin = node_module.nodeEnvironmentBuiltin;
+pub const nodeProcessExitCode = node_module.nodeProcessExitCode;
+pub const nodeCryptoBuiltin = node_module.nodeCryptoBuiltin;
+pub const nodeDirectoryBuiltin = node_module.nodeDirectoryBuiltin;
+pub const nodeTemporaryDirectoryPrefixAlloc = node_module.nodeTemporaryDirectoryPrefixAlloc;
+pub const nodeCreateTemporaryDirectoryBuiltin = node_module.nodeCreateTemporaryDirectoryBuiltin;
+pub const nodeMotherPathBuiltin = node_module.nodeMotherPathBuiltin;
+pub const nodeEnvironmentValueBuiltin = node_module.nodeEnvironmentValueBuiltin;
+pub const nodeEnvironmentListBuiltin = node_module.nodeEnvironmentListBuiltin;
+pub const nodeCurrentDirectoryBuiltin = node_module.nodeCurrentDirectoryBuiltin;
+pub const currentDirectoryAlloc = node_module.currentDirectoryAlloc;
+pub const aotProcessEnvironment = node_module.aotProcessEnvironment;
+pub const nodeChangeDirectoryBuiltin = node_module.nodeChangeDirectoryBuiltin;
+pub const nodePathBuiltin = node_module.nodePathBuiltin;
+pub const nodePathComponentBuiltin = node_module.nodePathComponentBuiltin;
+pub const systemPathComponentBuiltin = node_module.systemPathComponentBuiltin;
+pub const nodePathArgument = node_module.nodePathArgument;
+pub const nodePathReceivedType = node_module.nodePathReceivedType;
+pub const nodePathPrimitiveReceivedType = node_module.nodePathPrimitiveReceivedType;
 
-const AotWindowsSocketAddress = extern struct {
-    address: ?*std.os.windows.ws2_32.sockaddr,
-    length: c_int,
-};
+const node_file_module = @import("node_file.zig");
 
-const AotWindowsUnicastAddress = extern struct {
-    alignment: u64,
-    next: ?*AotWindowsUnicastAddress,
-    address: AotWindowsSocketAddress,
-};
+pub const isNodeFileOperationCommand = node_file_module.isNodeFileOperationCommand;
+pub const isNodeFileCallbackCommand = node_file_module.isNodeFileCallbackCommand;
+pub const nodeFileExistenceBuiltin = node_file_module.nodeFileExistenceBuiltin;
+pub const nodeFileReadBuiltin = node_file_module.nodeFileReadBuiltin;
+pub const nodeEncodedFileReadBuiltin = node_file_module.nodeEncodedFileReadBuiltin;
+pub const nodeFileSaveBuiltin = node_file_module.nodeFileSaveBuiltin;
+pub const nodeEncodedFileSaveBuiltin = node_file_module.nodeEncodedFileSaveBuiltin;
+pub const nodeEncodingName = node_file_module.nodeEncodingName;
+pub const nodeEncodingValueBytesAlloc = node_file_module.nodeEncodingValueBytesAlloc;
+pub const nodeEncodingBuiltin = node_file_module.nodeEncodingBuiltin;
+pub const nodeFileCallbackBuiltin = node_file_module.nodeFileCallbackBuiltin;
+pub const nodeFileOperationBuiltin = node_file_module.nodeFileOperationBuiltin;
+pub const nodeFileListBuiltin = node_file_module.nodeFileListBuiltin;
+pub const nodeFileDeleteBuiltin = node_file_module.nodeFileDeleteBuiltin;
+pub const nodeFileCopyDefaultOverwrite = node_file_module.nodeFileCopyDefaultOverwrite;
+pub const nodeFileCopyMoveBuiltin = node_file_module.nodeFileCopyMoveBuiltin;
+pub const nodeFileSizeBuiltin = node_file_module.nodeFileSizeBuiltin;
+pub const nodeFileInfoBuiltin = node_file_module.nodeFileInfoBuiltin;
+pub const nodeFileInfoTrue = node_file_module.nodeFileInfoTrue;
+pub const nodeFileInfoFalse = node_file_module.nodeFileInfoFalse;
+pub const nodeEncodingSupportsBuiltin = node_file_module.nodeEncodingSupportsBuiltin;
+pub const nodeStdinCallbackBuiltin = node_file_module.nodeStdinCallbackBuiltin;
+pub const nodeStdinLineBuiltin = node_file_module.nodeStdinLineBuiltin;
+pub const nodeStdinAllBuiltin = node_file_module.nodeStdinAllBuiltin;
+pub const nodeStdinValueBuiltin = node_file_module.nodeStdinValueBuiltin;
+pub const ensureAotStdin = node_file_module.ensureAotStdin;
+pub const aotFileCopyMoveWithIo = node_file_module.aotFileCopyMoveWithIo;
 
-const AotWindowsAdapterAddresses = extern struct {
-    alignment: u64,
-    next: ?*AotWindowsAdapterAddresses,
-    adapter_name: ?[*:0]u8,
-    first_unicast_address: ?*AotWindowsUnicastAddress,
-};
+const node_http_module = @import("node_http.zig");
 
-const AotWindowsInterfaces = if (builtin.os.tag == .windows) struct {
-    pub extern "iphlpapi" fn GetAdaptersAddresses(
-        family: u32,
-        flags: u32,
-        reserved: ?*anyopaque,
-        addresses: ?*AotWindowsAdapterAddresses,
-        size: *u32,
-    ) callconv(.winapi) u32;
-} else struct {};
+pub const nodePostDataBuiltin = node_http_module.nodePostDataBuiltin;
+pub const appendNodeUriComponent = node_http_module.appendNodeUriComponent;
+pub const aotClientDictionaryGetAscii = node_http_module.aotClientDictionaryGetAscii;
+pub const aotClientValueBytes = node_http_module.aotClientValueBytes;
+pub const aotClientPrepareAjax = node_http_module.aotClientPrepareAjax;
+pub const aotClientAppendUriComponent = node_http_module.aotClientAppendUriComponent;
+pub const aotClientFormEncodedBody = node_http_module.aotClientFormEncodedBody;
+pub const aotClientMultipartFields = node_http_module.aotClientMultipartFields;
+pub const aotClientPreparePost = node_http_module.aotClientPreparePost;
+pub const aotClientPrepareDiscord = node_http_module.aotClientPrepareDiscord;
+pub const aotClientPrepareDiscordFile = node_http_module.aotClientPrepareDiscordFile;
+pub const aotClientHttpMethod = node_http_module.aotClientHttpMethod;
+pub const aotClientHttpRequest = node_http_module.aotClientHttpRequest;
+pub const aotClientHttpBodyValue = node_http_module.aotClientHttpBodyValue;
+pub const aotClientHttpResponseValue = node_http_module.aotClientHttpResponseValue;
+pub const isAotHttpResponse = node_http_module.isAotHttpResponse;
+pub const aotClientHttpResponseBody = node_http_module.aotClientHttpResponseBody;
+pub const aotClientHttpResponseStatus = node_http_module.aotClientHttpResponseStatus;
+pub const aotClientHttpBodyKind = node_http_module.aotClientHttpBodyKind;
+pub const aotClientPrepareHttpCommand = node_http_module.aotClientPrepareHttpCommand;
+pub const aotClientIsCallbackCommand = node_http_module.aotClientIsCallbackCommand;
+pub const aotClientIsResponsePromiseCommand = node_http_module.aotClientIsResponsePromiseCommand;
+pub const nodeHttpBuiltin = node_http_module.nodeHttpBuiltin;
 
 pub fn valueIndex(value: Value) ?usize {
     if (value.tag != @intFromEnum(Tag.number)) return null;
@@ -3520,86 +3559,6 @@ pub fn isNodeHttpCommand(command: aot_builtin.Command) bool {
     };
 }
 
-pub fn runAotExternal(runtime: *Runtime, target: []const u8, reveal: bool) !void {
-    const argv: []const []const u8 = switch (builtin.os.tag) {
-        .macos => if (reveal) &.{ "/usr/bin/open", "-R", target } else &.{ "/usr/bin/open", target },
-        .windows => if (reveal)
-            &.{ "explorer.exe", "/select,", target }
-        else
-            &.{ "cmd.exe", "/d", "/s", "/c", "start", "", target },
-        else => if (reveal)
-            &.{ "xdg-open", std.fs.path.dirname(target) orelse "." }
-        else
-            &.{ "xdg-open", target },
-    };
-    // Keep platform-specific argv construction on the production path, then
-    // stop only the final process launch in the hermetic fixture environment.
-    // This mirrors the CLI host and avoids starting a desktop application in
-    // CI while preserving the official non-Windows Explorer result.
-    if (std.c.getenv("LNAKO_TEST_OPEN_EXTERNAL") != null) {
-        if (reveal and builtin.os.tag != .windows) return error.OpenExternalFailed;
-        return;
-    }
-    const result = try std.process.run(runtime.allocator, runtime.process_io.io(), .{
-        .argv = argv,
-        .stdout_limit = .limited(1024 * 1024),
-        .stderr_limit = .limited(1024 * 1024),
-    });
-    runtime.allocator.free(result.stdout);
-    runtime.allocator.free(result.stderr);
-    if (result.term != .exited or result.term.exited != 0) return error.OpenExternalFailed;
-}
-
-pub fn nodeProcessBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
-    switch (command) {
-        .node_open_external_browser, .node_open_external_explorer => {
-            if (arguments.len < 1) return error.InvalidArgumentCount;
-            const target = try valueUtf8LossyAlloc(runtime, arguments[0]);
-            defer runtime.allocator.free(target);
-            try runAotExternal(runtime, target, command == .node_open_external_explorer);
-            return .{};
-        },
-        .node_process_run_wait, .node_process_run, .node_process_start, .node_process_run_wait_output => {
-            if (arguments.len < 1) return error.InvalidArgumentCount;
-            const command_text = try valueUtf8LossyAlloc(runtime, arguments[0]);
-            defer runtime.allocator.free(command_text);
-            if (command == .node_process_run_wait) {
-                const cwd = try currentDirectoryAlloc(runtime);
-                defer runtime.allocator.free(cwd);
-                var result = try runAotShellCommand(runtime, command_text, cwd);
-                defer result.deinit(runtime.allocator);
-                if (result.exit_code != 0) return error.CommandFailed;
-                return runtimeUtf8StringLossy(runtime, result.stdout);
-            }
-            if (command == .node_process_run_wait_output) {
-                const cwd = try currentDirectoryAlloc(runtime);
-                defer runtime.allocator.free(cwd);
-                var result = try runAotShellCommand(runtime, command_text, cwd);
-                defer result.deinit(runtime.allocator);
-                writeBytes(result.stdout, false);
-                writeAotStderr(result.stderr);
-                return numberValue(@floatFromInt(result.exit_code));
-            }
-            const mode = AotProcessMode.command_output;
-            try queueAotProcess(runtime, command_text, mode, .{});
-            return .{};
-        },
-        .node_process_start_callback => {
-            if (arguments.len < 2) return error.InvalidArgumentCount;
-            var roots = [_]Value{arguments[0]};
-            var frame = RootFrame{};
-            runtime.pushRoots(&frame, &roots, roots.len);
-            defer runtime.popRoots(&frame);
-            roots[0] = try resolveAotCallback(runtime, roots[0]);
-            const command_text = try valueUtf8LossyAlloc(runtime, arguments[1]);
-            defer runtime.allocator.free(command_text);
-            try queueAotProcess(runtime, command_text, .output_callback, roots[0]);
-            return .{};
-        },
-        else => return error.UnknownCommand,
-    }
-}
-
 pub fn isArchiveCommand(command: aot_builtin.Command) bool {
     return switch (command) {
         .node_archive_extract, .node_archive_extract_callback, .node_archive_create, .node_archive_create_callback => true,
@@ -3838,18 +3797,6 @@ pub fn pollAotInterrupt(runtime: *Runtime) !void {
 /// Records execution of one statically identified typed literal. The
 /// generated module supplies the ID from its pre-optimization literal
 /// manifest.
-pub fn nodeBasenameWideFor(path: []const u16, windows: bool) []const u16 {
-    var end = path.len;
-    while (end > 0 and nodePathSeparatorWide(path[end - 1], windows)) end -= 1;
-    if (end == 0) return &.{};
-    const drive_path = windows and path.len >= 2 and isWindowsDriveLetterWide(path[0]) and path[1] == ':';
-    if (drive_path and end == 2 and path.len > end and nodePathSeparatorWide(path[2], true)) return &.{};
-    var start = end;
-    while (start > 0 and !nodePathSeparatorWide(path[start - 1], windows)) start -= 1;
-    if (drive_path and start < 2) start = 2;
-    return path[start..end];
-}
-
 /// Initializes Node-host constants whose values depend on the generated
 /// executable's process arguments.  The generated main has already rooted
 /// every referenced global before this function is called, so newly allocated
@@ -3933,125 +3880,6 @@ pub fn normalizeDebugSourcePath(source_path: []const u8, windows: bool) []const 
 /// HTTP client; callback and Response-Promise results are returned through the
 /// AOT event queue so their observable ordering remains compatible with the
 /// interpreter without embedding a JavaScript runtime.
-pub fn nodeNetworkAddressesBuiltin(runtime: *Runtime, ipv6: bool) !Value {
-    const synthetic = if (std.c.getenv("LNAKO_TEST_NETWORK_TOPOLOGY")) |topology|
-        std.mem.eql(u8, std.mem.span(topology), "synthetic-v1")
-    else
-        false;
-    var addresses = if (synthetic)
-        try syntheticAotNetworkAddresses(runtime.allocator, ipv6)
-    else if (builtin.os.tag == .windows)
-        try aotWindowsNetworkAddresses(runtime.allocator, ipv6)
-    else
-        try aotPosixNetworkAddresses(runtime.allocator, ipv6);
-    defer deinitAotNetworkAddressList(runtime.allocator, &addresses);
-
-    var result = try runtime.createArray(&.{});
-    var frame = RootFrame{};
-    runtime.pushRoots(&frame, @ptrCast(&result), 1);
-    defer runtime.popRoots(&frame);
-    for (addresses.items) |address| {
-        const value = try runtimeUtf8StringLossy(runtime, address);
-        try result.object().?.payload.array.append(runtime.allocator, value);
-    }
-    return result;
-}
-
-pub fn syntheticAotNetworkAddresses(allocator: std.mem.Allocator, ipv6: bool) !std.ArrayList([]u8) {
-    // Keep the AOT test route byte-for-byte aligned with the CLI host's
-    // synthetic topology. The marker is injected only by oracle fixtures.
-    const addresses: []const []const u8 = if (ipv6)
-        &.{ "::1", "fe80::1234", "2001:db8::10" }
-    else
-        &.{ "127.0.0.1", "192.0.2.10" };
-    var items: std.ArrayList([]u8) = .empty;
-    errdefer deinitAotNetworkAddressList(allocator, &items);
-    for (addresses) |address| try items.append(allocator, try allocator.dupe(u8, address));
-    return items;
-}
-
-pub fn aotPosixNetworkAddresses(allocator: std.mem.Allocator, ipv6: bool) !std.ArrayList([]u8) {
-    if (builtin.os.tag == .windows) return error.NetworkInterfacesUnavailable;
-    var first: ?*AotPosixIfAddrs = null;
-    if (AotPosixInterfaces.getifaddrs(&first) != 0) return error.NetworkInterfacesUnavailable;
-    defer AotPosixInterfaces.freeifaddrs(first);
-
-    var items: std.ArrayList([]u8) = .empty;
-    errdefer deinitAotNetworkAddressList(allocator, &items);
-    var current = first;
-    while (current) |entry| : (current = entry.next) {
-        // Nodeのos.networkInterfaces()が内部で使うlibuvと同じく、
-        // UPかつRUNNINGのインターフェイスだけを公開する。
-        if ((entry.flags & 0x1) == 0 or (entry.flags & 0x40) == 0) continue;
-        const address = entry.address orelse continue;
-        const family: usize = @intCast(address.family);
-        if ((!ipv6 and family != std.posix.AF.INET) or (ipv6 and family != std.posix.AF.INET6)) continue;
-        try items.append(allocator, try aotFormatSockAddress(allocator, address));
-    }
-    return items;
-}
-
-pub fn aotWindowsNetworkAddresses(allocator: std.mem.Allocator, ipv6: bool) !std.ArrayList([]u8) {
-    if (builtin.os.tag != .windows) return error.NetworkInterfacesUnavailable;
-    const overflow_code = 111;
-    var size: u32 = 15 * 1024;
-    var storage = try allocator.alignedAlloc(u8, .of(AotWindowsAdapterAddresses), size);
-    defer allocator.free(storage);
-    var result = AotWindowsInterfaces.GetAdaptersAddresses(std.os.windows.ws2_32.AF.UNSPEC, 0, null, @ptrCast(storage.ptr), &size);
-    if (result == overflow_code) {
-        storage = try allocator.realloc(storage, size);
-        result = AotWindowsInterfaces.GetAdaptersAddresses(std.os.windows.ws2_32.AF.UNSPEC, 0, null, @ptrCast(storage.ptr), &size);
-    }
-    if (result != 0) return error.NetworkInterfacesUnavailable;
-
-    var items: std.ArrayList([]u8) = .empty;
-    errdefer deinitAotNetworkAddressList(allocator, &items);
-    var adapter: ?*AotWindowsAdapterAddresses = @ptrCast(storage.ptr);
-    while (adapter) |current| : (adapter = current.next) {
-        var unicast = current.first_unicast_address;
-        while (unicast) |entry| : (unicast = entry.next) {
-            const address = entry.address.address orelse continue;
-            const family: usize = @intCast(address.family);
-            if ((!ipv6 and family != std.os.windows.ws2_32.AF.INET) or (ipv6 and family != std.os.windows.ws2_32.AF.INET6)) continue;
-            try items.append(allocator, try aotFormatWindowsSockAddress(allocator, address));
-        }
-    }
-    return items;
-}
-
-pub fn deinitAotNetworkAddressList(allocator: std.mem.Allocator, items: *std.ArrayList([]u8)) void {
-    for (items.items) |item| allocator.free(item);
-    items.deinit(allocator);
-}
-
-pub fn aotFormatSockAddress(allocator: std.mem.Allocator, address: *const std.posix.sockaddr) ![]u8 {
-    if (address.family == std.posix.AF.INET) {
-        const source: *const std.posix.sockaddr.in = @ptrCast(@alignCast(address));
-        const bytes: *const [4]u8 = @ptrCast(&source.addr);
-        return std.fmt.allocPrint(allocator, "{d}.{d}.{d}.{d}", .{ bytes[0], bytes[1], bytes[2], bytes[3] });
-    }
-    const source: *const std.posix.sockaddr.in6 = @ptrCast(@alignCast(address));
-    return aotFormatIpv6Address(allocator, source.addr);
-}
-
-pub fn aotFormatWindowsSockAddress(allocator: std.mem.Allocator, address: *const std.os.windows.ws2_32.sockaddr) ![]u8 {
-    if (address.family == std.os.windows.ws2_32.AF.INET) {
-        const source: *const std.os.windows.ws2_32.sockaddr.in = @ptrCast(@alignCast(address));
-        const bytes: *const [4]u8 = @ptrCast(&source.addr);
-        return std.fmt.allocPrint(allocator, "{d}.{d}.{d}.{d}", .{ bytes[0], bytes[1], bytes[2], bytes[3] });
-    }
-    const source: *const std.os.windows.ws2_32.sockaddr.in6 = @ptrCast(@alignCast(address));
-    return aotFormatIpv6Address(allocator, source.addr);
-}
-
-pub fn aotFormatIpv6Address(allocator: std.mem.Allocator, bytes: [16]u8) ![]u8 {
-    var output: std.Io.Writer.Allocating = .init(allocator);
-    errdefer output.deinit();
-    const unresolved: std.Io.net.Ip6Address.Unresolved = .{ .bytes = bytes, .interface_name = null };
-    try output.writer.print("{f}", .{unresolved});
-    return output.toOwnedSlice();
-}
-
 pub fn promiseSentinel(out: *Value, _: *anyopaque, _: ?[*]const Value, _: usize) callconv(.c) void {
     out.* = .{};
 }
@@ -4921,457 +4749,6 @@ pub fn systemGlobalFunctionNamesBuiltin(runtime: *Runtime) !Value {
         try roots[0].object().?.payload.array.append(runtime.allocator, roots[1]);
     }
     return roots[0];
-}
-
-pub fn nodeEnvironmentBuiltin(runtime: *Runtime, command: aot_builtin.Command) !Value {
-    return runtimeUtf8String(runtime, if (command == .node_os) aotOsName() else aotArchitectureName());
-}
-
-pub fn nodeProcessExitCode(runtime: *Runtime, value: Value) !u8 {
-    const number = try valueToNumberRuntime(runtime, value);
-    if (!std.math.isFinite(number)) return 0;
-    return @intFromFloat(@mod(@trunc(number), 256.0));
-}
-
-pub fn nodeCryptoBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
-    switch (command) {
-        .node_hash_value => {
-            if (arguments.len < 2) return error.InvalidArgumentCount;
-            const input = if (arguments[0].tag == @intFromEnum(Tag.byte_buffer))
-                try runtime.allocator.dupe(u8, arguments[0].object().?.payload.byte_buffer.bytes)
-            else
-                try valueUtf8LossyAlloc(runtime, arguments[0]);
-            defer runtime.allocator.free(input);
-            const algorithm = try valueUtf8LossyAlloc(runtime, arguments[1]);
-            defer runtime.allocator.free(algorithm);
-            const digest = try crypto.calculateDigest(runtime.allocator, input, algorithm);
-            defer runtime.allocator.free(digest);
-
-            const encoding_value: Value = if (arguments.len > 2) arguments[2] else .{};
-            if (encoding_value.tag == @intFromEnum(Tag.undefined) or encoding_value.tag == @intFromEnum(Tag.null_value)) return runtime.createBytes(digest);
-            const encoding_name = try valueUtf8LossyAlloc(runtime, encoding_value);
-            defer runtime.allocator.free(encoding_name);
-            if (std.ascii.eqlIgnoreCase(encoding_name, "hex")) {
-                const result = try runtime.allocator.alloc(u8, digest.len * 2);
-                defer runtime.allocator.free(result);
-                _ = std.fmt.bufPrint(result, "{x}", .{digest}) catch unreachable;
-                return runtimeUtf8String(runtime, result);
-            }
-            if (std.ascii.eqlIgnoreCase(encoding_name, "base64") or std.ascii.eqlIgnoreCase(encoding_name, "base64url")) {
-                const result = try runtime.allocator.alloc(u8, std.base64.standard.Encoder.calcSize(digest.len));
-                defer runtime.allocator.free(result);
-                _ = std.base64.standard.Encoder.encode(result, digest);
-                if (std.ascii.eqlIgnoreCase(encoding_name, "base64")) return runtimeUtf8String(runtime, result);
-                for (result) |*byte| byte.* = switch (byte.*) {
-                    '+' => '-',
-                    '/' => '_',
-                    else => byte.*,
-                };
-                var length = result.len;
-                while (length > 0 and result[length - 1] == '=') length -= 1;
-                return runtimeUtf8String(runtime, result[0..length]);
-            }
-            if (std.ascii.eqlIgnoreCase(encoding_name, "latin1") or std.ascii.eqlIgnoreCase(encoding_name, "binary")) {
-                const units = try runtime.allocator.alloc(u16, digest.len);
-                defer runtime.allocator.free(units);
-                for (digest, 0..) |byte, index| units[index] = byte;
-                return runtime.createString(units);
-            }
-            if (std.ascii.eqlIgnoreCase(encoding_name, "utf8") or std.ascii.eqlIgnoreCase(encoding_name, "utf-8")) return runtimeUtf8StringLossy(runtime, digest);
-            return error.UnsupportedDigestEncoding;
-        },
-        .node_random_uuid => {
-            if (arguments.len != 0) return error.InvalidArgumentCount;
-            var bytes: [16]u8 = undefined;
-            try std.Io.Threaded.global_single_threaded.io().randomSecure(&bytes);
-            const uuid = crypto.formatUuid(bytes);
-            return runtimeUtf8String(runtime, &uuid);
-        },
-        .node_random_array => {
-            const source: Value = if (arguments.len > 0) arguments[0] else .{};
-            const count_number = try valueToNumberRuntime(runtime, source);
-            if (std.math.isInf(count_number) or count_number < 0 or count_number > 65_536) return error.InvalidRandomByteCount;
-            const count: usize = if (std.math.isNan(count_number)) 0 else @intFromFloat(@trunc(count_number));
-            const bytes = try runtime.allocator.alloc(u8, count);
-            defer runtime.allocator.free(bytes);
-            try std.Io.Threaded.global_single_threaded.io().randomSecure(bytes);
-            return runtime.createUint8Array(bytes);
-        },
-        else => return error.UnknownCommand,
-    }
-}
-
-const node_file_module = @import("node_file.zig");
-
-pub const isNodeFileOperationCommand = node_file_module.isNodeFileOperationCommand;
-pub const isNodeFileCallbackCommand = node_file_module.isNodeFileCallbackCommand;
-pub const nodeFileExistenceBuiltin = node_file_module.nodeFileExistenceBuiltin;
-pub const nodeFileReadBuiltin = node_file_module.nodeFileReadBuiltin;
-pub const nodeEncodedFileReadBuiltin = node_file_module.nodeEncodedFileReadBuiltin;
-pub const nodeFileSaveBuiltin = node_file_module.nodeFileSaveBuiltin;
-pub const nodeEncodedFileSaveBuiltin = node_file_module.nodeEncodedFileSaveBuiltin;
-pub const nodeEncodingName = node_file_module.nodeEncodingName;
-pub const nodeEncodingValueBytesAlloc = node_file_module.nodeEncodingValueBytesAlloc;
-pub const nodeEncodingBuiltin = node_file_module.nodeEncodingBuiltin;
-pub const nodeFileCallbackBuiltin = node_file_module.nodeFileCallbackBuiltin;
-pub const nodeFileOperationBuiltin = node_file_module.nodeFileOperationBuiltin;
-pub const nodeFileListBuiltin = node_file_module.nodeFileListBuiltin;
-pub const nodeFileDeleteBuiltin = node_file_module.nodeFileDeleteBuiltin;
-pub const nodeFileCopyDefaultOverwrite = node_file_module.nodeFileCopyDefaultOverwrite;
-pub const nodeFileCopyMoveBuiltin = node_file_module.nodeFileCopyMoveBuiltin;
-pub const nodeFileSizeBuiltin = node_file_module.nodeFileSizeBuiltin;
-pub const nodeFileInfoBuiltin = node_file_module.nodeFileInfoBuiltin;
-pub const nodeFileInfoTrue = node_file_module.nodeFileInfoTrue;
-pub const nodeFileInfoFalse = node_file_module.nodeFileInfoFalse;
-pub const nodeEncodingSupportsBuiltin = node_file_module.nodeEncodingSupportsBuiltin;
-pub const nodeStdinCallbackBuiltin = node_file_module.nodeStdinCallbackBuiltin;
-pub const nodeStdinLineBuiltin = node_file_module.nodeStdinLineBuiltin;
-pub const nodeStdinAllBuiltin = node_file_module.nodeStdinAllBuiltin;
-pub const nodeStdinValueBuiltin = node_file_module.nodeStdinValueBuiltin;
-pub const ensureAotStdin = node_file_module.ensureAotStdin;
-pub const aotFileCopyMoveWithIo = node_file_module.aotFileCopyMoveWithIo;
-
-const node_http_module = @import("node_http.zig");
-
-pub const nodePostDataBuiltin = node_http_module.nodePostDataBuiltin;
-pub const appendNodeUriComponent = node_http_module.appendNodeUriComponent;
-pub const aotClientDictionaryGetAscii = node_http_module.aotClientDictionaryGetAscii;
-pub const aotClientValueBytes = node_http_module.aotClientValueBytes;
-pub const aotClientPrepareAjax = node_http_module.aotClientPrepareAjax;
-pub const aotClientAppendUriComponent = node_http_module.aotClientAppendUriComponent;
-pub const aotClientFormEncodedBody = node_http_module.aotClientFormEncodedBody;
-pub const aotClientMultipartFields = node_http_module.aotClientMultipartFields;
-pub const aotClientPreparePost = node_http_module.aotClientPreparePost;
-pub const aotClientPrepareDiscord = node_http_module.aotClientPrepareDiscord;
-pub const aotClientPrepareDiscordFile = node_http_module.aotClientPrepareDiscordFile;
-pub const aotClientHttpMethod = node_http_module.aotClientHttpMethod;
-pub const aotClientHttpRequest = node_http_module.aotClientHttpRequest;
-pub const aotClientHttpBodyValue = node_http_module.aotClientHttpBodyValue;
-pub const aotClientHttpResponseValue = node_http_module.aotClientHttpResponseValue;
-pub const isAotHttpResponse = node_http_module.isAotHttpResponse;
-pub const aotClientHttpResponseBody = node_http_module.aotClientHttpResponseBody;
-pub const aotClientHttpResponseStatus = node_http_module.aotClientHttpResponseStatus;
-pub const aotClientHttpBodyKind = node_http_module.aotClientHttpBodyKind;
-pub const aotClientPrepareHttpCommand = node_http_module.aotClientPrepareHttpCommand;
-pub const aotClientIsCallbackCommand = node_http_module.aotClientIsCallbackCommand;
-pub const aotClientIsResponsePromiseCommand = node_http_module.aotClientIsResponsePromiseCommand;
-pub const nodeHttpBuiltin = node_http_module.nodeHttpBuiltin;
-
-pub fn nodeDirectoryBuiltin(runtime: *Runtime, command: aot_builtin.Command) !Value {
-    if (command == .node_temporary_directory) {
-        const fallback = if (builtin.os.tag == .windows) "." else "/tmp";
-        const raw = if (builtin.os.tag == .windows)
-            std.c.getenv("TEMP") orelse std.c.getenv("TMP") orelse fallback
-        else
-            std.c.getenv("TMPDIR") orelse fallback;
-        const value = std.mem.span(raw);
-        const trimmed = std.mem.trimEnd(u8, value, "/\\");
-        return runtimeUtf8StringLossy(runtime, if (trimmed.len == 0) value else trimmed);
-    }
-
-    const home_name = if (builtin.os.tag == .windows) "USERPROFILE" else "HOME";
-    const home = std.c.getenv(home_name) orelse return .{};
-    const home_path = std.mem.span(home);
-    if (command == .node_home_directory) return runtimeUtf8StringLossy(runtime, home_path);
-    const child = switch (command) {
-        .node_desktop => "Desktop",
-        .node_documents => "Documents",
-        else => return error.UnknownCommand,
-    };
-    const path = try std.fs.path.join(runtime.allocator, &.{ home_path, child });
-    defer runtime.allocator.free(path);
-    return runtimeUtf8StringLossy(runtime, path);
-}
-
-pub fn nodeTemporaryDirectoryPrefixAlloc(runtime: *Runtime) ![]u8 {
-    const fallback = if (builtin.os.tag == .windows) "." else "/tmp";
-    const raw = if (builtin.os.tag == .windows)
-        std.c.getenv("TEMP") orelse std.c.getenv("TMP") orelse fallback
-    else
-        std.c.getenv("TMPDIR") orelse fallback;
-    const value = std.mem.span(raw);
-    const trimmed = std.mem.trimEnd(u8, value, "/\\");
-    return runtime.allocator.dupe(u8, if (trimmed.len == 0) value else trimmed);
-}
-
-pub fn nodeCreateTemporaryDirectoryBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
-    if (arguments.len < 1) return error.InvalidArgumentCount;
-    const prefix = try valueUtf8LossyAlloc(runtime, arguments[0]);
-    defer runtime.allocator.free(prefix);
-
-    var fallback_prefix: ?[]u8 = null;
-    const effective_prefix = if (prefix.len == 0) blk: {
-        fallback_prefix = try nodeTemporaryDirectoryPrefixAlloc(runtime);
-        break :blk fallback_prefix.?;
-    } else prefix;
-    defer if (fallback_prefix) |value| runtime.allocator.free(value);
-
-    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    const io = std.Io.Threaded.global_single_threaded.io();
-    for (0..128) |_| {
-        const candidate = try runtime.allocator.alloc(u8, effective_prefix.len + 6);
-        errdefer runtime.allocator.free(candidate);
-        @memcpy(candidate[0..effective_prefix.len], effective_prefix);
-        for (candidate[effective_prefix.len..]) |*byte| {
-            const index = @as(usize, @intFromFloat(@floor(nextRandom(runtime) * @as(f64, @floatFromInt(alphabet.len)))));
-            byte.* = alphabet[index];
-        }
-
-        if (std.fs.path.isAbsolute(candidate)) {
-            std.Io.Dir.createDirAbsolute(io, candidate, .default_dir) catch |failure| switch (failure) {
-                error.PathAlreadyExists => {
-                    runtime.allocator.free(candidate);
-                    continue;
-                },
-                else => return failure,
-            };
-        } else {
-            std.Io.Dir.cwd().createDir(io, candidate, .default_dir) catch |failure| switch (failure) {
-                error.PathAlreadyExists => {
-                    runtime.allocator.free(candidate);
-                    continue;
-                },
-                else => return failure,
-            };
-        }
-
-        defer runtime.allocator.free(candidate);
-        return runtimeUtf8StringLossy(runtime, candidate);
-    }
-    return error.TemporaryDirectoryCollision;
-}
-
-pub fn nodeMotherPathBuiltin(runtime: *Runtime) !Value {
-    const path = runtime.aot_source_directory orelse return error.SourcePathUnavailable;
-    return runtimeUtf8StringLossy(runtime, path);
-}
-
-pub fn nodeEnvironmentValueBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
-    if (arguments.len < 1) return error.InvalidArgumentCount;
-    const key_units = try valueUtf16Alloc(runtime, arguments[0]);
-    defer runtime.allocator.free(key_units);
-    const key = try (string_mod.String{ .allocator = runtime.allocator, .units = key_units }).toUtf8Lossy(runtime.allocator);
-    defer runtime.allocator.free(key);
-    const key_z = try runtime.allocator.dupeZ(u8, key);
-    defer runtime.allocator.free(key_z);
-    const environment = std.c.getenv(key_z.ptr) orelse return .{};
-    return runtimeUtf8String(runtime, std.mem.span(environment));
-}
-
-pub fn nodeEnvironmentListBuiltin(runtime: *Runtime) !Value {
-    var roots = [_]Value{ .{}, .{}, .{} };
-    var frame = RootFrame{};
-    runtime.pushRoots(&frame, &roots, roots.len);
-    defer runtime.popRoots(&frame);
-
-    roots[0] = try runtime.createDictionary(&.{});
-    if (comptime builtin.os.tag == .windows) {
-        const environ: std.process.Environ = .{ .block = .global };
-        var map = try std.process.Environ.createMap(environ, runtime.allocator);
-        defer map.deinit();
-        var iterator = map.iterator();
-        while (iterator.next()) |entry| {
-            roots[1] = try runtimeUtf8StringLossy(runtime, entry.key_ptr.*);
-            roots[2] = try runtimeUtf8StringLossy(runtime, entry.value_ptr.*);
-            try runtime.setDictionary(&roots[0].object().?.payload.dictionary, roots[1], roots[2]);
-        }
-    } else {
-        var index: usize = 0;
-        while (std.c.environ[index]) |entry| : (index += 1) {
-            const bytes = std.mem.span(entry);
-            const separator = std.mem.indexOfScalar(u8, bytes, '=') orelse continue;
-            if (separator == 0) continue;
-            roots[1] = try runtimeUtf8StringLossy(runtime, bytes[0..separator]);
-            roots[2] = try runtimeUtf8StringLossy(runtime, bytes[separator + 1 ..]);
-            try runtime.setDictionary(&roots[0].object().?.payload.dictionary, roots[1], roots[2]);
-        }
-    }
-    return roots[0];
-}
-
-pub fn nodeCurrentDirectoryBuiltin(runtime: *Runtime) !Value {
-    const path = try currentDirectoryAlloc(runtime);
-    defer runtime.allocator.free(path);
-    return runtimeUtf8StringLossy(runtime, path);
-}
-
-pub fn currentDirectoryAlloc(runtime: *Runtime) ![]u8 {
-    // Keep AOT's cwd semantics aligned with the CLI host.  In particular,
-    // Node reports the canonical path after entering a directory through a
-    // symlink; a raw getcwd buffer is a separate platform-specific path.
-    const io = std.Io.Threaded.global_single_threaded.io();
-    const canonical = try std.Io.Dir.cwd().realPathFileAlloc(io, ".", runtime.allocator);
-    defer runtime.allocator.free(canonical.ptr[0 .. canonical.len + 1]);
-    return runtime.allocator.dupe(u8, canonical);
-}
-
-pub fn aotProcessEnvironment() std.process.Environ {
-    if (comptime builtin.os.tag == .windows) return .{ .block = .global };
-    var count: usize = 0;
-    while (std.c.environ[count] != null) : (count += 1) {}
-    return .{ .block = .{ .slice = std.c.environ[0..count :null] } };
-}
-
-pub fn nodeChangeDirectoryBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
-    if (arguments.len < 1) return error.InvalidArgumentCount;
-    const units = try valueUtf16Alloc(runtime, arguments[0]);
-    defer runtime.allocator.free(units);
-    const display_path = try (string_mod.String{ .allocator = runtime.allocator, .units = units }).toUtf8Lossy(runtime.allocator);
-    defer runtime.allocator.free(display_path);
-    const path = if (comptime builtin.os.tag == .windows)
-        try std.unicode.wtf16LeToWtf8Alloc(runtime.allocator, units)
-    else
-        try runtime.allocator.dupe(u8, display_path);
-    defer runtime.allocator.free(path);
-    const cwd_raw = try currentDirectoryAlloc(runtime);
-    defer runtime.allocator.free(cwd_raw);
-    const cwd = try aotNodeErrorPathAlloc(runtime, cwd_raw);
-    defer runtime.allocator.free(cwd);
-    const io = std.Io.Threaded.global_single_threaded.io();
-    var directory = std.Io.Dir.cwd().openDir(io, path, .{}) catch |failure| {
-        try setAotNodeChangeDirectoryFailure(runtime, cwd, display_path, failure);
-        return failure;
-    };
-    defer directory.close(io);
-    std.process.setCurrentDir(io, directory) catch |failure| {
-        try setAotNodeChangeDirectoryFailure(runtime, cwd, display_path, failure);
-        return failure;
-    };
-    return .{};
-}
-
-const AotNodeChangeDirectoryErrorInfo = struct {
-    code: []const u8,
-    description: []const u8,
-};
-
-pub fn aotNodeChangeDirectoryErrorInfo(failure: anyerror) ?AotNodeChangeDirectoryErrorInfo {
-    return switch (failure) {
-        error.FileNotFound => .{ .code = "ENOENT", .description = "no such file or directory" },
-        error.NotDir => .{ .code = "ENOTDIR", .description = "not a directory" },
-        error.AccessDenied, error.PermissionDenied => .{ .code = "EACCES", .description = "permission denied" },
-        error.NameTooLong => .{ .code = "ENAMETOOLONG", .description = "name too long" },
-        error.BadPathName, error.InvalidWtf8 => .{ .code = "EINVAL", .description = "invalid argument" },
-        error.SymLinkLoop => .{ .code = "ELOOP", .description = "too many levels of symbolic links" },
-        else => null,
-    };
-}
-
-pub fn aotNodeErrorPathAlloc(runtime: *Runtime, path: []const u8) ![]u8 {
-    if (comptime builtin.os.tag == .windows) {
-        return std.unicode.wtf8ToUtf8LossyAlloc(runtime.allocator, path);
-    }
-    return runtime.allocator.dupe(u8, path);
-}
-
-pub fn setAotNodeChangeDirectoryFailure(runtime: *Runtime, cwd: []const u8, path: []const u8, failure: anyerror) !void {
-    const info = aotNodeChangeDirectoryErrorInfo(failure) orelse return;
-    const message = try std.fmt.allocPrint(
-        runtime.allocator,
-        "{s}: {s}, chdir '{s}' -> '{s}'",
-        .{ info.code, info.description, cwd, path },
-    );
-    defer runtime.allocator.free(message);
-    runtime.setFailureText(message);
-}
-
-pub fn nodePathBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
-    const required: usize = if (command == .node_path_resolve) 2 else 1;
-    if (arguments.len < required) return error.InvalidArgumentCount;
-
-    const first_label = if (command == .node_path_absolute) "paths[0]" else "path";
-    const first = try nodePathArgument(runtime, first_label, arguments[0]);
-    defer runtime.allocator.free(first);
-    const cwd = try currentDirectoryAlloc(runtime);
-    defer runtime.allocator.free(cwd);
-
-    const resolved = switch (command) {
-        .node_path_absolute => try std.fs.path.resolve(runtime.allocator, &.{ cwd, first }),
-        .node_path_resolve => blk: {
-            const second = try nodePathArgument(runtime, "path", arguments[1]);
-            defer runtime.allocator.free(second);
-            const joined = try std.fs.path.join(runtime.allocator, &.{ first, second });
-            defer runtime.allocator.free(joined);
-            break :blk try std.fs.path.resolve(runtime.allocator, &.{ cwd, joined });
-        },
-        else => return error.UnknownCommand,
-    };
-    defer runtime.allocator.free(resolved);
-    return runtimeUtf8StringLossy(runtime, resolved);
-}
-
-pub fn nodePathComponentBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
-    if (arguments.len < 1) return error.InvalidArgumentCount;
-    const path = try nodePathArgument(runtime, "path", arguments[0]);
-    defer runtime.allocator.free(path);
-    const component = switch (command) {
-        .node_path_basename => nodeBasename(path),
-        .node_path_dirname => nodeDirname(path),
-        else => return error.UnknownCommand,
-    };
-    return runtimeUtf8StringLossy(runtime, component);
-}
-
-pub fn systemPathComponentBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments: []const Value) !Value {
-    if (arguments.len < 1) return error.InvalidArgumentCount;
-    if (!isString(arguments[0])) return error.InvalidPathSource;
-    const path = try valueUtf16Alloc(runtime, arguments[0]);
-    defer runtime.allocator.free(path);
-    const component = switch (command) {
-        .system_path_basename => pathBasenameUnits(path, '/'),
-        .system_path_dirname => blk: {
-            const separator = std.mem.lastIndexOfScalar(u16, path, '/');
-            break :blk if (separator) |index| path[0..index] else &.{};
-        },
-        else => return error.UnknownCommand,
-    };
-    return runtime.createString(component);
-}
-
-pub fn nodePathArgument(runtime: *Runtime, label: []const u8, value: Value) ![]u8 {
-    if (!isString(value)) {
-        const received = try nodePathReceivedType(runtime, value);
-        defer runtime.allocator.free(received);
-        const message = try std.fmt.allocPrint(
-            runtime.allocator,
-            "The \"{s}\" argument must be of type string. Received {s}",
-            .{ label, received },
-        );
-        defer runtime.allocator.free(message);
-        runtime.setFailureText(message);
-        return error.InvalidPathSource;
-    }
-    return stringUtf8Alloc(runtime, value);
-}
-
-pub fn nodePathReceivedType(runtime: *Runtime, value: Value) ![]u8 {
-    return switch (@as(Tag, @enumFromInt(value.tag))) {
-        .undefined => runtime.allocator.dupe(u8, "undefined"),
-        .null_value => runtime.allocator.dupe(u8, "null"),
-        .boolean => runtime.allocator.dupe(u8, if (value.payload == 0) "type boolean (false)" else "type boolean (true)"),
-        .number => nodePathPrimitiveReceivedType(runtime, value, "number", false),
-        .bigint => nodePathPrimitiveReceivedType(runtime, value, "bigint", true),
-        .byte_buffer => switch (value.object().?.payload.byte_buffer.kind) {
-            .buffer => runtime.allocator.dupe(u8, "an instance of Buffer"),
-            .uint8_array => runtime.allocator.dupe(u8, "an instance of Uint8Array"),
-            .array_buffer => runtime.allocator.dupe(u8, "an instance of ArrayBuffer"),
-        },
-        .array => runtime.allocator.dupe(u8, "an instance of Array"),
-        .dictionary, .iterator, .binding_cell => runtime.allocator.dupe(u8, "an instance of Object"),
-        .function => runtime.allocator.dupe(u8, "function "),
-        .promise => runtime.allocator.dupe(u8, "an instance of Promise"),
-        .static_utf8_string, .utf16_string => unreachable,
-    };
-}
-
-pub fn nodePathPrimitiveReceivedType(runtime: *Runtime, value: Value, type_name: []const u8, bigint_suffix: bool) ![]u8 {
-    const text = try valueUtf8LossyAlloc(runtime, value);
-    defer runtime.allocator.free(text);
-    return std.fmt.allocPrint(
-        runtime.allocator,
-        "type {s} ({s}{s})",
-        .{ type_name, text, if (bigint_suffix) "n" else "" },
-    );
 }
 
 const node_path_module = @import("node_path.zig");
@@ -9981,447 +9358,26 @@ pub fn appendCodePointBuiltin(allocator: std.mem.Allocator, output: *std.ArrayLi
     try output.append(allocator, @intCast(0xdc00 + (offset & 0x3ff)));
 }
 
-pub fn kanaOffsetBuiltin(runtime: *Runtime, value: Value, to_katakana: bool) !Value {
-    const units = try valueUtf16Alloc(runtime, value);
-    defer runtime.allocator.free(units);
-    const output = try runtime.allocator.dupe(u16, units);
-    errdefer runtime.allocator.free(output);
-    const first: u16 = if (to_katakana) 0x3041 else 0x30a1;
-    const last: u16 = if (to_katakana) 0x3096 else 0x30f6;
-    const offset: i32 = if (to_katakana) 0x60 else -0x60;
-    for (output) |*unit| {
-        if (unit.* >= first and unit.* <= last) unit.* = @intCast(@as(i32, unit.*) + offset);
-    }
-    return runtime.ownString(output);
-}
+const string_module = @import("string.zig");
 
-pub fn asciiWidthBuiltin(runtime: *Runtime, value: Value, to_full: bool, symbols: bool) !Value {
-    const units = try valueUtf16Alloc(runtime, value);
-    defer runtime.allocator.free(units);
-    const output = try runtime.allocator.dupe(u16, units);
-    for (output) |*unit| {
-        if (to_full) {
-            if (symbols and unit.* == 0x20) {
-                unit.* = 0x3000;
-            } else if ((symbols and unit.* >= 0x21 and unit.* <= 0x7e) or
-                (!symbols and ((unit.* >= 'A' and unit.* <= 'Z') or
-                    (unit.* >= 'a' and unit.* <= 'z') or
-                    (unit.* >= '0' and unit.* <= '9'))))
-            {
-                unit.* += 0xfee0;
-            }
-        } else if (symbols and unit.* == 0x3000) {
-            unit.* = 0x20;
-        } else if ((symbols and unit.* >= 0xff00 and unit.* <= 0xff5f) or
-            (!symbols and ((unit.* >= 0xff21 and unit.* <= 0xff3a) or
-                (unit.* >= 0xff41 and unit.* <= 0xff5a) or
-                (unit.* >= 0xff10 and unit.* <= 0xff19))))
-        {
-            unit.* -= 0xfee0;
-        }
-    }
-    return runtime.ownString(output);
-}
-
-pub fn kanaWidthBuiltin(runtime: *Runtime, value: Value, to_full: bool) !Value {
-    return kanaMapBuiltin(runtime, value, to_full);
-}
-
-pub fn widthBuiltin(runtime: *Runtime, value: Value, to_full: bool) !Value {
-    // 公式実装と同じく、全角化はカナ→英数記号、半角化もカナ→英数記号の順に行う。
-    var roots = [_]Value{.{}};
-    var frame: RootFrame = .{};
-    runtime.pushRoots(&frame, &roots, roots.len);
-    defer runtime.popRoots(&frame);
-    roots[0] = try kanaMapBuiltin(runtime, value, to_full);
-    return asciiWidthBuiltin(runtime, roots[0], to_full, true);
-}
-
-pub fn currencyBuiltin(runtime: *Runtime, value: Value) !Value {
-    const units = try valueUtf16Alloc(runtime, value);
-    defer runtime.allocator.free(units);
-    var output: std.ArrayList(u16) = .empty;
-    errdefer output.deinit(runtime.allocator);
-    var index: usize = 0;
-    while (index < units.len) {
-        if (!isAsciiDigitBuiltin(units[index])) {
-            try output.append(runtime.allocator, units[index]);
-            index += 1;
-            continue;
-        }
-        const start = index;
-        while (index < units.len and isAsciiDigitBuiltin(units[index])) : (index += 1) {}
-        const end = index;
-        // 公式の可変長後読みは、ドット直後の数字run全体を除外する。
-        if (start > 0 and units[start - 1] == '.') {
-            try output.appendSlice(runtime.allocator, units[start..end]);
-            continue;
-        }
-        var group = (end - start) % 3;
-        if (group == 0) group = 3;
-        var cursor = start;
-        while (cursor < end) {
-            const next = std.math.add(usize, cursor, @min(end - cursor, group)) catch return error.StringTooLarge;
-            try output.appendSlice(runtime.allocator, units[cursor..next]);
-            cursor = next;
-            if (cursor < end) try output.append(runtime.allocator, ',');
-            group = 3;
-        }
-    }
-    return runtime.ownString(try output.toOwnedSlice(runtime.allocator));
-}
-
-pub fn padBuiltin(runtime: *Runtime, value: Value, width_value: Value, fill: u16) !Value {
-    const units = try valueUtf16Alloc(runtime, value);
-    defer runtime.allocator.free(units);
-    const original_number = switch (@as(Tag, @enumFromInt(width_value.tag))) {
-        .bigint => width_value.object().?.payload.bigint.toF64(),
-        else => try valueToNumberRuntime(runtime, width_value),
-    };
-    const parsed = try parseIntBuiltin(runtime, width_value);
-    // 公式はparseInt前に `for (i = 0; i < A; i++)` で埋め文字を作る。
-    // したがってAが数値化不能でも、parseInt後の幅とは別に1文字が残る。
-    const fill_count = if (std.math.isNan(original_number) or original_number <= 0) @as(usize, 1) else blk: {
-        // 正のInfinityでは公式のループが終了しないため、AOTでは安全に拒否する。
-        // 実際の割当失敗とは別の境界として呼び出し側へ伝える。
-        if (!std.math.isFinite(original_number)) return error.StringPadWidthUnbounded;
-        if (original_number >= @as(f64, @floatFromInt(std.math.maxInt(usize) - 1))) return error.OutOfMemory;
-        const iterations: usize = @intFromFloat(@ceil(original_number));
-        break :blk iterations + 1;
-    };
-    if (std.math.isNan(parsed)) {
-        const source_len = std.math.add(usize, fill_count, units.len) catch return error.OutOfMemory;
-        const output = try runtime.allocator.alloc(u16, source_len);
-        errdefer runtime.allocator.free(output);
-        @memset(output[0..fill_count], fill);
-        @memcpy(output[fill_count..], units);
-        return runtime.ownString(output);
-    }
-    const requested: usize = if (parsed <= 0) 0 else blk: {
-        if (!std.math.isFinite(parsed) or parsed >= @as(f64, @floatFromInt(std.math.maxInt(usize)))) return error.OutOfMemory;
-        break :blk @intFromFloat(@trunc(parsed));
-    };
-    const target = @max(units.len, requested);
-    const source_len = std.math.add(usize, fill_count, units.len) catch return error.OutOfMemory;
-    const result_len = @min(target, source_len);
-    const output = try runtime.allocator.alloc(u16, result_len);
-    errdefer runtime.allocator.free(output);
-    const result_fill_count = result_len - units.len;
-    @memset(output[0..result_fill_count], fill);
-    @memcpy(output[result_fill_count..], units);
-    return runtime.ownString(output);
-}
-
-pub fn stringPredicateBuiltin(runtime: *Runtime, value: Value, command: aot_builtin.Command) !Value {
-    const units = try valueUtf16Alloc(runtime, value);
-    defer runtime.allocator.free(units);
-    const first = if (units.len == 0) 0 else units[0];
-    const result = switch (command) {
-        .hiragana_predicate => first >= 0x3041 and first <= 0x309f,
-        .katakana_predicate => first >= 0x30a1 and first <= 0x30fa,
-        .digit_predicate => isSequenceDigitBuiltin(first),
-        .number_sequence_predicate => if (isString(value) and units.len == 0) false else numberSequenceBuiltin(units),
-        else => unreachable,
-    };
-    return .{ .tag = @intFromEnum(Tag.boolean), .payload = @intFromBool(result) };
-}
-
-pub fn numberSequenceBuiltin(units: []const u16) bool {
-    var index: usize = 0;
-    if (index < units.len and isSequenceSignBuiltin(units[index])) index += 1;
-    while (index < units.len and isSequenceDigitBuiltin(units[index])) : (index += 1) {}
-    if (index < units.len and (units[index] == '.' or units[index] == 0xff0e)) {
-        index += 1;
-        const fraction_start = index;
-        while (index < units.len and isSequenceDigitBuiltin(units[index])) : (index += 1) {}
-        if (index == fraction_start) return false;
-        if (index < units.len and (units[index] == 'e' or units[index] == 'E' or units[index] == 0xff45 or units[index] == 0xff25)) {
-            index += 1;
-            if (index < units.len and isSequenceSignBuiltin(units[index])) index += 1;
-            const exponent_start = index;
-            while (index < units.len and isSequenceDigitBuiltin(units[index])) : (index += 1) {}
-            if (index == exponent_start) return false;
-        }
-    }
-    // 公式正規表現は空文字列だけを別扱いにし、符号単独も受理する。
-    return index == units.len;
-}
-
-pub fn isAsciiDigitBuiltin(unit: u16) bool {
-    return unit >= '0' and unit <= '9';
-}
-
-pub fn isSequenceDigitBuiltin(unit: u16) bool {
-    return isAsciiDigitBuiltin(unit) or (unit >= 0xff10 and unit <= 0xff19);
-}
-
-pub fn isSequenceSignBuiltin(unit: u16) bool {
-    return unit == '+' or unit == '-' or unit == 0xff0b or unit == 0xff0d;
-}
-
-pub fn kanaMapBuiltin(runtime: *Runtime, value: Value, to_full: bool) !Value {
-    var roots = [_]Value{ value, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
-    var frame: RootFrame = .{};
-    runtime.pushRoots(&frame, &roots, roots.len);
-    defer runtime.popRoots(&frame);
-
-    var allocated_source: ?[]u16 = null;
-    defer if (allocated_source) |source| runtime.allocator.free(source);
-    const source: []const u16 = blk: {
-        if (isString(roots[0])) {
-            allocated_source = try valueUtf16Alloc(runtime, roots[0]);
-            break :blk allocated_source.?;
-        }
-        if (@as(Tag, @enumFromInt(roots[0].tag)) == .dictionary) {
-            if (!to_full) return kanaMapDictionaryHalfWidthBuiltin(runtime, roots[0], &roots);
-            const length = dictionaryProperty(roots[0], &.{ 'l', 'e', 'n', 'g', 't', 'h' });
-            // `0 < s.length` uses JavaScript's abstract relational
-            // comparison. Undefined/NaN therefore takes the empty path.
-            if (try compareValues(runtime, .less, numberValue(0), length)) return kanaMapDictionaryFullWidthBuiltin(runtime, roots[0], length, &roots);
-            break :blk &.{};
-        }
-        if (!to_full) switch (@as(Tag, @enumFromInt(roots[0].tag))) {
-            .null_value => return error.KatakanaHalfWidthSplitNull,
-            .undefined => return error.KatakanaHalfWidthSplitUndefined,
-            else => return error.KatakanaHalfWidthSplitReceiver,
-        };
-
-        switch (@as(Tag, @enumFromInt(roots[0].tag))) {
-            .null_value => return error.KatakanaFullWidthLengthNull,
-            .undefined => return error.KatakanaFullWidthLengthUndefined,
-            .array => {
-                if (roots[0].object().?.payload.array.items.len > 0) return error.KatakanaFullWidthSubstringReceiver;
-                break :blk &.{};
-            },
-            .byte_buffer => {
-                const buffer = roots[0].object().?.payload.byte_buffer;
-                if (buffer.kind != .array_buffer and buffer.bytes.len > 0) return error.KatakanaFullWidthSubstringReceiver;
-                break :blk &.{};
-            },
-            .function => break :blk &.{},
-            else => break :blk &.{},
-        }
-    };
-    const full_utf8 = system_constant.lookupString("全角カナ一覧").?;
-    const full_voiced_utf8 = system_constant.lookupString("全角カナ濁音一覧").?;
-    const half_utf8 = system_constant.lookupString("半角カナ一覧").?;
-    const half_voiced_utf8 = system_constant.lookupString("半角カナ濁音一覧").?;
-    const full = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, full_utf8);
-    defer runtime.allocator.free(full);
-    const half = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, half_utf8);
-    defer runtime.allocator.free(half);
-    const full_voiced = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, full_voiced_utf8);
-    defer runtime.allocator.free(full_voiced);
-    const half_voiced = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, half_voiced_utf8);
-    defer runtime.allocator.free(half_voiced);
-
-    var output: std.ArrayList(u16) = .empty;
-    errdefer output.deinit(runtime.allocator);
-    var index: usize = 0;
-    while (index < source.len) {
-        if (to_full) {
-            const candidate_end = @min(source.len, index + 2);
-            // The official implementation searches the half-width voiced table
-            // with the two-unit candidate. This intentionally also maps a lone
-            // dakuten/handakuten to the first matching voiced kana entry.
-            if (indexOfUnitsBuiltin(half_voiced, source[index..candidate_end], 0)) |position| {
-                try output.append(runtime.allocator, full_voiced[position / 2]);
-                index = candidate_end;
-                continue;
-            }
-            if (unitIndexBuiltin(half, source[index])) |half_index| {
-                if (half_index < full.len) try output.append(runtime.allocator, full[half_index]);
-            } else {
-                try output.append(runtime.allocator, source[index]);
-            }
-        } else if (unitIndexBuiltin(full, source[index])) |full_index| {
-            try output.append(runtime.allocator, half[full_index]);
-        } else if (unitIndexBuiltin(full_voiced, source[index])) |voiced_index| {
-            try output.append(runtime.allocator, half_voiced[voiced_index * 2]);
-            try output.append(runtime.allocator, half_voiced[voiced_index * 2 + 1]);
-        } else {
-            try output.append(runtime.allocator, source[index]);
-        }
-        index += 1;
-    }
-    return runtime.ownString(try output.toOwnedSlice(runtime.allocator));
-}
-
-pub fn kanaMapDictionaryFullWidthBuiltin(runtime: *Runtime, source: Value, length: Value, roots: []Value) !Value {
-    const length_number = try explicitRangeNumber(runtime, length);
-    if (!std.math.isFinite(length_number) or length_number > @as(f64, @floatFromInt(safe_array_element_limit))) return error.ArraySizeLimitExceeded;
-    const iterations: usize = @intFromFloat(@ceil(length_number));
-
-    roots[1] = dictionaryProperty(source, &.{ 's', 'u', 'b', 's', 't', 'r', 'i', 'n', 'g' });
-    roots[2] = dictionaryProperty(source, &.{ 'c', 'h', 'a', 'r', 'A', 't' });
-    if (roots[1].tag != @intFromEnum(Tag.function)) return error.KatakanaFullWidthSubstringReceiver;
-    if (roots[2].tag != @intFromEnum(Tag.function)) return error.KatakanaFullWidthCharAtReceiver;
-
-    const full_utf8 = system_constant.lookupString("全角カナ一覧").?;
-    const full_voiced_utf8 = system_constant.lookupString("全角カナ濁音一覧").?;
-    const half_utf8 = system_constant.lookupString("半角カナ一覧").?;
-    const half_voiced_utf8 = system_constant.lookupString("半角カナ濁音一覧").?;
-    const full = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, full_utf8);
-    defer runtime.allocator.free(full);
-    const half = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, half_utf8);
-    defer runtime.allocator.free(half);
-    const full_voiced = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, full_voiced_utf8);
-    defer runtime.allocator.free(full_voiced);
-    const half_voiced = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, half_voiced_utf8);
-    defer runtime.allocator.free(half_voiced);
-
-    var output: std.ArrayList(u16) = .empty;
-    errdefer output.deinit(runtime.allocator);
-    var arguments = [_]Value{ numberValue(0), numberValue(2) };
-    roots[3] = arguments[0];
-    roots[4] = arguments[1];
-    var index: usize = 0;
-    while (index < iterations) : (index += 1) {
-        arguments[0] = numberValue(@floatFromInt(index));
-        arguments[1] = numberValue(@floatFromInt(index + 2));
-        roots[3] = arguments[0];
-        roots[4] = arguments[1];
-        roots[5] = try invokeAotCallback(runtime, roots[1], &arguments, arguments.len);
-        const candidate = try valueUtf16Alloc(runtime, roots[5]);
-        defer runtime.allocator.free(candidate);
-        if (indexOfUnitsBuiltin(half_voiced, candidate, 0)) |position| {
-            try output.append(runtime.allocator, full_voiced[position / 2]);
-            index += 1;
-            continue;
-        }
-
-        arguments[0] = numberValue(@floatFromInt(index));
-        roots[3] = arguments[0];
-        roots[5] = try invokeAotCallback(runtime, roots[2], arguments[0..1].ptr, 1);
-        const character = try valueUtf16Alloc(runtime, roots[5]);
-        defer runtime.allocator.free(character);
-        if (indexOfUnitsBuiltin(half, character, 0)) |position| {
-            if (position < full.len) try output.append(runtime.allocator, full[position]);
-        } else try output.appendSlice(runtime.allocator, character);
-    }
-    return runtime.ownString(try output.toOwnedSlice(runtime.allocator));
-}
-
-pub fn kanaMapDictionaryHalfWidthBuiltin(runtime: *Runtime, source: Value, roots: []Value) !Value {
-    roots[1] = dictionaryProperty(source, &.{ 's', 'p', 'l', 'i', 't' });
-    if (roots[1].tag != @intFromEnum(Tag.function)) return error.KatakanaHalfWidthSplitReceiver;
-    roots[2] = try invokeAotCallback(runtime, roots[1], @ptrCast(&[_]Value{staticStringValue("")}), 1);
-    if (roots[2].tag != @intFromEnum(Tag.array)) return error.KatakanaHalfWidthMapReceiver;
-
-    const full_utf8 = system_constant.lookupString("全角カナ一覧").?;
-    const full_voiced_utf8 = system_constant.lookupString("全角カナ濁音一覧").?;
-    const half_utf8 = system_constant.lookupString("半角カナ一覧").?;
-    const half_voiced_utf8 = system_constant.lookupString("半角カナ濁音一覧").?;
-    const full = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, full_utf8);
-    defer runtime.allocator.free(full);
-    const half = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, half_utf8);
-    defer runtime.allocator.free(half);
-    const full_voiced = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, full_voiced_utf8);
-    defer runtime.allocator.free(full_voiced);
-    const half_voiced = try std.unicode.utf8ToUtf16LeAlloc(runtime.allocator, half_voiced_utf8);
-    defer runtime.allocator.free(half_voiced);
-
-    var output: std.ArrayList(u16) = .empty;
-    errdefer output.deinit(runtime.allocator);
-    const items = &roots[2].object().?.payload.array;
-    for (items.items, 0..) |value, index| {
-        if (!runtime.aotArrayIsPresent(roots[2].object().?, index)) continue;
-        roots[3] = value;
-        const character = try valueUtf16Alloc(runtime, roots[3]);
-        defer runtime.allocator.free(character);
-        if (indexOfUnitsBuiltin(full, character, 0)) |position| {
-            if (position < half.len) try output.append(runtime.allocator, half[position]);
-        } else if (indexOfUnitsBuiltin(full_voiced, character, 0)) |position| {
-            const start = position * 2;
-            if (start + 2 <= half_voiced.len) try output.appendSlice(runtime.allocator, half_voiced[start .. start + 2]);
-        } else if (roots[3].tag != @intFromEnum(Tag.undefined) and roots[3].tag != @intFromEnum(Tag.null_value)) {
-            try output.appendSlice(runtime.allocator, character);
-        }
-    }
-    return runtime.ownString(try output.toOwnedSlice(runtime.allocator));
-}
-
-pub fn unitIndexBuiltin(units: []const u16, needle: u16) ?usize {
-    for (units, 0..) |unit, index| if (unit == needle) return index;
-    return null;
-}
-
-pub fn indexOfUnitsBuiltin(haystack: []const u16, needle: []const u16, start: usize) ?usize {
-    if (needle.len == 0) return @min(start, haystack.len);
-    if (start > haystack.len or needle.len > haystack.len - start) return null;
-    var index = start;
-    while (index + needle.len <= haystack.len) : (index += 1) {
-        if (std.mem.eql(u16, haystack[index .. index + needle.len], needle)) return index;
-    }
-    return null;
-}
-
-pub fn replaceBuiltin(runtime: *Runtime, source_value: Value, needle_value: Value, replacement_value: Value, all: bool) !Value {
-    const source = try valueUtf16Alloc(runtime, source_value);
-    defer runtime.allocator.free(source);
-    // split(undefined) returns the source as its sole element, so join never
-    // observes the replacement separator. replace(undefined, ...) still
-    // searches for the literal string "undefined" and must use the path below.
-    if (all and needle_value.tag == @intFromEnum(Tag.undefined)) return runtime.createString(source);
-    const needle = try valueUtf16Alloc(runtime, needle_value);
-    defer runtime.allocator.free(needle);
-    var allocated_replacement: ?[]u16 = null;
-    const replacement: []const u16 = if (all and replacement_value.tag == @intFromEnum(Tag.undefined))
-        // Array.prototype.join(undefined) uses its default comma separator.
-        &.{','}
-    else blk: {
-        allocated_replacement = try valueUtf16Alloc(runtime, replacement_value);
-        break :blk allocated_replacement.?;
-    };
-    defer if (allocated_replacement) |allocated| runtime.allocator.free(allocated);
-    var output: std.ArrayList(u16) = .empty;
-    errdefer output.deinit(runtime.allocator);
-    if (!all) {
-        const found = std.mem.indexOf(u16, source, needle) orelse return runtime.createString(source);
-        try output.appendSlice(runtime.allocator, source[0..found]);
-        try appendFirstReplacementBuiltin(runtime, &output, source, found, found + needle.len, replacement);
-        try output.appendSlice(runtime.allocator, source[found + needle.len ..]);
-        return runtime.ownString(try output.toOwnedSlice(runtime.allocator));
-    }
-    if (needle.len == 0) {
-        for (source, 0..) |unit, index| {
-            if (index > 0) try output.appendSlice(runtime.allocator, replacement);
-            try output.append(runtime.allocator, unit);
-        }
-        return runtime.ownString(try output.toOwnedSlice(runtime.allocator));
-    }
-    var start: usize = 0;
-    while (std.mem.indexOfPos(u16, source, start, needle)) |found| {
-        try output.appendSlice(runtime.allocator, source[start..found]);
-        try output.appendSlice(runtime.allocator, replacement);
-        start = found + needle.len;
-    }
-    try output.appendSlice(runtime.allocator, source[start..]);
-    return runtime.ownString(try output.toOwnedSlice(runtime.allocator));
-}
-
-pub fn appendFirstReplacementBuiltin(runtime: *Runtime, output: *std.ArrayList(u16), source: []const u16, match_start: usize, match_end: usize, replacement: []const u16) !void {
-    var index: usize = 0;
-    while (index < replacement.len) {
-        if (replacement[index] != '$' or index + 1 >= replacement.len) {
-            try output.append(runtime.allocator, replacement[index]);
-            index += 1;
-            continue;
-        }
-        switch (replacement[index + 1]) {
-            '$' => try output.append(runtime.allocator, '$'),
-            '&' => try output.appendSlice(runtime.allocator, source[match_start..match_end]),
-            '`' => try output.appendSlice(runtime.allocator, source[0..match_start]),
-            '\'' => try output.appendSlice(runtime.allocator, source[match_end..]),
-            else => {
-                try output.append(runtime.allocator, '$');
-                index += 1;
-                continue;
-            },
-        }
-        index += 2;
-    }
-}
+pub const kanaOffsetBuiltin = string_module.kanaOffsetBuiltin;
+pub const asciiWidthBuiltin = string_module.asciiWidthBuiltin;
+pub const kanaWidthBuiltin = string_module.kanaWidthBuiltin;
+pub const widthBuiltin = string_module.widthBuiltin;
+pub const currencyBuiltin = string_module.currencyBuiltin;
+pub const padBuiltin = string_module.padBuiltin;
+pub const stringPredicateBuiltin = string_module.stringPredicateBuiltin;
+pub const numberSequenceBuiltin = string_module.numberSequenceBuiltin;
+pub const isAsciiDigitBuiltin = string_module.isAsciiDigitBuiltin;
+pub const isSequenceDigitBuiltin = string_module.isSequenceDigitBuiltin;
+pub const isSequenceSignBuiltin = string_module.isSequenceSignBuiltin;
+pub const kanaMapBuiltin = string_module.kanaMapBuiltin;
+pub const kanaMapDictionaryFullWidthBuiltin = string_module.kanaMapDictionaryFullWidthBuiltin;
+pub const kanaMapDictionaryHalfWidthBuiltin = string_module.kanaMapDictionaryHalfWidthBuiltin;
+pub const unitIndexBuiltin = string_module.unitIndexBuiltin;
+pub const indexOfUnitsBuiltin = string_module.indexOfUnitsBuiltin;
+pub const replaceBuiltin = string_module.replaceBuiltin;
+pub const appendFirstReplacementBuiltin = string_module.appendFirstReplacementBuiltin;
 
 pub fn numberValue(number: f64) Value {
     return .{ .tag = @intFromEnum(Tag.number), .payload = @bitCast(number) };
