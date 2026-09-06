@@ -9,6 +9,9 @@ const module_mod = @import("module.zig");
 pub const Optimization = enum { o0, o1, o2, o3 };
 pub const Emit = enum { llvm_ir, object, executable };
 
+var macos_sdk_locked: std.atomic.Value(bool) = .init(false);
+var macos_sdk_cache: ?[]u8 = null;
+
 pub const Options = struct {
     optimization: Optimization = .o0,
     emit: Emit = .executable,
@@ -268,7 +271,7 @@ fn linkExecutable(allocator: std.mem.Allocator, io: std.Io, object_path: []const
     defer allocator.free(runtime_library);
     const linker_argument = try std.fmt.allocPrint(allocator, "--ld-path={s}", .{tools.lld});
     defer allocator.free(linker_argument);
-    const macos_sdk: ?[]u8 = if (builtin.os.tag == .macos) try findMacOsSdk(allocator, io) else null;
+    const macos_sdk: ?[]u8 = if (builtin.os.tag == .macos) try findMacOsSdkCached(allocator, io) else null;
     defer if (macos_sdk) |path| allocator.free(path);
     const argv: []const []const u8 = switch (builtin.os.tag) {
         .linux => &.{ tools.clang, linker_argument, object_path, runtime_library, "-o", output_path, "-lm", "-Wl,--gc-sections" },
@@ -343,6 +346,16 @@ fn findPackagedLlvmRoot(allocator: std.mem.Allocator, io: std.Io) !?[]u8 {
         return null;
     };
     return root;
+}
+
+fn findMacOsSdkCached(allocator: std.mem.Allocator, io: std.Io) ![]u8 {
+    while (macos_sdk_locked.swap(true, .acquire)) std.atomic.spinLoopHint();
+    defer macos_sdk_locked.store(false, .release);
+    if (macos_sdk_cache) |cache| return try allocator.dupe(u8, cache);
+    const path = try findMacOsSdk(allocator, io);
+    macos_sdk_cache = try std.heap.page_allocator.dupe(u8, path);
+    allocator.free(path);
+    return try allocator.dupe(u8, macos_sdk_cache.?);
 }
 
 fn findMacOsSdk(allocator: std.mem.Allocator, io: std.Io) ![]u8 {
