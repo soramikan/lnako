@@ -23,6 +23,12 @@ pub const Counters = struct {
     frame_pools_misses: u64 = 0,
     root_pushes: u64 = 0,
     root_high_water: u64 = 0,
+    object_high_water: u64 = 0,
+    object_pool_hits: u64 = 0,
+    object_pool_misses: u64 = 0,
+    gc_collections: u64 = 0,
+    gc_reclaimed_objects: u64 = 0,
+    gc_reclaimed_bytes: u64 = 0,
 
     pub fn add(self: *Counters, other: Counters) void {
         self.dictionary_probes +|= other.dictionary_probes;
@@ -44,6 +50,12 @@ pub const Counters = struct {
         self.frame_pools_misses +|= other.frame_pools_misses;
         self.root_pushes +|= other.root_pushes;
         self.root_high_water +|= other.root_high_water;
+        self.object_high_water +|= other.object_high_water;
+        self.object_pool_hits +|= other.object_pool_hits;
+        self.object_pool_misses +|= other.object_pool_misses;
+        self.gc_collections +|= other.gc_collections;
+        self.gc_reclaimed_objects +|= other.gc_reclaimed_objects;
+        self.gc_reclaimed_bytes +|= other.gc_reclaimed_bytes;
     }
 };
 

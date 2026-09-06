@@ -6902,3 +6902,26 @@ test "AOT辞書索引はGC走査で参照を失わない" {
     try std.testing.expectEqual(@as(usize, 0), runtime.collect());
     try std.testing.expect(dictionary.findByUnits(&.{ 'g', '5' }) != null);
 }
+
+test "AOT ObjectプールはGC回収後にヘッダーを再利用する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{} };
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createString(&.{'A'});
+    const first_object = roots[0].object().?;
+    roots[1] = try runtime.createString(&.{'B'});
+
+    roots[0] = .{};
+    try std.testing.expectEqual(@as(usize, 1), runtime.collect());
+    try std.testing.expectEqual(@as(u64, 1), runtime.counters.gc_reclaimed_objects);
+
+    roots[0] = try runtime.createString(&.{'C'});
+    try std.testing.expectEqual(first_object, roots[0].object().?);
+    try std.testing.expectEqual(@as(u64, 1), runtime.counters.object_pool_hits);
+    try std.testing.expectEqual(@as(u64, 2), runtime.counters.object_pool_misses);
+    try std.testing.expect(runtime.counters.object_high_water >= 2);
+}

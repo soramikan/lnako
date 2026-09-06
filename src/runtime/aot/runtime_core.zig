@@ -832,6 +832,7 @@ pub const Runtime = struct {
     native_plugin_paths: std.ArrayList([]u8) = .empty,
     counters: counters.Counters = .{},
     live_roots: u64 = 0,
+    object_pool: ?*Object = null,
     dynamic_globals: std.ArrayList(DynamicGlobal) = .empty,
     dynamic_state: ?*DynamicInterpreterState = null,
     dynamic_promise_bridges: std.ArrayList(*DynamicPromiseBridge) = .empty,
@@ -895,6 +896,11 @@ pub const Runtime = struct {
             const next = object.next;
             self.destroyObject(object);
             current = next;
+        }
+        while (self.object_pool) |object| {
+            const next = object.next;
+            self.allocator.destroy(object);
+            self.object_pool = next;
         }
         self.named_functions.deinit(self.allocator);
         self.stringifying_arrays.deinit(self.allocator);
@@ -1143,10 +1149,28 @@ pub const Runtime = struct {
     }
 
     pub fn createObject(self: *Runtime, payload: Payload, tag: Tag) !Value {
-        const object = try self.allocator.create(Object);
+        var from_pool = false;
+        const object: *Object = blk: {
+            if (self.object_pool) |pooled| {
+                from_pool = true;
+                self.object_pool = pooled.next;
+                self.counters.object_pool_hits +|= 1;
+                break :blk pooled;
+            }
+            const allocated = try self.allocator.create(Object);
+            self.counters.object_pool_misses +|= 1;
+            self.counters.allocations +|= 1;
+            self.counters.allocated_bytes +|= @sizeOf(Object);
+            break :blk allocated;
+        };
         errdefer {
             object.array_presence.deinit(self.allocator);
-            self.allocator.destroy(object);
+            if (from_pool) {
+                object.next = self.object_pool;
+                self.object_pool = object;
+            } else {
+                self.allocator.destroy(object);
+            }
         }
         object.* = .{
             .next = self.objects,
@@ -1158,6 +1182,7 @@ pub const Runtime = struct {
         }
         self.objects = object;
         self.object_count += 1;
+        self.counters.object_high_water = @max(self.counters.object_high_water, self.object_count);
         return .{ .tag = @intFromEnum(tag), .payload = @intFromPtr(object) };
     }
 
@@ -1183,6 +1208,7 @@ pub const Runtime = struct {
     }
 
     pub fn collect(self: *Runtime) usize {
+        self.counters.gc_collections +|= 1;
         var frame = self.roots;
         while (frame) |current| : (frame = current.previous) {
             if (current.values) |values| for (values[0..current.len]) |value| self.markValue(value);
@@ -1295,6 +1321,8 @@ pub const Runtime = struct {
                 continue;
             }
             link.* = object.next;
+            self.counters.gc_reclaimed_objects +|= 1;
+            self.counters.gc_reclaimed_bytes +|= @sizeOf(Object);
             self.destroyObject(object);
             self.object_count -= 1;
             reclaimed += 1;
@@ -1402,7 +1430,8 @@ pub const Runtime = struct {
                 object.array_properties.deinit(self.allocator);
             },
         }
-        self.allocator.destroy(object);
+        object.next = self.object_pool;
+        self.object_pool = object;
     }
 
     pub fn indexGet(self: *Runtime, container: Value, key: Value) Value {
