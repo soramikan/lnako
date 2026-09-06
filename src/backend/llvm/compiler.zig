@@ -271,9 +271,9 @@ fn linkExecutable(allocator: std.mem.Allocator, io: std.Io, object_path: []const
     const macos_sdk: ?[]u8 = if (builtin.os.tag == .macos) try findMacOsSdk(allocator, io) else null;
     defer if (macos_sdk) |path| allocator.free(path);
     const argv: []const []const u8 = switch (builtin.os.tag) {
-        .linux => &.{ tools.clang, linker_argument, object_path, runtime_library, "-o", output_path, "-lm" },
-        .macos => &.{ tools.clang, linker_argument, "-isysroot", macos_sdk.?, object_path, runtime_library, "-o", output_path },
-        .windows => &.{ tools.clang, linker_argument, object_path, runtime_library, "-lcrypt32", "-liphlpapi", "-lntdll", "-o", output_path },
+        .linux => &.{ tools.clang, linker_argument, object_path, runtime_library, "-o", output_path, "-lm", "-Wl,--gc-sections" },
+        .macos => &.{ tools.clang, linker_argument, "-isysroot", macos_sdk.?, object_path, runtime_library, "-o", output_path, "-Wl,-dead_strip" },
+        .windows => &.{ tools.clang, linker_argument, object_path, runtime_library, "-lcrypt32", "-liphlpapi", "-lntdll", "-o", output_path, "-Wl,/OPT:REF" },
         else => &.{ tools.clang, linker_argument, object_path, runtime_library, "-o", output_path },
     };
     const result = try std.process.run(allocator, io, .{ .argv = argv });
