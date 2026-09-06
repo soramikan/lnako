@@ -63,7 +63,9 @@ pub fn writeInstruction(emitter: *Emitter, function: ir.Function, locals: []cons
         .const_string => {
             const id = result orelse return error.MissingInstructionResult;
             const constant = emitter.stringConstant(function.id, id) orelse return error.InvalidStringConstant;
-            try emitter.output.writer.print("  call void @lnako_aot_string_new(ptr %root.slot.{d}, ptr @lnako.string.{d}, i64 {d})", .{ id, constant.index, constant.units.len });
+            // The literal table hands back the same string object for every
+            // use of this constant, so repeated literals stop allocating.
+            try emitter.output.writer.print("  call void @lnako_aot_string_literal(ptr %root.slot.{d}, ptr @lnako.string.{d}, i64 {d}, i64 {d})", .{ id, constant.index, constant.units.len, constant.index });
             try emitter.debugSuffix(instruction.span, scope);
             try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ id, id });
             try emitter.debugSuffix(instruction.span, scope);

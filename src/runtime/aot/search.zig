@@ -304,7 +304,7 @@ pub fn elementCountBuiltin(runtime: *Runtime, value: Value) !usize {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
         .byte_buffer => value.object().?.payload.byte_buffer.bytes.len,
         .array => value.object().?.payload.array.items.len,
-        .dictionary => value.object().?.payload.dictionary.items.len,
+        .dictionary => value.object().?.payload.dictionary.entries.items.len,
         .static_utf8_string, .utf16_string => blk: {
             const units = try valueUtf16Alloc(runtime, value);
             defer runtime.allocator.free(units);

@@ -27,6 +27,7 @@ const valueUtf16Alloc = aot_state.valueUtf16Alloc;
 const valueIndex = aot_state.valueIndex;
 const aotCanonicalArrayIndex = aot_state.aotCanonicalArrayIndex;
 const sameKey = aot_state.sameKey;
+const isString = aot_state.isString;
 const staticUtf8 = aot_state.staticUtf8;
 const staticUtf8EqualsUtf16 = aot_state.staticUtf8EqualsUtf16;
 const repeatCount = aot_state.repeatCount;
@@ -66,6 +67,227 @@ pub const RootFrame = extern struct {
 };
 
 pub const DictionaryEntry = struct { key: Value, value: Value };
+
+/// Number of entries at which a dictionary builds its lookup index.  Below
+/// the threshold a linear scan over the ordered list is cheaper than
+/// hashing; at and above it an open-addressed slot table maps each key's
+/// hash to entry positions.
+pub const aot_dictionary_index_threshold: usize = 24;
+
+const aot_index_seed: u64 = 0x9e3779b97f4a7c15;
+
+pub fn aotIndexHashUnits(units: []const u16) u64 {
+    return std.hash.Wyhash.hash(aot_index_seed, std.mem.sliceAsBytes(units));
+}
+
+fn aotIndexHashUtf8(bytes: []const u8) u64 {
+    // Hash the decoded UTF-16 unit stream so a static literal and an equal
+    // runtime string land in the same slot.  Malformed input can never match
+    // a UTF-16 key, so the remaining bytes are hashed verbatim only to keep
+    // identical byte strings colliding together.
+    var hasher = std.hash.Wyhash.init(aot_index_seed);
+    var index: usize = 0;
+    while (index < bytes.len) {
+        const length = std.unicode.utf8ByteSequenceLength(bytes[index]) catch {
+            hasher.update(bytes[index..]);
+            break;
+        };
+        if (index + length > bytes.len) {
+            hasher.update(bytes[index..]);
+            break;
+        }
+        const codepoint = std.unicode.utf8Decode(bytes[index .. index + length]) catch {
+            hasher.update(bytes[index..]);
+            break;
+        };
+        index += length;
+        if (codepoint <= 0xffff) {
+            const unit: u16 = @intCast(codepoint);
+            hasher.update(std.mem.asBytes(&unit));
+        } else {
+            const offset = codepoint - 0x10000;
+            const pair = [2]u16{ @intCast(0xd800 + (offset >> 10)), @intCast(0xdc00 + (offset & 0x3ff)) };
+            hasher.update(std.mem.sliceAsBytes(&pair));
+        }
+    }
+    return hasher.final();
+}
+
+fn aotIndexHash(key: Value) u64 {
+    return switch (@as(Tag, @enumFromInt(key.tag))) {
+        .utf16_string => aotIndexHashUnits(key.object().?.payload.utf16_string),
+        .static_utf8_string => aotIndexHashUtf8(staticUtf8(key)),
+        // BigInt keys compare by value, not identity; a fixed bucket keeps
+        // indexed lookups correct while rare keys stay out of the fast path.
+        .bigint => aot_index_seed,
+        else => blk: {
+            var hasher = std.hash.Wyhash.init(aot_index_seed);
+            hasher.update(std.mem.asBytes(&key.tag));
+            hasher.update(std.mem.asBytes(&key.payload));
+            break :blk hasher.final();
+        },
+    };
+}
+
+fn aotIndexKeyMatchesUnits(key: Value, units: []const u16) bool {
+    return switch (@as(Tag, @enumFromInt(key.tag))) {
+        .static_utf8_string => staticUtf8EqualsUtf16(staticUtf8(key), units),
+        .utf16_string => std.mem.eql(u16, key.object().?.payload.utf16_string, units),
+        else => false,
+    };
+}
+
+/// Insertion-ordered key/value storage with an optional open-addressed
+/// index.  `entries` alone defines membership and enumeration order; the
+/// index is a pure lookup cache whose slots store `entry_index + 1` and
+/// whose zero value marks an empty slot.  Every mutation funnels through
+/// `set`, `appendEntry`, `orderedRemoveEntry`, or `clearRetainingCapacity`
+/// so the index never observes a stale view, and removal rebuilds it
+/// because `orderedRemove` shifts every later position.  A probe walks the
+/// whole hash cluster and returns the smallest matching index, so a
+/// duplicated key resolves to the same first entry a linear scan finds.
+pub const AotDictionary = struct {
+    pub const empty: AotDictionary = .{};
+
+    entries: std.ArrayList(DictionaryEntry) = .empty,
+    index_slots: []u32 = &.{},
+    index_valid: bool = false,
+    // Diagnostic counters (M0): observable lookup work for benchmark
+    // analysis.  They count comparisons actually performed, not results.
+    indexed_lookups: u64 = 0,
+    linear_lookups: u64 = 0,
+    entry_comparisons: u64 = 0,
+    index_rebuilds: u64 = 0,
+
+    pub fn deinit(self: *AotDictionary, allocator: std.mem.Allocator) void {
+        self.entries.deinit(allocator);
+        if (self.index_slots.len > 0) allocator.free(self.index_slots);
+        self.* = .{};
+    }
+
+    pub fn len(self: *const AotDictionary) usize {
+        return self.entries.items.len;
+    }
+
+    /// First-in-order entry equal to `key` under `sameKey`, or null.
+    pub fn findByKey(self: *AotDictionary, key: Value) ?usize {
+        if (self.index_valid) {
+            self.indexed_lookups += 1;
+            return self.probeIndex(aotIndexHash(key), key);
+        }
+        self.linear_lookups += 1;
+        for (self.entries.items, 0..) |entry, index| {
+            self.entry_comparisons += 1;
+            if (sameKey(entry.key, key)) return index;
+        }
+        return null;
+    }
+
+    /// First-in-order entry whose string key equals `units`.  Non-string
+    /// keys can never match a unit query, matching the previous scan.
+    pub fn findByUnits(self: *AotDictionary, units: []const u16) ?usize {
+        if (self.index_valid) {
+            self.indexed_lookups += 1;
+            var slot: usize = @intCast(aotIndexHashUnits(units) & (self.index_slots.len - 1));
+            var found: ?usize = null;
+            while (self.index_slots[slot] != 0) {
+                const index: usize = self.index_slots[slot] - 1;
+                self.entry_comparisons += 1;
+                if (aotIndexKeyMatchesUnits(self.entries.items[index].key, units)) {
+                    if (found == null or index < found.?) found = index;
+                }
+                slot = (slot + 1) & (self.index_slots.len - 1);
+            }
+            return found;
+        }
+        self.linear_lookups += 1;
+        for (self.entries.items, 0..) |entry, index| {
+            self.entry_comparisons += 1;
+            if (aotIndexKeyMatchesUnits(entry.key, units)) return index;
+        }
+        return null;
+    }
+
+    fn probeIndex(self: *AotDictionary, hash: u64, key: Value) ?usize {
+        const mask = self.index_slots.len - 1;
+        var slot: usize = @intCast(hash & mask);
+        var found: ?usize = null;
+        while (self.index_slots[slot] != 0) {
+            const index: usize = self.index_slots[slot] - 1;
+            self.entry_comparisons += 1;
+            if (sameKey(self.entries.items[index].key, key)) {
+                if (found == null or index < found.?) found = index;
+            }
+            slot = (slot + 1) & mask;
+        }
+        return found;
+    }
+
+    /// Insert or overwrite, keeping the first position on update.
+    pub fn set(self: *AotDictionary, allocator: std.mem.Allocator, key: Value, value: Value) !void {
+        if (self.findByKey(key)) |index| {
+            self.entries.items[index].value = value;
+            return;
+        }
+        try self.appendEntry(allocator, .{ .key = key, .value = value });
+    }
+
+    /// Append without a uniqueness check.  Callers that proved the key is
+    /// absent (or that intentionally produce duplicate keys) use this; the
+    /// index still records the position.
+    pub fn appendEntry(self: *AotDictionary, allocator: std.mem.Allocator, entry: DictionaryEntry) !void {
+        try self.entries.append(allocator, entry);
+        errdefer _ = self.entries.pop();
+        const index = self.entries.items.len - 1;
+        if (self.index_valid or self.entries.items.len >= aot_dictionary_index_threshold) try self.indexInsert(allocator, index);
+    }
+
+    /// Remove while preserving the order of the remaining entries.  The
+    /// index is rebuilt because positions shift; on allocation failure it
+    /// stays invalid and lookups fall back to the ordered scan.
+    pub fn orderedRemoveEntry(self: *AotDictionary, allocator: std.mem.Allocator, index: usize) DictionaryEntry {
+        const removed = self.entries.orderedRemove(index);
+        self.index_valid = false;
+        if (self.entries.items.len >= aot_dictionary_index_threshold) self.rebuildIndex(allocator) catch {};
+        return removed;
+    }
+
+    pub fn clearRetainingCapacity(self: *AotDictionary) void {
+        self.entries.clearRetainingCapacity();
+        @memset(self.index_slots, 0);
+        // Slots still cover zero entries; keep the buffer but flag it stale
+        // so the next insert path rebuilds rather than trusting emptiness.
+        self.index_valid = false;
+    }
+
+    fn indexInsert(self: *AotDictionary, allocator: std.mem.Allocator, entry_index: usize) !void {
+        if (!self.index_valid or self.entries.items.len * 2 > self.index_slots.len) {
+            try self.rebuildIndex(allocator);
+            return;
+        }
+        const mask = self.index_slots.len - 1;
+        var slot: usize = @intCast(aotIndexHash(self.entries.items[entry_index].key) & mask);
+        while (self.index_slots[slot] != 0) slot = (slot + 1) & mask;
+        self.index_slots[slot] = @intCast(entry_index + 1);
+    }
+
+    fn rebuildIndex(self: *AotDictionary, allocator: std.mem.Allocator) !void {
+        const capacity = std.math.ceilPowerOfTwo(usize, @max(self.entries.items.len * 2, 64)) catch return error.OutOfMemory;
+        const slots = try allocator.alloc(u32, capacity);
+        @memset(slots, 0);
+        errdefer allocator.free(slots);
+        const mask = capacity - 1;
+        for (self.entries.items, 0..) |entry, index| {
+            var slot: usize = @intCast(aotIndexHash(entry.key) & mask);
+            while (slots[slot] != 0) slot = (slot + 1) & mask;
+            slots[slot] = @intCast(index + 1);
+        }
+        if (self.index_slots.len > 0) allocator.free(self.index_slots);
+        self.index_slots = slots;
+        self.index_valid = true;
+        self.index_rebuilds += 1;
+    }
+};
 pub const AotTomlTemporal = struct {
     kind: toml_temporal.Kind,
     json_text: []u8,
@@ -483,7 +705,7 @@ const Payload = union(enum) {
     byte_buffer: ByteBuffer,
     bigint: BigInt,
     array: std.ArrayList(Value),
-    dictionary: std.ArrayList(DictionaryEntry),
+    dictionary: AotDictionary,
     iterator: Iterator,
     function: FunctionObject,
     binding_cell: Value,
@@ -500,7 +722,7 @@ pub const Object = struct {
     /// Own properties for arrays and for the other extensible object kinds.
     /// The legacy field name is retained because array operations and their
     /// serialized fixtures already use it.
-    array_properties: std.ArrayList(DictionaryEntry) = .empty,
+    array_properties: AotDictionary = .{},
     array_presence: std.ArrayList(bool) = .empty,
     toml_temporal: ?AotTomlTemporal = null,
     payload: Payload,
@@ -590,6 +812,10 @@ pub const Runtime = struct {
     dynamic_promise_bridges: std.ArrayList(*DynamicPromiseBridge) = .empty,
     dynamic_function_bridges: std.ArrayList(*AotFunctionBridge) = .empty,
     standard_property_cache: std.ArrayList(StandardPropertyCacheEntry) = .empty,
+    /// Canonical storage for emitted string literals.  `lnako_aot_string_literal`
+    /// fills each slot once so every use of the same literal shares one string
+    /// object; the list also keeps the cached strings reachable for GC.
+    literal_values: std.ArrayList(Value) = .empty,
 
     pub fn deinit(self: *Runtime) void {
         self.dispatch_trace.deinit();
@@ -623,6 +849,7 @@ pub const Runtime = struct {
         self.dynamic_function_bridges.deinit(self.allocator);
         for (self.standard_property_cache.items) |entry| self.allocator.free(entry.name);
         self.standard_property_cache.deinit(self.allocator);
+        self.literal_values.deinit(self.allocator);
         for (self.native_plugin_paths.items) |path| self.allocator.free(path);
         self.native_plugin_paths.deinit(self.allocator);
         for (self.dynamic_globals.items) |entry| self.allocator.free(entry.name);
@@ -829,7 +1056,7 @@ pub const Runtime = struct {
             .utf16_string => .{ .kind = .string, .source = values[0], .count = values[0].object().?.payload.utf16_string.len },
             .byte_buffer => .{ .kind = .bytes, .source = values[0], .count = values[0].object().?.payload.byte_buffer.bytes.len },
             .array => .{ .kind = .array, .source = values[0], .count = values[0].object().?.payload.array.items.len },
-            .dictionary => .{ .kind = .dictionary, .source = values[0], .count = values[0].object().?.payload.dictionary.items.len },
+            .dictionary => .{ .kind = .dictionary, .source = values[0], .count = values[0].object().?.payload.dictionary.entries.items.len },
             else => .{ .kind = .repeat, .count = 0 },
         };
         return self.createObject(.{ .iterator = iterator }, .iterator);
@@ -967,6 +1194,7 @@ pub const Runtime = struct {
         for (self.file_tasks.items) |task| self.markValue(task.callback);
         for (self.process_tasks.items) |task| self.markValue(task.callback);
         for (self.standard_property_cache.items) |entry| self.markValue(entry.value);
+        for (self.literal_values.items) |value| self.markValue(value);
         while (self.grey) |object| {
             self.grey = object.grey_next;
             object.grey_next = null;
@@ -975,14 +1203,14 @@ pub const Runtime = struct {
                 .byte_buffer => {
                     self.markValue(object.prototype);
                     self.markValue(object.payload.byte_buffer.storage.backing);
-                    for (object.array_properties.items) |property| {
+                    for (object.array_properties.entries.items) |property| {
                         self.markValue(property.key);
                         self.markValue(property.value);
                     }
                 },
                 .function => |function| {
                     self.markValue(function.prototype);
-                    for (object.array_properties.items) |property| {
+                    for (object.array_properties.entries.items) |property| {
                         self.markValue(property.key);
                         self.markValue(property.value);
                     }
@@ -1000,14 +1228,14 @@ pub const Runtime = struct {
                 .array => |items| {
                     self.markValue(object.prototype);
                     for (items.items) |value| self.markValue(value);
-                    for (object.array_properties.items) |property| {
+                    for (object.array_properties.entries.items) |property| {
                         self.markValue(property.key);
                         self.markValue(property.value);
                     }
                 },
-                .dictionary => |entries| {
+                .dictionary => |*entries| {
                     self.markValue(object.prototype);
-                    for (entries.items) |entry| {
+                    for (entries.entries.items) |entry| {
                         self.markValue(entry.key);
                         self.markValue(entry.value);
                     }
@@ -1015,7 +1243,7 @@ pub const Runtime = struct {
                 .iterator => |iterator| self.markValue(iterator.source),
                 .promise => |promise| {
                     self.markValue(promise.result);
-                    for (object.array_properties.items) |property| {
+                    for (object.array_properties.entries.items) |property| {
                         self.markValue(property.key);
                         self.markValue(property.value);
                     }
@@ -1199,12 +1427,21 @@ pub const Runtime = struct {
                 var dictionary_frame = RootFrame{};
                 self.pushRoots(&dictionary_frame, &rooted, rooted.len);
                 defer self.popRoots(&dictionary_frame);
+                const dictionary = &rooted[0].object().?.payload.dictionary;
+                // A string key resolves straight through the index without
+                // materializing UTF-16 units; other keys keep the text path
+                // because the prototype walk needs it either way.
+                if (isString(rooted[1])) {
+                    if (dictionary.findByKey(rooted[1])) |index| break :blk dictionary.entries.items[index].value;
+                }
                 const key_units = valueUtf16Alloc(self, rooted[1]) catch |failure| {
                     self.setFailure(failure);
                     break :blk .{};
                 };
                 defer self.allocator.free(key_units);
-                if (dictionaryOwnProperty(rooted[0], key_units)) |value| break :blk value;
+                if (!isString(rooted[1])) {
+                    if (dictionary.findByUnits(key_units)) |index| break :blk dictionary.entries.items[index].value;
+                }
                 rooted[2] = (tableInheritedProperty(self, rooted[0], .dictionary, key_units) catch |failure| {
                     self.setFailure(failure);
                     break :blk .{};
@@ -1255,12 +1492,7 @@ pub const Runtime = struct {
                 defer self.popRoots(&frame);
                 rooted[1] = try self.propertyKey(rooted[1]);
                 var has_own_prototype_key = false;
-                if (sameKey(rooted[1], staticStringValue("__proto__"))) for (entries.items) |entry| {
-                    if (sameKey(entry.key, rooted[1])) {
-                        has_own_prototype_key = true;
-                        break;
-                    }
-                };
+                if (sameKey(rooted[1], staticStringValue("__proto__"))) has_own_prototype_key = entries.findByKey(rooted[1]) != null;
                 if (!has_own_prototype_key and sameKey(rooted[1], staticStringValue("__proto__"))) {
                     if (rooted[2].tag == @intFromEnum(Tag.null_value) or rooted[2].object() != null) {
                         object.prototype = rooted[2];
@@ -1433,11 +1665,12 @@ pub const Runtime = struct {
     /// Resolve an own named property shared by all extensible AOT objects.
     /// Array indices remain handled by `aotArrayOwnPropertyGetUnits` before
     /// reaching this helper.
-    pub fn aotObjectOwnPropertyGetUnits(self: *Runtime, object: *const Object, key_units: []const u16) ?Value {
-        for (object.array_properties.items) |property| {
-            if (self.aotPropertyKeyMatchesUnits(property.key, key_units)) return property.value;
-        }
-        return null;
+    pub fn aotObjectOwnPropertyGetUnits(_: *Runtime, object: *const Object, key_units: []const u16) ?Value {
+        // Counter updates are diagnostics, not logical mutation; callers
+        // only ever supply live objects, so the const is a signature detail.
+        const properties = @constCast(&object.array_properties);
+        const index = properties.findByUnits(key_units) orelse return null;
+        return properties.entries.items[index].value;
     }
 
     pub fn aotPropertyKeyMatchesUnits(_: *Runtime, key: Value, units: []const u16) bool {
@@ -1509,7 +1742,7 @@ pub const Runtime = struct {
                 break :blk result;
             },
             .dictionary => blk: {
-                const entry = iterator.source.object().?.payload.dictionary.items[iterator.index];
+                const entry = iterator.source.object().?.payload.dictionary.entries.items[iterator.index];
                 if (key_target) |target| target.* = entry.key;
                 iterator.index += 1;
                 if (value_target) |target| target.* = entry.value;
@@ -1526,12 +1759,12 @@ pub const Runtime = struct {
         return self.createString(units[index .. index + 1]) catch .{};
     }
 
-    pub fn setDictionary(self: *Runtime, entries: *std.ArrayList(DictionaryEntry), key: Value, value: Value) !void {
-        for (entries.items) |*entry| if (sameKey(entry.key, key)) {
-            entry.value = value;
-            return;
-        };
-        try entries.append(self.allocator, .{ .key = key, .value = value });
+    /// Single mutation point for ordered key/value storage.  All insert,
+    /// replace, and delete paths reach `AotDictionary`, which keeps its
+    /// lookup index consistent and preserves insertion order for
+    /// enumeration.
+    pub fn setDictionary(self: *Runtime, entries: *AotDictionary, key: Value, value: Value) !void {
+        try entries.set(self.allocator, key, value);
     }
 
     pub fn propertyKey(self: *Runtime, key: Value) !Value {

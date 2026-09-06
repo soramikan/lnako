@@ -15,6 +15,32 @@ pub export fn lnako_aot_string_new(out: *state.Value, units: ?[*]const u16, len:
     out.* = runtime.createString(source) catch return;
 }
 
+/// Return the canonical object for an emitted string literal.  Each slot is
+/// filled once so every use of the same literal shares one string object and
+/// skips both the allocation and the UTF-16 copy; the literal table keeps
+/// the cached strings reachable across collections.
+pub export fn lnako_aot_string_literal(out: *state.Value, units: ?[*]const u16, len: usize, index: usize) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (state.active_runtime) |*value| value else return;
+    if (index < runtime.literal_values.items.len) {
+        const cached = runtime.literal_values.items[index];
+        if (cached.tag != @intFromEnum(state.Tag.undefined)) {
+            out.* = cached;
+            return;
+        }
+    }
+    const source = if (units) |pointer| pointer[0..len] else if (len == 0) &.{} else return;
+    const created = runtime.createString(source) catch return;
+    while (runtime.literal_values.items.len <= index) {
+        runtime.literal_values.append(runtime.allocator, .{}) catch {
+            out.* = created;
+            return;
+        };
+    }
+    runtime.literal_values.items[index] = created;
+    out.* = created;
+}
+
 pub export fn lnako_aot_print_utf16(value: *const state.Value, newline: bool) callconv(.c) void {
     const object = value.object() orelse return;
     if (object.payload != .utf16_string) return;

@@ -89,7 +89,7 @@ pub fn nodePostDataBuiltin(runtime: *Runtime, arguments: []const Value) !Value {
     defer output.deinit();
     const parameters = arguments[0];
     if (parameters.tag == @intFromEnum(Tag.dictionary)) {
-        for (parameters.object().?.payload.dictionary.items, 0..) |entry, index| {
+        for (parameters.object().?.payload.dictionary.entries.items, 0..) |entry, index| {
             if (index > 0) try output.writer.writeByte('&');
             const key = try valueUtf8LossyAlloc(runtime, entry.key);
             defer runtime.allocator.free(key);
@@ -107,7 +107,7 @@ pub fn aotClientDictionaryGetAscii(value: Value, name: []const u8) ?Value {
     if (value.tag != @intFromEnum(Tag.dictionary)) return null;
     const object = value.object() orelse return null;
     if (object.payload != .dictionary) return null;
-    for (object.payload.dictionary.items) |entry| {
+    for (object.payload.dictionary.entries.items) |entry| {
         const matches = switch (@as(Tag, @enumFromInt(entry.key.tag))) {
             .static_utf8_string => std.mem.eql(u8, staticUtf8(entry.key), name),
             .utf16_string => if (entry.key.object()) |key_object| blk: {
@@ -155,7 +155,7 @@ pub fn aotClientPrepareAjax(runtime: *Runtime, ajax_options: ?*Value, url_value:
         if (headers_value.tag != @intFromEnum(Tag.dictionary)) return request;
         const headers_object = headers_value.object() orelse return request;
         if (headers_object.payload != .dictionary) return request;
-        for (headers_object.payload.dictionary.items) |entry| {
+        for (headers_object.payload.dictionary.entries.items) |entry| {
             const name = try valueUtf8LossyAlloc(runtime, entry.key);
             defer runtime.allocator.free(name);
             const value = try valueUtf8LossyAlloc(runtime, entry.value);
@@ -185,7 +185,7 @@ pub fn aotClientFormEncodedBody(runtime: *Runtime, parameters: Value) ![]u8 {
     if (parameters.tag == @intFromEnum(Tag.dictionary)) {
         const object = parameters.object() orelse return error.InvalidDictionary;
         if (object.payload != .dictionary) return error.InvalidDictionary;
-        for (object.payload.dictionary.items, 0..) |entry, index| {
+        for (object.payload.dictionary.entries.items, 0..) |entry, index| {
             if (index > 0) try output.writer.writeByte('&');
             const key = try valueUtf8LossyAlloc(runtime, entry.key);
             defer runtime.allocator.free(key);
@@ -205,7 +205,7 @@ pub fn aotClientMultipartFields(runtime: *Runtime, parameters: Value, boundary: 
     if (parameters.tag == @intFromEnum(Tag.dictionary)) {
         const object = parameters.object() orelse return error.InvalidDictionary;
         if (object.payload != .dictionary) return error.InvalidDictionary;
-        for (object.payload.dictionary.items) |entry| {
+        for (object.payload.dictionary.entries.items) |entry| {
             const key = try valueUtf8LossyAlloc(runtime, entry.key);
             defer runtime.allocator.free(key);
             const value = try valueUtf8LossyAlloc(runtime, entry.value);

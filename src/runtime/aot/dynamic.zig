@@ -270,7 +270,7 @@ pub fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror
             try roots.protect(&prototype);
             result.array.prototype = prototype;
             for (value.object().?.payload.array.items) |item| _ = try result.array.push(try aotToDynamicValue(state, item));
-            for (value.object().?.array_properties.items) |property| {
+            for (value.object().?.array_properties.entries.items) |property| {
                 var key = try aotToDynamicValue(state, property.key);
                 var item = try aotToDynamicValue(state, property.value);
                 try roots.protect(&key);
@@ -288,7 +288,7 @@ pub fn aotToDynamicValue(state: *DynamicInterpreterState, value: Value) anyerror
             var roots = state.value_runtime.rootFrame();
             defer roots.deinit();
             try roots.protect(&result);
-            for (value.object().?.payload.dictionary.items) |entry| {
+            for (value.object().?.payload.dictionary.entries.items) |entry| {
                 var key = try aotToDynamicValue(state, entry.key);
                 var item = try aotToDynamicValue(state, entry.value);
                 try roots.protect(&key);

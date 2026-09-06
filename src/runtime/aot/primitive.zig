@@ -130,7 +130,7 @@ pub fn cutLengthProperty(runtime: *Runtime, value: Value) !Value {
 }
 
 pub fn dictionaryLengthValue(value: Value) Value {
-    const entries = value.object().?.payload.dictionary.items;
+    const entries = value.object().?.payload.dictionary.entries.items;
     for (entries) |entry| {
         const is_length = switch (@as(Tag, @enumFromInt(entry.key.tag))) {
             .static_utf8_string => std.mem.eql(u8, staticUtf8(entry.key), "length"),

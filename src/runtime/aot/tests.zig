@@ -1876,7 +1876,7 @@ test "AOT対応ブラウザ一覧取得はv3.7.24の辞書をキャッシュす�
     roots[0] = try caniuseBrowsersBuiltin(&runtime);
     roots[1] = try caniuseBrowsersBuiltin(&runtime);
     try std.testing.expectEqual(roots[0].payload, roots[1].payload);
-    try std.testing.expectEqual(@as(usize, 16), roots[0].object().?.payload.dictionary.items.len);
+    try std.testing.expectEqual(@as(usize, 16), roots[0].object().?.payload.dictionary.entries.items.len);
     roots[2] = dictionaryProperty(roots[0], &.{ 'c', 'h', 'r', 'o', 'm', 'e' });
     try std.testing.expectEqual(Tag.array, @as(Tag, @enumFromInt(roots[2].tag)));
     try std.testing.expectEqual(@as(usize, 10), roots[2].object().?.payload.array.items.len);
@@ -1894,7 +1894,7 @@ test "AOTブラウザ名変換表はv3.7.24の辞書をキャッシュする" {
     roots[0] = try caniuseAgentsBuiltin(&runtime);
     roots[1] = try caniuseAgentsBuiltin(&runtime);
     try std.testing.expectEqual(roots[0].payload, roots[1].payload);
-    try std.testing.expectEqual(@as(usize, 19), roots[0].object().?.payload.dictionary.items.len);
+    try std.testing.expectEqual(@as(usize, 19), roots[0].object().?.payload.dictionary.entries.items.len);
     roots[2] = dictionaryProperty(roots[0], &.{ 'c', 'h', 'r', 'o', 'm', 'e' });
     try expectUtf16String(&runtime, roots[2], "Chrome");
 }
@@ -2632,11 +2632,11 @@ test "AOT配列変更命令はspliceの数値化と辞書のtruthy規則を保�
     const zero_key = [_]Value{ roots[12], staticStringValue("zero") };
     lnako_aot_builtin_call(&roots[13], &zero_key, zero_key.len, @intFromEnum(aot_builtin.Command.array_cut));
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[13].tag)));
-    try std.testing.expectEqual(@as(usize, 3), roots[12].object().?.payload.dictionary.items.len);
+    try std.testing.expectEqual(@as(usize, 3), roots[12].object().?.payload.dictionary.entries.items.len);
     const yes_key = [_]Value{ roots[12], staticStringValue("yes") };
     lnako_aot_builtin_call(&roots[14], &yes_key, yes_key.len, @intFromEnum(aot_builtin.Command.array_cut));
     try std.testing.expectEqual(@as(f64, 7), valueToNumber(roots[14]));
-    try std.testing.expectEqual(@as(usize, 2), roots[12].object().?.payload.dictionary.items.len);
+    try std.testing.expectEqual(@as(usize, 2), roots[12].object().?.payload.dictionary.entries.items.len);
 
     roots[15] = try state.active_runtime.?.createArray(&.{ numberValue(1), numberValue(2) });
     const pop_arguments = [_]Value{roots[15]};
@@ -3460,7 +3460,7 @@ test "配列の伸長と辞書の挿入位置を保った更新を行う" {
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(runtime.indexGet(array, numberValue(1)).tag)));
     const dictionary = try runtime.createDictionary(&.{ staticStringValue("x"), numberValue(1), staticStringValue("y"), numberValue(2) });
     try runtime.indexSet(dictionary, staticStringValue("x"), numberValue(7));
-    const entries = dictionary.object().?.payload.dictionary.items;
+    const entries = dictionary.object().?.payload.dictionary.entries.items;
     try std.testing.expectEqual(@as(usize, 2), entries.len);
     try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 7))), entries[0].value.payload);
 }
@@ -4036,7 +4036,7 @@ test "AOT配列の集約・入替・連番・要素生成を公式境界で処�
     roots[19] = try arrayFillBuiltin(&runtime, roots[18], numberValue(1));
     const array_buffer_clone = (try arrayItems(roots[19])).items[0];
     try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(array_buffer_clone.tag)));
-    try std.testing.expectEqual(@as(usize, 0), array_buffer_clone.object().?.payload.dictionary.items.len);
+    try std.testing.expectEqual(@as(usize, 0), array_buffer_clone.object().?.payload.dictionary.entries.items.len);
 }
 
 test "AOT配列生成の安全上限を命令別の診断へ変換する" {
@@ -4814,7 +4814,7 @@ test "AOT表検索系は行プロパティとraw開始値を公式どおり処�
     roots[4] = try runtime.createString(&.{ 'a', 0xd83d, 0xde00 });
     roots[5] = try runtime.createString(&.{ 'l', 'e', 'n', 'g', 't', 'h' });
     roots[6] = try runtime.createString(&.{'3'});
-    try roots[3].object().?.payload.dictionary.append(runtime.allocator, .{ .key = roots[5], .value = roots[6] });
+    try roots[3].object().?.payload.dictionary.appendEntry(runtime.allocator, .{ .key = roots[5], .value = roots[6] });
     roots[9] = try runtime.createArray(&.{});
     roots[7] = try runtime.createArray(&.{ roots[9], roots[4], roots[3] });
     const columns = try tableBuiltin(&runtime, .table_column_count, roots[7..8]);
@@ -6696,7 +6696,7 @@ pub fn aotDictionaryPropertyKeyAllocationTest(allocator: std.mem.Allocator) !voi
     defer runtime.popRoots(&frame);
     runtime.next_collection = runtime.object_count;
     roots[1] = try runtime.createDictionary(&.{ roots[0], numberValue(1), staticStringValue("1"), numberValue(2), numberValue(2), numberValue(3), staticStringValue("2"), numberValue(4) });
-    const entries = roots[1].object().?.payload.dictionary.items;
+    const entries = roots[1].object().?.payload.dictionary.entries.items;
     try std.testing.expectEqual(@as(usize, 2), entries.len);
     try std.testing.expectEqual(@as(f64, 2), valueToNumber(entries[0].value));
     try std.testing.expectEqual(@as(f64, 4), valueToNumber(entries[1].value));
@@ -6716,7 +6716,7 @@ pub fn aotDictionaryBigIntPropertyKeyAllocationTest(allocator: std.mem.Allocator
     roots[1] = try runtime.createBigInt("2n");
     runtime.next_collection = runtime.object_count;
     roots[2] = try runtime.createDictionary(&.{ roots[0], numberValue(1), staticStringValue("1"), numberValue(2), roots[1], numberValue(3), staticStringValue("2"), numberValue(4) });
-    const entries = roots[2].object().?.payload.dictionary.items;
+    const entries = roots[2].object().?.payload.dictionary.entries.items;
     try std.testing.expectEqual(@as(usize, 2), entries.len);
     try std.testing.expectEqual(@as(f64, 2), valueToNumber(entries[0].value));
     try std.testing.expectEqual(@as(f64, 4), valueToNumber(entries[1].value));
@@ -6761,4 +6761,144 @@ test "AOT traceは無効確定後にロックを取得しない" {
     try std.testing.expectEqual(@as(u64, 0), runtime.dispatch_trace.lock_attempts);
     try std.testing.expectEqual(@as(u64, 0), runtime.global_trace.lock_attempts);
     try std.testing.expectEqual(@as(u64, 0), runtime.literal_trace.lock_attempts);
+}
+
+test "AOT辞書は閾値超過で索引を構築し挿入順と値を保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 3;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createDictionary(&.{});
+    const dictionary = &roots[0].object().?.payload.dictionary;
+    const count = state.aot_dictionary_index_threshold + 8;
+    var index: usize = 0;
+    while (index < count) : (index += 1) {
+        const text = try std.fmt.allocPrint(std.testing.allocator, "key{d}", .{index});
+        defer std.testing.allocator.free(text);
+        const units = try std.testing.allocator.alloc(u16, text.len);
+        defer std.testing.allocator.free(units);
+        _ = try std.unicode.utf8ToUtf16Le(units, text);
+        roots[1] = try runtime.createString(units);
+        roots[2] = numberValue(@floatFromInt(index));
+        try runtime.setDictionary(dictionary, roots[1], roots[2]);
+    }
+    try std.testing.expect(dictionary.index_valid);
+    try std.testing.expectEqual(@as(usize, count), dictionary.entries.items.len);
+
+    // 索引経由の検索が挿入した値を返し、先頭・末尾・中間の順序が保たれる。
+    try std.testing.expect(dictionary.findByUnits(&.{ 'k', 'e', 'y', '0' }) != null);
+    try std.testing.expectEqual(@as(usize, 0), dictionary.findByUnits(&.{ 'k', 'e', 'y', '0' }).?);
+    const last = try std.fmt.allocPrint(std.testing.allocator, "key{d}", .{count - 1});
+    defer std.testing.allocator.free(last);
+    const last_units = try std.testing.allocator.alloc(u16, last.len);
+    defer std.testing.allocator.free(last_units);
+    _ = try std.unicode.utf8ToUtf16Le(last_units, last);
+    try std.testing.expectEqual(@as(usize, count - 1), dictionary.findByUnits(last_units).?);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, @floatFromInt(count - 1)))), dictionary.entries.items[count - 1].value.payload);
+    try std.testing.expect(dictionary.indexed_lookups > 0);
+}
+
+test "AOT辞書は更新・削除・再挿入で索引と挿入順を維持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 3;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createDictionary(&.{});
+    const dictionary = &roots[0].object().?.payload.dictionary;
+    var index: usize = 0;
+    while (index < state.aot_dictionary_index_threshold + 4) : (index += 1) {
+        const text = try std.fmt.allocPrint(std.testing.allocator, "k{d}", .{index});
+        defer std.testing.allocator.free(text);
+        const units = try std.testing.allocator.alloc(u16, text.len);
+        defer std.testing.allocator.free(units);
+        _ = try std.unicode.utf8ToUtf16Le(units, text);
+        roots[1] = try runtime.createString(units);
+        try runtime.setDictionary(dictionary, roots[1], numberValue(@floatFromInt(index)));
+    }
+    try std.testing.expect(dictionary.index_valid);
+
+    // 既存キーの上書きは位置を変えない。
+    roots[1] = try runtime.createString(&.{ 'k', '3' });
+    try runtime.setDictionary(dictionary, roots[1], numberValue(99));
+    try std.testing.expectEqual(@as(usize, 3), dictionary.findByUnits(&.{ 'k', '3' }).?);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 99))), dictionary.entries.items[3].value.payload);
+
+    // 途中削除は順序を保ったまま索引を再構築する。
+    _ = dictionary.orderedRemoveEntry(runtime.allocator, 1);
+    try std.testing.expect(dictionary.index_valid);
+    try std.testing.expectEqual(@as(usize, state.aot_dictionary_index_threshold + 3), dictionary.entries.items.len);
+    try std.testing.expect(dictionary.findByUnits(&.{ 'k', '1' }) == null);
+    try std.testing.expectEqual(@as(usize, 1), dictionary.findByUnits(&.{ 'k', '2' }).?);
+    try std.testing.expectEqual(@as(usize, 2), dictionary.findByUnits(&.{ 'k', '3' }).?);
+    const entries = dictionary.entries.items;
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 0))), entries[0].value.payload);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 2))), entries[1].value.payload);
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 99))), entries[2].value.payload);
+}
+
+test "AOT辞書索引は重複キーの先頭とUTF-8静的キーを正しく解決する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{ .{}, .{}, .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createDictionary(&.{});
+    const dictionary = &roots[0].object().?.payload.dictionary;
+    // 索引が構築される件数まで一意キーを入れてから重複キーをappendする。
+    var index: usize = 0;
+    while (index < state.aot_dictionary_index_threshold) : (index += 1) {
+        const text = try std.fmt.allocPrint(std.testing.allocator, "u{d}", .{index});
+        defer std.testing.allocator.free(text);
+        const units = try std.testing.allocator.alloc(u16, text.len);
+        defer std.testing.allocator.free(units);
+        _ = try std.unicode.utf8ToUtf16Le(units, text);
+        roots[1] = try runtime.createString(units);
+        try dictionary.appendEntry(runtime.allocator, .{ .key = roots[1], .value = numberValue(@floatFromInt(index)) });
+    }
+    try std.testing.expect(dictionary.index_valid);
+    roots[1] = try runtime.createString(&.{ 'd', 'u', 'p' });
+    try dictionary.appendEntry(runtime.allocator, .{ .key = roots[1], .value = numberValue(1) });
+    roots[2] = try runtime.createString(&.{ 'd', 'u', 'p' });
+    try dictionary.appendEntry(runtime.allocator, .{ .key = roots[2], .value = numberValue(2) });
+    try std.testing.expectEqual(@as(usize, state.aot_dictionary_index_threshold), dictionary.findByUnits(&.{ 'd', 'u', 'p' }).?);
+
+    // 静的UTF-8リテラルと実行時UTF-16文字列は同じbucketに落ちる。
+    roots[1] = try runtime.createString(&.{ 's', 't', 'a', 't', 'i', 'c' });
+    try runtime.setDictionary(dictionary, roots[1], numberValue(7));
+    try std.testing.expect(dictionary.findByKey(staticStringValue("static")) != null);
+    const found = dictionary.findByKey(staticStringValue("static")).?;
+    try std.testing.expectEqual(@as(u64, @bitCast(@as(f64, 7))), dictionary.entries.items[found].value.payload);
+}
+
+test "AOT辞書索引はGC走査で参照を失わない" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    var roots = [_]Value{.{}} ** 2;
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    roots[0] = try runtime.createDictionary(&.{});
+    const dictionary = &roots[0].object().?.payload.dictionary;
+    var index: usize = 0;
+    while (index < state.aot_dictionary_index_threshold) : (index += 1) {
+        const text = try std.fmt.allocPrint(std.testing.allocator, "g{d}", .{index});
+        defer std.testing.allocator.free(text);
+        const units = try std.testing.allocator.alloc(u16, text.len);
+        defer std.testing.allocator.free(units);
+        _ = try std.unicode.utf8ToUtf16Le(units, text);
+        roots[1] = try runtime.createString(units);
+        try runtime.setDictionary(dictionary, roots[1], roots[1]);
+    }
+    try std.testing.expect(dictionary.index_valid);
+    try std.testing.expectEqual(@as(usize, 0), runtime.collect());
+    try std.testing.expect(dictionary.findByUnits(&.{ 'g', '5' }) != null);
 }

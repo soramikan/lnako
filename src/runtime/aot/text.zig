@@ -240,7 +240,7 @@ pub fn csvQuoteCell(runtime: *Runtime, source: Value, delimiter: []const u16) !V
 
 pub fn csvSetOptions(runtime: *Runtime, csv_state: *AotCsvState, source: Value) !void {
     if (source.tag != @intFromEnum(Tag.dictionary)) return;
-    for (source.object().?.payload.dictionary.items) |entry| {
+    for (source.object().?.payload.dictionary.entries.items) |entry| {
         const key_units = try valueUtf16Alloc(runtime, entry.key);
         defer runtime.allocator.free(key_units);
         const key = try std.unicode.utf16LeToUtf8Alloc(runtime.allocator, key_units);
@@ -542,7 +542,7 @@ const TomlAotParser = struct {
         var current = root;
         for (path, 0..) |segment, index| {
             const last = index + 1 == path.len;
-            const existing = try tomlAotDictionaryGet(self.runtime, current.object().?.payload.dictionary.items, segment);
+            const existing = try tomlAotDictionaryGet(self.runtime, current.object().?.payload.dictionary.entries.items, segment);
             if (last and array_table) {
                 var array_value = existing orelse blk: {
                     const created = try self.runtime.createArray(&.{});
@@ -577,7 +577,7 @@ const TomlAotParser = struct {
         if (path.len == 0) return error.InvalidTomlKey;
         var current = base;
         for (path[0 .. path.len - 1]) |segment| {
-            if (try tomlAotDictionaryGet(self.runtime, current.object().?.payload.dictionary.items, segment)) |found| {
+            if (try tomlAotDictionaryGet(self.runtime, current.object().?.payload.dictionary.entries.items, segment)) |found| {
                 if (!tomlAotIsTableDictionary(found)) return error.InvalidTomlKey;
                 current = found;
             } else {
@@ -586,7 +586,7 @@ const TomlAotParser = struct {
                 current = created;
             }
         }
-        if (try tomlAotDictionaryGet(self.runtime, current.object().?.payload.dictionary.items, path[path.len - 1]) != null) return error.DuplicateTomlKey;
+        if (try tomlAotDictionaryGet(self.runtime, current.object().?.payload.dictionary.entries.items, path[path.len - 1]) != null) return error.DuplicateTomlKey;
         try tomlAotPut(self.runtime, current, path[path.len - 1], assigned_value);
     }
 
@@ -718,14 +718,14 @@ pub fn tomlAotWriteTable(runtime: *Runtime, output: *std.ArrayList(u8), dictiona
         try tomlAotWriteHeader(runtime, output, path.items, false);
         try output.append(runtime.allocator, '\n');
     }
-    for (dictionary.payload.dictionary.items) |entry| {
+    for (dictionary.payload.dictionary.entries.items) |entry| {
         if (tomlAotIsTableDictionary(entry.value) or tomlAotIsArrayOfDictionaries(entry.value)) continue;
         try tomlAotWriteKey(runtime, output, entry.key);
         try output.appendSlice(runtime.allocator, " = ");
         try tomlAotWriteValue(runtime, output, entry.value, active_dictionaries, active_arrays);
         try output.append(runtime.allocator, '\n');
     }
-    for (dictionary.payload.dictionary.items) |entry| {
+    for (dictionary.payload.dictionary.entries.items) |entry| {
         if (!tomlAotIsTableDictionary(entry.value) and !tomlAotIsArrayOfDictionaries(entry.value)) continue;
         if (output.items.len > 0 and output.items[output.items.len - 1] != '\n') try output.append(runtime.allocator, '\n');
         if (output.items.len > 0 and !(output.items.len >= 2 and output.items[output.items.len - 2] == '\n')) try output.append(runtime.allocator, '\n');
@@ -811,7 +811,7 @@ pub fn tomlAotWriteValue(runtime: *Runtime, output: *std.ArrayList(u8), value: V
             try active_dictionaries.put(runtime.allocator, object, {});
             defer _ = active_dictionaries.remove(object);
             try output.appendSlice(runtime.allocator, "{ ");
-            for (object.payload.dictionary.items, 0..) |entry, index| {
+            for (object.payload.dictionary.entries.items, 0..) |entry, index| {
                 if (index > 0) try output.appendSlice(runtime.allocator, ", ");
                 try tomlAotWriteKey(runtime, output, entry.key);
                 try output.appendSlice(runtime.allocator, " = ");

@@ -119,7 +119,7 @@ pub fn jsonWriteValue(
             }
             try active_objects.append(runtime.allocator, .{ .object = object, .constructor = "Object", .path = path });
             defer _ = active_objects.pop();
-            const dictionary_length = object.payload.dictionary.items.len;
+            const dictionary_length = object.payload.dictionary.entries.items.len;
             const key_roots = try runtime.allocator.alloc(Value, dictionary_length);
             defer runtime.allocator.free(key_roots);
             @memset(key_roots, .{});
@@ -128,7 +128,7 @@ pub fn jsonWriteValue(
             defer runtime.popRoots(&key_frame);
             var entries: std.ArrayList(JsonAotEntry) = .empty;
             defer entries.deinit(runtime.allocator);
-            for (object.payload.dictionary.items, 0..) |entry, insertion_index| {
+            for (object.payload.dictionary.entries.items, 0..) |entry, insertion_index| {
                 const normalized_key = try jsonAotPropertyKey(runtime, entry.key);
                 key_roots[insertion_index] = normalized_key;
                 var replaced = false;

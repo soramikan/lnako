@@ -119,7 +119,7 @@ pub fn httpServerBuiltin(runtime: *Runtime, command: aot_builtin.Command, argume
             runtime.http_server_state.clearHeaders(runtime.allocator);
             const headers = arguments[1];
             if (headers.tag == @intFromEnum(Tag.dictionary)) {
-                for (headers.object().?.payload.dictionary.items) |entry| {
+                for (headers.object().?.payload.dictionary.entries.items) |entry| {
                     const name = try valueUtf8LossyAlloc(runtime, entry.key);
                     errdefer runtime.allocator.free(name);
                     const value = try valueUtf8LossyAlloc(runtime, entry.value);

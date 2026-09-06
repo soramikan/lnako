@@ -105,21 +105,8 @@ pub fn dictionaryOwnProperty(value: Value, key: []const u16) ?Value {
     if (value.tag != @intFromEnum(Tag.dictionary)) return null;
     const object = value.object() orelse return null;
     if (object.payload != .dictionary) return null;
-    for (object.payload.dictionary.items) |entry| {
-        const matches = switch (@as(Tag, @enumFromInt(entry.key.tag))) {
-            .static_utf8_string => blk: {
-                var units: [64]u16 = undefined;
-                const utf8 = staticUtf8(entry.key);
-                if (utf8.len > units.len) break :blk false;
-                const converted = std.unicode.utf8ToUtf16Le(&units, utf8) catch break :blk false;
-                break :blk std.mem.eql(u16, units[0..converted], key);
-            },
-            .utf16_string => std.mem.eql(u16, entry.key.object().?.payload.utf16_string, key),
-            else => false,
-        };
-        if (matches) return entry.value;
-    }
-    return null;
+    const index = object.payload.dictionary.findByUnits(key) orelse return null;
+    return object.payload.dictionary.entries.items[index].value;
 }
 
 pub fn dictionaryPrototypeProperty(value: Value, key: []const u16) ?Value {
@@ -252,6 +239,9 @@ const AotEnumerableDictionaryEntry = struct {
 };
 
 pub fn aotPropertyKeysEqual(runtime: *Runtime, left: Value, right: Value) !bool {
+    // String keys compare directly across representations; only non-string
+    // keys need their canonical text materialized.
+    if (isString(left) and isString(right)) return sameKey(left, right);
     const left_units = try valueUtf16Alloc(runtime, left);
     defer runtime.allocator.free(left_units);
     const right_units = try valueUtf16Alloc(runtime, right);
@@ -259,10 +249,43 @@ pub fn aotPropertyKeysEqual(runtime: *Runtime, left: Value, right: Value) !bool 
     return std.mem.eql(u16, left_units, right_units);
 }
 
-pub fn aotEnumerableKeyWasYielded(runtime: *Runtime, yielded: []const Value, key: Value) !bool {
-    for (yielded) |candidate| if (try aotPropertyKeysEqual(runtime, candidate, key)) return true;
-    return false;
-}
+/// `for...in` dedup over the canonical text of a property key.  Each
+/// yielded key contributes its units once; lookups hash the query's
+/// canonical units and verify against the bucket, so the check stays O(1)
+/// while keeping `aotPropertyKeysEqual`'s stringified semantics.
+const AotEnumerableKeyDedup = struct {
+    keys: std.ArrayList(Value) = .empty,
+    units: std.ArrayList([]u16) = .empty,
+    buckets: std.AutoHashMapUnmanaged(u64, std.ArrayListUnmanaged(usize)) = .empty,
+
+    fn deinit(self: *AotEnumerableKeyDedup, runtime: *Runtime) void {
+        var iterator = self.buckets.valueIterator();
+        while (iterator.next()) |bucket| bucket.deinit(runtime.allocator);
+        self.buckets.deinit(runtime.allocator);
+        for (self.units.items) |unit| runtime.allocator.free(unit);
+        self.units.deinit(runtime.allocator);
+        self.keys.deinit(runtime.allocator);
+    }
+
+    /// Return true when `key` was already yielded; otherwise record it.
+    fn markYielded(self: *AotEnumerableKeyDedup, runtime: *Runtime, key: Value) !bool {
+        const view = try aot_state.valueUtf16View(runtime, key);
+        defer view.deinit(runtime);
+        const hash = aot_state.aotIndexHashUnits(view.units);
+        const bucket = try self.buckets.getOrPut(runtime.allocator, hash);
+        if (!bucket.found_existing) bucket.value_ptr.* = .empty;
+        for (bucket.value_ptr.items) |index| {
+            if (std.mem.eql(u16, self.units.items[index], view.units)) return true;
+        }
+        const owned = try runtime.allocator.dupe(u16, view.units);
+        errdefer runtime.allocator.free(owned);
+        const index = self.units.items.len;
+        try self.units.append(runtime.allocator, owned);
+        try self.keys.append(runtime.allocator, key);
+        try bucket.value_ptr.append(runtime.allocator, index);
+        return false;
+    }
+};
 
 /// Collect a dictionary's enumerable own keys and custom prototype keys in
 /// ECMAScript `for...in` order.  Standard prototype methods are non-enumerable
@@ -270,21 +293,20 @@ pub fn aotEnumerableKeyWasYielded(runtime: *Runtime, yielded: []const Value, key
 pub fn aotEnumerableDictionaryEntries(runtime: *Runtime, source: Value) ![]AotEnumerableDictionaryEntry {
     var entries: std.ArrayList(AotEnumerableDictionaryEntry) = .empty;
     errdefer entries.deinit(runtime.allocator);
-    var yielded: std.ArrayList(Value) = .empty;
-    defer yielded.deinit(runtime.allocator);
+    var yielded: AotEnumerableKeyDedup = .{};
+    defer yielded.deinit(runtime);
 
     var current = source;
     var depth: usize = 0;
     while (depth < 256) : (depth += 1) {
         const object = current.object() orelse break;
         if (object.payload != .dictionary) break;
-        const dictionary = object.payload.dictionary.items;
+        const dictionary = object.payload.dictionary.entries.items;
         const order = try aotDictionaryOrder(runtime, dictionary);
         defer runtime.allocator.free(order);
         for (order) |index| {
             const entry = dictionary[index];
-            if (try aotEnumerableKeyWasYielded(runtime, yielded.items, entry.key)) continue;
-            try yielded.append(runtime.allocator, entry.key);
+            if (try yielded.markYielded(runtime, entry.key)) continue;
             try entries.append(runtime.allocator, .{ .key = entry.key, .value = entry.value });
         }
         current = object.prototype;
@@ -331,7 +353,7 @@ pub fn dictionaryKeysBuiltin(runtime: *Runtime, source: Value) !Value {
                 const key = try runtime.createString(units[0..unit_len]);
                 try result.append(runtime.allocator, key);
             }
-            for (roots[0].object().?.array_properties.items) |property| try result.append(runtime.allocator, property.key);
+            for (roots[0].object().?.array_properties.entries.items) |property| try result.append(runtime.allocator, property.key);
         },
         .byte_buffer => {
             const buffer = roots[0].object().?.payload.byte_buffer;
@@ -343,7 +365,7 @@ pub fn dictionaryKeysBuiltin(runtime: *Runtime, source: Value) !Value {
                 const key = try runtime.createString(units[0..unit_len]);
                 try result.append(runtime.allocator, key);
             };
-            for (roots[0].object().?.array_properties.items) |property| try result.append(runtime.allocator, property.key);
+            for (roots[0].object().?.array_properties.entries.items) |property| try result.append(runtime.allocator, property.key);
             if (buffer.kind == .buffer) for (table_byte_buffer_buffer_enumerable_property_names) |name| {
                 var units: [128]u16 = undefined;
                 const unit_len = std.unicode.utf8ToUtf16Le(&units, name) catch return error.InvalidUtf8;
@@ -354,8 +376,8 @@ pub fn dictionaryKeysBuiltin(runtime: *Runtime, source: Value) !Value {
                 try result.append(runtime.allocator, key);
             };
         },
-        .function => for (roots[0].object().?.array_properties.items) |property| try result.append(runtime.allocator, property.key),
-        .promise => for (roots[0].object().?.array_properties.items) |property| try result.append(runtime.allocator, property.key),
+        .function => for (roots[0].object().?.array_properties.entries.items) |property| try result.append(runtime.allocator, property.key),
+        .promise => for (roots[0].object().?.array_properties.entries.items) |property| try result.append(runtime.allocator, property.key),
         else => return error.DictionaryKeysReceiver,
     }
     return roots[1];
@@ -379,12 +401,12 @@ pub fn dictionaryValuesBuiltin(runtime: *Runtime, source: Value) !Value {
             for (object.payload.array.items, 0..) |item, index| {
                 if (runtime.aotArrayIsPresent(object, index)) try result.append(runtime.allocator, item);
             }
-            for (object.array_properties.items) |property| try result.append(runtime.allocator, property.value);
+            for (object.array_properties.entries.items) |property| try result.append(runtime.allocator, property.value);
         },
         .byte_buffer => {
             const buffer = roots[0].object().?.payload.byte_buffer;
             if (buffer.kind != .array_buffer) for (buffer.bytes) |byte| try result.append(runtime.allocator, numberValue(@floatFromInt(byte)));
-            for (roots[0].object().?.array_properties.items) |property| try result.append(runtime.allocator, property.value);
+            for (roots[0].object().?.array_properties.entries.items) |property| try result.append(runtime.allocator, property.value);
             if (buffer.kind == .buffer) for (table_byte_buffer_buffer_enumerable_property_names) |name| {
                 var property: Value = undefined;
                 if (std.mem.eql(u8, name, "parent")) {
@@ -402,11 +424,24 @@ pub fn dictionaryValuesBuiltin(runtime: *Runtime, source: Value) !Value {
                 try result.append(runtime.allocator, property);
             };
         },
-        .function => for (roots[0].object().?.array_properties.items) |property| try result.append(runtime.allocator, property.value),
-        .promise => for (roots[0].object().?.array_properties.items) |property| try result.append(runtime.allocator, property.value),
+        .function => for (roots[0].object().?.array_properties.entries.items) |property| try result.append(runtime.allocator, property.value),
+        .promise => for (roots[0].object().?.array_properties.entries.items) |property| try result.append(runtime.allocator, property.value),
         else => return error.DictionaryValuesReceiver,
     }
     return roots[1];
+}
+
+/// Index of the first entry matching `key_units` under the stringified
+/// property-key rules of `aotPropertyKeyEqual`.  String keys resolve
+/// through the dictionary index; the rare non-string key still compares by
+/// its materialized text and keeps first-in-order precedence.
+fn aotDictionaryIndexForUnits(runtime: *Runtime, dictionary: *aot_state.AotDictionary, key_units: []const u16) !?usize {
+    const found = dictionary.findByUnits(key_units);
+    const limit = found orelse dictionary.entries.items.len;
+    for (dictionary.entries.items[0..limit], 0..) |entry, index| {
+        if (!isString(entry.key) and try aotPropertyKeyEqual(runtime, entry.key, key_units)) return index;
+    }
+    return found;
 }
 
 pub fn dictionaryRemoveBuiltin(runtime: *Runtime, source: Value, key: Value) !Value {
@@ -416,13 +451,10 @@ pub fn dictionaryRemoveBuiltin(runtime: *Runtime, source: Value, key: Value) !Va
     defer runtime.popRoots(&frame);
     switch (@as(Tag, @enumFromInt(roots[0].tag))) {
         .dictionary => {
-            const entries = &roots[0].object().?.payload.dictionary;
+            const dictionary = &roots[0].object().?.payload.dictionary;
             const key_units = try valueUtf16Alloc(runtime, roots[1]);
             defer runtime.allocator.free(key_units);
-            for (entries.items, 0..) |entry, index| if (try aotPropertyKeyEqual(runtime, entry.key, key_units)) {
-                _ = entries.orderedRemove(index);
-                break;
-            };
+            if (try aotDictionaryIndexForUnits(runtime, dictionary, key_units)) |index| _ = dictionary.orderedRemoveEntry(runtime.allocator, index);
             return roots[0];
         },
         .array => {
@@ -433,10 +465,7 @@ pub fn dictionaryRemoveBuiltin(runtime: *Runtime, source: Value, key: Value) !Va
                 _ = try runtime.aotArrayDeleteIndex(roots[0].object().?, index);
             } else {
                 const properties = &roots[0].object().?.array_properties;
-                for (properties.items, 0..) |property, index| if (runtime.aotPropertyKeyMatchesUnits(property.key, key_units)) {
-                    _ = properties.orderedRemove(index);
-                    break;
-                };
+                if (properties.findByUnits(key_units)) |index| _ = properties.orderedRemoveEntry(runtime.allocator, index);
             }
             return roots[0];
         },
@@ -451,10 +480,7 @@ pub fn dictionaryRemoveBuiltin(runtime: *Runtime, source: Value, key: Value) !Va
                 }
             };
             const properties = &roots[0].object().?.array_properties;
-            for (properties.items, 0..) |property, index| if (runtime.aotPropertyKeyMatchesUnits(property.key, key_units)) {
-                _ = properties.orderedRemove(index);
-                break;
-            };
+            if (properties.findByUnits(key_units)) |index| _ = properties.orderedRemoveEntry(runtime.allocator, index);
             return roots[0];
         },
         .function => {
@@ -462,20 +488,14 @@ pub fn dictionaryRemoveBuiltin(runtime: *Runtime, source: Value, key: Value) !Va
             defer runtime.allocator.free(key_units);
             if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) or std.mem.eql(u16, key_units, &.{ 'n', 'a', 'm', 'e' })) return roots[0];
             const properties = &roots[0].object().?.array_properties;
-            for (properties.items, 0..) |property, index| if (runtime.aotPropertyKeyMatchesUnits(property.key, key_units)) {
-                _ = properties.orderedRemove(index);
-                break;
-            };
+            if (properties.findByUnits(key_units)) |index| _ = properties.orderedRemoveEntry(runtime.allocator, index);
             return roots[0];
         },
         .promise => {
             const key_units = try valueUtf16Alloc(runtime, roots[1]);
             defer runtime.allocator.free(key_units);
             const properties = &roots[0].object().?.array_properties;
-            for (properties.items, 0..) |property, index| if (runtime.aotPropertyKeyMatchesUnits(property.key, key_units)) {
-                _ = properties.orderedRemove(index);
-                break;
-            };
+            if (properties.findByUnits(key_units)) |index| _ = properties.orderedRemoveEntry(runtime.allocator, index);
             return roots[0];
         },
         else => return error.DictionaryRemoveReceiver,
@@ -499,7 +519,7 @@ pub fn dictionaryHasBuiltin(runtime: *Runtime, source: Value, key: Value) !bool 
         .dictionary => {
             const key_units = try valueUtf16Alloc(runtime, roots[1]);
             defer runtime.allocator.free(key_units);
-            for (roots[0].object().?.payload.dictionary.items) |entry| if (try aotPropertyKeyEqual(runtime, entry.key, key_units)) return true;
+            if (try aotDictionaryIndexForUnits(runtime, &roots[0].object().?.payload.dictionary, key_units) != null) return true;
             return (try tableInheritedProperty(runtime, roots[0], .dictionary, key_units)) != null;
         },
         .array => {
@@ -509,13 +529,13 @@ pub fn dictionaryHasBuiltin(runtime: *Runtime, source: Value, key: Value) !bool 
             if (runtime.aotCanonicalArrayIndexUnits(key_units)) |index| {
                 return runtime.aotArrayIsPresent(roots[0].object().?, index);
             }
-            for (roots[0].object().?.array_properties.items) |property| if (runtime.aotPropertyKeyMatchesUnits(property.key, key_units)) return true;
+            if (roots[0].object().?.array_properties.findByUnits(key_units) != null) return true;
             return (try tableInheritedProperty(runtime, roots[0], .array, key_units)) != null;
         },
         .function => {
             const key_units = try valueUtf16Alloc(runtime, roots[1]);
             defer runtime.allocator.free(key_units);
-            for (roots[0].object().?.array_properties.items) |property| if (runtime.aotPropertyKeyMatchesUnits(property.key, key_units)) return true;
+            if (roots[0].object().?.array_properties.findByUnits(key_units) != null) return true;
             if (std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' }) or std.mem.eql(u16, key_units, &.{ 'n', 'a', 'm', 'e' })) return true;
             return (try tableInheritedProperty(runtime, roots[0], .function, key_units)) != null;
         },
@@ -524,7 +544,7 @@ pub fn dictionaryHasBuiltin(runtime: *Runtime, source: Value, key: Value) !bool 
             defer runtime.allocator.free(key_units);
             const object = roots[0].object() orelse return error.InvalidByteBuffer;
             const buffer = object.payload.byte_buffer;
-            for (object.array_properties.items) |property| if (runtime.aotPropertyKeyMatchesUnits(property.key, key_units)) return true;
+            if (object.array_properties.findByUnits(key_units) != null) return true;
             if (buffer.kind != .array_buffer) {
                 if (aotByteBufferAllowsStandardPrototype(roots[0]) and std.mem.eql(u16, key_units, &.{ 'l', 'e', 'n', 'g', 't', 'h' })) return true;
                 if (runtime.aotCanonicalArrayIndexUnits(key_units)) |index| return index < buffer.bytes.len;
@@ -534,7 +554,7 @@ pub fn dictionaryHasBuiltin(runtime: *Runtime, source: Value, key: Value) !bool 
         .promise => {
             const key_units = try valueUtf16Alloc(runtime, roots[1]);
             defer runtime.allocator.free(key_units);
-            for (roots[0].object().?.array_properties.items) |property| if (runtime.aotPropertyKeyMatchesUnits(property.key, key_units)) return true;
+            if (roots[0].object().?.array_properties.findByUnits(key_units) != null) return true;
             return false;
         },
         else => {
@@ -708,17 +728,10 @@ pub fn arrayCutBuiltin(runtime: *Runtime, source: Value, index: Value) !Value {
         const key_units = try valueUtf16Alloc(runtime, roots[1]);
         defer runtime.allocator.free(key_units);
         const entries = &object.payload.dictionary;
-        var own_index: ?usize = null;
-        for (entries.items, 0..) |entry, entry_index| {
-            if (try aotPropertyKeyEqual(runtime, entry.key, key_units)) {
-                own_index = entry_index;
-                break;
-            }
-        }
-        if (own_index) |entry_index| {
-            const old = entries.items[entry_index].value;
+        if (try aotDictionaryIndexForUnits(runtime, entries, key_units)) |entry_index| {
+            const old = entries.entries.items[entry_index].value;
             if (!valueTruthy(old)) return .{};
-            const removed = entries.orderedRemove(entry_index);
+            const removed = entries.orderedRemoveEntry(runtime.allocator, entry_index);
             return removed.value;
         }
         roots[2] = (try tableInheritedProperty(runtime, roots[0], .dictionary, key_units)) orelse return .{};

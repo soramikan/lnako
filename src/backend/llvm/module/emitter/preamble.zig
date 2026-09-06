@@ -56,6 +56,7 @@ pub fn emitPreamble(emitter: *Emitter) !void {
             "declare void @lnako_aot_exception_take(ptr)\n" ++
             "declare void @lnako_aot_exception_abort()\n" ++
             "declare void @lnako_aot_string_new(ptr, ptr, i64)\n" ++
+            "declare void @lnako_aot_string_literal(ptr, ptr, i64, i64)\n" ++
             "declare void @lnako_aot_print_number(ptr, i1)\n" ++
             "declare void @lnako_aot_print_utf16(ptr, i1)\n" ++
             "declare void @lnako_aot_bigint_new(ptr, ptr, i64)\n" ++

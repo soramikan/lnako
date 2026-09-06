@@ -56,6 +56,7 @@ export fn lnako_aot_runtime_keepalive() void {
     _ = aot.lnako_aot_display_many;
     _ = aot.lnako_aot_debug_breakpoint_wait_call;
     _ = aot.lnako_aot_string_new;
+    _ = aot.lnako_aot_string_literal;
     _ = aot.lnako_aot_bigint_new;
     _ = aot.lnako_aot_bigint_truthy;
     _ = aot.lnako_aot_truthy;

@@ -593,7 +593,7 @@ pub fn tableRowProperty(runtime: *Runtime, row: Value, column: Value) !Value {
     if (row_tag == .dictionary) {
         const object = row.object() orelse return error.InvalidDictionary;
         if (object.payload != .dictionary) return error.InvalidDictionary;
-        for (object.payload.dictionary.items) |entry| {
+        for (object.payload.dictionary.entries.items) |entry| {
             if (try tablePropertyKeyEqual(runtime, entry.key, key_units)) return entry.value;
         }
         if (try tableInheritedProperty(runtime, row, row_tag, key_units)) |value| return value;
@@ -775,7 +775,7 @@ pub fn tableTransposeBuiltin(runtime: *Runtime, source: Value, rotate: bool) !Va
 
 pub fn tableDictionaryHasKey(runtime: *Runtime, dictionary: Value, key: Value) !bool {
     const entries = &dictionary.object().?.payload.dictionary;
-    for (entries.items) |entry| if (try strictEqual(runtime, entry.key, key)) return true;
+    for (entries.entries.items) |entry| if (try strictEqual(runtime, entry.key, key)) return true;
     return false;
 }
 
@@ -822,7 +822,7 @@ pub fn tableUniqueBuiltin(runtime: *Runtime, source: Value, column: Value) !Valu
         if (tableIsObjectPrototypeKey(units)) continue;
         roots[5] = try runtime.createString(units);
         if (try tableDictionaryHasKey(runtime, roots[3], roots[5])) continue;
-        try roots[3].object().?.payload.dictionary.append(runtime.allocator, .{ .key = roots[5], .value = numberValue(1) });
+        try roots[3].object().?.payload.dictionary.appendEntry(runtime.allocator, .{ .key = roots[5], .value = numberValue(1) });
         try result.append(runtime.allocator, row);
     }
     return roots[2];
@@ -1446,7 +1446,7 @@ pub fn deepCloneValue(runtime: *Runtime, source: Value, state: *CloneState) !Val
             var frame: RootFrame = .{};
             runtime.pushRoots(&frame, &roots, roots.len);
             defer runtime.popRoots(&frame);
-            for (object.payload.dictionary.items) |entry| {
+            for (object.payload.dictionary.entries.items) |entry| {
                 const cloned = try deepCloneValue(runtime, entry.value, state);
                 if (cloned.tag == @intFromEnum(Tag.undefined) or cloned.tag == @intFromEnum(Tag.function)) continue;
                 try runtime.setDictionary(&roots[0].object().?.payload.dictionary, entry.key, cloned);

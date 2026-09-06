@@ -60,6 +60,7 @@ pub const lnako_aot_hatena_execute = debug.lnako_aot_hatena_execute;
 pub const lnako_aot_display_many = debug.lnako_aot_display_many;
 pub const lnako_aot_debug_breakpoint_wait_call = builtins.lnako_aot_debug_breakpoint_wait_call;
 pub const lnako_aot_string_new = values.lnako_aot_string_new;
+pub const lnako_aot_string_literal = values.lnako_aot_string_literal;
 pub const lnako_aot_bigint_new = values.lnako_aot_bigint_new;
 pub const lnako_aot_bigint_truthy = instructions.lnako_aot_bigint_truthy;
 pub const lnako_aot_truthy = instructions.lnako_aot_truthy;

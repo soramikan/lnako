@@ -92,7 +92,7 @@ pub fn regexpBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments:
                 for (compiled.capture_names[0..compiled.capture_count], 0..) |capture_name, index| if (capture_name) |key_units| {
                     rooted[6] = if (match.captures[index].matched) try runtime.createString(source_units[match.captures[index].start..match.captures[index].end]) else .{};
                     rooted[7] = try runtime.createString(key_units);
-                    try rooted[5].object().?.payload.dictionary.append(runtime.allocator, .{ .key = rooted[7], .value = rooted[6] });
+                    try rooted[5].object().?.payload.dictionary.appendEntry(runtime.allocator, .{ .key = rooted[7], .value = rooted[6] });
                     try rooted[4].object().?.payload.array.append(runtime.allocator, rooted[6]);
                 };
                 try rooted[3].object().?.payload.array.append(runtime.allocator, rooted[5]);
