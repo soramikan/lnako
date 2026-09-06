@@ -25,6 +25,7 @@ const valueToNumber = aot_state.valueToNumber;
 const valueToNumberRuntime = aot_state.valueToNumberRuntime;
 const valueUtf16Alloc = aot_state.valueUtf16Alloc;
 const valueIndex = aot_state.valueIndex;
+const aotCanonicalArrayIndex = aot_state.aotCanonicalArrayIndex;
 const sameKey = aot_state.sameKey;
 const staticUtf8 = aot_state.staticUtf8;
 const staticUtf8EqualsUtf16 = aot_state.staticUtf8EqualsUtf16;
@@ -1321,6 +1322,14 @@ pub const Runtime = struct {
     }
 
     pub fn aotArrayPropertyGet(self: *Runtime, object: *const Object, key: Value) Value {
+        // Canonical index keys resolve without materializing the property
+        // name: numeric keys keep `key` as a plain Value and numeric strings
+        // are scanned in place instead of being re-encoded for the lookup.
+        if (aotCanonicalArrayIndex(key)) |index| {
+            if (index < object.payload.array.items.len) return object.payload.array.items[index];
+            // Out-of-range indices still consult the prototype chain, which
+            // needs the textual key.  Fall through to the general path.
+        }
         var rooted = [_]Value{
             .{ .tag = @intFromEnum(Tag.array), .payload = @intFromPtr(object) },
             key,
@@ -1376,6 +1385,11 @@ pub const Runtime = struct {
     }
 
     pub fn aotArrayPropertySet(self: *Runtime, object: *Object, key: Value, value: Value) !void {
+        // Canonical index keys skip property-name materialization entirely:
+        // a number Value already carries its index, and numeric strings are
+        // scanned without re-encoding.  The `length` and `__proto__` special
+        // cases below can never be produced by a canonical index.
+        if (aotCanonicalArrayIndex(key)) |index| return self.aotArraySetIndex(object, index, value);
         var rooted = [_]Value{
             .{ .tag = @intFromEnum(Tag.array), .payload = @intFromPtr(object) },
             key,
