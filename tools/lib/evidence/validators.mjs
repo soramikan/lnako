@@ -535,8 +535,12 @@ export function validateAttestation(attestation, evidence, inputSha256, inputPat
     }
     seen.add(platform);
   }
-  if (seen.size !== expectedPlatforms.size || attestation.commit !== evidence.provenance.lnako.commit || evidence.provenance.lnako.dirty !== false) {
-    throw new Error("dispatch証拠のattestation commit、clean状態、またはOS集合が一致しません");
+  if (seen.size !== expectedPlatforms.size || !/^[0-9a-f]{64}$/.test(evidence.provenance?.lnako?.binarySha256 ?? "")) {
+    throw new Error("dispatch証拠のattestation OS集合が一致しないかlnako binary hashが不正です");
+  }
+  const expectedSourceManifest = computeSourceManifestSha256Sync(env.root).sha256;
+  if (evidence.provenance?.lnako?.sourceManifestSha256 !== expectedSourceManifest) {
+    throw new Error("dispatch証拠のattestation source manifestが現行ソースと一致しません");
   }
   const currentPlatform = `${evidence.provenance.environment.platform}-${evidence.provenance.environment.arch}`;
   const currentSubject = attestation.subjects.find((subject) => `${subject.platform}-${subject.arch}` === currentPlatform);
