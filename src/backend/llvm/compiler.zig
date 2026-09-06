@@ -27,6 +27,7 @@ pub const Options = struct {
 };
 
 pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, options: Options, diagnostics: *std.Io.Writer) !void {
+    var timer = PhaseTimer.init(io, options.trace);
     var packaged_llvm_root: ?[]u8 = null;
     defer if (packaged_llvm_root) |path| allocator.free(path);
     const llvm_root: ?[]const u8 = if (options.llvm_root) |root| root else blk: {
@@ -93,6 +94,7 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
             "[LLVM] Nako SSA最適化: type={d} parameter={d} return={d} direct={d} fold={d} branch={d} dce={d}\n",
             .{ stats.inferred_values, stats.inferred_parameters, stats.inferred_returns, stats.direct_calls, stats.folded_constants, stats.simplified_branches, stats.removed_instructions },
         );
+        try timer.phase(diagnostics, "Nako SSA最適化・検証");
     }
     const selected_program = optimized_program orelse program;
     if (module_mod.findUnsupported(selected_program)) |feature| {
@@ -108,7 +110,7 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
     }
     var generated = try module_mod.generate(allocator, selected_program, options.source_path, options.optimization != .o0);
     defer generated.deinit(allocator);
-    try trace(options.trace, diagnostics, "LLVM共有ライブラリを読み込みます");
+    try timer.phase(diagnostics, "LLVM IR生成");
     var api = api_mod.Api.openAt(allocator, llvm_root, options.llvm_library) catch |failure| {
         try diagnostics.print("対応するLLVM/LLD ({d}.{d}+-{d}.x) を読み込めません: {s}\n", .{
             api_mod.min_supported_version.major,
@@ -119,7 +121,7 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
         return failure;
     };
     defer api.close();
-    try trace(options.trace, diagnostics, "LLVMコンテキストを作成します");
+    try timer.phase(diagnostics, "LLVM共有ライブラリ読み込み");
     const context = api.contextCreate() orelse return error.LlvmContextCreationFailed;
     defer api.contextDispose(context);
     const buffer_name = try allocator.dupeZ(u8, options.source_path);
@@ -132,8 +134,8 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
         return error.InvalidGeneratedLlvmIr;
     }
     defer api.disposeModule(llvm_module);
+    try timer.phase(diagnostics, "LLVM IR解析");
 
-    try trace(options.trace, diagnostics, "LLVMホストターゲットを初期化します");
     api.initializeTargetInfo();
     api.initializeTarget();
     api.initializeTargetMc();
@@ -155,7 +157,7 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
     api.setTarget(llvm_module, triple);
     api.setDataLayout(llvm_module, data_layout);
 
-    try trace(options.trace, diagnostics, "LLVMモジュールを検証・最適化します");
+    try timer.phase(diagnostics, "LLVMターゲット初期化");
     try verify(&api, llvm_module, diagnostics);
     const pass_options = api.createPassBuilderOptions() orelse return error.LlvmPassBuilderCreationFailed;
     defer api.disposePassBuilderOptions(pass_options);
@@ -173,22 +175,21 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
         return error.LlvmOptimizationFailed;
     }
     try verify(&api, llvm_module, diagnostics);
-
-    try trace(options.trace, diagnostics, "LLVM生成物を出力します");
+    try timer.phase(diagnostics, "LLVM検証・最適化パス");
     switch (options.emit) {
         .llvm_ir => {
             const module_text = api.printModule(llvm_module);
             defer api.disposeMessage(module_text);
             try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = options.output_path, .data = std.mem.span(module_text) });
         },
-        .object => try emitObject(allocator, &api, machine, llvm_module, options.output_path, diagnostics),
+        .object => try emitObject(allocator, &api, machine, llvm_module, options.output_path, &timer, diagnostics),
         .executable => {
             const temporary_nonce = nonce(io);
             const object_path = try std.fmt.allocPrint(allocator, "{s}.lnako-{x}.o", .{ options.output_path, temporary_nonce });
             defer allocator.free(object_path);
             defer std.Io.Dir.cwd().deleteFile(io, object_path) catch {};
-            try emitObject(allocator, &api, machine, llvm_module, object_path, diagnostics);
-            try linkExecutable(allocator, io, object_path, options.output_path, llvm_root, options.runtime_library, diagnostics);
+            try emitObject(allocator, &api, machine, llvm_module, object_path, &timer, diagnostics);
+            try linkExecutable(allocator, io, object_path, options.output_path, llvm_root, api.resolved_root, options.runtime_library, &timer, diagnostics);
         },
     }
     if (manifest_entry_count) |entry_count| {
@@ -214,11 +215,27 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
     }
 }
 
-fn trace(enabled: bool, diagnostics: *std.Io.Writer, message: []const u8) !void {
-    if (!enabled) return;
-    try diagnostics.print("[LLVM] {s}\n", .{message});
-    try diagnostics.flush();
-}
+/// フェーズごとの所要時間をtrace出力する計時。awake時計で直前フェーズからの
+/// 差分と開始からの累計をmsで出し、コンパイル時間の内訳を調べられるようにする。
+const PhaseTimer = struct {
+    io: std.Io,
+    enabled: bool,
+    start: i96,
+    last: i96,
+
+    fn init(io: std.Io, enabled: bool) PhaseTimer {
+        const now = std.Io.Timestamp.now(io, .awake).nanoseconds;
+        return .{ .io = io, .enabled = enabled, .start = now, .last = now };
+    }
+
+    fn phase(self: *PhaseTimer, diagnostics: *std.Io.Writer, label: []const u8) !void {
+        if (!self.enabled) return;
+        const now = std.Io.Timestamp.now(self.io, .awake).nanoseconds;
+        try diagnostics.print("[LLVM] {s}: {d}ms (累計{d}ms)\n", .{ label, @divTrunc(now - self.last, 1_000_000), @divTrunc(now - self.start, 1_000_000) });
+        try diagnostics.flush();
+        self.last = now;
+    }
+};
 
 fn verify(api: *api_mod.Api, module: api_mod.ModuleRef, diagnostics: *std.Io.Writer) !void {
     var message: api_mod.Message = null;
@@ -229,7 +246,7 @@ fn verify(api: *api_mod.Api, module: api_mod.ModuleRef, diagnostics: *std.Io.Wri
     if (message) |unused| api.disposeMessage(unused);
 }
 
-fn emitObject(allocator: std.mem.Allocator, api: *api_mod.Api, machine: api_mod.TargetMachineRef, module: api_mod.ModuleRef, path: []const u8, diagnostics: *std.Io.Writer) !void {
+fn emitObject(allocator: std.mem.Allocator, api: *api_mod.Api, machine: api_mod.TargetMachineRef, module: api_mod.ModuleRef, path: []const u8, timer: *PhaseTimer, diagnostics: *std.Io.Writer) !void {
     const output = try allocator.dupeZ(u8, path);
     defer allocator.free(output);
     var message: api_mod.Message = null;
@@ -238,6 +255,7 @@ fn emitObject(allocator: std.mem.Allocator, api: *api_mod.Api, machine: api_mod.
         return error.LlvmObjectEmissionFailed;
     }
     if (message) |unused| api.disposeMessage(unused);
+    try timer.phase(diagnostics, "LLVMオブジェクト出力");
 }
 
 fn reportMessage(api: *api_mod.Api, diagnostics: *std.Io.Writer, prefix: []const u8, message: api_mod.Message) !void {
@@ -260,8 +278,9 @@ fn nonce(io: std.Io) u64 {
     return @truncate(@as(u96, @bitCast(std.Io.Timestamp.now(io, .awake).nanoseconds)));
 }
 
-fn linkExecutable(allocator: std.mem.Allocator, io: std.Io, object_path: []const u8, output_path: []const u8, llvm_root: ?[]const u8, runtime_override: ?[]const u8, diagnostics: *std.Io.Writer) !void {
-    const tools = try findLinkTools(allocator, io, llvm_root);
+fn linkExecutable(allocator: std.mem.Allocator, io: std.Io, object_path: []const u8, output_path: []const u8, llvm_root: ?[]const u8, resolved_root: ?[]const u8, runtime_override: ?[]const u8, timer: *PhaseTimer, diagnostics: *std.Io.Writer) !void {
+    const tools = try findLinkTools(allocator, io, llvm_root, resolved_root);
+    try timer.phase(diagnostics, "リンクツール検出");
     defer allocator.free(tools.clang);
     defer allocator.free(tools.lld);
     const runtime_library = findRuntimeLibrary(allocator, io, runtime_override) catch |failure| {
@@ -273,6 +292,7 @@ fn linkExecutable(allocator: std.mem.Allocator, io: std.Io, object_path: []const
     defer allocator.free(linker_argument);
     const macos_sdk: ?[]u8 = if (builtin.os.tag == .macos) try findMacOsSdkCached(allocator, io) else null;
     defer if (macos_sdk) |path| allocator.free(path);
+    try timer.phase(diagnostics, "macOS SDK検出");
     const argv: []const []const u8 = switch (builtin.os.tag) {
         .linux => &.{ tools.clang, linker_argument, object_path, runtime_library, "-o", output_path, "-lm", "-Wl,--gc-sections" },
         .macos => &.{ tools.clang, linker_argument, "-isysroot", macos_sdk.?, object_path, runtime_library, "-o", output_path, "-Wl,-dead_strip" },
@@ -280,6 +300,7 @@ fn linkExecutable(allocator: std.mem.Allocator, io: std.Io, object_path: []const
         else => &.{ tools.clang, linker_argument, object_path, runtime_library, "-o", output_path },
     };
     const result = try std.process.run(allocator, io, .{ .argv = argv });
+    try timer.phase(diagnostics, "リンク実行");
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
     switch (result.term) {
@@ -378,7 +399,12 @@ fn findMacOsSdk(allocator: std.mem.Allocator, io: std.Io) ![]u8 {
 
 const LinkTools = struct { clang: []u8, lld: []u8 };
 
-fn findLinkTools(allocator: std.mem.Allocator, io: std.Io, llvm_root: ?[]const u8) !LinkTools {
+fn findLinkTools(allocator: std.mem.Allocator, io: std.Io, llvm_root: ?[]const u8, resolved_root: ?[]const u8) !LinkTools {
+    // 読み込み済みのlibLLVMと同じinstallからclang/lldを引く。ライブラリの
+    // バージョンはopenAtで検証済みなので --version プローブを省略できる。
+    if (llvm_root == null) if (resolved_root) |root| {
+        if (resolvedLinkTools(allocator, io, root)) |tools| return tools else |_| {}
+    };
     if (llvm_root) |root| {
         const clang_name = if (builtin.os.tag == .windows) "clang.exe" else "clang";
         const lld_name = switch (builtin.os.tag) {
@@ -441,6 +467,36 @@ fn findLinkTools(allocator: std.mem.Allocator, io: std.Io, llvm_root: ?[]const u
     const clang = try findVersionedTool(allocator, io, clang_candidates);
     errdefer allocator.free(clang);
     const lld = try findVersionedTool(allocator, io, lld_candidates);
+    return .{ .clang = clang, .lld = lld };
+}
+
+/// 解決済みlibLLVMのinstall rootからリンクツールを --version プローブなしで
+/// 特定する。lldはHomebrewのように別keg/ディレクトリへ分かれる場合があり、
+/// <parent>/llvm[@N] の兄弟として <parent>/lld[@N] も試す。
+fn resolvedLinkTools(allocator: std.mem.Allocator, io: std.Io, root: []const u8) !LinkTools {
+    const clang_name = if (builtin.os.tag == .windows) "clang.exe" else "clang";
+    const lld_name = switch (builtin.os.tag) {
+        .macos => "ld64.lld",
+        .windows => "lld-link.exe",
+        else => "ld.lld",
+    };
+    const clang = try std.fs.path.join(allocator, &.{ root, "bin", clang_name });
+    errdefer allocator.free(clang);
+    _ = std.Io.Dir.cwd().statFile(io, clang, .{}) catch return error.LlvmLinkerToolsNotFound;
+
+    const same_install_lld = try std.fs.path.join(allocator, &.{ root, "bin", lld_name });
+    if (std.Io.Dir.cwd().statFile(io, same_install_lld, .{})) |_| {
+        return .{ .clang = clang, .lld = same_install_lld };
+    } else |_| allocator.free(same_install_lld);
+
+    const parent = std.fs.path.dirname(root) orelse return error.LlvmLinkerToolsNotFound;
+    const base = std.fs.path.basename(root);
+    if (!std.mem.startsWith(u8, base, "llvm")) return error.LlvmLinkerToolsNotFound;
+    const sibling_base = try std.mem.concat(allocator, u8, &.{ "lld", base["llvm".len..] });
+    defer allocator.free(sibling_base);
+    const lld = try std.fs.path.join(allocator, &.{ parent, sibling_base, "bin", lld_name });
+    errdefer allocator.free(lld);
+    _ = std.Io.Dir.cwd().statFile(io, lld, .{}) catch return error.LlvmLinkerToolsNotFound;
     return .{ .clang = clang, .lld = lld };
 }
 

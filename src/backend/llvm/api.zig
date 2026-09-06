@@ -72,6 +72,10 @@ const FnDisposeErrorMessage = *const fn ([*:0]u8) callconv(.c) void;
 
 pub const Api = struct {
     library: NativeLibrary,
+    /// 読み込みに成功したライブラリから推定したLLVM root。
+    /// 絶対パスで解決できた場合のみ設定され、同じinstall内の
+    /// clang/lldをversion probeなしで使うために使う。
+    resolved_root: ?[]const u8,
     getVersion: FnGetVersion,
     contextCreate: FnContextCreate,
     contextDispose: FnContextDispose,
@@ -125,6 +129,7 @@ pub const Api = struct {
 
         var api = Api{
             .library = library,
+            .resolved_root = library.resolved_root,
             .getVersion = try library.require(FnGetVersion, "LLVMGetVersion"),
             .contextCreate = try library.require(FnContextCreate, "LLVMContextCreate"),
             .contextDispose = try library.require(FnContextDispose, "LLVMContextDispose"),
@@ -174,9 +179,20 @@ const NativeLibrary = if (builtin.os.tag == .windows) WindowsLibrary else PosixL
 
 const PosixLibrary = struct {
     inner: std.DynLib,
+    resolved_root: ?[]const u8 = null,
+
+    /// 絶対パス <root>/lib/libLLVM.* として読み込めたとき、その <root> を返す。
+    fn rootOfAbsoluteLibrary(path: []const u8) ?[]const u8 {
+        if (!std.fs.path.isAbsolute(path)) return null;
+        const lib_directory = std.fs.path.dirname(path) orelse return null;
+        return std.fs.path.dirname(lib_directory);
+    }
 
     fn openCandidates(allocator: std.mem.Allocator, llvm_root: ?[]const u8, llvm_library: ?[]const u8) !PosixLibrary {
-        if (llvm_library) |path| return .{ .inner = std.DynLib.open(path) catch return error.LlvmLibraryNotFound };
+        if (llvm_library) |path| return .{
+            .inner = std.DynLib.open(path) catch return error.LlvmLibraryNotFound,
+            .resolved_root = rootOfAbsoluteLibrary(path),
+        };
         if (llvm_root) |root| {
             const rooted_candidates: []const []const u8 = switch (builtin.os.tag) {
                 .macos => &.{
@@ -204,7 +220,7 @@ const PosixLibrary = struct {
                 const candidate = try std.fs.path.join(allocator, &.{ root, relative });
                 defer allocator.free(candidate);
                 const inner = std.DynLib.open(candidate) catch continue;
-                return .{ .inner = inner };
+                return .{ .inner = inner, .resolved_root = root };
             }
             return error.LlvmLibraryNotFound;
         }
@@ -244,7 +260,7 @@ const PosixLibrary = struct {
         };
         for (candidates) |candidate| {
             const inner = std.DynLib.open(candidate) catch continue;
-            return .{ .inner = inner };
+            return .{ .inner = inner, .resolved_root = rootOfAbsoluteLibrary(candidate) };
         }
         return error.LlvmLibraryNotFound;
     }
@@ -260,12 +276,22 @@ const PosixLibrary = struct {
 
 const WindowsLibrary = struct {
     handle: *anyopaque,
+    resolved_root: ?[]const u8 = null,
+
+    /// <root>/bin/LLVM*.dll として読み込めたとき、その <root> を返す。
+    fn rootOfAbsoluteLibrary(path: []const u8) ?[]const u8 {
+        if (!std.fs.path.isAbsolute(path)) return null;
+        return std.fs.path.dirname(path);
+    }
 
     fn openCandidates(allocator: std.mem.Allocator, llvm_root: ?[]const u8, llvm_library: ?[]const u8) !WindowsLibrary {
         if (llvm_library) |path| {
             const path_z = try allocator.dupeZ(u8, path);
             defer allocator.free(path_z);
-            return .{ .handle = LoadLibraryA(path_z) orelse return error.LlvmLibraryNotFound };
+            return .{
+                .handle = LoadLibraryA(path_z) orelse return error.LlvmLibraryNotFound,
+                .resolved_root = rootOfAbsoluteLibrary(path),
+            };
         }
         const candidates = [_][]const u8{ "LLVM-C.dll", "LLVM.dll", "libLLVM.dll" };
         if (llvm_root) |root| {
@@ -274,7 +300,7 @@ const WindowsLibrary = struct {
                 defer allocator.free(path);
                 const path_z = try allocator.dupeZ(u8, path);
                 defer allocator.free(path_z);
-                if (LoadLibraryA(path_z)) |handle| return .{ .handle = handle };
+                if (LoadLibraryA(path_z)) |handle| return .{ .handle = handle, .resolved_root = root };
             }
             return error.LlvmLibraryNotFound;
         }
