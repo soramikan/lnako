@@ -6739,3 +6739,26 @@ pub fn createJsonTestString(runtime: *Runtime, text: []const u8) !Value {
 pub fn jsonTestDictionaryGet(value: Value, key: []const u16) Value {
     return dictionaryProperty(value, key);
 }
+
+test "AOT traceは無効確定後にロックを取得しない" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+
+    // Publishing the inactive gate models the resolved "no trace output
+    // configured" state: every record entry point must return without
+    // touching the spin lock.
+    runtime.dispatch_trace.gate.store(2, .release);
+    runtime.global_trace.gate.store(2, .release);
+    runtime.literal_trace.gate.store(2, .release);
+    try std.testing.expectEqual(shared.no_dispatch_call_id, runtime.dispatch_trace.begin("テスト", 0, "test", 0));
+    runtime.dispatch_trace.result(0, "テスト", 0, "test", 0, true);
+    runtime.dispatch_trace.finish();
+    runtime.global_trace.record(1);
+    runtime.global_trace.recordWrite(1);
+    runtime.global_trace.finish();
+    runtime.literal_trace.record(1);
+    runtime.literal_trace.finish();
+    try std.testing.expectEqual(@as(u64, 0), runtime.dispatch_trace.lock_attempts);
+    try std.testing.expectEqual(@as(u64, 0), runtime.global_trace.lock_attempts);
+    try std.testing.expectEqual(@as(u64, 0), runtime.literal_trace.lock_attempts);
+}

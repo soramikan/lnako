@@ -1091,3 +1091,23 @@ fn testInterpreterCustomString(runtime: *Runtime, _: []const Value) !Value {
 fn testInterpreterConstantSeven(_: *Runtime, _: []const Value) !Value {
     return .{ .number = 7 };
 }
+
+test "Interpreterのtrace未設定時はemitがロックを取得しない" {
+    var dispatch = shared.DispatchTrace{};
+    dispatch.emit("表示", "test", "success", 1);
+    dispatch.finish();
+    var global = shared.GlobalTrace{};
+    global.emit("それ", true, 1);
+    global.emitWrite("それ", 1);
+    global.finish();
+    var literal = shared.LiteralTrace{};
+    literal.emit("あ", 1);
+    literal.finish();
+    var compat = CompatJsTrace{};
+    compat.emit("JS実行", "eval", "call", null, 1);
+    compat.finish();
+    try std.testing.expectEqual(@as(u64, 0), dispatch.lock_attempts);
+    try std.testing.expectEqual(@as(u64, 0), global.lock_attempts);
+    try std.testing.expectEqual(@as(u64, 0), literal.lock_attempts);
+    try std.testing.expectEqual(@as(u64, 0), compat.lock_attempts);
+}

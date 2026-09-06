@@ -18,15 +18,32 @@ pub const default_plugin_names = [_][]const u8{
     "plugin_node",
 };
 
+/// The interpreter trace sinks are configured once during `Interpreter.init`
+/// and never re-pointed afterwards, so `path`/`writeFn`/`context` can be read
+/// without the lock.  `disabled` is atomic: a trace with no configured sink or
+/// a permanently failed writer returns before paying the spin lock on the
+/// interpreter's per-instruction hot path.
 pub const DispatchTrace = struct {
     path: ?[]const u8 = null,
     context: ?*anyopaque = null,
     writeFn: ?DispatchTraceWriteFn = null,
-    disabled: bool = false,
+    disabled: std.atomic.Value(bool) = .init(false),
     sequence: u64 = 0,
     locked: std.atomic.Value(bool) = .init(false),
+    /// Number of times the spin lock was actually entered.  Diagnostics use
+    /// this to prove a disabled trace never reaches the lock.
+    lock_attempts: u64 = 0,
+
+    fn inactive(self: *const DispatchTrace) bool {
+        return self.disabled.load(.acquire) or self.path == null or self.writeFn == null or self.context == null;
+    }
+
+    fn disable(self: *DispatchTrace) void {
+        self.disabled.store(true, .release);
+    }
 
     pub fn lock(self: *DispatchTrace) void {
+        self.lock_attempts += 1;
         while (self.locked.swap(true, .acquire)) std.atomic.spinLoopHint();
     }
 
@@ -35,12 +52,13 @@ pub const DispatchTrace = struct {
     }
 
     pub fn emit(self: *DispatchTrace, name: []const u8, route: []const u8, result: []const u8, site_id: ?u64) void {
+        if (self.inactive()) return;
         self.lock();
         defer self.unlock();
-        if (self.disabled) return;
-        const path = self.path orelse return;
-        const writeFn = self.writeFn orelse return;
-        const context = self.context orelse return;
+        if (self.inactive()) return;
+        const path = self.path.?;
+        const writeFn = self.writeFn.?;
+        const context = self.context.?;
         var line: [1024]u8 = undefined;
         const rendered = (if (site_id) |id| std.fmt.bufPrint(
             &line,
@@ -51,20 +69,21 @@ pub const DispatchTrace = struct {
             "{{\"schema\":2,\"engine\":\"interpreter\",\"phase\":\"dispatch-result\",\"seq\":{d},\"siteId\":null,\"command\":\"{s}\",\"route\":\"{s}\",\"result\":\"{s}\"}}\n",
             .{ self.sequence, name, route, result },
         )) catch {
-            self.disabled = true;
+            self.disable();
             return;
         };
         writeFn(context, path, rendered) catch {
-            self.disabled = true;
+            self.disable();
             return;
         };
         self.sequence += 1;
     }
 
     pub fn finish(self: *DispatchTrace) void {
+        if (self.inactive()) return;
         self.lock();
         defer self.unlock();
-        if (self.disabled) return;
+        if (self.disabled.load(.acquire)) return;
         const path = self.path orelse return;
         const writeFn = self.writeFn orelse return;
         const context = self.context orelse return;
@@ -76,13 +95,14 @@ pub const DispatchTrace = struct {
         ) catch return;
         writeFn(context, path, rendered) catch return;
         self.sequence += 1;
-        self.disabled = true;
+        self.disable();
     }
 
     pub fn finishTerminal(self: *DispatchTrace, reason: []const u8, exit_code: u8) void {
+        if (self.inactive()) return;
         self.lock();
         defer self.unlock();
-        if (self.disabled) return;
+        if (self.disabled.load(.acquire)) return;
         const path = self.path orelse return;
         const writeFn = self.writeFn orelse return;
         const context = self.context orelse return;
@@ -94,7 +114,7 @@ pub const DispatchTrace = struct {
         ) catch return;
         writeFn(context, path, rendered) catch return;
         self.sequence += 1;
-        self.disabled = true;
+        self.disable();
     }
 };
 
@@ -102,11 +122,21 @@ pub const CompatJsTrace = struct {
     path: ?[]const u8 = null,
     context: ?*anyopaque = null,
     writeFn: ?DispatchTraceWriteFn = null,
-    disabled: bool = false,
+    disabled: std.atomic.Value(bool) = .init(false),
     sequence: u64 = 0,
     locked: std.atomic.Value(bool) = .init(false),
+    lock_attempts: u64 = 0,
+
+    fn inactive(self: *const CompatJsTrace) bool {
+        return self.disabled.load(.acquire) or self.path == null or self.writeFn == null or self.context == null;
+    }
+
+    fn disable(self: *CompatJsTrace) void {
+        self.disabled.store(true, .release);
+    }
 
     pub fn lock(self: *CompatJsTrace) void {
+        self.lock_attempts += 1;
         while (self.locked.swap(true, .acquire)) std.atomic.spinLoopHint();
     }
 
@@ -115,12 +145,13 @@ pub const CompatJsTrace = struct {
     }
 
     pub fn emit(self: *CompatJsTrace, command: []const u8, operation: []const u8, phase: []const u8, result: ?[]const u8, site_id: ?u64) void {
+        if (self.inactive()) return;
         self.lock();
         defer self.unlock();
-        if (self.disabled) return;
-        const path = self.path orelse return;
-        const writeFn = self.writeFn orelse return;
-        const context = self.context orelse return;
+        if (self.inactive()) return;
+        const path = self.path.?;
+        const writeFn = self.writeFn.?;
+        const context = self.context.?;
         var line: [512]u8 = undefined;
         const rendered = if (site_id) |id|
             if (result) |result_name| std.fmt.bufPrint(
@@ -128,14 +159,14 @@ pub const CompatJsTrace = struct {
                 "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"{s}\",\"seq\":{d},\"siteId\":\"0x{x:0>16}\",\"command\":\"{s}\",\"operation\":\"{s}\",\"result\":\"{s}\"}}\n",
                 .{ phase, self.sequence, id, command, operation, result_name },
             ) catch {
-                self.disabled = true;
+                self.disable();
                 return;
             } else std.fmt.bufPrint(
                 &line,
                 "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"{s}\",\"seq\":{d},\"siteId\":\"0x{x:0>16}\",\"command\":\"{s}\",\"operation\":\"{s}\"}}\n",
                 .{ phase, self.sequence, id, command, operation },
             ) catch {
-                self.disabled = true;
+                self.disable();
                 return;
             }
         else if (result) |result_name| std.fmt.bufPrint(
@@ -143,27 +174,28 @@ pub const CompatJsTrace = struct {
             "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"{s}\",\"seq\":{d},\"siteId\":null,\"command\":\"{s}\",\"operation\":\"{s}\",\"result\":\"{s}\"}}\n",
             .{ phase, self.sequence, command, operation, result_name },
         ) catch {
-            self.disabled = true;
+            self.disable();
             return;
         } else std.fmt.bufPrint(
             &line,
             "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"{s}\",\"seq\":{d},\"siteId\":null,\"command\":\"{s}\",\"operation\":\"{s}\"}}\n",
             .{ phase, self.sequence, command, operation },
         ) catch {
-            self.disabled = true;
+            self.disable();
             return;
         };
         writeFn(context, path, rendered) catch {
-            self.disabled = true;
+            self.disable();
             return;
         };
         self.sequence += 1;
     }
 
     pub fn finish(self: *CompatJsTrace) void {
+        if (self.inactive()) return;
         self.lock();
         defer self.unlock();
-        if (self.disabled) return;
+        if (self.disabled.load(.acquire)) return;
         const path = self.path orelse return;
         const writeFn = self.writeFn orelse return;
         const context = self.context orelse return;
@@ -175,7 +207,7 @@ pub const CompatJsTrace = struct {
         ) catch return;
         writeFn(context, path, rendered) catch return;
         self.sequence += 1;
-        self.disabled = true;
+        self.disable();
     }
 };
 
@@ -183,11 +215,21 @@ pub const GlobalTrace = struct {
     path: ?[]const u8 = null,
     context: ?*anyopaque = null,
     writeFn: ?DispatchTraceWriteFn = null,
-    disabled: bool = false,
+    disabled: std.atomic.Value(bool) = .init(false),
     sequence: u64 = 0,
     locked: std.atomic.Value(bool) = .init(false),
+    lock_attempts: u64 = 0,
+
+    fn inactive(self: *const GlobalTrace) bool {
+        return self.disabled.load(.acquire) or self.path == null or self.writeFn == null or self.context == null;
+    }
+
+    fn disable(self: *GlobalTrace) void {
+        self.disabled.store(true, .release);
+    }
 
     pub fn lock(self: *GlobalTrace) void {
+        self.lock_attempts += 1;
         while (self.locked.swap(true, .acquire)) std.atomic.spinLoopHint();
     }
 
@@ -196,12 +238,13 @@ pub const GlobalTrace = struct {
     }
 
     pub fn emit(self: *GlobalTrace, name: []const u8, found: bool, site_id: ?u64) void {
+        if (self.inactive()) return;
         self.lock();
         defer self.unlock();
-        if (self.disabled) return;
-        const path = self.path orelse return;
-        const writeFn = self.writeFn orelse return;
-        const context = self.context orelse return;
+        if (self.inactive()) return;
+        const path = self.path.?;
+        const writeFn = self.writeFn.?;
+        const context = self.context.?;
         var line: [1024]u8 = undefined;
         const rendered = (if (site_id) |id| std.fmt.bufPrint(
             &line,
@@ -212,23 +255,24 @@ pub const GlobalTrace = struct {
             "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"global-read\",\"seq\":{d},\"siteId\":null,\"name\":\"{s}\",\"found\":{}}}\n",
             .{ self.sequence, name, found },
         )) catch {
-            self.disabled = true;
+            self.disable();
             return;
         };
         writeFn(context, path, rendered) catch {
-            self.disabled = true;
+            self.disable();
             return;
         };
         self.sequence += 1;
     }
 
     pub fn emitWrite(self: *GlobalTrace, name: []const u8, site_id: ?u64) void {
+        if (self.inactive()) return;
         self.lock();
         defer self.unlock();
-        if (self.disabled) return;
-        const path = self.path orelse return;
-        const writeFn = self.writeFn orelse return;
-        const context = self.context orelse return;
+        if (self.inactive()) return;
+        const path = self.path.?;
+        const writeFn = self.writeFn.?;
+        const context = self.context.?;
         var line: [1024]u8 = undefined;
         const rendered = (if (site_id) |id| std.fmt.bufPrint(
             &line,
@@ -239,20 +283,21 @@ pub const GlobalTrace = struct {
             "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"global-write\",\"seq\":{d},\"siteId\":null,\"name\":\"{s}\"}}\n",
             .{ self.sequence, name },
         )) catch {
-            self.disabled = true;
+            self.disable();
             return;
         };
         writeFn(context, path, rendered) catch {
-            self.disabled = true;
+            self.disable();
             return;
         };
         self.sequence += 1;
     }
 
     pub fn finish(self: *GlobalTrace) void {
+        if (self.inactive()) return;
         self.lock();
         defer self.unlock();
-        if (self.disabled) return;
+        if (self.disabled.load(.acquire)) return;
         const path = self.path orelse return;
         const writeFn = self.writeFn orelse return;
         const context = self.context orelse return;
@@ -264,7 +309,7 @@ pub const GlobalTrace = struct {
         ) catch return;
         writeFn(context, path, rendered) catch return;
         self.sequence += 1;
-        self.disabled = true;
+        self.disable();
     }
 };
 
@@ -272,11 +317,21 @@ pub const LiteralTrace = struct {
     path: ?[]const u8 = null,
     context: ?*anyopaque = null,
     writeFn: ?DispatchTraceWriteFn = null,
-    disabled: bool = false,
+    disabled: std.atomic.Value(bool) = .init(false),
     sequence: u64 = 0,
     locked: std.atomic.Value(bool) = .init(false),
+    lock_attempts: u64 = 0,
+
+    fn inactive(self: *const LiteralTrace) bool {
+        return self.disabled.load(.acquire) or self.path == null or self.writeFn == null or self.context == null;
+    }
+
+    fn disable(self: *LiteralTrace) void {
+        self.disabled.store(true, .release);
+    }
 
     pub fn lock(self: *LiteralTrace) void {
+        self.lock_attempts += 1;
         while (self.locked.swap(true, .acquire)) std.atomic.spinLoopHint();
     }
 
@@ -285,12 +340,13 @@ pub const LiteralTrace = struct {
     }
 
     pub fn emit(self: *LiteralTrace, name: []const u8, site_id: ?u64) void {
+        if (self.inactive()) return;
         self.lock();
         defer self.unlock();
-        if (self.disabled) return;
-        const path = self.path orelse return;
-        const writeFn = self.writeFn orelse return;
-        const context = self.context orelse return;
+        if (self.inactive()) return;
+        const path = self.path.?;
+        const writeFn = self.writeFn.?;
+        const context = self.context.?;
         var line: [1024]u8 = undefined;
         const rendered = (if (site_id) |id| std.fmt.bufPrint(
             &line,
@@ -301,20 +357,21 @@ pub const LiteralTrace = struct {
             "{{\"schema\":1,\"engine\":\"interpreter\",\"phase\":\"literal\",\"seq\":{d},\"siteId\":null,\"name\":\"{s}\"}}\n",
             .{ self.sequence, name },
         )) catch {
-            self.disabled = true;
+            self.disable();
             return;
         };
         writeFn(context, path, rendered) catch {
-            self.disabled = true;
+            self.disable();
             return;
         };
         self.sequence += 1;
     }
 
     pub fn finish(self: *LiteralTrace) void {
+        if (self.inactive()) return;
         self.lock();
         defer self.unlock();
-        if (self.disabled) return;
+        if (self.disabled.load(.acquire)) return;
         const path = self.path orelse return;
         const writeFn = self.writeFn orelse return;
         const context = self.context orelse return;
@@ -326,7 +383,7 @@ pub const LiteralTrace = struct {
         ) catch return;
         writeFn(context, path, rendered) catch return;
         self.sequence += 1;
-        self.disabled = true;
+        self.disable();
     }
 };
 
