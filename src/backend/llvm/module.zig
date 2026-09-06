@@ -107,6 +107,27 @@ test "Nako SSA IRをデバッグ情報付きLLVM IRへ変換する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_debug_display") != null);
 }
 
+test "非同期命令のないモジュールは軽量event drainを出力する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "A=1\nAを表示\n", "main.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    var module = try generate(std.testing.allocator, program, "main.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    // 非同期タスクを生成する命令が無ければ、timer/process/archive/http等の
+    // 実装への参照を持つ完全版drainは呼び出さずdead-stripできる。
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_runtime_drain_events_light()\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_runtime_drain_events()\n") == null);
+}
+
 test "ネイティブプラグイン命令をAOT ABIへ出力する" {
     const parser = @import("../../frontend/parser.zig");
     const semantic = @import("../../semantic/analyzer.zig");

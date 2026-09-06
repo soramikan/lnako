@@ -118,7 +118,7 @@ pub fn writeMain(emitter: *Emitter) !void {
         try emitter.output.writer.print("  %global.root.frame.{d} = alloca %lnako.RootFrame\n", .{global_index});
         try emitter.output.writer.print("  call void @lnako_aot_push_roots(ptr %global.root.frame.{d}, ptr @lnako.global.{d}, i64 1)\n", .{ global_index, global_index });
     }
-    if (emitter.hasDynamicBuiltin()) for (emitter.globals.items, 0..) |name, global_index| {
+    if (try emitter.hasDynamicBuiltin()) for (emitter.globals.items, 0..) |name, global_index| {
         try emitter.output.writer.print("  call void @lnako_aot_dynamic_global_register(ptr @lnako.global.name.{d}, i64 {d}, ptr @lnako.global.{d})\n", .{ global_index, name.len, global_index });
     };
     for (emitter.system_strings.items, 0..) |constant, index| {
@@ -159,7 +159,7 @@ pub fn writeMain(emitter: *Emitter) !void {
         if (emitter.globalIndex("テンポラリフォルダ")) |global_index| try emitter.output.writer.print("@lnako.global.{d}", .{global_index}) else try emitter.output.writer.writeAll("null");
         try emitter.output.writer.writeAll(")\n");
     }
-    if (emitter.needsNodeMotherPath()) {
+    if (try emitter.needsNodeMotherPath()) {
         try emitter.output.writer.writeAll("  call void @lnako_aot_node_mother_path_init(ptr ");
         if (emitter.globalIndex("母艦パス")) |global_index| try emitter.output.writer.print("@lnako.global.{d}", .{global_index}) else try emitter.output.writer.writeAll("null");
         try emitter.output.writer.writeAll(", ptr ");
@@ -192,7 +192,11 @@ pub fn writeMain(emitter: *Emitter) !void {
         try emitter.output.writer.print("entry.exception.abort.{d}:\n  call void @lnako_aot_exception_abort()\n  unreachable\nentry.continue.{d}:\n", .{ call_index, call_index });
         call_index += 1;
     }
-    try emitter.output.writer.writeAll("  call void @lnako_aot_runtime_drain_events()\n");
+    if (try emitter.usesAsyncEvents()) {
+        try emitter.output.writer.writeAll("  call void @lnako_aot_runtime_drain_events()\n");
+    } else {
+        try emitter.output.writer.writeAll("  call void @lnako_aot_runtime_drain_events_light()\n");
+    }
     try emitter.output.writer.writeAll("  %entry.timer.exception.pending = call i32 @lnako_aot_exception_pending()\n");
     try emitter.output.writer.writeAll("  %entry.timer.exception.is-pending = icmp ne i32 %entry.timer.exception.pending, 0\n");
     try emitter.output.writer.writeAll("  br i1 %entry.timer.exception.is-pending, label %entry.timer.exception.abort, label %entry.timer.continue\n");

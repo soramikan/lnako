@@ -19,7 +19,6 @@ const isNativePluginCall = shared.isNativePluginCall;
 const isQualifiedGlobal = shared.isQualifiedGlobal;
 const lookupFunction = shared.lookupFunction;
 const shiftOpcode = shared.shiftOpcode;
-const valueType = shared.valueType;
 const constants_mod = @import("constants.zig");
 const collections_mod = @import("collections.zig");
 const variables_mod = @import("variables.zig");
@@ -70,7 +69,7 @@ pub fn writeBinary(emitter: *Emitter, function: ir.Function, instruction: ir.Ins
 pub fn writeArithmetic(emitter: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, opcode_value: u8) !void {
     const result = instruction.result orelse return error.MissingInstructionResult;
     if (instruction.operands.len < 2) return error.InvalidBinaryInstruction;
-    const proven_number = emitter.optimized and valueType(function, instruction.operands[0]) == .number and valueType(function, instruction.operands[1]) == .number;
+    const proven_number = emitter.optimized and try emitter.valueTypeOf(function, instruction.operands[0]) == .number and try emitter.valueTypeOf(function, instruction.operands[1]) == .number;
     if (!proven_number) {
         try emitter.output.writer.print("  call void @lnako_aot_arithmetic(ptr %root.slot.{d}, ptr %root.slot.{d}, ptr %root.slot.{d}, i8 {d})", .{ result, instruction.operands[0], instruction.operands[1], opcode_value });
         try emitter.debugSuffix(instruction.span, scope);
@@ -105,8 +104,8 @@ pub fn writeArithmetic(emitter: *Emitter, function: ir.Function, instruction: ir
 pub fn writeComparison(emitter: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, opcode: u8) !void {
     const result = instruction.result orelse return error.MissingInstructionResult;
     if (instruction.operands.len < 2) return error.InvalidBinaryInstruction;
-    const left_type = valueType(function, instruction.operands[0]);
-    const right_type = valueType(function, instruction.operands[1]);
+    const left_type = try emitter.valueTypeOf(function, instruction.operands[0]);
+    const right_type = try emitter.valueTypeOf(function, instruction.operands[1]);
     if (emitter.optimized and left_type == .number and right_type == .number) {
         return writeScalarNumberComparison(emitter, function, instruction, scope);
     }
@@ -217,7 +216,7 @@ pub fn writeUnary(emitter: *Emitter, function: ir.Function, instruction: ir.Inst
         return;
     }
     const unary_opcode: u8 = if (std.mem.eql(u8, instruction.operator, "-")) 0 else if (std.mem.eql(u8, instruction.operator, "+")) 1 else return error.UnsupportedUnaryOperator;
-    const proven_number = emitter.optimized and valueType(function, instruction.operands[0]) == .number;
+    const proven_number = emitter.optimized and try emitter.valueTypeOf(function, instruction.operands[0]) == .number;
     if (!proven_number) {
         try emitter.output.writer.print("  call void @lnako_aot_unary(ptr %root.slot.{d}, ptr %root.slot.{d}, i8 {d})", .{ result, instruction.operands[0], unary_opcode });
         try emitter.debugSuffix(instruction.span, scope);

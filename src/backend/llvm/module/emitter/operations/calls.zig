@@ -39,7 +39,7 @@ pub fn writeCall(emitter: *Emitter, function: ir.Function, locals: []const []con
     if (instruction.direct_callee == null and instruction.is_builtin_call and isDisplayCall(instruction.name)) {
         return plugins_mod.writeDisplayCall(emitter, function, instruction, scope, aggregate_count);
     }
-    if (instruction.direct_callee == null and instruction.is_builtin_call) if (aot_builtin.lookup(instruction.name)) |command| {
+    if (instruction.direct_callee == null and instruction.is_builtin_call) if (try emitter.builtinCommand(instruction.name)) |command| {
         if (command == .regexp_match or command == .regexp_extract or command == .regexp_replace or command == .regexp_split) {
             try plugins_mod.writeRegexpCall(emitter, function, instruction, scope, aggregate_count, command);
             try writeCallResult(emitter, result, instruction.span, scope);
@@ -52,7 +52,7 @@ pub fn writeCall(emitter: *Emitter, function: ir.Function, locals: []const []con
     const callee = if (instruction.direct_callee) |callee_id|
         if (callee_id < emitter.program.functions.len) emitter.program.functions[callee_id] else return error.InvalidDirectCallee
     else
-        emitter.findFunction(instruction.name);
+        try emitter.findFunction(instruction.name);
     if (callee == null) {
         if (isNativePluginCall(emitter.program, function, instruction)) {
             try plugins_mod.writeNativePluginCall(emitter, function, instruction, scope, aggregate_count);
@@ -114,7 +114,7 @@ pub fn writeDynamicCall(
 
 pub fn writeMakeClosure(emitter: *Emitter, caller: ir.Function, locals: []const []const u8, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
     const result = instruction.result orelse return error.MissingInstructionResult;
-    const function = lookupFunction(emitter.program, instruction.name) orelse return error.UnknownClosureFunction;
+    const function = try emitter.findFunction(instruction.name) orelse return error.UnknownClosureFunction;
     if (function.captures.len > aggregate_count) return error.InvalidAggregateScratch;
     const value_root_count = context.functionValueCount(caller);
     for (function.captures, 0..) |capture, index| {

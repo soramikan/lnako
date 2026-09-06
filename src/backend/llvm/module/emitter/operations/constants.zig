@@ -19,7 +19,6 @@ const isNativePluginCall = shared.isNativePluginCall;
 const isQualifiedGlobal = shared.isQualifiedGlobal;
 const lookupFunction = shared.lookupFunction;
 const shiftOpcode = shared.shiftOpcode;
-const valueType = shared.valueType;
 const constants_mod = @import("constants.zig");
 const collections_mod = @import("collections.zig");
 const variables_mod = @import("variables.zig");
@@ -47,7 +46,7 @@ pub fn writeValueRef(emitter: *Emitter, function: ir.Function, value: ir.ValueId
 }
 
 pub fn writeNumberOperand(emitter: *Emitter, function: ir.Function, value: ir.ValueId, label: []const u8, span: ast.Span, scope: usize) !void {
-    if (emitter.optimized and valueType(function, value) == .number) {
+    if (emitter.optimized and try emitter.valueTypeOf(function, value) == .number) {
         try emitter.output.writer.print("  %{s}.bits = extractvalue %lnako.Value ", .{label});
         try writeValueRef(emitter, function, value);
         try emitter.output.writer.writeAll(", 1");
@@ -63,7 +62,7 @@ pub fn writeNumberOperand(emitter: *Emitter, function: ir.Function, value: ir.Va
 }
 
 pub fn writeBooleanOperand(emitter: *Emitter, function: ir.Function, value: ir.ValueId, label: []const u8, span: ast.Span, scope: usize) !void {
-    if (emitter.optimized and valueType(function, value) == .boolean) {
+    if (emitter.optimized and try emitter.valueTypeOf(function, value) == .boolean) {
         try emitter.output.writer.print("  %{s}.bits = extractvalue %lnako.Value ", .{label});
         try writeValueRef(emitter, function, value);
         try emitter.output.writer.writeAll(", 1");
@@ -79,7 +78,7 @@ pub fn writeBooleanOperand(emitter: *Emitter, function: ir.Function, value: ir.V
 }
 
 pub fn writeTruthyOperand(emitter: *Emitter, function: ir.Function, value: ir.ValueId, label: []const u8, span: ast.Span, scope: usize) !void {
-    const value_type = valueType(function, value);
+    const value_type = try emitter.valueTypeOf(function, value);
     if (emitter.optimized and value_type == .boolean) {
         try emitter.output.writer.print("  %{s}.bits = extractvalue %lnako.Value ", .{label});
         try writeValueRef(emitter, function, value);

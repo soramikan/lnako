@@ -34,6 +34,15 @@ pub const Emitter = struct {
     bigints: std.ArrayList(BigIntConstant) = .empty,
     locations: std.ArrayList(DebugLocation) = .empty,
     next_metadata: usize = 4,
+    // 名前解決の線形再探索を避ける索引。aot_builtin.lookupは全コマンド名への
+    // 逐次比較で高価なため結果をmemo化し、globalはappendと同期したmap、
+    // functionは初回呼び出し時にname→indexのmapを一度だけ構築する。
+    builtin_command_cache: std.StringHashMapUnmanaged(?aot_builtin.Command) = .empty,
+    used_commands: ?std.EnumSet(aot_builtin.Command) = null,
+    function_index: ?std.StringHashMapUnmanaged(usize) = null,
+    global_index_map: std.StringHashMapUnmanaged(usize) = .empty,
+    // function.id → ValueId順の型表。valueTypeの全命令走査を一度に済ませる。
+    value_types: std.AutoHashMapUnmanaged(ir.FunctionId, []ir.Type) = .empty,
 
     pub fn deinit(self: *Emitter) void {
         self.globals.deinit(self.allocator);
@@ -48,6 +57,12 @@ pub const Emitter = struct {
         self.system_era_data.deinit(self.allocator);
         self.bigints.deinit(self.allocator);
         self.locations.deinit(self.allocator);
+        self.builtin_command_cache.deinit(self.allocator);
+        if (self.function_index) |*index| index.deinit(self.allocator);
+        self.global_index_map.deinit(self.allocator);
+        var value_type_entries = self.value_types.valueIterator();
+        while (value_type_entries.next()) |types| self.allocator.free(types.*);
+        self.value_types.deinit(self.allocator);
         self.output.deinit();
     }
 
@@ -58,27 +73,85 @@ pub const Emitter = struct {
         try self.output.writer.print(", !dbg !{d}\n", .{id});
     }
 
+    /// shared.valueTypeと同じ規則だが、関数ごとの型表を一度だけ構築して
+    /// 以降の探索をO(1)にする。
+    pub fn valueTypeOf(self: *Emitter, function: ir.Function, value: ir.ValueId) !ir.Type {
+        const entry = try self.value_types.getOrPut(self.allocator, function.id);
+        if (!entry.found_existing) {
+            const count = functionValueCount(function);
+            const types = try self.allocator.alloc(ir.Type, count);
+            @memset(types, .dynamic);
+            for (function.parameters) |parameter| types[parameter.value] = parameter.type;
+            for (function.blocks) |block| for (block.instructions) |instruction| {
+                if (instruction.result) |result| types[result] = instruction.type;
+            };
+            entry.value_ptr.* = types;
+        }
+        const types = entry.value_ptr.*;
+        return if (value < types.len) types[value] else .dynamic;
+    }
+
     pub fn localNames(self: *Emitter, function: ir.Function) ![][]const u8 {
         var names: std.ArrayList([]const u8) = .empty;
         defer names.deinit(self.allocator);
-        for (function.captures) |capture| if (nameIndex(names.items, capture) == null) try names.append(self.allocator, capture);
-        for (function.parameters) |parameter| if (nameIndex(names.items, parameter.name) == null) try names.append(self.allocator, parameter.name);
+        var seen: std.StringHashMapUnmanaged(void) = .empty;
+        defer seen.deinit(self.allocator);
+        for (function.captures) |capture| if (!seen.contains(capture)) {
+            try seen.put(self.allocator, capture, {});
+            try names.append(self.allocator, capture);
+        };
+        for (function.parameters) |parameter| if (!seen.contains(parameter.name)) {
+            try seen.put(self.allocator, parameter.name, {});
+            try names.append(self.allocator, parameter.name);
+        };
         for (function.blocks) |block| for (block.instructions) |instruction| {
-            if ((instruction.opcode == .load_local or instruction.opcode == .store_local) and nameIndex(names.items, instruction.name) == null) {
+            if ((instruction.opcode == .load_local or instruction.opcode == .store_local) and !seen.contains(instruction.name)) {
+                try seen.put(self.allocator, instruction.name, {});
                 try names.append(self.allocator, instruction.name);
             }
             if (instruction.opcode == .destructure_store) for (instruction.names) |name| {
-                if (!isQualifiedGlobal(name) and nameIndex(names.items, name) == null) try names.append(self.allocator, name);
+                if (!isQualifiedGlobal(name) and !seen.contains(name)) {
+                    try seen.put(self.allocator, name, {});
+                    try names.append(self.allocator, name);
+                }
             };
-            if (instruction.opcode == .increment and !isQualifiedGlobal(instruction.name) and nameIndex(names.items, instruction.name) == null) {
+            if (instruction.opcode == .increment and !isQualifiedGlobal(instruction.name) and !seen.contains(instruction.name)) {
+                try seen.put(self.allocator, instruction.name, {});
                 try names.append(self.allocator, instruction.name);
             }
         };
         return self.allocator.dupe([]const u8, names.items);
     }
 
+    /// globalsへの追加は必ずこの経路で行い、index mapを同期させる。
+    pub fn appendGlobal(self: *Emitter, name: []const u8) !void {
+        const index = self.globals.items.len;
+        try self.globals.append(self.allocator, name);
+        try self.global_index_map.put(self.allocator, name, index);
+    }
+
     pub fn globalIndex(self: Emitter, name: []const u8) ?usize {
-        return nameIndex(self.globals.items, name);
+        return self.global_index_map.get(name);
+    }
+
+    /// aot_builtin.lookupは全コマンド名の逐次比較なので名前ごとにmemo化する。
+    pub fn builtinCommand(self: *Emitter, name: []const u8) !?aot_builtin.Command {
+        if (self.builtin_command_cache.get(name)) |cached| return cached;
+        const command = aot_builtin.lookup(name);
+        try self.builtin_command_cache.put(self.allocator, name, command);
+        return command;
+    }
+
+    /// 直接呼び出しでないbuiltin call命令が使うコマンド集合を一度だけ構築する。
+    pub fn usedCommands(self: *Emitter) !std.EnumSet(aot_builtin.Command) {
+        if (self.used_commands) |commands| return commands;
+        var commands: std.EnumSet(aot_builtin.Command) = .initEmpty();
+        for (self.program.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
+            if (instruction.opcode != .call or instruction.direct_callee != null or !instruction.is_builtin_call) continue;
+            if (try self.builtinCommand(instruction.name)) |command| commands.insert(command);
+        };
+        self.used_commands = commands;
+        return commands;
     }
 
     pub fn nativePluginNameIndex(self: Emitter, name: []const u8) ?usize {
@@ -86,20 +159,32 @@ pub const Emitter = struct {
         return null;
     }
 
-    pub fn hasBuiltinCall(self: Emitter, command: aot_builtin.Command) bool {
-        for (self.program.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
-            if (instruction.opcode != .call or instruction.direct_callee != null or !instruction.is_builtin_call) continue;
-            if (aot_builtin.lookup(instruction.name) == command) return true;
-        };
+    pub fn hasBuiltinCall(self: *Emitter, command: aot_builtin.Command) !bool {
+        return (try self.usedCommands()).contains(command);
+    }
+
+    pub fn hasDynamicBuiltin(self: *Emitter) !bool {
+        const commands = try self.usedCommands();
+        return commands.contains(.system_nadesiko) or commands.contains(.system_nadesiko_continue);
+    }
+
+    /// 終了時drainで回収が必要な非同期タスクを生成し得る命令が存在するか。
+    /// 無ければ生成コードは軽量drainを呼び、timer/process/archive/http等の
+    /// 実装への参照が消えてdead-stripできる。
+    pub fn usesAsyncEvents(self: *Emitter) !bool {
+        const commands = try self.usedCommands();
+        var iterator = commands.iterator();
+        while (iterator.next()) |command| if (isAsyncEventCommand(command)) return true;
+        if (self.program.native_plugin_paths.len > 0) {
+            for (self.program.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
+                if (isNativePluginCall(self.program, function, instruction)) return true;
+            };
+        }
         return false;
     }
 
-    pub fn hasDynamicBuiltin(self: Emitter) bool {
-        return self.hasBuiltinCall(.system_nadesiko) or self.hasBuiltinCall(.system_nadesiko_continue);
-    }
-
-    pub fn needsNodeMotherPath(self: Emitter) bool {
-        return self.globalIndex("母艦パス") != null or self.hasBuiltinCall(.node_mother_path);
+    pub fn needsNodeMotherPath(self: *Emitter) !bool {
+        return self.globalIndex("母艦パス") != null or (try self.hasBuiltinCall(.node_mother_path));
     }
 
     pub fn systemStringValue(self: Emitter, name: []const u8) ?[]const u8 {
@@ -135,8 +220,17 @@ pub const Emitter = struct {
         return null;
     }
 
-    pub fn findFunction(self: Emitter, name: []const u8) ?ir.Function {
-        return lookupFunction(self.program, name);
+    pub fn findFunction(self: *Emitter, name: []const u8) !?ir.Function {
+        if (self.function_index == null) {
+            var index: std.StringHashMapUnmanaged(usize) = .empty;
+            errdefer index.deinit(self.allocator);
+            for (self.program.functions, 0..) |function, function_index| {
+                try index.put(self.allocator, function.name, function_index);
+            }
+            self.function_index = index;
+        }
+        const index = self.function_index.?.get(name) orelse return null;
+        return self.program.functions[index];
     }
 };
 
@@ -221,6 +315,19 @@ pub fn isNodeHttpCommand(command: aot_builtin.Command) bool {
     };
 }
 
+/// 実行中または終了時のevent drainが回収する非同期タスクを生成する命令群。
+/// node_stdin_callbackはcallbackを同期的に回し、node_interrupt_callbackは
+/// 軽量drainでもpollされるため対象外。
+pub fn isAsyncEventCommand(command: aot_builtin.Command) bool {
+    if (isTimerCommand(command) or isPromiseCommand(command) or isHttpServerCommand(command) or
+        isArchiveCommand(command) or isNodeProcessCommand(command) or isNodeFileCallbackCommand(command) or
+        isNodeHttpCommand(command)) return true;
+    return switch (command) {
+        .system_nadesiko, .system_nadesiko_continue => true,
+        else => false,
+    };
+}
+
 pub fn isPluginManagementCommand(command: aot_builtin.Command) bool {
     return switch (command) {
         .plugin_name_set, .namespace_set, .namespace_pop => true,
@@ -235,9 +342,10 @@ pub fn isNodeFileOperationCommand(command: aot_builtin.Command) bool {
     };
 }
 
-pub fn requiresDisplayLog(name: []const u8) bool {
+pub fn requiresDisplayLog(name: []const u8, command: ?aot_builtin.Command) bool {
     if (isDisplayCall(name)) return true;
-    return if (aot_builtin.lookup(name)) |command| isStdioCommand(command) or command == .system_debug_display or command == .system_hatena_execute else false;
+    const resolved = command orelse return false;
+    return isStdioCommand(resolved) or resolved == .system_debug_display or resolved == .system_hatena_execute;
 }
 
 pub fn nameIndex(names: []const []const u8, name: []const u8) ?usize {

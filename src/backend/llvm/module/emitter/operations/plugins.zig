@@ -420,6 +420,15 @@ pub fn writeBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: i
             try emitter.output.writer.print("%builtin.{d}.slot.0", .{result});
         } else try emitter.output.writer.writeAll("null");
         try emitter.output.writer.print(", i64 {d}, i8 {d}, i64 {d})", .{ instruction.operands.len, mode, site_id });
+    } else if (command == .array_push or command == .element_count) {
+        // 配列追加/要素数はループ内の高頻度命令なので、汎用dispatchを迂回する
+        // 専用ABIへ出力する。routeは汎用経路と同じ "builtin" を維持する。
+        const abi_name = if (command == .array_push) "lnako_aot_array_push_call_site" else "lnako_aot_element_count_call_site";
+        try emitter.output.writer.print("  call void @{s}(ptr %root.slot.{d}, ptr ", .{ abi_name, result });
+        if (instruction.operands.len > 0) {
+            try emitter.output.writer.print("%builtin.{d}.slot.0", .{result});
+        } else try emitter.output.writer.writeAll("null");
+        try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
     } else {
         try emitter.output.writer.print("  call void @lnako_aot_builtin_call_site(ptr %root.slot.{d}, ptr ", .{result});
         if (instruction.operands.len > 0) {
