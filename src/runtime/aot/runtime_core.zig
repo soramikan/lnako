@@ -1617,8 +1617,13 @@ pub const Runtime = struct {
     pub fn aotArraySetIndex(self: *Runtime, object: *Object, index: usize, value: Value) !void {
         try self.normalizeAotArrayPresence(object);
         if (index >= object.payload.array.items.len) {
+            const previous_capacity = object.payload.array.capacity;
             const previous_len = object.payload.array.items.len;
             try object.payload.array.resize(self.allocator, index + 1);
+            if (object.payload.array.capacity > previous_capacity) {
+                self.counters.array_grows +|= 1;
+                self.counters.array_copied_bytes +|= previous_len * @sizeOf(Value);
+            }
             @memset(object.payload.array.items[previous_len..], .{});
             try object.array_presence.resize(self.allocator, index + 1);
             @memset(object.array_presence.items[previous_len..], false);
@@ -1637,7 +1642,14 @@ pub const Runtime = struct {
 
     pub fn aotArrayAppend(self: *Runtime, object: *Object, value: Value) !void {
         try self.normalizeAotArrayPresence(object);
+        const previous_capacity = object.payload.array.capacity;
+        const previous_len = object.payload.array.items.len;
         try object.payload.array.append(self.allocator, value);
+        self.counters.array_appends +|= 1;
+        if (object.payload.array.capacity > previous_capacity) {
+            self.counters.array_grows +|= 1;
+            self.counters.array_copied_bytes +|= previous_len * @sizeOf(Value);
+        }
         errdefer _ = object.payload.array.pop();
         try object.array_presence.append(self.allocator, true);
     }
