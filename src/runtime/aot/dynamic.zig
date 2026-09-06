@@ -11,7 +11,6 @@ const Value = aot_state.Value;
 const Tag = aot_state.Tag;
 const RootFrame = aot_state.RootFrame;
 const numberValue = aot_state.numberValue;
-const valueUtf16Alloc = aot_state.valueUtf16Alloc;
 const valueUtf8LossyAlloc = aot_state.valueUtf8LossyAlloc;
 const staticUtf8 = aot_state.staticUtf8;
 const invokeAotCallback = aot_state.invokeAotCallback;
@@ -467,13 +466,17 @@ pub fn dynamicBuiltin(runtime: *Runtime, command: aot_builtin.Command, arguments
 }
 
 pub fn concatAotValues(runtime: *Runtime, left: Value, right: Value) !Value {
-    const left_units = if (left.tag == @intFromEnum(Tag.undefined)) &.{} else try valueUtf16Alloc(runtime, left);
-    defer if (left.tag != @intFromEnum(Tag.undefined)) runtime.allocator.free(left_units);
-    const right_units = if (right.tag == @intFromEnum(Tag.undefined)) &.{} else try valueUtf16Alloc(runtime, right);
-    defer if (right.tag != @intFromEnum(Tag.undefined)) runtime.allocator.free(right_units);
-    var units: std.ArrayList(u16) = .empty;
-    defer units.deinit(runtime.allocator);
-    try units.appendSlice(runtime.allocator, left_units);
-    try units.appendSlice(runtime.allocator, right_units);
-    return runtime.createString(units.items);
+    var rooted = [_]Value{ left, right };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &rooted, rooted.len);
+    defer runtime.popRoots(&frame);
+    const left_view: aot_state.Utf16View = if (rooted[0].tag == @intFromEnum(Tag.undefined)) .{ .units = &.{} } else try aot_state.valueUtf16View(runtime, rooted[0]);
+    defer left_view.deinit(runtime);
+    const right_view: aot_state.Utf16View = if (rooted[1].tag == @intFromEnum(Tag.undefined)) .{ .units = &.{} } else try aot_state.valueUtf16View(runtime, rooted[1]);
+    defer right_view.deinit(runtime);
+    const combined = try runtime.allocator.alloc(u16, left_view.units.len + right_view.units.len);
+    errdefer runtime.allocator.free(combined);
+    @memcpy(combined[0..left_view.units.len], left_view.units);
+    @memcpy(combined[left_view.units.len..], right_view.units);
+    return runtime.ownString(combined);
 }

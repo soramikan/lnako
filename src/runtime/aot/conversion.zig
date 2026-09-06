@@ -418,7 +418,97 @@ pub fn dictionaryToPrimitive(runtime: *Runtime, value: Value, hint: AotPrimitive
     return error.CannotConvertObjectToPrimitive;
 }
 
+/// A UTF-16 view over a value's text.  Existing UTF-16 strings are borrowed
+/// without copying; every other kind materializes into owned scratch that the
+/// caller releases through `deinit`.  A borrowed view aliases GC-managed
+/// storage, so the owning value must stay rooted across any allocation.
+pub const Utf16View = struct {
+    units: []const u16,
+    owned: bool = false,
+
+    pub fn deinit(self: Utf16View, runtime: *Runtime) void {
+        if (self.owned) runtime.allocator.free(@constCast(self.units));
+    }
+};
+
+pub fn valueUtf16View(runtime: *Runtime, value: Value) anyerror!Utf16View {
+    if (value.tag == @intFromEnum(Tag.utf16_string)) {
+        return .{ .units = value.object().?.payload.utf16_string };
+    }
+    return .{ .units = try valueUtf16Alloc(runtime, value), .owned = true };
+}
+
+/// Lexicographic cursor over a string value's code units.  Static UTF-8
+/// literals are decoded on the fly so comparisons never allocate a
+/// temporary buffer; malformed input terminates the cursor, matching the
+/// "no match" behaviour of `staticUtf8EqualsUtf16`.
+const StringCursor = struct {
+    bytes: []const u8 = &.{},
+    units: []const u16 = &.{},
+    index: usize = 0,
+    pending_low: u16 = 0,
+    has_pending_low: bool = false,
+    utf8_mode: bool = false,
+
+    fn init(value: Value) StringCursor {
+        return switch (@as(Tag, @enumFromInt(value.tag))) {
+            .static_utf8_string => .{ .bytes = staticUtf8(value), .utf8_mode = true },
+            .utf16_string => .{ .units = value.object().?.payload.utf16_string },
+            else => .{},
+        };
+    }
+
+    fn next(self: *StringCursor) ?u16 {
+        if (self.has_pending_low) {
+            self.has_pending_low = false;
+            return self.pending_low;
+        }
+        if (!self.utf8_mode) {
+            if (self.index >= self.units.len) return null;
+            defer self.index += 1;
+            return self.units[self.index];
+        }
+        while (self.index < self.bytes.len) {
+            const length = std.unicode.utf8ByteSequenceLength(self.bytes[self.index]) catch return null;
+            if (self.index + length > self.bytes.len) return null;
+            const codepoint = std.unicode.utf8Decode(self.bytes[self.index .. self.index + length]) catch return null;
+            self.index += length;
+            if (codepoint <= 0xffff) return @intCast(codepoint);
+            const offset = codepoint - 0x10000;
+            self.pending_low = @intCast(0xdc00 + (offset & 0x3ff));
+            self.has_pending_low = true;
+            return @intCast(0xd800 + (offset >> 10));
+        }
+        return null;
+    }
+};
+
+fn orderStringCursors(left: *StringCursor, right: *StringCursor) std.math.Order {
+    while (true) {
+        const left_unit = left.next();
+        const right_unit = right.next();
+        if (left_unit == null or right_unit == null) {
+            if (left_unit == null and right_unit == null) return .eq;
+            return if (left_unit == null) .lt else .gt;
+        }
+        if (left_unit.? != right_unit.?) return if (left_unit.? < right_unit.?) .lt else .gt;
+    }
+}
+
 pub fn stringEqual(runtime: *Runtime, left: Value, right: Value) !bool {
+    if (isString(left) and isString(right)) {
+        // Identical storage is trivially equal; otherwise compare the code
+        // unit sequences without materializing temporary buffers.
+        if (left.tag == right.tag and left.payload == right.payload) return true;
+        var left_cursor = StringCursor.init(left);
+        var right_cursor = StringCursor.init(right);
+        while (true) {
+            const left_unit = left_cursor.next();
+            const right_unit = right_cursor.next();
+            if (left_unit == null or right_unit == null) return left_unit == null and right_unit == null;
+            if (left_unit.? != right_unit.?) return false;
+        }
+    }
     const left_units = try valueUtf16Alloc(runtime, left);
     defer runtime.allocator.free(left_units);
     const right_units = try valueUtf16Alloc(runtime, right);
@@ -427,6 +517,12 @@ pub fn stringEqual(runtime: *Runtime, left: Value, right: Value) !bool {
 }
 
 pub fn stringOrder(runtime: *Runtime, left: Value, right: Value) !std.math.Order {
+    if (isString(left) and isString(right)) {
+        if (left.tag == right.tag and left.payload == right.payload) return .eq;
+        var left_cursor = StringCursor.init(left);
+        var right_cursor = StringCursor.init(right);
+        return orderStringCursors(&left_cursor, &right_cursor);
+    }
     const left_units = try valueUtf16Alloc(runtime, left);
     defer runtime.allocator.free(left_units);
     const right_units = try valueUtf16Alloc(runtime, right);
@@ -583,14 +679,75 @@ pub fn numberString(allocator: std.mem.Allocator, number: f64) ![]u8 {
     return number_mod.toStringAlloc(allocator, number);
 }
 
+/// One concat operand.  Existing UTF-16 strings and static UTF-8 literals
+/// are borrowed without copying; only non-string values materialize into
+/// owned scratch.  Borrowed arms alias GC storage, so the owning value must
+/// stay rooted across the output allocation.
+const ConcatOperand = union(enum) {
+    utf16: []const u16,
+    utf8: []const u8,
+    scratch: []u16,
+
+    fn deinit(self: ConcatOperand, runtime: *Runtime) void {
+        switch (self) {
+            .scratch => |units| runtime.allocator.free(units),
+            else => {},
+        }
+    }
+
+    fn unitsLen(self: ConcatOperand) !usize {
+        return switch (self) {
+            .utf16 => |units| units.len,
+            .utf8 => |bytes| std.unicode.calcUtf16LeLen(bytes),
+            .scratch => |units| units.len,
+        };
+    }
+
+    fn write(self: ConcatOperand, dest: []u16) !usize {
+        return switch (self) {
+            .utf16 => |units| blk: {
+                @memcpy(dest[0..units.len], units);
+                break :blk units.len;
+            },
+            .utf8 => |bytes| std.unicode.utf8ToUtf16Le(dest, bytes),
+            .scratch => |units| blk: {
+                @memcpy(dest[0..units.len], units);
+                break :blk units.len;
+            },
+        };
+    }
+};
+
+fn concatOperand(runtime: *Runtime, value: Value) !ConcatOperand {
+    return switch (@as(Tag, @enumFromInt(value.tag))) {
+        .utf16_string => .{ .utf16 = value.object().?.payload.utf16_string },
+        .static_utf8_string => .{ .utf8 = staticUtf8(value) },
+        else => .{ .scratch = try valueUtf16Alloc(runtime, value) },
+    };
+}
+
 pub fn concat(runtime: *Runtime, left: Value, right: Value) !Value {
-    const left_units = try valueUtf16Alloc(runtime, left);
-    defer runtime.allocator.free(left_units);
-    const right_units = try valueUtf16Alloc(runtime, right);
-    defer runtime.allocator.free(right_units);
-    const combined = try runtime.allocator.alloc(u16, left_units.len + right_units.len);
-    @memcpy(combined[0..left_units.len], left_units);
-    @memcpy(combined[left_units.len..], right_units);
+    // Root both operands: the borrowed arms below alias GC storage, and the
+    // output allocation may collect before `ownString` publishes it.  The
+    // left operand is still materialized before the right one so ToPrimitive
+    // order and exceptions are unchanged.
+    var rooted = [_]Value{ left, right };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &rooted, rooted.len);
+    defer runtime.popRoots(&frame);
+
+    const left_operand = try concatOperand(runtime, rooted[0]);
+    defer left_operand.deinit(runtime);
+    const right_operand = try concatOperand(runtime, rooted[1]);
+    defer right_operand.deinit(runtime);
+
+    const left_len = try left_operand.unitsLen();
+    const right_len = try right_operand.unitsLen();
+    const combined = try runtime.allocator.alloc(u16, left_len + right_len);
+    errdefer runtime.allocator.free(combined);
+    const written_left = try left_operand.write(combined);
+    const written_right = try right_operand.write(combined[written_left..]);
+    std.debug.assert(written_left == left_len and written_right == right_len);
     return runtime.ownString(combined);
 }
 
