@@ -673,9 +673,12 @@ pub fn nodeGetGlobal(context: *anyopaque, name: []const u8) ?Value {
 }
 
 pub fn handleNodeInterrupt(self: *Interpreter) !void {
+    // The host callback runs per instruction, so return before touching it
+    // when no interrupt callback is registered.
+    if (self.node_state.interrupt_callback == .undefined) return;
     const context = self.host.node_context orelse return;
     const consume = context.consumeInterruptFn orelse return;
-    if (!consume(context.context) or self.node_state.interrupt_callback == .undefined) return;
+    if (!consume(context.context)) return;
     const result = try self.callFunctionValue(self.node_state.interrupt_callback.function, &.{.undefined});
     if (result.toBoolean()) {
         self.node_state.requested_exit_code = 0;

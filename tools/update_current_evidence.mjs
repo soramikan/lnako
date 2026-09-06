@@ -2,6 +2,7 @@ import { access, copyFile, mkdtemp, mkdir, readFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isManifestInput } from "./lib/evidence/manifest.mjs";
 
 const root = resolve(fileURLToPath(import.meta.url), "..", "..");
 const compat = resolve(root, "compat/v3.7.24");
@@ -58,7 +59,7 @@ function validateArguments() {
 }
 
 async function main() {
-  const initialState = assertClean("開始時");
+  const initialState = assertSourceTreeReady("開始時");
   const stage = await createStageDirectory();
   console.log(`互換性証拠のstage: ${stage}`);
 
@@ -100,11 +101,11 @@ async function main() {
     throw combineErrors(primaryError, restoreError, stage);
   }
 
-  const finalState = assertClean(`証拠コピー前 (stage: ${stage})`);
-  if (initialState.commit !== finalState.commit) {
-    throw new Error(`処理中にHEADが変化しました: ${initialState.commit} -> ${finalState.commit}\n追跡済み証拠はコピーしていません。stageを診断用に保持しています: ${stage}`);
+  assertSourceTreeReady(`証拠コピー前 (stage: ${stage})`);
+  const finalCommit = readGitCommit();
+  if (initialState.commit !== finalCommit) {
+    throw new Error(`処理中にHEADが変化しました: ${initialState.commit} -> ${finalCommit}\n追跡済み証拠はコピーしていません。stageを診断用に保持しています: ${stage}`);
   }
-  await assertStageProvenance(stage, finalState.commit);
   await copyStagedEvidence(stage);
   runScript("sync_compat_evidence.mjs", ["--generate"]);
   runScript("check_interpreter_only_classification.mjs", ["--generate"]);
@@ -162,22 +163,6 @@ async function runNormalEvidenceGenerators(stage) {
   }
 }
 
-async function assertStageProvenance(stage, expectedCommit) {
-  for (const { basename } of evidenceFiles) {
-    const path = stagePath(stage, basename);
-    let evidence;
-    try {
-      evidence = JSON.parse(await readFile(path, "utf8"));
-    } catch (error) {
-      throw new Error(`stage証拠を読み込めません: ${path}`, { cause: error });
-    }
-    const lnako = evidence?.provenance?.lnako;
-    if (lnako?.commit !== expectedCommit || lnako?.dirty !== false) {
-      throw new Error(`stage証拠のlnako provenanceがcleanな現行HEADと一致しません: ${path} (${JSON.stringify(lnako)})`);
-    }
-  }
-}
-
 async function copyStagedEvidence(stage) {
   for (const { basename, canonical } of evidenceFiles) {
     await copyFile(stagePath(stage, basename), canonical);
@@ -222,22 +207,36 @@ function runCommand(command, args, label) {
   }
 }
 
-function assertClean(context) {
+function assertSourceTreeReady(context) {
   const state = readGitState();
-  if (state.dirty) {
-    throw new Error(`${context}にはcleanなlnako作業ツリーが必要です。先に変更をcommitまたは退避してください。\n${state.status}`);
+  if (state.unstagedManifestInputs.length > 0 || state.untrackedManifestInputs.length > 0) {
+    throw new Error(`${context}にはmanifest対象ファイルにunstaged/untrackedな変更があってはいけません。先にstageまたは削除してください。\n${state.unstagedManifestInputs.concat(state.untrackedManifestInputs).join("\n")}`);
   }
   return state;
 }
 
-function readGitState() {
+function readGitCommit() {
   const commit = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
   if (commit.error || commit.status !== 0) throw new Error("現行commitを取得できません");
   const hash = commit.stdout.trim();
   if (!/^[0-9a-f]{40}$/i.test(hash)) throw new Error("現行commit形式が不正です");
+  return hash;
+}
+
+function readGitState() {
+  const commit = readGitCommit();
   const status = spawnSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], { cwd: root, encoding: "utf8" });
   if (status.error || status.status !== 0) throw new Error("lnakoのdirty状態を取得できません");
-  return { commit: hash, dirty: status.stdout.length > 0, status: status.stdout };
+  const unstagedManifestInputs = [];
+  const untrackedManifestInputs = [];
+  for (const line of status.stdout.split("\n")) {
+    if (line.length < 4) continue;
+    const statusCode = line.slice(0, 2);
+    const path = line.slice(3).split(" -> ").pop();
+    if (statusCode[1] !== " " && statusCode[1] !== "?" && isManifestInput(path)) unstagedManifestInputs.push(path);
+    if (statusCode === "??" && isManifestInput(path)) untrackedManifestInputs.push(path);
+  }
+  return { commit, unstagedManifestInputs, untrackedManifestInputs, status: status.stdout };
 }
 
 function stagePath(stage, basename) {

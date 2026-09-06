@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
+import { computeSourceManifestSha256 } from "./lib/evidence/manifest.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const lockPath = resolve(root, "compat/upstream.lock.json");
@@ -54,8 +55,6 @@ try {
   validateEvidence(evidence, lock, catalog, cases, { allowDirty: true });
 
   if (evidenceOutput !== null) {
-    const git = readGitState();
-    if (git.dirty) throw new Error("compat-js証拠の生成にはcleanなlnako作業ツリーが必要です");
     await writeExclusive(evidenceOutput, `${JSON.stringify(evidence, null, 2)}\n`);
     console.log(`compat-js実行証拠を生成しました: ${evidence.entries.length} entry / ${evidence.scope.caseCount}ケース`);
   } else {
@@ -114,7 +113,7 @@ async function runCase(testCase, cliPath) {
 }
 
 async function makeEvidence(lock, catalog, cases, reports, oracle) {
-  const git = readGitState();
+  const git = await readGitState();
   const compatCommands = catalog.commands.filter((command) => command.plannedMode === "compat-js");
   const reportsWithOperations = reports.filter((report) => report.trace?.operations.length > 0).map((report) => report.id);
   const entries = compatCommands.map((command) => {
@@ -181,7 +180,10 @@ async function makeEvidence(lock, catalog, cases, reports, oracle) {
         treeHashAlgorithm: oracle.treeHashAlgorithm,
         treeSha256: oracle.treeSha256,
       },
-      lnako: { binarySha256: sha256(await readFile(compiler)), commit: git.commit, dirty: git.dirty },
+      lnako: {
+        binarySha256: sha256(await readFile(compiler)),
+        sourceManifestSha256: git.sourceManifestSha256,
+      },
       raw: { traceSha256ByCase: Object.fromEntries(reports.filter((report) => report.traceSha256 !== null).map((report) => [report.id, report.traceSha256])) },
     },
     entries,
@@ -243,7 +245,7 @@ function validateEvidence(evidence, lock, catalog, cases, { allowDirty }) {
   assertKeys(evidence.provenance, ["environment", "oracle", "lnako", "raw"], "compat-js-evidence.provenance");
   assertKeys(evidence.provenance.environment, ["platform", "arch", "node"], "compat-js-evidence.provenance.environment");
   assertKeys(evidence.provenance.oracle, ["build", "archiveSha256", "cliSha256", "markerSha256", "treeHashAlgorithm", "treeSha256"], "compat-js-evidence.provenance.oracle");
-  assertKeys(evidence.provenance.lnako, ["binarySha256", "commit", "dirty"], "compat-js-evidence.provenance.lnako");
+  assertKeys(evidence.provenance.lnako, ["binarySha256", "sourceManifestSha256", "commit", "dirty"], "compat-js-evidence.provenance.lnako");
   assertKeys(evidence.provenance.raw, ["traceSha256ByCase"], "compat-js-evidence.provenance.raw");
   validateProvenance(evidence.provenance, lock, allowDirty);
 
@@ -302,7 +304,10 @@ function validateProvenance(provenance, lock, allowDirty) {
   const environment = provenance.environment;
   const oracle = provenance.oracle;
   const lnako = provenance.lnako;
-  if (![environment.platform, environment.arch, environment.node].every((value) => typeof value === "string" && value.length > 0) || !Number.isSafeInteger(oracle.build) || oracle.build !== lock.nadesiko3.oracleIdentity?.build || oracle.archiveSha256 !== lock.nadesiko3.archive.sha256 || oracle.cliSha256 !== lock.nadesiko3.oracleIdentity?.cliSha256 || oracle.markerSha256 !== lock.nadesiko3.oracleIdentity?.markerSha256 || oracle.treeHashAlgorithm !== lock.nadesiko3.oracleIdentity?.treeHashAlgorithm || oracle.treeSha256 !== lock.nadesiko3.oracleIdentity?.treeSha256ByPlatform?.[`${environment.platform}-${environment.arch}`] || !hashPattern.test(oracle.archiveSha256) || !hashPattern.test(oracle.cliSha256) || !hashPattern.test(oracle.markerSha256) || !hashPattern.test(oracle.treeSha256) || !hashPattern.test(lnako.binarySha256) || !commitPattern.test(lnako.commit) || (!allowDirty && lnako.dirty !== false)) throw new Error("compat-js証拠のprovenanceが不正です");
+  if (![environment.platform, environment.arch, environment.node].every((value) => typeof value === "string" && value.length > 0) || !Number.isSafeInteger(oracle.build) || oracle.build !== lock.nadesiko3.oracleIdentity?.build || oracle.archiveSha256 !== lock.nadesiko3.archive.sha256 || oracle.cliSha256 !== lock.nadesiko3.oracleIdentity?.cliSha256 || oracle.markerSha256 !== lock.nadesiko3.oracleIdentity?.markerSha256 || oracle.treeHashAlgorithm !== lock.nadesiko3.oracleIdentity?.treeHashAlgorithm || oracle.treeSha256 !== lock.nadesiko3.oracleIdentity?.treeSha256ByPlatform?.[`${environment.platform}-${environment.arch}`] || !hashPattern.test(oracle.archiveSha256) || !hashPattern.test(oracle.cliSha256) || !hashPattern.test(oracle.markerSha256) || !hashPattern.test(oracle.treeSha256) ||
+      !hashPattern.test(lnako.binarySha256) ||
+      (lnako.sourceManifestSha256 === undefined && (!commitPattern.test(lnako.commit) || (!allowDirty && lnako.dirty !== false))) ||
+      (lnako.sourceManifestSha256 !== undefined && !hashPattern.test(lnako.sourceManifestSha256))) throw new Error("compat-js証拠のprovenanceが不正です");
   for (const hash of Object.values(provenance.raw.traceSha256ByCase)) if (!hashPattern.test(hash)) throw new Error("compat-js trace raw SHA-256が不正です");
 }
 
@@ -401,11 +406,12 @@ function buildCompatLnako() {
   if (result.status !== 0) throw new Error(`QuickJS互換lnakoのビルドに失敗しました:\n${result.stderr}`);
 }
 
-function readGitState() {
+async function readGitState() {
   const commit = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
   const status = spawnSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" });
   if (commit.status !== 0 || status.status !== 0) throw new Error("lnakoのGit状態を取得できません");
-  return { commit: commit.stdout.trim(), dirty: status.stdout.length > 0 };
+  const manifest = await computeSourceManifestSha256(root);
+  return { commit: commit.stdout.trim(), dirty: status.stdout.length > 0, sourceManifestSha256: manifest.sha256 };
 }
 
 function sha256(value) {

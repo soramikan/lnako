@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
+import { computeSourceManifestSha256 } from "./lib/evidence/manifest.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const lockPath = resolve(root, "compat/upstream.lock.json");
@@ -77,7 +78,7 @@ if (process.platform === "win32") throw new Error("強制終了時の実SIGINT�
 const oracle = await readOracleIdentity();
 if (!noBuild) buildCompiler();
 await access(executable);
-const git = gitState();
+const git = await gitState();
 const temporary = await mkdtemp(join(root, ".tmp-lnako-node-exit-evidence-"));
 try {
   const entries = [];
@@ -95,7 +96,10 @@ try {
     provenance: {
       environment: { platform: process.platform, arch: process.arch, node: process.version },
       oracle: oracleEvidence(oracle),
-      lnako: { binarySha256: sha256(await readFile(executable)), commit: git.commit, dirty: git.dirty },
+      lnako: {
+        binarySha256: sha256(await readFile(executable)),
+        sourceManifestSha256: git.sourceManifestSha256,
+      },
       raw: {
         traceSha256: Object.fromEntries(entries.map((entry) => [entry.caseId, {
           interpreter: entry.trace.interpreter.traceSha256,
@@ -489,10 +493,13 @@ function validateArtifact(artifact) {
   assertExactKeys(artifact.provenance, ["environment", "oracle", "lnako", "raw"]);
   assertExactKeys(artifact.provenance.environment, ["platform", "arch", "node"]);
   assertExactKeys(artifact.provenance.oracle, ["build", "archiveSha256", "cliSha256", "markerSha256", "treeHashAlgorithm", "treeSha256"]);
-  assertExactKeys(artifact.provenance.lnako, ["binarySha256", "commit", "dirty"]);
+  assertExactKeys(artifact.provenance.lnako, ["binarySha256", "sourceManifestSha256"]);
   assertExactKeys(artifact.provenance.raw, ["traceSha256"]);
   if (!hashPattern.test(artifact.provenance.oracle.archiveSha256) || !hashPattern.test(artifact.provenance.oracle.cliSha256) || !hashPattern.test(artifact.provenance.oracle.markerSha256) || !hashPattern.test(artifact.provenance.oracle.treeSha256) ||
-      !hashPattern.test(artifact.provenance.lnako.binarySha256) || !commitPattern.test(artifact.provenance.lnako.commit) || artifact.provenance.lnako.dirty !== false) throw new Error("expected-exit証拠のprovenanceが不正です");
+      !hashPattern.test(artifact.provenance.lnako.binarySha256) ||
+      (artifact.provenance.lnako.sourceManifestSha256 === undefined &&
+       (!commitPattern.test(artifact.provenance.lnako.commit) || artifact.provenance.lnako.dirty !== false)) ||
+      (artifact.provenance.lnako.sourceManifestSha256 !== undefined && !hashPattern.test(artifact.provenance.lnako.sourceManifestSha256))) throw new Error("expected-exit証拠のprovenanceが不正です");
   assertExactKeys(artifact.provenance.raw.traceSha256, selectedCases.map((testCase) => testCase.id));
   for (const traces of Object.values(artifact.provenance.raw.traceSha256)) {
     assertExactKeys(traces, ["interpreter", "aot"]);
@@ -598,11 +605,12 @@ function buildCompiler() {
   if (result.status !== 0) throw new Error(`lnakoビルドに失敗しました:\n${result.stderr}`);
 }
 
-function gitState() {
+async function gitState() {
   const commit = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
   const status = spawnSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" });
   if (commit.status !== 0 || status.status !== 0 || !commit.stdout.trim().match(commitPattern)) throw new Error("lnako git stateを取得できません");
-  return { commit: commit.stdout.trim(), dirty: status.stdout.length > 0 };
+  const manifest = await computeSourceManifestSha256(root);
+  return { commit: commit.stdout.trim(), dirty: status.stdout.length > 0, sourceManifestSha256: manifest.sha256 };
 }
 
 async function writeExclusive(path, contents) {

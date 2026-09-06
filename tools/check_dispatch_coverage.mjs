@@ -11,7 +11,7 @@ import * as coverage_process from "./lib/coverage_process.mjs";
 import * as coverage_fixtures from "./lib/coverage_fixtures.mjs";
 import * as coverage_http from "./lib/coverage_http.mjs";
 import * as coverage_sites from "./lib/coverage_sites.mjs";
-import { gitState, sha256, sha256FileSync, normalizeLineEndings, readOracleIdentity, assertOutputDoesNotExist, writeExclusive, validDispatchExpectationPlatforms } from "./lib/evidence_common.mjs";
+import { sha256, sha256FileSync, normalizeLineEndings, readOracleIdentity, assertOutputDoesNotExist, writeExclusive, validDispatchExpectationPlatforms } from "./lib/evidence_common.mjs";
 
 
 const root = resolve(import.meta.dirname, "..");
@@ -132,7 +132,6 @@ await access(compiler);
 // therefore treats a `D:/...` path as relative. Keep the scratch tree on the
 // repository drive, which is also the default oracle drive in CI, so relative
 // plugin paths remain valid on Windows.
-const auditGitState = gitState();
 const temporary = await mkdtemp(join(root, ".tmp-lnako-dispatch-coverage-"));
 Object.assign(coverageEnv, {
   root,
@@ -157,7 +156,6 @@ Object.assign(coverageEnv, {
   nativeDispatchCoverageExclusions,
   fixturePool,
   temporary,
-  auditGitState,
 });
 let loopbackServer = null;
 try {
@@ -176,7 +174,7 @@ try {
     unresolvedSites.push(...result.unresolvedSites);
   }
 
-  const report = await coverage_sites.createReport({ fixtureReports, sites, unresolvedSites, oracle, git: auditGitState });
+  const report = await coverage_sites.createReport({ fixtureReports, sites, unresolvedSites, oracle });
   if (arguments_.output !== null) await writeExclusive(arguments_.output, `${JSON.stringify(report, null, 2)}\n`);
   const nativeCoverage = report.coverage.unambiguousObservedNativeEntries;
   const nativeNames = report.coverage.unambiguousObservedNativeUniqueNames;

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { oracleTreeHash } from "./oracle_tree_hash.mjs";
+import { computeSourceManifestSha256 } from "./lib/evidence/manifest.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const compiler = resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
@@ -119,7 +120,7 @@ try {
   const manifest = await readBindingManifest(globalManifest, sourcePath);
   const interpreterEvents = await readBindingTrace(interpreterTrace, "interpreter", manifest);
   const aotEvents = await readBindingTrace(aotTrace, "aot", manifest);
-  const git = readGitState();
+  const git = await readGitState();
   const manifestSites = manifest.entries.map((entry, index) => ({
     catalogId: expectedAccesses[index].catalogId,
     name: expectedAccesses[index].name,
@@ -158,7 +159,10 @@ try {
     provenance: {
       environment: { platform: process.platform, arch: process.arch, node: process.version },
       oracle: await readOracleIdentity(oracleRoot, officialCli, lock.nadesiko3),
-      lnako: { binarySha256: sha256(await readFile(compiler)), commit: git.commit, dirty: git.dirty },
+      lnako: {
+        binarySha256: sha256(await readFile(compiler)),
+        sourceManifestSha256: git.sourceManifestSha256,
+      },
       raw: {
         interpreterTraceSha256: sha256(await readFile(interpreterTrace)),
         aotTraceSha256: sha256(await readFile(aotTrace)),
@@ -368,17 +372,23 @@ function validateEvidence(evidence, lock_, fixture_, manifest) {
   assertKeys(evidence.provenance, ["environment", "oracle", "lnako", "raw"], "global binding provenance");
   assertKeys(evidence.provenance.environment, ["platform", "arch", "node"], "global binding provenance environment");
   assertKeys(evidence.provenance.oracle, ["build", "archiveSha256", "cliSha256", "markerSha256", "treeHashAlgorithm", "treeSha256"], "global binding provenance oracle");
-  assertKeys(evidence.provenance.lnako, ["binarySha256", "commit", "dirty"], "global binding provenance lnako");
+  assertKeys(evidence.provenance.lnako, ["binarySha256", "sourceManifestSha256", "commit", "dirty"], "global binding provenance lnako");
   assertKeys(evidence.provenance.raw, ["interpreterTraceSha256", "aotTraceSha256", "globalManifestSha256"], "global binding provenance raw");
   const hashPattern = /^[0-9a-f]{64}$/;
-  if (![evidence.provenance.environment.platform, evidence.provenance.environment.arch, evidence.provenance.environment.node].every((value) => typeof value === "string" && value.length > 0) || !Number.isSafeInteger(evidence.provenance.oracle.build) || !hashPattern.test(evidence.provenance.oracle.archiveSha256) || !hashPattern.test(evidence.provenance.oracle.cliSha256) || !hashPattern.test(evidence.provenance.oracle.markerSha256) || !hashPattern.test(evidence.provenance.oracle.treeSha256) || !hashPattern.test(evidence.provenance.lnako.binarySha256) || !/^[0-9a-f]{40}$/.test(evidence.provenance.lnako.commit) || evidence.provenance.lnako.dirty !== false || !hashPattern.test(evidence.provenance.raw.interpreterTraceSha256) || !hashPattern.test(evidence.provenance.raw.aotTraceSha256) || !hashPattern.test(evidence.provenance.raw.globalManifestSha256)) throw new Error("global binding provenanceが不正です");
+  if (![evidence.provenance.environment.platform, evidence.provenance.environment.arch, evidence.provenance.environment.node].every((value) => typeof value === "string" && value.length > 0) || !Number.isSafeInteger(evidence.provenance.oracle.build) || !hashPattern.test(evidence.provenance.oracle.archiveSha256) || !hashPattern.test(evidence.provenance.oracle.cliSha256) || !hashPattern.test(evidence.provenance.oracle.markerSha256) || !hashPattern.test(evidence.provenance.oracle.treeSha256) ||
+      !hashPattern.test(evidence.provenance.lnako.binarySha256) ||
+      (evidence.provenance.lnako.sourceManifestSha256 === undefined &&
+       (!/^[0-9a-f]{40}$/i.test(evidence.provenance.lnako.commit) || evidence.provenance.lnako.dirty !== false)) ||
+      (evidence.provenance.lnako.sourceManifestSha256 !== undefined && !hashPattern.test(evidence.provenance.lnako.sourceManifestSha256)) ||
+      !hashPattern.test(evidence.provenance.raw.interpreterTraceSha256) || !hashPattern.test(evidence.provenance.raw.aotTraceSha256) || !hashPattern.test(evidence.provenance.raw.globalManifestSha256)) throw new Error("global binding provenanceが不正です");
 }
 
-function readGitState() {
+async function readGitState() {
   const commit = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
   const status = spawnSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" });
   if (commit.status !== 0 || status.status !== 0) throw new Error("lnakoのGit状態を取得できません");
-  return { commit: commit.stdout.trim(), dirty: status.stdout.length > 0 };
+  const manifest = await computeSourceManifestSha256(root);
+  return { commit: commit.stdout.trim(), dirty: status.stdout.length > 0, sourceManifestSha256: manifest.sha256 };
 }
 
 async function readOracleIdentity(directory, cli, baseline) {

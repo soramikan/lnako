@@ -176,10 +176,15 @@ pub fn executeFunction(self: *Interpreter, function: *const ir.Function, argumen
     self.call_depth += 1;
     defer self.call_depth -= 1;
     const value_count = maxValueId(function.*) + 1;
-    const values = try self.allocator.alloc(Value, value_count);
-    @memset(values, .undefined);
-    var frame = Frame{ .parent = self.active_frame, .function = function, .owner_program = owner_program, .values = values };
-    defer frame.deinit(self.allocator);
+    const values = try self.acquireValueBuffer(value_count);
+    var frame = Frame{ .parent = self.active_frame, .function = function, .owner_program = owner_program, .values = values[0..value_count], .values_buffer = values };
+    defer {
+        const buffer = frame.values_buffer;
+        frame.values_buffer = null;
+        frame.values = &.{};
+        frame.deinit(self.allocator);
+        if (buffer) |allocation| self.releaseValueBuffer(allocation);
+    }
     self.active_frame = &frame;
     defer self.active_frame = frame.parent;
     const previous_source_path = self.current_source_path;
@@ -287,8 +292,9 @@ pub fn executeInstruction(self: *Interpreter, frame: *Frame, instruction: ir.Ins
         .const_string => result = try self.runtime.stringUtf8(instruction.text),
         .const_undefined => result = .undefined,
         .load_global => {
-            const found = self.globals.getPtr(instruction.name) != null;
-            result = self.globals.get(instruction.name) orelse .undefined;
+            const stored = self.globals.getPtr(instruction.name);
+            result = if (stored) |entry| entry.* else .undefined;
+            const found = stored != null;
             if (instruction.global_site_id != null) {
                 const site_id = if (frame.owner_program == &self.root_program) instruction.global_site_id else null;
                 self.global_trace.emit(traceBuiltinName(instruction.name), found, site_id);
@@ -363,56 +369,147 @@ pub fn executeDestructure(self: *Interpreter, frame: *Frame, instruction: ir.Ins
     }
 }
 
+const BinaryOperator = enum {
+    add,
+    subtract,
+    multiply,
+    divide,
+    integer_divide,
+    remainder,
+    power,
+    concat,
+    bit_or,
+    bit_xor,
+    shift_left,
+    shift_right,
+    shift_right_unsigned,
+    logical_and,
+    logical_or,
+    abstract_equal,
+    strict_equal,
+    abstract_not_equal,
+    strict_not_equal,
+    less,
+    less_equal,
+    greater,
+    greater_equal,
+};
+
+/// Operator spellings resolve once per instruction through this map instead
+/// of the previous chain of sequential `std.mem.eql` comparisons.
+const binary_operators = std.StaticStringMap(BinaryOperator).initComptime(.{
+    .{ "+", .add },
+    .{ "-", .subtract },
+    .{ "*", .multiply },
+    .{ "/", .divide },
+    .{ "÷", .divide },
+    .{ "÷÷", .integer_divide },
+    .{ "%", .remainder },
+    .{ "**", .power },
+    .{ "&", .concat },
+    .{ "|", .bit_or },
+    .{ "^", .bit_xor },
+    .{ "shift_l", .shift_left },
+    .{ "shift_r", .shift_right },
+    .{ "shift_r0", .shift_right_unsigned },
+    .{ "&&", .logical_and },
+    .{ "and", .logical_and },
+    .{ "||", .logical_or },
+    .{ "or", .logical_or },
+    .{ "==", .abstract_equal },
+    .{ "=", .abstract_equal },
+    .{ "eq", .abstract_equal },
+    .{ "===", .strict_equal },
+    .{ "!=", .abstract_not_equal },
+    .{ "≠", .abstract_not_equal },
+    .{ "noteq", .abstract_not_equal },
+    .{ "!==", .strict_not_equal },
+    .{ "<", .less },
+    .{ "lt", .less },
+    .{ "<=", .less_equal },
+    .{ "lteq", .less_equal },
+    .{ ">", .greater },
+    .{ "gt", .greater },
+    .{ ">=", .greater_equal },
+    .{ "gteq", .greater_equal },
+});
+
+const UnaryOperator = enum { logical_not, minus, plus, bit_not };
+
+const unary_operators = std.StaticStringMap(UnaryOperator).initComptime(.{
+    .{ "!", .logical_not },
+    .{ "not", .logical_not },
+    .{ "-", .minus },
+    .{ "+", .plus },
+    .{ "~", .bit_not },
+});
+
 pub fn executeBinary(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
     const left = self.operand(frame, instruction, 0);
     const right = self.operand(frame, instruction, 1);
-    if (std.mem.eql(u8, instruction.operator, "+")) return operators.nadesikoAdd(self.runtime, left, right);
-    if (std.mem.eql(u8, instruction.operator, "-")) return operators.binary(self.runtime, .subtract, left, right);
-    if (std.mem.eql(u8, instruction.operator, "*")) return operators.binary(self.runtime, .multiply, left, right);
-    if (std.mem.eql(u8, instruction.operator, "/") or std.mem.eql(u8, instruction.operator, "÷")) return operators.binary(self.runtime, .divide, left, right);
-    if (std.mem.eql(u8, instruction.operator, "÷÷")) {
-        const quotient = try operators.binary(self.runtime, .divide, left, right);
-        if (quotient == .number) return .{ .number = @floor(quotient.number) };
-        return error.CannotConvertBigIntToNumber;
+    const operator = binary_operators.get(instruction.operator) orelse return error.UnsupportedBinaryOperator;
+    switch (operator) {
+        .add => return operators.nadesikoAdd(self.runtime, left, right),
+        .subtract => return operators.binary(self.runtime, .subtract, left, right),
+        .multiply => return operators.binary(self.runtime, .multiply, left, right),
+        .divide => return operators.binary(self.runtime, .divide, left, right),
+        .integer_divide => {
+            const quotient = try operators.binary(self.runtime, .divide, left, right);
+            if (quotient == .number) return .{ .number = @floor(quotient.number) };
+            return error.CannotConvertBigIntToNumber;
+        },
+        .remainder => return operators.binary(self.runtime, .remainder, left, right),
+        .power => return operators.binary(self.runtime, .power, left, right),
+        .concat => {
+            const left_string = (try self.runtime.valueToString(left)).string;
+            const right_string = (try self.runtime.valueToString(right)).string;
+            return self.runtime.concatStrings(left_string, right_string);
+        },
+        .bit_or => return operators.binary(self.runtime, .bit_or, left, right),
+        .bit_xor => return operators.binary(self.runtime, .bit_xor, left, right),
+        .shift_left => return operators.binary(self.runtime, .shift_left, left, right),
+        .shift_right => return operators.binary(self.runtime, .shift_right, left, right),
+        .shift_right_unsigned => return operators.binary(self.runtime, .shift_right_unsigned, left, right),
+        .logical_and => return if (left.toBoolean()) right else left,
+        .logical_or => return if (left.toBoolean()) left else right,
+        .abstract_equal => return .{ .boolean = try self.runtime.abstractEqual(left, right) },
+        .strict_equal => return .{ .boolean = Value.strictEqual(left, right) },
+        .abstract_not_equal => return .{ .boolean = !(try self.runtime.abstractEqual(left, right)) },
+        .strict_not_equal => return .{ .boolean = !Value.strictEqual(left, right) },
+        .less, .less_equal, .greater, .greater_equal => {
+            const order = try operators.compare(self.runtime, left, right);
+            return .{ .boolean = switch (operator) {
+                .less => order != null and order.? == .lt,
+                .less_equal => order != null and order.? != .gt,
+                .greater => order != null and order.? == .gt,
+                else => order != null and order.? != .lt,
+            } };
+        },
     }
-    if (std.mem.eql(u8, instruction.operator, "%")) return operators.binary(self.runtime, .remainder, left, right);
-    if (std.mem.eql(u8, instruction.operator, "**")) return operators.binary(self.runtime, .power, left, right);
-    if (std.mem.eql(u8, instruction.operator, "&")) {
-        const left_string = (try self.runtime.valueToString(left)).string;
-        const right_string = (try self.runtime.valueToString(right)).string;
-        return self.runtime.concatStrings(left_string, right_string);
-    }
-    if (std.mem.eql(u8, instruction.operator, "|")) return operators.binary(self.runtime, .bit_or, left, right);
-    if (std.mem.eql(u8, instruction.operator, "^")) return operators.binary(self.runtime, .bit_xor, left, right);
-    if (std.mem.eql(u8, instruction.operator, "shift_l")) return operators.binary(self.runtime, .shift_left, left, right);
-    if (std.mem.eql(u8, instruction.operator, "shift_r")) return operators.binary(self.runtime, .shift_right, left, right);
-    if (std.mem.eql(u8, instruction.operator, "shift_r0")) return operators.binary(self.runtime, .shift_right_unsigned, left, right);
-    if (std.mem.eql(u8, instruction.operator, "&&") or std.mem.eql(u8, instruction.operator, "and")) return if (left.toBoolean()) right else left;
-    if (std.mem.eql(u8, instruction.operator, "||") or std.mem.eql(u8, instruction.operator, "or")) return if (left.toBoolean()) left else right;
-    if (std.mem.eql(u8, instruction.operator, "==") or std.mem.eql(u8, instruction.operator, "=") or std.mem.eql(u8, instruction.operator, "eq")) return .{ .boolean = try self.runtime.abstractEqual(left, right) };
-    if (std.mem.eql(u8, instruction.operator, "===")) return .{ .boolean = Value.strictEqual(left, right) };
-    if (std.mem.eql(u8, instruction.operator, "!=") or std.mem.eql(u8, instruction.operator, "≠") or std.mem.eql(u8, instruction.operator, "noteq")) return .{ .boolean = !(try self.runtime.abstractEqual(left, right)) };
-    if (std.mem.eql(u8, instruction.operator, "!==")) return .{ .boolean = !Value.strictEqual(left, right) };
-    const order = try operators.compare(self.runtime, left, right);
-    if (std.mem.eql(u8, instruction.operator, "<") or std.mem.eql(u8, instruction.operator, "lt")) return .{ .boolean = order != null and order.? == .lt };
-    if (std.mem.eql(u8, instruction.operator, "<=") or std.mem.eql(u8, instruction.operator, "lteq")) return .{ .boolean = order != null and order.? != .gt };
-    if (std.mem.eql(u8, instruction.operator, ">") or std.mem.eql(u8, instruction.operator, "gt")) return .{ .boolean = order != null and order.? == .gt };
-    if (std.mem.eql(u8, instruction.operator, ">=") or std.mem.eql(u8, instruction.operator, "gteq")) return .{ .boolean = order != null and order.? != .lt };
-    return error.UnsupportedBinaryOperator;
 }
 
 pub fn executeUnary(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
     const value = self.operand(frame, instruction, 0);
-    if (std.mem.eql(u8, instruction.operator, "!") or std.mem.eql(u8, instruction.operator, "not")) return .{ .boolean = !value.toBoolean() };
-    if (std.mem.eql(u8, instruction.operator, "-")) return operators.unaryMinus(self.runtime, value);
-    if (std.mem.eql(u8, instruction.operator, "+")) return operators.unaryPlus(self.runtime, value);
-    if (std.mem.eql(u8, instruction.operator, "~")) return operators.bitNot(self.runtime, value);
-    return error.UnsupportedUnaryOperator;
+    return switch (unary_operators.get(instruction.operator) orelse return error.UnsupportedUnaryOperator) {
+        .logical_not => .{ .boolean = !value.toBoolean() },
+        .minus => try operators.unaryMinus(self.runtime, value),
+        .plus => try operators.unaryPlus(self.runtime, value),
+        .bit_not => try operators.bitNot(self.runtime, value),
+    };
 }
 
+/// Calls with up to this many arguments build their argument list on the
+/// stack; longer calls fall back to a heap allocation.
+const stack_argument_capacity = 8;
+
 pub fn executeCall(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
-    var arguments = try self.allocator.alloc(Value, instruction.operands.len);
-    defer self.allocator.free(arguments);
+    var stack_arguments: [stack_argument_capacity]Value = undefined;
+    const heap_arguments = instruction.operands.len > stack_argument_capacity;
+    const arguments = if (heap_arguments) args: {
+        self.heap_argument_allocs += 1;
+        break :args try self.allocator.alloc(Value, instruction.operands.len);
+    } else stack_arguments[0..instruction.operands.len];
+    defer if (heap_arguments) self.allocator.free(arguments);
     for (instruction.operands, 0..) |operand_id, index| arguments[index] = frame.values[operand_id];
     var writes_result = false;
     const result = if (instruction.direct_callee) |callee_id| blk: {
@@ -442,8 +539,13 @@ pub fn executeCall(self: *Interpreter, frame: *Frame, instruction: ir.Instructio
 pub fn executeCallValue(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
     if (instruction.operands.len == 0) return error.NotCallable;
     const callable = frame.values[instruction.operands[0]];
-    var arguments = try self.allocator.alloc(Value, instruction.operands.len - 1);
-    defer self.allocator.free(arguments);
+    var stack_arguments: [stack_argument_capacity]Value = undefined;
+    const heap_arguments = instruction.operands.len - 1 > stack_argument_capacity;
+    const arguments = if (heap_arguments) args: {
+        self.heap_argument_allocs += 1;
+        break :args try self.allocator.alloc(Value, instruction.operands.len - 1);
+    } else stack_arguments[0 .. instruction.operands.len - 1];
+    defer if (heap_arguments) self.allocator.free(arguments);
     for (instruction.operands[1..], 0..) |operand_id, index| arguments[index] = frame.values[operand_id];
     if (callable != .function) return error.NotCallable;
     return self.callFunctionValue(callable.function, arguments);

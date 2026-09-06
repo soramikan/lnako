@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
+import { computeSourceManifestSha256 } from "./lib/evidence/manifest.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const compiler = resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
@@ -294,7 +295,7 @@ try {
   });
   if (new Set(entries.map((entry) => entry.catalogId)).size !== entries.length) throw new Error("静的定数のcatalog IDが重複しています");
 
-  const git = readGitState();
+  const git = await readGitState();
   const evidence = {
     schema: "lnako.static-constant-evidence.v2",
     generator: "tools/check_static_constant_evidence.mjs",
@@ -321,7 +322,10 @@ try {
     provenance: {
       environment: { platform: process.platform, arch: process.arch, node: process.version },
       oracle: await readOracleIdentity(oracleRoot, officialCli, lock.nadesiko3),
-      lnako: { binarySha256: sha256(await readFile(compiler)), commit: git.commit, dirty: git.dirty },
+      lnako: {
+        binarySha256: sha256(await readFile(compiler)),
+        sourceManifestSha256: git.sourceManifestSha256,
+      },
       raw: {
         interpreterTraceSha256: sha256(await readFile(interpreterTrace)),
         aotTraceSha256: sha256(await readFile(aotTrace)),
@@ -607,11 +611,12 @@ function validateEvidence(evidence, lock, fixture, globalReadNames, literalNames
   if (names.global.size !== globalReadNames.length || names.literal.size !== literalNames.length || [...names.global].some((name) => !globalReadNames.includes(name)) || [...names.literal].some((name) => !literalNames.includes(name))) throw new Error("静的定数証拠のname集合が不一致です");
 }
 
-function readGitState() {
+async function readGitState() {
   const commit = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
   const status = spawnSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" });
   if (commit.status !== 0 || status.status !== 0) throw new Error("lnakoのGit状態を取得できません");
-  return { commit: commit.stdout.trim(), dirty: status.stdout.length > 0 };
+  const manifest = await computeSourceManifestSha256(root);
+  return { commit: commit.stdout.trim(), dirty: status.stdout.length > 0, sourceManifestSha256: manifest.sha256 };
 }
 
 async function readOracleIdentity(directory, cli, baseline) {

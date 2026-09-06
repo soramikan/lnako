@@ -445,6 +445,9 @@ pub const Frame = struct {
     function: *const ir.Function,
     owner_program: *const ir.Program,
     values: []Value,
+    /// Full allocation backing `values` when it came from the interpreter
+    /// pool; null means `values` itself is the allocation to free.
+    values_buffer: ?[]Value = null,
     locals: std.StringHashMapUnmanaged(*value_mod.BindingCell) = .empty,
     owned_names: std.ArrayList([]u8) = .empty,
     iterators: std.AutoHashMapUnmanaged(ir.ValueId, IteratorState) = .empty,
@@ -456,7 +459,9 @@ pub const Frame = struct {
         self.owned_names.deinit(allocator);
         self.iterators.deinit(allocator);
         self.handlers.deinit(allocator);
-        allocator.free(self.values);
+        if (self.values_buffer) |buffer| {
+            allocator.free(buffer);
+        } else if (self.values.len > 0) allocator.free(self.values);
         self.* = undefined;
     }
 };

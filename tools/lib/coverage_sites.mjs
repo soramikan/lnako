@@ -303,7 +303,7 @@ export function resolveCatalogCommand(fixture, name) {
 }
 
 
-export async function createReport({ fixtureReports, sites, unresolvedSites, oracle, git }) {
+export async function createReport({ fixtureReports, sites, unresolvedSites, oracle }) {
   const nativeCommands = env.catalog.commands.filter((command) => command.status === "native");
   const nativeIds = new Set(nativeCommands.map((command) => command.id));
   const nativeNames = new Set(nativeCommands.map((command) => command.name));
@@ -344,9 +344,7 @@ export async function createReport({ fixtureReports, sites, unresolvedSites, ora
       environment: { platform: process.platform, arch: process.arch, node: process.version },
       oracle,
       lnako: {
-        binarySha256: evidence_common.sha256FileSync(env.compiler),
-        commit: git.commit,
-        dirty: git.dirty,
+        ...await evidence_common.lnakoProvenance(env.compiler),
       },
       auditScriptSha256: await evidence_common.dispatchCoverageAuditSha256(env.root),
     },

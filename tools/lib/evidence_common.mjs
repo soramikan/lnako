@@ -5,17 +5,29 @@ import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "../oracle_tree_hash.mjs";
 import { coverageEnv as env } from "./coverage_env.mjs";
+import { computeSourceManifestSha256 } from "./evidence/manifest.mjs";
 
 export const throwStatementOpcode = 0xffff;
 
 export function gitState() {
-  const commit = spawnSync("git", ["rev-parse", "HEAD"], { cwd: env.root, encoding: "utf8" });
+  const root = env.root ?? resolve(import.meta.dirname, "../..");
+  const commit = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
   if (commit.status !== 0) throw new Error("lnakoのcommitを取得できません");
   const hash = commit.stdout.trim();
   if (!/^[0-9a-f]{40}$/i.test(hash)) throw new Error("lnakoのcommit形式が不正です");
-  const status = spawnSync("git", ["status", "--porcelain"], { cwd: env.root, encoding: "utf8" });
+  const status = spawnSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" });
   if (status.status !== 0) throw new Error("lnakoのdirty状態を取得できません");
   return { commit: hash, dirty: status.stdout.length > 0 };
+}
+
+export async function lnakoProvenance(compiler) {
+  const root = env.root ?? resolve(import.meta.dirname, "../..");
+  const manifest = await computeSourceManifestSha256(root);
+  const binarySha256 = sha256FileSync(compiler);
+  return {
+    binarySha256,
+    sourceManifestSha256: manifest.sha256,
+  };
 }
 
 

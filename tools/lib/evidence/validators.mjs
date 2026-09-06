@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { evidenceEnv as env } from "./env.mjs";
 import { json, readJson, hashPattern, siteIdPattern, throwStatementOpcode, forbiddenEvidenceFields, runtimeFixtureFiles, dispatchEvidenceFollowUpPaths } from "./constants.mjs";
 import { validDispatchExpectationPlatforms } from "../evidence_common.mjs";
+import { computeSourceManifestSha256Sync } from "./manifest.mjs";
 import * as records from "./records.mjs";
 
 export function duplicateNameSet(entries) {
@@ -53,7 +54,7 @@ export function validateDispatchCoverageEvidence(evidence, lock, standard, recor
   assertKnownObjectKeys(evidence.provenance, ["environment", "oracle", "lnako", "auditScriptSha256"], "dispatch-coverage-evidence.provenance");
   assertKnownObjectKeys(evidence.provenance.environment, ["platform", "arch", "node"], "dispatch-coverage-evidence.provenance.environment");
   assertKnownObjectKeys(evidence.provenance.oracle, ["build", "archiveSha256", "cliSha256", "markerSha256", "treeHashAlgorithm", "treeSha256"], "dispatch-coverage-evidence.provenance.oracle");
-  assertKnownObjectKeys(evidence.provenance.lnako, ["binarySha256", "commit", "dirty"], "dispatch-coverage-evidence.provenance.lnako");
+  assertLnakoProvenanceKeys(evidence.provenance.lnako,  "dispatch-coverage-evidence.provenance.lnako");
   const hashPattern = /^[0-9a-f]{64}$/;
   const commitPattern = /^[0-9a-f]{40}$/i;
   const environment = evidence.provenance.environment;
@@ -66,14 +67,12 @@ export function validateDispatchCoverageEvidence(evidence, lock, standard, recor
       oracle.markerSha256 !== lock.nadesiko3.oracleIdentity?.markerSha256 || oracle.treeHashAlgorithm !== lock.nadesiko3.oracleIdentity?.treeHashAlgorithm ||
       oracle.treeSha256 !== lock.nadesiko3.oracleIdentity?.treeSha256ByPlatform?.[platformKey] ||
       !hashPattern.test(oracle.archiveSha256) || !hashPattern.test(oracle.cliSha256) || !hashPattern.test(oracle.markerSha256) || !hashPattern.test(oracle.treeSha256) ||
-      !hashPattern.test(lnako.binarySha256) || !commitPattern.test(lnako.commit) || lnako.dirty !== false ||
+      !validateLnakoProvenance(lnako) ||
       !hashPattern.test(evidence.provenance.auditScriptSha256) || evidence.provenance.auditScriptSha256 !== auditScriptSha256) {
     throw new Error("dispatch coverage証拠のprovenanceが不正です");
   }
   const currentGit = readGitState();
-  if (lnako.commit !== currentGit.commit && !isAllowedDispatchEvidenceFollowUp(lnako.commit, currentGit.commit)) {
-    throw new Error("cleanなdispatch coverage証拠のlnako commitが現行HEADと一致しません");
-  }
+  assertLnakoProvenanceMatches(lnako, currentGit);
 
   const standardById = new Map(standard.commands.map((command) => [command.id, command]));
   const recordByKey = new Map(records.map((record) => [`${record.file}/${record.id}`, record]));
@@ -388,6 +387,36 @@ export function readGitState() {
 }
 
 
+export function assertLnakoProvenanceKeys(lnako, path) {
+  assertKnownObjectKeys(lnako, ["binarySha256", "sourceManifestSha256", "commit", "dirty"], path);
+}
+
+export function validateLnakoProvenance(lnako) {
+  const localHashPattern = /^[0-9a-f]{64}$/;
+  const commitPattern = /^[0-9a-f]{40}$/i;
+  if (!localHashPattern.test(lnako.binarySha256)) return false;
+  const hasManifest = typeof lnako.sourceManifestSha256 === "string";
+  const hasLegacy = typeof lnako.commit === "string" || typeof lnako.dirty === "boolean";
+  if (hasManifest && !localHashPattern.test(lnako.sourceManifestSha256)) return false;
+  if (hasLegacy && (!commitPattern.test(lnako.commit) || typeof lnako.dirty !== "boolean")) return false;
+  return hasManifest || hasLegacy;
+}
+
+export function assertLnakoProvenanceMatches(lnako, currentGit, historicalCommit = null) {
+  if (typeof lnako.sourceManifestSha256 === "string") {
+    const root = env.root ?? resolve(import.meta.dirname, "../../..");
+    const actual = computeSourceManifestSha256Sync(root);
+    if (lnako.sourceManifestSha256 !== actual.sha256) {
+      throw new Error("lnako source manifest SHA-256が現行ソースと一致しません");
+    }
+    return;
+  }
+  if (lnako.commit !== currentGit.commit && lnako.dirty !== true && historicalCommit !== lnako.commit &&
+      !isAllowedDispatchEvidenceFollowUp(lnako.commit, currentGit.commit)) {
+    throw new Error("cleanなlnako commitが現行HEADと一致しません");
+  }
+}
+
 export function isAllowedDispatchEvidenceFollowUp(evidenceCommit, currentCommit) {
   if (evidenceCommit === currentCommit) return true;
   const ancestryResult = spawnSync("git", ["merge-base", "--is-ancestor", evidenceCommit, currentCommit], { cwd: env.root, encoding: "utf8" });
@@ -452,21 +481,18 @@ export function validateDispatchEvidence(evidence, lock, standard, records, inpu
   assertKnownObjectKeys(evidence.provenance, ["environment", "oracle", "lnako", "raw"], "dispatch-evidence.provenance");
   assertKnownObjectKeys(evidence.provenance.environment, ["platform", "arch", "node"], "dispatch-evidence.provenance.environment");
   assertKnownObjectKeys(evidence.provenance.oracle, ["build", "archiveSha256", "cliSha256", "markerSha256", "treeHashAlgorithm", "treeSha256"], "dispatch-evidence.provenance.oracle");
-  assertKnownObjectKeys(evidence.provenance.lnako, ["binarySha256", "commit", "dirty"], "dispatch-evidence.provenance.lnako");
+  assertLnakoProvenanceKeys(evidence.provenance.lnako,  "dispatch-evidence.provenance.lnako");
   assertKnownObjectKeys(evidence.provenance.raw, ["interpreterTraceSha256", "aotTraceSha256", "compileManifestSha256"], "dispatch-evidence.provenance.raw");
   const commitPattern = /^[0-9a-f]{40}$/i;
   if (![evidence.provenance.environment.platform, evidence.provenance.environment.arch, evidence.provenance.environment.node].every((value) => typeof value === "string" && value.length > 0) ||
       !Number.isSafeInteger(evidence.provenance.oracle.build) || evidence.provenance.oracle.build < 1 || evidence.provenance.oracle.build !== lock.nadesiko3.oracleIdentity?.build || evidence.provenance.oracle.archiveSha256 !== lock.nadesiko3.archive.sha256 || evidence.provenance.oracle.cliSha256 !== lock.nadesiko3.oracleIdentity?.cliSha256 || evidence.provenance.oracle.markerSha256 !== lock.nadesiko3.oracleIdentity?.markerSha256 || evidence.provenance.oracle.treeHashAlgorithm !== lock.nadesiko3.oracleIdentity?.treeHashAlgorithm || evidence.provenance.oracle.treeSha256 !== lock.nadesiko3.oracleIdentity?.treeSha256ByPlatform?.[evidence.provenance.environment.platform + "-" + evidence.provenance.environment.arch] ||
       !hashPattern.test(evidence.provenance.oracle.cliSha256) || !hashPattern.test(evidence.provenance.oracle.markerSha256) || !hashPattern.test(evidence.provenance.oracle.treeSha256) ||
-      !hashPattern.test(evidence.provenance.lnako.binarySha256) || !commitPattern.test(evidence.provenance.lnako.commit) || typeof evidence.provenance.lnako.dirty !== "boolean" ||
+      !validateLnakoProvenance(evidence.provenance.lnako) ||
       !hashPattern.test(evidence.provenance.raw.interpreterTraceSha256) || !hashPattern.test(evidence.provenance.raw.aotTraceSha256) || !hashPattern.test(evidence.provenance.raw.compileManifestSha256)) {
     throw new Error("dispatch証拠のprovenanceが不正です");
   }
   const currentGit = readGitState();
-  if (evidence.provenance.lnako.commit !== currentGit.commit && evidence.provenance.lnako.dirty !== true && historicalCommit !== evidence.provenance.lnako.commit &&
-      !isAllowedDispatchEvidenceFollowUp(evidence.provenance.lnako.commit, currentGit.commit)) {
-    throw new Error("cleanなdispatch証拠のlnako commitが現行HEADと一致しません");
-  }
+  assertLnakoProvenanceMatches(evidence.provenance.lnako, currentGit, historicalCommit);
   const standardById = new Map(standard.commands.map((command) => [command.id, command]));
   const siteIds = new Set();
   const catalogIds = new Set();
@@ -637,7 +663,7 @@ export function validateStaticConstantEvidence(evidence, lock, standard, records
   assertKnownObjectKeys(evidence.provenance, ["environment", "oracle", "lnako", "raw"], "static-constant-evidence.provenance");
   assertKnownObjectKeys(evidence.provenance.environment, ["platform", "arch", "node"], "static-constant-evidence.provenance.environment");
   assertKnownObjectKeys(evidence.provenance.oracle, ["build", "archiveSha256", "cliSha256", "markerSha256", "treeHashAlgorithm", "treeSha256"], "static-constant-evidence.provenance.oracle");
-  assertKnownObjectKeys(evidence.provenance.lnako, ["binarySha256", "commit", "dirty"], "static-constant-evidence.provenance.lnako");
+  assertLnakoProvenanceKeys(evidence.provenance.lnako,  "static-constant-evidence.provenance.lnako");
   assertKnownObjectKeys(evidence.provenance.raw, ["interpreterTraceSha256", "aotTraceSha256", "globalManifestSha256", "literalInterpreterTraceSha256", "literalAotTraceSha256", "literalManifestSha256"], "static-constant-evidence.provenance.raw");
   const commitPattern = /^[0-9a-f]{40}$/i;
   const environment = evidence.provenance.environment;
@@ -651,15 +677,13 @@ export function validateStaticConstantEvidence(evidence, lock, standard, records
       oracle.markerSha256 !== lock.nadesiko3.oracleIdentity?.markerSha256 || oracle.treeHashAlgorithm !== lock.nadesiko3.oracleIdentity?.treeHashAlgorithm ||
       oracle.treeSha256 !== lock.nadesiko3.oracleIdentity?.treeSha256ByPlatform?.[platformKey] ||
       !hashPattern.test(oracle.archiveSha256) || !hashPattern.test(oracle.cliSha256) || !hashPattern.test(oracle.markerSha256) || !hashPattern.test(oracle.treeSha256) ||
-      !hashPattern.test(lnako.binarySha256) || !commitPattern.test(lnako.commit) || lnako.dirty !== false ||
+      !validateLnakoProvenance(lnako) ||
       !hashPattern.test(raw.interpreterTraceSha256) || !hashPattern.test(raw.aotTraceSha256) || !hashPattern.test(raw.globalManifestSha256) ||
       !hashPattern.test(raw.literalInterpreterTraceSha256) || !hashPattern.test(raw.literalAotTraceSha256) || !hashPattern.test(raw.literalManifestSha256)) {
     throw new Error("静的定数証拠のprovenanceが不正です");
   }
   const currentGit = readGitState();
-  if (lnako.commit !== currentGit.commit && !isAllowedDispatchEvidenceFollowUp(lnako.commit, currentGit.commit)) {
-    throw new Error("cleanな静的定数証拠のlnako commitが現行HEADと一致しません");
-  }
+  assertLnakoProvenanceMatches(lnako, currentGit);
 
   const standardById = new Map(standard.commands.map((command) => [command.id, command]));
   const standardByName = new Map();
@@ -810,7 +834,7 @@ export function validateGlobalBindingEvidence(evidence, lock, standard, records,
   assertKnownObjectKeys(evidence.provenance, ["environment", "oracle", "lnako", "raw"], "global-binding-evidence.provenance");
   assertKnownObjectKeys(evidence.provenance.environment, ["platform", "arch", "node"], "global-binding-evidence.provenance.environment");
   assertKnownObjectKeys(evidence.provenance.oracle, ["build", "archiveSha256", "cliSha256", "markerSha256", "treeHashAlgorithm", "treeSha256"], "global-binding-evidence.provenance.oracle");
-  assertKnownObjectKeys(evidence.provenance.lnako, ["binarySha256", "commit", "dirty"], "global-binding-evidence.provenance.lnako");
+  assertLnakoProvenanceKeys(evidence.provenance.lnako,  "global-binding-evidence.provenance.lnako");
   assertKnownObjectKeys(evidence.provenance.raw, ["interpreterTraceSha256", "aotTraceSha256", "globalManifestSha256"], "global-binding-evidence.provenance.raw");
   const environment = evidence.provenance.environment;
   const oracle = evidence.provenance.oracle;
@@ -824,14 +848,12 @@ export function validateGlobalBindingEvidence(evidence, lock, standard, records,
       oracle.markerSha256 !== lock.nadesiko3.oracleIdentity?.markerSha256 || oracle.treeHashAlgorithm !== lock.nadesiko3.oracleIdentity?.treeHashAlgorithm ||
       oracle.treeSha256 !== lock.nadesiko3.oracleIdentity?.treeSha256ByPlatform?.[platformKey] ||
       !hashPattern.test(oracle.archiveSha256) || !hashPattern.test(oracle.cliSha256) || !hashPattern.test(oracle.markerSha256) || !hashPattern.test(oracle.treeSha256) ||
-      !hashPattern.test(lnako.binarySha256) || !commitPattern.test(lnako.commit) || lnako.dirty !== false ||
+      !validateLnakoProvenance(lnako) ||
       !hashPattern.test(raw.interpreterTraceSha256) || !hashPattern.test(raw.aotTraceSha256) || !hashPattern.test(raw.globalManifestSha256)) {
     throw new Error("global binding証拠のprovenanceが不正です");
   }
   const currentGit = readGitState();
-  if (lnako.commit !== currentGit.commit && !isAllowedDispatchEvidenceFollowUp(lnako.commit, currentGit.commit)) {
-    throw new Error("cleanなglobal binding証拠のlnako commitが現行HEADと一致しません");
-  }
+  assertLnakoProvenanceMatches(lnako, currentGit);
 }
 
 
@@ -849,7 +871,7 @@ export function validateExpectedExitEvidence(evidence, lock, standard, records) 
   assertKnownObjectKeys(evidence.provenance, ["environment", "oracle", "lnako", "raw"], "expected-exit-evidence.provenance");
   assertKnownObjectKeys(evidence.provenance.environment, ["platform", "arch", "node"], "expected-exit-evidence.provenance.environment");
   assertKnownObjectKeys(evidence.provenance.oracle, ["build", "archiveSha256", "cliSha256", "markerSha256", "treeHashAlgorithm", "treeSha256"], "expected-exit-evidence.provenance.oracle");
-  assertKnownObjectKeys(evidence.provenance.lnako, ["binarySha256", "commit", "dirty"], "expected-exit-evidence.provenance.lnako");
+  assertLnakoProvenanceKeys(evidence.provenance.lnako,  "expected-exit-evidence.provenance.lnako");
   assertKnownObjectKeys(evidence.provenance.raw, ["traceSha256"], "expected-exit-evidence.provenance.raw");
   const environment = evidence.provenance.environment;
   const oracle = evidence.provenance.oracle;
@@ -861,11 +883,11 @@ export function validateExpectedExitEvidence(evidence, lock, standard, records) 
       oracle.markerSha256 !== lock.nadesiko3.oracleIdentity?.markerSha256 || oracle.treeHashAlgorithm !== lock.nadesiko3.oracleIdentity?.treeHashAlgorithm ||
       oracle.treeSha256 !== lock.nadesiko3.oracleIdentity?.treeSha256ByPlatform?.[platformKey] ||
       !hashPattern.test(oracle.archiveSha256) || !hashPattern.test(oracle.cliSha256) || !hashPattern.test(oracle.markerSha256) || !hashPattern.test(oracle.treeSha256) ||
-      !hashPattern.test(lnako.binarySha256) || !/^[0-9a-f]{40}$/i.test(lnako.commit) || lnako.dirty !== false) {
+      !validateLnakoProvenance(lnako)) {
     throw new Error("expected-exit証拠のprovenanceが不正です");
   }
   const currentGit = readGitState();
-  if (lnako.commit !== currentGit.commit && !isAllowedDispatchEvidenceFollowUp(lnako.commit, currentGit.commit)) throw new Error("cleanなexpected-exit証拠のlnako commitが現行HEADと一致しません");
+  assertLnakoProvenanceMatches(lnako, currentGit);
   const standardById = new Map(standard.commands.map((command) => [command.id, command]));
   const recordById = new Map(records.map((record) => [record.id, record]));
   const casesById = new Map();
@@ -970,18 +992,18 @@ export function validateCompatJsEvidence(evidence, lock, standard, cases, record
   assertKnownObjectKeys(evidence.provenance, ["environment", "oracle", "lnako", "raw"], "compat-js-evidence.provenance");
   assertKnownObjectKeys(evidence.provenance.environment, ["platform", "arch", "node"], "compat-js-evidence.provenance.environment");
   assertKnownObjectKeys(evidence.provenance.oracle, ["build", "archiveSha256", "cliSha256", "markerSha256", "treeHashAlgorithm", "treeSha256"], "compat-js-evidence.provenance.oracle");
-  assertKnownObjectKeys(evidence.provenance.lnako, ["binarySha256", "commit", "dirty"], "compat-js-evidence.provenance.lnako");
+  assertLnakoProvenanceKeys(evidence.provenance.lnako,  "compat-js-evidence.provenance.lnako");
   assertKnownObjectKeys(evidence.provenance.raw, ["traceSha256ByCase"], "compat-js-evidence.provenance.raw");
   const environment = evidence.provenance.environment;
   const oracle = evidence.provenance.oracle;
   const lnako = evidence.provenance.lnako;
   const platformKey = `${environment.platform}-${environment.arch}`;
-  if (![environment.platform, environment.arch, environment.node].every((value) => typeof value === "string" && value.length > 0) || !Number.isSafeInteger(oracle.build) || oracle.build !== lock.nadesiko3.oracleIdentity?.build || oracle.archiveSha256 !== lock.nadesiko3.archive.sha256 || oracle.cliSha256 !== lock.nadesiko3.oracleIdentity?.cliSha256 || oracle.markerSha256 !== lock.nadesiko3.oracleIdentity?.markerSha256 || oracle.treeHashAlgorithm !== lock.nadesiko3.oracleIdentity?.treeHashAlgorithm || oracle.treeSha256 !== lock.nadesiko3.oracleIdentity?.treeSha256ByPlatform?.[platformKey] || !hashPattern.test(oracle.archiveSha256) || !hashPattern.test(oracle.cliSha256) || !hashPattern.test(oracle.markerSha256) || !hashPattern.test(oracle.treeSha256) || !hashPattern.test(lnako.binarySha256) || !/^[0-9a-f]{40}$/i.test(lnako.commit) || lnako.dirty !== false) throw new Error("compat-js証拠のprovenanceが不正です");
+  if (![environment.platform, environment.arch, environment.node].every((value) => typeof value === "string" && value.length > 0) || !Number.isSafeInteger(oracle.build) || oracle.build !== lock.nadesiko3.oracleIdentity?.build || oracle.archiveSha256 !== lock.nadesiko3.archive.sha256 || oracle.cliSha256 !== lock.nadesiko3.oracleIdentity?.cliSha256 || oracle.markerSha256 !== lock.nadesiko3.oracleIdentity?.markerSha256 || oracle.treeHashAlgorithm !== lock.nadesiko3.oracleIdentity?.treeHashAlgorithm || oracle.treeSha256 !== lock.nadesiko3.oracleIdentity?.treeSha256ByPlatform?.[platformKey] || !hashPattern.test(oracle.archiveSha256) || !hashPattern.test(oracle.cliSha256) || !hashPattern.test(oracle.markerSha256) || !hashPattern.test(oracle.treeSha256) || !validateLnakoProvenance(lnako)) throw new Error("compat-js証拠のprovenanceが不正です");
   const expectedTraceCaseIds = cases.filter((testCase) => testCase.expectedFailure !== true).map((testCase) => testCase.id).sort();
   const actualTraceCaseIds = Object.keys(evidence.provenance.raw.traceSha256ByCase).sort();
   if (JSON.stringify(expectedTraceCaseIds) !== JSON.stringify(actualTraceCaseIds) || Object.values(evidence.provenance.raw.traceSha256ByCase).some((hash) => !hashPattern.test(hash))) throw new Error("compat-js証拠のraw trace SHA-256集合が不正です");
   const currentGit = readGitState();
-  if (lnako.commit !== currentGit.commit && !isAllowedDispatchEvidenceFollowUp(lnako.commit, currentGit.commit)) throw new Error("cleanなcompat-js証拠のlnako commitが現行HEADと一致しません");
+  assertLnakoProvenanceMatches(lnako, currentGit);
 
   const commandById = new Map(expectedCommands.map((command) => [command.id, command]));
   if (!Array.isArray(evidence.entries) || evidence.entries.length !== expectedCommands.length) throw new Error("compat-js証拠のentry数が不正です");

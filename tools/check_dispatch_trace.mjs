@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { oracleTreeHash, oracleTreeHashAlgorithm } from "./oracle_tree_hash.mjs";
 import { readDispatchFixture } from "./dispatch_fixture.mjs";
+import { computeSourceManifestSha256 } from "./lib/evidence/manifest.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const throwStatementOpcode = 0xffff;
@@ -434,7 +435,6 @@ function assertOnlyCommands(events, allowed) {
 
 async function writeDispatchEvidence(output, fixture, interpreterEvents, aotEvents, manifestEntries, processes) {
   if (!Array.isArray(fixture.commands) || fixture.commands.length === 0) throw new Error("dispatch証拠fixtureには明示commandsが必要です");
-  const git = gitState();
   const attempts = new Map(aotEvents.filter((event) => event.phase === "dispatch-attempt").map((event) => [event.callId, event]));
   const results = new Map(aotEvents.filter((event) => event.phase === "dispatch-result").map((event) => [event.callId, event]));
   const sites = [];
@@ -534,8 +534,7 @@ async function writeDispatchEvidence(output, fixture, interpreterEvents, aotEven
       },
       lnako: {
         binarySha256: sha256(await readFile(processes.compiler)),
-        commit: git.commit,
-        dirty: git.dirty,
+        sourceManifestSha256: (await computeSourceManifestSha256(root)).sha256,
       },
       raw: {
         interpreterTraceSha256: interpreterEvents.rawSha256,
@@ -565,16 +564,6 @@ async function writeDispatchEvidence(output, fixture, interpreterEvents, aotEven
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
-}
-
-function gitState() {
-  const commit = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
-  if (commit.status !== 0) throw new Error("lnakoのcommitを取得できません");
-  const commitHash = commit.stdout.trim();
-  if (!/^[0-9a-f]{40}$/i.test(commitHash)) throw new Error("lnakoのcommit形式が不正です");
-  const status = spawnSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" });
-  if (status.status !== 0) throw new Error("lnakoのdirty状態を取得できません");
-  return { commit: commitHash, dirty: status.stdout.length > 0 };
 }
 
 async function readOracleIdentity() {

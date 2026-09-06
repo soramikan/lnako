@@ -283,6 +283,68 @@ pub const Interpreter = struct {
     dispatch_route_overflow: usize = 0,
     dynamic_programs: std.ArrayList(*ir.Program) = .empty,
     active_program_owner: ?*const ir.Program = null,
+    /// Released call-frame value buffers, kept at full capacity so a later
+    /// call of the same or smaller size skips `allocator.alloc`.  Pooled
+    /// slices are LIFO, which matches recursive and repeated-call patterns.
+    value_buffers: std.ArrayListUnmanaged([]Value) = .empty,
+    /// Per-program name index for `findFunction`.  Programs outlive the
+    /// interpreter (dynamic programs are owned by `dynamic_programs`), so
+    /// the pointer key stays valid for the interpreter's whole lifetime.
+    function_indexes: std.AutoHashMapUnmanaged(*const ir.Program, FunctionIndex) = .empty,
+    heap_argument_allocs: u64 = 0,
+    pooled_frame_buffers: u64 = 0,
+
+    /// Built once per program: exact name hits and the `module__name`
+    /// suffix rule (null marks an ambiguous suffix that must not match).
+    pub const FunctionIndex = struct {
+        exact: std.StringHashMapUnmanaged(ir.FunctionId) = .empty,
+        suffix: std.StringHashMapUnmanaged(?ir.FunctionId) = .empty,
+
+        pub fn deinit(self: *FunctionIndex, allocator: std.mem.Allocator) void {
+            self.exact.deinit(allocator);
+            self.suffix.deinit(allocator);
+        }
+    };
+
+    pub fn acquireValueBuffer(self: *Interpreter, count: usize) ![]Value {
+        if (self.value_buffers.pop()) |buffer| {
+            if (buffer.len >= count) {
+                self.pooled_frame_buffers += 1;
+                @memset(buffer[0..count], .undefined);
+                return buffer;
+            }
+            self.allocator.free(buffer);
+        }
+        const buffer = try self.allocator.alloc(Value, count);
+        @memset(buffer, .undefined);
+        return buffer;
+    }
+
+    pub fn releaseValueBuffer(self: *Interpreter, buffer: []Value) void {
+        self.value_buffers.append(self.allocator, buffer) catch self.allocator.free(buffer);
+    }
+
+    fn functionIndex(self: *Interpreter, owner_program: *const ir.Program) !*const FunctionIndex {
+        const entry = try self.function_indexes.getOrPut(self.allocator, owner_program);
+        if (!entry.found_existing) {
+            entry.value_ptr.* = .{};
+            for (owner_program.functions, 0..) |*function, index| {
+                const id: ir.FunctionId = @intCast(index);
+                const exact_slot = try entry.value_ptr.exact.getOrPut(self.allocator, function.name);
+                if (!exact_slot.found_existing) exact_slot.value_ptr.* = id;
+                if (std.mem.lastIndexOf(u8, function.name, "__")) |separator| {
+                    const suffix = function.name[separator + 2 ..];
+                    const slot = try entry.value_ptr.suffix.getOrPut(self.allocator, suffix);
+                    if (!slot.found_existing) {
+                        slot.value_ptr.* = id;
+                    } else if (slot.value_ptr.* != id) {
+                        slot.value_ptr.* = null;
+                    }
+                }
+            }
+        }
+        return entry.value_ptr;
+    }
 
     pub fn init(allocator: std.mem.Allocator, runtime: *Runtime, program: ir.Program, host: Host) Interpreter {
         return .{ .allocator = allocator, .runtime = runtime, .program = program, .root_program = program, .host = host, .dispatch_trace = .{ .path = host.dispatch_trace_path, .context = host.context, .writeFn = host.dispatch_trace_writeFn }, .compat_js_trace = .{ .path = host.compat_js_trace_path, .context = host.context, .writeFn = host.compat_js_trace_writeFn }, .global_trace = .{ .path = host.global_trace_path, .context = host.context, .writeFn = host.global_trace_writeFn }, .literal_trace = .{ .path = host.literal_trace_path, .context = host.context, .writeFn = host.literal_trace_writeFn }, .csv_state = plugin_csv.State.init(allocator), .quickjs_state = quickjs.State.init(program.compat_js), .native_plugin_state = plugin_native.State.init() };
@@ -324,6 +386,11 @@ pub const Interpreter = struct {
             self.allocator.destroy(program);
         }
         self.dynamic_programs.deinit(self.allocator);
+        for (self.value_buffers.items) |buffer| self.allocator.free(buffer);
+        self.value_buffers.deinit(self.allocator);
+        var index_iterator = self.function_indexes.valueIterator();
+        while (index_iterator.next()) |index| index.deinit(self.allocator);
+        self.function_indexes.deinit(self.allocator);
         self.* = undefined;
     }
 
@@ -815,20 +882,26 @@ pub const Interpreter = struct {
         try self.global_names.append(self.allocator, owned_name);
     }
 
-    pub fn findFunction(_: Interpreter, owner_program: *const ir.Program, name: []const u8) ?*const ir.Function {
-        for (owner_program.functions) |*function| if (std.mem.eql(u8, function.name, name)) return function;
-
+    pub fn findFunction(self: *Interpreter, owner_program: *const ir.Program, name: []const u8) ?*const ir.Function {
+        const index = self.functionIndex(owner_program) catch {
+            // An index build failure is not a program failure; fall back to
+            // the previous linear scans so OOM stays the only new error.
+            for (owner_program.functions) |*function| if (std.mem.eql(u8, function.name, name)) return function;
+            var match: ?*const ir.Function = null;
+            for (owner_program.functions) |*function| {
+                const separator = std.mem.lastIndexOf(u8, function.name, "__") orelse continue;
+                if (!std.mem.eql(u8, function.name[separator + 2 ..], name)) continue;
+                if (match != null) return null;
+                match = function;
+            }
+            return match;
+        };
+        if (index.exact.get(name)) |id| return &owner_program.functions[id];
         // The semantic analyzer qualifies module-level declarations as
         // `module__name`, while Nadesiko callback-taking commands receive the
         // source spelling as a string (for example, `"二倍"`).  Accept an
         // unqualified spelling only when it identifies exactly one function.
-        var match: ?*const ir.Function = null;
-        for (owner_program.functions) |*function| {
-            const separator = std.mem.lastIndexOf(u8, function.name, "__") orelse continue;
-            if (!std.mem.eql(u8, function.name[separator + 2 ..], name)) continue;
-            if (match != null) return null;
-            match = function;
-        }
-        return match;
+        if (index.suffix.get(name)) |id| return if (id) |found| &owner_program.functions[found] else null;
+        return null;
     }
 };
