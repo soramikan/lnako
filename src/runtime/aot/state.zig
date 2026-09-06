@@ -26,6 +26,8 @@ pub const toml_temporal = shared.toml_temporal;
 
 pub const lnako_aot_builtin_call = builtins.lnako_aot_builtin_call;
 pub const lnako_aot_builtin_call_site = builtins.lnako_aot_builtin_call_site;
+pub const lnako_aot_array_push_call_site = builtins.lnako_aot_array_push_call_site;
+pub const lnako_aot_element_count_call_site = builtins.lnako_aot_element_count_call_site;
 pub const lnako_aot_debug_breakpoint_wait_call = builtins.lnako_aot_debug_breakpoint_wait_call;
 pub extern "c" fn fflush(stream: ?*std.c.FILE) c_int;
 pub extern "c" fn time(timer: ?*i64) i64;
@@ -268,6 +270,7 @@ pub const appendUtf8Units = json_module.appendUtf8Units;
 pub const jsonEncodeBuiltin = json_module.jsonEncodeBuiltin;
 pub const jsonDecodeBuiltin = json_module.jsonDecodeBuiltin;
 pub const jsonAotContainerCount = json_module.jsonAotContainerCount;
+pub const expectJsonAotString = json_module.expectJsonAotString;
 
 pub extern "c" fn putchar(character: c_int) c_int;
 
@@ -301,6 +304,13 @@ const http_server_module = @import("http_server.zig");
 pub const isHttpServerCommand = http_server_module.isHttpServerCommand;
 pub const httpServerBuiltin = http_server_module.httpServerBuiltin;
 pub const aotHttpDictionarySetUtf8 = http_server_module.aotHttpDictionarySetUtf8;
+pub const aotHttpBestRoute = http_server_module.aotHttpBestRoute;
+pub const aotHttpDispositionParameter = http_server_module.aotHttpDispositionParameter;
+pub const aotHttpMultipartBoundary = http_server_module.aotHttpMultipartBoundary;
+pub const aotHttpParseQuery = http_server_module.aotHttpParseQuery;
+pub const aotHttpMimeType = http_server_module.aotHttpMimeType;
+pub const aotHttpParsePost = http_server_module.aotHttpParsePost;
+pub const aotHttpUploadBasename = http_server_module.aotHttpUploadBasename;
 pub const pollAotHttpServer = http_server_module.pollAotHttpServer;
 
 const async_module = @import("async.zig");
@@ -389,6 +399,7 @@ const math_module = @import("math.zig");
 pub const parseFloatBuiltin = math_module.parseFloatBuiltin;
 pub const mathBuiltin = math_module.mathBuiltin;
 pub const initialRandomState = math_module.initialRandomState;
+pub const default_random_seed = math_module.default_random_seed;
 pub const nextRandom = math_module.nextRandom;
 
 const datetime_module = @import("datetime.zig");

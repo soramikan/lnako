@@ -18,7 +18,10 @@ export fn lnako_aot_runtime_keepalive() void {
     _ = aot.lnako_aot_regexp_call_site;
     _ = aot.lnako_aot_builtin_call;
     _ = aot.lnako_aot_builtin_call_site;
+    _ = aot.lnako_aot_array_push_call_site;
+    _ = aot.lnako_aot_element_count_call_site;
     _ = aot.lnako_aot_runtime_drain_events;
+    _ = aot.lnako_aot_runtime_drain_events_light;
     _ = aot.lnako_aot_http_server_init;
     _ = aot.lnako_aot_http_server_call;
     _ = aot.lnako_aot_stdio_call;
@@ -93,4 +96,8 @@ export fn lnako_aot_runtime_keepalive() void {
 
 comptime {
     _ = aot;
+}
+
+test {
+    _ = aot.tests;
 }

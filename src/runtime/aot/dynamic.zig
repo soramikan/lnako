@@ -125,6 +125,10 @@ pub const DynamicInterpreterState = struct {
         dynamic_bridge_provider_initialized = false;
         program_initialized = false;
         value_runtime_initialized = false;
+        // Runtime側からinterpreterへの静的呼び出しを避けるため、
+        // 解放とnative plugin drainはここで間接呼び出しとして登録する。
+        owner.dynamic_deinit = deinitDynamicState;
+        owner.dynamic_drain = drainNativePluginTasks;
         return state;
     }
 
@@ -402,6 +406,47 @@ pub fn syncDynamicGlobals(state: *DynamicInterpreterState) anyerror!void {
         };
         try upsertDynamicGlobal(state.owner, entry.key_ptr.*, value);
     }
+}
+
+fn deinitDynamicState(runtime: *Runtime) void {
+    const state = runtime.dynamic_state orelse return;
+    state.deinit();
+    runtime.allocator.destroy(state);
+    runtime.dynamic_state = null;
+    runtime.dynamic_deinit = null;
+    runtime.dynamic_drain = null;
+}
+
+// runtime.dynamic_drain 経由でのみ呼ばれる。drain_events など常時到達する
+// コードからの直接参照を切り、動的実行を使わない生成物から埋め込み
+// interpreter と plugin 群をdead-stripできるようにする。
+fn drainNativePluginTasks(runtime: *Runtime) anyerror!bool {
+    const state = runtime.dynamic_state orelse return false;
+    const native_pending = try state.interpreter.pollExternalPlugins();
+    var pending_bridge = false;
+    var index: usize = 0;
+    while (index < runtime.dynamic_promise_bridges.items.len) {
+        const bridge = runtime.dynamic_promise_bridges.items[index];
+        if (bridge.state != state or bridge.promise.state == .pending) {
+            pending_bridge = pending_bridge or bridge.state == state;
+            index += 1;
+            continue;
+        }
+
+        var rooted = [_]Value{ bridge.aot_promise, .{} };
+        var frame = RootFrame{};
+        runtime.pushRoots(&frame, &rooted, rooted.len);
+        defer runtime.popRoots(&frame);
+        rooted[1] = try dynamicToAotValue(state, bridge.promise.result);
+        if (bridge.promise.state == .fulfilled) {
+            try aot_state.resolveAotPromise(runtime, rooted[0].object().?, rooted[1]);
+        } else {
+            try aot_state.rejectAotPromise(runtime, rooted[0].object().?, rooted[1]);
+        }
+        _ = runtime.dynamic_promise_bridges.orderedRemove(index);
+        runtime.allocator.destroy(bridge);
+    }
+    return native_pending or pending_bridge;
 }
 
 pub fn dynamicInterpreterState(runtime: *Runtime) !*DynamicInterpreterState {

@@ -834,6 +834,11 @@ pub const Runtime = struct {
     live_roots: u64 = 0,
     dynamic_globals: std.ArrayList(DynamicGlobal) = .empty,
     dynamic_state: ?*DynamicInterpreterState = null,
+    // dynamic_stateの解放とnative plugin drainはdynamic.zigがinit時に
+    // 登録する間接呼び出しで行う。直接メソッドを呼ぶと生成物が常に
+    // 埋め込みinterpreterと全pluginを静的参照し、dead-stripできなくなる。
+    dynamic_deinit: ?*const fn (*Runtime) void = null,
+    dynamic_drain: ?*const fn (*Runtime) anyerror!bool = null,
     dynamic_promise_bridges: std.ArrayList(*DynamicPromiseBridge) = .empty,
     dynamic_function_bridges: std.ArrayList(*AotFunctionBridge) = .empty,
     standard_property_cache: std.ArrayList(StandardPropertyCacheEntry) = .empty,
@@ -864,10 +869,7 @@ pub const Runtime = struct {
         while (self.process_tasks.pop()) |task| task.deinit(self.allocator, true);
         self.process_tasks.deinit(self.allocator);
         if (self.process_io_initialized) self.process_io.deinit();
-        if (self.dynamic_state) |state| {
-            state.deinit();
-            self.allocator.destroy(state);
-        }
+        if (self.dynamic_deinit) |deinit_dynamic| deinit_dynamic(self);
         for (self.dynamic_promise_bridges.items) |bridge| self.allocator.destroy(bridge);
         self.dynamic_promise_bridges.deinit(self.allocator);
         for (self.dynamic_function_bridges.items) |bridge| self.allocator.destroy(bridge);
@@ -1385,7 +1387,6 @@ pub const Runtime = struct {
             .array => |*items| {
                 items.deinit(self.allocator);
                 object.array_properties.deinit(self.allocator);
-                object.array_presence.deinit(self.allocator);
             },
             .dictionary => |*entries| {
                 entries.deinit(self.allocator);
@@ -1412,8 +1413,6 @@ pub const Runtime = struct {
             },
         }
         object.array_presence.deinit(self.allocator);
-        self.counters.gc_reclaimed_objects +|= 1;
-        self.counters.gc_reclaimed_bytes +|= @sizeOf(Object);
         self.allocator.destroy(object);
     }
 

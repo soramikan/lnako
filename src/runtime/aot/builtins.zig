@@ -1162,3 +1162,67 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
     }
     success = runtime.failure_epoch == start_epoch;
 }
+
+/// 配列追加専用ABI。汎用builtin dispatchを通さず直接pushすることで、
+/// 配列構築ループにおける呼び出しあたりの固定費を下げる。traceの
+/// routeは汎用経路と同じ "builtin" を維持し、dispatch証拠との互換を保つ。
+pub export fn lnako_aot_array_push_call_site(out: *Value, arguments: ?[*]const Value, len: usize, opcode: u16, site_id: u64) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (state.active_runtime) |*active| active else return;
+    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
+        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "builtin", site_id);
+        runtime.setFailure(error.UnknownCommand);
+        runtime.dispatch_trace.result(call_id, "unknown", opcode, "builtin", site_id, false);
+        return;
+    };
+    if (command != .array_push) {
+        runtime.setFailure(error.UnknownCommand);
+        return;
+    }
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "builtin", site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "builtin", site_id, success);
+    if (len == 0 or (arguments == null and len != 0)) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    const actual = if (arguments) |pointer| pointer[0..len] else &.{};
+    const item: Value = if (actual.len > 1) actual[1] else .{};
+    out.* = state.arrayPushBuiltin(runtime, actual[0], item) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    success = runtime.failure_epoch == start_epoch;
+}
+
+/// 要素数専用ABI。配列走査ループで汎用builtin dispatchを迂回する。
+pub export fn lnako_aot_element_count_call_site(out: *Value, arguments: ?[*]const Value, len: usize, opcode: u16, site_id: u64) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (state.active_runtime) |*active| active else return;
+    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
+        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "builtin", site_id);
+        runtime.setFailure(error.UnknownCommand);
+        runtime.dispatch_trace.result(call_id, "unknown", opcode, "builtin", site_id, false);
+        return;
+    };
+    if (command != .element_count) {
+        runtime.setFailure(error.UnknownCommand);
+        return;
+    }
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "builtin", site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "builtin", site_id, success);
+    if (len == 0 or (arguments == null and len != 0)) {
+        runtime.setFailure(error.InvalidArgumentCount);
+        return;
+    }
+    out.* = state.numberValue(@floatFromInt(state.elementCountBuiltin(runtime, arguments.?[0]) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    }));
+    success = runtime.failure_epoch == start_epoch;
+}

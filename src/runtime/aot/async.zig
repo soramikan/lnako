@@ -41,7 +41,6 @@ const invokeAotCallback = aot_state.invokeAotCallback;
 const resolveAotCallback = aot_state.resolveAotCallback;
 const aotClientHttpResponseValue = aot_state.aotClientHttpResponseValue;
 const aotFileCopyMoveWithIo = aot_state.aotFileCopyMoveWithIo;
-const dynamicToAotValue = aot_state.dynamicToAotValue;
 const pollAotInterrupt = aot_state.pollAotInterrupt;
 const currentDirectoryAlloc = aot_state.currentDirectoryAlloc;
 const error_message = shared.error_message;
@@ -353,32 +352,8 @@ pub fn drainAotPromiseTasks(runtime: *Runtime) !void {
 }
 
 pub fn drainAotNativePluginTasks(runtime: *Runtime) !bool {
-    const state = runtime.dynamic_state orelse return false;
-    const native_pending = try state.interpreter.pollExternalPlugins();
-    var pending_bridge = false;
-    var index: usize = 0;
-    while (index < runtime.dynamic_promise_bridges.items.len) {
-        const bridge = runtime.dynamic_promise_bridges.items[index];
-        if (bridge.state != state or bridge.promise.state == .pending) {
-            pending_bridge = pending_bridge or bridge.state == state;
-            index += 1;
-            continue;
-        }
-
-        var rooted = [_]Value{ bridge.aot_promise, .{} };
-        var frame = RootFrame{};
-        runtime.pushRoots(&frame, &rooted, rooted.len);
-        defer runtime.popRoots(&frame);
-        rooted[1] = try dynamicToAotValue(state, bridge.promise.result);
-        if (bridge.promise.state == .fulfilled) {
-            try resolveAotPromise(runtime, rooted[0].object().?, rooted[1]);
-        } else {
-            try rejectAotPromise(runtime, rooted[0].object().?, rooted[1]);
-        }
-        _ = runtime.dynamic_promise_bridges.orderedRemove(index);
-        runtime.allocator.destroy(bridge);
-    }
-    return native_pending or pending_bridge;
+    const drain = runtime.dynamic_drain orelse return false;
+    return drain(runtime);
 }
 
 pub fn drainAotClientHttpTasks(runtime: *Runtime) !void {

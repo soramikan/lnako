@@ -3,6 +3,14 @@ const builtin = @import("builtin");
 const shared = @import("shared.zig");
 const state = @import("state.zig");
 
+/// 非同期命令を含まない生成物用のdrain。イベント機構全体への静的参照を
+/// 避け、timer/process/archive/http等の実装をdead-stripできるようにする。
+/// 割り込みcallbackだけはコマンド登録なしに届き得るためpollだけは残す。
+pub export fn lnako_aot_runtime_drain_events_light() callconv(.c) void {
+    const runtime = if (state.active_runtime) |*active| active else return;
+    state.pollAotInterrupt(runtime) catch |failure| state.runtimeFailure(failure);
+}
+
 pub export fn lnako_aot_runtime_drain_events() callconv(.c) void {
     const runtime = if (state.active_runtime) |*active| active else return;
     state.pollAotInterrupt(runtime) catch |failure| state.runtimeFailure(failure);

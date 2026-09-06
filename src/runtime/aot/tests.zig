@@ -117,6 +117,8 @@ const lnako_aot_binding_cell_new = state.lnako_aot_binding_cell_new;
 const lnako_aot_binding_cell_value = state.lnako_aot_binding_cell_value;
 const lnako_aot_builtin_call = state.lnako_aot_builtin_call;
 const lnako_aot_builtin_call_site = state.lnako_aot_builtin_call_site;
+const lnako_aot_array_push_call_site = state.lnako_aot_array_push_call_site;
+const lnako_aot_element_count_call_site = state.lnako_aot_element_count_call_site;
 const lnako_aot_compare = state.lnako_aot_compare;
 const lnako_aot_concat = state.lnako_aot_concat;
 const lnako_aot_cut = state.lnako_aot_cut;
@@ -294,6 +296,8 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn () callconv(.c) void, @TypeOf(&lnako_aot_runtime_drain_events));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16) callconv(.c) void, @TypeOf(&lnako_aot_builtin_call));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_builtin_call_site));
+    try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_array_push_call_site));
+    try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_element_count_call_site));
     try std.testing.expectEqual(*const fn (*Value, *Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_timer_call_site));
     try std.testing.expectEqual(*const fn (*Value, *Value, *Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_promise_call_site));
     try std.testing.expectEqual(*const fn (*Value, ?*const Value, u64, ?[*]const u8, usize, ?*Value, u64) callconv(.c) void, @TypeOf(&lnako_aot_debug_display));
@@ -6161,7 +6165,7 @@ test "AOTネイティブABI橋渡しは関数とPromiseをAOT値へ変換する"
     roots[0] = try dynamicPromiseToAotValue(aot_state, dynamic_promise.promise);
     try aot_state.value_runtime.resolvePromise(dynamic_promise.promise, .{ .number = 42 });
     _ = try drainAotNativePluginTasks(active);
-    try std.testing.expectEqual(AotPromiseState.fulfilled, roots[0].object().?.payload.promise.aot_state);
+    try std.testing.expectEqual(AotPromiseState.fulfilled, roots[0].object().?.payload.promise.state);
     try std.testing.expectEqual(@as(f64, 42), valueToNumber(roots[0].object().?.payload.promise.result));
     try std.testing.expectEqual(@as(usize, 0), active.dynamic_promise_bridges.items.len);
 
@@ -6903,7 +6907,48 @@ test "AOT辞書索引はGC走査で参照を失わない" {
     try std.testing.expect(dictionary.findByUnits(&.{ 'g', '5' }) != null);
 }
 
-test "AOT ObjectプールはGC回収後にヘッダーを再利用する" {
+test "AOT 配列追加/要素数専用call_siteは汎用dispatchと同じ結果を返す" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    var roots = [_]Value{ .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    var frame: RootFrame = .{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try state.active_runtime.?.createArray(&.{numberValue(1)});
+    var push_arguments = [_]Value{ roots[0], numberValue(2) };
+    lnako_aot_array_push_call_site(&roots[1], &push_arguments, push_arguments.len, @intFromEnum(aot_builtin.Command.array_push), 0x2345);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(usize, 2), roots[0].object().?.payload.array.items.len);
+    try std.testing.expectEqual(roots[0].payload, roots[1].payload);
+
+    push_arguments[1] = staticStringValue("ab");
+    lnako_aot_array_push_call_site(&roots[2], &push_arguments, push_arguments.len, @intFromEnum(aot_builtin.Command.array_push), 0x2346);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(usize, 3), roots[0].object().?.payload.array.items.len);
+
+    var count_arguments = [_]Value{roots[0]};
+    lnako_aot_element_count_call_site(&roots[3], &count_arguments, count_arguments.len, @intFromEnum(aot_builtin.Command.element_count), 0x2347);
+    try std.testing.expect(!state.active_runtime.?.has_pending_exception);
+    try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(roots[3].payload)));
+
+    // 引数ゼロは汎用経路と同じく InvalidArgumentCount になる。
+    lnako_aot_array_push_call_site(&roots[4], null, 0, @intFromEnum(aot_builtin.Command.array_push), 0x2348);
+    try std.testing.expect(state.active_runtime.?.has_pending_exception);
+    _ = state.active_runtime.?.takeException();
+
+    // 専用ABIへ別opcodeを渡した場合は UnknownCommand を失敗として記録する。
+    lnako_aot_element_count_call_site(&roots[5], &count_arguments, count_arguments.len, @intFromEnum(aot_builtin.Command.array_push), 0x2349);
+    try std.testing.expect(state.active_runtime.?.has_pending_exception);
+    _ = state.active_runtime.?.takeException();
+}
+
+test "AOT ObjectはGC回収で解放され次の生成に影響しない" {
     var runtime = Runtime{ .allocator = std.testing.allocator };
     defer runtime.deinit();
     var roots = [_]Value{ .{}, .{} };
@@ -6912,16 +6957,15 @@ test "AOT ObjectプールはGC回収後にヘッダーを再利用する" {
     defer runtime.popRoots(&frame);
 
     roots[0] = try runtime.createString(&.{'A'});
-    const first_object = roots[0].object().?;
     roots[1] = try runtime.createString(&.{'B'});
 
     roots[0] = .{};
     try std.testing.expectEqual(@as(usize, 1), runtime.collect());
     try std.testing.expectEqual(@as(u64, 1), runtime.counters.gc_reclaimed_objects);
+    try std.testing.expectEqual(@as(u64, @sizeOf(Object)), runtime.counters.gc_reclaimed_bytes);
 
     roots[0] = try runtime.createString(&.{'C'});
-    try std.testing.expectEqual(first_object, roots[0].object().?);
-    try std.testing.expectEqual(@as(u64, 1), runtime.counters.object_pool_hits);
-    try std.testing.expectEqual(@as(u64, 2), runtime.counters.object_pool_misses);
+    try std.testing.expectEqual(@as(u64, 3), runtime.counters.allocations);
+    try std.testing.expectEqual(@as(usize, 2), runtime.object_count);
     try std.testing.expect(runtime.counters.object_high_water >= 2);
 }
