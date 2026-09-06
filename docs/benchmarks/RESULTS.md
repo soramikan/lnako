@@ -4,14 +4,14 @@
 
 ## gonako・C・Rustを含む結果
 
-新しい記録の日付は2026年9月6日（JST）です。個別文書にはUTCの測定日時も記載しています。測定コミットは `d072a540a26765bd16b5b61d767c5728eef7c3dd`。各環境20ケース・108測定行で、ウォームアップ3回後に各10回測定しています。JSONは実測結果を変更せずに保存しています。[比較CI #33998967402](https://github.com/soramikan/lnako/actions/runs/33998967402)は正式3環境すべて成功しました。
+新しい記録の日付は2026年9月7日（JST）です。個別文書にはUTCの測定日時も記載しています。CI3環境の測定コミットは `c720465342c10235877a97ee953d148e5d9469a4`、開発機ローカルは `aa356cf308902837b02a903c8adf2c3f872684ea` です。各環境20ケース・108測定行で、ウォームアップ3回後に各10回測定しています。JSONは実測結果を変更せずに保存しています。[比較CI #34044030940](https://github.com/soramikan/lnako/actions/runs/34044030940)は正式3環境すべて成功しました。
 
 | 環境 | 全結果（Markdown） | 生サンプル（JSON） |
 | --- | --- | --- |
-| Linux x86_64（CI） | [詳細](2026-09-06-linux-x64.md) | [JSON](2026-09-06-linux-x64.json) |
-| macOS arm64（CI） | [詳細](2026-09-06-macos-arm64.md) | [JSON](2026-09-06-macos-arm64.json) |
-| Windows x86_64（CI） | [詳細](2026-09-06-windows-x64.md) | [JSON](2026-09-06-windows-x64.json) |
-| macOS arm64（開発機Apple M1） | [詳細](2026-09-06-macos-local.md) | [JSON](2026-09-06-macos-local.json) |
+| Linux x86_64（CI） | [詳細](2026-09-07-linux-x64.md) | [JSON](2026-09-07-linux-x64.json) |
+| macOS arm64（CI） | [詳細](2026-09-07-macos-arm64.md) | [JSON](2026-09-07-macos-arm64.json) |
+| Windows x86_64（CI） | [詳細](2026-09-07-windows-x64.md) | [JSON](2026-09-07-windows-x64.json) |
+| macOS arm64（開発機Apple M1） | [詳細](2026-09-07-macos-local.md) | [JSON](2026-09-07-macos-local.json) |
 
 ローカル測定のlnakoはReleaseSafe、LLVM/LLD 22.1.8、Node.js 24.15.0を使用しています。CはClang 22.1.8、Rustは1.95.0です。CIではRustを1.98.0へ固定しています。ローカルとCIの数値を直接順位付けしないでください。
 
@@ -39,10 +39,18 @@ C・Rustの他のケースは未測定です。Pythonはランナーで任意選
 - 実行時間はプロセス起動から終了までです。cnako・gonako・lnako interpreterは解析・実行を含み、AOT・C・Rustは事前コンパイル済みの実行ファイルを起動します。コンパイル費用は別表です。
 - `steady_state` も起動を含む反復処理全体の時間です。中央値200ms未満には†を付けています。純粋なカーネル速度や、長時間常駐時の性能とは区別してください。
 - 共有CIランナーのCPU、OS、プロセス生成方式やファイルキャッシュの影響があります。OS間の数値を直接順位付けせず、同じ環境・同じケースで比較してください。
-- 辞書検索など、lnako AOTが他の経路より遅いケースもあります。得意なケースだけから全体性能を判断せず、用途ごとの結果を確認してください。異なるスイート・環境の過去記録との差を、性能回帰とは断定しません。
+- `hash-lookup` などの辞書検索では、M1/M7の索引化と今回のSSA最適化修正後、lnako AOTがcnako・gonakoより速くなっています。macOS arm64 CIでは `hash-lookup` が cnako 133.33ms・gonako 68.56ms・lnako AOT 50.96ms です。得意なケースだけから全体性能を判断せず、用途ごとの結果を確認してください。異なるスイート・環境の過去記録との差を、性能回帰とは断定しません。
 - 表示はms単位で小数2桁に丸めています。総合スコアは作らず、四分位範囲・MAD・CVなどのばらつきとともに読んでください。測定順の生サンプルはJSONに残しています。
 
 ## 過去の2処理系比較
+
+2026年9月6日の[比較CI #34044030940](https://github.com/soramikan/lnako/actions/runs/34044030940)、コミット `c720465` の記録です。各環境20ケース・108測定行です。`hash-lookup` のAOT性能が大きく改善した記録として残しています。
+
+| 環境 | 全結果 | 生データ |
+| --- | --- | --- |
+| Linux x86_64 | [Markdown](2026-09-07-linux-x64.md) | [JSON](2026-09-07-linux-x64.json) |
+| macOS arm64 | [Markdown](2026-09-07-macos-arm64.md) | [JSON](2026-09-07-macos-arm64.json) |
+| Windows x86_64 | [Markdown](2026-09-07-windows-x64.md) | [JSON](2026-09-07-windows-x64.json) |
 
 2026年9月5日の[比較CI](https://github.com/soramikan/lnako/actions/runs/33976608090)、コミット `9fdd244` の記録です。各環境20ケース・77測定行です。この記録にはgonako・C・Rustの測定値はありません。
 
