@@ -1,6 +1,8 @@
 const std = @import("std");
 const aot_state = @import("state.zig");
 const shared = @import("shared.zig");
+const environment = @import("../environment.zig");
+const counters = @import("../counters.zig");
 
 const builtin = shared.builtin;
 const aot_builtin = shared.aot_builtin;
@@ -158,6 +160,8 @@ pub const AotDictionary = struct {
     linear_lookups: u64 = 0,
     entry_comparisons: u64 = 0,
     index_rebuilds: u64 = 0,
+    hits: u64 = 0,
+    misses: u64 = 0,
 
     pub fn deinit(self: *AotDictionary, allocator: std.mem.Allocator) void {
         self.entries.deinit(allocator);
@@ -173,13 +177,23 @@ pub const AotDictionary = struct {
     pub fn findByKey(self: *AotDictionary, key: Value) ?usize {
         if (self.index_valid) {
             self.indexed_lookups += 1;
-            return self.probeIndex(aotIndexHash(key), key);
+            const result = self.probeIndex(aotIndexHash(key), key);
+            if (result != null) {
+                self.hits += 1;
+            } else {
+                self.misses += 1;
+            }
+            return result;
         }
         self.linear_lookups += 1;
         for (self.entries.items, 0..) |entry, index| {
             self.entry_comparisons += 1;
-            if (sameKey(entry.key, key)) return index;
+            if (sameKey(entry.key, key)) {
+                self.hits += 1;
+                return index;
+            }
         }
+        self.misses += 1;
         return null;
     }
 
@@ -198,13 +212,22 @@ pub const AotDictionary = struct {
                 }
                 slot = (slot + 1) & (self.index_slots.len - 1);
             }
+            if (found != null) {
+                self.hits += 1;
+            } else {
+                self.misses += 1;
+            }
             return found;
         }
         self.linear_lookups += 1;
         for (self.entries.items, 0..) |entry, index| {
             self.entry_comparisons += 1;
-            if (aotIndexKeyMatchesUnits(entry.key, units)) return index;
+            if (aotIndexKeyMatchesUnits(entry.key, units)) {
+                self.hits += 1;
+                return index;
+            }
         }
+        self.misses += 1;
         return null;
     }
 
@@ -807,6 +830,7 @@ pub const Runtime = struct {
     process_io: std.Io.Threaded = .init_single_threaded,
     process_io_initialized: bool = false,
     native_plugin_paths: std.ArrayList([]u8) = .empty,
+    counters: counters.Counters = .{},
     dynamic_globals: std.ArrayList(DynamicGlobal) = .empty,
     dynamic_state: ?*DynamicInterpreterState = null,
     dynamic_promise_bridges: std.ArrayList(*DynamicPromiseBridge) = .empty,
@@ -864,6 +888,7 @@ pub const Runtime = struct {
         self.promise_all_states.deinit(self.allocator);
         if (self.stdin_bytes) |bytes| self.allocator.free(bytes);
         if (self.aot_source_directory) |path| self.allocator.free(path);
+        self.aggregateDictionaryCounters();
         var current = self.objects;
         while (current) |object| {
             const next = object.next;
@@ -872,6 +897,7 @@ pub const Runtime = struct {
         }
         self.named_functions.deinit(self.allocator);
         self.stringifying_arrays.deinit(self.allocator);
+        self.reportCounters();
         self.* = undefined;
     }
 
@@ -1776,5 +1802,31 @@ pub const Runtime = struct {
                 break :blk try self.createString(units);
             },
         };
+    }
+
+    fn aggregateAotDictionaryCounters(self: *Runtime, dict: *AotDictionary) void {
+        self.counters.dictionary_probes +|= dict.indexed_lookups + dict.linear_lookups;
+        self.counters.dictionary_hits +|= dict.hits;
+        self.counters.dictionary_misses +|= dict.misses;
+        self.counters.dictionary_linear_steps +|= dict.linear_lookups;
+        self.counters.dictionary_index_lookups +|= dict.indexed_lookups;
+        self.counters.dictionary_entry_comparisons +|= dict.entry_comparisons;
+        self.counters.dictionary_index_rebuilds +|= dict.index_rebuilds;
+    }
+
+    fn aggregateDictionaryCounters(self: *Runtime) void {
+        var current = self.objects;
+        while (current) |object| : (current = object.next) {
+            self.aggregateAotDictionaryCounters(&object.array_properties);
+            switch (object.payload) {
+                .dictionary => |*dict| self.aggregateAotDictionaryCounters(dict),
+                else => {},
+            }
+        }
+    }
+
+    fn reportCounters(self: *const Runtime) void {
+        if (!environment.valueEquals("LNAKO_PERF_COUNTERS", "1")) return;
+        std.debug.print("lnako perf counters: {}\n", .{self.counters});
     }
 };

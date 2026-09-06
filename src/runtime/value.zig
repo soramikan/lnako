@@ -3,6 +3,8 @@ const string_mod = @import("string.zig");
 const bigint_mod = @import("bigint.zig");
 const number_mod = @import("number.zig");
 const toml_temporal = @import("toml_temporal.zig");
+const environment = @import("environment.zig");
+const counters = @import("counters.zig");
 
 pub const String = string_mod.String;
 pub const BigInt = bigint_mod.BigInt;
@@ -653,6 +655,7 @@ pub const Runtime = struct {
     custom_failure_message_units: std.ArrayList(u16) = .empty,
     next_collection: usize = 64,
     stress_collection: bool = false,
+    counters: counters.Counters = .{},
 
     pub fn init(backing_allocator: std.mem.Allocator) Runtime {
         return .{ .backing_allocator = backing_allocator };
@@ -670,7 +673,13 @@ pub const Runtime = struct {
         self.standard_property_cache.deinit(self.backing_allocator);
         self.custom_failure_message.deinit(self.backing_allocator);
         self.custom_failure_message_units.deinit(self.backing_allocator);
+        self.reportCounters();
         self.* = undefined;
+    }
+
+    fn reportCounters(self: *const Runtime) void {
+        if (!environment.valueEquals("LNAKO_PERF_COUNTERS", "1")) return;
+        std.debug.print("lnako perf counters: {}\n", .{self.counters});
     }
 
     pub fn allocator(self: *Runtime) std.mem.Allocator {

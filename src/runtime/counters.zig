@@ -9,6 +9,8 @@ pub const Counters = struct {
     dictionary_misses: u64 = 0,
     dictionary_linear_steps: u64 = 0,
     dictionary_index_lookups: u64 = 0,
+    dictionary_entry_comparisons: u64 = 0,
+    dictionary_index_rebuilds: u64 = 0,
     allocations: u64 = 0,
     allocated_bytes: u64 = 0,
     string_conversions: u64 = 0,
@@ -23,6 +25,8 @@ pub const Counters = struct {
         self.dictionary_misses +|= other.dictionary_misses;
         self.dictionary_linear_steps +|= other.dictionary_linear_steps;
         self.dictionary_index_lookups +|= other.dictionary_index_lookups;
+        self.dictionary_entry_comparisons +|= other.dictionary_entry_comparisons;
+        self.dictionary_index_rebuilds +|= other.dictionary_index_rebuilds;
         self.allocations +|= other.allocations;
         self.allocated_bytes +|= other.allocated_bytes;
         self.string_conversions +|= other.string_conversions;
@@ -31,29 +35,13 @@ pub const Counters = struct {
         self.frame_pools_hits +|= other.frame_pools_hits;
         self.frame_pools_misses +|= other.frame_pools_misses;
     }
-
-    pub fn format(self: Counters, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = options;
-        try writer.writeAll("{ ");
-        inline for (@typeInfo(Counters).Struct.fields) |field| {
-            const value = @field(self, field.name);
-            try writer.print("\"{s}\": {d}, ", .{ field.name, value });
-        }
-        try writer.writeAll("}");
-    }
 };
 
-test "Counters add saturates and formats" {
+test "Counters add saturates" {
     var a: Counters = .{ .dictionary_probes = 10, .dictionary_hits = 5 };
     const b: Counters = .{ .dictionary_probes = 3, .dictionary_misses = 2 };
     a.add(b);
     try std.testing.expectEqual(@as(u64, 13), a.dictionary_probes);
     try std.testing.expectEqual(@as(u64, 5), a.dictionary_hits);
     try std.testing.expectEqual(@as(u64, 2), a.dictionary_misses);
-
-    var buf: [512]u8 = undefined;
-    const written = try std.fmt.bufPrint(&buf, "{}", .{a});
-    try std.testing.expect(std.mem.indexOf(u8, written, "\"dictionary_probes\": 13") != null);
-    try std.testing.expect(std.mem.indexOf(u8, written, "\"dictionary_misses\": 2") != null);
 }
