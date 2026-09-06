@@ -3,6 +3,7 @@ import { access, readdir, readFile, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { isAbsolute, resolve } from "node:path";
 import { platformIndependentOfficialComparison } from "./dispatch_evidence_semantics.mjs";
+import { computeSourceManifestSha256 } from "./lib/evidence/manifest.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const args = process.argv.slice(2);
@@ -33,6 +34,7 @@ const forbiddenFields = new Set(["source", "sourceText", "sourcePath", "args", "
 const expectedPlatforms = new Set(["darwin-arm64", "linux-x64", "win32-x64"]);
 const bundleBytes = await readFile(bundle);
 const bundleSha256 = sha256(bundleBytes);
+const expectedSourceManifest = (await computeSourceManifestSha256(root)).sha256;
 const files = (await readdir(directory)).filter((file) => file.endsWith(".json")).sort();
 if (files.length !== expectedPlatforms.size) throw new Error("dispatch証拠artifactが3正式OS分ありません");
 
@@ -44,7 +46,7 @@ for (const file of files) {
   const bytes = await readFile(path);
   const evidence = JSON.parse(bytes.toString("utf8"));
   rejectForbidden(evidence);
-  validateEvidence(evidence, commit);
+  validateEvidence(evidence, expectedSourceManifest);
   const platform = `${evidence.provenance.environment.platform}-${evidence.provenance.environment.arch}`;
   if (!expectedPlatforms.has(platform) || evidenceByPlatform.has(platform)) throw new Error(`dispatch証拠のOSが不正または重複しています: ${platform}`);
   const evidenceSha256 = sha256(bytes);
@@ -108,10 +110,13 @@ function absoluteOption(name) {
   return resolve(value);
 }
 
-function validateEvidence(evidence, expectedCommit) {
+function validateEvidence(evidence, expectedSourceManifest) {
+  const hashPattern = /^[0-9a-f]{64}$/i;
   if (evidence?.schema !== "lnako.dispatch-evidence.v2" || evidence.generator !== "tools/check_dispatch_trace.mjs" ||
       evidence.attestation !== null || evidence.fixture?.id !== "native-dispatch-commands" || evidence.fixture?.file !== "native-cases.json" ||
-      evidence.officialComparison?.equivalent !== true || evidence.provenance?.lnako?.commit !== expectedCommit || evidence.provenance?.lnako?.dirty !== false ||
+      evidence.officialComparison?.equivalent !== true ||
+      evidence.provenance?.lnako?.sourceManifestSha256 !== expectedSourceManifest ||
+      !hashPattern.test(evidence.provenance?.lnako?.binarySha256 ?? "") ||
       !Array.isArray(evidence.sites) || evidence.sites.length === 0) {
     throw new Error("dispatch証拠の安全なschemaまたは対象commitが不正です");
   }
