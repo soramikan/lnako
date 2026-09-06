@@ -42,6 +42,86 @@ pub const Report = struct {
 
 const Definition = struct { block: ?ir.BlockId, instruction_index: ?usize };
 
+// CFGは疎なので、ブロック数の二乗の行列ではなく辺リストからCSR形式の
+// 先行・後続リストを構築する。recordEdgeは分岐先検証と重複除去だけを行い、
+// 実体のリストは検証走査の完了後に一度だけ作る。
+const Edge = struct { source: usize, target: usize };
+
+const EdgeSet = struct {
+    edges: std.ArrayList(Edge) = .empty,
+    seen: std.AutoHashMapUnmanaged(u64, void) = .empty,
+
+    fn add(self: *EdgeSet, allocator: std.mem.Allocator, source: usize, target: usize) !bool {
+        const key = (@as(u64, target) << 32) | @as(u64, source);
+        if (self.seen.contains(key)) return false;
+        try self.seen.put(allocator, key, {});
+        try self.edges.append(allocator, .{ .source = source, .target = target });
+        return true;
+    }
+};
+
+// CSR形式の辺リスト。offsets[b]..offsets[b+1]がitems上の区切りになる。
+const Csr = struct {
+    offsets: []usize,
+    items: []usize,
+
+    fn list(self: Csr, block: usize) []const usize {
+        return self.items[self.offsets[block]..self.offsets[block + 1]];
+    }
+
+    fn contains(self: Csr, block: usize, candidate: usize) bool {
+        for (self.list(block)) |item| if (item == candidate) return true;
+        return false;
+    }
+};
+
+const ControlFlow = struct {
+    predecessors: Csr,
+    successors: Csr,
+
+    fn build(allocator: std.mem.Allocator, edges: []const Edge, count: usize) !ControlFlow {
+        const pred = try buildCsr(allocator, edges, count, true);
+        const succ = try buildCsr(allocator, edges, count, false);
+        return .{ .predecessors = pred, .successors = succ };
+    }
+
+    fn buildCsr(allocator: std.mem.Allocator, edges: []const Edge, count: usize, by_target: bool) !Csr {
+        const offsets = try allocator.alloc(usize, count + 1);
+        @memset(offsets, 0);
+        for (edges) |edge| offsets[if (by_target) edge.target else edge.source] += 1;
+        var total: usize = 0;
+        for (offsets[0..count]) |*offset| {
+            const length = offset.*;
+            offset.* = total;
+            total += length;
+        }
+        offsets[count] = total;
+        const items = try allocator.alloc(usize, total);
+        const cursor = try allocator.alloc(usize, count);
+        @memcpy(cursor, offsets[0..count]);
+        for (edges) |edge| {
+            const bucket = if (by_target) edge.target else edge.source;
+            const member = if (by_target) edge.source else edge.target;
+            items[cursor[bucket]] = member;
+            cursor[bucket] += 1;
+        }
+        return .{ .offsets = offsets, .items = items };
+    }
+};
+
+// 即時支配木のDFS区間による支配関係。到達不能ブロックは木に入らず、
+// 従来の行列と同じく自身以外を支配しない結果になる。
+const Dominators = struct {
+    first: []u32,
+    last: []u32,
+    reachable: []bool,
+
+    fn dominates(self: Dominators, definition: usize, use: usize) bool {
+        return self.reachable[definition] and self.reachable[use] and
+            self.first[definition] <= self.first[use] and self.last[use] <= self.last[definition];
+    }
+};
+
 pub fn verify(backing_allocator: std.mem.Allocator, program: ir.Program) !Report {
     var arena = std.heap.ArenaAllocator.init(backing_allocator);
     errdefer arena.deinit();
@@ -68,8 +148,7 @@ const Checker = struct {
             } else try definitions.put(self.allocator, parameter.value, .{ .block = null, .instruction_index = null });
         }
 
-        const predecessors = try self.allocator.alloc(bool, count * count);
-        @memset(predecessors, false);
+        var edges = EdgeSet{};
         for (function.blocks, 0..) |block, block_index| {
             const effective_block: ir.BlockId = @intCast(block_index);
             if (block.id != block_index) try self.add(.invalid_block_id, function, block.id, null, "基本ブロックIDと配列位置が一致しません");
@@ -92,7 +171,7 @@ const Checker = struct {
                 }
                 if (instruction.opcode == .try_begin) {
                     if (instruction.exception_target) |target| {
-                        try self.recordEdge(function, predecessors, effective_block, target);
+                        try self.recordEdge(function, &edges, effective_block, target);
                     } else try self.add(.invalid_exception_target, function, block.id, instruction_index, "try_begin命令に例外分岐先がありません");
                 } else if (instruction.exception_target != null) {
                     try self.add(.invalid_exception_target, function, block.id, instruction_index, "try_begin以外の命令に例外分岐先があります");
@@ -100,35 +179,38 @@ const Checker = struct {
             }
             switch (block.terminator) {
                 .none => try self.add(.missing_terminator, function, block.id, null, "基本ブロックに終端命令がありません"),
-                .branch => |target| try self.recordEdge(function, predecessors, effective_block, target),
+                .branch => |target| try self.recordEdge(function, &edges, effective_block, target),
                 .conditional_branch => |branch| {
-                    try self.recordEdge(function, predecessors, effective_block, branch.then_block);
-                    try self.recordEdge(function, predecessors, effective_block, branch.else_block);
+                    try self.recordEdge(function, &edges, effective_block, branch.then_block);
+                    try self.recordEdge(function, &edges, effective_block, branch.else_block);
                 },
-                .throw_value => |throw_value| if (throw_value.target) |target| try self.recordEdge(function, predecessors, effective_block, target),
+                .throw_value => |throw_value| if (throw_value.target) |target| try self.recordEdge(function, &edges, effective_block, target),
                 else => {},
             }
         }
 
-        const dominators = try computeDominators(self.allocator, predecessors, count, function.entry);
+        const flow = try ControlFlow.build(self.allocator, edges.edges.items, count);
+        const dominators = try computeDominators(self.allocator, flow, count, function.entry);
+        const phi_seen = try self.allocator.alloc(u32, count);
+        @memset(phi_seen, 0);
+        var phi_generation: u32 = 0;
         for (function.blocks, 0..) |block, block_index| {
             const effective_block: ir.BlockId = @intCast(block_index);
-            const predecessor_count = countPredecessors(predecessors, count, effective_block);
+            const predecessor_count = flow.predecessors.list(effective_block).len;
             for (block.instructions, 0..) |instruction, instruction_index| {
                 if (instruction.opcode == .phi) {
                     if (instruction.phi_incoming.len != predecessor_count) try self.add(.invalid_phi_input_count, function, block.id, instruction_index, "phi入力数が先行ブロック数と一致しません");
-                    const seen = try self.allocator.alloc(bool, count);
-                    @memset(seen, false);
+                    phi_generation += 1;
                     for (instruction.phi_incoming) |incoming| {
-                        if (incoming.predecessor >= count or !predecessors[effective_block * count + incoming.predecessor]) {
+                        if (incoming.predecessor >= count or !flow.predecessors.contains(effective_block, incoming.predecessor)) {
                             try self.add(.invalid_phi_predecessor, function, block.id, instruction_index, "phi入力元が先行ブロックではありません");
                             continue;
                         }
-                        if (seen[incoming.predecessor]) {
+                        if (phi_seen[incoming.predecessor] == phi_generation) {
                             try self.add(.duplicate_phi_predecessor, function, block.id, instruction_index, "同じ先行ブロックから複数のphi入力があります");
                             continue;
                         }
-                        seen[incoming.predecessor] = true;
+                        phi_seen[incoming.predecessor] = phi_generation;
                         try self.verifyUse(function, definitions, dominators, incoming.predecessor, function.blocks[incoming.predecessor].instructions.len, incoming.value, block.id, instruction_index);
                     }
                 } else {
@@ -151,19 +233,19 @@ const Checker = struct {
         }
     }
 
-    fn recordEdge(self: *Checker, function: ir.Function, predecessors: []bool, source: ir.BlockId, target: ir.BlockId) !void {
+    fn recordEdge(self: *Checker, function: ir.Function, edges: *EdgeSet, source: ir.BlockId, target: ir.BlockId) !void {
         if (target >= function.blocks.len) {
             try self.add(.invalid_branch_target, function, source, null, "分岐先の基本ブロックが存在しません");
             return;
         }
-        predecessors[target * function.blocks.len + source] = true;
+        _ = try edges.add(self.allocator, source, target);
     }
 
     fn verifyUse(
         self: *Checker,
         function: ir.Function,
         definitions: std.AutoHashMapUnmanaged(ir.ValueId, Definition),
-        dominators: []const bool,
+        dominators: Dominators,
         use_block: ir.BlockId,
         use_index: usize,
         value: ir.ValueId,
@@ -179,8 +261,7 @@ const Checker = struct {
             if (definition.instruction_index.? >= use_index) try self.add(.value_does_not_dominate_use, function, report_block, report_index, "SSA値が定義より前に使用されています");
             return;
         }
-        const count = function.blocks.len;
-        if (!dominators[use_block * count + definition_block]) {
+        if (!dominators.dominates(definition_block, use_block)) {
             try self.add(.value_does_not_dominate_use, function, report_block, report_index, "SSA値の定義が使用箇所を支配していません");
         }
     }
@@ -203,58 +284,112 @@ fn producesValue(opcode: ir.Opcode) bool {
     };
 }
 
-fn countPredecessors(predecessors: []const bool, count: usize, block: ir.BlockId) usize {
-    var result: usize = 0;
-    for (0..count) |source| if (predecessors[block * count + source]) {
-        result += 1;
-    };
-    return result;
-}
+// Cooper-Harvey-Kennedyの反復idom計算。RPO順に処理すると疎なCFGでは
+// 数回の走査で収束し、二乗の支配行列と固定点の全要素反復を避けられる。
+fn computeDominators(allocator: std.mem.Allocator, flow: ControlFlow, count: usize, entry: ir.BlockId) !Dominators {
+    const invalid = std.math.maxInt(usize);
+    const order_index = try allocator.alloc(usize, count);
+    @memset(order_index, invalid);
+    const order = try reversePostOrder(allocator, flow.successors, count, entry, order_index);
 
-fn computeDominators(allocator: std.mem.Allocator, predecessors: []const bool, count: usize, entry: ir.BlockId) ![]bool {
-    // The CFG is usually sparse. Build predecessor lists once so each
-    // intersection visits actual edges instead of scanning all blocks.
-    var offsets = try allocator.alloc(usize, count + 1);
-    defer allocator.free(offsets);
-    var incoming: std.ArrayList(usize) = .empty;
-    defer incoming.deinit(allocator);
-    for (0..count) |block| {
-        offsets[block] = incoming.items.len;
-        for (0..count) |predecessor| {
-            if (predecessors[block * count + predecessor]) try incoming.append(allocator, predecessor);
-        }
-    }
-    offsets[count] = incoming.items.len;
-    const dominators = try allocator.alloc(bool, count * count);
-    for (0..count) |block| for (0..count) |candidate| {
-        dominators[block * count + candidate] = block != entry or candidate == entry;
-    };
-    for (0..count) |candidate| dominators[entry * count + candidate] = candidate == entry;
-
+    const idom = try allocator.alloc(usize, count);
+    @memset(idom, invalid);
+    idom[entry] = entry;
     var changed = true;
     while (changed) {
         changed = false;
-        for (0..count) |block| {
-            if (block == entry) continue;
-            const block_predecessors = incoming.items[offsets[block]..offsets[block + 1]];
-            const has_predecessor = block_predecessors.len > 0;
-            for (0..count) |candidate| {
-                var value = candidate == block;
-                if (candidate != block and has_predecessor) {
-                    value = true;
-                    for (block_predecessors) |predecessor| {
-                        value = value and dominators[predecessor * count + candidate];
-                    }
-                }
-                const index = block * count + candidate;
-                if (dominators[index] != value) {
-                    dominators[index] = value;
-                    changed = true;
-                }
+        for (order[1..]) |block| {
+            var new_idom: usize = invalid;
+            for (flow.predecessors.list(block)) |predecessor| {
+                if (idom[predecessor] == invalid) continue;
+                new_idom = if (new_idom == invalid) predecessor else intersectIdom(idom, order_index, predecessor, new_idom);
+            }
+            if (new_idom != invalid and idom[block] != new_idom) {
+                idom[block] = new_idom;
+                changed = true;
             }
         }
     }
-    return dominators;
+
+    const child_head = try allocator.alloc(usize, count);
+    @memset(child_head, invalid);
+    const child_next = try allocator.alloc(usize, count);
+    @memset(child_next, invalid);
+    for (order[1..]) |block| {
+        if (idom[block] == invalid) continue;
+        child_next[block] = child_head[idom[block]];
+        child_head[idom[block]] = block;
+    }
+
+    const first = try allocator.alloc(u32, count);
+    const last = try allocator.alloc(u32, count);
+    const reachable = try allocator.alloc(bool, count);
+    @memset(reachable, false);
+    var tick: u32 = 0;
+    const cursor = try allocator.alloc(usize, count);
+    @memcpy(cursor, child_head);
+    var stack: std.ArrayList(usize) = .empty;
+    try stack.append(allocator, entry);
+    first[entry] = tick;
+    tick += 1;
+    reachable[entry] = true;
+    while (stack.items.len > 0) {
+        const top = stack.items[stack.items.len - 1];
+        if (cursor[top] != invalid) {
+            const child = cursor[top];
+            cursor[top] = child_next[child];
+            reachable[child] = true;
+            first[child] = tick;
+            tick += 1;
+            try stack.append(allocator, child);
+        } else {
+            last[top] = tick;
+            tick += 1;
+            _ = stack.pop();
+        }
+    }
+    return .{ .first = first, .last = last, .reachable = reachable };
+}
+
+fn intersectIdom(idom: []const usize, order_index: []const usize, a_start: usize, b_start: usize) usize {
+    var a = a_start;
+    var b = b_start;
+    while (a != b) {
+        while (order_index[a] > order_index[b]) a = idom[a];
+        while (order_index[b] > order_index[a]) b = idom[b];
+    }
+    return a;
+}
+
+fn reversePostOrder(allocator: std.mem.Allocator, successors: Csr, count: usize, entry: ir.BlockId, order_index: []usize) ![]usize {
+    const visited = try allocator.alloc(bool, count);
+    @memset(visited, false);
+    var post_order: std.ArrayList(usize) = .empty;
+    var stack: std.ArrayList(struct { block: usize, next: usize }) = .empty;
+    visited[entry] = true;
+    try stack.append(allocator, .{ .block = entry, .next = 0 });
+    while (stack.items.len > 0) {
+        const top = &stack.items[stack.items.len - 1];
+        const succs = successors.list(top.block);
+        if (top.next < succs.len) {
+            const succ = succs[top.next];
+            top.next += 1;
+            if (!visited[succ]) {
+                visited[succ] = true;
+                try stack.append(allocator, .{ .block = succ, .next = 0 });
+            }
+        } else {
+            try post_order.append(allocator, top.block);
+            _ = stack.pop();
+        }
+    }
+    const order = try allocator.alloc(usize, post_order.items.len);
+    for (post_order.items, 0..) |block, index| {
+        const position = post_order.items.len - 1 - index;
+        order[position] = block;
+        order_index[block] = position;
+    }
+    return order;
 }
 
 fn makeTestProgram(allocator: std.mem.Allocator) !struct { hir_program: @import("hir.zig").Program, ir_program: ir.Program, parsed: @import("../frontend/parser.zig").ParseResult, analyzed: @import("../semantic/analyzer.zig").Program } {
@@ -270,21 +405,27 @@ fn makeTestProgram(allocator: std.mem.Allocator) !struct { hir_program: @import(
 }
 
 test "支配関係は分岐合流・後方辺・到達不能ブロックを保持する" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
     const count = 6;
-    var predecessors = [_]bool{false} ** (count * count);
-    const edges = [_][2]usize{ .{ 0, 4 }, .{ 4, 1 }, .{ 4, 2 }, .{ 1, 3 }, .{ 2, 3 }, .{ 3, 4 } };
-    for (edges) |edge| predecessors[edge[1] * count + edge[0]] = true;
-    const dominators = try computeDominators(std.testing.allocator, &predecessors, count, 0);
-    defer std.testing.allocator.free(dominators);
+    const edge_list = [_]Edge{ .{ .source = 0, .target = 4 }, .{ .source = 4, .target = 1 }, .{ .source = 4, .target = 2 }, .{ .source = 1, .target = 3 }, .{ .source = 2, .target = 3 }, .{ .source = 3, .target = 4 } };
+    const flow = try ControlFlow.build(allocator, &edge_list, count);
+    const dominators = try computeDominators(allocator, flow, count, 0);
     const expected = [_][count]bool{
         .{ true, false, false, false, false, false },
         .{ true, true, false, false, true, false },
         .{ true, false, true, false, true, false },
         .{ true, false, false, true, true, false },
         .{ true, false, false, false, true, false },
-        .{ false, false, false, false, false, true },
+        .{ false, false, false, false, false, false },
     };
-    for (expected, 0..) |row, block| try std.testing.expectEqualSlices(bool, &row, dominators[block * count .. (block + 1) * count]);
+    for (expected, 0..) |row, use_block| {
+        for (row, 0..) |dominates, definition_block| {
+            if (use_block == definition_block and !dominators.reachable[use_block]) continue;
+            try std.testing.expectEqual(dominates, dominators.dominates(definition_block, use_block));
+        }
+    }
 }
 
 test "生成したSSA IRを検証する" {
