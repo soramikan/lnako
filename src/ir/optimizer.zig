@@ -498,7 +498,119 @@ fn eliminateDeadCode(scratch_allocator: std.mem.Allocator, program: *ir.Program,
             }
             block.instructions = try retained.toOwnedSlice(allocator);
         }
+        try removeUnreachableBlocks(scratch_allocator, program, function);
     }
+}
+
+fn removeUnreachableBlocks(scratch_allocator: std.mem.Allocator, program: *ir.Program, function: *ir.Function) !void {
+    const count = function.blocks.len;
+    if (count == 0) return;
+    const reachable = try scratch_allocator.alloc(bool, count);
+    defer scratch_allocator.free(reachable);
+    @memset(reachable, false);
+    var queue: std.ArrayList(ir.BlockId) = .empty;
+    defer queue.deinit(scratch_allocator);
+    try queue.append(scratch_allocator, function.entry);
+    reachable[function.entry] = true;
+    while (queue.pop()) |block_id| {
+        const block = function.blocks[block_id];
+        for (block.instructions) |instruction| {
+            if (instruction.opcode == .try_begin) if (instruction.exception_target) |target| {
+                if (!reachable[target]) {
+                    reachable[target] = true;
+                    try queue.append(scratch_allocator, target);
+                }
+            };
+        }
+        switch (block.terminator) {
+            .branch => |target| {
+                if (!reachable[target]) {
+                    reachable[target] = true;
+                    try queue.append(scratch_allocator, target);
+                }
+            },
+            .conditional_branch => |branch| {
+                if (!reachable[branch.then_block]) {
+                    reachable[branch.then_block] = true;
+                    try queue.append(scratch_allocator, branch.then_block);
+                }
+                if (!reachable[branch.else_block]) {
+                    reachable[branch.else_block] = true;
+                    try queue.append(scratch_allocator, branch.else_block);
+                }
+            },
+            .throw_value => |throw_value| if (throw_value.target) |target| {
+                if (!reachable[target]) {
+                    reachable[target] = true;
+                    try queue.append(scratch_allocator, target);
+                }
+            },
+            else => {},
+        }
+    }
+
+    const mapping = try scratch_allocator.alloc(?ir.BlockId, count);
+    defer scratch_allocator.free(mapping);
+    var new_count: usize = 0;
+    for (function.blocks, 0..) |_, index| {
+        if (reachable[index]) {
+            mapping[index] = @intCast(new_count);
+            new_count += 1;
+        } else {
+            mapping[index] = null;
+        }
+    }
+    if (new_count == count) return;
+
+    const arena = program.arena.allocator();
+    const new_blocks = try arena.alloc(ir.BasicBlock, new_count);
+    for (function.blocks, 0..) |block, index| {
+        if (mapping[index]) |new_id| new_blocks[new_id] = block;
+    }
+    for (new_blocks, 0..) |*block, new_id| {
+        block.id = @intCast(new_id);
+        for (block.instructions) |*instruction| {
+            if (instruction.opcode == .try_begin) if (instruction.exception_target) |target| {
+                instruction.exception_target = mapping[target].?;
+            };
+            var retained: std.ArrayList(ir.PhiIncoming) = .empty;
+            for (instruction.phi_incoming) |incoming| {
+                if (mapping[incoming.predecessor]) |new_pred| {
+                    try retained.append(arena, .{ .predecessor = new_pred, .value = incoming.value });
+                }
+            }
+            instruction.phi_incoming = try retained.toOwnedSlice(arena);
+        }
+        switch (block.terminator) {
+            .branch => |target| {
+                if (mapping[target]) |new_target| {
+                    block.terminator = .{ .branch = new_target };
+                } else {
+                    block.terminator = .unreachable_terminator;
+                }
+            },
+            .conditional_branch => |*branch| {
+                const then_new = mapping[branch.then_block];
+                const else_new = mapping[branch.else_block];
+                if (then_new != null and else_new != null) {
+                    branch.then_block = then_new.?;
+                    branch.else_block = else_new.?;
+                } else if (then_new != null) {
+                    block.terminator = .{ .branch = then_new.? };
+                } else if (else_new != null) {
+                    block.terminator = .{ .branch = else_new.? };
+                } else {
+                    block.terminator = .unreachable_terminator;
+                }
+            },
+            .throw_value => |*throw_value| if (throw_value.target) |target| {
+                throw_value.target = mapping[target].?;
+            },
+            else => {},
+        }
+    }
+    function.blocks = new_blocks;
+    function.entry = mapping[function.entry].?;
 }
 
 fn removable(instruction: ir.Instruction, types: []const ir.Type) bool {
@@ -873,4 +985,29 @@ test "唯一の入力を持つphiへの定数分岐は保守的に維持する" 
     };
     try std.testing.expect(!canSimplifyBranch(function, 0, 1, 2));
     try std.testing.expect(canSimplifyBranch(function, 0, 1, 1));
+}
+
+test "定数短絡評価で到達不能ブロックとphi入力を削除する" {
+    const parser = @import("../frontend/parser.zig");
+    const semantic = @import("../semantic/analyzer.zig");
+    const hir = @import("hir.zig");
+    const lower_ssa = @import("lower_ssa.zig");
+    const verifier = @import("verifier.zig");
+    const source = "(0かつ表示(\"NG-and\"))を表示\n(1または表示(\"NG-or\"))を表示\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower_ssa.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+
+    const stats = try optimize(std.testing.allocator, &program, .{});
+    try std.testing.expect(stats.simplified_branches >= 2);
+    var report = try verifier.verify(std.testing.allocator, program);
+    defer report.deinit();
+    try std.testing.expect(report.succeeded());
 }
