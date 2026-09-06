@@ -832,7 +832,6 @@ pub const Runtime = struct {
     native_plugin_paths: std.ArrayList([]u8) = .empty,
     counters: counters.Counters = .{},
     live_roots: u64 = 0,
-    object_pool: ?*Object = null,
     dynamic_globals: std.ArrayList(DynamicGlobal) = .empty,
     dynamic_state: ?*DynamicInterpreterState = null,
     dynamic_promise_bridges: std.ArrayList(*DynamicPromiseBridge) = .empty,
@@ -896,11 +895,6 @@ pub const Runtime = struct {
             const next = object.next;
             self.destroyObject(object);
             current = next;
-        }
-        while (self.object_pool) |object| {
-            const next = object.next;
-            self.allocator.destroy(object);
-            self.object_pool = next;
         }
         self.named_functions.deinit(self.allocator);
         self.stringifying_arrays.deinit(self.allocator);
@@ -1149,28 +1143,12 @@ pub const Runtime = struct {
     }
 
     pub fn createObject(self: *Runtime, payload: Payload, tag: Tag) !Value {
-        var from_pool = false;
-        const object: *Object = blk: {
-            if (self.object_pool) |pooled| {
-                from_pool = true;
-                self.object_pool = pooled.next;
-                self.counters.object_pool_hits +|= 1;
-                break :blk pooled;
-            }
-            const allocated = try self.allocator.create(Object);
-            self.counters.object_pool_misses +|= 1;
-            self.counters.allocations +|= 1;
-            self.counters.allocated_bytes +|= @sizeOf(Object);
-            break :blk allocated;
-        };
+        const object = try self.allocator.create(Object);
+        self.counters.allocations +|= 1;
+        self.counters.allocated_bytes +|= @sizeOf(Object);
         errdefer {
             object.array_presence.deinit(self.allocator);
-            if (from_pool) {
-                object.next = self.object_pool;
-                self.object_pool = object;
-            } else {
-                self.allocator.destroy(object);
-            }
+            self.allocator.destroy(object);
         }
         object.* = .{
             .next = self.objects,
@@ -1409,7 +1387,10 @@ pub const Runtime = struct {
                 object.array_properties.deinit(self.allocator);
                 object.array_presence.deinit(self.allocator);
             },
-            .dictionary => |*entries| entries.deinit(self.allocator),
+            .dictionary => |*entries| {
+                entries.deinit(self.allocator);
+                object.array_properties.deinit(self.allocator);
+            },
             .function => |function| {
                 var index: usize = 0;
                 while (index < self.named_functions.items.len) {
@@ -1430,8 +1411,10 @@ pub const Runtime = struct {
                 object.array_properties.deinit(self.allocator);
             },
         }
-        object.next = self.object_pool;
-        self.object_pool = object;
+        object.array_presence.deinit(self.allocator);
+        self.counters.gc_reclaimed_objects +|= 1;
+        self.counters.gc_reclaimed_bytes +|= @sizeOf(Object);
+        self.allocator.destroy(object);
     }
 
     pub fn indexGet(self: *Runtime, container: Value, key: Value) Value {

@@ -1,14 +1,14 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
-import { spawnSync } from "node:child_process";
 import { isAbsolute, join, resolve } from "node:path";
 import { dispatchCoverageAuditSha256 } from "./lib/evidence_common.mjs";
+import { computeSourceManifestSha256 } from "./lib/evidence/manifest.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const arguments_ = parseArguments();
 const lock = JSON.parse(await readFile(resolve(root, "compat/upstream.lock.json"), "utf8"));
 const baseline = lock.nadesiko3;
-const currentCommit = readGitCommit();
+const currentSourceManifestSha256 = (await computeSourceManifestSha256(root)).sha256;
 const auditScriptSha256 = await dispatchCoverageAuditSha256(root);
 const expectedSelection = "plugin-system/system-runtime/standard-plugin/supplemental-plugin command-bearing success fixtures plus the nine node-http callback/Promise/value/Discord/LINE-discontinued fixtures, one HTTP-server dispatch fixture, seven explicit plugin-route fixtures, and native-cut-commands, excluding explicit AOT gaps";
 const files = (await jsonFiles(arguments_.directory)).sort();
@@ -127,7 +127,8 @@ async function readCoverageArtifact(path) {
   const platform = `${environment?.platform}-${environment?.arch}`;
   const provenance = evidence.provenance;
   if (!environment || ![environment.platform, environment.arch, environment.node].every((value) => typeof value === "string" && value.length > 0) ||
-      provenance?.lnako?.commit !== currentCommit || provenance?.lnako?.dirty !== false ||
+      typeof provenance?.lnako?.binarySha256 !== "string" || typeof provenance?.lnako?.sourceManifestSha256 !== "string" ||
+      provenance?.lnako?.sourceManifestSha256 !== currentSourceManifestSha256 ||
       provenance?.auditScriptSha256 !== auditScriptSha256) {
     throw new Error(`dispatch coverage artifactの現行HEAD／監査script provenanceが不正です: ${path}`);
   }
@@ -173,14 +174,6 @@ function assertSetEqual(actual, expected, label) {
   const extra = [...actual].filter((value) => !expected.has(value));
   if (missing.length === 0 && extra.length === 0) return;
   throw new Error(`${label}が不一致です: missing=${JSON.stringify(missing)} extra=${JSON.stringify(extra)}`);
-}
-
-function readGitCommit() {
-  const result = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
-  if (result.status !== 0) throw new Error("lnakoのcommitを取得できません");
-  const commit = result.stdout.trim();
-  if (!/^[0-9a-f]{40}$/i.test(commit)) throw new Error("lnakoのcommit形式が不正です");
-  return commit;
 }
 
 function sha256(value) {
