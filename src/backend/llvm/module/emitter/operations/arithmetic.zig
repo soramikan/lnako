@@ -62,7 +62,7 @@ pub fn writeBinary(emitter: *Emitter, function: ir.Function, instruction: ir.Ins
         return writeShift(emitter, instruction, scope, opcode);
     }
     if (context.comparisonOpcode(instruction.operator)) |opcode| {
-        return writeComparison(emitter, instruction, scope, opcode);
+        return writeComparison(emitter, function, instruction, scope, opcode);
     }
     return error.UnsupportedBinaryOperator;
 }
@@ -102,12 +102,76 @@ pub fn writeArithmetic(emitter: *Emitter, function: ir.Function, instruction: ir
     try emitter.debugSuffix(instruction.span, scope);
 }
 
-pub fn writeComparison(emitter: *Emitter, instruction: ir.Instruction, scope: usize, opcode: u8) !void {
+pub fn writeComparison(emitter: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, opcode: u8) !void {
     const result = instruction.result orelse return error.MissingInstructionResult;
     if (instruction.operands.len < 2) return error.InvalidBinaryInstruction;
+    const left_type = valueType(function, instruction.operands[0]);
+    const right_type = valueType(function, instruction.operands[1]);
+    if (emitter.optimized and left_type == .number and right_type == .number) {
+        return writeScalarNumberComparison(emitter, function, instruction, scope);
+    }
+    if (emitter.optimized and left_type == .boolean and right_type == .boolean) {
+        return writeScalarBooleanComparison(emitter, function, instruction, scope);
+    }
     try emitter.output.writer.print("  call void @lnako_aot_compare(ptr %root.slot.{d}, ptr %root.slot.{d}, ptr %root.slot.{d}, i8 {d})", .{ result, instruction.operands[0], instruction.operands[1], opcode });
     try emitter.debugSuffix(instruction.span, scope);
     try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+}
+
+fn numberComparisonPredicate(operator: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, operator, "==") or std.mem.eql(u8, operator, "=") or std.mem.eql(u8, operator, "eq") or std.mem.eql(u8, operator, "===")) return "oeq";
+    if (std.mem.eql(u8, operator, "!=") or std.mem.eql(u8, operator, "≠") or std.mem.eql(u8, operator, "noteq") or std.mem.eql(u8, operator, "!==")) return "une";
+    if (std.mem.eql(u8, operator, "<") or std.mem.eql(u8, operator, "lt")) return "olt";
+    if (std.mem.eql(u8, operator, "<=") or std.mem.eql(u8, operator, "lteq")) return "ole";
+    if (std.mem.eql(u8, operator, ">") or std.mem.eql(u8, operator, "gt")) return "ogt";
+    if (std.mem.eql(u8, operator, ">=") or std.mem.eql(u8, operator, "gteq")) return "oge";
+    return null;
+}
+
+fn booleanComparisonPredicate(operator: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, operator, "==") or std.mem.eql(u8, operator, "=") or std.mem.eql(u8, operator, "eq") or std.mem.eql(u8, operator, "===")) return "eq";
+    if (std.mem.eql(u8, operator, "!=") or std.mem.eql(u8, operator, "≠") or std.mem.eql(u8, operator, "noteq") or std.mem.eql(u8, operator, "!==")) return "ne";
+    if (std.mem.eql(u8, operator, "<") or std.mem.eql(u8, operator, "lt")) return "ult";
+    if (std.mem.eql(u8, operator, "<=") or std.mem.eql(u8, operator, "lteq")) return "ule";
+    if (std.mem.eql(u8, operator, ">") or std.mem.eql(u8, operator, "gt")) return "ugt";
+    if (std.mem.eql(u8, operator, ">=") or std.mem.eql(u8, operator, "gteq")) return "uge";
+    return null;
+}
+
+fn writeScalarNumberComparison(emitter: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize) !void {
+    const result = instruction.result orelse return error.MissingInstructionResult;
+    const left_label = try std.fmt.allocPrint(emitter.allocator, "left.number.{d}", .{result});
+    defer emitter.allocator.free(left_label);
+    const right_label = try std.fmt.allocPrint(emitter.allocator, "right.number.{d}", .{result});
+    defer emitter.allocator.free(right_label);
+    try constants_mod.writeNumberOperand(emitter, function, instruction.operands[0], left_label, instruction.span, scope);
+    try constants_mod.writeNumberOperand(emitter, function, instruction.operands[1], right_label, instruction.span, scope);
+    const predicate = numberComparisonPredicate(instruction.operator) orelse return error.UnsupportedComparisonOperator;
+    try emitter.output.writer.print("  %compare.{d} = fcmp {s} double %left.number.{d}, %right.number.{d}", .{ result, predicate, result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %compare.bits.{d} = zext i1 %compare.{d} to i64", .{ result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+    const tag = @intFromEnum(aot_abi.Tag.boolean);
+    try emitter.output.writer.print("  %v{d} = insertvalue %lnako.Value {{ i8 {d}, i64 0 }}, i64 %compare.bits.{d}, 1", .{ result, tag, result });
+    try emitter.debugSuffix(instruction.span, scope);
+}
+
+fn writeScalarBooleanComparison(emitter: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize) !void {
+    const result = instruction.result orelse return error.MissingInstructionResult;
+    const left_label = try std.fmt.allocPrint(emitter.allocator, "left.boolean.{d}", .{result});
+    defer emitter.allocator.free(left_label);
+    const right_label = try std.fmt.allocPrint(emitter.allocator, "right.boolean.{d}", .{result});
+    defer emitter.allocator.free(right_label);
+    try constants_mod.writeBooleanOperand(emitter, function, instruction.operands[0], left_label, instruction.span, scope);
+    try constants_mod.writeBooleanOperand(emitter, function, instruction.operands[1], right_label, instruction.span, scope);
+    const predicate = booleanComparisonPredicate(instruction.operator) orelse return error.UnsupportedComparisonOperator;
+    try emitter.output.writer.print("  %compare.{d} = icmp {s} i1 %left.boolean.{d}, %right.boolean.{d}", .{ result, predicate, result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %compare.bits.{d} = zext i1 %compare.{d} to i64", .{ result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+    const tag = @intFromEnum(aot_abi.Tag.boolean);
+    try emitter.output.writer.print("  %v{d} = insertvalue %lnako.Value {{ i8 {d}, i64 0 }}, i64 %compare.bits.{d}, 1", .{ result, tag, result });
     try emitter.debugSuffix(instruction.span, scope);
 }
 

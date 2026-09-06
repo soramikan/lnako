@@ -21,6 +21,8 @@ pub const Counters = struct {
     value_copies: u64 = 0,
     frame_pools_hits: u64 = 0,
     frame_pools_misses: u64 = 0,
+    root_pushes: u64 = 0,
+    root_high_water: u64 = 0,
 
     pub fn add(self: *Counters, other: Counters) void {
         self.dictionary_probes +|= other.dictionary_probes;
@@ -40,6 +42,8 @@ pub const Counters = struct {
         self.value_copies +|= other.value_copies;
         self.frame_pools_hits +|= other.frame_pools_hits;
         self.frame_pools_misses +|= other.frame_pools_misses;
+        self.root_pushes +|= other.root_pushes;
+        self.root_high_water +|= other.root_high_water;
     }
 };
 

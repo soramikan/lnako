@@ -810,6 +810,35 @@ test "O1では証明済み数値と真偽判定をアンボックスしO0のIR�
     try std.testing.expect(std.mem.indexOf(u8, optimized_module.text, ".number = bitcast i64") != null);
 }
 
+test "O1では証明済み数値・真偽比較をfcmp/icmpへ出力する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    const optimizer = @import("../../ir/optimizer.zig");
+    const source = "●(Aを,Bを)比較とは\nもしA<Bならば\n1を表示\n違えば\n0を表示\nここまで\nここまで\n比較(1,2)を表示\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "compare.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "compare.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "compare.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+
+    var unoptimized_module = try generate(std.testing.allocator, program, "compare.nako3", false);
+    defer unoptimized_module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, unoptimized_module.text, "call void @lnako_aot_compare") != null);
+
+    _ = try optimizer.optimize(std.testing.allocator, &program, .{});
+    var optimized_module = try generate(std.testing.allocator, program, "compare.nako3", true);
+    defer optimized_module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, optimized_module.text, "call void @lnako_aot_compare") == null);
+    try std.testing.expect(std.mem.indexOf(u8, optimized_module.text, "fcmp olt double") != null);
+}
+
 test "単項算術は動的ABIとNumberの高速経路をLLVM IRへ出力する" {
     const parser = @import("../../frontend/parser.zig");
     const semantic = @import("../../semantic/analyzer.zig");

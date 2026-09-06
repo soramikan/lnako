@@ -831,6 +831,7 @@ pub const Runtime = struct {
     process_io_initialized: bool = false,
     native_plugin_paths: std.ArrayList([]u8) = .empty,
     counters: counters.Counters = .{},
+    live_roots: u64 = 0,
     dynamic_globals: std.ArrayList(DynamicGlobal) = .empty,
     dynamic_state: ?*DynamicInterpreterState = null,
     dynamic_promise_bridges: std.ArrayList(*DynamicPromiseBridge) = .empty,
@@ -1169,11 +1170,15 @@ pub const Runtime = struct {
     pub fn pushRoots(self: *Runtime, frame: *RootFrame, values: ?[*]Value, len: usize) void {
         frame.* = .{ .previous = self.roots, .values = values, .len = len };
         self.roots = frame;
+        self.counters.root_pushes +|= 1;
+        self.live_roots +|= len;
+        self.counters.root_high_water = @max(self.counters.root_high_water, self.live_roots);
     }
 
     pub fn popRoots(self: *Runtime, frame: *RootFrame) void {
         if (self.roots != frame) return;
         self.roots = frame.previous;
+        self.live_roots -|= frame.len;
         frame.* = .{};
     }
 

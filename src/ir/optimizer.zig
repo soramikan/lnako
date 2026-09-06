@@ -1,5 +1,6 @@
 const std = @import("std");
 const ir = @import("nako_ir.zig");
+const effect = @import("effect.zig");
 
 pub const Options = struct {
     max_iterations: usize = 8,
@@ -47,10 +48,12 @@ const Evidence = union(enum) {
 
 pub fn optimize(scratch_allocator: std.mem.Allocator, program: *ir.Program, options: Options) !Stats {
     var stats = Stats{};
+    const effect_summary = try effect.analyze(scratch_allocator, program.*);
+    defer effect.deinitAll(scratch_allocator, effect_summary);
     markDirectCalls(program, &stats);
-    try inferTypes(scratch_allocator, program, options.max_iterations, &stats);
+    try inferTypes(scratch_allocator, program, options.max_iterations, &stats, effect_summary);
     if (options.fold_constants) try foldConstants(scratch_allocator, program, options.max_iterations, &stats);
-    try inferTypes(scratch_allocator, program, options.max_iterations, &stats);
+    try inferTypes(scratch_allocator, program, options.max_iterations, &stats, effect_summary);
     if (options.eliminate_dead_code) try eliminateDeadCode(scratch_allocator, program, &stats);
     return stats;
 }
@@ -66,12 +69,12 @@ fn markDirectCalls(program: *ir.Program, stats: *Stats) void {
     };
 }
 
-fn inferTypes(allocator: std.mem.Allocator, program: *ir.Program, max_iterations: usize, stats: *Stats) !void {
+fn inferTypes(allocator: std.mem.Allocator, program: *ir.Program, max_iterations: usize, stats: *Stats, effect_summary: []const effect.Summary) !void {
     var iteration: usize = 0;
     while (iteration < max_iterations) : (iteration += 1) {
         var changed = false;
         for (program.functions) |*function| {
-            if (try inferFunctionValues(allocator, program, function, stats)) changed = true;
+            if (try inferFunctionValues(allocator, program, function, stats, effect_summary)) changed = true;
         }
         if (try inferReturnTypes(allocator, program, stats)) changed = true;
         if (try inferParameterTypes(allocator, program, stats)) changed = true;
@@ -79,7 +82,7 @@ fn inferTypes(allocator: std.mem.Allocator, program: *ir.Program, max_iterations
     }
 }
 
-fn inferFunctionValues(allocator: std.mem.Allocator, program: *ir.Program, function: *ir.Function, stats: *Stats) !bool {
+fn inferFunctionValues(allocator: std.mem.Allocator, program: *ir.Program, function: *ir.Function, stats: *Stats, effect_summary: []const effect.Summary) !bool {
     const count = maxValueId(function.*) + 1;
     const types = try allocator.alloc(ir.Type, count);
     defer allocator.free(types);
@@ -100,7 +103,7 @@ fn inferFunctionValues(allocator: std.mem.Allocator, program: *ir.Program, funct
                 continue;
             }
             const inferred = if (instruction.opcode == .load_local)
-                inferParameterLoadType(program.*, function.*, instruction.*, types)
+                inferParameterLoadType(program.*, function.*, instruction.*, types, effect_summary)
             else
                 instructionType(program.*, instruction.*, types);
             if (inferred == .dynamic or inferred == .void) continue;
@@ -115,7 +118,7 @@ fn inferFunctionValues(allocator: std.mem.Allocator, program: *ir.Program, funct
     return changed;
 }
 
-fn inferParameterLoadType(program: ir.Program, function: ir.Function, instruction: ir.Instruction, types: []const ir.Type) ir.Type {
+fn inferParameterLoadType(program: ir.Program, function: ir.Function, instruction: ir.Instruction, types: []const ir.Type, effect_summary: []const effect.Summary) ir.Type {
     var evidence: Evidence = .none;
     var parameter_found = false;
     for (function.parameters) |parameter| if (std.mem.eql(u8, parameter.name, instruction.name)) {
@@ -124,7 +127,7 @@ fn inferParameterLoadType(program: ir.Program, function: ir.Function, instructio
     };
     if (!parameter_found) return .dynamic;
     // Captured cells can be changed by another function, including callbacks.
-    // Until alias/effect analysis models those writes, do not narrow their loads.
+    // The effect summary tells us which captures are actually written.
     for (function.captures) |name| {
         if (std.mem.eql(u8, name, instruction.name)) return .dynamic;
     }
@@ -132,9 +135,7 @@ fn inferParameterLoadType(program: ir.Program, function: ir.Function, instructio
         if (creation.opcode != .make_closure) continue;
         for (program.functions) |candidate| {
             if (!std.mem.eql(u8, candidate.name, creation.name)) continue;
-            for (candidate.captures) |name| {
-                if (std.mem.eql(u8, name, instruction.name)) return .dynamic;
-            }
+            if (candidate.id < effect_summary.len and effect_summary[candidate.id].mutated_captures.contains(instruction.name)) return .dynamic;
         }
     };
     for (function.blocks) |block| for (block.instructions) |candidate| {
@@ -783,6 +784,66 @@ test "分解代入と捕捉セルと増減がある引数のロードを数値�
         defer report.deinit();
         try std.testing.expect(report.succeeded());
     }
+}
+
+test "読み取り専用の捕捉セルは引数ロードを数値へ狭める" {
+    const parser = @import("../frontend/parser.zig");
+    const semantic = @import("../semantic/analyzer.zig");
+    const hir = @import("hir.zig");
+    const lower_ssa = @import("lower_ssa.zig");
+    const source = "●(Aを)Fとは\nG=関数()\nAを表示\nここまで\nG()\nA+1で戻る\nここまで\nF(1)を表示\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower_ssa.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+
+    _ = try optimize(std.testing.allocator, &program, .{});
+    const function = program.findFunction("main__F").?;
+    var number_loads: usize = 0;
+    var other_loads: usize = 0;
+    for (function.blocks) |block| for (block.instructions) |instruction| {
+        if (instruction.opcode == .load_local and std.mem.eql(u8, instruction.name, "A")) {
+            if (instruction.type == .number) {
+                number_loads += 1;
+            } else {
+                other_loads += 1;
+            }
+        }
+    };
+    try std.testing.expect(number_loads > 0);
+    try std.testing.expectEqual(@as(usize, 0), other_loads);
+}
+
+test "書き込みを伴う捕捉セルは引数ロードを数値へ狭めない" {
+    const parser = @import("../frontend/parser.zig");
+    const semantic = @import("../semantic/analyzer.zig");
+    const hir = @import("hir.zig");
+    const lower_ssa = @import("lower_ssa.zig");
+    const source = "●(Aを)Fとは\nG=関数()\nA=\"文字\"\nここまで\nG()\nA+1で戻る\nここまで\nF(1)を表示\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "main.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "main.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "main.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower_ssa.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+
+    _ = try optimize(std.testing.allocator, &program, .{});
+    const function = program.findFunction("main__F").?;
+    for (function.blocks) |block| for (block.instructions) |instruction| {
+        if (instruction.opcode == .load_local and std.mem.eql(u8, instruction.name, "A")) {
+            try std.testing.expectEqual(ir.Type.dynamic, instruction.type);
+        }
+    };
 }
 
 test "唯一の入力を持つphiへの定数分岐は保守的に維持する" {

@@ -62,6 +62,22 @@ pub fn writeNumberOperand(emitter: *Emitter, function: ir.Function, value: ir.Va
     try emitter.debugSuffix(span, scope);
 }
 
+pub fn writeBooleanOperand(emitter: *Emitter, function: ir.Function, value: ir.ValueId, label: []const u8, span: ast.Span, scope: usize) !void {
+    if (emitter.optimized and valueType(function, value) == .boolean) {
+        try emitter.output.writer.print("  %{s}.bits = extractvalue %lnako.Value ", .{label});
+        try writeValueRef(emitter, function, value);
+        try emitter.output.writer.writeAll(", 1");
+        try emitter.debugSuffix(span, scope);
+        try emitter.output.writer.print("  %{s} = trunc i64 %{s}.bits to i1", .{ label, label });
+        try emitter.debugSuffix(span, scope);
+        return;
+    }
+    try emitter.output.writer.print("  %{s} = call i1 @lnako.truthy(%lnako.Value ", .{label});
+    try writeValueRef(emitter, function, value);
+    try emitter.output.writer.writeByte(')');
+    try emitter.debugSuffix(span, scope);
+}
+
 pub fn writeTruthyOperand(emitter: *Emitter, function: ir.Function, value: ir.ValueId, label: []const u8, span: ast.Span, scope: usize) !void {
     const value_type = valueType(function, value);
     if (emitter.optimized and value_type == .boolean) {
