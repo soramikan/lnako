@@ -7,7 +7,7 @@
 | 単位 | 実装内容 | 受け入れ条件 | 状態 |
 | --- | --- | --- | --- |
 | M8 | Prepared Interpreter、名前・演算子・callee・value countの事前解決、サイズクラスpool | 動的実行・capture・例外の互換性、診断benchmark比較 | 実装中 |
-| M9 | 共通capture/escape解析、Interpreter/AOTの直接local Value | 非capture関数cellゼロ、capture共有維持 | 実装中 |
+| M9 | 共通capture/escape解析、Interpreter/AOTの直接local Value | 非capture関数cellゼロ、capture共有維持 | AOT側検証済み、Interpreter側実装中 |
 | M10 | AOT safepoint、参照liveness、root coloring | GC強制時の分岐・phi・loop・callback安全性、root数減少 | 未実装 |
 | M11 | Number/Boolean typed internal ABIとgeneric wrapper | NaN/Infinity/-0維持、直接・動的呼出し同値 | 未実装 |
 | M12 | exact-size文字列allocation、GC/concat統計 | immutable copy量維持、UTF-16境界・GC安全性、3 OS測定 | 実装中 |
@@ -28,3 +28,10 @@ packed NumberArray、世代別GC、in-place文字列builderはレビューに従
 
 - 開始時: Zig 0.16.0を確認。CI `34047279623`、比較benchmark `34058162808` は開始HEADで成功。
 - 文書保存単位: fmt-check成功、単体906/906成功（loopback待受を許可して実行）、現行ドキュメント検査成功。
+
+### M9a: 共通解析とAOT local Value（隔離検証）
+
+- 通常localはroot登録済みValue slotを直接参照し、capture/dynamic/不明なclosureはBindingCellを維持する。
+- 単体910/910成功。通常関数のcell生成ゼロとcapture維持の生成IRテストを追加。
+- 既存公式差分9ケース（関数、戻り値、それ、引数不足、共有可変capture、捕捉引数型、推移的capture、引数なし呼出し、関数をまたぐ例外）で公式/Interpreter/AOT O0/O2一致。
+- 性能評価とInterpreterの非capture cell除去は未完了。

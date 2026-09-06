@@ -1,5 +1,6 @@
 const std = @import("std");
 const ir = @import("../../../../ir/nako_ir.zig");
+const local_storage = @import("../../../../ir/local_storage.zig");
 const ast = @import("../../../../frontend/ast.zig");
 const aot_abi = @import("../../../../runtime/aot_abi.zig");
 const aot_builtin = @import("../../../../runtime/aot_builtin.zig");
@@ -13,7 +14,6 @@ const BigIntConstant = shared.BigIntConstant;
 const DebugLocation = shared.DebugLocation;
 const isDisplayCall = shared.isDisplayCall;
 const isNativePluginCall = shared.isNativePluginCall;
-const isQualifiedGlobal = shared.isQualifiedGlobal;
 const lookupFunction = shared.lookupFunction;
 const valueType = shared.valueType;
 
@@ -92,35 +92,7 @@ pub const Emitter = struct {
     }
 
     pub fn localNames(self: *Emitter, function: ir.Function) ![][]const u8 {
-        var names: std.ArrayList([]const u8) = .empty;
-        defer names.deinit(self.allocator);
-        var seen: std.StringHashMapUnmanaged(void) = .empty;
-        defer seen.deinit(self.allocator);
-        for (function.captures) |capture| if (!seen.contains(capture)) {
-            try seen.put(self.allocator, capture, {});
-            try names.append(self.allocator, capture);
-        };
-        for (function.parameters) |parameter| if (!seen.contains(parameter.name)) {
-            try seen.put(self.allocator, parameter.name, {});
-            try names.append(self.allocator, parameter.name);
-        };
-        for (function.blocks) |block| for (block.instructions) |instruction| {
-            if ((instruction.opcode == .load_local or instruction.opcode == .store_local) and !seen.contains(instruction.name)) {
-                try seen.put(self.allocator, instruction.name, {});
-                try names.append(self.allocator, instruction.name);
-            }
-            if (instruction.opcode == .destructure_store) for (instruction.names) |name| {
-                if (!isQualifiedGlobal(name) and !seen.contains(name)) {
-                    try seen.put(self.allocator, name, {});
-                    try names.append(self.allocator, name);
-                }
-            };
-            if (instruction.opcode == .increment and !isQualifiedGlobal(instruction.name) and !seen.contains(instruction.name)) {
-                try seen.put(self.allocator, instruction.name, {});
-                try names.append(self.allocator, instruction.name);
-            }
-        };
-        return self.allocator.dupe([]const u8, names.items);
+        return local_storage.collectLocalNames(self.allocator, function);
     }
 
     /// globalsへの追加は必ずこの経路で行い、index mapを同期させる。

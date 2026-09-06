@@ -2,6 +2,7 @@ const std = @import("std");
 const target_builtin = @import("builtin");
 const ir = @import("../../../../../ir/nako_ir.zig");
 const ast = @import("../../../../../frontend/ast.zig");
+const local_storage = @import("../../../../../ir/local_storage.zig");
 const aot_abi = @import("../../../../../runtime/aot_abi.zig");
 const aot_builtin = @import("../../../../../runtime/aot_builtin.zig");
 const system_constant = @import("../../../../../runtime/system_constant.zig");
@@ -119,6 +120,7 @@ pub fn writeMakeClosure(emitter: *Emitter, caller: ir.Function, locals: []const 
     const value_root_count = context.functionValueCount(caller);
     for (function.captures, 0..) |capture, index| {
         const local_index = context.nameIndex(locals, capture) orelse return error.MissingClosureCapture;
+        if (!local_storage.requiresCell(emitter.program, caller, capture)) return error.MissingClosureCapture;
         const cell_root = value_root_count + local_index;
         try emitter.output.writer.print("  %closure.capture.{d}.{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, index, cell_root });
         try emitter.debugSuffix(instruction.span, scope);

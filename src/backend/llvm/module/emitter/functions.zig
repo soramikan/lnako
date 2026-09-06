@@ -1,6 +1,7 @@
 const std = @import("std");
 const target_builtin = @import("builtin");
 const ir = @import("../../../../ir/nako_ir.zig");
+const local_storage = @import("../../../../ir/local_storage.zig");
 const ast = @import("../../../../frontend/ast.zig");
 const aot_abi = @import("../../../../runtime/aot_abi.zig");
 const aot_builtin = @import("../../../../runtime/aot_builtin.zig");
@@ -66,16 +67,29 @@ pub fn writeFunction(emitter: *Emitter, function: ir.Function) !void {
             }
             for (locals, 0..) |name, index| {
                 const cell_root = value_root_count + index;
-                if (context.nameIndex(function.captures, name)) |capture_index| {
-                    try emitter.output.writer.print("  call void @lnako_aot_function_capture(ptr %root.slot.{d}, ptr %context, i64 {d})\n", .{ cell_root, capture_index });
-                } else {
-                    try emitter.output.writer.print("  call void @lnako_aot_binding_cell_new(ptr %root.slot.{d}, ptr ", .{cell_root});
-                    if (context.parameterIndex(function, name)) |parameter_index| {
-                        try emitter.output.writer.print("%root.slot.{d}", .{function.parameters[parameter_index].value});
-                    } else try emitter.output.writer.writeAll("null");
-                    try emitter.output.writer.writeAll(")\n");
+                switch (local_storage.storageClass(emitter.program, function, name)) {
+                    .cell => {
+                        if (context.nameIndex(function.captures, name)) |capture_index| {
+                            try emitter.output.writer.print("  call void @lnako_aot_function_capture(ptr %root.slot.{d}, ptr %context, i64 {d})\n", .{ cell_root, capture_index });
+                        } else {
+                            try emitter.output.writer.print("  call void @lnako_aot_binding_cell_new(ptr %root.slot.{d}, ptr ", .{cell_root});
+                            if (context.parameterIndex(function, name)) |parameter_index| {
+                                try emitter.output.writer.print("%root.slot.{d}", .{function.parameters[parameter_index].value});
+                            } else try emitter.output.writer.writeAll("null");
+                            try emitter.output.writer.writeAll(")\n");
+                        }
+                        try emitter.output.writer.print("  %local.{d} = call ptr @lnako_aot_binding_cell_value(ptr %root.slot.{d})\n", .{ index, cell_root });
+                    },
+                    .value => {
+                        // The local root slot is already part of the active
+                        // root frame.  Point operations directly at that
+                        // Value instead of allocating a GC BindingCell.
+                        if (context.parameterIndex(function, name)) |parameter_index| {
+                            try emitter.output.writer.print("  store %lnako.Value %arg.{d}, ptr %root.slot.{d}\n", .{ parameter_index, cell_root });
+                        }
+                        try emitter.output.writer.print("  %local.{d} = getelementptr %lnako.Value, ptr %root.slot.{d}, i64 0\n", .{ index, cell_root });
+                    },
                 }
-                try emitter.output.writer.print("  %local.{d} = call ptr @lnako_aot_binding_cell_value(ptr %root.slot.{d})\n", .{ index, cell_root });
             }
         }
         var phi_count: usize = 0;

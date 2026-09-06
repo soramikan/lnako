@@ -774,6 +774,47 @@ test "非捕捉無名関数を統一ABIの関数値へ変換する" {
     try std.testing.expect(std.mem.indexOf(u8, module.text, "store %lnako.Value %wrapper.result, ptr %result.out") != null);
 }
 
+test "非capture localはAOTでBindingCellを生成しない" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    const source = "●(Aを)加算とは\nB=A+1\nBで戻る\nここまで\n加算(2)を表示\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "local-value.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "local-value.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "local_value", "local-value.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    var module = try generate(std.testing.allocator, program, "local-value.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 0), std.mem.count(u8, module.text, "call void @lnako_aot_binding_cell_new"));
+    try std.testing.expectEqual(@as(usize, 0), std.mem.count(u8, module.text, "call ptr @lnako_aot_binding_cell_value"));
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "getelementptr [") != null);
+}
+
+test "capture localは共有BindingCellをAOTで維持する" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    const source = "●(Aを)作るとは\nF=関数(B)それはA+B;ここまで\nFで戻る\nここまで\n作る(1)\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "local-capture.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "local-capture.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "local_capture", "local-capture.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    var module = try generate(std.testing.allocator, program, "local-capture.nako3", false);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.count(u8, module.text, "call void @lnako_aot_binding_cell_new") > 0);
+    try std.testing.expect(std.mem.count(u8, module.text, "call void @lnako_aot_function_capture") > 0);
+}
+
 test "監視外のthrowを保留例外としてmainまで伝播する" {
     const parser = @import("../../frontend/parser.zig");
     const semantic = @import("../../semantic/analyzer.zig");
