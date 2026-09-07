@@ -22076,8 +22076,8 @@
         "proofSchema": "lnako.dispatch-coverage.v1",
         "fixtureId": "dispatch-coverage",
         "siteIds": [
-          "plugin-node-file-callbacks/0x0000000300000008",
-          "plugin-node-file-callbacks/0x0000000300000014"
+          "plugin-node-file-callbacks/0x000000030000000a",
+          "plugin-node-file-callbacks/0x0000000300000016"
         ],
         "officialComparison": [
           "officialSource",

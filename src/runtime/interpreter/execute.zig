@@ -28,6 +28,7 @@ const quickjs = @import("../../compat/quickjs.zig");
 const environment = @import("../environment.zig");
 const istate = @import("state.zig");
 const shared = @import("shared.zig");
+const prepared = @import("prepared.zig");
 
 const Interpreter = istate.Interpreter;
 const TestResult = shared.TestResult;
@@ -56,7 +57,6 @@ const interpreterArrayIndex = shared.interpreterArrayIndex;
 const repeatCount = shared.repeatCount;
 const valueIndex = shared.valueIndex;
 const getArrayProperty = shared.getArrayProperty;
-const maxValueId = shared.maxValueId;
 const isPrototypeObject = shared.isPrototypeObject;
 const interpreterByteBufferReadOnlyProperty = shared.interpreterByteBufferReadOnlyProperty;
 const ownProperty = shared.ownProperty;
@@ -66,7 +66,26 @@ const preservesResultVariable = shared.preservesResultVariable;
 const promiseResolverSentinel = shared.promiseResolverSentinel;
 const promiseAllSentinel = shared.promiseAllSentinel;
 const localValue = shared.localValue;
+const localCell = shared.localCell;
+const localSlotCell = shared.localSlotCell;
+const localSlotValue = shared.localSlotValue;
+const localSlotKnown = shared.localSlotKnown;
 const traceRoots = istate.traceRoots;
+
+fn interruptSafepoint(self: *Interpreter) !void {
+    self.interrupt_safepoint_count += 1;
+    self.interrupt_budget_remaining = self.interrupt_budget_limit;
+    try self.handleNodeInterrupt();
+}
+
+fn interruptBudgetTick(self: *Interpreter) !bool {
+    if (self.interrupt_budget_remaining <= 1) {
+        try interruptSafepoint(self);
+        return true;
+    }
+    self.interrupt_budget_remaining -= 1;
+    return false;
+}
 
 pub fn run(self: *Interpreter) !Value {
     self.ensurePrimitiveHook();
@@ -85,6 +104,15 @@ pub fn runTests(self: *Interpreter) ![]const TestResult {
     try self.initializeSystem();
     for (self.program.functions) |*function| {
         if (!function.is_test) continue;
+        // A test is an independent execution boundary.  A previous test (or
+        // an event callback drained by it) may have left a pending exception
+        // value or a diagnostic in the runtime; neither belongs to this test.
+        self.exception_value = .undefined;
+        self.runtime.clearFailureMessage();
+        defer {
+            self.exception_value = .undefined;
+            self.runtime.clearFailureMessage();
+        }
         const result = self.executeFunction(function, &.{}, null, self.currentProgramOwner());
         if (result) |_| {
             try self.drainEventLoop();
@@ -175,9 +203,11 @@ pub fn executeFunction(self: *Interpreter, function: *const ir.Function, argumen
     if (self.call_depth >= self.max_call_depth) return error.CallStackLimitExceeded;
     self.call_depth += 1;
     defer self.call_depth -= 1;
-    const value_count = maxValueId(function.*) + 1;
+    const prepared_program = try self.prepareProgram(owner_program);
+    const prepared_function = prepared_program.functionAt(function) orelse return error.InvalidFunction;
+    const value_count = prepared_function.value_count;
     const values = try self.acquireValueBuffer(value_count);
-    var frame = Frame{ .parent = self.active_frame, .function = function, .owner_program = owner_program, .values = values[0..value_count], .values_buffer = values };
+    var frame = Frame{ .parent = self.active_frame, .function = function, .owner_program = owner_program, .values = values[0..value_count], .values_buffer = values, .prepared_function = prepared_function };
     defer {
         const buffer = frame.values_buffer;
         frame.values_buffer = null;
@@ -185,6 +215,8 @@ pub fn executeFunction(self: *Interpreter, function: *const ir.Function, argumen
         frame.deinit(self.allocator);
         if (buffer) |allocation| self.releaseValueBuffer(allocation);
     }
+    try frame.initLocalValues(self.allocator, prepared_function.local_count);
+    try frame.initLocalCells(self.allocator, prepared_function.local_count);
     self.active_frame = &frame;
     defer self.active_frame = frame.parent;
     const previous_source_path = self.current_source_path;
@@ -195,7 +227,7 @@ pub fn executeFunction(self: *Interpreter, function: *const ir.Function, argumen
         const name = try capture.name.toUtf8Lossy(self.allocator);
         try frame.owned_names.append(self.allocator, name);
         const cell = capture.cell orelse try self.runtime.createBindingCell(capture.value);
-        try frame.locals.put(self.allocator, name, cell);
+        try self.attachLocal(&frame, name, cell);
     };
     for (function.parameters, 0..) |parameter, index| {
         const argument = if (index < arguments.len) arguments[index] else Value.undefined;
@@ -207,11 +239,14 @@ pub fn executeFunction(self: *Interpreter, function: *const ir.Function, argumen
     var predecessor: ?ir.BlockId = null;
     execution: while (true) {
         if (current_block >= function.blocks.len) return error.InvalidBranchTarget;
+        try interruptSafepoint(self);
         const block = function.blocks[current_block];
+        const prepared_block = prepared_function.blocks[current_block];
         var exceptional_target: ?ir.BlockId = null;
-        for (block.instructions) |instruction| {
-            try self.handleNodeInterrupt();
-            self.executeInstruction(&frame, instruction, predecessor) catch |failure| {
+        for (prepared_block.instructions) |*prepared_instruction| {
+            const budget_polled = try interruptBudgetTick(self);
+            if (prepared_instruction.interrupt_safepoint and !budget_polled) try interruptSafepoint(self);
+            self.executePreparedInstruction(&frame, prepared_instruction, predecessor) catch |failure| {
                 if (frame.handlers.pop()) |handler| {
                     if (self.exception_value == .undefined) {
                         if (self.runtime.failureMessageValue() catch return failure) |message| {
@@ -270,6 +305,21 @@ pub fn errorMessageValue(self: *Interpreter, value: Value) !Value {
 }
 
 pub fn executeInstruction(self: *Interpreter, frame: *Frame, instruction: ir.Instruction, predecessor: ?ir.BlockId) anyerror!void {
+    return executeInstructionResolved(self, frame, &instruction, null, predecessor);
+}
+
+pub fn executePreparedInstruction(self: *Interpreter, frame: *Frame, prepared_instruction: *const prepared.PreparedInstruction, predecessor: ?ir.BlockId) anyerror!void {
+    return executeInstructionResolved(self, frame, prepared_instruction.ir_instruction, prepared_instruction, predecessor);
+}
+
+fn executeInstructionResolved(
+    self: *Interpreter,
+    frame: *Frame,
+    instruction_ptr: *const ir.Instruction,
+    prepared_instruction: ?*const prepared.PreparedInstruction,
+    predecessor: ?ir.BlockId,
+) anyerror!void {
+    const instruction = instruction_ptr.*;
     const previous_span = self.current_span;
     self.current_span = instruction.span;
     defer self.current_span = previous_span;
@@ -292,34 +342,72 @@ pub fn executeInstruction(self: *Interpreter, frame: *Frame, instruction: ir.Ins
         .const_string => result = try self.runtime.stringUtf8(instruction.text),
         .const_undefined => result = .undefined,
         .load_global => {
-            const stored = self.globals.getPtr(instruction.name);
-            result = if (stored) |entry| entry.* else .undefined;
-            const found = stored != null;
+            const slot = if (prepared_instruction) |prepared_entry| prepared_entry.global_slot else prepared.no_global_slot;
+            result = if (slot != prepared.no_global_slot) self.globalSlotValue(slot) orelse .undefined else self.globals.get(instruction.name) orelse .undefined;
+            const found = if (slot != prepared.no_global_slot) self.globalSlotValue(slot) != null else self.globals.contains(instruction.name);
             if (instruction.global_site_id != null) {
                 const site_id = if (frame.owner_program == &self.root_program) instruction.global_site_id else null;
                 self.global_trace.emit(traceBuiltinName(instruction.name), found, site_id);
             }
         },
-        .load_local => result = localValue(frame, instruction.name) orelse self.globals.get(instruction.name) orelse .undefined,
+        .load_local => {
+            if (prepared_instruction) |prepared_entry| {
+                if (localSlotValue(frame, prepared_entry.local_slot)) |value| result = value;
+                if (result == null) {
+                    if (localSlotCell(frame, prepared_entry.local_slot)) |cell| result = cell.value;
+                }
+                if (result == null) result = localValue(frame, instruction.name);
+                if (result == null) result = if (prepared_entry.global_slot != prepared.no_global_slot) self.globalSlotValue(prepared_entry.global_slot) else self.globals.get(instruction.name);
+            } else result = localValue(frame, instruction.name) orelse self.globals.get(instruction.name);
+            if (result == null) result = .undefined;
+        },
         .store_global => {
-            try self.setGlobal(instruction.name, self.operand(frame, instruction, 0));
+            const value = self.operand(frame, instruction, 0);
+            if (prepared_instruction) |prepared_entry| if (prepared_entry.global_slot != prepared.no_global_slot)
+                try self.setGlobalSlot(prepared_entry.global_slot, instruction.name, value)
+            else
+                try self.setGlobal(instruction.name, value) else try self.setGlobal(instruction.name, value);
             if (instruction.global_site_id != null) {
                 const site_id = if (frame.owner_program == &self.root_program) instruction.global_site_id else null;
                 self.global_trace.emitWrite(traceBuiltinName(instruction.name), site_id);
             }
         },
-        .store_local => try self.storeLocal(frame, instruction.name, self.operand(frame, instruction, 0)),
-        .destructure_store => try self.executeDestructure(frame, instruction),
-        .binary => result = try self.executeBinary(frame, instruction),
-        .unary => result = try self.executeUnary(frame, instruction),
-        .call => result = try self.executeCall(frame, instruction),
+        .store_local => if (prepared_instruction) |prepared_entry|
+            try self.storeLocalSlot(frame, prepared_entry.local_slot, instruction.name, self.operand(frame, instruction, 0))
+        else
+            try self.storeLocal(frame, instruction.name, self.operand(frame, instruction, 0)),
+        .destructure_store => if (prepared_instruction) |prepared_entry|
+            try executeDestructureResolved(self, frame, instruction, prepared_entry)
+        else
+            try self.executeDestructure(frame, instruction),
+        .binary => result = if (prepared_instruction) |prepared_entry|
+            try executeBinaryResolved(self, frame, instruction, prepared_entry.binary_operator)
+        else
+            try self.executeBinary(frame, instruction),
+        .unary => result = if (prepared_instruction) |prepared_entry|
+            try executeUnaryResolved(self, frame, instruction, prepared_entry.unary_operator)
+        else
+            try self.executeUnary(frame, instruction),
+        .call => result = if (prepared_instruction) |prepared_entry|
+            try executeCallResolved(self, frame, instruction, prepared_entry.call_target, prepared_entry.global_slot, prepared_entry.omit_result_store)
+        else
+            try self.executeCall(frame, instruction),
         .call_value => result = try self.executeCallValue(frame, instruction),
         .make_array => result = try self.makeArray(frame, instruction),
         .make_object => result = try self.makeDictionary(frame, instruction),
         .array_get, .property_get => result = try self.getIndexed(frame, instruction),
-        .array_set, .property_set => try self.setIndexed(frame, instruction),
-        .increment => try self.increment(frame, instruction),
-        .make_closure => result = try self.makeClosure(frame, instruction),
+        .array_set, .property_set => if (prepared_instruction) |prepared_entry|
+            try setIndexedResolved(self, frame, instruction, prepared_entry.local_slot, prepared_entry.global_slot)
+        else
+            try self.setIndexed(frame, instruction),
+        .increment => if (prepared_instruction) |prepared_entry|
+            try incrementResolved(self, frame, instruction, prepared_entry.local_slot, prepared_entry.global_slot)
+        else
+            try self.increment(frame, instruction),
+        .make_closure => result = if (prepared_instruction) |prepared_entry|
+            try makeClosureResolved(self, frame, instruction, prepared_entry.closure_target)
+        else
+            try self.makeClosure(frame, instruction),
         .iterator_begin => result = try self.iteratorBegin(frame, instruction),
         .iterator_has_next => result = .{ .boolean = try self.iteratorHasNext(frame, instruction) },
         .iterator_next => result = try self.iteratorNext(frame, instruction),
@@ -347,11 +435,33 @@ pub fn operand(self: Interpreter, frame: *Frame, instruction: ir.Instruction, in
 }
 
 pub fn bindLocal(self: *Interpreter, frame: *Frame, name: []const u8, value: Value) !void {
+    if (frame.prepared_function) |prepared_function| if (prepared_function.localSlot(name)) |slot| {
+        if (prepared_function.storageClass(slot)) |storage| if (storage == .value) {
+            return self.storeLocalSlot(frame, slot, name, value);
+        };
+    };
     const cell = try self.runtime.createBindingCell(value);
+    try self.attachLocal(frame, name, cell);
+}
+
+pub fn attachLocal(self: *Interpreter, frame: *Frame, name: []const u8, cell: *value_mod.BindingCell) !void {
     try frame.locals.put(self.allocator, name, cell);
+    if (frame.prepared_function) |prepared_function| if (prepared_function.localSlot(name)) |slot| {
+        if (prepared_function.storageClass(slot)) |storage| {
+            if (storage == .value) {
+                if (slot < frame.local_values.len) {
+                    frame.local_values[slot] = cell.value;
+                    frame.local_values_initialized[slot] = true;
+                }
+            } else if (slot < frame.local_cells.len) frame.local_cells[slot] = cell;
+        }
+    };
 }
 
 pub fn storeLocal(self: *Interpreter, frame: *Frame, name: []const u8, value: Value) !void {
+    if (frame.prepared_function) |prepared_function| if (prepared_function.localSlot(name)) |slot| {
+        return self.storeLocalSlot(frame, slot, name, value);
+    };
     if (frame.locals.get(name)) |cell| {
         cell.value = value;
         return;
@@ -359,11 +469,45 @@ pub fn storeLocal(self: *Interpreter, frame: *Frame, name: []const u8, value: Va
     try self.bindLocal(frame, name, value);
 }
 
+pub fn storeLocalSlot(self: *Interpreter, frame: *Frame, slot: prepared.LocalSlot, name: []const u8, value: Value) !void {
+    if (frame.prepared_function) |prepared_function| if (prepared_function.storageClass(slot)) |storage| switch (storage) {
+        .value => {
+            if (slot >= frame.local_values.len) return error.InvalidLocalSlot;
+            frame.local_values[slot] = value;
+            frame.local_values_initialized[slot] = true;
+            return;
+        },
+        .cell => {},
+    };
+    if (localSlotCell(frame, slot)) |cell| {
+        cell.value = value;
+        return;
+    }
+    const cell = try self.runtime.createBindingCell(value);
+    try frame.locals.put(self.allocator, name, cell);
+    if (slot != prepared.no_local_slot and slot < frame.local_cells.len) frame.local_cells[slot] = cell;
+}
+
 pub fn executeDestructure(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
+    return executeDestructureResolved(self, frame, instruction, null);
+}
+
+fn executeDestructureResolved(
+    self: *Interpreter,
+    frame: *Frame,
+    instruction: ir.Instruction,
+    prepared_instruction: ?*const prepared.PreparedInstruction,
+) !void {
     const source = self.operand(frame, instruction, 0);
     for (instruction.names, 0..) |name, index| {
         const value = if (source == .array) source.array.get(index) else if (index == 0) source else .undefined;
-        if (std.mem.indexOf(u8, name, "__") != null) {
+        const local_slot = if (prepared_instruction) |entry| entry.destructure_local_slots[index] else prepared.no_local_slot;
+        const global_slot = if (prepared_instruction) |entry| entry.destructure_global_slots[index] else prepared.no_global_slot;
+        if (global_slot != prepared.no_global_slot) {
+            try self.setGlobalSlot(global_slot, name, value);
+        } else if (local_slot != prepared.no_local_slot) {
+            try self.storeLocalSlot(frame, local_slot, name, value);
+        } else if (std.mem.indexOf(u8, name, "__") != null) {
             try self.setGlobal(name, value);
         } else try self.storeLocal(frame, name, value);
     }
@@ -445,9 +589,21 @@ const unary_operators = std.StaticStringMap(UnaryOperator).initComptime(.{
 });
 
 pub fn executeBinary(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
+    const operator = binary_operators.get(instruction.operator) orelse return error.UnsupportedBinaryOperator;
+    return executeBinaryWithOperator(self, frame, instruction, operator);
+}
+
+fn executeBinaryResolved(self: *Interpreter, frame: *Frame, instruction: ir.Instruction, operator: ?prepared.BinaryOperator) !Value {
+    const resolved = operator orelse return error.UnsupportedBinaryOperator;
+    // The prepared enum intentionally mirrors the legacy private enum.  Keep
+    // the conversion in this adapter so the public unprepared entry point
+    // and all existing tests continue to share one implementation.
+    return executeBinaryWithOperator(self, frame, instruction, @enumFromInt(@intFromEnum(resolved)));
+}
+
+fn executeBinaryWithOperator(self: *Interpreter, frame: *Frame, instruction: ir.Instruction, operator: BinaryOperator) !Value {
     const left = self.operand(frame, instruction, 0);
     const right = self.operand(frame, instruction, 1);
-    const operator = binary_operators.get(instruction.operator) orelse return error.UnsupportedBinaryOperator;
     switch (operator) {
         .add => return operators.nadesikoAdd(self.runtime, left, right),
         .subtract => return operators.binary(self.runtime, .subtract, left, right),
@@ -498,11 +654,33 @@ pub fn executeUnary(self: *Interpreter, frame: *Frame, instruction: ir.Instructi
     };
 }
 
+fn executeUnaryResolved(self: *Interpreter, frame: *Frame, instruction: ir.Instruction, operator: ?prepared.UnaryOperator) !Value {
+    const value = self.operand(frame, instruction, 0);
+    const resolved = operator orelse return error.UnsupportedUnaryOperator;
+    return switch (resolved) {
+        .logical_not => .{ .boolean = !value.toBoolean() },
+        .minus => try operators.unaryMinus(self.runtime, value),
+        .plus => try operators.unaryPlus(self.runtime, value),
+        .bit_not => try operators.bitNot(self.runtime, value),
+    };
+}
+
 /// Calls with up to this many arguments build their argument list on the
 /// stack; longer calls fall back to a heap allocation.
 const stack_argument_capacity = 8;
 
 pub fn executeCall(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
+    return executeCallResolved(self, frame, instruction, null, prepared.no_global_slot, false);
+}
+
+fn executeCallResolved(
+    self: *Interpreter,
+    frame: *Frame,
+    instruction: ir.Instruction,
+    prepared_target: ?prepared.CallTarget,
+    prepared_global_slot: prepared.GlobalSlot,
+    omit_result_store: bool,
+) !Value {
     var stack_arguments: [stack_argument_capacity]Value = undefined;
     const heap_arguments = instruction.operands.len > stack_argument_capacity;
     const arguments = if (heap_arguments) args: {
@@ -512,7 +690,19 @@ pub fn executeCall(self: *Interpreter, frame: *Frame, instruction: ir.Instructio
     defer if (heap_arguments) self.allocator.free(arguments);
     for (instruction.operands, 0..) |operand_id, index| arguments[index] = frame.values[operand_id];
     var writes_result = false;
-    const result = if (instruction.direct_callee) |callee_id| blk: {
+    const result = if (prepared_target) |target| switch (target) {
+        .direct_ir => |callee_id| blk: {
+            if (callee_id >= frame.owner_program.functions.len) return error.InvalidDirectCallee;
+            writes_result = true;
+            break :blk try self.executeFunction(&frame.owner_program.functions[callee_id], arguments, null, frame.owner_program);
+        },
+        .local_slot => |slot| if (localSlotValue(frame, slot)) |callable| blk: {
+            if (callable != .function) return error.NotCallable;
+            writes_result = callable.function.kind == .ir;
+            break :blk try self.callFunctionValue(callable.function, arguments);
+        } else try executeCallFallback(self, frame, instruction, arguments, &writes_result, prepared_global_slot, null),
+        .global_or_builtin => |builtin_target| try executeCallFallback(self, frame, instruction, arguments, &writes_result, builtin_target.global_slot, builtin_target.id),
+    } else if (instruction.direct_callee) |callee_id| blk: {
         if (callee_id >= frame.owner_program.functions.len) return error.InvalidDirectCallee;
         writes_result = true;
         break :blk try self.executeFunction(&frame.owner_program.functions[callee_id], arguments, null, frame.owner_program);
@@ -523,17 +713,47 @@ pub fn executeCall(self: *Interpreter, frame: *Frame, instruction: ir.Instructio
         if (callable != .function) return error.NotCallable;
         writes_result = callable.function.kind == .ir;
         break :blk try self.callFunctionValue(callable.function, arguments);
-    } else if (self.globals.get(instruction.name)) |callable| blk: {
-        if (callable != .function) return error.NotCallable;
-        writes_result = callable.function.kind == .ir;
-        break :blk try self.callFunctionValue(callable.function, arguments);
-    } else blk: {
-        writes_result = !preservesResultVariable(instruction.name);
-        const site_id = if (frame.owner_program == &self.root_program) instruction.site_id else null;
-        break :blk try self.callBuiltin(instruction.name, arguments, site_id);
-    };
-    if (writes_result) try self.setGlobal("それ", result);
+    } else try executeCallFallback(self, frame, instruction, arguments, &writes_result, prepared.no_global_slot, null);
+    if (writes_result and !resultStoreCanBeOmitted(self, omit_result_store)) try self.setGlobal("それ", result);
     return result;
+}
+
+fn resultStoreCanBeOmitted(self: *const Interpreter, proven_dead: bool) bool {
+    if (!proven_dead) return false;
+    // Global tracing is an explicit observation surface.  Keep the legacy
+    // write whenever the trace is active, even if the static proof says the
+    // language value is dead.
+    if (!(self.global_trace.path == null or self.global_trace.context == null or
+        self.global_trace.writeFn == null or self.global_trace.disabled.load(.acquire))) return false;
+    // An interrupt callback runs at the same safepoints used by prepared
+    // calls and allocations.  It can read `それ` between this call and the
+    // proven overwrite, so the proof is disabled while one is registered.
+    if (self.node_state.interrupt_callback != .undefined) return false;
+    // Timers are drained after synchronous execution today, but retaining the
+    // store while one is pending keeps the optimization safe if a future
+    // safepoint drains event work inline.
+    if (self.timers.items.len != 0) return false;
+    return true;
+}
+
+fn executeCallFallback(
+    self: *Interpreter,
+    frame: *Frame,
+    instruction: ir.Instruction,
+    arguments: []const Value,
+    writes_result: *bool,
+    global_slot: prepared.GlobalSlot,
+    builtin_id: ?prepared.BuiltinId,
+) !Value {
+    const global = if (global_slot != prepared.no_global_slot) self.globalSlotValue(global_slot) else self.globals.get(instruction.name);
+    if (global) |callable| {
+        if (callable != .function) return error.NotCallable;
+        writes_result.* = callable.function.kind == .ir;
+        return self.callFunctionValue(callable.function, arguments);
+    }
+    writes_result.* = !preservesResultVariable(instruction.name);
+    const site_id = if (frame.owner_program == &self.root_program) instruction.site_id else null;
+    return self.callBuiltinResolved(builtin_id, instruction.name, arguments, site_id);
 }
 
 pub fn executeCallValue(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
@@ -702,8 +922,23 @@ pub fn getOne(self: *Interpreter, container: Value, key: Value) !Value {
 }
 
 pub fn setIndexed(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
+    return setIndexedResolved(self, frame, instruction, prepared.no_local_slot, prepared.no_global_slot);
+}
+
+fn setIndexedResolved(
+    self: *Interpreter,
+    frame: *Frame,
+    instruction: ir.Instruction,
+    local_slot: prepared.LocalSlot,
+    global_slot: prepared.GlobalSlot,
+) !void {
     if (instruction.operands.len < 2) return error.InvalidAssignment;
-    var container = localValue(frame, instruction.name) orelse self.globals.get(instruction.name) orelse return error.InvalidAssignment;
+    var container = localSlotValue(frame, local_slot) orelse if (localCell(frame, instruction.name)) |cell|
+        cell.value
+    else if (global_slot != prepared.no_global_slot)
+        self.globalSlotValue(global_slot) orelse return error.InvalidAssignment
+    else
+        self.globals.get(instruction.name) orelse return error.InvalidAssignment;
     const value = self.operand(frame, instruction, 0);
     const keys = instruction.operands[1..];
     var index: usize = 0;
@@ -793,15 +1028,38 @@ pub fn setIndexed(self: *Interpreter, frame: *Frame, instruction: ir.Instruction
 }
 
 pub fn increment(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
-    const old = localValue(frame, instruction.name) orelse self.globals.get(instruction.name) orelse Value{ .number = 0 };
+    return incrementResolved(self, frame, instruction, prepared.no_local_slot, prepared.no_global_slot);
+}
+
+fn incrementResolved(
+    self: *Interpreter,
+    frame: *Frame,
+    instruction: ir.Instruction,
+    local_slot: prepared.LocalSlot,
+    global_slot: prepared.GlobalSlot,
+) !void {
+    const local_cell = localSlotCell(frame, local_slot) orelse localCell(frame, instruction.name);
+    const local_value = localSlotValue(frame, local_slot) orelse if (local_cell) |cell| cell.value else null;
+    const old = local_value orelse
+        (if (global_slot != prepared.no_global_slot) self.globalSlotValue(global_slot) else self.globals.get(instruction.name)) orelse
+        Value{ .number = 0 };
     const updated = try operators.increment(self.runtime, old, self.operand(frame, instruction, 0));
-    if (frame.locals.contains(instruction.name)) {
-        try self.storeLocal(frame, instruction.name, updated);
-    } else try self.setGlobal(instruction.name, updated);
+    if (local_cell) |cell| {
+        cell.value = updated;
+    } else if (local_value != null or localSlotKnown(frame, local_slot)) {
+        try self.storeLocalSlot(frame, local_slot, instruction.name, updated);
+    } else if (global_slot != prepared.no_global_slot) try self.setGlobalSlot(global_slot, instruction.name, updated) else try self.setGlobal(instruction.name, updated);
 }
 
 pub fn makeClosure(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !Value {
-    const function = self.findFunction(frame.owner_program, instruction.name) orelse return error.UnknownFunction;
+    return makeClosureResolved(self, frame, instruction, null);
+}
+
+fn makeClosureResolved(self: *Interpreter, frame: *Frame, instruction: ir.Instruction, prepared_target: ?ir.FunctionId) !Value {
+    const function = if (prepared_target) |target| blk: {
+        if (target >= frame.owner_program.functions.len) return error.UnknownFunction;
+        break :blk &frame.owner_program.functions[target];
+    } else self.findFunction(frame.owner_program, instruction.name) orelse return error.UnknownFunction;
     const name = try self.runtime.stringUtf8(instruction.name);
     var name_root = name;
     var root = self.runtime.rootFrame();
@@ -813,7 +1071,7 @@ pub fn makeClosure(self: *Interpreter, frame: *Frame, instruction: ir.Instructio
     const capture_roots = try self.allocator.alloc(Value, count);
     defer self.allocator.free(capture_roots);
     for (function.captures, 0..) |capture_name, index| {
-        const cell = frame.locals.get(capture_name) orelse return error.MissingClosureCapture;
+        const cell = localCell(frame, capture_name) orelse return error.MissingClosureCapture;
         capture_roots[index] = try self.runtime.stringUtf8(capture_name);
         try root.protect(&capture_roots[index]);
         captures[index] = .{ .name = capture_roots[index].string, .cell = cell };
@@ -875,7 +1133,9 @@ pub fn iteratorNext(self: *Interpreter, frame: *Frame, instruction: ir.Instructi
         .range => {
             result = .{ .number = state.current };
             state.current += state.step;
-            if (frame.locals.contains(state.variable_name)) {
+            if (localCell(frame, state.variable_name) != null or
+                (frame.prepared_function != null and frame.prepared_function.?.localSlot(state.variable_name) != null))
+            {
                 try self.storeLocal(frame, state.variable_name, result);
             } else try self.setGlobal(state.variable_name, result);
         },

@@ -8,6 +8,8 @@ const hir = @import("../../ir/hir.zig");
 const lower_ssa = @import("../../ir/lower_ssa.zig");
 const verifier = @import("../../ir/verifier.zig");
 const ir = @import("../../ir/nako_ir.zig");
+const plugin_node = @import("../../plugins/node.zig");
+const prepared = @import("prepared.zig");
 
 const Interpreter = istate.Interpreter;
 const Host = istate.Host;
@@ -16,6 +18,276 @@ const Value = shared.Value;
 const Runtime = shared.Runtime;
 const TestResult = shared.TestResult;
 const CompatJsTrace = shared.CompatJsTrace;
+
+test "Prepared Interpreterは関数メタデータを一度だけ解決し実行結果を保つ" {
+    const source =
+        "●(Aを)二倍とは\n" ++
+        "A*2で戻る\n" ++
+        "ここまで\n" ++
+        "二倍(3)を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+
+    const first = try interpreter.prepareProgram(&interpreter.root_program);
+    const second = try interpreter.prepareProgram(&interpreter.root_program);
+    try std.testing.expect(first == second);
+    try std.testing.expectEqual(interpreter.root_program.functions.len, first.functions.len);
+
+    var saw_binary = false;
+    var saw_direct_call = false;
+    var saw_local_slot = false;
+    var saw_direct_value_local = false;
+    var saw_builtin_id = false;
+    var saw_stable_global_slot = false;
+    for (first.functions) |function| {
+        try std.testing.expect(function.value_count > 0);
+        for (function.storage_classes) |storage| {
+            if (storage == .value) saw_direct_value_local = true;
+        }
+        for (function.blocks) |block| for (block.instructions) |instruction| {
+            if (instruction.binary_operator) |operator| {
+                if (operator == .multiply) saw_binary = true;
+            }
+            if (instruction.call_target) |target| switch (target) {
+                .direct_ir => saw_direct_call = true,
+                .global_or_builtin => |builtin_target| {
+                    if (builtin_target.id != null) saw_builtin_id = true;
+                    if (builtin_target.global_slot != prepared.no_global_slot) saw_stable_global_slot = true;
+                },
+                else => {},
+            };
+            if (instruction.local_slot != prepared.no_local_slot) saw_local_slot = true;
+        };
+    }
+    try std.testing.expect(saw_binary);
+    try std.testing.expect(saw_direct_call);
+    try std.testing.expect(saw_local_slot);
+    try std.testing.expect(saw_direct_value_local);
+    try std.testing.expect(saw_builtin_id);
+    try std.testing.expect(saw_stable_global_slot);
+
+    const reserved_slot = try interpreter.globalSlot("prepared-slot-test");
+    try std.testing.expect(interpreter.globalSlotValue(reserved_slot) == null);
+    try interpreter.setGlobalValue("prepared-slot-test", .{ .number = 1 });
+    try std.testing.expectEqual(reserved_slot, try interpreter.globalSlot("prepared-slot-test"));
+    try std.testing.expectEqual(@as(f64, 1), interpreter.globalSlotValue(reserved_slot).?.number);
+    try interpreter.setGlobalValue("prepared-slot-test", .{ .number = 2 });
+    try std.testing.expectEqual(@as(f64, 2), interpreter.globalSlotValue(reserved_slot).?.number);
+
+    const frame_misses_before = runtime.counters.frame_pools_misses;
+    const first_buffer = try interpreter.acquireValueBuffer(3);
+    const first_buffer_len = first_buffer.len;
+    interpreter.releaseValueBuffer(first_buffer);
+    const pooled_before = interpreter.pooled_frame_buffers;
+    const second_buffer = try interpreter.acquireValueBuffer(3);
+    try std.testing.expectEqual(first_buffer_len, second_buffer.len);
+    try std.testing.expect(interpreter.pooled_frame_buffers > pooled_before);
+    try std.testing.expect(runtime.counters.frame_pools_misses > frame_misses_before);
+    try std.testing.expect(runtime.counters.frame_pools_hits > 0);
+    interpreter.releaseValueBuffer(second_buffer);
+
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("6\n", host.written());
+}
+
+test "Prepared Interpreterはinterrupt budgetと命令safepointを維持する" {
+    const source = "A=1\nB=2\nC=A+B\nCを表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+
+    interpreter.configureInterruptBudget(2);
+    try std.testing.expectEqual(@as(usize, 2), interpreter.interruptBudget());
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("3\n", host.written());
+    try std.testing.expect(interpreter.interruptSafepointCount() > 1);
+}
+
+test "Prepared Interpreterはdead result storeを省略し戻り値観測を維持する" {
+    const overwritten_source =
+        "●Aとは\n" ++
+        "7で戻る\n" ++
+        "ここまで\n" ++
+        "A()\n" ++
+        "それは9\n" ++
+        "それを表示\n";
+    var overwritten_fixture = try compileForTest(std.testing.allocator, overwritten_source);
+    defer overwritten_fixture.ir_program.deinit();
+    defer overwritten_fixture.hir_program.deinit();
+    defer overwritten_fixture.analyzed.deinit();
+    defer overwritten_fixture.parsed.deinit();
+    var overwritten_runtime = Runtime.init(std.testing.allocator);
+    defer overwritten_runtime.deinit();
+    var overwritten_host = BufferHost{ .allocator = std.testing.allocator };
+    defer overwritten_host.deinit();
+    var overwritten_interpreter = Interpreter.init(std.testing.allocator, &overwritten_runtime, overwritten_fixture.ir_program, overwritten_host.host());
+    defer overwritten_interpreter.deinit();
+
+    const overwritten_prepared = try overwritten_interpreter.prepareProgram(&overwritten_interpreter.root_program);
+    var saw_omitted_call = false;
+    for (overwritten_prepared.functions) |function| {
+        for (function.blocks) |block| for (block.instructions) |instruction| {
+            if (instruction.ir_instruction.opcode == .call and instruction.omit_result_store) saw_omitted_call = true;
+        };
+    }
+    try std.testing.expect(saw_omitted_call);
+    _ = try overwritten_interpreter.run();
+    try std.testing.expectEqualStrings("9\n", overwritten_host.written());
+
+    const observed_source =
+        "●Aとは\n" ++
+        "7で戻る\n" ++
+        "ここまで\n" ++
+        "A()\n" ++
+        "それを表示\n";
+    var observed_fixture = try compileForTest(std.testing.allocator, observed_source);
+    defer observed_fixture.ir_program.deinit();
+    defer observed_fixture.hir_program.deinit();
+    defer observed_fixture.analyzed.deinit();
+    defer observed_fixture.parsed.deinit();
+    var observed_runtime = Runtime.init(std.testing.allocator);
+    defer observed_runtime.deinit();
+    var observed_host = BufferHost{ .allocator = std.testing.allocator };
+    defer observed_host.deinit();
+    var observed_interpreter = Interpreter.init(std.testing.allocator, &observed_runtime, observed_fixture.ir_program, observed_host.host());
+    defer observed_interpreter.deinit();
+
+    const observed_prepared = try observed_interpreter.prepareProgram(&observed_interpreter.root_program);
+    var saw_kept_call = false;
+    var saw_direct_call = false;
+    for (observed_prepared.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
+        if (instruction.ir_instruction.opcode != .call) continue;
+        if (instruction.call_target) |target| switch (target) {
+            .direct_ir => {
+                saw_direct_call = true;
+                if (!instruction.omit_result_store) saw_kept_call = true;
+            },
+            else => {},
+        };
+    };
+    try std.testing.expect(saw_direct_call);
+    try std.testing.expect(saw_kept_call);
+    _ = try observed_interpreter.run();
+    try std.testing.expectEqualStrings("7\n", observed_host.written());
+}
+
+test "Prepared InterpreterはToPrimitive callback中のそれを保持する" {
+    const source =
+        "●Aとは\n" ++
+        "7で戻る\n" ++
+        "ここまで\n" ++
+        "D={}\n" ++
+        "D[\"valueOf\"]=関数()それを表示;それは7;ここまで\n" ++
+        "A()\n" ++
+        "(D-1)を表示\n" ++
+        "それは9\n" ++
+        "それを表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, host.host());
+    defer interpreter.deinit();
+
+    const prepared_program = try interpreter.prepareProgram(&interpreter.root_program);
+    var saw_kept_call = false;
+    for (prepared_program.functions) |function| for (function.blocks) |block| for (block.instructions) |instruction| {
+        if (instruction.ir_instruction.opcode != .call) continue;
+        if (instruction.ir_instruction.name.len > 0 and std.mem.endsWith(u8, instruction.ir_instruction.name, "__A")) {
+            saw_kept_call = !instruction.omit_result_store;
+        }
+    };
+    try std.testing.expect(saw_kept_call);
+    _ = try interpreter.run();
+    try std.testing.expectEqualStrings("7\n6\n9\n", host.written());
+}
+
+test "Prepared Interpreterはloop・call・allocの割り込みを実際にキャンセルする" {
+    const source =
+        "F=関数(S)それは真;ここまで\n" ++
+        "Fを強制終了時\n" ++
+        "HIT=0\n" ++
+        "Nを1から100000まで繰り返す\n" ++
+        "HIT=HIT+1\n" ++
+        "X=[N]\n" ++
+        "F()\n" ++
+        "ここまで\n" ++
+        "\"AFTER\"を表示\n";
+    var fixture = try compileForTest(std.testing.allocator, source);
+    defer fixture.ir_program.deinit();
+    defer fixture.hir_program.deinit();
+    defer fixture.analyzed.deinit();
+    defer fixture.parsed.deinit();
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    var host = BufferHost{ .allocator = std.testing.allocator };
+    defer host.deinit();
+    var probe = InterruptProbe{ .cancel_after = 40 };
+    var runtime_host = host.host();
+    runtime_host.node_context = .{
+        .context = &probe,
+        .cwdFn = interruptTestCwd,
+        .installInterruptFn = interruptTestInstall,
+        .consumeInterruptFn = interruptTestConsume,
+    };
+    var interpreter = Interpreter.init(std.testing.allocator, &runtime, fixture.ir_program, runtime_host);
+    defer interpreter.deinit();
+    interpreter.configureInterruptBudget(Interpreter.default_interrupt_budget);
+
+    try std.testing.expectError(error.ProcessExitRequested, interpreter.run());
+    try std.testing.expect(probe.installed);
+    try std.testing.expect(probe.polls >= probe.cancel_after);
+    try std.testing.expect(interpreter.interruptSafepointCount() >= probe.polls);
+    try std.testing.expect(interpreter.getGlobal("main__HIT") != null);
+    try std.testing.expect(interpreter.getGlobal("main__X") != null);
+    try std.testing.expectEqualStrings("", host.written());
+}
+
+const InterruptProbe = struct {
+    polls: usize = 0,
+    cancel_after: usize,
+    cancel_sent: bool = false,
+    installed: bool = false,
+};
+
+fn interruptTestCwd(_: *anyopaque, allocator: std.mem.Allocator) ![]u8 {
+    return allocator.dupe(u8, ".");
+}
+
+fn interruptTestInstall(context: *anyopaque) !void {
+    const probe: *InterruptProbe = @ptrCast(@alignCast(context));
+    probe.installed = true;
+}
+
+fn interruptTestConsume(context: *anyopaque) bool {
+    const probe: *InterruptProbe = @ptrCast(@alignCast(context));
+    probe.polls += 1;
+    if (probe.polls < probe.cancel_after or probe.cancel_sent) return false;
+    probe.cancel_sent = true;
+    return true;
+}
 
 test "SSA IRで条件・反復・関数・配列辞書を実行する" {
     const source = "●(AとBを)足すとは\nA+Bで戻る\nここまで\n合計=0\nNを1から3まで繰り返す\n合計=合計+N\nここまで\nもし合計=6ならば\n足す(合計,4)を表示\n違えば\n0を表示\nここまで\nA=[1,2]\nA[1]=5\nA[1]を表示\nB={\"x\":7}\nB@\"x\"を表示\n";

@@ -25,6 +25,7 @@ pub const ir = struct {
     pub const verifier = @import("ir/verifier.zig");
     pub const optimizer = @import("ir/optimizer.zig");
     pub const root_liveness = @import("ir/root_liveness.zig");
+    pub const result_effect = @import("ir/result_effect.zig");
     pub const printer = @import("ir/printer.zig");
 };
 
@@ -140,6 +141,7 @@ test {
     std.testing.refAllDecls(ir.verifier);
     std.testing.refAllDecls(ir.optimizer);
     std.testing.refAllDecls(ir.root_liveness);
+    std.testing.refAllDecls(ir.result_effect);
     std.testing.refAllDecls(ir.printer);
     std.testing.refAllDecls(runtime.aot_abi);
     std.testing.refAllDecls(runtime.aot_builtin);

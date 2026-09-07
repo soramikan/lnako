@@ -28,6 +28,7 @@ const quickjs = @import("../../compat/quickjs.zig");
 const environment = @import("../environment.zig");
 const istate = @import("state.zig");
 const shared = @import("shared.zig");
+const prepared = @import("prepared.zig");
 
 const Interpreter = istate.Interpreter;
 const TestResult = shared.TestResult;
@@ -79,10 +80,23 @@ pub fn pollExternalPlugins(self: *Interpreter) !bool {
 }
 
 pub fn callBuiltin(self: *Interpreter, name: []const u8, arguments: []const Value, site_id: ?u64) !Value {
+    // Unprepared/plugin-facing calls retain the legacy dynamic chain.  The
+    // prepared executor supplies the catalog id explicitly and reaches the
+    // hot dispatch below without re-scanning this table.
+    return callBuiltinResolved(self, null, name, arguments, site_id);
+}
+
+pub fn callBuiltinResolved(
+    self: *Interpreter,
+    builtin_id: ?prepared.BuiltinId,
+    name: []const u8,
+    arguments: []const Value,
+    site_id: ?u64,
+) !Value {
     self.beginDispatchRoute();
     const compat_operation = compatJsOperation(name);
     if (compat_operation) |operation| self.compat_js_trace.emit(name, operation, "compat-js-attempt", null, site_id);
-    const result = self.callBuiltinImpl(name, arguments) catch |failure| {
+    const result = callBuiltinImplResolved(self, builtin_id, name, arguments) catch |failure| {
         const route = self.endDispatchRoute();
         const result_kind = if (failure == error.ProcessExitRequested) "success" else "failure";
         self.dispatch_trace.emit(traceBuiltinName(name), route, result_kind, site_id);
@@ -93,6 +107,70 @@ pub fn callBuiltin(self: *Interpreter, name: []const u8, arguments: []const Valu
     self.dispatch_trace.emit(traceBuiltinName(name), route, "success", site_id);
     if (compat_operation) |operation| self.compat_js_trace.emit(name, operation, "compat-js-result", "success", site_id);
     return result;
+}
+
+fn builtinId(comptime name: []const u8) prepared.BuiltinId {
+    inline for (builtin_catalog.names, 0..) |candidate, index| {
+        if (std.mem.eql(u8, candidate, name)) return @intCast(index);
+    }
+    @compileError("builtin name is missing from the catalog");
+}
+
+const builtin_id_display = builtinId("表示");
+const builtin_id_continue_display = builtinId("継続表示");
+const builtin_id_display_many = builtinId("連続表示");
+const builtin_id_continue_display_many = builtinId("連続無改行表示");
+const builtin_id_clear_display_log = builtinId("表示ログクリア");
+const builtin_id_sin = builtinId("SIN");
+const builtin_id_cos = builtinId("COS");
+const builtin_id_tan = builtinId("TAN");
+const builtin_id_abs = builtinId("ABS");
+const builtin_id_sqrt = builtinId("SQRT");
+const builtin_id_round = builtinId("ROUND");
+const builtin_id_random = builtinId("乱数");
+const builtin_id_random_range = builtinId("乱数範囲");
+
+fn callBuiltinImplResolved(
+    self: *Interpreter,
+    builtin_id: ?prepared.BuiltinId,
+    name: []const u8,
+    arguments: []const Value,
+) !Value {
+    if (builtin_id) |id| if (try callBuiltinHot(self, id, arguments)) |value| return value;
+    return self.callBuiltinImpl(name, arguments);
+}
+
+/// A small, deliberately conservative hot set.  The complete compatibility
+/// chain remains the fallback, while prepared calls skip the repeated
+/// spelling comparisons for the commands that dominate tight loops.
+fn callBuiltinHot(self: *Interpreter, id: prepared.BuiltinId, arguments: []const Value) !?Value {
+    switch (id) {
+        builtin_id_display => return @as(?Value, try self.display(arguments)),
+        builtin_id_continue_display => return @as(?Value, try self.continueDisplay(arguments)),
+        builtin_id_display_many => return @as(?Value, try self.displayMany(arguments)),
+        builtin_id_continue_display_many => return @as(?Value, try self.continueDisplayMany(arguments)),
+        builtin_id_clear_display_log => {
+            try self.setGlobal("表示ログ", try self.runtime.stringUtf8(""));
+            return @as(?Value, .undefined);
+        },
+        builtin_id_sin,
+        builtin_id_cos,
+        builtin_id_tan,
+        builtin_id_abs,
+        builtin_id_sqrt,
+        builtin_id_round,
+        builtin_id_random,
+        builtin_id_random_range,
+        => {
+            self.setDispatchRoute("plugin_math");
+            const name = builtin_catalog.names[@intCast(id)];
+            return try plugin_math.call(self.runtime, name, arguments, .{
+                .context = self,
+                .randomFn = pluginRandom,
+            });
+        },
+        else => return null,
+    }
 }
 
 pub fn beginDispatchRoute(self: *Interpreter) void {

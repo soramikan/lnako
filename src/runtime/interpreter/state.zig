@@ -30,11 +30,16 @@ const shared = @import("shared.zig");
 const execute = @import("execute.zig");
 const events = @import("events.zig");
 const plugins = @import("plugins.zig");
+const prepared = @import("prepared.zig");
 
 pub const Value = shared.Value;
 pub const Runtime = shared.Runtime;
 pub const TestResult = shared.TestResult;
 pub const DynamicPreparationFn = *const fn (context: *anyopaque, interpreter: *Interpreter) anyerror!void;
+pub const PreparedProgram = prepared.PreparedProgram;
+pub const PreparedFunction = prepared.PreparedFunction;
+pub const PreparedInstruction = prepared.PreparedInstruction;
+pub const PreparedBlock = prepared.PreparedBlock;
 const Frame = shared.Frame;
 const IteratorKind = shared.IteratorKind;
 const IteratorState = shared.IteratorState;
@@ -198,6 +203,9 @@ pub fn traceRoots(context: *anyopaque, runtime: *Runtime) !void {
     var frame = self.active_frame;
     while (frame) |active| : (frame = active.parent) {
         for (active.values) |value| try runtime.traceExternal(value);
+        for (active.local_values, active.local_values_initialized) |value, initialized| {
+            if (initialized) try runtime.traceExternal(value);
+        }
         var locals = active.locals.valueIterator();
         while (locals.next()) |cell| try runtime.traceExternalBindingCell(cell.*);
         var iterators = active.iterators.valueIterator();
@@ -230,7 +238,26 @@ pub fn traceRoots(context: *anyopaque, runtime: *Runtime) !void {
     try self.native_plugin_state.trace(runtime);
 }
 
+/// Frame value buffers are returned to a size class instead of one unbounded
+/// LIFO list.  A large recursive call therefore cannot strand every later
+/// small call with an oversized allocation, while repeated calls of the same
+/// shape still reuse their exact class without touching the allocator.
+const value_buffer_size_classes = [_]usize{
+    1,   2,   4,    8,    16,   32,   64, 128,
+    256, 512, 1024, 2048, 4096, 8192,
+};
+
+const ValueBufferBucket = struct {
+    buffers: std.ArrayListUnmanaged([]Value) = .empty,
+};
+
+fn isQualifiedGlobal(name: []const u8) bool {
+    return std.mem.indexOf(u8, name, "__") != null;
+}
+
 pub const Interpreter = struct {
+    pub const default_interrupt_budget: usize = 1024;
+
     allocator: std.mem.Allocator,
     runtime: *Runtime,
     program: ir.Program,
@@ -241,11 +268,24 @@ pub const Interpreter = struct {
     host: Host,
     globals: std.StringHashMapUnmanaged(Value) = .empty,
     global_names: std.ArrayList([]u8) = .empty,
+    /// `globals` remains the compatibility/iteration view.  These parallel
+    /// arrays provide stable numeric access for prepared instructions.  A
+    /// reserved but unset slot is intentionally absent from `globals`, so
+    /// dynamic global enumeration and trace behavior remain unchanged.
+    global_slots: std.StringHashMapUnmanaged(prepared.GlobalSlot) = .empty,
+    global_values: std.ArrayListUnmanaged(Value) = .empty,
+    global_present: std.ArrayListUnmanaged(bool) = .empty,
     active_frame: ?*Frame = null,
     exception_value: Value = .undefined,
     system_context: Value = .undefined,
     call_depth: usize = 0,
     max_call_depth: usize = 4096,
+    /// Number of ordinary instructions allowed between interrupt polls.
+    /// Calls, allocations, dynamic execution, and block entries remain
+    /// explicit safepoints regardless of this budget.
+    interrupt_budget_limit: usize = default_interrupt_budget,
+    interrupt_budget_remaining: usize = default_interrupt_budget,
+    interrupt_safepoint_count: u64 = 0,
     dynamic_depth: usize = 0,
     max_dynamic_depth: usize = 64,
     test_results: std.ArrayList(TestResult) = .empty,
@@ -283,14 +323,19 @@ pub const Interpreter = struct {
     dispatch_route_overflow: usize = 0,
     dynamic_programs: std.ArrayList(*ir.Program) = .empty,
     active_program_owner: ?*const ir.Program = null,
-    /// Released call-frame value buffers, kept at full capacity so a later
-    /// call of the same or smaller size skips `allocator.alloc`.  Pooled
-    /// slices are LIFO, which matches recursive and repeated-call patterns.
-    value_buffers: std.ArrayListUnmanaged([]Value) = .empty,
+    /// Released call-frame value buffers grouped by power-of-two size class.
+    /// Buffers larger than the largest class are retained in a separate list.
+    value_buffer_buckets: [value_buffer_size_classes.len]ValueBufferBucket = [_]ValueBufferBucket{.{}} ** value_buffer_size_classes.len,
+    oversized_value_buffers: std.ArrayListUnmanaged([]Value) = .empty,
     /// Per-program name index for `findFunction`.  Programs outlive the
     /// interpreter (dynamic programs are owned by `dynamic_programs`), so
     /// the pointer key stays valid for the interpreter's whole lifetime.
     function_indexes: std.AutoHashMapUnmanaged(*const ir.Program, FunctionIndex) = .empty,
+    /// Immutable interpreter execution metadata, keyed by the stable owner
+    /// address used by IR function values.  Dynamic programs are kept alive
+    /// in `dynamic_programs` until interpreter teardown, so these pointers
+    /// remain valid for the cache lifetime.
+    prepared_programs: std.AutoHashMapUnmanaged(*const ir.Program, *prepared.PreparedProgram) = .empty,
     heap_argument_allocs: u64 = 0,
     pooled_frame_buffers: u64 = 0,
 
@@ -307,21 +352,46 @@ pub const Interpreter = struct {
     };
 
     pub fn acquireValueBuffer(self: *Interpreter, count: usize) ![]Value {
-        if (self.value_buffers.pop()) |buffer| {
+        if (count == 0) {
+            const result = try self.allocator.alloc(Value, 0);
+            self.runtime.counters.frame_pools_misses +|= 1;
+            return result;
+        }
+        for (value_buffer_size_classes, 0..) |class_size, class_index| {
+            if (class_size < count) continue;
+            if (self.value_buffer_buckets[class_index].buffers.pop()) |buffer| {
+                self.pooled_frame_buffers += 1;
+                self.runtime.counters.frame_pools_hits +|= 1;
+                @memset(buffer[0..count], .undefined);
+                return buffer;
+            }
+            const buffer = try self.allocator.alloc(Value, class_size);
+            self.runtime.counters.frame_pools_misses +|= 1;
+            @memset(buffer[0..count], .undefined);
+            return buffer;
+        }
+        while (self.oversized_value_buffers.pop()) |buffer| {
             if (buffer.len >= count) {
                 self.pooled_frame_buffers += 1;
+                self.runtime.counters.frame_pools_hits +|= 1;
                 @memset(buffer[0..count], .undefined);
                 return buffer;
             }
             self.allocator.free(buffer);
         }
-        const buffer = try self.allocator.alloc(Value, count);
-        @memset(buffer, .undefined);
-        return buffer;
+        const result = try self.allocator.alloc(Value, count);
+        self.runtime.counters.frame_pools_misses +|= 1;
+        @memset(result, .undefined);
+        return result;
     }
 
     pub fn releaseValueBuffer(self: *Interpreter, buffer: []Value) void {
-        self.value_buffers.append(self.allocator, buffer) catch self.allocator.free(buffer);
+        for (value_buffer_size_classes, 0..) |class_size, class_index| {
+            if (buffer.len != class_size) continue;
+            self.value_buffer_buckets[class_index].buffers.append(self.allocator, buffer) catch self.allocator.free(buffer);
+            return;
+        }
+        self.oversized_value_buffers.append(self.allocator, buffer) catch self.allocator.free(buffer);
     }
 
     fn functionIndex(self: *Interpreter, owner_program: *const ir.Program) !*const FunctionIndex {
@@ -346,6 +416,43 @@ pub const Interpreter = struct {
         return entry.value_ptr;
     }
 
+    pub fn prepareProgram(self: *Interpreter, owner_program: *const ir.Program) !*const prepared.PreparedProgram {
+        if (self.prepared_programs.get(owner_program)) |prepared_program| return prepared_program;
+        const prepared_program = try self.allocator.create(prepared.PreparedProgram);
+        errdefer self.allocator.destroy(prepared_program);
+        prepared_program.* = try prepared.PreparedProgram.init(self.allocator, owner_program);
+        errdefer prepared_program.deinit(self.allocator);
+        try self.bindPreparedGlobalSlots(prepared_program);
+        try self.prepared_programs.put(self.allocator, owner_program, prepared_program);
+        return prepared_program;
+    }
+
+    fn bindPreparedGlobalSlots(self: *Interpreter, prepared_program: *prepared.PreparedProgram) !void {
+        for (prepared_program.functions) |*prepared_function| {
+            for (prepared_function.blocks) |*block| {
+                for (block.instructions) |*entry| {
+                    const instruction = entry.ir_instruction.*;
+                    switch (instruction.opcode) {
+                        .load_global, .store_global => entry.global_slot = try self.ensureGlobalSlot(instruction.name),
+                        .load_local, .array_set, .property_set, .increment => {
+                            if (entry.local_slot == prepared.no_local_slot) entry.global_slot = try self.ensureGlobalSlot(instruction.name);
+                        },
+                        .destructure_store => {
+                            for (instruction.names, 0..) |name, index| {
+                                if (isQualifiedGlobal(name)) entry.destructure_global_slots[index] = try self.ensureGlobalSlot(name);
+                            }
+                        },
+                        .call => if (entry.call_target) |*target| switch (target.*) {
+                            .global_or_builtin => |*builtin_target| builtin_target.global_slot = try self.ensureGlobalSlot(instruction.name),
+                            else => {},
+                        },
+                        else => {},
+                    }
+                }
+            }
+        }
+    }
+
     pub fn init(allocator: std.mem.Allocator, runtime: *Runtime, program: ir.Program, host: Host) Interpreter {
         return .{ .allocator = allocator, .runtime = runtime, .program = program, .root_program = program, .host = host, .dispatch_trace = .{ .path = host.dispatch_trace_path, .context = host.context, .writeFn = host.dispatch_trace_writeFn }, .compat_js_trace = .{ .path = host.compat_js_trace_path, .context = host.context, .writeFn = host.compat_js_trace_writeFn }, .global_trace = .{ .path = host.global_trace_path, .context = host.context, .writeFn = host.global_trace_writeFn }, .literal_trace = .{ .path = host.literal_trace_path, .context = host.context, .writeFn = host.literal_trace_writeFn }, .csv_state = plugin_csv.State.init(allocator), .quickjs_state = quickjs.State.init(program.compat_js), .native_plugin_state = plugin_native.State.init() };
     }
@@ -361,6 +468,9 @@ pub const Interpreter = struct {
         // deinitialize, so tear them down while all interpreter services exist.
         self.native_plugin_state.deinit();
         self.globals.deinit(self.allocator);
+        self.global_slots.deinit(self.allocator);
+        self.global_values.deinit(self.allocator);
+        self.global_present.deinit(self.allocator);
         for (self.global_names.items) |name| self.allocator.free(name);
         self.global_names.deinit(self.allocator);
         for (self.test_results.items) |result| {
@@ -381,13 +491,23 @@ pub const Interpreter = struct {
         self.promise_all_states.deinit(self.allocator);
         self.namespace_stack.deinit(self.allocator);
         self.hatena_callbacks.deinit(self.allocator);
+        var prepared_iterator = self.prepared_programs.valueIterator();
+        while (prepared_iterator.next()) |program| {
+            program.*.deinit(self.allocator);
+            self.allocator.destroy(program.*);
+        }
+        self.prepared_programs.deinit(self.allocator);
         for (self.dynamic_programs.items) |program| {
             program.deinit();
             self.allocator.destroy(program);
         }
         self.dynamic_programs.deinit(self.allocator);
-        for (self.value_buffers.items) |buffer| self.allocator.free(buffer);
-        self.value_buffers.deinit(self.allocator);
+        for (&self.value_buffer_buckets) |*bucket| {
+            for (bucket.buffers.items) |buffer| self.allocator.free(buffer);
+            bucket.buffers.deinit(self.allocator);
+        }
+        for (self.oversized_value_buffers.items) |buffer| self.allocator.free(buffer);
+        self.oversized_value_buffers.deinit(self.allocator);
         var index_iterator = self.function_indexes.valueIterator();
         while (index_iterator.next()) |index| index.deinit(self.allocator);
         self.function_indexes.deinit(self.allocator);
@@ -398,12 +518,37 @@ pub const Interpreter = struct {
         return execute.run(self);
     }
 
+    pub fn configureInterruptBudget(self: *Interpreter, budget: usize) void {
+        self.interrupt_budget_limit = @max(@as(usize, 1), budget);
+        self.interrupt_budget_remaining = self.interrupt_budget_limit;
+    }
+
+    pub fn interruptBudget(self: Interpreter) usize {
+        return self.interrupt_budget_limit;
+    }
+
+    pub fn interruptSafepointCount(self: Interpreter) u64 {
+        return self.interrupt_safepoint_count;
+    }
+
     pub fn runTests(self: *Interpreter) ![]const TestResult {
         return execute.runTests(self);
     }
 
     pub fn getGlobal(self: Interpreter, name: []const u8) ?Value {
         return self.globals.get(name);
+    }
+
+    /// Return (and, when needed, reserve) the stable slot for a global name.
+    /// Reservation is internal to prepared execution: an unset name is still
+    /// absent from `getGlobal` and from global enumeration.
+    pub fn globalSlot(self: *Interpreter, name: []const u8) !prepared.GlobalSlot {
+        return self.ensureGlobalSlot(name);
+    }
+
+    pub fn globalSlotValue(self: Interpreter, slot: prepared.GlobalSlot) ?Value {
+        if (slot == prepared.no_global_slot or slot >= self.global_values.items.len or !self.global_present.items[slot]) return null;
+        return self.global_values.items[slot];
     }
 
     pub fn setGlobalValue(self: *Interpreter, name: []const u8, value: Value) !void {
@@ -473,6 +618,10 @@ pub const Interpreter = struct {
         return execute.executeInstruction(self, frame, instruction, predecessor);
     }
 
+    pub fn executePreparedInstruction(self: *Interpreter, frame: *Frame, instruction: *const prepared.PreparedInstruction, predecessor: ?ir.BlockId) anyerror!void {
+        return execute.executePreparedInstruction(self, frame, instruction, predecessor);
+    }
+
     pub fn operand(self: Interpreter, frame: *Frame, instruction: ir.Instruction, index: usize) Value {
         return execute.operand(self, frame, instruction, index);
     }
@@ -481,8 +630,16 @@ pub const Interpreter = struct {
         return execute.bindLocal(self, frame, name, value);
     }
 
+    pub fn attachLocal(self: *Interpreter, frame: *Frame, name: []const u8, cell: *value_mod.BindingCell) !void {
+        return execute.attachLocal(self, frame, name, cell);
+    }
+
     pub fn storeLocal(self: *Interpreter, frame: *Frame, name: []const u8, value: Value) !void {
         return execute.storeLocal(self, frame, name, value);
+    }
+
+    pub fn storeLocalSlot(self: *Interpreter, frame: *Frame, slot: prepared.LocalSlot, name: []const u8, value: Value) !void {
+        return execute.storeLocalSlot(self, frame, slot, name, value);
     }
 
     pub fn executeDestructure(self: *Interpreter, frame: *Frame, instruction: ir.Instruction) !void {
@@ -520,6 +677,16 @@ pub const Interpreter = struct {
 
     pub fn callBuiltin(self: *Interpreter, name: []const u8, arguments: []const Value, site_id: ?u64) !Value {
         return plugins.callBuiltin(self, name, arguments, site_id);
+    }
+
+    pub fn callBuiltinResolved(
+        self: *Interpreter,
+        builtin_id: ?prepared.BuiltinId,
+        name: []const u8,
+        arguments: []const Value,
+        site_id: ?u64,
+    ) !Value {
+        return plugins.callBuiltinResolved(self, builtin_id, name, arguments, site_id);
     }
 
     pub fn beginDispatchRoute(self: *Interpreter) void {
@@ -871,15 +1038,36 @@ pub const Interpreter = struct {
     }
 
     pub fn setGlobal(self: *Interpreter, name: []const u8, value: Value) !void {
-        if (self.globals.getPtr(name)) |existing| {
-            existing.* = value;
-            return;
-        }
+        const slot = try self.ensureGlobalSlot(name);
+        try self.setGlobalSlot(slot, name, value);
+    }
+
+    fn ensureGlobalSlot(self: *Interpreter, name: []const u8) !prepared.GlobalSlot {
+        if (self.global_slots.get(name)) |slot| return slot;
+        const slot = std.math.cast(prepared.GlobalSlot, self.global_values.items.len) orelse return error.GlobalSlotOverflow;
         const owned_name = try self.allocator.dupe(u8, name);
         errdefer self.allocator.free(owned_name);
-        try self.globals.put(self.allocator, owned_name, value);
-        errdefer _ = self.globals.remove(owned_name);
+        try self.global_values.append(self.allocator, .undefined);
+        errdefer _ = self.global_values.pop();
+        try self.global_present.append(self.allocator, false);
+        errdefer _ = self.global_present.pop();
         try self.global_names.append(self.allocator, owned_name);
+        errdefer _ = self.global_names.pop();
+        const entry = try self.global_slots.getOrPut(self.allocator, owned_name);
+        if (entry.found_existing) return entry.value_ptr.*;
+        entry.value_ptr.* = slot;
+        return slot;
+    }
+
+    pub fn setGlobalSlot(self: *Interpreter, slot: prepared.GlobalSlot, name: []const u8, value: Value) !void {
+        if (slot == prepared.no_global_slot or slot >= self.global_values.items.len or slot >= self.global_names.items.len) return error.InvalidGlobalSlot;
+        if (self.globals.getPtr(name)) |existing| {
+            existing.* = value;
+        } else {
+            try self.globals.put(self.allocator, self.global_names.items[slot], value);
+        }
+        self.global_values.items[slot] = value;
+        self.global_present.items[slot] = true;
     }
 
     pub fn findFunction(self: *Interpreter, owner_program: *const ir.Program, name: []const u8) ?*const ir.Function {

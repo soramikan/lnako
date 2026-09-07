@@ -330,9 +330,17 @@ pub fn executeTimer(self: *Interpreter, index: usize) !void {
         next.due_milliseconds = std.math.add(u64, self.elapsed_milliseconds, timer.interval_milliseconds) catch return error.TimerOverflow;
         try self.timers.append(self.allocator, next);
     }
+    // Each timer callback is an independent execution boundary.  A failed
+    // callback must not become the pending exception observed by the next
+    // callback (or by its error guard).
+    self.exception_value = .undefined;
+    self.runtime.clearFailureMessage();
     const id = Value{ .number = @floatFromInt(timer.id) };
     _ = self.callFunctionValue(callback.function, &.{id}) catch |failure| {
-        self.exception_value = try self.runtime.stringUtf8(@errorName(failure));
+        // A source-level throw already supplied the exception value.  Keep it
+        // so the callback's own error remains observable; only synthesize a
+        // value for failures that did not provide one.
+        if (self.exception_value == .undefined) self.exception_value = try self.runtime.stringUtf8(@errorName(failure));
     };
 }
 

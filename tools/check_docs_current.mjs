@@ -76,7 +76,7 @@ const fixtureInventory = evidence.fixtureInventory;
 if (fixtureInventory?.total !== 417 || fixtureInventory?.nativeAot !== 315 || fixtureInventory?.interpreter !== 112 || fixtureInventory?.compatJs !== 9) {
   fail("evidence.jsonのfixture inventoryが不一致です");
 }
-if (dispatchCoverage.scope?.fixtureCount !== 228 || dispatchCoverage.sites?.length !== 4509 ||
+if (dispatchCoverage.scope?.fixtureCount !== 228 || dispatchCoverage.sites?.length !== 4510 ||
     dispatchCoverage.coverage?.unambiguousObservedNativeEntries !== 426 ||
     dispatchCoverage.coverage?.unambiguousObservedNativeUniqueNames !== 424) {
   fail("dispatch coverageの現行集計が不一致です");

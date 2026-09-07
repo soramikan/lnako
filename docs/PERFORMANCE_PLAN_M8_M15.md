@@ -6,13 +6,13 @@
 
 | 単位 | 実装内容 | 受け入れ条件 | 状態 |
 | --- | --- | --- | --- |
-| M8 | Prepared Interpreter、名前・演算子・callee・value countの事前解決、サイズクラスpool | 動的実行・capture・例外の互換性、診断benchmark比較 | 実装中 |
+| M8 | Prepared Interpreter、名前・演算子・callee・value countの事前解決、サイズクラスpool | 動的実行・capture・例外の互換性、診断benchmark比較 | b394fa9 isolated snapshotで実装・検証済み。main統合待ち |
 | M9 | 共通capture/escape解析、Interpreter/AOTの直接local Value | 非capture関数cellゼロ、capture共有維持 | AOT側検証済み、Interpreter側実装中 |
 | M10 | AOT safepoint、参照liveness、root coloring | GC強制時の分岐・phi・loop・callback安全性、root数減少 | 実装・検証中 |
 | M11 | Number/Boolean typed internal ABIとgeneric wrapper | NaN/Infinity/-0維持、直接・動的呼出し同値 | 実装中 |
 | M12 | exact-size文字列allocation、GC/concat統計 | immutable copy量維持、UTF-16境界・GC安全性、3 OS測定 | 実装中 |
 | M13 | Windows nbody sampling・LLVM IR・assembly・imports診断 | Win64 ABI/stack/helperの実測比較と原因に基づく判断 | 取得tool/CI実装、Windows測定未完了 |
-| M14 | Interpreter interrupt safepoint/budget、dispatch軽量化 | 割り込み応答上限、timer/callback/dynamic/global観測維持 | 未実装 |
+| M14 | Interpreter interrupt safepoint/budget、dispatch軽量化 | 割り込み応答上限、timer/callback/dynamic/global観測維持 | isolated snapshotで実装・境界検証済み。wall-clock上限の実測は未完了 |
 | M15 | compiler stage timing/index/worklist、hot builtin専用ABI/dead strip | コンパイル同値、時間・symbol/size比較 | 実装・検証中 |
 | 診断ケース | local/global/direct/captured/index/dict/string/GC/numeric 12ケース | 正解照合、build/read/write範囲を区別 | 12件追加、ローカル正解照合成功、3 OS CI追加 |
 
@@ -76,7 +76,7 @@ Windowsでは `--windows-sampling` を指定し、独立したWPR instanceでCPU
 ### M15aの追加回帰とCI修正
 
 - 直接callの推論型だけでは、文字列名からの動的entryの引数型を保証できない。`調整(9)`と`AWAIT実行("調整",["16"])`のSQRT結果が3/4になるようruntime tag確認を追加。単体923/923、公式差分11ケース成功。
-- 拡張dispatch auditは228 fixtures/4509 sites、native entry 426/unique name 424。新規fixtureを含め、検査の固定件数と現行文書を更新。
+- 拡張dispatch auditは228 fixtures/4510 sites、native entry 426/unique name 424。新規fixtureを含め、検査の固定件数と現行文書を更新。
 - macOS nbodyで正解を保ち、実験snapshotのbinaryは7,526,464→553,904 bytes、IRの汎用builtin静的call 6→0。runtime call回数や3 OS性能達成とは区別する。
 - 比較CI run 34079518569のmacOS profile stepがBash 3の空配列+nounsetで失敗。常に非空の引数配列へ変更し、実際のworkflow shellをmacOS Bashでテスト。Linux/Windowsの同run比較・診断jobは成功。
 - Windows ETL取得を確認。次回からtracerpt XML/summaryも保存し、別hostでの解析を可能にする。ETL取得だけではCPUの原因分析完了とは扱わない。
@@ -128,3 +128,11 @@ Windowsでは `--windows-sampling` を指定し、独立したWPR instanceでCPU
 - Linux x86_64 GNUクロスビルド成功。Runtime初期化・終了だけを参照するCのリンク検証では、同一archiveのno-gc / gcが8,849,008 / 322,920 bytes。これはリンク構造の検証であり、正式ななでしこbenchmarkやLinux実行検証ではない。
 - Windows MSVC向けruntime libraryのクロスビルドは成功。CLIのリンクはmacOS側にWindows SDKのshell32がないため未完了。Windowsでのリンク・実行はCIで検証する。
 - コードをstageした状態で17証拠ファイルを再生成し、CIの互換基準チェック13項目がすべて成功。コードと同じコミットに保存する。
+
+### M8/M14 isolated snapshot 検証（b394fa9）
+
+- `/private/tmp/lnako-performance-m8` のsnapshotへM8 Prepared Interpreter、M14 interrupt budget/safepoint、timer・test callbackのexception boundary修正を統合した。`root_liveness` と `result_effect` は同じ `ir` namespaceへ公開し、M8側のpool counter版 `state.zig`/`tests.zig` はRuntime telemetry共有を持たない。
+- `zig build fmt-check` は成功し、権限付き `zig build test --summary all` は **955/955** 成功した。これはtelemetry専用テストと親側M11追加分を含めない隔離snapshotの件数である。
+- Node `v24.15.0` 固定の `tools/compare_native_oracle.mjs --no-build` は、公式CLI・公式生成JavaScript・`lnako run`・LLVM AOT O0/O1/O2/O3の7経路 **295/295** 成功。既知の公式経路差はCLI基準24件、公式生成JavaScript基準44件で、比較器が許容する既知差として記録された。
+- diagnostics suiteはNodeテスト **2/2** 成功、公式cnakoとInterpreter/AOT O2の実測は **12 cases / 48 measurements、failures 0**。smoke測定ではprocess-batched wallの200ms未満警告が27件あり、正解不一致ではない。
+- `git diff --check` は成功。Windows callback fixtureの50ms raceを0.01秒間隔・最大100回のbounded pollへ置換した修正を受領し、Node 24.15.0でdispatch coverageを再測定した。結果は228 fixtures/4510 sites、native entry 426/unique name 424で、17証拠の再生成へ進める状態である。

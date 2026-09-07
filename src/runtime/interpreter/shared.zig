@@ -3,6 +3,7 @@ const ir = @import("../../ir/nako_ir.zig");
 const builtin_catalog = @import("../../semantic/builtin_catalog.zig");
 const value_mod = @import("../value.zig");
 const plugin_system = @import("../../plugins/system.zig");
+const prepared = @import("prepared.zig");
 
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
@@ -448,6 +449,20 @@ pub const Frame = struct {
     /// Full allocation backing `values` when it came from the interpreter
     /// pool; null means `values` itself is the allocation to free.
     values_buffer: ?[]Value = null,
+    /// Prepared local slots point at the same binding cells kept in `locals`.
+    /// Direct-value slots live beside them for locals whose binding identity
+    /// cannot escape the frame.  The name map remains as a compatibility
+    /// fallback for dynamically introduced names and host callbacks.
+    prepared_function: ?*const prepared.PreparedFunction = null,
+    local_cells: []?*value_mod.BindingCell = &.{},
+    local_cells_storage: [8]?*value_mod.BindingCell = [_]?*value_mod.BindingCell{null} ** 8,
+    local_cells_buffer: ?[]?*value_mod.BindingCell = null,
+    local_values: []Value = &.{},
+    local_values_initialized: []bool = &.{},
+    local_values_storage: [8]Value = [_]Value{.undefined} ** 8,
+    local_values_initialized_storage: [8]bool = [_]bool{false} ** 8,
+    local_values_buffer: ?[]Value = null,
+    local_values_initialized_buffer: ?[]bool = null,
     locals: std.StringHashMapUnmanaged(*value_mod.BindingCell) = .empty,
     owned_names: std.ArrayList([]u8) = .empty,
     iterators: std.AutoHashMapUnmanaged(ir.ValueId, IteratorState) = .empty,
@@ -459,10 +474,49 @@ pub const Frame = struct {
         self.owned_names.deinit(allocator);
         self.iterators.deinit(allocator);
         self.handlers.deinit(allocator);
+        if (self.local_cells_buffer) |buffer| allocator.free(buffer);
+        if (self.local_values_buffer) |buffer| allocator.free(buffer);
+        if (self.local_values_initialized_buffer) |buffer| allocator.free(buffer);
         if (self.values_buffer) |buffer| {
             allocator.free(buffer);
         } else if (self.values.len > 0) allocator.free(self.values);
         self.* = undefined;
+    }
+
+    pub fn initLocalCells(self: *Frame, allocator: std.mem.Allocator, count: usize) !void {
+        if (count == 0) {
+            self.local_cells = &.{};
+            return;
+        }
+        if (count <= self.local_cells_storage.len) {
+            self.local_cells = self.local_cells_storage[0..count];
+        } else {
+            self.local_cells_buffer = try allocator.alloc(?*value_mod.BindingCell, count);
+            self.local_cells = self.local_cells_buffer.?;
+        }
+        @memset(self.local_cells, null);
+    }
+
+    pub fn initLocalValues(self: *Frame, allocator: std.mem.Allocator, count: usize) !void {
+        if (count == 0) {
+            self.local_values = &.{};
+            self.local_values_initialized = &.{};
+            return;
+        }
+        if (count <= self.local_values_storage.len) {
+            self.local_values = self.local_values_storage[0..count];
+            self.local_values_initialized = self.local_values_initialized_storage[0..count];
+        } else {
+            const values = try allocator.alloc(Value, count);
+            errdefer allocator.free(values);
+            const initialized = try allocator.alloc(bool, count);
+            self.local_values_buffer = values;
+            self.local_values_initialized_buffer = initialized;
+            self.local_values = values;
+            self.local_values_initialized = initialized;
+        }
+        @memset(self.local_values, .undefined);
+        @memset(self.local_values_initialized, false);
     }
 };
 
@@ -484,8 +538,46 @@ pub fn traceBuiltinName(name: []const u8) []const u8 {
 }
 
 pub fn localValue(frame: *const Frame, name: []const u8) ?Value {
+    if (frame.prepared_function) |prepared_function| {
+        if (prepared_function.localSlot(name)) |slot| {
+            if (localSlotValue(frame, slot)) |value| return value;
+        }
+    }
     const cell = frame.locals.get(name) orelse return null;
     return cell.value;
+}
+
+pub fn localCell(frame: *const Frame, name: []const u8) ?*value_mod.BindingCell {
+    if (frame.prepared_function) |prepared_function| {
+        if (prepared_function.localSlot(name)) |slot| {
+            if (prepared_function.storageClass(slot) != .value) {
+                if (slot < frame.local_cells.len) if (frame.local_cells[slot]) |cell| return cell;
+            } else return null;
+        }
+    }
+    return frame.locals.get(name);
+}
+
+pub fn localSlotCell(frame: *const Frame, slot: prepared.LocalSlot) ?*value_mod.BindingCell {
+    if (slot == prepared.no_local_slot or slot >= frame.local_cells.len) return null;
+    return frame.local_cells[slot];
+}
+
+pub fn localSlotValue(frame: *const Frame, slot: prepared.LocalSlot) ?Value {
+    if (slot == prepared.no_local_slot) return null;
+    if (frame.prepared_function) |prepared_function| {
+        const storage = prepared_function.storageClass(slot) orelse return null;
+        return switch (storage) {
+            .cell => if (slot < frame.local_cells.len) if (frame.local_cells[slot]) |cell| cell.value else null else null,
+            .value => if (slot < frame.local_values.len and frame.local_values_initialized[slot]) frame.local_values[slot] else null,
+        };
+    }
+    return null;
+}
+
+pub fn localSlotKnown(frame: *const Frame, slot: prepared.LocalSlot) bool {
+    if (slot == prepared.no_local_slot) return false;
+    return if (frame.prepared_function) |prepared_function| prepared_function.storageClass(slot) != null else false;
 }
 
 pub fn preservesResultVariable(name: []const u8) bool {
