@@ -84,6 +84,7 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
             .o3 => 12,
         };
         const stats = try optimizer.optimize(allocator, &optimized_program.?, .{ .max_iterations = max_iterations });
+        try timer.phase(diagnostics, "Nako SSA最適化");
         var report = try verifier.verify(allocator, optimized_program.?);
         defer report.deinit();
         if (!report.succeeded()) {
@@ -94,7 +95,7 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
             "[LLVM] Nako SSA最適化: type={d} parameter={d} return={d} direct={d} fold={d} branch={d} dce={d}\n",
             .{ stats.inferred_values, stats.inferred_parameters, stats.inferred_returns, stats.direct_calls, stats.folded_constants, stats.simplified_branches, stats.removed_instructions },
         );
-        try timer.phase(diagnostics, "Nako SSA最適化・検証");
+        try timer.phase(diagnostics, "最適化後SSA検証");
     }
     const selected_program = optimized_program orelse program;
     if (module_mod.findUnsupported(selected_program)) |feature| {

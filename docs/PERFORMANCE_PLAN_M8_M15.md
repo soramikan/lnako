@@ -64,3 +64,11 @@ Windowsでは `--windows-sampling` を指定し、独立したWPR instanceでCPU
 - 既存v2の20ケースを保持し、`benchmarks/suites/diagnostics.json` に12ケースを追加。setupを含むprocess全体計測であることをREADMEへ明記。実装時の公式/Interpreter正解照合12件、比較結果48 rowsを確認。
 - numeric profileはsource/compiler/binary hash、取得元repository revision、IR、再生成assemblyと実際のlinked disassembly、imports、runtime countersを保存する。baseline macOSでnbody出力と取得を確認。
 - Nodeの診断suite/profile検査、LLVM prune self-test、CI構成検査と現行文書検査を実施。比較CIに3 OS診断実行とartifact保存を追加。Windows ETLは取得後の解析が必要。
+
+### M15a: compiler計測・索引化と数値builtin ABI
+
+- module-load/parse、semantic、AST lowering、SSA construction/verificationとLLVM各段階を分けて計測。ValueId def-use worklist、callsite evidence集約、関数名索引を追加。
+- 型がnumberと判明した純粋単項builtinを固定double ABIへ接続。dynamic入力とO0はgeneric経路を維持。dispatch trace/site/例外の境界を保持。
+- INTの科学表記・subnormal、TOFLOATの負のゼロを公式処理系に合わせて検証。generic Interpreter/AOTのTOFLOATもnumber -0を+0へ正規化し、文字列"-0"は負のゼロを保持。
+- fmt-check、単体922/922、公式差分11ケースInterpreter/AOT O0/O2成功。追加境界fixtureのIRで固定ABI call 7箇所、nbodyの段階別計測を確認。
+- nbodyのdynamic配列要素は専用ABI対象外。3 OS実行時間、compile-stress 30%、binary size目標は未測定であり達成とは扱わない。

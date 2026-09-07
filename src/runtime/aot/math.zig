@@ -14,9 +14,105 @@ const valueUtf16Alloc = state.valueUtf16Alloc;
 const staticStringValue = state.staticStringValue;
 const time = state.time;
 
+/// Pure unary builtins which can use a fixed `double` argument ABI once the
+/// compiler has proved the operand is numeric.  Commands omitted here keep
+/// the generic Value ABI because they inspect objects, take two arguments, or
+/// depend on runtime state (for example random numbers).
+pub fn isMathUnaryF64Command(command: aot_builtin.Command) bool {
+    return switch (command) {
+        .to_int,
+        .to_float,
+        .math_sin,
+        .math_cos,
+        .math_tan,
+        .math_arcsin,
+        .math_arccos,
+        .math_arctan,
+        .math_rad2deg,
+        .math_deg2rad,
+        .math_sign,
+        .math_abs,
+        .math_exp,
+        .math_log,
+        .math_frac,
+        .math_integer,
+        .math_sqrt,
+        .math_round,
+        .math_ceil,
+        .math_floor,
+        => true,
+        else => false,
+    };
+}
+
+/// Numeric half of the pure unary builtin set.  Conversion and arity checks
+/// remain in the generic dispatcher for dynamic operands; this helper only
+/// receives the already-unboxed f64 value from the fixed ABI.
+pub fn mathUnaryF64(command: aot_builtin.Command, value: f64) !f64 {
+    return switch (command) {
+        .to_int => state.parseIntNumberF64(value),
+        .to_float => if (value == 0) 0 else value,
+        .math_sin => @sin(value),
+        .math_cos => @cos(value),
+        .math_tan => @tan(value),
+        .math_arcsin => std.math.asin(value),
+        .math_arccos => std.math.acos(value),
+        .math_arctan => std.math.atan(value),
+        .math_rad2deg => value / std.math.pi * 180,
+        .math_deg2rad => value / 180 * std.math.pi,
+        .math_sign => if (value == 0) 0 else if (value > 0) 1 else -1,
+        .math_abs => @abs(value),
+        .math_exp => @exp(value),
+        .math_log => @log(value),
+        .math_frac => @rem(value, 1),
+        .math_integer => @trunc(value),
+        .math_sqrt => @sqrt(value),
+        .math_round => mathRound(value),
+        .math_ceil => @ceil(value),
+        .math_floor => @floor(value),
+        else => error.UnknownCommand,
+    };
+}
+
+/// Fixed signature ABI for hot pure numeric builtins.  The dispatch trace,
+/// route, failure epoch, and exception behavior intentionally mirror the
+/// generic builtin call site; only the Value argument packing/conversion is
+/// removed for statically proven numeric operands.
+pub export fn lnako_aot_math_unary_f64_call_site(out: *Value, value: f64, opcode: u16, site_id: u64) callconv(.c) void {
+    out.* = .{};
+    const runtime = if (state.active_runtime) |*active| active else return;
+    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
+        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "builtin", site_id);
+        runtime.setFailure(error.UnknownCommand);
+        runtime.dispatch_trace.result(call_id, "unknown", opcode, "builtin", site_id, false);
+        return;
+    };
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    // Every opcode admitted by this ABI belongs to the ordinary builtin
+    // route. Keeping the route literal avoids pulling the full route
+    // classifier into a fixed-signature hot path.
+    const route = "builtin";
+    const call_id = runtime.dispatch_trace.begin(command_name, opcode, route, site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, opcode, route, site_id, success);
+    if (!isMathUnaryF64Command(command)) {
+        runtime.setFailure(error.UnknownCommand);
+        return;
+    }
+    out.* = numberValue(mathUnaryF64(command, value) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    });
+    success = runtime.failure_epoch == start_epoch;
+}
+
 pub fn parseFloatBuiltin(runtime: *Runtime, value: Value) !f64 {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
-        .number => @bitCast(value.payload),
+        .number => blk: {
+            const number: f64 = @bitCast(value.payload);
+            break :blk if (number == 0) 0 else number;
+        },
         .bigint => value.object().?.payload.bigint.toF64(),
         else => blk: {
             const units = try valueUtf16Alloc(runtime, value);
@@ -168,4 +264,52 @@ pub fn mathRound(value: f64) f64 {
     const result = @floor(value + 0.5);
     if (result == 0 and value < 0) return -0.0;
     return result;
+}
+
+test "AOT純粋数値builtin専用ABIはgeneric結果と例外境界を保つ" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+
+    var specialized: Value = .{};
+    state.lnako_aot_math_unary_f64_call_site(&specialized, 9, @intFromEnum(aot_builtin.Command.math_sqrt), 0x11);
+    try std.testing.expectEqual(@as(f64, 3), @as(f64, @bitCast(specialized.payload)));
+
+    state.lnako_aot_math_unary_f64_call_site(&specialized, -1.2, @intFromEnum(aot_builtin.Command.math_abs), 0x12);
+    try std.testing.expectEqual(@as(f64, 1.2), @as(f64, @bitCast(specialized.payload)));
+
+    state.lnako_aot_math_unary_f64_call_site(&specialized, -1.8, @intFromEnum(aot_builtin.Command.math_integer), 0x13);
+    try std.testing.expectEqual(@as(f64, -1), @as(f64, @bitCast(specialized.payload)));
+
+    state.lnako_aot_math_unary_f64_call_site(&specialized, -1.2, @intFromEnum(aot_builtin.Command.math_floor), 0x14);
+    try std.testing.expectEqual(@as(f64, -2), @as(f64, @bitCast(specialized.payload)));
+
+    state.lnako_aot_math_unary_f64_call_site(&specialized, -1.2, @intFromEnum(aot_builtin.Command.math_ceil), 0x15);
+    try std.testing.expectEqual(@as(f64, -1), @as(f64, @bitCast(specialized.payload)));
+
+    state.lnako_aot_math_unary_f64_call_site(&specialized, 1e21, @intFromEnum(aot_builtin.Command.to_int), 0x16);
+    try std.testing.expectEqual(@as(f64, 1), @as(f64, @bitCast(specialized.payload)));
+
+    const input = numberValue(1e21);
+    var generic: Value = .{};
+    state.lnako_aot_builtin_call(&generic, @ptrCast(&input), 1, @intFromEnum(aot_builtin.Command.to_int));
+    try std.testing.expectEqual(@as(f64, @bitCast(generic.payload)), @as(f64, @bitCast(specialized.payload)));
+
+    state.lnako_aot_math_unary_f64_call_site(&specialized, 2, @intFromEnum(aot_builtin.Command.math_atan2), 0x17);
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(specialized.tag)));
+    try std.testing.expect(state.active_runtime.?.has_pending_exception);
+    _ = state.active_runtime.?.takeException();
+}
+
+test "fixed TOFLOAT normalizes negative zero like parseFloat String" {
+    const converted = try mathUnaryF64(.to_float, -0.0);
+    try std.testing.expectEqual(@as(u64, 0), @as(u64, @bitCast(converted)));
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const generic = try parseFloatBuiltin(&runtime, numberValue(-0.0));
+    try std.testing.expectEqual(@as(u64, 0), @as(u64, @bitCast(generic)));
 }

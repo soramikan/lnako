@@ -29,6 +29,48 @@ const runtimeUtf8String = aot_state.runtimeUtf8String;
 const staticUtf8 = aot_state.staticUtf8;
 const indexOfUnitsBuiltin = aot_state.indexOfUnitsBuiltin;
 
+/// Implements `INT`/`TOINT` for a value which the compiler has already
+/// proved to be a number.  The ordinary builtin converts through the
+/// language's number-to-string representation before applying parseInt's
+/// prefix rules.  Calling `trunc` directly would change values rendered in
+/// scientific notation (for example, `1e21` becomes `1` for parseInt), so
+/// Values in the ordinary fixed notation range truncate directly.  Values
+/// rendered in scientific notation use the first significant decimal digit,
+/// which is exactly the prefix parseInt sees before the decimal point or
+/// exponent. Formatting into a fixed stack buffer avoids both the generic
+/// Value conversion and a temporary runtime allocation.
+pub fn parseIntNumberF64(value: f64) f64 {
+    if (!std.math.isFinite(value)) return std.math.nan(f64);
+    const magnitude = @abs(value);
+    if (magnitude == 0) return 0;
+    if (magnitude >= 1e-6 and magnitude < 1e21) return @trunc(value);
+
+    // Match the same shortest decimal formatter as number.toStringAlloc.
+    // Logarithm/scaling arithmetic loses the leading digit near powers of
+    // ten and underflows for subnormal inputs.
+    var buffer: [768]u8 = undefined;
+    const text = std.fmt.bufPrint(&buffer, "{d}", .{value}) catch unreachable;
+    for (text) |digit| {
+        if (digit >= '1' and digit <= '9') {
+            const leading: f64 = @floatFromInt(digit - '0');
+            return if (value < 0) -leading else leading;
+        }
+    }
+    unreachable;
+}
+
+test "型判明数値のINTはnumber文字列表現のparseInt規則を保つ" {
+    try std.testing.expectEqual(@as(f64, 12), parseIntNumberF64(12.75));
+    try std.testing.expectEqual(@as(f64, -12), parseIntNumberF64(-12.75));
+    try std.testing.expectEqual(@as(f64, 1), parseIntNumberF64(1e21));
+    try std.testing.expectEqual(@as(f64, 1), parseIntNumberF64(1e-7));
+    try std.testing.expectEqual(@as(f64, 1), parseIntNumberF64(1e23));
+    try std.testing.expectEqual(@as(f64, 5), parseIntNumberF64(@bitCast(@as(u64, 1))));
+    try std.testing.expectEqual(@as(f64, -5), parseIntNumberF64(-@as(f64, @bitCast(@as(u64, 1)))));
+    try std.testing.expect(std.math.isNan(parseIntNumberF64(std.math.nan(f64))));
+    try std.testing.expect(std.math.isNan(parseIntNumberF64(std.math.inf(f64))));
+}
+
 pub fn addParsedBuiltin(runtime: *Runtime, left: Value, right: Value) !Value {
     var roots = [_]Value{ left, right, .{}, .{} };
     var frame: RootFrame = .{};

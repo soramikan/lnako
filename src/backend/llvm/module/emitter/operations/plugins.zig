@@ -33,6 +33,42 @@ const functions_mod = @import("../functions.zig");
 const preamble_mod = @import("../preamble.zig");
 const declarations_mod = @import("../declarations.zig");
 
+fn isFixedMathUnaryBuiltin(command: aot_builtin.Command) bool {
+    return switch (command) {
+        .to_int,
+        .to_float,
+        .math_sin,
+        .math_cos,
+        .math_tan,
+        .math_arcsin,
+        .math_arccos,
+        .math_arctan,
+        .math_rad2deg,
+        .math_deg2rad,
+        .math_sign,
+        .math_abs,
+        .math_exp,
+        .math_log,
+        .math_frac,
+        .math_integer,
+        .math_sqrt,
+        .math_round,
+        .math_ceil,
+        .math_floor,
+        => true,
+        else => false,
+    };
+}
+
+test "固定数値builtin ABIは純粋単項だけを選択する" {
+    try std.testing.expect(isFixedMathUnaryBuiltin(.to_int));
+    try std.testing.expect(isFixedMathUnaryBuiltin(.math_sqrt));
+    try std.testing.expect(isFixedMathUnaryBuiltin(.math_floor));
+    try std.testing.expect(!isFixedMathUnaryBuiltin(.math_atan2));
+    try std.testing.expect(!isFixedMathUnaryBuiltin(.math_random));
+    try std.testing.expect(!isFixedMathUnaryBuiltin(.array_push));
+}
+
 pub fn writeDisplayCall(emitter: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {
     const result = instruction.result orelse return error.MissingInstructionResult;
     const site_id = instruction.site_id orelse return error.MissingDispatchSiteId;
@@ -399,6 +435,26 @@ pub fn writeBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: i
         try emitter.output.writer.print("  call void @lnako_aot_stdio_call(ptr %root.slot.{d}, ptr @lnako.global.{d}, ptr ", .{ result, display_log_index });
         if (instruction.operands.len > 0) try emitter.output.writer.print("%stdio.{d}.slot.0", .{result}) else try emitter.output.writer.writeAll("null");
         try emitter.output.writer.print(", i64 {d}, i16 {d}, i64 {d})", .{ instruction.operands.len, @intFromEnum(command), site_id });
+        try emitter.debugSuffix(instruction.span, scope);
+        try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
+        try emitter.debugSuffix(instruction.span, scope);
+        return;
+    }
+    if (emitter.optimized and instruction.operands.len == 1 and isFixedMathUnaryBuiltin(command) and
+        try emitter.valueTypeOf(function, instruction.operands[0]) == .number)
+    {
+        // Numeric pure builtins have no object roots or hidden global side
+        // effects. Unbox the proven number directly and use the fixed f64
+        // ABI, leaving dynamic operands on the generic Value path below.
+        const label = try std.fmt.allocPrint(emitter.allocator, "math.number.{d}", .{result});
+        defer emitter.allocator.free(label);
+        try constants_mod.writeNumberOperand(emitter, function, instruction.operands[0], label, instruction.span, scope);
+        try emitter.output.writer.print("  call void @lnako_aot_math_unary_f64_call_site(ptr %root.slot.{d}, double %{s}, i16 {d}, i64 {d})", .{
+            result,
+            label,
+            @intFromEnum(command),
+            site_id,
+        });
         try emitter.debugSuffix(instruction.span, scope);
         try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try emitter.debugSuffix(instruction.span, scope);

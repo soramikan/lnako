@@ -50,7 +50,7 @@ pub fn optimize(scratch_allocator: std.mem.Allocator, program: *ir.Program, opti
     var stats = Stats{};
     const effect_summary = try effect.analyze(scratch_allocator, program.*);
     defer effect.deinitAll(scratch_allocator, effect_summary);
-    markDirectCalls(program, &stats);
+    try markDirectCalls(scratch_allocator, program, &stats);
     try inferTypes(scratch_allocator, program, options.max_iterations, &stats, effect_summary);
     if (options.fold_constants) try foldConstants(scratch_allocator, program, options.max_iterations, &stats);
     try inferTypes(scratch_allocator, program, options.max_iterations, &stats, effect_summary);
@@ -58,14 +58,20 @@ pub fn optimize(scratch_allocator: std.mem.Allocator, program: *ir.Program, opti
     return stats;
 }
 
-fn markDirectCalls(program: *ir.Program, stats: *Stats) void {
+fn markDirectCalls(allocator: std.mem.Allocator, program: *ir.Program, stats: *Stats) !void {
+    var by_name: std.StringHashMapUnmanaged(ir.FunctionId) = .empty;
+    defer by_name.deinit(allocator);
+    for (program.functions) |function| {
+        const entry = try by_name.getOrPut(allocator, function.name);
+        // Preserve first-match semantics even for malformed duplicate names.
+        if (!entry.found_existing) entry.value_ptr.* = function.id;
+    }
     for (program.functions) |*function| for (function.blocks) |*block| for (block.instructions) |*instruction| {
         if (instruction.opcode != .call or instruction.direct_callee != null) continue;
-        for (program.functions) |callee| if (std.mem.eql(u8, callee.name, instruction.name)) {
-            instruction.direct_callee = callee.id;
+        if (by_name.get(instruction.name)) |id| {
+            instruction.direct_callee = id;
             stats.direct_calls += 1;
-            break;
-        };
+        }
     };
 }
 
@@ -92,29 +98,58 @@ fn inferFunctionValues(allocator: std.mem.Allocator, program: *ir.Program, funct
         types[result] = instruction.type;
     };
 
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+    const definitions = try scratch.alloc(?*ir.Instruction, count);
+    @memset(definitions, null);
+    const users = try scratch.alloc(std.ArrayList(ir.ValueId), count);
+    for (users) |*list| list.* = .empty;
+    var worklist: std.ArrayList(ir.ValueId) = .empty;
+    const queued = try scratch.alloc(bool, count);
+    @memset(queued, false);
+    for (function.blocks) |*block| for (block.instructions) |*instruction| {
+        const result = instruction.result orelse continue;
+        definitions[result] = instruction;
+        if (instruction.type != .dynamic) continue;
+        try worklist.append(scratch, result);
+        queued[result] = true;
+        for (instruction.operands) |operand| try users[operand].append(scratch, result);
+        for (instruction.phi_incoming) |incoming| try users[incoming.value].append(scratch, result);
+        // Parameter-local loads also depend on values assigned to the binding.
+        if (instruction.opcode == .load_local) {
+            for (function.blocks) |other_block| for (other_block.instructions) |store| {
+                if (store.opcode == .store_local and store.operands.len > 0 and
+                    std.mem.eql(u8, store.name, instruction.name))
+                {
+                    try users[store.operands[0]].append(scratch, result);
+                }
+            };
+        }
+    };
     var changed = false;
-    var pass: usize = 0;
-    while (pass < 8) : (pass += 1) {
-        var pass_changed = false;
-        for (function.blocks) |*block| for (block.instructions) |*instruction| {
-            const result = instruction.result orelse continue;
-            if (instruction.type != .dynamic) {
-                types[result] = instruction.type;
-                continue;
-            }
-            const inferred = if (instruction.opcode == .load_local)
-                inferParameterLoadType(program.*, function.*, instruction.*, types, effect_summary)
-            else
-                instructionType(program.*, instruction.*, types);
-            if (inferred == .dynamic or inferred == .void) continue;
-            instruction.type = inferred;
-            types[result] = inferred;
-            stats.inferred_values += 1;
-            pass_changed = true;
-            changed = true;
-        };
-        if (!pass_changed) break;
+    var cursor: usize = 0;
+    while (cursor < worklist.items.len) : (cursor += 1) {
+        const result = worklist.items[cursor];
+        queued[result] = false;
+        const instruction = definitions[result] orelse continue;
+        if (instruction.type != .dynamic) continue;
+        const inferred = if (instruction.opcode == .load_local)
+            inferParameterLoadType(program.*, function.*, instruction.*, types, effect_summary)
+        else
+            instructionType(program.*, instruction.*, types);
+        if (inferred == .dynamic or inferred == .void) continue;
+        instruction.type = inferred;
+        types[result] = inferred;
+        stats.inferred_values += 1;
+        changed = true;
+        for (users[result].items) |user| {
+            if (queued[user]) continue;
+            try worklist.append(scratch, user);
+            queued[user] = true;
+        }
     }
+
     return changed;
 }
 
@@ -225,30 +260,45 @@ fn inferReturnTypes(allocator: std.mem.Allocator, program: *ir.Program, stats: *
 }
 
 fn inferParameterTypes(allocator: std.mem.Allocator, program: *ir.Program, stats: *Stats) !bool {
+    // Aggregate call-site evidence in caller order once, rather than rebuilding
+    // every caller's ValueId type table for every candidate callee.
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+    const evidence = try scratch.alloc([]Evidence, program.functions.len);
+    const call_counts = try scratch.alloc(usize, program.functions.len);
+    @memset(call_counts, 0);
+    var by_id: std.AutoHashMapUnmanaged(ir.FunctionId, usize) = .empty;
+    var escaping_names: std.StringHashMapUnmanaged(void) = .empty;
+    for (program.functions, 0..) |function, index| {
+        try by_id.put(scratch, function.id, index);
+        evidence[index] = try scratch.alloc(Evidence, function.parameters.len);
+        @memset(evidence[index], .none);
+        for (function.blocks) |block| for (block.instructions) |instruction| {
+            if (instruction.opcode == .make_closure) try escaping_names.put(scratch, instruction.name, {});
+        };
+    }
+    for (program.functions) |caller| {
+        const types = try valueTypes(allocator, caller);
+        defer allocator.free(types);
+        for (caller.blocks) |block| for (block.instructions) |instruction| {
+            if (instruction.opcode != .call) continue;
+            const id = instruction.direct_callee orelse continue;
+            const index = by_id.get(id) orelse continue;
+            call_counts[index] += 1;
+            for (evidence[index], 0..) |*item, parameter| {
+                if (parameter >= instruction.operands.len) {
+                    item.* = .conflict;
+                } else item.add(types[instruction.operands[parameter]]);
+            }
+        };
+    }
     var changed = false;
-    for (program.functions) |*callee| {
-        if (callee.parameters.len == 0 or functionEscapes(program.*, callee.*)) continue;
-        const evidence = try allocator.alloc(Evidence, callee.parameters.len);
-        defer allocator.free(evidence);
-        @memset(evidence, .none);
-        var call_count: usize = 0;
-        for (program.functions) |caller| {
-            const types = try valueTypes(allocator, caller);
-            defer allocator.free(types);
-            for (caller.blocks) |block| for (block.instructions) |instruction| {
-                if (instruction.opcode != .call or instruction.direct_callee != callee.id) continue;
-                call_count += 1;
-                for (callee.parameters, 0..) |_, index| {
-                    if (index >= instruction.operands.len) {
-                        evidence[index] = .conflict;
-                    } else evidence[index].add(types[instruction.operands[index]]);
-                }
-            };
-        }
-        if (call_count == 0) continue;
-        for (callee.parameters, 0..) |*parameter, index| {
-            if (parameter.type != .dynamic or evidence[index] != .known) continue;
-            parameter.type = evidence[index].known;
+    for (program.functions, 0..) |*callee, index| {
+        if (call_counts[index] == 0 or escaping_names.contains(callee.name)) continue;
+        for (callee.parameters, evidence[index]) |*parameter, item| {
+            if (parameter.type != .dynamic or item != .known) continue;
+            parameter.type = item.known;
             stats.inferred_parameters += 1;
             changed = true;
         }
@@ -780,6 +830,40 @@ test "定数畳み込みでNaNと符号付きゼロを区別する" {
     const nan_bits: u64 = 0x7ff8_0000_0000_0042;
     const nan_value: f64 = @bitCast(nan_bits);
     try std.testing.expect(constantValueEqual(.{ .number = nan_value }, .{ .number = nan_value }));
+}
+
+test "型推論worklistは逆配置された長いdef-use連鎖を収束させる" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const count = 24;
+    const blocks = try a.alloc(ir.BasicBlock, count);
+    for (0..count) |id| {
+        const instructions = try a.alloc(ir.Instruction, 1);
+        instructions[0] = .{
+            .result = @intCast(id),
+            .opcode = if (id == 0) .const_number else .phi,
+            .type = if (id == 0) .number else .dynamic,
+            .span = @import("../frontend/ast.zig").emptySpan(),
+        };
+        if (id > 0) {
+            instructions[0].phi_incoming = try a.dupe(ir.PhiIncoming, &.{.{ .predecessor = @intCast(id - 1), .value = @intCast(id - 1) }});
+        }
+        blocks[count - 1 - id] = .{
+            .id = @intCast(id),
+            .name = "chain",
+            .instructions = instructions,
+            .terminator = if (id + 1 == count) .{ .return_value = @intCast(id) } else .{ .branch = @intCast(id + 1) },
+        };
+    }
+    const functions = try a.alloc(ir.Function, 1);
+    functions[0] = .{ .id = 0, .name = "chain", .parameters = &.{}, .blocks = blocks, .entry = 0, .return_type = .dynamic, .is_async = false, .is_test = false };
+    var program: ir.Program = .{ .arena = std.heap.ArenaAllocator.init(a), .functions = functions, .module_entries = &.{} };
+    defer program.deinit();
+    var stats: Stats = .{};
+    try std.testing.expect(try inferFunctionValues(std.testing.allocator, &program, &functions[0], &stats, &.{}));
+    for (blocks) |block| try std.testing.expectEqual(ir.Type.number, block.instructions[0].type);
+    try std.testing.expectEqual(@as(usize, count - 1), stats.inferred_values);
 }
 
 test "関数値として外部へ渡る関数の引数型を狭めない" {

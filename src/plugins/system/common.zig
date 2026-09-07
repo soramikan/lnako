@@ -20,7 +20,7 @@ pub fn toUtf8Alloc(runtime: *Runtime, value: Value) ![]u8 {
 }
 
 pub fn parseFloatValue(runtime: *Runtime, value: Value) !f64 {
-    if (value == .number) return value.number;
+    if (value == .number) return if (value.number == 0) 0 else value.number;
     if (value == .bigint) return value.bigint.toF64();
     const text_value = try runtime.valueToString(value);
     return number_mod.parseFloatPrefix(runtime.allocator(), text_value.string.units);
@@ -74,4 +74,11 @@ test "parseFloatとparseIntのJavaScript接頭辞規則を再現する" {
     try std.testing.expectEqual(@as(f64, 12.5), try parseFloatValue(&runtime, try runtime.stringUtf8("  12.5xyz")));
     try std.testing.expectEqual(@as(f64, -16), try parseIntValue(&runtime, try runtime.stringUtf8(" -0x10rest"), null));
     try std.testing.expect(std.math.isNan(try parseIntValue(&runtime, try runtime.stringUtf8("xyz"), null)));
+}
+
+test "parseFloat numeric negative zero follows String conversion" {
+    var runtime = Runtime.init(std.testing.allocator);
+    defer runtime.deinit();
+    const converted = try parseFloatValue(&runtime, .{ .number = -0.0 });
+    try std.testing.expectEqual(@as(u64, 0), @as(u64, @bitCast(converted)));
 }

@@ -398,6 +398,9 @@ const math_module = @import("math.zig");
 
 pub const parseFloatBuiltin = math_module.parseFloatBuiltin;
 pub const mathBuiltin = math_module.mathBuiltin;
+pub const isMathUnaryF64Command = math_module.isMathUnaryF64Command;
+pub const mathUnaryF64 = math_module.mathUnaryF64;
+pub const lnako_aot_math_unary_f64_call_site = math_module.lnako_aot_math_unary_f64_call_site;
 pub const initialRandomState = math_module.initialRandomState;
 pub const default_random_seed = math_module.default_random_seed;
 pub const nextRandom = math_module.nextRandom;
@@ -510,6 +513,7 @@ const primitive_module = @import("primitive.zig");
 
 pub const addParsedBuiltin = primitive_module.addParsedBuiltin;
 pub const sumParsedBuiltin = primitive_module.sumParsedBuiltin;
+pub const parseIntNumberF64 = primitive_module.parseIntNumberF64;
 pub const toBigIntBuiltin = primitive_module.toBigIntBuiltin;
 pub const jsAdd = primitive_module.jsAdd;
 pub const CutResult = primitive_module.CutResult;

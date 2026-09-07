@@ -91,7 +91,7 @@ pub fn run(
                 try stderr.flush();
                 std.process.exit(2);
             }
-            var ir_program = (try compiler_pipeline.compileInput(allocator, io, options.input, options.compat_js, stderr)) orelse {
+            var ir_program = (try compiler_pipeline.compileInputTraced(allocator, io, options.input, options.compat_js, stderr, init.environ_map.get("LNAKO_LLVM_TRACE") != null)) orelse {
                 try stderr.flush();
                 std.process.exit(1);
             };

@@ -1493,5 +1493,16 @@
     "id": "native-system-object-to-primitive-byte-prototype",
     "commands": ["文字列変換", "ハッシュ値計算", "ランダム配列生成", "表示"],
     "source": "B=ハッシュ値計算(\"A\",\"sha256\",undefined)\nAB=B[\"buffer\"]\nBP={\"toString\":関数()それは\"BUFFER-PROTO\";ここまで}\nB[\"__proto__\"]=BP\n文字列変換(B)を表示\nU=ランダム配列生成(2)\nUP={\"toString\":関数()それは\"UINT8-PROTO\";ここまで}\nU[\"__proto__\"]=UP\n文字列変換(U)を表示\nAP={\"valueOf\":関数()それは7;ここまで}\nAB[\"__proto__\"]=AP\n(AB-1)を表示\n"
+  },
+  {
+    "id": "native-numeric-fixed-abi-boundaries",
+    "commands": [
+      "INT",
+      "TOFLOAT",
+      "SQRT",
+      "ABS",
+      "整数部分"
+    ],
+    "source": "INT(1e23)を表示\nINT(5e-324)を表示\nINT(-5e-324)を表示\n(1/TOFLOAT(-0))を表示\n(1/TOFLOAT(\"-0\"))を表示\nSQRT(9)を表示\nABS(-3)を表示\n整数部分(-1.8)を表示\n"
   }
 ]
