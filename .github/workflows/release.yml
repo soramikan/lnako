@@ -190,14 +190,21 @@ jobs:
         run: |
           node tools/check_distribution.mjs \
             --archive "$RUNNER_TEMP/dist/lnako-${LNAKO_VERSION}-${{ matrix.target }}.${{ matrix.extension }}"
+      - name: Stage release assets
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/release-assets-${{ matrix.target }}"
+          cp "$RUNNER_TEMP"/dist/lnako-${{ needs.preflight.outputs.version }}-${{ matrix.target }}.* \
+             "$RUNNER_TEMP/benchmark-${{ matrix.target }}.json" \
+             "$RUNNER_TEMP/benchmark-${{ matrix.target }}.md" \
+             "$RUNNER_TEMP/release-assets-${{ matrix.target }}/"
       - name: Upload target release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: lnako-release-${{ matrix.target }}
-          path: |
-            ${{ runner.temp }}/dist/lnako-${{ needs.preflight.outputs.version }}-${{ matrix.target }}.*
-            ${{ runner.temp }}/benchmark-${{ matrix.target }}.json
-            ${{ runner.temp }}/benchmark-${{ matrix.target }}.md
+          # upload-artifactは複数directoryを指定すると共通祖先基準で階層を保持する。
+          # dist/等のサブディレクトリ混入を防ぐため、単一の平坦なdirectoryのみを対象にする。
+          path: ${{ runner.temp }}/release-assets-${{ matrix.target }}/*
           if-no-files-found: error
           retention-days: 30
 

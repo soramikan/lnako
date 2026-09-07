@@ -70,6 +70,13 @@ if (!attestationGate.includes("if: github.event_name == 'push'") ||
 if (!workflow.includes("merge-multiple: true") || !workflow.includes("LNAKO_BENCHMARK_COMMIT")) {
   throw new Error("Release workflowのartifact集約またはbenchmark provenanceが不完全です");
 }
+// upload-artifactは複数directoryを指定すると共通祖先基準で階層を保持するため、
+// artifactへdist/等のサブディレクトリが混入し集約側の平坦directory検査を壊す。
+// upload対象は単一の平坦なstaging directoryに限定する。
+const uploadBlock = workflow.match(/- name: Upload target release assets\n[\s\S]*?(?=\n      - name:|\n  \w)/)?.[0];
+if (!uploadBlock || !uploadBlock.includes("path: ${{ runner.temp }}/release-assets-${{ matrix.target }}/*")) {
+  throw new Error("Release assetのuploadが単一平坦directory経由になっていません");
+}
 if (!workflow.includes("key: release-toolchains-llvm-22.1.8-${{ matrix.target }}-v2-minimal") ||
     !workflow.includes("restore-keys: |\n            release-toolchains-llvm-22.1.8-${{ matrix.target }}-v1") ||
     !workflow.includes("run: node tools/prune_llvm_toolchain.mjs")) {
