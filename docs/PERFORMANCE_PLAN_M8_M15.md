@@ -109,3 +109,8 @@ Windowsでは `--windows-sampling` を指定し、独立したWPR instanceでCPU
 - M12基準のroot slot合計/runtime high-water: nbody 197→22 / 201→26、string-concat 29→9 / 33→13、binary-trees 100→26 / 459→117。各正解を照合済み。
 - M10+M15のmacOS診断snapshotでもnbody正解93200371、runtime root high-water 26、553,904 bytes、汎用builtin静的callゼロを確認。root push回数122,422は削減されておらず、root保持数と呼出し回数を区別する。計測toolはcompiler/binary hashを記録しているが、3 OS性能達成の証拠ではない。
 - 統合後のdiagnostics 12ケース/36測定も正解・JSON/Markdown検査成功。単発測定なので速度比較には使用しない。
+
+### native AOT検査のfixture件数同期
+
+- 03b2c41の通常CI coreで、native fixture 295件に対して成果物検査の固定値294が残っていることを検出。成果物検査とattestation検査を295件へ同期。
+- native AOTのshard partition/schema/tamper拒否self-test成功。CI互換基準確認の全コマンドを実行し、未更新source manifestに依存する2検査以外は成功。証拠更新後に同じ全ステップを再実行する。
