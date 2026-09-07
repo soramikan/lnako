@@ -37,7 +37,7 @@ export function validateDispatchCoverageEvidence(evidence, lock, standard, recor
   const expectedFixtureCount = evidence.scope.fixtureSelection === defaultDispatchCoverageSelection
     ? 56
     : evidence.scope.fixtureSelection === fullDispatchCoverageSelection
-      ? 227
+      ? 228
       : null;
   if (evidence.scope.catalogEntries !== 527 || evidence.scope.nativeEntries !== 523 || evidence.scope.nativeUniqueNames !== 492 ||
       expectedFixtureCount === null || evidence.scope.fixtureCount !== expectedFixtureCount ||

@@ -201,11 +201,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          profile_args=()
-          if [ "${RUNNER_OS:-}" = "Windows" ]; then profile_args=(--windows-sampling); fi
+          profile_args=(--output "$RUNNER_TEMP/numeric-profile-${{ matrix.target }}")
+          if [ "${RUNNER_OS:-}" = "Windows" ]; then profile_args+=(--windows-sampling); fi
           node tools/profile_aot_numeric_test.mjs
-          node tools/profile_aot_numeric.mjs "${profile_args[@]}" \
-            --output "$RUNNER_TEMP/numeric-profile-${{ matrix.target }}"
+          node tools/profile_aot_numeric.mjs "${profile_args[@]}"
 
       - name: Upload numeric profile artifacts
         if: always()

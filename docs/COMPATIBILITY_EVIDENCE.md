@@ -40,7 +40,7 @@ fixture coverageは `paired: 523`、`compat-js-only: 4`、その他の状態は0
 
 `dispatch-evidence.json` は `lnako.dispatch-evidence.v2` です。現行artifactはmacOS arm64で生成され、Interpreter trace 944 event、AOT trace 1,888 eventを持ち、公式source・公式生成JavaScript・`lnako run`・LLVM AOT O0の比較結果を記録しています。
 
-`dispatch-coverage-evidence.json` は `lnako.dispatch-coverage.v1` の sampled auditです。227 fixture、4,489 site、unambiguousなnative entry 426（unique name 424）を記録します。これは全527 entryの純LLVM AOT実行証明ではなく、同名命令の曖昧な推定も成功証拠として扱いません。
+`dispatch-coverage-evidence.json` は `lnako.dispatch-coverage.v1` の sampled auditです。228 fixture、4,509 site、unambiguousなnative entry 426（unique name 424）を記録します。これは全527 entryの純LLVM AOT実行証明ではなく、同名命令の曖昧な推定も成功証拠として扱いません。
 
 global binding、static literal、終了・例外、外部host、公式generated routeの差は、通常の命令siteとは別の証拠namespaceまたはfixture policyで扱います。理由を省略して成功件数だけを増やしません。
 

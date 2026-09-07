@@ -109,7 +109,7 @@ pub fn emitPreamble(emitter: *Emitter) !void {
             "declare void @lnako_aot_builtin_call_site(ptr, ptr, i64, i16, i64)\n" ++
             "declare void @lnako_aot_array_push_call_site(ptr, ptr, i64, i16, i64)\n" ++
             "declare void @lnako_aot_element_count_call_site(ptr, ptr, i64, i16, i64)\n" ++
-            "declare void @lnako_aot_math_unary_f64_call_site(ptr, double, i16, i64)\n" ++
+            "declare void @lnako_aot_math_unary_f64_call_site(ptr, double, i16, i64)\ndeclare void @lnako_aot_math_unary_value_call_site(ptr, ptr, i16, i64)\n" ++
             "declare void @lnako_aot_node_stdin_callback_call(ptr, ptr, ptr, i64, i16, i64)\n" ++
             "declare void @lnako_aot_timer_call_site(ptr, ptr, ptr, i64, i16, i64)\n" ++
             "declare void @lnako_aot_promise_call_site(ptr, ptr, ptr, ptr, i64, i16, i64)\n" ++

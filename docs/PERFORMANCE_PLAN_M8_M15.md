@@ -68,7 +68,15 @@ Windowsでは `--windows-sampling` を指定し、独立したWPR instanceでCPU
 ### M15a: compiler計測・索引化と数値builtin ABI
 
 - module-load/parse、semantic、AST lowering、SSA construction/verificationとLLVM各段階を分けて計測。ValueId def-use worklist、callsite evidence集約、関数名索引を追加。
-- 型がnumberと判明した純粋単項builtinを固定double ABIへ接続。dynamic入力とO0はgeneric経路を維持。dispatch trace/site/例外の境界を保持。
+- 純粋単項builtinは数値literalを固定double ABIへ、他の入力をtag確認付き単一Value ABIへ接続。数値以外は既存coercion、O0は従来generic経路を維持。dispatch trace/site/例外の境界を保持。
 - INTの科学表記・subnormal、TOFLOATの負のゼロを公式処理系に合わせて検証。generic Interpreter/AOTのTOFLOATもnumber -0を+0へ正規化し、文字列"-0"は負のゼロを保持。
 - fmt-check、単体922/922、公式差分11ケースInterpreter/AOT O0/O2成功。追加境界fixtureのIRで固定ABI call 7箇所、nbodyの段階別計測を確認。
 - nbodyのdynamic配列要素は専用ABI対象外。3 OS実行時間、compile-stress 30%、binary size目標は未測定であり達成とは扱わない。
+
+### M15aの追加回帰とCI修正
+
+- 直接callの推論型だけでは、文字列名からの動的entryの引数型を保証できない。`調整(9)`と`AWAIT実行("調整",["16"])`のSQRT結果が3/4になるようruntime tag確認を追加。単体923/923、公式差分11ケース成功。
+- 拡張dispatch auditは228 fixtures/4509 sites、native entry 426/unique name 424。新規fixtureを含め、検査の固定件数と現行文書を更新。
+- macOS nbodyで正解を保ち、実験snapshotのbinaryは7,526,464→553,904 bytes、IRの汎用builtin静的call 6→0。runtime call回数や3 OS性能達成とは区別する。
+- 比較CI run 34079518569のmacOS profile stepがBash 3の空配列+nounsetで失敗。常に非空の引数配列へ変更し、実際のworkflow shellをmacOS Bashでテスト。Linux/Windowsの同run比較・診断jobは成功。
+- Windows ETL取得を確認。次回からtracerpt XML/summaryも保存し、別hostでの解析を可能にする。ETL取得だけではCPUの原因分析完了とは扱わない。

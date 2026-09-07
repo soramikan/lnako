@@ -107,6 +107,50 @@ pub export fn lnako_aot_math_unary_f64_call_site(out: *Value, value: f64, opcode
     success = runtime.failure_epoch == start_epoch;
 }
 
+pub export fn lnako_aot_math_unary_value_call_site(out: *Value, input: *const Value, opcode: u16, site_id: u64) callconv(.c) void {
+    const value = input.*;
+    out.* = .{};
+    const runtime = if (state.active_runtime) |*active| active else return;
+    var roots = [_]Value{value};
+    var frame: state.RootFrame = .{};
+    const root_input = value.tag != @intFromEnum(Tag.number);
+    if (root_input) runtime.pushRoots(&frame, &roots, roots.len);
+    defer if (root_input) runtime.popRoots(&frame);
+    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
+        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "builtin", site_id);
+        runtime.setFailure(error.UnknownCommand);
+        runtime.dispatch_trace.result(call_id, "unknown", opcode, "builtin", site_id, false);
+        return;
+    };
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    // Every opcode admitted by this ABI belongs to the ordinary builtin
+    // route. Keeping the route literal avoids pulling the full route
+    // classifier into a fixed-signature hot path.
+    const route = "builtin";
+    const call_id = runtime.dispatch_trace.begin(command_name, opcode, route, site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, opcode, route, site_id, success);
+    if (!isMathUnaryF64Command(command)) {
+        runtime.setFailure(error.UnknownCommand);
+        return;
+    }
+    out.* = mathUnaryValue(runtime, command, value) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    success = runtime.failure_epoch == start_epoch;
+}
+
+fn mathUnaryValue(runtime: *Runtime, command: aot_builtin.Command, value: Value) !Value {
+    if (value.tag == @intFromEnum(Tag.number)) return numberValue(try mathUnaryF64(command, @bitCast(value.payload)));
+    return switch (command) {
+        .to_int => numberValue(try state.parseIntBuiltin(runtime, value)),
+        .to_float => numberValue(try parseFloatBuiltin(runtime, value)),
+        else => mathBuiltin(runtime, command, &.{value}),
+    };
+}
+
 pub fn parseFloatBuiltin(runtime: *Runtime, value: Value) !f64 {
     return switch (@as(Tag, @enumFromInt(value.tag))) {
         .number => blk: {
@@ -312,4 +356,13 @@ test "fixed TOFLOAT normalizes negative zero like parseFloat String" {
     defer runtime.deinit();
     const generic = try parseFloatBuiltin(&runtime, numberValue(-0.0));
     try std.testing.expectEqual(@as(u64, 0), @as(u64, @bitCast(generic)));
+}
+
+test "single Value math ABI keeps numeric fast path and string coercion" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const numeric = try mathUnaryValue(&runtime, .math_sqrt, numberValue(16));
+    const coerced = try mathUnaryValue(&runtime, .math_sqrt, state.staticStringValue("16"));
+    try std.testing.expectEqual(@as(f64, 4), @as(f64, @bitCast(numeric.payload)));
+    try std.testing.expectEqual(@as(f64, 4), @as(f64, @bitCast(coerced.payload)));
 }

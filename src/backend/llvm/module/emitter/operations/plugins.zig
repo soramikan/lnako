@@ -33,6 +33,13 @@ const functions_mod = @import("../functions.zig");
 const preamble_mod = @import("../preamble.zig");
 const declarations_mod = @import("../declarations.zig");
 
+fn isNumberLiteral(function: ir.Function, value: ir.ValueId) bool {
+    for (function.blocks) |block| for (block.instructions) |instruction| {
+        if (instruction.result == value) return instruction.opcode == .const_number;
+    };
+    return false;
+}
+
 fn isFixedMathUnaryBuiltin(command: aot_builtin.Command) bool {
     return switch (command) {
         .to_int,
@@ -440,21 +447,18 @@ pub fn writeBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: i
         try emitter.debugSuffix(instruction.span, scope);
         return;
     }
-    if (emitter.optimized and instruction.operands.len == 1 and isFixedMathUnaryBuiltin(command) and
-        try emitter.valueTypeOf(function, instruction.operands[0]) == .number)
-    {
-        // Numeric pure builtins have no object roots or hidden global side
-        // effects. Unbox the proven number directly and use the fixed f64
-        // ABI, leaving dynamic operands on the generic Value path below.
-        const label = try std.fmt.allocPrint(emitter.allocator, "math.number.{d}", .{result});
-        defer emitter.allocator.free(label);
-        try constants_mod.writeNumberOperand(emitter, function, instruction.operands[0], label, instruction.span, scope);
-        try emitter.output.writer.print("  call void @lnako_aot_math_unary_f64_call_site(ptr %root.slot.{d}, double %{s}, i16 {d}, i64 {d})", .{
-            result,
-            label,
-            @intFromEnum(command),
-            site_id,
-        });
+    if (emitter.optimized and instruction.operands.len == 1 and isFixedMathUnaryBuiltin(command)) {
+        // Inferred parameter types cannot constrain dynamic named entry. Only
+        // a literal is unconditionally unboxed here; the single-Value ABI
+        // checks the runtime tag and preserves generic coercion otherwise.
+        if (isNumberLiteral(function, instruction.operands[0])) {
+            const label = try std.fmt.allocPrint(emitter.allocator, "math.number.{d}", .{result});
+            defer emitter.allocator.free(label);
+            try constants_mod.writeNumberOperand(emitter, function, instruction.operands[0], label, instruction.span, scope);
+            try emitter.output.writer.print("  call void @lnako_aot_math_unary_f64_call_site(ptr %root.slot.{d}, double %{s}, i16 {d}, i64 {d})", .{ result, label, @intFromEnum(command), site_id });
+        } else {
+            try emitter.output.writer.print("  call void @lnako_aot_math_unary_value_call_site(ptr %root.slot.{d}, ptr %root.slot.{d}, i16 {d}, i64 {d})", .{ result, instruction.operands[0], @intFromEnum(command), site_id });
+        }
         try emitter.debugSuffix(instruction.span, scope);
         try emitter.output.writer.print("  %v{d} = load %lnako.Value, ptr %root.slot.{d}", .{ result, result });
         try emitter.debugSuffix(instruction.span, scope);

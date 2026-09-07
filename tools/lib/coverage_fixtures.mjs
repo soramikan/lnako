@@ -69,7 +69,7 @@ export async function loadSelectedFixtures() {
       fixtures.push({ file: specification.file, ...testCase });
     }
   }
-  const expectedFixtureCount = env.arguments_.includeNative ? 227 : 56;
+  const expectedFixtureCount = env.arguments_.includeNative ? 228 : 56;
   if (fixtures.length !== expectedFixtureCount) throw new Error(`dispatch coverageのfixture数が想定外です: ${fixtures.length}`);
   return fixtures;
 }

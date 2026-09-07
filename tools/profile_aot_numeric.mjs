@@ -88,6 +88,11 @@ export function profile(arguments_) {
         run("wpr.exe", ["-stop", join(output, "nbody-cpu.etl"), "-instancename", instance], { log: "wpr-stop.log" });
       }
       manifest.sampling = "etl-collected-analysis-required";
+      // Export the ETL while still on Windows so analysis can run on another
+      // host without requiring Windows trace decoding libraries.
+      // https://learn.microsoft.com/windows-server/administration/windows-commands/tracerpt
+      run("tracerpt.exe", [join(output, "nbody-cpu.etl"), "-o", join(output, "nbody-events.xml"), "-of", "XML", "-summary", join(output, "trace-summary.txt"), "-y"], { log: "tracerpt.log" });
+      manifest.trace_export = "xml-and-summary-collected";
     }
   } finally {
     writeFileSync(join(output, "profile.json"), JSON.stringify(manifest, null, 2) + "\n");
