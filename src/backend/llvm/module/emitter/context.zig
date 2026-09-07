@@ -1,6 +1,7 @@
 const std = @import("std");
 const ir = @import("../../../../ir/nako_ir.zig");
 const local_storage = @import("../../../../ir/local_storage.zig");
+const typed_abi = @import("typed_abi.zig");
 const ast = @import("../../../../frontend/ast.zig");
 const aot_abi = @import("../../../../runtime/aot_abi.zig");
 const aot_builtin = @import("../../../../runtime/aot_builtin.zig");
@@ -43,6 +44,7 @@ pub const Emitter = struct {
     global_index_map: std.StringHashMapUnmanaged(usize) = .empty,
     // function.id → ValueId順の型表。valueTypeの全命令走査を一度に済ませる。
     value_types: std.AutoHashMapUnmanaged(ir.FunctionId, []ir.Type) = .empty,
+    typed_analysis: ?typed_abi.ProgramAnalysis = null,
 
     pub fn deinit(self: *Emitter) void {
         self.globals.deinit(self.allocator);
@@ -63,6 +65,7 @@ pub const Emitter = struct {
         var value_type_entries = self.value_types.valueIterator();
         while (value_type_entries.next()) |types| self.allocator.free(types.*);
         self.value_types.deinit(self.allocator);
+        if (self.typed_analysis) |*analysis| analysis.deinit(self.allocator);
         self.output.deinit();
     }
 
@@ -89,6 +92,11 @@ pub const Emitter = struct {
         }
         const types = entry.value_ptr.*;
         return if (value < types.len) types[value] else .dynamic;
+    }
+
+    pub fn typedAnalysis(self: *Emitter) !*typed_abi.ProgramAnalysis {
+        if (self.typed_analysis == null) self.typed_analysis = try typed_abi.analyzeProgram(self.allocator, self.program);
+        return &self.typed_analysis.?;
     }
 
     pub fn localNames(self: *Emitter, function: ir.Function) ![][]const u8 {
@@ -219,6 +227,19 @@ pub fn primaryModuleName(program: ir.Program) []const u8 {
 pub fn parameterIndex(function: ir.Function, name: []const u8) ?usize {
     for (function.parameters, 0..) |parameter, index| if (std.mem.eql(u8, parameter.name, name)) return index;
     return null;
+}
+
+/// Write a primitive SSA value produced by a typed function body.  Parameter
+/// ValueIds are represented by the typed ABI arguments; all other values are
+/// named after their IR ValueId.  Keeping this mapping beside the generic
+/// ValueId helpers avoids accidentally reading a boxed `%vN` in a `double` or
+/// `i1` body.
+pub fn writeTypedValueRef(writer: *std.Io.Writer, function: ir.Function, value: ir.ValueId) !void {
+    for (function.parameters, 0..) |parameter, index| if (parameter.value == value) {
+        try writer.print("%typed.arg.{d}", .{index});
+        return;
+    };
+    try writer.print("%typed.v{d}", .{value});
 }
 
 pub fn maxClosureCaptureCount(program: ir.Program, function: ir.Function) usize {

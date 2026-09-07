@@ -2,6 +2,7 @@ const std = @import("std");
 const target_builtin = @import("builtin");
 const ir = @import("../../../../../ir/nako_ir.zig");
 const ast = @import("../../../../../frontend/ast.zig");
+const typed_abi = @import("../typed_abi.zig");
 const aot_abi = @import("../../../../../runtime/aot_abi.zig");
 const aot_builtin = @import("../../../../../runtime/aot_builtin.zig");
 const system_constant = @import("../../../../../runtime/system_constant.zig");
@@ -75,6 +76,34 @@ pub fn writeBooleanOperand(emitter: *Emitter, function: ir.Function, value: ir.V
     try writeValueRef(emitter, function, value);
     try emitter.output.writer.writeByte(')');
     try emitter.debugSuffix(span, scope);
+}
+
+/// Emit an operand for a call whose typed signature was proven by the
+/// optimizer.  The proof is deliberately checked by the caller; these paths
+/// only perform the lossless unboxing needed at the generic-to-typed boundary.
+pub fn writeTypedOperand(emitter: *Emitter, function: ir.Function, value: ir.ValueId, scalar: typed_abi.Scalar, label: []const u8, span: ast.Span, scope: usize) !void {
+    if (emitter.optimized) {
+        // The generic caller must use the canonical optimizer proof.  The
+        // typed analysis also contains speculative virtual parameter types;
+        // consulting it here would unbox a dynamic entry without a tag check.
+        const proven_type = try emitter.valueTypeOf(function, value);
+        if ((scalar == .number and proven_type == .number) or (scalar == .boolean and proven_type == .boolean)) {
+            try emitter.output.writer.print("  %{s}.bits = extractvalue %lnako.Value ", .{label});
+            try writeValueRef(emitter, function, value);
+            try emitter.output.writer.writeAll(", 1");
+            try emitter.debugSuffix(span, scope);
+            switch (scalar) {
+                .number => try emitter.output.writer.print("  %{s} = bitcast i64 %{s}.bits to double", .{ label, label }),
+                .boolean => try emitter.output.writer.print("  %{s} = trunc i64 %{s}.bits to i1", .{ label, label }),
+            }
+            try emitter.debugSuffix(span, scope);
+            return;
+        }
+    }
+    switch (scalar) {
+        .number => try writeNumberOperand(emitter, function, value, label, span, scope),
+        .boolean => try writeBooleanOperand(emitter, function, value, label, span, scope),
+    }
 }
 
 pub fn writeTruthyOperand(emitter: *Emitter, function: ir.Function, value: ir.ValueId, label: []const u8, span: ast.Span, scope: usize) !void {

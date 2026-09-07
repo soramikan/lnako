@@ -136,3 +136,11 @@ Windowsでは `--windows-sampling` を指定し、独立したWPR instanceでCPU
 - Node `v24.15.0` 固定の `tools/compare_native_oracle.mjs --no-build` は、公式CLI・公式生成JavaScript・`lnako run`・LLVM AOT O0/O1/O2/O3の7経路 **295/295** 成功。既知の公式経路差はCLI基準24件、公式生成JavaScript基準44件で、比較器が許容する既知差として記録された。
 - diagnostics suiteはNodeテスト **2/2** 成功、公式cnakoとInterpreter/AOT O2の実測は **12 cases / 48 measurements、failures 0**。smoke測定ではprocess-batched wallの200ms未満警告が27件あり、正解不一致ではない。
 - `git diff --check` は成功。Windows callback fixtureの50ms raceを0.01秒間隔・最大100回のbounded pollへ置換した修正を受領し、Node 24.15.0でdispatch coverageを再測定した。結果は228 fixtures/4510 sites、native entry 426/unique name 424で、17証拠の再生成へ進める状態である。
+
+### M11: Number / Boolean internal ABI
+
+- 非破壊の型解析でNumber / Booleanの内部関数を生成し、型が確定した直接呼出しをdouble / i1引数・戻り値へ接続する。再帰・相互再帰は固定点で解析する。
+- 名前による動的呼出しに備え、公開関数のgeneric Value経路を保持。直接呼出しの観測だけで公開引数型を狭めず、不明な型・capture・非対応命令はgeneric経路に戻す。
+- 独立レビューで数値・真偽値・再帰・callback・NaN/Infinity/-0・それのInterpreter/AOT O2同値を確認し、現時点でP1/P2なし。隔離環境のfmt-checkと全単体テスト成功。公式/Interpreter/O0/O1/O2/O3差分11ケースも成功。拡張fixtureを含むdispatch auditは228 fixtures / 4,515 sites / native entry 426で成功。性能の最終評価は継続中。
+- 2,000回の数値更新を並べた追加stressでは、b394fa9とM11の生成LLVM IRが5,220,471 bytes、SHA-256 `164f9337086018e296f4c84f6c329a043b98c7b9d379306e6afb1374eda2e50e`で完全一致。IR生成は42 / 15 msに対しLLVM最適化・object出力が約14 / 19秒を占めた。同時負荷下の単発測定なので速度差を変更効果とは扱わない。typed解析の回帰は検出されず、巨大IRのLLVM処理負荷は残る。
+- M8/M14とWindows callback fixture修正を統合した状態でもfmt-check・全単体・公式11ケース（InterpreterとAOT O0〜O3）が成功。最終dispatchは228 fixtures / 4,516 sites、17証拠再生成後のCI互換baseline 13項目すべて成功。

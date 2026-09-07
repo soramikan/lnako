@@ -3,6 +3,7 @@ const target_builtin = @import("builtin");
 const ir = @import("../../../../../ir/nako_ir.zig");
 const ast = @import("../../../../../frontend/ast.zig");
 const local_storage = @import("../../../../../ir/local_storage.zig");
+const typed_abi = @import("../typed_abi.zig");
 const aot_abi = @import("../../../../../runtime/aot_abi.zig");
 const aot_builtin = @import("../../../../../runtime/aot_builtin.zig");
 const system_constant = @import("../../../../../runtime/system_constant.zig");
@@ -63,6 +64,21 @@ pub fn writeCall(emitter: *Emitter, function: ir.Function, locals: []const []con
         try writeCallResult(emitter, result, instruction.span, scope);
         return;
     }
+    if (emitter.optimized) if (callee) |resolved| {
+        const typed_analysis = try emitter.typedAnalysis();
+        const argument_types = try emitter.allocator.alloc(ir.Type, instruction.operands.len);
+        defer emitter.allocator.free(argument_types);
+        for (argument_types, instruction.operands) |*argument_type, operand| {
+            // This is the generic caller path.  Virtual signature types are
+            // only valid inside a scalar body; using them here would make a
+            // dynamically callable generic entry jump into the scalar ABI.
+            argument_type.* = try emitter.valueTypeOf(function, operand);
+        }
+        if (typed_analysis.callSpecialization(resolved, argument_types)) |scalar| {
+            try writeTypedCall(emitter, function, resolved, scalar, instruction, scope);
+            return;
+        }
+    };
     try emitter.output.writer.print("  %v{d} = call %lnako.Value @lnako.fn.{d}(ptr null", .{ result, callee.?.id });
     for (instruction.operands) |operand| {
         try emitter.output.writer.writeAll(", %lnako.Value ");
@@ -71,6 +87,99 @@ pub fn writeCall(emitter: *Emitter, function: ir.Function, locals: []const []con
     try emitter.output.writer.writeByte(')');
     try emitter.debugSuffix(instruction.span, scope);
     try writeCallResult(emitter, result, instruction.span, scope);
+}
+
+/// Emit a direct primitive call from another primitive body.  The generic
+/// caller boundary is responsible for boxing and pending-exception handling;
+/// this path only passes the already-unboxed scalar values through the typed
+/// ABI and leaves the following IR `exception_pending` instruction intact.
+pub fn writeTypedBodyCall(emitter: *Emitter, caller: ir.Function, callee: ir.Function, scalar: typed_abi.Scalar, instruction: ir.Instruction, scope: usize) !void {
+    const result = instruction.result orelse return error.MissingInstructionResult;
+    if (instruction.operands.len != callee.parameters.len) return error.InvalidTypedCall;
+    const typed_analysis = try emitter.typedAnalysis();
+    const global_index = emitter.globalIndex("それ") orelse return error.MissingResultGlobal;
+    if (typed_abi.scalarType(typed_analysis.valueType(caller.id, result)) != scalar) return error.InvalidTypedCall;
+    try emitter.output.writer.print("  %typed.v{d} = call {s} ", .{ result, scalar.llvmType() });
+    try typed_abi.writeName(&emitter.output.writer, scalar, callee.id);
+    try emitter.output.writer.writeAll("(ptr %context");
+    for (instruction.operands, 0..) |operand, index| {
+        const parameter_type = typed_analysis.parameterType(callee.id, index);
+        const parameter_scalar = typed_abi.scalarType(parameter_type) orelse return error.InvalidTypedCall;
+        if (typed_analysis.valueType(caller.id, operand) != parameter_type) return error.InvalidTypedCall;
+        try emitter.output.writer.print(", {s} ", .{parameter_scalar.llvmType()});
+        try context.writeTypedValueRef(&emitter.output.writer, caller, operand);
+    }
+    try emitter.output.writer.writeByte(')');
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %typed.call.result.bits.{d} = ", .{result});
+    switch (scalar) {
+        .number => try emitter.output.writer.print("bitcast double %typed.v{d} to i64", .{result}),
+        .boolean => try emitter.output.writer.print("zext i1 %typed.v{d} to i64", .{result}),
+    }
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %typed.call.result.boxed.{d} = insertvalue %lnako.Value {{ i8 {d}, i64 0 }}, i64 %typed.call.result.bits.{d}, 1", .{ result, scalar.valueTag(), result });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %typed.call.pending.{d} = call i32 @lnako_aot_exception_pending()", .{result});
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %typed.call.is-pending.{d} = icmp ne i32 %typed.call.pending.{d}, 0", .{ result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %typed.call.previous.{d} = load %lnako.Value, ptr @lnako.global.{d}", .{ result, global_index });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %typed.call.selected.{d} = select i1 %typed.call.is-pending.{d}, %lnako.Value %typed.call.previous.{d}, %lnako.Value %typed.call.result.boxed.{d}", .{ result, result, result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  store %lnako.Value %typed.call.selected.{d}, ptr @lnako.global.{d}", .{ result, global_index });
+    try emitter.debugSuffix(instruction.span, scope);
+}
+
+fn writeTypedCall(emitter: *Emitter, caller: ir.Function, callee: ir.Function, scalar: typed_abi.Scalar, instruction: ir.Instruction, scope: usize) !void {
+    const result = instruction.result orelse return error.MissingInstructionResult;
+    if (instruction.operands.len != callee.parameters.len) return error.InvalidTypedCall;
+    const typed_analysis = try emitter.typedAnalysis();
+    for (instruction.operands, 0..) |operand, index| {
+        const parameter_type = typed_analysis.parameterType(callee.id, index);
+        const parameter_scalar = typed_abi.scalarType(parameter_type) orelse return error.InvalidTypedCall;
+        const label = try std.fmt.allocPrint(emitter.allocator, "typed.call.{d}.arg.{d}", .{ result, index });
+        defer emitter.allocator.free(label);
+        try constants_mod.writeTypedOperand(emitter, caller, operand, parameter_scalar, label, instruction.span, scope);
+    }
+    try emitter.output.writer.print("  %typed.call.{d} = call {s} ", .{ result, scalar.llvmType() });
+    try typed_abi.writeName(&emitter.output.writer, scalar, callee.id);
+    try emitter.output.writer.writeAll("(ptr null");
+    for (callee.parameters, 0..) |_, index| {
+        const parameter_scalar = typed_abi.scalarType(typed_analysis.parameterType(callee.id, index)) orelse return error.InvalidTypedCall;
+        try emitter.output.writer.print(", {s} %typed.call.{d}.arg.{d}", .{ parameter_scalar.llvmType(), result, index });
+    }
+    try emitter.output.writer.writeByte(')');
+    try emitter.debugSuffix(instruction.span, scope);
+
+    try emitter.output.writer.print("  %typed.result.bits.{d} = ", .{result});
+    switch (scalar) {
+        .number => try emitter.output.writer.print("bitcast double %typed.call.{d} to i64", .{result}),
+        .boolean => try emitter.output.writer.print("zext i1 %typed.call.{d} to i64", .{result}),
+    }
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %typed.result.boxed.{d} = insertvalue %lnako.Value {{ i8 {d}, i64 0 }}, i64 %typed.result.bits.{d}, 1", .{ result, scalar.valueTag(), result });
+    try emitter.debugSuffix(instruction.span, scope);
+    try writeTypedCallResult(emitter, result, instruction.span, scope);
+}
+
+/// A primitive callee cannot return the undefined Value used by the generic
+/// exception ABI.  Materialize it at the call boundary when a pending
+/// exception is observed, then keep the existing `それ` global selection rule.
+fn writeTypedCallResult(emitter: *Emitter, result: ir.ValueId, span: ast.Span, scope: usize) !void {
+    const global_index = emitter.globalIndex("それ") orelse return error.MissingResultGlobal;
+    try emitter.output.writer.print("  %call.result.pending.{d} = call i32 @lnako_aot_exception_pending()", .{result});
+    try emitter.debugSuffix(span, scope);
+    try emitter.output.writer.print("  %call.result.is-pending.{d} = icmp ne i32 %call.result.pending.{d}, 0", .{ result, result });
+    try emitter.debugSuffix(span, scope);
+    try emitter.output.writer.print("  %v{d} = select i1 %call.result.is-pending.{d}, %lnako.Value {{ i8 0, i64 0 }}, %lnako.Value %typed.result.boxed.{d}", .{ result, result, result });
+    try emitter.debugSuffix(span, scope);
+    try emitter.output.writer.print("  %call.result.previous.{d} = load %lnako.Value, ptr @lnako.global.{d}", .{ result, global_index });
+    try emitter.debugSuffix(span, scope);
+    try emitter.output.writer.print("  %call.result.selected.{d} = select i1 %call.result.is-pending.{d}, %lnako.Value %call.result.previous.{d}, %lnako.Value %v{d}", .{ result, result, result, result });
+    try emitter.debugSuffix(span, scope);
+    try emitter.output.writer.print("  store %lnako.Value %call.result.selected.{d}, ptr @lnako.global.{d}", .{ result, global_index });
+    try emitter.debugSuffix(span, scope);
 }
 
 pub fn writeCallValue(emitter: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, aggregate_count: usize) !void {

@@ -2,6 +2,7 @@ const std = @import("std");
 const target_builtin = @import("builtin");
 const ir = @import("../../../../ir/nako_ir.zig");
 const ast = @import("../../../../frontend/ast.zig");
+const typed_abi = @import("typed_abi.zig");
 const aot_abi = @import("../../../../runtime/aot_abi.zig");
 const aot_builtin = @import("../../../../runtime/aot_builtin.zig");
 const system_constant = @import("../../../../runtime/system_constant.zig");
@@ -79,5 +80,59 @@ pub fn writeTerminator(emitter: *Emitter, function: ir.Function, terminator: ir.
             try emitter.debugSuffix(span, scope);
         },
         else => return error.UnsupportedTerminator,
+    }
+}
+
+/// Emit a terminator for the primitive internal body.  Primitive functions do
+/// not own a `%lnako.RootFrame`; their caller observes pending exceptions and
+/// boxes undefined at the generic ABI boundary instead.
+pub fn writeTypedTerminator(emitter: *Emitter, function: ir.Function, terminator: ir.Terminator, scalar: typed_abi.Scalar, block_id: ir.BlockId, span: ast.Span, scope: usize, typed_analysis: *typed_abi.ProgramAnalysis) !void {
+    switch (terminator) {
+        .branch => |target| {
+            try emitter.output.writer.print("  br label %typed.bb.{d}.{d}", .{ function.id, target });
+            try emitter.debugSuffix(span, scope);
+        },
+        .conditional_branch => |branch| {
+            const condition_type = typed_abi.scalarType(typed_analysis.valueType(function.id, branch.condition)) orelse return error.InvalidTypedCondition;
+            if (condition_type == .number) {
+                try emitter.output.writer.print("  %typed.branch.condition.{d} = fcmp one double ", .{branch.condition});
+                try context.writeTypedValueRef(&emitter.output.writer, function, branch.condition);
+                try emitter.output.writer.writeAll(", 0.000000e+00");
+                try emitter.debugSuffix(span, scope);
+                try emitter.output.writer.print("  br i1 %typed.branch.condition.{d}, label %typed.bb.{d}.{d}, label %typed.bb.{d}.{d}", .{ branch.condition, function.id, branch.then_block, function.id, branch.else_block });
+            } else {
+                try emitter.output.writer.writeAll("  br i1 ");
+                try context.writeTypedValueRef(&emitter.output.writer, function, branch.condition);
+                try emitter.output.writer.print(", label %typed.bb.{d}.{d}, label %typed.bb.{d}.{d}", .{ function.id, branch.then_block, function.id, branch.else_block });
+            }
+            try emitter.debugSuffix(span, scope);
+        },
+        .return_value => |value| {
+            try emitter.output.writer.writeAll("  ret ");
+            try emitter.output.writer.writeAll(scalar.llvmType());
+            try emitter.output.writer.writeByte(' ');
+            if (value) |operand| try context.writeTypedValueRef(&emitter.output.writer, function, operand) else try writeTypedFallback(&emitter.output.writer, scalar);
+            try emitter.debugSuffix(span, scope);
+        },
+        .propagate_exception => {
+            try emitter.output.writer.writeAll("  ret ");
+            try emitter.output.writer.writeAll(scalar.llvmType());
+            try emitter.output.writer.writeByte(' ');
+            try writeTypedFallback(&emitter.output.writer, scalar);
+            try emitter.debugSuffix(span, scope);
+        },
+        .unreachable_terminator => {
+            try emitter.output.writer.writeAll("  unreachable");
+            try emitter.debugSuffix(span, scope);
+        },
+        else => return error.UnsupportedTypedTerminator,
+    }
+    _ = block_id;
+}
+
+fn writeTypedFallback(writer: *std.Io.Writer, scalar: typed_abi.Scalar) !void {
+    switch (scalar) {
+        .number => try writer.writeAll("0.000000e+00"),
+        .boolean => try writer.writeAll("false"),
     }
 }

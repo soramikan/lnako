@@ -6,6 +6,10 @@ pub const Options = struct {
     max_iterations: usize = 8,
     fold_constants: bool = true,
     eliminate_dead_code: bool = true,
+    /// AOT publishes top-level named functions through the dynamic global
+    /// table. Keep their public Value ABI dynamic; the LLVM emitter derives
+    /// private scalar variants separately.
+    preserve_named_dynamic: bool = false,
 };
 
 pub const Stats = struct {
@@ -51,9 +55,9 @@ pub fn optimize(scratch_allocator: std.mem.Allocator, program: *ir.Program, opti
     const effect_summary = try effect.analyze(scratch_allocator, program.*);
     defer effect.deinitAll(scratch_allocator, effect_summary);
     try markDirectCalls(scratch_allocator, program, &stats);
-    try inferTypes(scratch_allocator, program, options.max_iterations, &stats, effect_summary);
+    try inferTypes(scratch_allocator, program, options.max_iterations, &stats, effect_summary, options.preserve_named_dynamic);
     if (options.fold_constants) try foldConstants(scratch_allocator, program, options.max_iterations, &stats);
-    try inferTypes(scratch_allocator, program, options.max_iterations, &stats, effect_summary);
+    try inferTypes(scratch_allocator, program, options.max_iterations, &stats, effect_summary, options.preserve_named_dynamic);
     if (options.eliminate_dead_code) try eliminateDeadCode(scratch_allocator, program, &stats);
     return stats;
 }
@@ -75,15 +79,15 @@ fn markDirectCalls(allocator: std.mem.Allocator, program: *ir.Program, stats: *S
     };
 }
 
-fn inferTypes(allocator: std.mem.Allocator, program: *ir.Program, max_iterations: usize, stats: *Stats, effect_summary: []const effect.Summary) !void {
+fn inferTypes(allocator: std.mem.Allocator, program: *ir.Program, max_iterations: usize, stats: *Stats, effect_summary: []const effect.Summary, preserve_named_dynamic: bool) !void {
     var iteration: usize = 0;
     while (iteration < max_iterations) : (iteration += 1) {
         var changed = false;
         for (program.functions) |*function| {
             if (try inferFunctionValues(allocator, program, function, stats, effect_summary)) changed = true;
         }
-        if (try inferReturnTypes(allocator, program, stats)) changed = true;
-        if (try inferParameterTypes(allocator, program, stats)) changed = true;
+        if (try inferReturnTypes(allocator, program, stats, preserve_named_dynamic)) changed = true;
+        if (try inferParameterTypes(allocator, program, stats, preserve_named_dynamic)) changed = true;
         if (!changed) break;
     }
 }
@@ -234,9 +238,10 @@ fn inferPhiType(instruction: ir.Instruction, types: []const ir.Type) ir.Type {
     };
 }
 
-fn inferReturnTypes(allocator: std.mem.Allocator, program: *ir.Program, stats: *Stats) !bool {
+fn inferReturnTypes(allocator: std.mem.Allocator, program: *ir.Program, stats: *Stats, preserve_named_dynamic: bool) !bool {
     var changed = false;
     for (program.functions) |*function| {
+        if (preserve_named_dynamic and isNamedGlobalFunction(function.name)) continue;
         if (function.return_type != .dynamic) continue;
         const types = try valueTypes(allocator, function.*);
         defer allocator.free(types);
@@ -259,7 +264,7 @@ fn inferReturnTypes(allocator: std.mem.Allocator, program: *ir.Program, stats: *
     return changed;
 }
 
-fn inferParameterTypes(allocator: std.mem.Allocator, program: *ir.Program, stats: *Stats) !bool {
+fn inferParameterTypes(allocator: std.mem.Allocator, program: *ir.Program, stats: *Stats, preserve_named_dynamic: bool) !bool {
     // Aggregate call-site evidence in caller order once, rather than rebuilding
     // every caller's ValueId type table for every candidate callee.
     var arena = std.heap.ArenaAllocator.init(allocator);
@@ -295,6 +300,7 @@ fn inferParameterTypes(allocator: std.mem.Allocator, program: *ir.Program, stats
     }
     var changed = false;
     for (program.functions, 0..) |*callee, index| {
+        if (preserve_named_dynamic and isNamedGlobalFunction(callee.name)) continue;
         if (call_counts[index] == 0 or escaping_names.contains(callee.name)) continue;
         for (callee.parameters, evidence[index]) |*parameter, item| {
             if (parameter.type != .dynamic or item != .known) continue;
@@ -304,6 +310,10 @@ fn inferParameterTypes(allocator: std.mem.Allocator, program: *ir.Program, stats
         }
     }
     return changed;
+}
+
+fn isNamedGlobalFunction(name: []const u8) bool {
+    return !std.mem.endsWith(u8, name, "__$entry") and std.mem.indexOf(u8, name, "__lambda$") == null;
 }
 
 fn foldConstants(allocator: std.mem.Allocator, program: *ir.Program, max_iterations: usize, stats: *Stats) !void {

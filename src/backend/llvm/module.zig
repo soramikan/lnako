@@ -870,6 +870,12 @@ test "O1では証明済み数値と真偽判定をアンボックスしO0のIR�
     try std.testing.expect(std.mem.indexOf(u8, optimized_module.text, "call i1 @lnako.truthy") == null);
     try std.testing.expect(std.mem.indexOf(u8, optimized_module.text, ".bits = extractvalue %lnako.Value") != null);
     try std.testing.expect(std.mem.indexOf(u8, optimized_module.text, ".number = bitcast i64") != null);
+    const optimized_function = optimized_program.findFunction("optimized__F").?;
+    const typed_symbol = try std.fmt.allocPrint(std.testing.allocator, "@lnako.fn.number.{d}", .{optimized_function.id});
+    defer std.testing.allocator.free(typed_symbol);
+    try std.testing.expect(std.mem.indexOf(u8, optimized_module.text, "define internal double ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, optimized_module.text, typed_symbol) != null);
+    try std.testing.expect(std.mem.indexOf(u8, optimized_module.text, "call double @lnako.fn.number.") != null);
 }
 
 test "O1では証明済み数値・真偽比較をfcmp/icmpへ出力する" {
@@ -899,6 +905,49 @@ test "O1では証明済み数値・真偽比較をfcmp/icmpへ出力する" {
     defer optimized_module.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.indexOf(u8, optimized_module.text, "call void @lnako_aot_compare") == null);
     try std.testing.expect(std.mem.indexOf(u8, optimized_module.text, "fcmp olt double") != null);
+}
+
+test "O1 typed ABIは証明された再帰をtyped body間で呼ぶ" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    const optimizer = @import("../../ir/optimizer.zig");
+    const source = "●(Nを)Fとは\nもしN<1ならば\n0で戻る\n違えば\nF(N-1)で戻る\nここまで\nここまで\nF(2)を表示\n";
+    var parsed = try parser.parse(std.testing.allocator, source, "typed-recursion.nako3");
+    defer parsed.deinit();
+    try std.testing.expect(parsed.succeeded());
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "typed-recursion.nako3");
+    defer analyzed.deinit();
+    try std.testing.expect(analyzed.succeeded());
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "typed_recursion", "typed-recursion.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    _ = try optimizer.optimize(std.testing.allocator, &program, .{});
+    var function_id: ?ir.FunctionId = null;
+    for (program.functions) |*function| if (std.mem.endsWith(u8, function.name, "__F")) {
+        function_id = function.id;
+        for (function.parameters) |*parameter| parameter.type = .number;
+        function.return_type = .number;
+        for (function.blocks) |*block| for (block.instructions) |*instruction| {
+            switch (instruction.opcode) {
+                .load_local => instruction.type = .number,
+                .binary => {
+                    if (std.mem.eql(u8, instruction.operator, "<")) instruction.type = .boolean else if (std.mem.eql(u8, instruction.operator, "-")) instruction.type = .number;
+                },
+                else => {},
+            }
+        };
+        break;
+    };
+    const id = function_id orelse return error.MissingRecursiveFunction;
+    var module = try generate(std.testing.allocator, program, "typed-recursion.nako3", true);
+    defer module.deinit(std.testing.allocator);
+    const typed_symbol = try std.fmt.allocPrint(std.testing.allocator, "@lnako.fn.number.{d}", .{id});
+    defer std.testing.allocator.free(typed_symbol);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, typed_symbol) != null);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "call double @lnako.fn.number.") != null);
 }
 
 test "単項算術は動的ABIとNumberの高速経路をLLVM IRへ出力する" {

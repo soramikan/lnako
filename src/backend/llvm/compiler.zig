@@ -83,7 +83,7 @@ pub fn compile(allocator: std.mem.Allocator, io: std.Io, program: ir.Program, op
             .o2 => 8,
             .o3 => 12,
         };
-        const stats = try optimizer.optimize(allocator, &optimized_program.?, .{ .max_iterations = max_iterations });
+        const stats = try optimizer.optimize(allocator, &optimized_program.?, .{ .max_iterations = max_iterations, .preserve_named_dynamic = true });
         try timer.phase(diagnostics, "Nako SSA最適化");
         var report = try verifier.verify(allocator, optimized_program.?);
         defer report.deinit();

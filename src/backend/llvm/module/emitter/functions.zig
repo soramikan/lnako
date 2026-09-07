@@ -2,6 +2,7 @@ const std = @import("std");
 const target_builtin = @import("builtin");
 const ir = @import("../../../../ir/nako_ir.zig");
 const local_storage = @import("../../../../ir/local_storage.zig");
+const typed_abi = @import("typed_abi.zig");
 const root_liveness = @import("../../../../ir/root_liveness.zig");
 const roots_mod = @import("roots.zig");
 const ast = @import("../../../../frontend/ast.zig");
@@ -119,6 +120,264 @@ pub fn writeFunction(emitter: *Emitter, function: ir.Function) !void {
         try terminators_mod.writeTerminator(emitter, function, block.terminator, terminator_span, scope);
     }
     try emitter.output.writer.writeAll("}\n\n");
+    if (emitter.optimized) {
+        const typed_analysis = try emitter.typedAnalysis();
+        if (typed_analysis.scalar(function.id)) |scalar| try writeTypedFunction(emitter, function, scalar, typed_analysis);
+    }
+}
+
+fn writeTypedFunction(emitter: *Emitter, function: ir.Function, scalar: typed_abi.Scalar, typed_analysis: *typed_abi.ProgramAnalysis) !void {
+    // Generic and scalar variants have distinct DISubprogram metadata. LLVM
+    // rejects attaching one DISubprogram to both definitions.
+    const scope = 5 + emitter.program.functions.len + function.id;
+    const locals = try emitter.localNames(function);
+    defer emitter.allocator.free(locals);
+    try emitter.output.writer.print("define internal {s} ", .{scalar.llvmType()});
+    try typed_abi.writeName(&emitter.output.writer, scalar, function.id);
+    try emitter.output.writer.print("(ptr %context", .{});
+    for (function.parameters, 0..) |_, index| {
+        const parameter_scalar = typed_abi.scalarType(typed_analysis.parameterType(function.id, index)) orelse return error.InvalidTypedCall;
+        try emitter.output.writer.print(", {s} %typed.arg.{d}", .{ parameter_scalar.llvmType(), index });
+    }
+    try emitter.output.writer.print(") !dbg !{d} {{\n", .{scope});
+
+    for (function.blocks) |block| {
+        try emitter.output.writer.print("typed.bb.{d}.{d}:\n", .{ function.id, block.id });
+        if (block.id == function.entry) {
+            for (locals, 0..) |name, index| {
+                const local_scalar = typed_analysis.localScalar(function, name) orelse return error.InvalidTypedLocal;
+                try emitter.output.writer.print("  %typed.local.{d} = alloca {s}\n", .{ index, local_scalar.llvmType() });
+            }
+            for (function.parameters, 0..) |parameter, parameter_index| {
+                const local_index = context.nameIndex(locals, parameter.name) orelse return error.InvalidTypedLocal;
+                const parameter_scalar = typed_abi.scalarType(typed_analysis.parameterType(function.id, parameter_index)) orelse return error.InvalidTypedCall;
+                try emitter.output.writer.print("  store {s} %typed.arg.{d}, ptr %typed.local.{d}\n", .{ parameter_scalar.llvmType(), parameter_index, local_index });
+            }
+        }
+        for (block.instructions) |instruction| try writeTypedInstruction(emitter, function, locals, instruction, scope, typed_analysis);
+        try terminators_mod.writeTypedTerminator(emitter, function, block.terminator, scalar, block.id, ast.emptySpan(), scope, typed_analysis);
+    }
+    try emitter.output.writer.writeAll("}\n\n");
+}
+
+fn writeTypedInstruction(emitter: *Emitter, function: ir.Function, locals: []const []const u8, instruction: ir.Instruction, scope: usize, typed_analysis: *typed_abi.ProgramAnalysis) !void {
+    const result = instruction.result;
+    switch (instruction.opcode) {
+        .const_number => {
+            const id = result orelse return error.MissingInstructionResult;
+            try emitter.output.writer.print("  %typed.number.bits.{d} = bitcast double 0x{X:0>16} to i64", .{ id, @as(u64, @bitCast(instruction.number_value orelse 0)) });
+            try emitter.debugSuffix(instruction.span, scope);
+            try emitter.output.writer.print("  %typed.v{d} = bitcast i64 %typed.number.bits.{d} to double", .{ id, id });
+            try emitter.debugSuffix(instruction.span, scope);
+        },
+        .const_boolean => {
+            const id = result orelse return error.MissingInstructionResult;
+            try emitter.output.writer.print("  %typed.v{d} = select i1 true, i1 {s}, i1 false", .{ id, if (instruction.boolean_value) "true" else "false" });
+            try emitter.debugSuffix(instruction.span, scope);
+        },
+        .load_local => {
+            const id = result orelse return error.MissingInstructionResult;
+            const local_index = context.nameIndex(locals, instruction.name) orelse return error.UnknownLocal;
+            const local_scalar = typed_abi.scalarType(typed_analysis.valueType(function.id, id)) orelse return error.InvalidTypedLocal;
+            try emitter.output.writer.print("  %typed.v{d} = load {s}, ptr %typed.local.{d}", .{ id, local_scalar.llvmType(), local_index });
+            try emitter.debugSuffix(instruction.span, scope);
+        },
+        .store_local => {
+            if (instruction.operands.len != 1) return error.InvalidTypedInstruction;
+            const local_index = context.nameIndex(locals, instruction.name) orelse return error.UnknownLocal;
+            const local_scalar = typed_analysis.localScalar(function, instruction.name) orelse return error.InvalidTypedLocal;
+            try emitter.output.writer.writeAll("  store ");
+            try emitter.output.writer.writeAll(local_scalar.llvmType());
+            try emitter.output.writer.writeByte(' ');
+            try context.writeTypedValueRef(&emitter.output.writer, function, instruction.operands[0]);
+            try emitter.output.writer.print(", ptr %typed.local.{d}", .{local_index});
+            try emitter.debugSuffix(instruction.span, scope);
+        },
+        .binary => try writeTypedBinary(emitter, function, instruction, scope, typed_analysis),
+        .unary => try writeTypedUnary(emitter, function, instruction, scope, typed_analysis),
+        .call => {
+            if (instruction.is_builtin_call) {
+                try writeTypedBuiltinCall(emitter, function, instruction, scope, typed_analysis);
+            } else {
+                const callee_id = instruction.direct_callee orelse return error.UnsupportedTypedInstruction;
+                if (callee_id >= emitter.program.functions.len) return error.InvalidTypedCall;
+                const callee = emitter.program.functions[callee_id];
+                const scalar = typed_analysis.scalar(callee_id) orelse return error.InvalidTypedCall;
+                try calls_mod.writeTypedBodyCall(emitter, function, callee, scalar, instruction, scope);
+            }
+        },
+        .exception_pending => {
+            const id = result orelse return error.MissingInstructionResult;
+            try emitter.output.writer.print("  %typed.pending.i32.{d} = call i32 @lnako_aot_exception_pending()", .{id});
+            try emitter.debugSuffix(instruction.span, scope);
+            try emitter.output.writer.print("  %typed.v{d} = icmp ne i32 %typed.pending.i32.{d}, 0", .{ id, id });
+            try emitter.debugSuffix(instruction.span, scope);
+        },
+        .phi => {
+            const id = result orelse return error.MissingInstructionResult;
+            const result_scalar = typed_abi.scalarType(typed_analysis.valueType(function.id, id)) orelse return error.InvalidTypedInstruction;
+            try emitter.output.writer.print("  %typed.v{d} = phi {s} ", .{ id, result_scalar.llvmType() });
+            for (instruction.phi_incoming, 0..) |incoming, index| {
+                if (index > 0) try emitter.output.writer.writeAll(", ");
+                try emitter.output.writer.writeAll("[ ");
+                try context.writeTypedValueRef(&emitter.output.writer, function, incoming.value);
+                try emitter.output.writer.print(", %typed.bb.{d}.{d} ]", .{ function.id, incoming.predecessor });
+            }
+            try emitter.debugSuffix(instruction.span, scope);
+        },
+        .try_begin, .try_end => {},
+        else => return error.UnsupportedTypedInstruction,
+    }
+}
+
+fn writeTypedBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, typed_analysis: *typed_abi.ProgramAnalysis) !void {
+    const result = instruction.result orelse return error.MissingInstructionResult;
+    const command = typed_abi.scalarBuiltinCommand(instruction) orelse return error.UnsupportedTypedInstruction;
+    if (typed_abi.scalarType(typed_analysis.valueType(function.id, instruction.operands[0])) != .number or
+        typed_abi.scalarType(typed_analysis.valueType(function.id, result)) != .number) return error.InvalidTypedInstruction;
+    const site_id = instruction.site_id orelse return error.MissingDispatchSiteId;
+    const operand = try typedValueText(emitter, function, instruction.operands[0]);
+    defer emitter.allocator.free(operand);
+    try emitter.output.writer.print("  %typed.builtin.out.{d} = alloca %lnako.Value", .{result});
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  call void @lnako_aot_math_unary_f64_call_site(ptr %typed.builtin.out.{d}, double {s}, i16 {d}, i64 {d})", .{ result, operand, @intFromEnum(command), site_id });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %typed.builtin.value.{d} = load %lnako.Value, ptr %typed.builtin.out.{d}", .{ result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+    // Keep the ordinary call contract for `それ`: a failed builtin leaves the
+    // previous value visible while the following exception_pending instruction
+    // decides whether the typed body propagates the failure.
+    const global_index = emitter.globalIndex("それ") orelse return error.MissingResultGlobal;
+    try emitter.output.writer.print("  %typed.builtin.pending.{d} = call i32 @lnako_aot_exception_pending()", .{result});
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %typed.builtin.is-pending.{d} = icmp ne i32 %typed.builtin.pending.{d}, 0", .{ result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %typed.builtin.previous.{d} = load %lnako.Value, ptr @lnako.global.{d}", .{ result, global_index });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %typed.builtin.selected.{d} = select i1 %typed.builtin.is-pending.{d}, %lnako.Value %typed.builtin.previous.{d}, %lnako.Value %typed.builtin.value.{d}", .{ result, result, result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  store %lnako.Value %typed.builtin.selected.{d}, ptr @lnako.global.{d}", .{ result, global_index });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %typed.builtin.bits.{d} = extractvalue %lnako.Value %typed.builtin.value.{d}, 1", .{ result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+    try emitter.output.writer.print("  %typed.v{d} = bitcast i64 %typed.builtin.bits.{d} to double", .{ result, result });
+    try emitter.debugSuffix(instruction.span, scope);
+}
+
+fn writeTypedBinary(emitter: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, typed_analysis: *typed_abi.ProgramAnalysis) !void {
+    const result = instruction.result orelse return error.MissingInstructionResult;
+    if (instruction.operands.len < 2) return error.InvalidTypedInstruction;
+    const left_type = typed_abi.scalarType(typed_analysis.valueType(function.id, instruction.operands[0])) orelse return error.InvalidTypedInstruction;
+    const right_type = typed_abi.scalarType(typed_analysis.valueType(function.id, instruction.operands[1])) orelse return error.InvalidTypedInstruction;
+    const result_type = typed_abi.scalarType(typed_analysis.valueType(function.id, result)) orelse return error.InvalidTypedInstruction;
+    if (isNumberArithmetic(instruction.operator)) {
+        if (left_type != .number or right_type != .number or result_type != .number) return error.InvalidTypedInstruction;
+        const left = try typedValueText(emitter, function, instruction.operands[0]);
+        defer emitter.allocator.free(left);
+        const right = try typedValueText(emitter, function, instruction.operands[1]);
+        defer emitter.allocator.free(right);
+        const opcode = arithmeticOpcode(instruction.operator) orelse return error.UnsupportedBinaryOperator;
+        if (std.mem.eql(u8, opcode, "pow")) {
+            try emitter.output.writer.print("  %typed.v{d} = call double @llvm.pow.f64(double {s}, double {s})", .{ result, left, right });
+        } else if (std.mem.eql(u8, opcode, "divfloor")) {
+            try emitter.output.writer.print("  %typed.divfloor.{d} = fdiv double {s}, {s}", .{ result, left, right });
+            try emitter.debugSuffix(instruction.span, scope);
+            try emitter.output.writer.print("  %typed.v{d} = call double @llvm.floor.f64(double %typed.divfloor.{d})", .{ result, result });
+        } else try emitter.output.writer.print("  %typed.v{d} = {s} double {s}, {s}", .{ result, opcode, left, right });
+        if (!std.mem.eql(u8, opcode, "divfloor")) try emitter.debugSuffix(instruction.span, scope);
+        if (std.mem.eql(u8, opcode, "divfloor")) try emitter.debugSuffix(instruction.span, scope);
+        return;
+    }
+    if (isComparison(instruction.operator)) {
+        if (left_type != right_type or result_type != .boolean) return error.InvalidTypedInstruction;
+        const left = try typedValueText(emitter, function, instruction.operands[0]);
+        defer emitter.allocator.free(left);
+        const right = try typedValueText(emitter, function, instruction.operands[1]);
+        defer emitter.allocator.free(right);
+        const predicate = if (left_type == .number) numberPredicate(instruction.operator) else booleanPredicate(instruction.operator);
+        try emitter.output.writer.print("  %typed.v{d} = {s} {s} {s} {s}, {s}", .{ result, if (left_type == .number) "fcmp" else "icmp", predicate orelse return error.UnsupportedComparisonOperator, if (left_type == .number) "double" else "i1", left, right });
+        try emitter.debugSuffix(instruction.span, scope);
+        return;
+    }
+    if (isLogical(instruction.operator)) {
+        if (left_type != .boolean or right_type != .boolean or result_type != .boolean) return error.InvalidTypedInstruction;
+        const left = try typedValueText(emitter, function, instruction.operands[0]);
+        defer emitter.allocator.free(left);
+        const right = try typedValueText(emitter, function, instruction.operands[1]);
+        defer emitter.allocator.free(right);
+        try emitter.output.writer.print("  %typed.v{d} = {s} i1 {s}, {s}", .{ result, if (std.mem.eql(u8, instruction.operator, "&&") or std.mem.eql(u8, instruction.operator, "and")) "and" else "or", left, right });
+        try emitter.debugSuffix(instruction.span, scope);
+        return;
+    }
+    return error.UnsupportedBinaryOperator;
+}
+
+fn writeTypedUnary(emitter: *Emitter, function: ir.Function, instruction: ir.Instruction, scope: usize, typed_analysis: *typed_abi.ProgramAnalysis) !void {
+    const result = instruction.result orelse return error.MissingInstructionResult;
+    if (instruction.operands.len != 1) return error.InvalidTypedInstruction;
+    const operand_type = typed_abi.scalarType(typed_analysis.valueType(function.id, instruction.operands[0])) orelse return error.InvalidTypedInstruction;
+    const result_type = typed_abi.scalarType(typed_analysis.valueType(function.id, result)) orelse return error.InvalidTypedInstruction;
+    const operand = try typedValueText(emitter, function, instruction.operands[0]);
+    defer emitter.allocator.free(operand);
+    if (std.mem.eql(u8, instruction.operator, "!") or std.mem.eql(u8, instruction.operator, "not")) {
+        if (result_type != .boolean) return error.InvalidTypedInstruction;
+        try emitter.output.writer.print("  %typed.truthy.{d} = ", .{result});
+        if (operand_type == .number) try emitter.output.writer.print("fcmp one double {s}, 0.000000e+00", .{operand}) else try emitter.output.writer.print("select i1 true, i1 {s}, i1 false", .{operand});
+        try emitter.debugSuffix(instruction.span, scope);
+        try emitter.output.writer.print("  %typed.v{d} = xor i1 %typed.truthy.{d}, true", .{ result, result });
+        try emitter.debugSuffix(instruction.span, scope);
+        return;
+    }
+    if (operand_type != .number) return error.InvalidTypedInstruction;
+    if (result_type != .number) return error.InvalidTypedInstruction;
+    if (std.mem.eql(u8, instruction.operator, "-")) {
+        try emitter.output.writer.print("  %typed.v{d} = fneg double {s}", .{ result, operand });
+    } else if (std.mem.eql(u8, instruction.operator, "+")) {
+        // A select identity preserves NaN payloads and negative zero.
+        try emitter.output.writer.print("  %typed.v{d} = select i1 true, double {s}, double 0.000000e+00", .{ result, operand });
+    } else return error.UnsupportedUnaryOperator;
+    try emitter.debugSuffix(instruction.span, scope);
+}
+
+fn typedValueText(emitter: *Emitter, function: ir.Function, value: ir.ValueId) ![]u8 {
+    var output: std.Io.Writer.Allocating = .init(emitter.allocator);
+    defer output.deinit();
+    try context.writeTypedValueRef(&output.writer, function, value);
+    return output.toOwnedSlice();
+}
+
+fn isNumberArithmetic(operator: []const u8) bool {
+    for ([_][]const u8{ "+", "-", "*", "/", "÷", "÷÷", "%", "**" }) |candidate| if (std.mem.eql(u8, operator, candidate)) return true;
+    return false;
+}
+
+fn isComparison(operator: []const u8) bool {
+    for ([_][]const u8{ "==", "=", "eq", "===", "!=", "≠", "noteq", "!==", "<", "lt", "<=", "lteq", ">", "gt", ">=", "gteq" }) |candidate| if (std.mem.eql(u8, operator, candidate)) return true;
+    return false;
+}
+
+fn isLogical(operator: []const u8) bool {
+    return std.mem.eql(u8, operator, "&&") or std.mem.eql(u8, operator, "and") or std.mem.eql(u8, operator, "||") or std.mem.eql(u8, operator, "or");
+}
+
+fn numberPredicate(operator: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, operator, "==") or std.mem.eql(u8, operator, "=") or std.mem.eql(u8, operator, "eq") or std.mem.eql(u8, operator, "===")) return "oeq";
+    if (std.mem.eql(u8, operator, "!=") or std.mem.eql(u8, operator, "≠") or std.mem.eql(u8, operator, "noteq") or std.mem.eql(u8, operator, "!==")) return "une";
+    if (std.mem.eql(u8, operator, "<") or std.mem.eql(u8, operator, "lt")) return "olt";
+    if (std.mem.eql(u8, operator, "<=") or std.mem.eql(u8, operator, "lteq")) return "ole";
+    if (std.mem.eql(u8, operator, ">") or std.mem.eql(u8, operator, "gt")) return "ogt";
+    if (std.mem.eql(u8, operator, ">=") or std.mem.eql(u8, operator, "gteq")) return "oge";
+    return null;
+}
+
+fn booleanPredicate(operator: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, operator, "==") or std.mem.eql(u8, operator, "=") or std.mem.eql(u8, operator, "eq") or std.mem.eql(u8, operator, "===")) return "eq";
+    if (std.mem.eql(u8, operator, "!=") or std.mem.eql(u8, operator, "≠") or std.mem.eql(u8, operator, "noteq") or std.mem.eql(u8, operator, "!==")) return "ne";
+    if (std.mem.eql(u8, operator, "<") or std.mem.eql(u8, operator, "lt")) return "ult";
+    if (std.mem.eql(u8, operator, "<=") or std.mem.eql(u8, operator, "lteq")) return "ule";
+    if (std.mem.eql(u8, operator, ">") or std.mem.eql(u8, operator, "gt")) return "ugt";
+    if (std.mem.eql(u8, operator, ">=") or std.mem.eql(u8, operator, "gteq")) return "uge";
+    return null;
 }
 
 pub fn writeFunctionWrapper(emitter: *Emitter, function: ir.Function) !void {

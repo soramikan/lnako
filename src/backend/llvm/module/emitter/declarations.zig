@@ -141,6 +141,15 @@ pub fn writeDebugMetadata(emitter: *Emitter) !void {
     }
     const main_scope = 4 + emitter.program.functions.len;
     try writer.print("!{d} = distinct !DISubprogram(name: \"main\", linkageName: \"main\", scope: !1, file: !1, line: 1, type: !2, scopeLine: 1, spFlags: DISPFlagDefinition, unit: !0)\n", .{main_scope});
+    if (emitter.optimized) {
+        const typed_analysis = try emitter.typedAnalysis();
+        for (emitter.program.functions) |function| if (typed_analysis.scalar(function.id)) |scalar| {
+            const scope = 5 + emitter.program.functions.len + function.id;
+            try writer.print("!{d} = distinct !DISubprogram(name: \"", .{scope});
+            try context.writeMetadataString(writer, function.name);
+            try writer.print("\", linkageName: \"lnako.fn.{s}.{d}\", scope: !1, file: !1, line: 1, type: !2, scopeLine: 1, spFlags: DISPFlagDefinition, unit: !0)\n", .{ scalar.suffix(), function.id });
+        };
+    }
     for (emitter.locations.items) |location| try writer.print("!{d} = !DILocation(line: {d}, column: {d}, scope: !{d})\n", .{ location.id, location.line, location.column, location.scope });
     try writer.print("!{d} = !{{i32 2, !\"Dwarf Version\", i32 4}}\n", .{flags_start});
     try writer.print("!{d} = !{{i32 2, !\"Debug Info Version\", i32 3}}\n", .{flags_start + 1});

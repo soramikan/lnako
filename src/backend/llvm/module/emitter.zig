@@ -8,7 +8,9 @@ pub const Emitter = context.Emitter;
 
 pub fn run(emitter: *Emitter) !void {
     try preamble.collectModuleData(emitter);
-    emitter.next_metadata = 4 + emitter.program.functions.len + 1;
+    // Reserve generic function scopes, the main scope, and the separate
+    // scalar-variant scopes before allocating source locations.
+    emitter.next_metadata = 5 + emitter.program.functions.len * 2;
     try preamble.emitPreamble(emitter);
     try preamble.emitDeclarations(emitter);
     try declarations.writeRuntimeHelpers(emitter);
