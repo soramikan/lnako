@@ -1,6 +1,16 @@
 # 配布物
 
-> これは将来の配布フェーズの設計・検証手順です。現在のGoalは3正式OSの検証とattestationまでであり、ここに記載した配布アーカイブ、checksum、SBOM、タグ、GitHub Releaseは現時点では作成しません。
+> この文書は配布フェーズの設計・検証手順です。v0.1.0が初回の配布リリースです。
+
+## v0.1.0リリース手順
+
+1. バージョンを `build.zig.zon` の `.version` と `src/root.zig` の `pub const version` の両方で `0.1.0` へ揃える（`lnako --version` が `lnako 0.1.0` を返すこと）。
+2. manifest入力の変更でsource manifestが変わるため、`compat/v3.7.24/attestations/current.json` は取り外し、`node tools/update_current_evidence.mjs` で証拠を現行manifestで再生成する。この時点のcanonicalはunattested。
+3. mainへ取り込み、同じsource commitのCI runが54 job全成功するのを待つ。成功runが生成するattestation artifactを `compat/v3.7.24/attestations/<run>/` へ追跡し、`current.json` を更新して `evidence.json` を `verified: 527` へ再生成する。
+4. 追跡snapshotを含むcommitがmainへ入ったら、そのcommitに署名済みannotated tag `v0.1.0` を作成してpushする。
+5. Release workflowのpreflightが、tag署名・source version一致・同commitのCI 54 job全成功・canonical attestation全検証（current pointer存在・証拠再生成一致・追跡snapshotの公式 `gh attestation verify` と `verified: 527`）を確認してからbuild/publishへ進む。
+
+manifest入力を変更するどの後続commitでも、tag push前に同じ再attestation手順が必要です。
 
 配布物は、対応OSごとにビルド済みの`lnako`本体とAOTランタイム静的ライブラリ、公開ネイティブプラグインヘッダ、ライセンス、互換性資料を一つのアーカイブへまとめます。`--llvm-dir`を指定した場合は、実行時に必要なLLVM C API共有ライブラリと、AOTリンクに使うClang/LLDの最小セットも`llvm/`へ同梱します。
 
