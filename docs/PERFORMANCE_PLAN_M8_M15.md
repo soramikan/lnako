@@ -71,7 +71,7 @@ Windowsでは `--windows-sampling` を指定し、独立したWPR instanceでCPU
 - 純粋単項builtinは数値literalを固定double ABIへ、他の入力をtag確認付き単一Value ABIへ接続。数値以外は既存coercion、O0は従来generic経路を維持。dispatch trace/site/例外の境界を保持。
 - INTの科学表記・subnormal、TOFLOATの負のゼロを公式処理系に合わせて検証。generic Interpreter/AOTのTOFLOATもnumber -0を+0へ正規化し、文字列"-0"は負のゼロを保持。
 - fmt-check、単体922/922、公式差分11ケースInterpreter/AOT O0/O2成功。追加境界fixtureのIRで固定ABI call 7箇所、nbodyの段階別計測を確認。
-- nbodyのdynamic配列要素は専用ABI対象外。3 OS実行時間、compile-stress 30%、binary size目標は未測定であり達成とは扱わない。
+- 初期版ではnbodyのdynamic配列要素を対象外にしていたが、追加回帰対応でtag確認付き単一Value ABIを適用した。3 OS実行時間、compile-stress 30%、binary size目標の最終評価は未完了。
 
 ### M15aの追加回帰とCI修正
 
@@ -80,3 +80,23 @@ Windowsでは `--windows-sampling` を指定し、独立したWPR instanceでCPU
 - macOS nbodyで正解を保ち、実験snapshotのbinaryは7,526,464→553,904 bytes、IRの汎用builtin静的call 6→0。runtime call回数や3 OS性能達成とは区別する。
 - 比較CI run 34079518569のmacOS profile stepがBash 3の空配列+nounsetで失敗。常に非空の引数配列へ変更し、実際のworkflow shellをmacOS Bashでテスト。Linux/Windowsの同run比較・診断jobは成功。
 - Windows ETL取得を確認。次回からtracerpt XML/summaryも保存し、別hostでの解析を可能にする。ETL取得だけではCPUの原因分析完了とは扱わない。
+
+### 次回push前のCI調査
+
+- 通常CI run 34079518578は3 OS共通で`runtime_core.zig`の85.5 KiBが80 KiB上限を超えたため失敗。型・処理の分割で対応中。
+- Windows dispatch coverage shard 2/3は初回に詳細出力なしで終了したが、同一commitの再実行（attempt 2）は成功。原因未特定・再現なし。以後はfixture開始とcleanup前の例外をログへ記録する。3 OS coreの構造検査失敗は再現しており、別途修正する。
+
+### M13 中間観測（e6f3887、M15適用前）
+
+- Windows/Linuxのnbody IRはいずれも汎用builtin静的callが6箇所、runtime counterのroot pushは122,421回、root high-waterは201。静的call箇所数と動的root push回数を混同しない。
+- Windows再生成assemblyのmainは3,432 byteのstack frameを持ち、配列要素のtag/payloadを引数用stack領域へコピーして汎用builtinを呼ぶ。これだけではWindows固有の実行時間差の原因とは断定できない。
+- 同CIのnbody AOT中央値はWindows 57.02 ms / gonako 62.34 ms、Linux 16.25 / 52.19 ms、macOS 11.43 / 36.12 ms。開始CIとhost負荷・処理系の時間も変動しているため、差分すべてを変更効果に帰属させない。
+- string-concat AOT / gonako中央値はWindows 71.17 / 41.43 ms、Linux 31.89 / 23.13 ms、macOS 55.93 / 28.44 ms。一体割当だけでは3 OS目標は未達。
+- 出典: 比較CI run 34079518569のcomparison-benchmark各OS artifact、numeric-profile-windows-x64/linux-x64 artifact。M15・M10・M11後の計測とsampling解析は継続中。
+
+### CI構造検査の修正検証
+
+- dictionary / byte storage / CSV state / async task typesを専用moduleへ分割。M15版runtime_coreは77,538 bytes（75.7 KiB）。上限設定は変更しない。
+- fmt-check、全単体テスト（HTTP bind許可）、ReleaseSafe build、公式/Interpreter/AOT O0/O2の11 fixture差分、source structure、diff checkが成功。
+- pre-pushにもsource structure検査を追加。違反で後続検査前に停止する回帰を含むhook 5テスト、numeric profile tool検査が成功。
+- M15証拠更新は43b32a1へ保存。CI修正に伴うsource manifestは改めて更新する。

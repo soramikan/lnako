@@ -166,6 +166,7 @@ try {
   const sites = [];
   const unresolvedSites = [];
   for (const [index, fixture] of selectedFixtures.entries()) {
+    console.error(`dispatch fixture ${index + 1}/${selectedFixtures.length}: ${fixture.file}/${fixture.id}`);
     const result = fixture.httpServer === true
       ? await coverage_http.runHttpServerFixture(fixture, index, temporary)
       : await runFixture(fixture, index, temporary, loopbackServer?.base ?? null);
@@ -182,6 +183,10 @@ try {
     `AOT dispatch coverage audit: ${fixtureReports.length} fixtures / ${sites.length} unambiguous sites / ` +
       `${nativeCoverage}/523 native entries・${nativeNames}/492 unique names (unattested sampled coverage)`,
   );
+} catch (error) {
+  // Report before cleanup: child termination or scratch removal can fail too.
+  console.error(error?.stack ?? error);
+  throw error;
 } finally {
   if (loopbackServer !== null) await coverage_process.stopLoopbackServer(loopbackServer.process);
   await rm(temporary, { recursive: true, force: true });

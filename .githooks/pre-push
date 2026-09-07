@@ -75,6 +75,9 @@ echo "pre-push: running zig build fmt-check..." >&2
 echo "pre-push: running zig build test..." >&2
 "$ZIG" build test
 
+echo "pre-push: checking source structure..." >&2
+"$NODE" tools/check_source_structure.mjs
+
 echo "pre-push: checking compatibility evidence provenance..." >&2
 "$NODE" tools/sync_compat_evidence.mjs --check
 

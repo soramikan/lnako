@@ -136,8 +136,23 @@ test("successful validation runs all required read-only checks", () => {
       "git status --porcelain=v1 --untracked-files=all",
       "zig build fmt-check",
       "zig build test",
+      "node tools/check_source_structure.mjs",
       "node tools/sync_compat_evidence.mjs --check",
       "node tools/check_interpreter_only_classification.mjs --check",
+    ]);
+    assertNoGitMutation(environment);
+  } finally {
+    rmSync(environment.directory, { recursive: true, force: true });
+  }
+});
+
+test("source structure failure stops the push before evidence checks", () => {
+  const environment = makeFakeEnvironment({ nodeStatus: 1 });
+  try {
+    const result = runHook(environment, newBranchInput);
+    assert.notEqual(result.status, 0);
+    assert.deepEqual(logLines(environment).filter((line) => line.startsWith("node ")), [
+      "node tools/check_source_structure.mjs",
     ]);
     assertNoGitMutation(environment);
   } finally {

@@ -3,6 +3,10 @@ const aot_state = @import("state.zig");
 const shared = @import("shared.zig");
 const environment = @import("../environment.zig");
 const counters = @import("../counters.zig");
+const dictionary_module = @import("dictionary.zig");
+const byte_storage = @import("byte_storage.zig");
+const csv_state = @import("csv_state.zig");
+const async_types = @import("async_types.zig");
 
 const builtin = shared.builtin;
 const aot_builtin = shared.aot_builtin;
@@ -148,169 +152,7 @@ fn aotIndexKeyMatchesUnits(key: Value, units: []const u16) bool {
 /// because `orderedRemove` shifts every later position.  A probe walks the
 /// whole hash cluster and returns the smallest matching index, so a
 /// duplicated key resolves to the same first entry a linear scan finds.
-pub const AotDictionary = struct {
-    pub const empty: AotDictionary = .{};
-
-    entries: std.ArrayList(DictionaryEntry) = .empty,
-    index_slots: []u32 = &.{},
-    index_valid: bool = false,
-    // Diagnostic counters (M0): observable lookup work for benchmark
-    // analysis.  They count comparisons actually performed, not results.
-    indexed_lookups: u64 = 0,
-    linear_lookups: u64 = 0,
-    entry_comparisons: u64 = 0,
-    index_rebuilds: u64 = 0,
-    hits: u64 = 0,
-    misses: u64 = 0,
-
-    pub fn deinit(self: *AotDictionary, allocator: std.mem.Allocator) void {
-        self.entries.deinit(allocator);
-        if (self.index_slots.len > 0) allocator.free(self.index_slots);
-        self.* = .{};
-    }
-
-    pub fn len(self: *const AotDictionary) usize {
-        return self.entries.items.len;
-    }
-
-    /// First-in-order entry equal to `key` under `sameKey`, or null.
-    pub fn findByKey(self: *AotDictionary, key: Value) ?usize {
-        if (self.index_valid) {
-            self.indexed_lookups += 1;
-            const result = self.probeIndex(aotIndexHash(key), key);
-            if (result != null) {
-                self.hits += 1;
-            } else {
-                self.misses += 1;
-            }
-            return result;
-        }
-        self.linear_lookups += 1;
-        for (self.entries.items, 0..) |entry, index| {
-            self.entry_comparisons += 1;
-            if (sameKey(entry.key, key)) {
-                self.hits += 1;
-                return index;
-            }
-        }
-        self.misses += 1;
-        return null;
-    }
-
-    /// First-in-order entry whose string key equals `units`.  Non-string
-    /// keys can never match a unit query, matching the previous scan.
-    pub fn findByUnits(self: *AotDictionary, units: []const u16) ?usize {
-        if (self.index_valid) {
-            self.indexed_lookups += 1;
-            var slot: usize = @intCast(aotIndexHashUnits(units) & (self.index_slots.len - 1));
-            var found: ?usize = null;
-            while (self.index_slots[slot] != 0) {
-                const index: usize = self.index_slots[slot] - 1;
-                self.entry_comparisons += 1;
-                if (aotIndexKeyMatchesUnits(self.entries.items[index].key, units)) {
-                    if (found == null or index < found.?) found = index;
-                }
-                slot = (slot + 1) & (self.index_slots.len - 1);
-            }
-            if (found != null) {
-                self.hits += 1;
-            } else {
-                self.misses += 1;
-            }
-            return found;
-        }
-        self.linear_lookups += 1;
-        for (self.entries.items, 0..) |entry, index| {
-            self.entry_comparisons += 1;
-            if (aotIndexKeyMatchesUnits(entry.key, units)) {
-                self.hits += 1;
-                return index;
-            }
-        }
-        self.misses += 1;
-        return null;
-    }
-
-    fn probeIndex(self: *AotDictionary, hash: u64, key: Value) ?usize {
-        const mask = self.index_slots.len - 1;
-        var slot: usize = @intCast(hash & mask);
-        var found: ?usize = null;
-        while (self.index_slots[slot] != 0) {
-            const index: usize = self.index_slots[slot] - 1;
-            self.entry_comparisons += 1;
-            if (sameKey(self.entries.items[index].key, key)) {
-                if (found == null or index < found.?) found = index;
-            }
-            slot = (slot + 1) & mask;
-        }
-        return found;
-    }
-
-    /// Insert or overwrite, keeping the first position on update.
-    pub fn set(self: *AotDictionary, allocator: std.mem.Allocator, key: Value, value: Value) !void {
-        if (self.findByKey(key)) |index| {
-            self.entries.items[index].value = value;
-            return;
-        }
-        try self.appendEntry(allocator, .{ .key = key, .value = value });
-    }
-
-    /// Append without a uniqueness check.  Callers that proved the key is
-    /// absent (or that intentionally produce duplicate keys) use this; the
-    /// index still records the position.
-    pub fn appendEntry(self: *AotDictionary, allocator: std.mem.Allocator, entry: DictionaryEntry) !void {
-        try self.entries.append(allocator, entry);
-        errdefer _ = self.entries.pop();
-        const index = self.entries.items.len - 1;
-        if (self.index_valid or self.entries.items.len >= aot_dictionary_index_threshold) try self.indexInsert(allocator, index);
-    }
-
-    /// Remove while preserving the order of the remaining entries.  The
-    /// index is rebuilt because positions shift; on allocation failure it
-    /// stays invalid and lookups fall back to the ordered scan.
-    pub fn orderedRemoveEntry(self: *AotDictionary, allocator: std.mem.Allocator, index: usize) DictionaryEntry {
-        const removed = self.entries.orderedRemove(index);
-        self.index_valid = false;
-        if (self.entries.items.len >= aot_dictionary_index_threshold) self.rebuildIndex(allocator) catch {};
-        return removed;
-    }
-
-    pub fn clearRetainingCapacity(self: *AotDictionary) void {
-        self.entries.clearRetainingCapacity();
-        @memset(self.index_slots, 0);
-        // Slots still cover zero entries; keep the buffer but flag it stale
-        // so the next insert path rebuilds rather than trusting emptiness.
-        self.index_valid = false;
-    }
-
-    fn indexInsert(self: *AotDictionary, allocator: std.mem.Allocator, entry_index: usize) !void {
-        if (!self.index_valid or self.entries.items.len * 2 > self.index_slots.len) {
-            try self.rebuildIndex(allocator);
-            return;
-        }
-        const mask = self.index_slots.len - 1;
-        var slot: usize = @intCast(aotIndexHash(self.entries.items[entry_index].key) & mask);
-        while (self.index_slots[slot] != 0) slot = (slot + 1) & mask;
-        self.index_slots[slot] = @intCast(entry_index + 1);
-    }
-
-    fn rebuildIndex(self: *AotDictionary, allocator: std.mem.Allocator) !void {
-        const capacity = std.math.ceilPowerOfTwo(usize, @max(self.entries.items.len * 2, 64)) catch return error.OutOfMemory;
-        const slots = try allocator.alloc(u32, capacity);
-        @memset(slots, 0);
-        errdefer allocator.free(slots);
-        const mask = capacity - 1;
-        for (self.entries.items, 0..) |entry, index| {
-            var slot: usize = @intCast(aotIndexHash(entry.key) & mask);
-            while (slots[slot] != 0) slot = (slot + 1) & mask;
-            slots[slot] = @intCast(index + 1);
-        }
-        if (self.index_slots.len > 0) allocator.free(self.index_slots);
-        self.index_slots = slots;
-        self.index_valid = true;
-        self.index_rebuilds += 1;
-    }
-};
+pub const AotDictionary = dictionary_module.make(Value, DictionaryEntry, aotIndexHash, aotIndexHashUnits, aotIndexKeyMatchesUnits, sameKey, aot_dictionary_index_threshold);
 pub const AotTomlTemporal = struct {
     kind: toml_temporal.Kind,
     json_text: []u8,
@@ -322,110 +164,28 @@ pub const AotTomlTemporal = struct {
         self.* = undefined;
     }
 };
-pub const ByteKind = enum { buffer, uint8_array, array_buffer };
-const ByteStorage = struct {
-    allocator: std.mem.Allocator,
-    bytes: []u8,
-    ref_count: usize = 1,
-    /// Keep one stable ArrayBuffer wrapper for all views sharing this storage.
-    /// The Value is traced from each live byte-buffer object below.
-    backing: Value = .{},
+pub const ByteKind = byte_storage.Kind;
+const ByteStorage = byte_storage.Storage(Value);
+pub const ByteBuffer = byte_storage.Buffer(ByteStorage);
+pub const AotTimer = async_types.Timer(Value);
+const IteratorKind = async_types.IteratorKind;
+const Iterator = async_types.Iterator(Value);
 
-    pub fn retain(self: *ByteStorage) void {
-        std.debug.assert(self.ref_count > 0);
-        self.ref_count += 1;
-    }
+pub const AotPromiseState = async_types.PromiseState;
+pub const AotPromiseReactionMode = async_types.PromiseReactionMode;
+pub const AotPromiseReaction = async_types.PromiseReaction(Value, Object);
+const AotPromise = async_types.Promise(Value, Object);
+pub const AotPromiseTask = async_types.PromiseTask(Value, Object);
+pub const AotPromiseAllState = async_types.PromiseAllState(Value, Object);
+pub const AotPromiseResolver = async_types.PromiseResolver(Object);
+pub const AotPromiseAllHandler = async_types.PromiseAllHandler(AotPromiseAllState);
 
-    pub fn release(self: *ByteStorage) void {
-        std.debug.assert(self.ref_count > 0);
-        self.ref_count -= 1;
-        if (self.ref_count != 0) return;
-        self.allocator.free(self.bytes);
-        self.allocator.destroy(self);
-    }
-};
-
-pub const ByteBuffer = struct {
-    bytes: []u8,
-    kind: ByteKind,
-    storage: *ByteStorage,
-    /// Offset of this view from the beginning of the shared backing storage.
-    /// This remains meaningful for zero-length views, where pointer arithmetic
-    /// alone cannot recover the original subarray position.
-    byte_offset: usize = 0,
-};
-pub const AotTimer = struct {
-    id: u64,
-    due_milliseconds: u64,
-    interval_milliseconds: u64,
-    repeating: bool,
-    callback: Value,
-};
-const IteratorKind = enum { repeat, range, bytes, string, array, dictionary };
-const Iterator = struct {
-    kind: IteratorKind,
-    source: Value = .{},
-    index: usize = 0,
-    count: usize = 0,
-    current: f64 = 0,
-    end: f64 = 0,
-    step: f64 = 1,
-};
-
-pub const AotPromiseState = enum { pending, fulfilled, rejected };
-pub const AotPromiseReactionMode = enum { standard, settled_pair, finally };
-
-pub const AotPromiseReaction = struct {
-    on_fulfilled: Value = .{},
-    on_rejected: Value = .{},
-    next: *Object,
-    mode: AotPromiseReactionMode = .standard,
-    target_global: ?*Value = null,
-};
-
-const AotPromise = struct {
-    state: AotPromiseState = .pending,
-    result: Value = .{},
-    reactions: std.ArrayList(AotPromiseReaction) = .empty,
-};
-
-pub const AotPromiseTask = struct {
-    callback: Value,
-    settled_value: Value,
-    rejected: bool,
-    next: *Object,
-    mode: AotPromiseReactionMode,
-    target_global: ?*Value,
-};
-
-pub const AotPromiseAllState = struct {
-    promise: *Object,
-    results: Value,
-    remaining: usize = 0,
-};
-
-pub const AotPromiseResolver = struct {
-    promise: *Object,
-    rejected: bool,
-};
-
-pub const AotPromiseAllHandler = struct {
-    state: *AotPromiseAllState,
-    index: usize,
-    rejected: bool,
-};
-
+pub const AotPromiseChainKind = enum { success, failure, settled, finally };
 const PromiseFunctionKind = union(enum) {
     none,
     resolver: AotPromiseResolver,
     all_handler: AotPromiseAllHandler,
 };
-
-pub const AotPromiseChainKind = enum { success, failure, settled, finally };
-
-/// Generated callbacks cross the Zig/LLVM boundary. Returning the 16-byte
-/// Value aggregate directly is not portable to the Windows x64 C ABI, so the
-/// result is always written through an explicit pointer.
 pub const FunctionCallback = *const fn (*Value, *anyopaque, ?[*]const Value, usize) callconv(.c) void;
 const FunctionObject = struct {
     callback: FunctionCallback,
@@ -625,11 +385,8 @@ const AotHttpGlobals = struct {
     files_data: ?*Value = null,
 };
 
-pub const AotCsvDelimiterDefault = enum { comma, tab };
-
-const aot_csv_comma = [_]u16{','};
-const aot_csv_tab = [_]u16{'\t'};
-const aot_csv_crlf = [_]u16{ '\r', '\n' };
+pub const AotCsvDelimiterDefault = csv_state.DelimiterDefault;
+pub const AotCsvState = csv_state.State;
 
 pub const default_plugin_names = [_][]const u8{
     "plugin_system",
@@ -640,52 +397,6 @@ pub const default_plugin_names = [_][]const u8{
     "plugin_toml",
     "plugin_node",
 };
-
-/// CSV options are process-local in the official plugin. Keep the same
-/// lifetime as the AOT runtime so separate builtin calls observe updates from
-/// CSVオプション設定 without introducing a JavaScript runtime.
-pub const AotCsvState = struct {
-    custom_delimiter: ?[]u16 = null,
-    custom_eol: ?[]u16 = null,
-    delimiter_default: AotCsvDelimiterDefault = .comma,
-    auto_convert_number: bool = true,
-
-    pub fn deinit(self: *AotCsvState, allocator: std.mem.Allocator) void {
-        if (self.custom_delimiter) |value| allocator.free(value);
-        if (self.custom_eol) |value| allocator.free(value);
-        self.* = undefined;
-    }
-
-    pub fn delimiter(self: *const AotCsvState) []const u16 {
-        return self.custom_delimiter orelse switch (self.delimiter_default) {
-            .comma => &aot_csv_comma,
-            .tab => &aot_csv_tab,
-        };
-    }
-
-    pub fn eol(self: *const AotCsvState) []const u16 {
-        return self.custom_eol orelse &aot_csv_crlf;
-    }
-
-    pub fn useDelimiter(self: *AotCsvState, allocator: std.mem.Allocator, value: AotCsvDelimiterDefault) void {
-        if (self.custom_delimiter) |owned| allocator.free(owned);
-        self.custom_delimiter = null;
-        self.delimiter_default = value;
-    }
-
-    pub fn setDelimiter(self: *AotCsvState, allocator: std.mem.Allocator, value: []const u16) !void {
-        const owned = try allocator.dupe(u16, value);
-        if (self.custom_delimiter) |old| allocator.free(old);
-        self.custom_delimiter = owned;
-    }
-
-    pub fn setEol(self: *AotCsvState, allocator: std.mem.Allocator, value: []const u16) !void {
-        const owned = try allocator.dupe(u16, value);
-        if (self.custom_eol) |old| allocator.free(old);
-        self.custom_eol = owned;
-    }
-};
-
 pub const Arithmetic = enum(u8) {
     add,
     subtract,
