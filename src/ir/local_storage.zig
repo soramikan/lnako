@@ -117,7 +117,6 @@ pub fn collectLocalNames(allocator: std.mem.Allocator, function: ir.Function) ![
     for (function.blocks) |block| for (block.instructions) |instruction| {
         switch (instruction.opcode) {
             .load_local, .store_local => try appendName(allocator, &names, &seen, instruction.name),
-            .array_set, .property_set => if (!isQualifiedGlobal(instruction.name)) try appendName(allocator, &names, &seen, instruction.name),
             .destructure_store => for (instruction.names) |name| {
                 if (!isQualifiedGlobal(name)) try appendName(allocator, &names, &seen, name);
             },
@@ -342,7 +341,10 @@ test "添字とpropertyのglobal代入をlocal slotへ登録しない" {
         .{ .result = null, .opcode = .array_set, .type = .void, .name = "main__A", .span = span },
         .{ .result = null, .opcode = .property_set, .type = .void, .name = "main__B", .span = span },
         .{ .result = null, .opcode = .increment, .type = .void, .name = "main__I", .span = span },
+        .{ .result = null, .opcode = .array_set, .type = .void, .name = "コマンドライン", .span = span },
+        .{ .result = null, .opcode = .store_local, .type = .void, .name = "A", .span = span },
         .{ .result = null, .opcode = .array_set, .type = .void, .name = "A", .span = span },
+        .{ .result = null, .opcode = .store_local, .type = .void, .name = "B", .span = span },
         .{ .result = null, .opcode = .property_set, .type = .void, .name = "B", .span = span },
     };
     var blocks = [_]ir.BasicBlock{.{ .id = 0, .name = "entry", .instructions = &instructions, .terminator = .{ .return_value = null } }};
