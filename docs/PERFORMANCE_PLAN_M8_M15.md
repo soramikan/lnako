@@ -6,15 +6,15 @@
 
 | 単位 | 実装内容 | 受け入れ条件 | 状態 |
 | --- | --- | --- | --- |
-| M8 | Prepared Interpreter、名前・演算子・callee・value countの事前解決、サイズクラスpool | 動的実行・capture・例外の互換性、診断benchmark比較 | b394fa9 isolated snapshotで実装・検証済み。main統合待ち |
-| M9 | 共通capture/escape解析、Interpreter/AOTの直接local Value | 非capture関数cellゼロ、capture共有維持 | AOT側検証済み、Interpreter側実装中 |
-| M10 | AOT safepoint、参照liveness、root coloring | GC強制時の分岐・phi・loop・callback安全性、root数減少 | 実装・検証中 |
-| M11 | Number/Boolean typed internal ABIとgeneric wrapper | NaN/Infinity/-0維持、直接・動的呼出し同値 | 実装中 |
-| M12 | exact-size文字列allocation、GC/concat統計 | immutable copy量維持、UTF-16境界・GC安全性、3 OS測定 | 実装中 |
-| M13 | Windows nbody sampling・LLVM IR・assembly・imports診断 | Win64 ABI/stack/helperの実測比較と原因に基づく判断 | 取得tool/CI実装、Windows測定未完了 |
-| M14 | Interpreter interrupt safepoint/budget、dispatch軽量化 | 割り込み応答上限、timer/callback/dynamic/global観測維持 | isolated snapshotで実装・境界検証済み。wall-clock上限の実測は未完了 |
-| M15 | compiler stage timing/index/worklist、hot builtin専用ABI/dead strip | コンパイル同値、時間・symbol/size比較 | 実装・検証中 |
-| 診断ケース | local/global/direct/captured/index/dict/string/GC/numeric 12ケース | 正解照合、build/read/write範囲を区別 | 12件追加、ローカル正解照合成功、3 OS CI追加 |
+| M8 | Prepared Interpreter、名前・演算子・callee・value countの事前解決、サイズクラスpool | 動的実行・capture・例外の互換性、診断benchmark比較 | 実装・検証済み（bfcf104）。3 OS最終値を結果文書に記録 |
+| M9 | 共通capture/escape解析、Interpreter/AOTの直接local Value | 非capture関数cellゼロ、capture共有維持 | 両経路で実装・検証済み（e8f21d2、bfcf104） |
+| M10 | AOT safepoint、参照liveness、root coloring | GC強制時の分岐・phi・loop・callback安全性、root数減少 | 実装・検証済み（c2a359b）。nbody high-water 201→26 |
+| M11 | Number/Boolean typed internal ABIとgeneric wrapper | NaN/Infinity/-0維持、直接・動的呼出し同値 | 実装・検証済み（6b6899b）。不明な型はgenericを維持 |
+| M12 | exact-size文字列allocation、GC/concat統計 | immutable copy量維持、UTF-16境界・GC安全性、3 OS測定 | 実装・検証済み（d50451b、02457ac）。allocator置換実験は不採用 |
+| M13 | Windows nbody sampling・LLVM IR・assembly・imports診断 | Win64 ABI/stack/helperの実測比較と原因に基づく判断 | 取得・実Windows解析済み。解析toolの最終CI統合を含む |
+| M14 | Interpreter interrupt safepoint/budget、dispatch軽量化 | 割り込み応答、timer/callback/dynamic/global観測維持 | 実装・検証済み（bfcf104）。最大1,024通常命令、macOS SIGINT 10回を観測 |
+| M15 | compiler stage timing/index/worklist、hot builtin専用ABI/dead strip | コンパイル同値、時間・symbol/size比較 | 実装・検証済み（d13f4b1、b394fa9、394ca49）。Windows共有tableの制約は結果文書へ |
+| 診断ケース | local/global/direct/captured/index/dict/string/GC/numeric 12ケース | 正解照合、build/read/write範囲を区別 | 12件追加、3 OS正解照合・CI artifact保存済み |
 
 packed NumberArray、世代別GC、in-place文字列builderはレビューに従い先行解析・測定後に可否を判断する。安全性や測定で採用できない項目は理由と未達事項を明記し、実装済みとは扱わない。
 
@@ -23,6 +23,8 @@ packed NumberArray、世代別GC、in-place文字列builderはレビューに従
 実装単位ごとに `zig build fmt-check` → `zig build test` → 関連oracle/AOTテストを実施し、日本語署名付きコミットを作成してpushする。次回push前に前回CIを確認し、失敗を調査・修正する。未完了CIを成功とは記録しない。製品変更に必要な互換性証拠は開発手順に従い再測定する。
 
 3 OS性能目標、compile-stress 30%短縮、小規模AOT 1 MiB未満は実測で判定する。ローカルmacOSの結果をLinux/Windowsの達成証拠にしない。
+
+実装済みと性能目標の達成は別に判定する。最終的な測定値・未達・採用しなかった実験は[検証結果](PERFORMANCE_RESULTS_M8_M15.md)を参照。以下は各実装段階の記録であり、その時点の「未完了」を現在の状態と混同しない。
 
 ## 検証記録
 
@@ -170,3 +172,20 @@ Windowsでは `--windows-sampling` を指定し、独立したWPR instanceでCPU
 - `out` と `input` が同一slotになる公開ABI境界をレビューで検出し、入力を出力clear前にコピーする修正と回帰テストを追加した。fmt-check成功、全単体 **965/965** 成功。
 - Node 24.15.0固定のReleaseSafe compilerで公式CLI・公式生成JavaScript・Interpreter・AOT O0/O1/O2/O3を **295/295** 比較し、Unicode・数値ABI境界を含め全件一致した（既知の公式経路差はCLI基準24件、生成JavaScript基準44件）。
 - `文字数("A😀B")` のReleaseSafe O3実行は `3`。生成LLVM IRは専用 `lnako_aot_unicode_length_call_site` を1箇所呼び、generic `lnako_aot_builtin_call_site` を呼ばない。`llvm-nm`で専用symbolを確認し、fixture実行ファイルは338,096 bytesだった。runtime countersはconcat 0、object allocation 3、string payload 3件/12 bytes、root high-water 6を記録した。UTF-16 scratchはgenericと同じ `valueUtf16Alloc` 1回のimmutable copy経路で、専用ABIによる追加concat/object copyはない。
+
+### M13 CPU解析のCI統合と最終検証
+
+- ETW SampledProfileをProcess / Thread / Imageの時刻区間へ対応付け、PID/TID再利用・100 ns時刻・provider識別・COFF `/lldmap` RVA/size 0 symbolを検証するstreaming Python解析を追加。関数名の未解決、欠けたcounter、複数Runtime contextを推測で埋めない。
+- CIの`--require-usable-trace`は診断JSON保存後、空sample・target process/executableへ対応付けできないtrace・明示されたevent lossを非成功にする。一部の未解決sampleやoptional artifact不足は診断に残す。
+- 独立レビューで検出した空traceでもCLIが成功するP2を修正。Python **11/11**、Node profile/workflow **2項目**、既存の実Windows trace 2本のstrict解析が成功。
+- 計測版`02457ac`を基準とする最終単位でfmt-check、全単体 **987/987**、関連Python/Node検査を順に実行。17証拠を実測再生成し、その後にCI互換基準 **13/13** 成功。dispatch coverageは **228 fixtures / 4,516 sites**、標準命令はverified 0 / trace-confirmed-unattested 527 / unverified 0を維持する。
+- ユーザー指示以後の実装単位はコード・回帰・生成証拠を同じ署名付きコミットへ保存した。先行コミットの履歴は改変していない。
+
+### 最終ランタイムの3 OS性能評価
+
+- 測定対象`02457acce036c239d12313da6bd528dd22e48f6b`、比較CI `34093414459` は3 OS成功。各OSの正式20ケース/108行、診断12ケース/48行をJSON/Markdown検査でも確認した。
+- 開始版とsuite・各ケースのsource hashが一致。AOT対cnakoは17/17、compile-stressはLinux 44.6% / Windows 38.5% / macOS 49.4%短縮、Windows nbodyは33.508 ms / gonako 72.175 msで目標達成。
+- string-concat、Interpreter対cnakoの過半数・gonakoの全ケース2倍以内、macOS/Linuxのnumeric C/Rust 5倍以内、Windows AOT 1 MiB未満は未達。達成・未達を[検証結果](PERFORMANCE_RESULTS_M8_M15.md)で分離した。
+- Windowsの最終CPU traceはloss 0、14,416 sample records中target process 2,095 / exe 1,451。map照合のexe sample未解決0、strict解析成功。別実行の3 OS counterで数学Value ABI 7,205 / index_get 52,803 / index_set 19,200 / 汎用builtin 0 entryを観測した。
+- 正式・診断のraw samples、source/binary/artifact hash、CPU解析、allocator不採用実験、SIGINT/pool計測を`docs/benchmarks/2026-09-07-m8-m15-*`へ保存した。
+- 計測版の通常CI `34093414457` も **54/54 jobs成功**。この実測済みruntimeに対して最終CPU解析toolと記録を追加し、最後のpush後のCIとは区別する。

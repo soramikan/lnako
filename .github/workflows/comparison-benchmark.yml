@@ -9,10 +9,10 @@ on:
         options: [smoke, normal, full]
         default: normal
   pull_request:
-    paths: ['src/**', 'benchmarks/**', 'tools/*benchmark*', 'tools/profile_aot_numeric*', 'tools/lib/benchmark*', '.github/workflows/comparison-benchmark.yml']
+    paths: ['src/**', 'benchmarks/**', 'tools/*benchmark*', 'tools/profile_aot_numeric*', 'tools/analyze_numeric_trace*', 'tools/lib/benchmark*', '.github/workflows/comparison-benchmark.yml']
   push:
     branches: [main]
-    paths: ['src/**', 'benchmarks/**', 'tools/*benchmark*', 'tools/profile_aot_numeric*', 'tools/lib/benchmark*', '.github/workflows/comparison-benchmark.yml']
+    paths: ['src/**', 'benchmarks/**', 'tools/*benchmark*', 'tools/profile_aot_numeric*', 'tools/analyze_numeric_trace*', 'tools/lib/benchmark*', '.github/workflows/comparison-benchmark.yml']
   schedule:
     - cron: '23 18 * * *'
 
@@ -205,6 +205,20 @@ jobs:
           if [ "${RUNNER_OS:-}" = "Windows" ]; then profile_args+=(--windows-sampling); fi
           node tools/profile_aot_numeric_test.mjs
           node tools/profile_aot_numeric.mjs "${profile_args[@]}"
+
+      - name: Analyze numeric CPU trace
+        shell: bash
+        run: |
+          set -euo pipefail
+          python_command=python3
+          if [ "${RUNNER_OS:-}" = "Windows" ]; then python_command=python; fi
+          "$python_command" tools/analyze_numeric_trace_test.py
+          if [ "${RUNNER_OS:-}" = "Windows" ]; then
+            "$python_command" tools/analyze_numeric_trace.py \
+              --input "$RUNNER_TEMP/numeric-profile-${{ matrix.target }}/nbody-events.xml" \
+              --output "$RUNNER_TEMP/numeric-profile-${{ matrix.target }}/cpu-sampling-analysis.json" \
+              --require-usable-trace
+          fi
 
       - name: Upload numeric profile artifacts
         if: always()

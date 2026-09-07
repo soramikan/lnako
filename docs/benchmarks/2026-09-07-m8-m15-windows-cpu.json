@@ -1,0 +1,4381 @@
+{
+  "schema": "lnako.numeric-trace-analysis.v1",
+  "analyzer": {
+    "source_sha256": "1512870a2490b9fa201e7cc42ebb8d524161b91e3da7847b3459333b3a45e7dc",
+    "python_version": "3.14.7"
+  },
+  "input": {
+    "trace": {
+      "path": "/private/tmp/lnako-ci-02457ac/numeric-profile-windows-x64/nbody-events.xml",
+      "sha256": "494fb26b881c8f028d79d0ac1baa5e687e0796e44f91f8d4771ec7e74a5d7078"
+    },
+    "artifact_directory": "/private/tmp/lnako-ci-02457ac/numeric-profile-windows-x64",
+    "artifacts": {
+      "nbody-events.xml": {
+        "path": "/private/tmp/lnako-ci-02457ac/numeric-profile-windows-x64/nbody-events.xml",
+        "bytes": 396802561,
+        "sha256": "494fb26b881c8f028d79d0ac1baa5e687e0796e44f91f8d4771ec7e74a5d7078"
+      },
+      "nbody-cpu.etl": {
+        "path": "/private/tmp/lnako-ci-02457ac/numeric-profile-windows-x64/nbody-cpu.etl",
+        "bytes": 67108864,
+        "sha256": "6abdb7f04e019d4b30266c2273363dcfc5ceea30c3742783ea8e7150d62ba60e"
+      },
+      "profile.json": {
+        "path": "/private/tmp/lnako-ci-02457ac/numeric-profile-windows-x64/profile.json",
+        "bytes": 25889,
+        "sha256": "8dc4aed164a4845a6602340a4db711570df6de27020e3140ff1a35df768b4c5d"
+      },
+      "nbody.exe": {
+        "path": "/private/tmp/lnako-ci-02457ac/numeric-profile-windows-x64/nbody.exe",
+        "bytes": 8947200,
+        "sha256": "9fe05133ce7926cef5e796172bc1d7aba79358bdc0796a3b260d745c4bd61022"
+      },
+      "nbody.ll": {
+        "path": "/private/tmp/lnako-ci-02457ac/numeric-profile-windows-x64/nbody.ll",
+        "bytes": 130940,
+        "sha256": "0ae6a178be7817af2316b29242680fbbd5cf1ea7a9ee4d838f3b6cdc11014d79"
+      },
+      "nbody.s": {
+        "path": "/private/tmp/lnako-ci-02457ac/numeric-profile-windows-x64/nbody.s",
+        "bytes": 84277,
+        "sha256": "e67b16720cbfab2067abe932befa6dc8767fac4dc92a452a47ddf44ce1438d6f"
+      },
+      "linked-disassembly.txt": {
+        "path": "/private/tmp/lnako-ci-02457ac/numeric-profile-windows-x64/linked-disassembly.txt",
+        "bytes": 48969655,
+        "sha256": "3b79b1e13fe68bf1ccd055ae1f1c21fd8fd9b75714135e5b17fe33aa1b30b498"
+      },
+      "imports-symbols.txt": {
+        "path": "/private/tmp/lnako-ci-02457ac/numeric-profile-windows-x64/imports-symbols.txt",
+        "bytes": 5452,
+        "sha256": "225d12759a352c8206cc0fcfa23aa572a6bdbfb8ab502cda851dd7f133a2ad8f"
+      },
+      "runtime-counters.log": {
+        "path": "/private/tmp/lnako-ci-02457ac/numeric-profile-windows-x64/runtime-counters.log",
+        "bytes": 1547,
+        "sha256": "b13d957726d46f87230100662c25eaed657d9c856a3f207d4ba5d82f020038e6"
+      },
+      "trace-summary.txt": {
+        "path": "/private/tmp/lnako-ci-02457ac/numeric-profile-windows-x64/trace-summary.txt",
+        "bytes": 25298,
+        "sha256": "7ba7bd84f3fcd57779598a241560cea2e476434613a810da5e1f443ba1657ce6"
+      },
+      "nbody.exe.map": {
+        "path": "/private/tmp/lnako-ci-02457ac/numeric-profile-windows-x64/nbody.exe.map",
+        "bytes": 1952121,
+        "sha256": "90a2e3f1527d964b181bedf51d7c5afa7f1d86b16a0cabd2191d887ffe4c50d3"
+      }
+    }
+  },
+  "trace_summary": {
+    "events_processed": 308945,
+    "events_lost": 0,
+    "sampled_profile_events": 14416,
+    "stackwalk_events": 37960
+  },
+  "event_counts": {
+    "MSNT_SystemTrace/Header": 1,
+    "MSNT_SystemTrace/PartitionInfoExtensionV2": 4,
+    "MSNT_SystemTrace/Extension": 4,
+    "{9b79ee91-b5fd-41c0-a243-4248e266e9d0}/33": 1,
+    "{9b79ee91-b5fd-41c0-a243-4248e266e9d0}/34": 2,
+    "{9b79ee91-b5fd-41c0-a243-4248e266e9d0}/35": 12,
+    "MSNT_SystemTrace/EndExtension": 3,
+    "MSNT_SystemTrace/DCStart": 8135,
+    "{b3e675d7-2554-4f18-830b-2762732560de}/64": 1277,
+    "{b3e675d7-2554-4f18-830b-2762732560de}/0": 15248,
+    "{b3e675d7-2554-4f18-830b-2762732560de}/36": 14892,
+    "{b3e675d7-2554-4f18-830b-2762732560de}/38": 14936,
+    "{b3e675d7-2554-4f18-830b-2762732560de}/40": 14538,
+    "{b3e675d7-2554-4f18-830b-2762732560de}/41": 4,
+    "MSNT_SystemTrace/ReadyThread": 10433,
+    "MSNT_SystemTrace/Stack": 37960,
+    "{3d6fa8d1-fe05-11d0-9dda-00c04fd7ba7c}/36": 19305,
+    "{ce1dbfb4-137e-4da6-87b0-3f59aa102cbc}/46": 14416,
+    "{b3e675d7-2554-4f18-830b-2762732560de}/32": 236,
+    "{b3e675d7-2554-4f18-830b-2762732560de}/37": 408,
+    "MSNT_SystemTrace/SetPriority": 18,
+    "MSNT_SystemTrace/CollectionStart": 1,
+    "MSNT_SystemTrace/RDComplete": 3,
+    "MSNT_SystemTrace/ProviderBinaryPath": 1,
+    "{3d6fa8d1-fe05-11d0-9dda-00c04fd7ba7c}/70": 503,
+    "{3d6fa8d1-fe05-11d0-9dda-00c04fd7ba7c}/71": 458,
+    "MSNT_SystemTrace/Start": 559,
+    "MSNT_SystemTrace/SetBasePriority": 1,
+    "MSNT_SystemTrace/SetName": 3,
+    "{bbccf6c1-6cd1-48c4-80ff-839482e37671}/32": 41,
+    "{e13c0d23-ccbc-4e12-931b-d9cc2eee27e4}/JittingStarted ": 7,
+    "{e13c0d23-ccbc-4e12-931b-d9cc2eee27e4}/103": 7,
+    "MSNT_SystemTrace/Load": 927,
+    "Microsoft-Windows-Performance-Recorder-Control /Stop ": 17,
+    "Microsoft-Windows-Performance-Recorder-Control /Start ": 17,
+    "{bbccf6c1-6cd1-48c4-80ff-839482e37671}/33": 16,
+    "{e13c0d23-ccbc-4e12-931b-d9cc2eee27e4}/LoadVerbose ": 7,
+    "{e13c0d23-ccbc-4e12-931b-d9cc2eee27e4}/87": 7,
+    "{8c416c79-d49b-4f01-a467-e56d3aa8234c}/Info ": 347,
+    "MSNT_SystemTrace/UnLoad": 918,
+    "Microsoft-Windows-Networking-Correlation /Send ": 173,
+    "Microsoft-Windows-RPC /Start ": 28,
+    "Microsoft-Windows-RPC /Stop ": 28,
+    "MSNT_SystemTrace/End": 506,
+    "MSNT_SystemTrace/Terminate": 101,
+    "Microsoft-Windows-Kernel-EventTracing /Info ": 101,
+    "Microsoft-Windows-Networking-Correlation /Stop ": 41,
+    "Microsoft-Windows-Networking-Correlation /Start ": 51,
+    "{3d6fa8d3-fe05-11d0-9dda-00c04fd7ba7c}/112": 7,
+    "MSNT_SystemTrace/Mark": 4,
+    "{e13c0d23-ccbc-4e12-931b-d9cc2eee27e4}/UnloadVerbose ": 47592,
+    "{e13c0d23-ccbc-4e12-931b-d9cc2eee27e4}/ModuleUnload ": 522,
+    "{e13c0d23-ccbc-4e12-931b-d9cc2eee27e4}/AssemblyUnload ": 522,
+    "{e13c0d23-ccbc-4e12-931b-d9cc2eee27e4}/AppDomainUnload ": 24,
+    "Microsoft-Windows-Kernel-EventTracing /User Mode Stack Trace ": 64,
+    "{a669021c-c450-4609-a035-5af59af4df18}/Start ": 14,
+    "{a669021c-c450-4609-a035-5af59af4df18}/DCStopInit ": 14,
+    "{a669021c-c450-4609-a035-5af59af4df18}/42": 41858,
+    "{a669021c-c450-4609-a035-5af59af4df18}/DCStopVerbose ": 47592,
+    "{a669021c-c450-4609-a035-5af59af4df18}/MethodDCEndILToNativeMap ": 3838,
+    "{a669021c-c450-4609-a035-5af59af4df18}/ModuleDCStop ": 522,
+    "{a669021c-c450-4609-a035-5af59af4df18}/DomainModuleDCStop ": 512,
+    "{a669021c-c450-4609-a035-5af59af4df18}/AssemblyDCStop ": 522,
+    "{a669021c-c450-4609-a035-5af59af4df18}/AppDomainDCStop ": 24,
+    "{a669021c-c450-4609-a035-5af59af4df18}/DCStopComplete ": 14,
+    "MSNT_SystemTrace/SetPagePriority": 2,
+    "MSNT_SystemTrace/DPI": 1,
+    "MSNT_SystemTrace/NIC": 3,
+    "MSNT_SystemTrace/PhyDisk": 2,
+    "{01853a65-418f-4f36-aefc-dc0f1d2fd235}/19": 2,
+    "MSNT_SystemTrace/LogDisk": 2,
+    "MSNT_SystemTrace/Defragmentation": 5,
+    "MSNT_SystemTrace/PnP": 62,
+    "MSNT_SystemTrace/IRQ": 5,
+    "MSNT_SystemTrace/Services": 259,
+    "MSNT_SystemTrace/CPU": 1,
+    "MSNT_SystemTrace/Processors": 4,
+    "MSNT_SystemTrace/Power": 1,
+    "MSNT_SystemTrace/Platform": 1,
+    "MSNT_SystemTrace/DeviceFamily": 1,
+    "MSNT_SystemTrace/FlightIds": 1,
+    "MSNT_SystemTrace/CodeIntegrity": 1,
+    "MSNT_SystemTrace/TelemetryConfiguration": 1,
+    "MSNT_SystemTrace/Virtualization Config Info": 1,
+    "MSNT_SystemTrace/Boot Config Info": 1,
+    "MSNT_SystemTrace/DCEnd": 8202,
+    "MSNT_SystemTrace/KernelBase": 1,
+    "MSNT_SystemTrace/HypercallPage": 1,
+    "MSNT_SystemTrace/Defunct": 5,
+    "MSNT_SystemTrace/CollectionEnd": 1,
+    "{3d6fa8d3-fe05-11d0-9dda-00c04fd7ba7c}/124": 1,
+    "{e43445e0-0903-48c3-b878-ff0fccebdd04}/51": 4,
+    "{e43445e0-0903-48c3-b878-ff0fccebdd04}/53": 4,
+    "MSNT_SystemTrace/ProcessorNumber": 1,
+    "MSNT_SystemTrace/ProcessorGroup": 1,
+    "MSNT_SystemTrace/NumaNode": 1,
+    "{9b79ee91-b5fd-41c0-a243-4248e266e9d0}/36": 18,
+    "{9b79ee91-b5fd-41c0-a243-4248e266e9d0}/32": 1,
+    "{9b79ee91-b5fd-41c0-a243-4248e266e9d0}/37": 1
+  },
+  "sampled_profile_schema": {
+    "provider_guid": "{ce1dbfb4-137e-4da6-87b0-3f59aa102cbc}",
+    "opcode": 46,
+    "payload_fields": [
+      "InstructionPointer:uint64",
+      "ThreadId:uint32",
+      "Count:uint32"
+    ],
+    "count_field_used": false,
+    "references": [
+      "https://learn.microsoft.com/en-us/windows/win32/etw/sampledprofile",
+      "https://learn.microsoft.com/en-us/windows/win32/etw/perfinfo"
+    ]
+  },
+  "mapping": {
+    "sample_events": 14416,
+    "sample_time_range": {
+      "first_ns": 1788765284216973500,
+      "last_ns": 1788765287820340200,
+      "duration_ms": 3603.3667
+    },
+    "outcomes": {
+      "thread_unresolved": 3924,
+      "process_unresolved": 11831,
+      "thread_id_zero": 7907,
+      "thread_resolved": 2585,
+      "process_interval_unresolved": 286,
+      "nbody_process": 2095,
+      "nbody_kernel": 426,
+      "nbody_other_user_image_or_unresolved": 218,
+      "nbody_executable": 1451,
+      "other_process": 204
+    },
+    "process": {
+      "target_image": "nbody.exe",
+      "target_pid_count": 100,
+      "target_pids": {
+        "0x234": 21,
+        "0x23c": 21,
+        "0x30c": 19,
+        "0x33c": 20,
+        "0x394": 37,
+        "0x3a4": 20,
+        "0x404": 20,
+        "0x564": 21,
+        "0x5fc": 20,
+        "0x688": 22,
+        "0x690": 20,
+        "0x6cc": 20,
+        "0x740": 21,
+        "0x77c": 23,
+        "0x7ac": 21,
+        "0x81c": 20,
+        "0x864": 21,
+        "0x8cc": 20,
+        "0x978": 22,
+        "0xa78": 18,
+        "0xb68": 22,
+        "0xb78": 21,
+        "0xc44": 21,
+        "0xc58": 21,
+        "0xca8": 25,
+        "0xd24": 20,
+        "0xd34": 23,
+        "0xd78": 20,
+        "0xe34": 22,
+        "0xe64": 24,
+        "0xea8": 22,
+        "0xf18": 21,
+        "0xf74": 24,
+        "0xfc0": 24,
+        "0x100c": 21,
+        "0x1018": 21,
+        "0x1040": 20,
+        "0x10bc": 19,
+        "0x10dc": 22,
+        "0x10ec": 19,
+        "0x110c": 19,
+        "0x1110": 22,
+        "0x1124": 20,
+        "0x1220": 20,
+        "0x1344": 23,
+        "0x1454": 20,
+        "0x147c": 22,
+        "0x14cc": 19,
+        "0x14e8": 20,
+        "0x159c": 24,
+        "0x15ac": 22,
+        "0x16b8": 18,
+        "0x1710": 23,
+        "0x175c": 19,
+        "0x1798": 20,
+        "0x1820": 20,
+        "0x18b0": 22,
+        "0x18e8": 23,
+        "0x1938": 20,
+        "0x1940": 23,
+        "0x1964": 19,
+        "0x1998": 20,
+        "0x19f4": 19,
+        "0x1a04": 20,
+        "0x1a34": 22,
+        "0x1a44": 19,
+        "0x1a94": 23,
+        "0x1ab8": 21,
+        "0x1b38": 19,
+        "0x1b50": 20,
+        "0x1c14": 20,
+        "0x1c4c": 20,
+        "0x1c74": 22,
+        "0x1d48": 22,
+        "0x1dbc": 22,
+        "0x1dd0": 18,
+        "0x1df0": 21,
+        "0x1e60": 20,
+        "0x1e88": 20,
+        "0x1ee0": 18,
+        "0x1f3c": 20,
+        "0x1f44": 19,
+        "0x1fbc": 25,
+        "0x1ff0": 21,
+        "0x2044": 21,
+        "0x2070": 20,
+        "0x20b0": 20,
+        "0x20c0": 20,
+        "0x20e8": 23,
+        "0x2120": 21,
+        "0x2138": 19,
+        "0x2188": 20,
+        "0x2194": 20,
+        "0x2234": 21,
+        "0x2250": 19,
+        "0x2270": 25,
+        "0x2280": 19,
+        "0x230c": 22,
+        "0x2338": 19,
+        "0x23f4": 18
+      },
+      "target_thread_count": 396,
+      "target_threads": {
+        "5556": 37,
+        "2120": 24,
+        "7660": 24,
+        "3008": 23,
+        "1160": 23,
+        "5960": 23,
+        "2640": 23,
+        "5248": 23,
+        "2660": 23,
+        "612": 23,
+        "1676": 22,
+        "3564": 22,
+        "6640": 22,
+        "5624": 22,
+        "6996": 22,
+        "364": 22,
+        "2552": 21,
+        "1880": 21,
+        "8796": 21,
+        "3696": 21,
+        "4988": 21,
+        "1436": 21,
+        "4856": 21,
+        "5432": 21,
+        "8664": 21,
+        "4132": 21,
+        "4236": 21,
+        "4552": 21,
+        "5208": 20,
+        "6112": 20,
+        "6656": 20,
+        "5408": 20,
+        "6940": 20,
+        "8872": 20,
+        "8152": 20,
+        "9140": 20,
+        "2576": 20,
+        "7956": 20,
+        "3164": 20,
+        "8592": 20,
+        "5916": 20,
+        "8228": 20,
+        "7780": 20,
+        "8364": 20,
+        "8944": 20,
+        "7768": 20,
+        "4028": 20,
+        "7416": 20,
+        "8408": 20,
+        "1320": 20,
+        "6072": 20,
+        "6596": 20,
+        "8084": 20,
+        "7504": 20,
+        "8344": 20,
+        "5732": 20,
+        "7064": 20,
+        "6900": 20,
+        "8100": 20,
+        "7544": 20,
+        "4648": 19,
+        "1416": 19,
+        "5680": 19,
+        "8248": 19,
+        "4660": 19,
+        "3600": 19,
+        "1044": 19,
+        "3660": 19,
+        "7756": 19,
+        "6688": 19,
+        "5400": 19,
+        "7980": 19,
+        "9120": 19,
+        "8132": 19,
+        "2124": 19,
+        "6172": 19,
+        "8196": 19,
+        "8472": 19,
+        "6600": 19,
+        "6980": 19,
+        "8460": 19,
+        "7844": 19,
+        "6340": 19,
+        "9148": 18,
+        "8028": 18,
+        "6264": 18,
+        "3400": 18,
+        "7108": 18,
+        "7892": 18,
+        "8212": 18,
+        "7932": 18,
+        "4452": 18,
+        "1396": 18,
+        "7080": 18,
+        "8892": 18,
+        "6636": 18,
+        "8264": 18,
+        "6896": 18,
+        "1400": 18,
+        "4840": 18,
+        "8620": 2,
+        "4216": 2,
+        "4912": 1,
+        "4004": 1,
+        "4612": 1,
+        "8216": 1,
+        "6156": 1,
+        "7832": 1,
+        "7972": 1,
+        "6076": 1,
+        "8420": 1,
+        "904": 1,
+        "2040": 1,
+        "5292": 1,
+        "5124": 1,
+        "1420": 1,
+        "7596": 1,
+        "1732": 1,
+        "3736": 1,
+        "2796": 1,
+        "6424": 1,
+        "6668": 1,
+        "8700": 1,
+        "5448": 1,
+        "1216": 1,
+        "8040": 1,
+        "5536": 1,
+        "2696": 1,
+        "6440": 1,
+        "7476": 1,
+        "1364": 1,
+        "8572": 1,
+        "7348": 1,
+        "2600": 1,
+        "2744": 1,
+        "7224": 1,
+        "1440": 1,
+        "5748": 1,
+        "5336": 1,
+        "2748": 1,
+        "8104": 1,
+        "3260": 1,
+        "2160": 1,
+        "8372": 1,
+        "4336": 1,
+        "5824": 1,
+        "8044": 1,
+        "8928": 1,
+        "1296": 1,
+        "6036": 1,
+        "7092": 1,
+        "5492": 1,
+        "4836": 1,
+        "5360": 1,
+        "3996": 1,
+        "2764": 1,
+        "2404": 1,
+        "9192": 1,
+        "3028": 1,
+        "3824": 1,
+        "6764": 1,
+        "2760": 1,
+        "3576": 1,
+        "7324": 1,
+        "6760": 1,
+        "7984": 1,
+        "1992": 1,
+        "7940": 1,
+        "7116": 1,
+        "2648": 1,
+        "5348": 1,
+        "8680": 1,
+        "1988": 1,
+        "4088": 1,
+        "4508": 1,
+        "8140": 1,
+        "7564": 1,
+        "8076": 1,
+        "5760": 1,
+        "7852": 1
+      }
+    },
+    "module_distribution": [
+      {
+        "value": "kernel/unresolved",
+        "count": 11226
+      },
+      {
+        "value": "nbody.exe",
+        "count": 1451
+      },
+      {
+        "value": "unresolved",
+        "count": 1272
+      },
+      {
+        "value": "ntdll.dll",
+        "count": 246
+      },
+      {
+        "value": "coreclr.dll",
+        "count": 100
+      },
+      {
+        "value": "clr.dll",
+        "count": 32
+      },
+      {
+        "value": "ucrtbase.dll",
+        "count": 24
+      },
+      {
+        "value": "msxml6.dll",
+        "count": 18
+      },
+      {
+        "value": "kernelbase.dll",
+        "count": 15
+      },
+      {
+        "value": "windowsperformancerecordercontrol.dll",
+        "count": 7
+      },
+      {
+        "value": "clrjit.dll",
+        "count": 3
+      },
+      {
+        "value": "iphlpapi.dll",
+        "count": 3
+      },
+      {
+        "value": "crypt32.dll",
+        "count": 3
+      },
+      {
+        "value": "msvcrt.dll",
+        "count": 3
+      },
+      {
+        "value": "ucrtbase_clr0400.dll",
+        "count": 3
+      },
+      {
+        "value": "cfgmgr32.dll",
+        "count": 3
+      },
+      {
+        "value": "kernel32.dll",
+        "count": 2
+      },
+      {
+        "value": "xmllite.dll",
+        "count": 2
+      },
+      {
+        "value": "bcryptprimitives.dll",
+        "count": 1
+      },
+      {
+        "value": "advapi32.dll",
+        "count": 1
+      },
+      {
+        "value": "rpcrt4.dll",
+        "count": 1
+      }
+    ],
+    "cpu_distribution": [
+      {
+        "value": "0",
+        "count": 3604
+      },
+      {
+        "value": "1",
+        "count": 3604
+      },
+      {
+        "value": "3",
+        "count": 3604
+      },
+      {
+        "value": "2",
+        "count": 3604
+      }
+    ],
+    "target_cpu_distribution": [
+      {
+        "value": "0",
+        "count": 685
+      },
+      {
+        "value": "2",
+        "count": 664
+      },
+      {
+        "value": "1",
+        "count": 471
+      },
+      {
+        "value": "3",
+        "count": 275
+      }
+    ],
+    "target_ip_top": [
+      {
+        "ip": "0x7ff6713f1de6",
+        "base": "0x7ff6713b0000",
+        "rva": "0x41de6",
+        "count": 115
+      },
+      {
+        "ip": "0x7ff6713f22b5",
+        "base": "0x7ff6713b0000",
+        "rva": "0x422b5",
+        "count": 62
+      },
+      {
+        "ip": "0x7ff67141b1d5",
+        "base": "0x7ff6713b0000",
+        "rva": "0x6b1d5",
+        "count": 50
+      },
+      {
+        "ip": "0x7ff67141a76a",
+        "base": "0x7ff6713b0000",
+        "rva": "0x6a76a",
+        "count": 47
+      },
+      {
+        "ip": "0x7ff67141147b",
+        "base": "0x7ff6713b0000",
+        "rva": "0x6147b",
+        "count": 35
+      },
+      {
+        "ip": "0x7ff671438533",
+        "base": "0x7ff6713b0000",
+        "rva": "0x88533",
+        "count": 32
+      },
+      {
+        "ip": "0x7ff6713eff6a",
+        "base": "0x7ff6713b0000",
+        "rva": "0x3ff6a",
+        "count": 22
+      },
+      {
+        "ip": "0x7ff67141a867",
+        "base": "0x7ff6713b0000",
+        "rva": "0x6a867",
+        "count": 19
+      },
+      {
+        "ip": "0x7ff6713f1de2",
+        "base": "0x7ff6713b0000",
+        "rva": "0x41de2",
+        "count": 17
+      },
+      {
+        "ip": "0x7ff67141b167",
+        "base": "0x7ff6713b0000",
+        "rva": "0x6b167",
+        "count": 16
+      },
+      {
+        "ip": "0x7ff67141a8ed",
+        "base": "0x7ff6713b0000",
+        "rva": "0x6a8ed",
+        "count": 16
+      },
+      {
+        "ip": "0x7ff67140a218",
+        "base": "0x7ff6713b0000",
+        "rva": "0x5a218",
+        "count": 16
+      },
+      {
+        "ip": "0x7ff67143854f",
+        "base": "0x7ff6713b0000",
+        "rva": "0x8854f",
+        "count": 16
+      },
+      {
+        "ip": "0x7ff67141b14c",
+        "base": "0x7ff6713b0000",
+        "rva": "0x6b14c",
+        "count": 15
+      },
+      {
+        "ip": "0x7ff6713eff82",
+        "base": "0x7ff6713b0000",
+        "rva": "0x3ff82",
+        "count": 13
+      },
+      {
+        "ip": "0x7ff67141b1dd",
+        "base": "0x7ff6713b0000",
+        "rva": "0x6b1dd",
+        "count": 11
+      },
+      {
+        "ip": "0x7ff67141a813",
+        "base": "0x7ff6713b0000",
+        "rva": "0x6a813",
+        "count": 11
+      },
+      {
+        "ip": "0x7ff67141a97c",
+        "base": "0x7ff6713b0000",
+        "rva": "0x6a97c",
+        "count": 11
+      },
+      {
+        "ip": "0x7ff6713eff93",
+        "base": "0x7ff6713b0000",
+        "rva": "0x3ff93",
+        "count": 10
+      },
+      {
+        "ip": "0x7ff67141a80e",
+        "base": "0x7ff6713b0000",
+        "rva": "0x6a80e",
+        "count": 10
+      },
+      {
+        "ip": "0x7ff67141a862",
+        "base": "0x7ff6713b0000",
+        "rva": "0x6a862",
+        "count": 10
+      },
+      {
+        "ip": "0x7ff67140a246",
+        "base": "0x7ff6713b0000",
+        "rva": "0x5a246",
+        "count": 9
+      },
+      {
+        "ip": "0x7ff6713eff65",
+        "base": "0x7ff6713b0000",
+        "rva": "0x3ff65",
+        "count": 9
+      },
+      {
+        "ip": "0x7ff67141a8ab",
+        "base": "0x7ff6713b0000",
+        "rva": "0x6a8ab",
+        "count": 9
+      },
+      {
+        "ip": "0x7ff67141aa68",
+        "base": "0x7ff6713b0000",
+        "rva": "0x6aa68",
+        "count": 8
+      },
+      {
+        "ip": "0x7ff67141a851",
+        "base": "0x7ff6713b0000",
+        "rva": "0x6a851",
+        "count": 8
+      },
+      {
+        "ip": "0x7ff671407a1a",
+        "base": "0x7ff6713b0000",
+        "rva": "0x57a1a",
+        "count": 8
+      },
+      {
+        "ip": "0x7ff67143854a",
+        "base": "0x7ff6713b0000",
+        "rva": "0x8854a",
+        "count": 8
+      },
+      {
+        "ip": "0x7ff67140f835",
+        "base": "0x7ff6713b0000",
+        "rva": "0x5f835",
+        "count": 8
+      },
+      {
+        "ip": "0x7ff671414317",
+        "base": "0x7ff6713b0000",
+        "rva": "0x64317",
+        "count": 7
+      },
+      {
+        "ip": "0x7ff67143858b",
+        "base": "0x7ff6713b0000",
+        "rva": "0x8858b",
+        "count": 7
+      },
+      {
+        "ip": "0x7ff67141a1eb",
+        "base": "0x7ff6713b0000",
+        "rva": "0x6a1eb",
+        "count": 7
+      },
+      {
+        "ip": "0x7ff67140f853",
+        "base": "0x7ff6713b0000",
+        "rva": "0x5f853",
+        "count": 7
+      },
+      {
+        "ip": "0x7ff6713eff6b",
+        "base": "0x7ff6713b0000",
+        "rva": "0x3ff6b",
+        "count": 7
+      },
+      {
+        "ip": "0x7ff67140953d",
+        "base": "0x7ff6713b0000",
+        "rva": "0x5953d",
+        "count": 7
+      },
+      {
+        "ip": "0x7ff67140e6b0",
+        "base": "0x7ff6713b0000",
+        "rva": "0x5e6b0",
+        "count": 7
+      },
+      {
+        "ip": "0x7ff671408279",
+        "base": "0x7ff6713b0000",
+        "rva": "0x58279",
+        "count": 7
+      },
+      {
+        "ip": "0x7ff67141a894",
+        "base": "0x7ff6713b0000",
+        "rva": "0x6a894",
+        "count": 7
+      },
+      {
+        "ip": "0x7ff6714381d9",
+        "base": "0x7ff6713b0000",
+        "rva": "0x881d9",
+        "count": 6
+      },
+      {
+        "ip": "0x7ff67140e1a7",
+        "base": "0x7ff6713b0000",
+        "rva": "0x5e1a7",
+        "count": 6
+      },
+      {
+        "ip": "0x7ff67140e326",
+        "base": "0x7ff6713b0000",
+        "rva": "0x5e326",
+        "count": 6
+      },
+      {
+        "ip": "0x7ff6713f22b9",
+        "base": "0x7ff6713b0000",
+        "rva": "0x422b9",
+        "count": 6
+      },
+      {
+        "ip": "0x7ff6713f1f93",
+        "base": "0x7ff6713b0000",
+        "rva": "0x41f93",
+        "count": 6
+      },
+      {
+        "ip": "0x7ff67141a822",
+        "base": "0x7ff6713b0000",
+        "rva": "0x6a822",
+        "count": 6
+      },
+      {
+        "ip": "0x7ff6713eff67",
+        "base": "0x7ff6713b0000",
+        "rva": "0x3ff67",
+        "count": 6
+      },
+      {
+        "ip": "0x7ff67141a7da",
+        "base": "0x7ff6713b0000",
+        "rva": "0x6a7da",
+        "count": 6
+      },
+      {
+        "ip": "0x7ff67140f881",
+        "base": "0x7ff6713b0000",
+        "rva": "0x5f881",
+        "count": 6
+      },
+      {
+        "ip": "0x7ff6713f1fc4",
+        "base": "0x7ff6713b0000",
+        "rva": "0x41fc4",
+        "count": 6
+      },
+      {
+        "ip": "0x7ff67141a8ae",
+        "base": "0x7ff6713b0000",
+        "rva": "0x6a8ae",
+        "count": 5
+      },
+      {
+        "ip": "0x7ff6714381d5",
+        "base": "0x7ff6713b0000",
+        "rva": "0x881d5",
+        "count": 5
+      }
+    ],
+    "target_rva_top": [
+      {
+        "rva": "0x41de6",
+        "count": 115
+      },
+      {
+        "rva": "0x422b5",
+        "count": 62
+      },
+      {
+        "rva": "0x6b1d5",
+        "count": 50
+      },
+      {
+        "rva": "0x6a76a",
+        "count": 47
+      },
+      {
+        "rva": "0x6147b",
+        "count": 35
+      },
+      {
+        "rva": "0x88533",
+        "count": 32
+      },
+      {
+        "rva": "0x3ff6a",
+        "count": 22
+      },
+      {
+        "rva": "0x6a867",
+        "count": 19
+      },
+      {
+        "rva": "0x41de2",
+        "count": 17
+      },
+      {
+        "rva": "0x6b167",
+        "count": 16
+      },
+      {
+        "rva": "0x6a8ed",
+        "count": 16
+      },
+      {
+        "rva": "0x5a218",
+        "count": 16
+      },
+      {
+        "rva": "0x8854f",
+        "count": 16
+      },
+      {
+        "rva": "0x6b14c",
+        "count": 15
+      },
+      {
+        "rva": "0x3ff82",
+        "count": 13
+      },
+      {
+        "rva": "0x6b1dd",
+        "count": 11
+      },
+      {
+        "rva": "0x6a813",
+        "count": 11
+      },
+      {
+        "rva": "0x6a97c",
+        "count": 11
+      },
+      {
+        "rva": "0x3ff93",
+        "count": 10
+      },
+      {
+        "rva": "0x6a80e",
+        "count": 10
+      },
+      {
+        "rva": "0x6a862",
+        "count": 10
+      },
+      {
+        "rva": "0x5a246",
+        "count": 9
+      },
+      {
+        "rva": "0x3ff65",
+        "count": 9
+      },
+      {
+        "rva": "0x6a8ab",
+        "count": 9
+      },
+      {
+        "rva": "0x6aa68",
+        "count": 8
+      },
+      {
+        "rva": "0x6a851",
+        "count": 8
+      },
+      {
+        "rva": "0x57a1a",
+        "count": 8
+      },
+      {
+        "rva": "0x8854a",
+        "count": 8
+      },
+      {
+        "rva": "0x5f835",
+        "count": 8
+      },
+      {
+        "rva": "0x64317",
+        "count": 7
+      },
+      {
+        "rva": "0x8858b",
+        "count": 7
+      },
+      {
+        "rva": "0x6a1eb",
+        "count": 7
+      },
+      {
+        "rva": "0x5f853",
+        "count": 7
+      },
+      {
+        "rva": "0x3ff6b",
+        "count": 7
+      },
+      {
+        "rva": "0x5953d",
+        "count": 7
+      },
+      {
+        "rva": "0x5e6b0",
+        "count": 7
+      },
+      {
+        "rva": "0x58279",
+        "count": 7
+      },
+      {
+        "rva": "0x6a894",
+        "count": 7
+      },
+      {
+        "rva": "0x881d9",
+        "count": 6
+      },
+      {
+        "rva": "0x5e1a7",
+        "count": 6
+      },
+      {
+        "rva": "0x5e326",
+        "count": 6
+      },
+      {
+        "rva": "0x422b9",
+        "count": 6
+      },
+      {
+        "rva": "0x41f93",
+        "count": 6
+      },
+      {
+        "rva": "0x6a822",
+        "count": 6
+      },
+      {
+        "rva": "0x3ff67",
+        "count": 6
+      },
+      {
+        "rva": "0x6a7da",
+        "count": 6
+      },
+      {
+        "rva": "0x5f881",
+        "count": 6
+      },
+      {
+        "rva": "0x41fc4",
+        "count": 6
+      },
+      {
+        "rva": "0x6a8ae",
+        "count": 5
+      },
+      {
+        "rva": "0x881d5",
+        "count": 5
+      }
+    ],
+    "target_rva_4k_buckets": [
+      {
+        "rva": "0x6a000",
+        "count": 330
+      },
+      {
+        "rva": "0x41000",
+        "count": 181
+      },
+      {
+        "rva": "0x88000",
+        "count": 130
+      },
+      {
+        "rva": "0x6b000",
+        "count": 126
+      },
+      {
+        "rva": "0x3f000",
+        "count": 88
+      },
+      {
+        "rva": "0x42000",
+        "count": 87
+      },
+      {
+        "rva": "0x61000",
+        "count": 83
+      },
+      {
+        "rva": "0x5a000",
+        "count": 56
+      },
+      {
+        "rva": "0x5e000",
+        "count": 51
+      },
+      {
+        "rva": "0x2000",
+        "count": 50
+      },
+      {
+        "rva": "0x30f000",
+        "count": 49
+      },
+      {
+        "rva": "0x5f000",
+        "count": 43
+      },
+      {
+        "rva": "0x57000",
+        "count": 34
+      },
+      {
+        "rva": "0x58000",
+        "count": 29
+      },
+      {
+        "rva": "0x3000",
+        "count": 23
+      },
+      {
+        "rva": "0x59000",
+        "count": 21
+      },
+      {
+        "rva": "0x64000",
+        "count": 18
+      },
+      {
+        "rva": "0x4000",
+        "count": 9
+      },
+      {
+        "rva": "0x320000",
+        "count": 7
+      },
+      {
+        "rva": "0x310000",
+        "count": 7
+      },
+      {
+        "rva": "0x37000",
+        "count": 6
+      },
+      {
+        "rva": "0x31f000",
+        "count": 3
+      },
+      {
+        "rva": "0x55000",
+        "count": 3
+      },
+      {
+        "rva": "0x10000",
+        "count": 3
+      },
+      {
+        "rva": "0x325000",
+        "count": 3
+      },
+      {
+        "rva": "0x52000",
+        "count": 2
+      },
+      {
+        "rva": "0x54000",
+        "count": 2
+      },
+      {
+        "rva": "0x53000",
+        "count": 2
+      },
+      {
+        "rva": "0x324000",
+        "count": 1
+      },
+      {
+        "rva": "0x3c000",
+        "count": 1
+      },
+      {
+        "rva": "0x3b000",
+        "count": 1
+      },
+      {
+        "rva": "0x7d000",
+        "count": 1
+      },
+      {
+        "rva": "0x322000",
+        "count": 1
+      }
+    ],
+    "target_image_bases": [
+      {
+        "base": "0x7ff6713b0000",
+        "count": 1451
+      }
+    ]
+  },
+  "runtime_gc_allocator": {
+    "counter_values": {
+      "aot_generic_builtin_calls": 0,
+      "aot_generic_builtin_successes": 0,
+      "aot_generic_builtin_failures": 0,
+      "aot_index_get_calls": 52803,
+      "aot_index_get_successes": 52803,
+      "aot_index_get_failures": 0,
+      "aot_index_set_calls": 19200,
+      "aot_index_set_successes": 19200,
+      "aot_index_set_failures": 0,
+      "aot_math_f64_calls": 0,
+      "aot_math_f64_successes": 0,
+      "aot_math_f64_failures": 0,
+      "aot_math_value_calls": 7205,
+      "aot_math_value_successes": 7205,
+      "aot_math_value_failures": 0,
+      "aot_unicode_length_calls": 0,
+      "aot_unicode_length_successes": 0,
+      "aot_unicode_length_failures": 0,
+      "dictionary_probes": 0,
+      "dictionary_hits": 0,
+      "dictionary_misses": 0,
+      "dictionary_linear_steps": 0,
+      "dictionary_index_lookups": 0,
+      "dictionary_entry_comparisons": 0,
+      "dictionary_index_rebuilds": 0,
+      "array_appends": 0,
+      "array_grows": 0,
+      "array_copied_bytes": 0,
+      "allocator_alloc_calls": 3627,
+      "allocator_resize_calls": 0,
+      "allocator_remap_calls": 3,
+      "allocator_free_calls": 3627,
+      "allocator_live_bytes": 0,
+      "allocator_peak_live_bytes": 21646,
+      "allocator_telemetry_active": 1,
+      "allocator_telemetry_init_failures": 0,
+      "allocations": 3610,
+      "allocated_bytes": 1126440,
+      "concat_calls": 0,
+      "concat_output_bytes": 0,
+      "string_payload_allocations": 4,
+      "string_payload_bytes": 120,
+      "string_conversions": 0,
+      "numeric_conversions": 0,
+      "value_copies": 0,
+      "frame_pools_hits": 0,
+      "frame_pools_misses": 0,
+      "root_pushes": 122422,
+      "root_high_water": 26,
+      "object_high_water": 64,
+      "object_pool_hits": 0,
+      "object_pool_misses": 0,
+      "gc_collections": 66,
+      "gc_scanned_objects": 660,
+      "gc_scanned_bytes": 205920,
+      "gc_reclaimed_objects": 3564,
+      "gc_reclaimed_bytes": 1111968,
+      "gc_mark_ns": 15100,
+      "gc_sweep_ns": 168400
+    },
+    "counter_context_count": 1,
+    "counter_contexts": [
+      {
+        "aot_generic_builtin_calls": 0,
+        "aot_generic_builtin_successes": 0,
+        "aot_generic_builtin_failures": 0,
+        "aot_index_get_calls": 52803,
+        "aot_index_get_successes": 52803,
+        "aot_index_get_failures": 0,
+        "aot_index_set_calls": 19200,
+        "aot_index_set_successes": 19200,
+        "aot_index_set_failures": 0,
+        "aot_math_f64_calls": 0,
+        "aot_math_f64_successes": 0,
+        "aot_math_f64_failures": 0,
+        "aot_math_value_calls": 7205,
+        "aot_math_value_successes": 7205,
+        "aot_math_value_failures": 0,
+        "aot_unicode_length_calls": 0,
+        "aot_unicode_length_successes": 0,
+        "aot_unicode_length_failures": 0,
+        "dictionary_probes": 0,
+        "dictionary_hits": 0,
+        "dictionary_misses": 0,
+        "dictionary_linear_steps": 0,
+        "dictionary_index_lookups": 0,
+        "dictionary_entry_comparisons": 0,
+        "dictionary_index_rebuilds": 0,
+        "array_appends": 0,
+        "array_grows": 0,
+        "array_copied_bytes": 0,
+        "allocator_alloc_calls": 3627,
+        "allocator_resize_calls": 0,
+        "allocator_remap_calls": 3,
+        "allocator_free_calls": 3627,
+        "allocator_live_bytes": 0,
+        "allocator_peak_live_bytes": 21646,
+        "allocator_telemetry_active": 1,
+        "allocator_telemetry_init_failures": 0,
+        "allocations": 3610,
+        "allocated_bytes": 1126440,
+        "concat_calls": 0,
+        "concat_output_bytes": 0,
+        "string_payload_allocations": 4,
+        "string_payload_bytes": 120,
+        "string_conversions": 0,
+        "numeric_conversions": 0,
+        "value_copies": 0,
+        "frame_pools_hits": 0,
+        "frame_pools_misses": 0,
+        "root_pushes": 122422,
+        "root_high_water": 26,
+        "object_high_water": 64,
+        "object_pool_hits": 0,
+        "object_pool_misses": 0,
+        "gc_collections": 66,
+        "gc_scanned_objects": 660,
+        "gc_scanned_bytes": 205920,
+        "gc_reclaimed_objects": 3564,
+        "gc_reclaimed_bytes": 1111968,
+        "gc_mark_ns": 15100,
+        "gc_sweep_ns": 168400
+      }
+    ],
+    "counter_scope": "single runtime report",
+    "managed_object_and_payload_fields": {
+      "allocations": 3610,
+      "allocated_bytes": 1126440,
+      "string_payload_allocations": 4,
+      "string_payload_bytes": 120,
+      "concat_calls": 0,
+      "concat_output_bytes": 0,
+      "gc_collections": 66,
+      "gc_scanned_objects": 660,
+      "gc_scanned_bytes": 205920,
+      "gc_reclaimed_objects": 3564,
+      "gc_reclaimed_bytes": 1111968
+    },
+    "allocator_telemetry_fields": {
+      "allocator_telemetry_active": 1,
+      "allocator_telemetry_init_failures": 0,
+      "allocator_alloc_calls": 3627,
+      "allocator_resize_calls": 0,
+      "allocator_remap_calls": 3,
+      "allocator_free_calls": 3627,
+      "allocator_live_bytes": 0,
+      "allocator_peak_live_bytes": 21646,
+      "gc_mark_ns": 15100,
+      "gc_sweep_ns": 168400
+    },
+    "allocator_telemetry_status": "observed by this runtime",
+    "aot_helper_entry_fields": {
+      "aot_generic_builtin_calls": 0,
+      "aot_generic_builtin_successes": 0,
+      "aot_generic_builtin_failures": 0,
+      "aot_index_get_calls": 52803,
+      "aot_index_get_successes": 52803,
+      "aot_index_get_failures": 0,
+      "aot_index_set_calls": 19200,
+      "aot_index_set_successes": 19200,
+      "aot_index_set_failures": 0,
+      "aot_math_f64_calls": 0,
+      "aot_math_f64_successes": 0,
+      "aot_math_f64_failures": 0,
+      "aot_math_value_calls": 7205,
+      "aot_math_value_successes": 7205,
+      "aot_math_value_failures": 0,
+      "aot_unicode_length_calls": 0,
+      "aot_unicode_length_successes": 0,
+      "aot_unicode_length_failures": 0
+    },
+    "allocator_telemetry_missing": [],
+    "units_and_limits": {
+      "allocations": "managed Object headers, not malloc calls",
+      "allocated_bytes": "accounted managed Object/payload bytes, not allocator live bytes",
+      "allocator_telemetry": "allocator vtable operations are unavailable when the corresponding fields are absent",
+      "gc_scanned_bytes": "Object header bytes visited by the mark phase; inline UTF-16 units do not contain roots",
+      "aot_helper_entries": "instrumented ABI entries in the separate counter run; nested wrapper/fallback entries can both count, so these fields must not be summed as unique language calls"
+    }
+  },
+  "static_abi": {
+    "profile_static_call_sites": {
+      "lnako_aot_dispatch_display_begin_with_epoch": 1,
+      "lnako_aot_dispatch_result": 1,
+      "lnako_aot_runtime_init": 1,
+      "lnako_aot_string_new": 1,
+      "lnako_aot_global_read_site": 44,
+      "lnako_aot_element_count_call_site": 1,
+      "lnako_aot_exception_pending": 47,
+      "lnako_aot_arithmetic": 22,
+      "lnako_aot_index_get": 13,
+      "lnako_aot_math_unary_value_call_site": 6,
+      "lnako_aot_global_write_site": 16,
+      "lnako_aot_array_new": 4,
+      "lnako_aot_iterator_new": 4,
+      "lnako_aot_iterator_has_next": 5,
+      "lnako_aot_iterator_next": 4,
+      "lnako_aot_index_set": 4,
+      "lnako_aot_exception_abort": 2,
+      "lnako_aot_runtime_drain_events_light": 1,
+      "lnako_aot_runtime_deinit": 1
+    },
+    "profile_typed_definitions": [],
+    "profile_sqrt_mentions": 0,
+    "profile_stack_probe_mentions": 0,
+    "pe_symbols_empty": true,
+    "sampled_function_names": "link-map",
+    "llvm_ir_call_sites": {
+      "lnako_aot_dispatch_display_begin_with_epoch": 1,
+      "lnako_aot_display_value": 1,
+      "lnako_aot_dispatch_result": 1,
+      "lnako_aot_runtime_init": 1,
+      "lnako_aot_push_roots": 16,
+      "lnako_aot_string_new": 1,
+      "lnako_aot_node_constants_init_wide": 1,
+      "lnako_aot_global_read_site": 44,
+      "lnako_aot_element_count_call_site": 1,
+      "lnako_aot_exception_pending": 47,
+      "lnako_aot_arithmetic": 22,
+      "lnako_aot_index_get": 13,
+      "lnako_aot_math_unary_value_call_site": 6,
+      "lnako_aot_global_write_site": 16,
+      "lnako_aot_array_new": 4,
+      "lnako_aot_iterator_new": 4,
+      "lnako_aot_iterator_has_next": 5,
+      "lnako_aot_iterator_next": 4,
+      "lnako_aot_compare": 1,
+      "lnako_aot_index_set": 4,
+      "lnako_aot_pop_roots": 16,
+      "lnako_aot_exception_abort": 2,
+      "lnako_aot_runtime_drain_events_light": 1,
+      "lnako_aot_runtime_deinit": 1
+    },
+    "llvm_ir_direct_sqrt_mentions": 0,
+    "sampling_address_resolution": {
+      "target_executable_samples": 1451,
+      "rva_only": true,
+      "symbol_names": "link-map"
+    }
+  },
+  "linked_disassembly": {
+    "available": true,
+    "instruction_count": 782898,
+    "call_instruction_count": 39742,
+    "sqrt_instruction_count": 11,
+    "preferred_image_base": "0x140000000",
+    "sqrt_rvas": [
+      "0x6b480",
+      "0x6b495",
+      "0x186efe",
+      "0x239d12",
+      "0x2f2b64",
+      "0x2f2bcd",
+      "0x2f2c18",
+      "0x2f305f",
+      "0x2f31be",
+      "0x2f3329",
+      "0x30fc01"
+    ],
+    "sample_nearest_instructions": [
+      {
+        "rva": "0x41de6",
+        "delta": 0,
+        "count": 115,
+        "text": "140041de6: 48 89 4b 10                 \tmovq\t%rcx, 0x10(%rbx)"
+      },
+      {
+        "rva": "0x422b5",
+        "delta": 0,
+        "count": 62,
+        "text": "1400422b5: c5 f8 11 06                 \tvmovups\t%xmm0, (%rsi)"
+      },
+      {
+        "rva": "0x6b1d5",
+        "delta": 0,
+        "count": 50,
+        "text": "14006b1d5: c5 f8 11 07                 \tvmovups\t%xmm0, (%rdi)"
+      },
+      {
+        "rva": "0x6a76a",
+        "delta": 0,
+        "count": 47,
+        "text": "14006a76a: c5 f8 11 06                 \tvmovups\t%xmm0, (%rsi)"
+      },
+      {
+        "rva": "0x6147b",
+        "delta": 0,
+        "count": 35,
+        "text": "14006147b: e9 f8 00 00 00              \tjmp\t0x140061578 <.text+0x60578>"
+      },
+      {
+        "rva": "0x88533",
+        "delta": 0,
+        "count": 32,
+        "text": "140088533: 49 8b 0e                    \tmovq\t(%r14), %rcx"
+      },
+      {
+        "rva": "0x3ff6a",
+        "delta": 0,
+        "count": 22,
+        "text": "14003ff6a: 57                          \tpushq\t%rdi"
+      },
+      {
+        "rva": "0x6a867",
+        "delta": 0,
+        "count": 19,
+        "text": "14006a867: 48 83 c0 04                 \taddq\t$0x4, %rax"
+      },
+      {
+        "rva": "0x41de2",
+        "delta": 0,
+        "count": 17,
+        "text": "140041de2: 48 8b 48 10                 \tmovq\t0x10(%rax), %rcx"
+      },
+      {
+        "rva": "0x6b167",
+        "delta": 0,
+        "count": 16,
+        "text": "14006b167: 4c 8d 45 c0                 \tleaq\t-0x40(%rbp), %r8"
+      },
+      {
+        "rva": "0x6a8ed",
+        "delta": 0,
+        "count": 16,
+        "text": "14006a8ed: 66 85 c0                    \ttestw\t%ax, %ax"
+      },
+      {
+        "rva": "0x5a218",
+        "delta": 0,
+        "count": 16,
+        "text": "14005a218: c5 f8 29 45 d0              \tvmovaps\t%xmm0, -0x30(%rbp)"
+      },
+      {
+        "rva": "0x8854f",
+        "delta": 0,
+        "count": 16,
+        "text": "14008854f: c3                          \tretq"
+      },
+      {
+        "rva": "0x6b14c",
+        "delta": 0,
+        "count": 15,
+        "text": "14006b14c: 48 89 cf                    \tmovq\t%rcx, %rdi"
+      },
+      {
+        "rva": "0x3ff82",
+        "delta": 0,
+        "count": 13,
+        "text": "14003ff82: 48 8b 07                    \tmovq\t(%rdi), %rax"
+      },
+      {
+        "rva": "0x6b1dd",
+        "delta": 0,
+        "count": 11,
+        "text": "14006b1dd: 48 8b 0e                    \tmovq\t(%rsi), %rcx"
+      },
+      {
+        "rva": "0x6a813",
+        "delta": 0,
+        "count": 11,
+        "text": "14006a813: 48 89 45 a8                 \tmovq\t%rax, -0x58(%rbp)"
+      },
+      {
+        "rva": "0x6a97c",
+        "delta": 0,
+        "count": 11,
+        "text": "14006a97c: 66 85 c0                    \ttestw\t%ax, %ax"
+      },
+      {
+        "rva": "0x3ff93",
+        "delta": 0,
+        "count": 10,
+        "text": "14003ff93: 83 f8 0e                    \tcmpl\t$0xe, %eax"
+      },
+      {
+        "rva": "0x6a80e",
+        "delta": 0,
+        "count": 10,
+        "text": "14006a80e: c4 c1 78 10 01              \tvmovups\t(%r9), %xmm0"
+      },
+      {
+        "rva": "0x6a862",
+        "delta": 0,
+        "count": 10,
+        "text": "14006a862: c5 f9 10 4d 10              \tvmovupd\t0x10(%rbp), %xmm1"
+      },
+      {
+        "rva": "0x5a246",
+        "delta": 0,
+        "count": 9,
+        "text": "14005a246: c5 f8 11 07                 \tvmovups\t%xmm0, (%rdi)"
+      },
+      {
+        "rva": "0x3ff65",
+        "delta": 0,
+        "count": 9,
+        "text": "14003ff65: 41 55                       \tpushq\t%r13"
+      },
+      {
+        "rva": "0x6a8ab",
+        "delta": 0,
+        "count": 9,
+        "text": "14006a8ab: 66 85 c0                    \ttestw\t%ax, %ax"
+      },
+      {
+        "rva": "0x6aa68",
+        "delta": 0,
+        "count": 8,
+        "text": "14006aa68: 4c 39 35 61 b0 81 00        \tcmpq\t%r14, 0x81b061(%rip)    # 0x140885ad0"
+      },
+      {
+        "rva": "0x6a851",
+        "delta": 0,
+        "count": 8,
+        "text": "14006a851: c5 fc 11 45 e0              \tvmovups\t%ymm0, -0x20(%rbp)"
+      },
+      {
+        "rva": "0x57a1a",
+        "delta": 0,
+        "count": 8,
+        "text": "140057a1a: e9 4a fd ff ff              \tjmp\t0x140057769 <.text+0x56769>"
+      },
+      {
+        "rva": "0x8854a",
+        "delta": 0,
+        "count": 8,
+        "text": "14008854a: 41 5e                       \tpopq\t%r14"
+      },
+      {
+        "rva": "0x5f835",
+        "delta": 0,
+        "count": 8,
+        "text": "14005f835: 41 55                       \tpushq\t%r13"
+      },
+      {
+        "rva": "0x64317",
+        "delta": 0,
+        "count": 7,
+        "text": "140064317: 89 06                       \tmovl\t%eax, (%rsi)"
+      }
+    ],
+    "sample_near_sqrt_count": 0,
+    "symbol_resolution": "link-map"
+  },
+  "symbol_map": {
+    "available": true,
+    "path": "/private/tmp/lnako-ci-02457ac/numeric-profile-windows-x64/nbody.exe.map",
+    "format": "lld-link-rva",
+    "address_kind": "rva",
+    "symbol_count": 10717,
+    "zero_size_symbol_count": 10717,
+    "preferred_image_base": "0x140000000",
+    "sections": [
+      {
+        "rva": "0x1000",
+        "size": 3331430,
+        "name": ".text"
+      },
+      {
+        "rva": "0x310720",
+        "size": 0,
+        "name": ".weak.memset.default"
+      },
+      {
+        "rva": "0x3107a0",
+        "size": 0,
+        "name": ".weak.__chk_fail.default"
+      },
+      {
+        "rva": "0x3107a0",
+        "size": 0,
+        "name": ".weak.__stack_chk_fail.default"
+      },
+      {
+        "rva": "0x3107b0",
+        "size": 0,
+        "name": ".weak.memmove.default"
+      },
+      {
+        "rva": "0x310b30",
+        "size": 0,
+        "name": ".weak.memcpy.default"
+      },
+      {
+        "rva": "0x310cf0",
+        "size": 0,
+        "name": ".weak.___chkstk_ms.default"
+      },
+      {
+        "rva": "0x310cf0",
+        "size": 0,
+        "name": ".weak.__chkstk.default"
+      },
+      {
+        "rva": "0x310cf0",
+        "size": 0,
+        "name": ".weak.__chkstk_ms.default"
+      },
+      {
+        "rva": "0x313bf0",
+        "size": 0,
+        "name": ".weak.tan.default"
+      },
+      {
+        "rva": "0x3144d0",
+        "size": 0,
+        "name": ".weak.sincosq.default"
+      },
+      {
+        "rva": "0x314b00",
+        "size": 0,
+        "name": ".weak.__sincosx.default"
+      },
+      {
+        "rva": "0x3157d0",
+        "size": 0,
+        "name": ".weak.sincos.default"
+      },
+      {
+        "rva": "0x315aa0",
+        "size": 0,
+        "name": ".weak.sincosf.default"
+      },
+      {
+        "rva": "0x315f90",
+        "size": 0,
+        "name": ".weak.sinq.default"
+      },
+      {
+        "rva": "0x316590",
+        "size": 0,
+        "name": ".weak.__sinx.default"
+      },
+      {
+        "rva": "0x316820",
+        "size": 0,
+        "name": ".weak.sin.default"
+      },
+      {
+        "rva": "0x316b20",
+        "size": 0,
+        "name": ".weak.sinf.default"
+      },
+      {
+        "rva": "0x316db0",
+        "size": 0,
+        "name": ".weak.log2f.default"
+      },
+      {
+        "rva": "0x316ee0",
+        "size": 0,
+        "name": ".weak.log.default"
+      },
+      {
+        "rva": "0x317180",
+        "size": 0,
+        "name": ".weak.fmod.default"
+      },
+      {
+        "rva": "0x317330",
+        "size": 0,
+        "name": ".weak.fabsq.default"
+      },
+      {
+        "rva": "0x317360",
+        "size": 0,
+        "name": ".weak.exp.default"
+      },
+      {
+        "rva": "0x317660",
+        "size": 0,
+        "name": ".weak.cosq.default"
+      },
+      {
+        "rva": "0x317810",
+        "size": 0,
+        "name": ".weak.__cosx.default"
+      },
+      {
+        "rva": "0x317aa0",
+        "size": 0,
+        "name": ".weak.cos.default"
+      },
+      {
+        "rva": "0x317db0",
+        "size": 0,
+        "name": ".weak.cosf.default"
+      },
+      {
+        "rva": "0x318170",
+        "size": 0,
+        "name": ".weak.__multf3.default"
+      },
+      {
+        "rva": "0x3186a0",
+        "size": 0,
+        "name": ".weak.__subtf3.default"
+      },
+      {
+        "rva": "0x318ac0",
+        "size": 0,
+        "name": ".weak.__addtf3.default"
+      },
+      {
+        "rva": "0x318ef0",
+        "size": 0,
+        "name": ".weak.__getf2.default"
+      },
+      {
+        "rva": "0x318ef0",
+        "size": 0,
+        "name": ".weak.__gttf2.default"
+      },
+      {
+        "rva": "0x318f90",
+        "size": 0,
+        "name": ".weak.__cmptf2.default"
+      },
+      {
+        "rva": "0x318f90",
+        "size": 0,
+        "name": ".weak.__eqtf2.default"
+      },
+      {
+        "rva": "0x318f90",
+        "size": 0,
+        "name": ".weak.__letf2.default"
+      },
+      {
+        "rva": "0x318f90",
+        "size": 0,
+        "name": ".weak.__lttf2.default"
+      },
+      {
+        "rva": "0x318f90",
+        "size": 0,
+        "name": ".weak.__netf2.default"
+      },
+      {
+        "rva": "0x319030",
+        "size": 0,
+        "name": ".weak.__floatuneixf.default"
+      },
+      {
+        "rva": "0x3192c0",
+        "size": 0,
+        "name": ".weak.__floatuneitf.default"
+      },
+      {
+        "rva": "0x319750",
+        "size": 0,
+        "name": ".weak.__floatuneidf.default"
+      },
+      {
+        "rva": "0x3198f0",
+        "size": 0,
+        "name": ".weak.__floatuneisf.default"
+      },
+      {
+        "rva": "0x319a70",
+        "size": 0,
+        "name": ".weak.__floatuneihf.default"
+      },
+      {
+        "rva": "0x319c10",
+        "size": 0,
+        "name": ".weak.__floatuntixf.default"
+      },
+      {
+        "rva": "0x319cf0",
+        "size": 0,
+        "name": ".weak.__floatuntidf.default"
+      },
+      {
+        "rva": "0x319db0",
+        "size": 0,
+        "name": ".weak.__floatuntisf.default"
+      },
+      {
+        "rva": "0x319e60",
+        "size": 0,
+        "name": ".weak.__floateixf.default"
+      },
+      {
+        "rva": "0x31a140",
+        "size": 0,
+        "name": ".weak.__floateitf.default"
+      },
+      {
+        "rva": "0x31a6a0",
+        "size": 0,
+        "name": ".weak.__floateidf.default"
+      },
+      {
+        "rva": "0x31a840",
+        "size": 0,
+        "name": ".weak.__floateisf.default"
+      },
+      {
+        "rva": "0x31a9d0",
+        "size": 0,
+        "name": ".weak.__floateihf.default"
+      },
+      {
+        "rva": "0x31ab60",
+        "size": 0,
+        "name": ".weak.__floattixf.default"
+      },
+      {
+        "rva": "0x31ac60",
+        "size": 0,
+        "name": ".weak.__floattidf.default"
+      },
+      {
+        "rva": "0x31ad60",
+        "size": 0,
+        "name": ".weak.__floattisf.default"
+      },
+      {
+        "rva": "0x31ae40",
+        "size": 0,
+        "name": ".weak.__fixunsxfei.default"
+      },
+      {
+        "rva": "0x31b070",
+        "size": 0,
+        "name": ".weak.__fixunsxfti.default"
+      },
+      {
+        "rva": "0x31b100",
+        "size": 0,
+        "name": ".weak.__fixunstfei.default"
+      },
+      {
+        "rva": "0x31b330",
+        "size": 0,
+        "name": ".weak.__fixunstfti.default"
+      },
+      {
+        "rva": "0x31b3e0",
+        "size": 0,
+        "name": ".weak.__fixunstfdi.default"
+      },
+      {
+        "rva": "0x31b460",
+        "size": 0,
+        "name": ".weak.__fixunstfsi.default"
+      },
+      {
+        "rva": "0x31b4e0",
+        "size": 0,
+        "name": ".weak.__fixunsdfei.default"
+      },
+      {
+        "rva": "0x31b6d0",
+        "size": 0,
+        "name": ".weak.__fixunsdfti.default"
+      },
+      {
+        "rva": "0x31b770",
+        "size": 0,
+        "name": ".weak.__fixunssfei.default"
+      },
+      {
+        "rva": "0x31b920",
+        "size": 0,
+        "name": ".weak.__fixunssfti.default"
+      },
+      {
+        "rva": "0x31b9b0",
+        "size": 0,
+        "name": ".weak.__fixunshfei.default"
+      },
+      {
+        "rva": "0x31bb80",
+        "size": 0,
+        "name": ".weak.__fixxfei.default"
+      },
+      {
+        "rva": "0x31bef0",
+        "size": 0,
+        "name": ".weak.__fixtfei.default"
+      },
+      {
+        "rva": "0x31c230",
+        "size": 0,
+        "name": ".weak.__fixtfti.default"
+      },
+      {
+        "rva": "0x31c310",
+        "size": 0,
+        "name": ".weak.__fixtfdi.default"
+      },
+      {
+        "rva": "0x31c3a0",
+        "size": 0,
+        "name": ".weak.__fixtfsi.default"
+      },
+      {
+        "rva": "0x31c420",
+        "size": 0,
+        "name": ".weak.__fixdfei.default"
+      },
+      {
+        "rva": "0x31c6e0",
+        "size": 0,
+        "name": ".weak.__fixdfti.default"
+      },
+      {
+        "rva": "0x31c7b0",
+        "size": 0,
+        "name": ".weak.__fixsfei.default"
+      },
+      {
+        "rva": "0x31ca00",
+        "size": 0,
+        "name": ".weak.__fixsfti.default"
+      },
+      {
+        "rva": "0x31cac0",
+        "size": 0,
+        "name": ".weak.__fixhfei.default"
+      },
+      {
+        "rva": "0x31cd40",
+        "size": 0,
+        "name": ".weak.__fixxfti.default"
+      },
+      {
+        "rva": "0x31cdf0",
+        "size": 0,
+        "name": ".weak.__trunctfdf2.default"
+      },
+      {
+        "rva": "0x31d430",
+        "size": 0,
+        "name": ".weak.__divti3.default"
+      },
+      {
+        "rva": "0x31d4b0",
+        "size": 0,
+        "name": ".weak.__udivti3.default"
+      },
+      {
+        "rva": "0x32f000",
+        "size": 5540236,
+        "name": ".rdata"
+      },
+      {
+        "rva": "0x872670",
+        "size": 0,
+        "name": ".refptr.__stack_chk_guard"
+      },
+      {
+        "rva": "0x878000",
+        "size": 61700,
+        "name": ".data"
+      },
+      {
+        "rva": "0x884ee0",
+        "size": 0,
+        "name": ".weak.__stack_chk_guard.default"
+      },
+      {
+        "rva": "0x888000",
+        "size": 4692,
+        "name": ".pdata"
+      },
+      {
+        "rva": "0x88a000",
+        "size": 256,
+        "name": ".fptable"
+      },
+      {
+        "rva": "0x88b000",
+        "size": 25,
+        "name": ".tls"
+      },
+      {
+        "rva": "0x88c000",
+        "size": 11876,
+        "name": ".reloc"
+      }
+    ],
+    "symbol_resolution": "link-map",
+    "sampled_symbol_top": [
+      {
+        "rva": "0x3ff60",
+        "size": 0,
+        "effective_size": 8240,
+        "name": "runtime.aot.conversion.valueToPrimitive",
+        "count": 237
+      },
+      {
+        "rva": "0x6a7b0",
+        "size": 0,
+        "effective_size": 2400,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 218
+      },
+      {
+        "rva": "0x6b110",
+        "size": 0,
+        "effective_size": 240,
+        "name": "runtime.aot.instructions.lnako_aot_arithmetic",
+        "count": 126
+      },
+      {
+        "rva": "0x41f90",
+        "size": 0,
+        "effective_size": 1808,
+        "name": "runtime.aot.conversion.valueToNumberRuntime",
+        "count": 119
+      },
+      {
+        "rva": "0x881d0",
+        "size": 0,
+        "effective_size": 944,
+        "name": "runtime.aot.trace.GlobalTrace.recordPhase",
+        "count": 100
+      },
+      {
+        "rva": "0x61390",
+        "size": 0,
+        "effective_size": 1088,
+        "name": "runtime.aot.collection.aotCanonicalArrayIndex",
+        "count": 83
+      },
+      {
+        "rva": "0x6a630",
+        "size": 0,
+        "effective_size": 384,
+        "name": "runtime.aot.conversion.valueToParseFloatRuntime",
+        "count": 78
+      },
+      {
+        "rva": "0x1060",
+        "size": 0,
+        "effective_size": 15392,
+        "name": "wmain",
+        "count": 78
+      },
+      {
+        "rva": "0x5a1e0",
+        "size": 0,
+        "effective_size": 256,
+        "name": "runtime.aot.instructions.lnako_aot_index_get",
+        "count": 53
+      },
+      {
+        "rva": "0x5e1a0",
+        "size": 0,
+        "effective_size": 3936,
+        "name": "runtime.aot.runtime_core.Runtime.indexGet",
+        "count": 51
+      },
+      {
+        "rva": "0x30fdd0",
+        "size": 0,
+        "effective_size": 1872,
+        "name": "runtime.aot.math.lnako_aot_math_unary_value_call_site",
+        "count": 45
+      },
+      {
+        "rva": "0x5f830",
+        "size": 0,
+        "effective_size": 928,
+        "name": "runtime.aot.runtime_core.Runtime.aotArrayPropertyGet",
+        "count": 43
+      },
+      {
+        "rva": "0x57630",
+        "size": 0,
+        "effective_size": 1408,
+        "name": "runtime.aot.instructions.lnako_aot_iterator_next",
+        "count": 25
+      },
+      {
+        "rva": "0x59400",
+        "size": 0,
+        "effective_size": 3552,
+        "name": "runtime.aot.instructions.lnako_aot_index_set",
+        "count": 24
+      },
+      {
+        "rva": "0x6a160",
+        "size": 0,
+        "effective_size": 992,
+        "name": "runtime.aot.conversion.compareValues",
+        "count": 19
+      },
+      {
+        "rva": "0x88580",
+        "size": 0,
+        "effective_size": 48,
+        "name": "runtime.aot.debug.lnako_aot_global_read_site",
+        "count": 17
+      },
+      {
+        "rva": "0x58270",
+        "size": 0,
+        "effective_size": 704,
+        "name": "runtime.aot.runtime_core.Runtime.aotArraySetIndex",
+        "count": 15
+      },
+      {
+        "rva": "0x6a540",
+        "size": 0,
+        "effective_size": 240,
+        "name": "runtime.aot.instructions.lnako_aot_compare",
+        "count": 15
+      },
+      {
+        "rva": "0x64280",
+        "size": 0,
+        "effective_size": 528,
+        "name": "runtime.aot.conversion.strictEqual",
+        "count": 14
+      },
+      {
+        "rva": "0x880a0",
+        "size": 0,
+        "effective_size": 48,
+        "name": "runtime.aot.debug.lnako_aot_exception_pending",
+        "count": 10
+      },
+      {
+        "rva": "0x58c40",
+        "size": 0,
+        "effective_size": 1472,
+        "name": "runtime.aot.runtime_core.Runtime.aotArrayPropertySet",
+        "count": 10
+      },
+      {
+        "rva": "0x30fa60",
+        "size": 0,
+        "effective_size": 880,
+        "name": "runtime.aot.math.mathUnaryF64",
+        "count": 8
+      },
+      {
+        "rva": "0x57c80",
+        "size": 0,
+        "effective_size": 1328,
+        "name": "runtime.aot.instructions.lnako_aot_iterator_new",
+        "count": 8
+      },
+      {
+        "rva": "0x320b44",
+        "size": 0,
+        "effective_size": 140,
+        "name": "char",
+        "count": 6
+      },
+      {
+        "rva": "0x57bb0",
+        "size": 0,
+        "effective_size": 208,
+        "name": "runtime.aot.instructions.lnako_aot_iterator_has_next",
+        "count": 5
+      },
+      {
+        "rva": "0x54bb0",
+        "size": 0,
+        "effective_size": 1680,
+        "name": "runtime.aot.trace.DispatchTrace.begin",
+        "count": 4
+      },
+      {
+        "rva": "0x4dc0",
+        "size": 0,
+        "effective_size": 1136,
+        "name": "runtime.aot.runtime_core.Runtime.createObject",
+        "count": 4
+      },
+      {
+        "rva": "0x52a10",
+        "size": 0,
+        "effective_size": 1872,
+        "name": "runtime.aot.trace.DispatchTrace.result",
+        "count": 4
+      },
+      {
+        "rva": "0x64490",
+        "size": 0,
+        "effective_size": 1200,
+        "name": "runtime.aot.conversion.abstractEqual",
+        "count": 4
+      },
+      {
+        "rva": "0x37350",
+        "size": 0,
+        "effective_size": 736,
+        "name": "process.Environ.getWindows",
+        "count": 3
+      },
+      {
+        "rva": "0x36970",
+        "size": 0,
+        "effective_size": 2080,
+        "name": "runtime.aot.runtime_core.Runtime.destroyObject",
+        "count": 3
+      },
+      {
+        "rva": "0x881a0",
+        "size": 0,
+        "effective_size": 48,
+        "name": "runtime.aot.debug.lnako_aot_global_write_site",
+        "count": 3
+      },
+      {
+        "rva": "0x10740",
+        "size": 0,
+        "effective_size": 752,
+        "name": "mem.findScalarPos__anon_16231",
+        "count": 3
+      },
+      {
+        "rva": "0x310520",
+        "size": 0,
+        "effective_size": 80,
+        "name": "runtime.aot.math.isMathUnaryF64Command",
+        "count": 2
+      },
+      {
+        "rva": "0x31f6a4",
+        "size": 0,
+        "effective_size": 274,
+        "name": "char",
+        "count": 2
+      },
+      {
+        "rva": "0x325f08",
+        "size": 0,
+        "effective_size": 156,
+        "name": "__dcrt_get_wide_environment_from_os",
+        "count": 2
+      },
+      {
+        "rva": "0x324640",
+        "size": 0,
+        "effective_size": 96,
+        "name": "_malloc_base",
+        "count": 1
+      },
+      {
+        "rva": "0x31f7b8",
+        "size": 0,
+        "effective_size": 286,
+        "name": "wchar_t",
+        "count": 1
+      },
+      {
+        "rva": "0x3b890",
+        "size": 0,
+        "effective_size": 7552,
+        "name": "runtime.aot.debug.lnako_aot_runtime_deinit",
+        "count": 1
+      },
+      {
+        "rva": "0x55240",
+        "size": 0,
+        "effective_size": 6704,
+        "name": "runtime.aot_builtin.canonicalOpcodeName",
+        "count": 1
+      },
+      {
+        "rva": "0x3afd0",
+        "size": 0,
+        "effective_size": 384,
+        "name": "runtime.aot.runtime_core.Runtime.createString",
+        "count": 1
+      },
+      {
+        "rva": "0x7d7d0",
+        "size": 0,
+        "effective_size": 2160,
+        "name": "runtime.aot.display.emitDisplayLine",
+        "count": 1
+      },
+      {
+        "rva": "0x320ce7",
+        "size": 0,
+        "effective_size": 222,
+        "name": "$LN13",
+        "count": 1
+      },
+      {
+        "rva": "0x322e40",
+        "size": 0,
+        "effective_size": 80,
+        "name": "_free_base",
+        "count": 1
+      },
+      {
+        "rva": "0x30f8f0",
+        "size": 0,
+        "effective_size": 64,
+        "name": "heap.c_allocator_impl.free",
+        "count": 1
+      },
+      {
+        "rva": "0x325df8",
+        "size": 0,
+        "effective_size": 272,
+        "name": "__dcrt_get_narrow_environment_from_os",
+        "count": 1
+      }
+    ],
+    "sampled_address_symbol_top": [
+      {
+        "rva": "0x41de6",
+        "symbol_rva": "0x3ff60",
+        "delta": 7814,
+        "name": "runtime.aot.conversion.valueToPrimitive",
+        "count": 115
+      },
+      {
+        "rva": "0x422b5",
+        "symbol_rva": "0x41f90",
+        "delta": 805,
+        "name": "runtime.aot.conversion.valueToNumberRuntime",
+        "count": 62
+      },
+      {
+        "rva": "0x6b1d5",
+        "symbol_rva": "0x6b110",
+        "delta": 197,
+        "name": "runtime.aot.instructions.lnako_aot_arithmetic",
+        "count": 50
+      },
+      {
+        "rva": "0x6a76a",
+        "symbol_rva": "0x6a630",
+        "delta": 314,
+        "name": "runtime.aot.conversion.valueToParseFloatRuntime",
+        "count": 47
+      },
+      {
+        "rva": "0x6147b",
+        "symbol_rva": "0x61390",
+        "delta": 235,
+        "name": "runtime.aot.collection.aotCanonicalArrayIndex",
+        "count": 35
+      },
+      {
+        "rva": "0x88533",
+        "symbol_rva": "0x881d0",
+        "delta": 867,
+        "name": "runtime.aot.trace.GlobalTrace.recordPhase",
+        "count": 32
+      },
+      {
+        "rva": "0x3ff6a",
+        "symbol_rva": "0x3ff60",
+        "delta": 10,
+        "name": "runtime.aot.conversion.valueToPrimitive",
+        "count": 22
+      },
+      {
+        "rva": "0x6a867",
+        "symbol_rva": "0x6a7b0",
+        "delta": 183,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 19
+      },
+      {
+        "rva": "0x41de2",
+        "symbol_rva": "0x3ff60",
+        "delta": 7810,
+        "name": "runtime.aot.conversion.valueToPrimitive",
+        "count": 17
+      },
+      {
+        "rva": "0x6b167",
+        "symbol_rva": "0x6b110",
+        "delta": 87,
+        "name": "runtime.aot.instructions.lnako_aot_arithmetic",
+        "count": 16
+      },
+      {
+        "rva": "0x6a8ed",
+        "symbol_rva": "0x6a7b0",
+        "delta": 317,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 16
+      },
+      {
+        "rva": "0x5a218",
+        "symbol_rva": "0x5a1e0",
+        "delta": 56,
+        "name": "runtime.aot.instructions.lnako_aot_index_get",
+        "count": 16
+      },
+      {
+        "rva": "0x8854f",
+        "symbol_rva": "0x881d0",
+        "delta": 895,
+        "name": "runtime.aot.trace.GlobalTrace.recordPhase",
+        "count": 16
+      },
+      {
+        "rva": "0x6b14c",
+        "symbol_rva": "0x6b110",
+        "delta": 60,
+        "name": "runtime.aot.instructions.lnako_aot_arithmetic",
+        "count": 15
+      },
+      {
+        "rva": "0x3ff82",
+        "symbol_rva": "0x3ff60",
+        "delta": 34,
+        "name": "runtime.aot.conversion.valueToPrimitive",
+        "count": 13
+      },
+      {
+        "rva": "0x6b1dd",
+        "symbol_rva": "0x6b110",
+        "delta": 205,
+        "name": "runtime.aot.instructions.lnako_aot_arithmetic",
+        "count": 11
+      },
+      {
+        "rva": "0x6a813",
+        "symbol_rva": "0x6a7b0",
+        "delta": 99,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 11
+      },
+      {
+        "rva": "0x6a97c",
+        "symbol_rva": "0x6a7b0",
+        "delta": 460,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 11
+      },
+      {
+        "rva": "0x3ff93",
+        "symbol_rva": "0x3ff60",
+        "delta": 51,
+        "name": "runtime.aot.conversion.valueToPrimitive",
+        "count": 10
+      },
+      {
+        "rva": "0x6a80e",
+        "symbol_rva": "0x6a7b0",
+        "delta": 94,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 10
+      },
+      {
+        "rva": "0x6a862",
+        "symbol_rva": "0x6a7b0",
+        "delta": 178,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 10
+      },
+      {
+        "rva": "0x5a246",
+        "symbol_rva": "0x5a1e0",
+        "delta": 102,
+        "name": "runtime.aot.instructions.lnako_aot_index_get",
+        "count": 9
+      },
+      {
+        "rva": "0x3ff65",
+        "symbol_rva": "0x3ff60",
+        "delta": 5,
+        "name": "runtime.aot.conversion.valueToPrimitive",
+        "count": 9
+      },
+      {
+        "rva": "0x6a8ab",
+        "symbol_rva": "0x6a7b0",
+        "delta": 251,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 9
+      },
+      {
+        "rva": "0x6aa68",
+        "symbol_rva": "0x6a7b0",
+        "delta": 696,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 8
+      },
+      {
+        "rva": "0x6a851",
+        "symbol_rva": "0x6a7b0",
+        "delta": 161,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 8
+      },
+      {
+        "rva": "0x57a1a",
+        "symbol_rva": "0x57630",
+        "delta": 1002,
+        "name": "runtime.aot.instructions.lnako_aot_iterator_next",
+        "count": 8
+      },
+      {
+        "rva": "0x8854a",
+        "symbol_rva": "0x881d0",
+        "delta": 890,
+        "name": "runtime.aot.trace.GlobalTrace.recordPhase",
+        "count": 8
+      },
+      {
+        "rva": "0x5f835",
+        "symbol_rva": "0x5f830",
+        "delta": 5,
+        "name": "runtime.aot.runtime_core.Runtime.aotArrayPropertyGet",
+        "count": 8
+      },
+      {
+        "rva": "0x64317",
+        "symbol_rva": "0x64280",
+        "delta": 151,
+        "name": "runtime.aot.conversion.strictEqual",
+        "count": 7
+      },
+      {
+        "rva": "0x8858b",
+        "symbol_rva": "0x88580",
+        "delta": 11,
+        "name": "runtime.aot.debug.lnako_aot_global_read_site",
+        "count": 7
+      },
+      {
+        "rva": "0x6a1eb",
+        "symbol_rva": "0x6a160",
+        "delta": 139,
+        "name": "runtime.aot.conversion.compareValues",
+        "count": 7
+      },
+      {
+        "rva": "0x5f853",
+        "symbol_rva": "0x5f830",
+        "delta": 35,
+        "name": "runtime.aot.runtime_core.Runtime.aotArrayPropertyGet",
+        "count": 7
+      },
+      {
+        "rva": "0x3ff6b",
+        "symbol_rva": "0x3ff60",
+        "delta": 11,
+        "name": "runtime.aot.conversion.valueToPrimitive",
+        "count": 7
+      },
+      {
+        "rva": "0x5953d",
+        "symbol_rva": "0x59400",
+        "delta": 317,
+        "name": "runtime.aot.instructions.lnako_aot_index_set",
+        "count": 7
+      },
+      {
+        "rva": "0x5e6b0",
+        "symbol_rva": "0x5e1a0",
+        "delta": 1296,
+        "name": "runtime.aot.runtime_core.Runtime.indexGet",
+        "count": 7
+      },
+      {
+        "rva": "0x58279",
+        "symbol_rva": "0x58270",
+        "delta": 9,
+        "name": "runtime.aot.runtime_core.Runtime.aotArraySetIndex",
+        "count": 7
+      },
+      {
+        "rva": "0x6a894",
+        "symbol_rva": "0x6a7b0",
+        "delta": 228,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 7
+      },
+      {
+        "rva": "0x881d9",
+        "symbol_rva": "0x881d0",
+        "delta": 9,
+        "name": "runtime.aot.trace.GlobalTrace.recordPhase",
+        "count": 6
+      },
+      {
+        "rva": "0x5e1a7",
+        "symbol_rva": "0x5e1a0",
+        "delta": 7,
+        "name": "runtime.aot.runtime_core.Runtime.indexGet",
+        "count": 6
+      },
+      {
+        "rva": "0x5e326",
+        "symbol_rva": "0x5e1a0",
+        "delta": 390,
+        "name": "runtime.aot.runtime_core.Runtime.indexGet",
+        "count": 6
+      },
+      {
+        "rva": "0x422b9",
+        "symbol_rva": "0x41f90",
+        "delta": 809,
+        "name": "runtime.aot.conversion.valueToNumberRuntime",
+        "count": 6
+      },
+      {
+        "rva": "0x41f93",
+        "symbol_rva": "0x41f90",
+        "delta": 3,
+        "name": "runtime.aot.conversion.valueToNumberRuntime",
+        "count": 6
+      },
+      {
+        "rva": "0x6a822",
+        "symbol_rva": "0x6a7b0",
+        "delta": 114,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 6
+      },
+      {
+        "rva": "0x3ff67",
+        "symbol_rva": "0x3ff60",
+        "delta": 7,
+        "name": "runtime.aot.conversion.valueToPrimitive",
+        "count": 6
+      },
+      {
+        "rva": "0x6a7da",
+        "symbol_rva": "0x6a7b0",
+        "delta": 42,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 6
+      },
+      {
+        "rva": "0x5f881",
+        "symbol_rva": "0x5f830",
+        "delta": 81,
+        "name": "runtime.aot.runtime_core.Runtime.aotArrayPropertyGet",
+        "count": 6
+      },
+      {
+        "rva": "0x41fc4",
+        "symbol_rva": "0x41f90",
+        "delta": 52,
+        "name": "runtime.aot.conversion.valueToNumberRuntime",
+        "count": 6
+      },
+      {
+        "rva": "0x6a8ae",
+        "symbol_rva": "0x6a7b0",
+        "delta": 254,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 5
+      },
+      {
+        "rva": "0x881d5",
+        "symbol_rva": "0x881d0",
+        "delta": 5,
+        "name": "runtime.aot.trace.GlobalTrace.recordPhase",
+        "count": 5
+      },
+      {
+        "rva": "0x5a1e0",
+        "symbol_rva": "0x5a1e0",
+        "delta": 0,
+        "name": "runtime.aot.instructions.lnako_aot_index_get",
+        "count": 5
+      },
+      {
+        "rva": "0x6aa9c",
+        "symbol_rva": "0x6a7b0",
+        "delta": 748,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 5
+      },
+      {
+        "rva": "0x6aacc",
+        "symbol_rva": "0x6a7b0",
+        "delta": 796,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 5
+      },
+      {
+        "rva": "0x58c4b",
+        "symbol_rva": "0x58c40",
+        "delta": 11,
+        "name": "runtime.aot.runtime_core.Runtime.aotArrayPropertySet",
+        "count": 5
+      },
+      {
+        "rva": "0x5e1c5",
+        "symbol_rva": "0x5e1a0",
+        "delta": 37,
+        "name": "runtime.aot.runtime_core.Runtime.indexGet",
+        "count": 5
+      },
+      {
+        "rva": "0x6157c",
+        "symbol_rva": "0x61390",
+        "delta": 492,
+        "name": "runtime.aot.collection.aotCanonicalArrayIndex",
+        "count": 5
+      },
+      {
+        "rva": "0x6aa57",
+        "symbol_rva": "0x6a7b0",
+        "delta": 679,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 5
+      },
+      {
+        "rva": "0x320b85",
+        "symbol_rva": "0x320b44",
+        "delta": 65,
+        "name": "char",
+        "count": 5
+      },
+      {
+        "rva": "0x3ff60",
+        "symbol_rva": "0x3ff60",
+        "delta": 0,
+        "name": "runtime.aot.conversion.valueToPrimitive",
+        "count": 5
+      },
+      {
+        "rva": "0x5e6b4",
+        "symbol_rva": "0x5e1a0",
+        "delta": 1300,
+        "name": "runtime.aot.runtime_core.Runtime.indexGet",
+        "count": 5
+      },
+      {
+        "rva": "0x6a94d",
+        "symbol_rva": "0x6a7b0",
+        "delta": 413,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 4
+      },
+      {
+        "rva": "0x6a630",
+        "symbol_rva": "0x6a630",
+        "delta": 0,
+        "name": "runtime.aot.conversion.valueToParseFloatRuntime",
+        "count": 4
+      },
+      {
+        "rva": "0x41f95",
+        "symbol_rva": "0x41f90",
+        "delta": 5,
+        "name": "runtime.aot.conversion.valueToNumberRuntime",
+        "count": 4
+      },
+      {
+        "rva": "0x30ff0c",
+        "symbol_rva": "0x30fdd0",
+        "delta": 316,
+        "name": "runtime.aot.math.lnako_aot_math_unary_value_call_site",
+        "count": 4
+      },
+      {
+        "rva": "0x6159c",
+        "symbol_rva": "0x61390",
+        "delta": 524,
+        "name": "runtime.aot.collection.aotCanonicalArrayIndex",
+        "count": 4
+      },
+      {
+        "rva": "0x8853c",
+        "symbol_rva": "0x881d0",
+        "delta": 876,
+        "name": "runtime.aot.trace.GlobalTrace.recordPhase",
+        "count": 4
+      },
+      {
+        "rva": "0x88539",
+        "symbol_rva": "0x881d0",
+        "delta": 873,
+        "name": "runtime.aot.trace.GlobalTrace.recordPhase",
+        "count": 4
+      },
+      {
+        "rva": "0x61578",
+        "symbol_rva": "0x61390",
+        "delta": 488,
+        "name": "runtime.aot.collection.aotCanonicalArrayIndex",
+        "count": 4
+      },
+      {
+        "rva": "0x881da",
+        "symbol_rva": "0x881d0",
+        "delta": 10,
+        "name": "runtime.aot.trace.GlobalTrace.recordPhase",
+        "count": 4
+      },
+      {
+        "rva": "0x41dee",
+        "symbol_rva": "0x3ff60",
+        "delta": 7822,
+        "name": "runtime.aot.conversion.valueToPrimitive",
+        "count": 4
+      },
+      {
+        "rva": "0x6a887",
+        "symbol_rva": "0x6a7b0",
+        "delta": 215,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 4
+      },
+      {
+        "rva": "0x421ba",
+        "symbol_rva": "0x41f90",
+        "delta": 554,
+        "name": "runtime.aot.conversion.valueToNumberRuntime",
+        "count": 4
+      },
+      {
+        "rva": "0x422bd",
+        "symbol_rva": "0x41f90",
+        "delta": 813,
+        "name": "runtime.aot.conversion.valueToNumberRuntime",
+        "count": 4
+      },
+      {
+        "rva": "0x881d7",
+        "symbol_rva": "0x881d0",
+        "delta": 7,
+        "name": "runtime.aot.trace.GlobalTrace.recordPhase",
+        "count": 4
+      },
+      {
+        "rva": "0x5f8b7",
+        "symbol_rva": "0x5f830",
+        "delta": 135,
+        "name": "runtime.aot.runtime_core.Runtime.aotArrayPropertyGet",
+        "count": 4
+      },
+      {
+        "rva": "0x30fd80",
+        "symbol_rva": "0x30fa60",
+        "delta": 800,
+        "name": "runtime.aot.math.mathUnaryF64",
+        "count": 4
+      },
+      {
+        "rva": "0x6a87d",
+        "symbol_rva": "0x6a7b0",
+        "delta": 205,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 4
+      },
+      {
+        "rva": "0x6b170",
+        "symbol_rva": "0x6b110",
+        "delta": 96,
+        "name": "runtime.aot.instructions.lnako_aot_arithmetic",
+        "count": 4
+      },
+      {
+        "rva": "0x6b113",
+        "symbol_rva": "0x6b110",
+        "delta": 3,
+        "name": "runtime.aot.instructions.lnako_aot_arithmetic",
+        "count": 4
+      },
+      {
+        "rva": "0x6144e",
+        "symbol_rva": "0x61390",
+        "delta": 190,
+        "name": "runtime.aot.collection.aotCanonicalArrayIndex",
+        "count": 4
+      },
+      {
+        "rva": "0x6a7d6",
+        "symbol_rva": "0x6a7b0",
+        "delta": 38,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 4
+      },
+      {
+        "rva": "0x5a207",
+        "symbol_rva": "0x5a1e0",
+        "delta": 39,
+        "name": "runtime.aot.instructions.lnako_aot_index_get",
+        "count": 4
+      },
+      {
+        "rva": "0x6a924",
+        "symbol_rva": "0x6a7b0",
+        "delta": 372,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 4
+      },
+      {
+        "rva": "0x6a975",
+        "symbol_rva": "0x6a7b0",
+        "delta": 453,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 4
+      },
+      {
+        "rva": "0x41e0b",
+        "symbol_rva": "0x3ff60",
+        "delta": 7851,
+        "name": "runtime.aot.conversion.valueToPrimitive",
+        "count": 4
+      },
+      {
+        "rva": "0x6b162",
+        "symbol_rva": "0x6b110",
+        "delta": 82,
+        "name": "runtime.aot.instructions.lnako_aot_arithmetic",
+        "count": 4
+      },
+      {
+        "rva": "0x6aa2f",
+        "symbol_rva": "0x6a7b0",
+        "delta": 639,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 4
+      },
+      {
+        "rva": "0x88546",
+        "symbol_rva": "0x881d0",
+        "delta": 886,
+        "name": "runtime.aot.trace.GlobalTrace.recordPhase",
+        "count": 4
+      },
+      {
+        "rva": "0x5954a",
+        "symbol_rva": "0x59400",
+        "delta": 330,
+        "name": "runtime.aot.instructions.lnako_aot_index_set",
+        "count": 4
+      },
+      {
+        "rva": "0x88581",
+        "symbol_rva": "0x88580",
+        "delta": 1,
+        "name": "runtime.aot.debug.lnako_aot_global_read_site",
+        "count": 4
+      },
+      {
+        "rva": "0x5a1e1",
+        "symbol_rva": "0x5a1e0",
+        "delta": 1,
+        "name": "runtime.aot.instructions.lnako_aot_index_get",
+        "count": 4
+      },
+      {
+        "rva": "0x41e0c",
+        "symbol_rva": "0x3ff60",
+        "delta": 7852,
+        "name": "runtime.aot.conversion.valueToPrimitive",
+        "count": 4
+      },
+      {
+        "rva": "0x6a7b8",
+        "symbol_rva": "0x6a7b0",
+        "delta": 8,
+        "name": "runtime.aot.conversion.arithmetic",
+        "count": 4
+      },
+      {
+        "rva": "0x6a2db",
+        "symbol_rva": "0x6a160",
+        "delta": 379,
+        "name": "runtime.aot.conversion.compareValues",
+        "count": 4
+      },
+      {
+        "rva": "0x6a59a",
+        "symbol_rva": "0x6a540",
+        "delta": 90,
+        "name": "runtime.aot.instructions.lnako_aot_compare",
+        "count": 4
+      },
+      {
+        "rva": "0x3ff61",
+        "symbol_rva": "0x3ff60",
+        "delta": 1,
+        "name": "runtime.aot.conversion.valueToPrimitive",
+        "count": 3
+      },
+      {
+        "rva": "0x30feca",
+        "symbol_rva": "0x30fdd0",
+        "delta": 250,
+        "name": "runtime.aot.math.lnako_aot_math_unary_value_call_site",
+        "count": 3
+      },
+      {
+        "rva": "0x881d3",
+        "symbol_rva": "0x881d0",
+        "delta": 3,
+        "name": "runtime.aot.trace.GlobalTrace.recordPhase",
+        "count": 3
+      },
+      {
+        "rva": "0x880af",
+        "symbol_rva": "0x880a0",
+        "delta": 15,
+        "name": "runtime.aot.debug.lnako_aot_exception_pending",
+        "count": 3
+      },
+      {
+        "rva": "0x880a0",
+        "symbol_rva": "0x880a0",
+        "delta": 0,
+        "name": "runtime.aot.debug.lnako_aot_exception_pending",
+        "count": 3
+      }
+    ],
+    "unresolved_sample_count": 0
+  },
+  "profile_manifest": {
+    "source_sha256": "93eb9df59c051066c03172db438c70c4065d932108b20c1a43507fa6a156351b",
+    "repository_commit": "02457acce036c239d12313da6bd528dd22e48f6b",
+    "repository_tracked_dirty": false,
+    "compiler_path": "D:\\a\\lnako\\lnako\\zig-out\\bin\\lnako.exe",
+    "schema": "lnako.numeric-profile.v1",
+    "platform": "win32",
+    "arch": "x64",
+    "source": "benchmarks/cases/numeric/nbody/source.nako3",
+    "arguments": [
+      "600"
+    ],
+    "commands": [
+      {
+        "command": "D:\\a\\lnako\\lnako\\zig-out\\bin\\lnako.exe",
+        "args": [
+          "build",
+          "D:\\a\\lnako\\lnako\\benchmarks\\cases\\numeric\\nbody\\source.nako3",
+          "-O3",
+          "-o",
+          "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe"
+        ],
+        "pid": 5320,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\lnako\\lnako\\zig-out\\bin\\lnako.exe",
+        "args": [
+          "build",
+          "D:\\a\\lnako\\lnako\\benchmarks\\cases\\numeric\\nbody\\source.nako3",
+          "-O3",
+          "--emit",
+          "llvm-ir",
+          "-o",
+          "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.ll"
+        ],
+        "pid": 4824,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\lnako\\lnako\\.cache\\toolchains\\llvm-22.1.8-windows-x86_64\\bin\\clang.exe",
+        "args": [
+          "-S",
+          "-x",
+          "ir",
+          "-O3",
+          "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.ll",
+          "-o",
+          "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.s"
+        ],
+        "pid": 6648,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\lnako\\lnako\\.cache\\toolchains\\llvm-22.1.8-windows-x86_64\\bin\\llvm-readobj.exe",
+        "args": [
+          "--coff-imports",
+          "--symbols",
+          "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe"
+        ],
+        "pid": 4392,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\lnako\\lnako\\.cache\\toolchains\\llvm-22.1.8-windows-x86_64\\bin\\llvm-objdump.exe",
+        "args": [
+          "-d",
+          "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe"
+        ],
+        "pid": 9200,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 7760,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "wpr.exe",
+        "args": [
+          "-start",
+          "CPU",
+          "-filemode",
+          "-recordtempto",
+          "D:\\a\\_temp\\numeric-profile-windows-x64",
+          "-instancename",
+          "lnako-nbody-8064"
+        ],
+        "pid": 7004,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 916,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 3240,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 1916,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 6840,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 8584,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 6320,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 3684,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 2920,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 8596,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 7244,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 1680,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 8504,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 3752,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 9204,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 4284,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 2936,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 780,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 5548,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 4388,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 6464,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 7496,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 4108,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 1740,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 8176,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 3636,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 2076,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 8756,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 932,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 5532,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 2252,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 572,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 4120,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 1532,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 5244,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 4932,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 3380,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 8816,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 1672,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 7284,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 3956,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 6376,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 6708,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 1964,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 5352,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 7996,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 7816,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 6968,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 4316,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 3364,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 1856,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 2424,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 3864,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 8424,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 4332,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 6804,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 4032,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 7632,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 3448,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 4160,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 8004,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 2148,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 3140,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 8124,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 8260,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 6992,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 6724,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 7904,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 1028,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 3160,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 5204,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 6456,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 4640,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 7612,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 5980,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 8832,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 8304,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 564,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 7664,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 5904,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 828,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 6176,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 7776,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 5816,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 8784,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 1380,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 6660,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 4364,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 6500,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 6644,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 8384,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 6040,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 4368,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 2680,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 7188,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 8368,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 9016,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 8480,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 6552,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 5324,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+        "args": [
+          "600"
+        ],
+        "pid": 8972,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "wpr.exe",
+        "args": [
+          "-stop",
+          "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody-cpu.etl",
+          "-instancename",
+          "lnako-nbody-8064"
+        ],
+        "pid": 2488,
+        "status": 0,
+        "signal": null,
+        "error": null
+      },
+      {
+        "command": "tracerpt.exe",
+        "args": [
+          "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody-cpu.etl",
+          "-o",
+          "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody-events.xml",
+          "-of",
+          "XML",
+          "-summary",
+          "D:\\a\\_temp\\numeric-profile-windows-x64\\trace-summary.txt",
+          "-y"
+        ],
+        "pid": 7948,
+        "status": 0,
+        "signal": null,
+        "error": null
+      }
+    ],
+    "sampling": "etl-collected-analysis-required",
+    "link_map": {
+      "file": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe.map",
+      "sha256": "90a2e3f1527d964b181bedf51d7c5afa7f1d86b16a0cabd2191d887ffe4c50d3"
+    },
+    "assembly_scope": "clang assembly from the optimized LLVM module; linked disassembly is separate",
+    "imports": "collected",
+    "linked_disassembly": "collected",
+    "output_verified": true,
+    "code": {
+      "static_call_sites": {
+        "lnako_aot_dispatch_display_begin_with_epoch": 1,
+        "lnako_aot_display_value": 1,
+        "lnako_aot_dispatch_result": 1,
+        "lnako_aot_runtime_init": 1,
+        "lnako_aot_push_roots": 16,
+        "lnako_aot_string_new": 1,
+        "lnako_aot_node_constants_init_wide": 1,
+        "llvm.lifetime.start.p0": 4,
+        "lnako_aot_global_read_site": 44,
+        "lnako_aot_element_count_call_site": 1,
+        "lnako_aot_exception_pending": 47,
+        "lnako.global.0": 14,
+        "lnako_aot_arithmetic": 22,
+        "lnako_aot_index_get": 13,
+        "lnako_aot_math_unary_value_call_site": 6,
+        "lnako_aot_global_write_site": 16,
+        "lnako_aot_array_new": 4,
+        "lnako_aot_iterator_new": 4,
+        "lnako_aot_iterator_has_next": 5,
+        "lnako_aot_iterator_next": 4,
+        "lnako_aot_compare": 1,
+        "lnako_aot_index_set": 4,
+        "lnako.display": 1,
+        "lnako_aot_pop_roots": 16,
+        "llvm.lifetime.end.p0": 4,
+        "lnako_aot_exception_abort": 2,
+        "lnako_aot_runtime_drain_events_light": 1,
+        "lnako_aot_runtime_deinit": 1
+      },
+      "stack_probe_mentions": 0,
+      "sqrt_mentions": 0,
+      "typed_definitions": []
+    },
+    "binary_sha256": "9fe05133ce7926cef5e796172bc1d7aba79358bdc0796a3b260d745c4bd61022",
+    "compiler_sha256": "1c0e51108c1996c0527d9d6f94ed1feae06c87a902996bcca11b2200ae92bea7",
+    "binary_bytes": 8947200,
+    "trace_export": "xml-and-summary-collected"
+  },
+  "interpretation": {
+    "sample_counts": "one decoded SampledProfile event per counted record; the ETW Count payload is retained in parsing but not used as a weight",
+    "process_join": "nbody attribution is an observed timestamp join from SampledProfile ThreadId to Thread and Process intervals; unresolved records are reported separately",
+    "address_join": "nbody.exe samples are reported as runtime-image-relative RVAs, then matched to linked-disassembly addresses; a usable linker map additionally resolves sampled RVAs to function names within proven symbol ranges",
+    "sqrt_sampling": "zero samples near a sqrt instruction is an observation of this sample set, not proof that no sqrt call executed",
+    "runtime_counters": "runtime-counters.log values are a separate run artifact and are not inferred from ETW sample counts"
+  },
+  "missing_information": [
+    "some SampledProfile ThreadId values have no active Thread Start/End interval",
+    "some nbody-thread samples did not resolve to nbody.exe or a mapped image"
+  ]
+}

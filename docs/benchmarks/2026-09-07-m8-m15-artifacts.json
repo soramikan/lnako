@@ -1,0 +1,92 @@
+{
+  "schema": "lnako.performance-record-index.v1",
+  "measured_commit": "02457acce036c239d12313da6bd528dd22e48f6b",
+  "comparison_ci_url": "https://github.com/soramikan/lnako/actions/runs/34093414459",
+  "records": [
+    {
+      "target": "linux-x64",
+      "kind": "comparison",
+      "file": "2026-09-07-m8-m15-linux-x64-comparison.json",
+      "sha256": "62716eb8ea6e43425ff00d57a4f5695df1b3af1091764b09b0dfc90ba3031fbd",
+      "case_count": 20,
+      "measurement_count": 108,
+      "source_artifact": "comparison-benchmark-linux-x64",
+      "source_file": "benchmark-linux-x64.json"
+    },
+    {
+      "target": "linux-x64",
+      "kind": "diagnostics",
+      "file": "2026-09-07-m8-m15-linux-x64-diagnostics.json",
+      "sha256": "40a47bb68fa0172f46f04b6102f49a290c2a4ce2dc9642da554e5bd3bb72edc7",
+      "case_count": 12,
+      "measurement_count": 48,
+      "source_artifact": "diagnostics-benchmark-linux-x64",
+      "source_file": "diagnostics-linux-x64.json"
+    },
+    {
+      "target": "windows-x64",
+      "kind": "comparison",
+      "file": "2026-09-07-m8-m15-windows-x64-comparison.json",
+      "sha256": "2dacaf163e64b623e1b390fb58ec641d44b4977079de04a695cdf6f52a18aae5",
+      "case_count": 20,
+      "measurement_count": 108,
+      "source_artifact": "comparison-benchmark-windows-x64",
+      "source_file": "benchmark-windows-x64.json"
+    },
+    {
+      "target": "windows-x64",
+      "kind": "diagnostics",
+      "file": "2026-09-07-m8-m15-windows-x64-diagnostics.json",
+      "sha256": "91c18edf72a54a5ba212b4698e6ed7a94c8df06f32127a0d492e00110f1e64b0",
+      "case_count": 12,
+      "measurement_count": 48,
+      "source_artifact": "diagnostics-benchmark-windows-x64",
+      "source_file": "diagnostics-windows-x64.json"
+    },
+    {
+      "target": "macos-arm64",
+      "kind": "comparison",
+      "file": "2026-09-07-m8-m15-macos-arm64-comparison.json",
+      "sha256": "6cde692a4862e40f26c544bb03a8ef3a8d7a58bd81d63049acbb34d361dd38d9",
+      "case_count": 20,
+      "measurement_count": 108,
+      "source_artifact": "comparison-benchmark-macos-arm64",
+      "source_file": "benchmark-macos-arm64.json"
+    },
+    {
+      "target": "macos-arm64",
+      "kind": "diagnostics",
+      "file": "2026-09-07-m8-m15-macos-arm64-diagnostics.json",
+      "sha256": "e99189ec362b217e182cc8052256f3c5e00591935607f773a34280069471d99f",
+      "case_count": 12,
+      "measurement_count": 48,
+      "source_artifact": "diagnostics-benchmark-macos-arm64",
+      "source_file": "diagnostics-macos-arm64.json"
+    },
+    {
+      "kind": "numeric-profiles",
+      "file": "2026-09-07-m8-m15-numeric-profiles.json",
+      "sha256": "6b5f5e4afdfc98879c5b14b519998685c0d4a18d1bb2a8cf8cab6ad02211049c"
+    },
+    {
+      "kind": "windows-cpu",
+      "file": "2026-09-07-m8-m15-windows-cpu.json",
+      "sha256": "a780d8af30df760a7568ccdd0eaafde66e0bac5cf6b61c09034bd20ac66b4fd1"
+    },
+    {
+      "kind": "goal-assessment",
+      "file": "2026-09-07-m8-m15-goals.json",
+      "sha256": "a7f5655efc91340c3524053f42fa5b50e2adbf867d5acc1eec5dbbb09560eb95"
+    },
+    {
+      "kind": "local-probes",
+      "file": "2026-09-07-m8-m15-local-probes.json",
+      "sha256": "51484d58f6476b6be96eaf6afb2fb53356a85ade86ed06ea6cd1532576777f6c"
+    }
+  ],
+  "notes": [
+    "Benchmark JSON files are unmodified copies of CI artifacts with raw samples.",
+    "Numeric profile and CPU analysis are separate diagnostic runs, not timing benchmark data.",
+    "CPU analysis source hash is recorded inside the analysis JSON; analyzer was added after measured runtime commit."
+  ]
+}

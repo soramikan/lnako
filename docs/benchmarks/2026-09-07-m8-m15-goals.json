@@ -1,0 +1,1628 @@
+[
+  {
+    "os": "linux",
+    "before_commit": "3c417fab192bbb8648a33525d02fbf9944ae8380",
+    "after_commit": "02457acce036c239d12313da6bd528dd22e48f6b",
+    "artifact_sha256": "62716eb8ea6e43425ff00d57a4f5695df1b3af1091764b09b0dfc90ba3031fbd",
+    "baseline_sha256": "448272a3befbe82fea38527b4c6a471997e0bf6fe52f55898d59ad6a721334bb",
+    "results": {
+      "aot_cnako": {
+        "faster": 17,
+        "compared": 17,
+        "ratios": [
+          {
+            "case": "integer-arithmetic",
+            "ratio": 0.43774864472187475
+          },
+          {
+            "case": "branch-mix",
+            "ratio": 0.5448053645444577
+          },
+          {
+            "case": "function-call",
+            "ratio": 0.18831337631070674
+          },
+          {
+            "case": "closure-call",
+            "ratio": 0.06016529480913178
+          },
+          {
+            "case": "recursion",
+            "ratio": 0.1403577391567709
+          },
+          {
+            "case": "nbody",
+            "ratio": 0.09497503497928562
+          },
+          {
+            "case": "array-build",
+            "ratio": 0.047358530189160496
+          },
+          {
+            "case": "array-scan",
+            "ratio": 0.20190911429058753
+          },
+          {
+            "case": "hash-lookup",
+            "ratio": 0.3416503160096816
+          },
+          {
+            "case": "string-concat",
+            "ratio": 0.24944374736494987
+          },
+          {
+            "case": "string-builder",
+            "ratio": 0.0323453004010143
+          },
+          {
+            "case": "unicode-scan",
+            "ratio": 0.23911285654299655
+          },
+          {
+            "case": "sieve",
+            "ratio": 0.10394590192689303
+          },
+          {
+            "case": "binary-trees",
+            "ratio": 0.10554069278815127
+          },
+          {
+            "case": "word-count",
+            "ratio": 0.12087741905821006
+          },
+          {
+            "case": "json-transform",
+            "ratio": 0.05546414620289031
+          },
+          {
+            "case": "file-read",
+            "ratio": 0.01855749294398914
+          }
+        ]
+      },
+      "aot_gonako": {
+        "faster": 16,
+        "compared": 17,
+        "ratios": [
+          {
+            "case": "integer-arithmetic",
+            "ratio": 0.43837552561677473
+          },
+          {
+            "case": "branch-mix",
+            "ratio": 0.45296661392370213
+          },
+          {
+            "case": "function-call",
+            "ratio": 0.2812129362699075
+          },
+          {
+            "case": "closure-call",
+            "ratio": 0.13463765586408216
+          },
+          {
+            "case": "recursion",
+            "ratio": 0.2775844236145081
+          },
+          {
+            "case": "nbody",
+            "ratio": 0.3157160742692175
+          },
+          {
+            "case": "array-build",
+            "ratio": 0.10309257008489359
+          },
+          {
+            "case": "array-scan",
+            "ratio": 0.23377349256724347
+          },
+          {
+            "case": "hash-lookup",
+            "ratio": 0.6726108406607971
+          },
+          {
+            "case": "string-concat",
+            "ratio": 1.284846941627337
+          },
+          {
+            "case": "string-builder",
+            "ratio": 0.16529446942296905
+          },
+          {
+            "case": "unicode-scan",
+            "ratio": 0.5307405300263355
+          },
+          {
+            "case": "sieve",
+            "ratio": 0.3440529315933265
+          },
+          {
+            "case": "binary-trees",
+            "ratio": 0.33090273499641554
+          },
+          {
+            "case": "word-count",
+            "ratio": 0.4195379400288645
+          },
+          {
+            "case": "json-transform",
+            "ratio": 0.3218619249835558
+          },
+          {
+            "case": "file-read",
+            "ratio": 0.24196321870461332
+          }
+        ]
+      },
+      "aot_interpreter": {
+        "faster": 17,
+        "compared": 17,
+        "ratios": [
+          {
+            "case": "integer-arithmetic",
+            "ratio": 0.07899432167540002
+          },
+          {
+            "case": "branch-mix",
+            "ratio": 0.07211362969175972
+          },
+          {
+            "case": "function-call",
+            "ratio": 0.10130657773131363
+          },
+          {
+            "case": "closure-call",
+            "ratio": 0.03316157102920529
+          },
+          {
+            "case": "recursion",
+            "ratio": 0.31199078580928774
+          },
+          {
+            "case": "nbody",
+            "ratio": 0.03770566962309203
+          },
+          {
+            "case": "array-build",
+            "ratio": 0.026027903615694983
+          },
+          {
+            "case": "array-scan",
+            "ratio": 0.03723551830844938
+          },
+          {
+            "case": "hash-lookup",
+            "ratio": 0.0976478393245173
+          },
+          {
+            "case": "string-concat",
+            "ratio": 0.5009484038296671
+          },
+          {
+            "case": "string-builder",
+            "ratio": 0.059416445746396596
+          },
+          {
+            "case": "unicode-scan",
+            "ratio": 0.09232200371237545
+          },
+          {
+            "case": "sieve",
+            "ratio": 0.03175687882740839
+          },
+          {
+            "case": "binary-trees",
+            "ratio": 0.344545208344533
+          },
+          {
+            "case": "word-count",
+            "ratio": 0.06253619319727378
+          },
+          {
+            "case": "json-transform",
+            "ratio": 0.10331243865493585
+          },
+          {
+            "case": "file-read",
+            "ratio": 0.314502185470355
+          }
+        ]
+      },
+      "interpreter_cnako": {
+        "faster": 6,
+        "compared": 17,
+        "ratios": [
+          {
+            "case": "integer-arithmetic",
+            "ratio": 5.541520395866581
+          },
+          {
+            "case": "branch-mix",
+            "ratio": 7.554818234405299
+          },
+          {
+            "case": "function-call",
+            "ratio": 1.8588464888247775
+          },
+          {
+            "case": "closure-call",
+            "ratio": 1.81430773458062
+          },
+          {
+            "case": "recursion",
+            "ratio": 0.44987783466966924
+          },
+          {
+            "case": "nbody",
+            "ratio": 2.5188528921157314
+          },
+          {
+            "case": "array-build",
+            "ratio": 1.8195291825425008
+          },
+          {
+            "case": "array-scan",
+            "ratio": 5.422487008721747
+          },
+          {
+            "case": "hash-lookup",
+            "ratio": 3.4988005712472585
+          },
+          {
+            "case": "string-concat",
+            "ratio": 0.49794299264753406
+          },
+          {
+            "case": "string-builder",
+            "ratio": 0.5443829565146268
+          },
+          {
+            "case": "unicode-scan",
+            "ratio": 2.5899877269555436
+          },
+          {
+            "case": "sieve",
+            "ratio": 3.273177521374692
+          },
+          {
+            "case": "binary-trees",
+            "ratio": 0.30631885230751577
+          },
+          {
+            "case": "word-count",
+            "ratio": 1.9329193684191128
+          },
+          {
+            "case": "json-transform",
+            "ratio": 0.5368583582480411
+          },
+          {
+            "case": "file-read",
+            "ratio": 0.059005926830795793
+          }
+        ]
+      },
+      "interpreter_gonako": {
+        "faster": 3,
+        "compared": 17,
+        "ratios": [
+          {
+            "case": "integer-arithmetic",
+            "ratio": 5.549456167471481
+          },
+          {
+            "case": "branch-mix",
+            "ratio": 6.2812899012273915
+          },
+          {
+            "case": "function-call",
+            "ratio": 2.77586058642454
+          },
+          {
+            "case": "closure-call",
+            "ratio": 4.0600505852243005
+          },
+          {
+            "case": "recursion",
+            "ratio": 0.8897199412298946
+          },
+          {
+            "case": "nbody",
+            "ratio": 8.373172454570705
+          },
+          {
+            "case": "array-build",
+            "ratio": 3.9608480040139744
+          },
+          {
+            "case": "array-scan",
+            "ratio": 6.278239250779981
+          },
+          {
+            "case": "hash-lookup",
+            "ratio": 6.888128250595288
+          },
+          {
+            "case": "string-concat",
+            "ratio": 2.5648288961595567
+          },
+          {
+            "case": "string-builder",
+            "ratio": 2.7819649483660607
+          },
+          {
+            "case": "unicode-scan",
+            "ratio": 5.748797780427631
+          },
+          {
+            "case": "sieve",
+            "ratio": 10.833965562647958
+          },
+          {
+            "case": "binary-trees",
+            "ratio": 0.9604044026220341
+          },
+          {
+            "case": "word-count",
+            "ratio": 6.708722078835365
+          },
+          {
+            "case": "json-transform",
+            "ratio": 3.1154227813610764
+          },
+          {
+            "case": "file-read",
+            "ratio": 0.7693530597974836
+          }
+        ]
+      },
+      "compile_stress_change": -0.44634526454046697,
+      "compile_stress_baseline_measurement": {
+        "runtime": "lnako",
+        "group": "nadesiko-implementation",
+        "measurement": "compile",
+        "mode": "compile",
+        "timing_scope": "process_wall",
+        "correctness_checked": true,
+        "executable_path": "/tmp/lnako-comparison-sn9gDS/compile-stress-medium/lnako-aot",
+        "executable_size_bytes": 8854736,
+        "warnings": [],
+        "samples_ns": [
+          796466313,
+          831635279,
+          796695750,
+          805913567,
+          793100387,
+          840449125,
+          837036928,
+          801757246,
+          799962047,
+          799097205
+        ],
+        "count": 10,
+        "min_ns": 793100387,
+        "p25_ns": 797296114,
+        "median_ns": 800859647,
+        "p75_ns": 825204851,
+        "max_ns": 840449125,
+        "iqr_ns": 27908737,
+        "mad_ns": 4723627,
+        "mean_ns": 810211384.7,
+        "stddev_ns": 17538007.840895686,
+        "cv": 0.02164621254660541
+      },
+      "compile_stress_after_measurement": {
+        "runtime": "lnako",
+        "group": "nadesiko-implementation",
+        "measurement": "compile",
+        "mode": "compile",
+        "timing_scope": "process_wall",
+        "correctness_checked": true,
+        "executable_path": "/tmp/lnako-comparison-BMr1hJ/compile-stress-medium/lnako-aot",
+        "executable_size_bytes": 655744,
+        "warnings": [],
+        "samples_ns": [
+          439947330,
+          448120113,
+          439573522,
+          445372028,
+          446824538,
+          448382495,
+          444748407,
+          434392040,
+          438266978,
+          442051064
+        ],
+        "count": 10,
+        "min_ns": 434392040,
+        "p25_ns": 439666974,
+        "median_ns": 443399736,
+        "p75_ns": 446461411,
+        "max_ns": 448382495,
+        "iqr_ns": 6794437,
+        "mad_ns": 3639310,
+        "mean_ns": 442767851.5,
+        "stddev_ns": 4431894.773578367,
+        "cv": 0.010009522503867621
+      },
+      "compile_stress_source_hashes": {
+        "lnako": "16a22228c2a23c728ac720e2d814d35fcf7808ea2b9abb5c22627e47e18943e6",
+        "cnako": "16a22228c2a23c728ac720e2d814d35fcf7808ea2b9abb5c22627e47e18943e6"
+      },
+      "aot_sizes": [
+        {
+          "case": "startup-empty",
+          "bytes": 438624
+        },
+        {
+          "case": "startup-hello",
+          "bytes": 448512
+        },
+        {
+          "case": "integer-arithmetic",
+          "bytes": 626744
+        },
+        {
+          "case": "branch-mix",
+          "bytes": 676968
+        },
+        {
+          "case": "function-call",
+          "bytes": 626944
+        },
+        {
+          "case": "closure-call",
+          "bytes": 537392
+        },
+        {
+          "case": "recursion",
+          "bytes": 671656
+        },
+        {
+          "case": "nbody",
+          "bytes": 698312
+        },
+        {
+          "case": "array-build",
+          "bytes": 628040
+        },
+        {
+          "case": "array-scan",
+          "bytes": 629712
+        },
+        {
+          "case": "hash-lookup",
+          "bytes": 645760
+        },
+        {
+          "case": "string-concat",
+          "bytes": 632208
+        },
+        {
+          "case": "string-builder",
+          "bytes": 7997768
+        },
+        {
+          "case": "unicode-scan",
+          "bytes": 7993536
+        },
+        {
+          "case": "sieve",
+          "bytes": 685960
+        },
+        {
+          "case": "binary-trees",
+          "bytes": 683304
+        },
+        {
+          "case": "word-count",
+          "bytes": 8000960
+        },
+        {
+          "case": "json-transform",
+          "bytes": 7997288
+        },
+        {
+          "case": "file-read",
+          "bytes": 7993432
+        }
+      ],
+      "reference_numeric": [
+        {
+          "case": "integer-arithmetic",
+          "reference": "c",
+          "ratio": 28.242435012358722
+        },
+        {
+          "case": "integer-arithmetic",
+          "reference": "rust",
+          "ratio": 25.835976458840037
+        }
+      ]
+    }
+  },
+  {
+    "os": "windows",
+    "before_commit": "3c417fab192bbb8648a33525d02fbf9944ae8380",
+    "after_commit": "02457acce036c239d12313da6bd528dd22e48f6b",
+    "artifact_sha256": "2dacaf163e64b623e1b390fb58ec641d44b4977079de04a695cdf6f52a18aae5",
+    "baseline_sha256": "159a9a679ee679859d18f225b82fadf912c5feca334388fb7789857f75bf58f3",
+    "results": {
+      "aot_cnako": {
+        "faster": 17,
+        "compared": 17,
+        "ratios": [
+          {
+            "case": "integer-arithmetic",
+            "ratio": 0.2613450261503513
+          },
+          {
+            "case": "branch-mix",
+            "ratio": 0.4200328369514067
+          },
+          {
+            "case": "function-call",
+            "ratio": 0.18996455413906432
+          },
+          {
+            "case": "closure-call",
+            "ratio": 0.10973004145572463
+          },
+          {
+            "case": "recursion",
+            "ratio": 0.10263323101510469
+          },
+          {
+            "case": "nbody",
+            "ratio": 0.1411707879563842
+          },
+          {
+            "case": "array-build",
+            "ratio": 0.13554930502903748
+          },
+          {
+            "case": "array-scan",
+            "ratio": 0.21503943713352627
+          },
+          {
+            "case": "hash-lookup",
+            "ratio": 0.3723040621174707
+          },
+          {
+            "case": "string-concat",
+            "ratio": 0.4178728527223778
+          },
+          {
+            "case": "string-builder",
+            "ratio": 0.11751427547579385
+          },
+          {
+            "case": "unicode-scan",
+            "ratio": 0.25019569556877364
+          },
+          {
+            "case": "sieve",
+            "ratio": 0.1536436983238606
+          },
+          {
+            "case": "binary-trees",
+            "ratio": 0.14639649618650524
+          },
+          {
+            "case": "word-count",
+            "ratio": 0.1631710162164635
+          },
+          {
+            "case": "json-transform",
+            "ratio": 0.12889171255179072
+          },
+          {
+            "case": "file-read",
+            "ratio": 0.10507072418510204
+          }
+        ]
+      },
+      "aot_gonako": {
+        "faster": 16,
+        "compared": 17,
+        "ratios": [
+          {
+            "case": "integer-arithmetic",
+            "ratio": 0.4738059990149522
+          },
+          {
+            "case": "branch-mix",
+            "ratio": 0.5073382728817432
+          },
+          {
+            "case": "function-call",
+            "ratio": 0.35584733910125593
+          },
+          {
+            "case": "closure-call",
+            "ratio": 0.25806911841068514
+          },
+          {
+            "case": "recursion",
+            "ratio": 0.25914616241960164
+          },
+          {
+            "case": "nbody",
+            "ratio": 0.46425934008077535
+          },
+          {
+            "case": "array-build",
+            "ratio": 0.33982701114385605
+          },
+          {
+            "case": "array-scan",
+            "ratio": 0.3455034178429696
+          },
+          {
+            "case": "hash-lookup",
+            "ratio": 0.8294274009165234
+          },
+          {
+            "case": "string-concat",
+            "ratio": 1.6181633809877831
+          },
+          {
+            "case": "string-builder",
+            "ratio": 0.5192372059865507
+          },
+          {
+            "case": "unicode-scan",
+            "ratio": 0.6305247732885554
+          },
+          {
+            "case": "sieve",
+            "ratio": 0.4260871998180144
+          },
+          {
+            "case": "binary-trees",
+            "ratio": 0.4295204016589069
+          },
+          {
+            "case": "word-count",
+            "ratio": 0.5459688621786078
+          },
+          {
+            "case": "json-transform",
+            "ratio": 0.6241681514546725
+          },
+          {
+            "case": "file-read",
+            "ratio": 0.6615125908716181
+          }
+        ]
+      },
+      "aot_interpreter": {
+        "faster": 16,
+        "compared": 17,
+        "ratios": [
+          {
+            "case": "integer-arithmetic",
+            "ratio": 0.08587184435694407
+          },
+          {
+            "case": "branch-mix",
+            "ratio": 0.08007477156174335
+          },
+          {
+            "case": "function-call",
+            "ratio": 0.13804330609962942
+          },
+          {
+            "case": "closure-call",
+            "ratio": 0.08012815349885055
+          },
+          {
+            "case": "recursion",
+            "ratio": 0.3284581053601042
+          },
+          {
+            "case": "nbody",
+            "ratio": 0.07066057685494782
+          },
+          {
+            "case": "array-build",
+            "ratio": 0.046051381823005354
+          },
+          {
+            "case": "array-scan",
+            "ratio": 0.04136173518151084
+          },
+          {
+            "case": "hash-lookup",
+            "ratio": 0.14085626508653204
+          },
+          {
+            "case": "string-concat",
+            "ratio": 1.037742087515025
+          },
+          {
+            "case": "string-builder",
+            "ratio": 0.13608751526641025
+          },
+          {
+            "case": "unicode-scan",
+            "ratio": 0.12156513150250267
+          },
+          {
+            "case": "sieve",
+            "ratio": 0.06547795917287673
+          },
+          {
+            "case": "binary-trees",
+            "ratio": 0.541241494460398
+          },
+          {
+            "case": "word-count",
+            "ratio": 0.11256223302521533
+          },
+          {
+            "case": "json-transform",
+            "ratio": 0.28088380289671117
+          },
+          {
+            "case": "file-read",
+            "ratio": 0.6798946638679736
+          }
+        ]
+      },
+      "interpreter_cnako": {
+        "faster": 6,
+        "compared": 17,
+        "ratios": [
+          {
+            "case": "integer-arithmetic",
+            "ratio": 3.043430918567635
+          },
+          {
+            "case": "branch-mix",
+            "ratio": 5.2455077767849945
+          },
+          {
+            "case": "function-call",
+            "ratio": 1.3761228958248943
+          },
+          {
+            "case": "closure-call",
+            "ratio": 1.3694317997393852
+          },
+          {
+            "case": "recursion",
+            "ratio": 0.3124697772417064
+          },
+          {
+            "case": "nbody",
+            "ratio": 1.9978719993495084
+          },
+          {
+            "case": "array-build",
+            "ratio": 2.943436215443218
+          },
+          {
+            "case": "array-scan",
+            "ratio": 5.198994582549606
+          },
+          {
+            "case": "hash-lookup",
+            "ratio": 2.6431487579821433
+          },
+          {
+            "case": "string-concat",
+            "ratio": 0.4026750555362126
+          },
+          {
+            "case": "string-builder",
+            "ratio": 0.8635198845812072
+          },
+          {
+            "case": "unicode-scan",
+            "ratio": 2.05812055213894
+          },
+          {
+            "case": "sieve",
+            "ratio": 2.3464949162237363
+          },
+          {
+            "case": "binary-trees",
+            "ratio": 0.27048276542887434
+          },
+          {
+            "case": "word-count",
+            "ratio": 1.449607135813583
+          },
+          {
+            "case": "json-transform",
+            "ratio": 0.45887912091245725
+          },
+          {
+            "case": "file-read",
+            "ratio": 0.15453971000058528
+          }
+        ]
+      },
+      "interpreter_gonako": {
+        "faster": 3,
+        "compared": 17,
+        "ratios": [
+          {
+            "case": "integer-arithmetic",
+            "ratio": 5.517594300705591
+          },
+          {
+            "case": "branch-mix",
+            "ratio": 6.335806684013444
+          },
+          {
+            "case": "function-call",
+            "ratio": 2.5777949627230146
+          },
+          {
+            "case": "closure-call",
+            "ratio": 3.2207046729759865
+          },
+          {
+            "case": "recursion",
+            "ratio": 0.7889778275847003
+          },
+          {
+            "case": "nbody",
+            "ratio": 6.570273846388317
+          },
+          {
+            "case": "array-build",
+            "ratio": 7.379301069617255
+          },
+          {
+            "case": "array-scan",
+            "ratio": 8.353213817717531
+          },
+          {
+            "case": "hash-lookup",
+            "ratio": 5.888466518737966
+          },
+          {
+            "case": "string-concat",
+            "ratio": 1.5593117022579608
+          },
+          {
+            "case": "string-builder",
+            "ratio": 3.8154654008493845
+          },
+          {
+            "case": "unicode-scan",
+            "ratio": 5.18672390261491
+          },
+          {
+            "case": "sieve",
+            "ratio": 6.507337815661711
+          },
+          {
+            "case": "binary-trees",
+            "ratio": 0.7935836517618189
+          },
+          {
+            "case": "word-count",
+            "ratio": 4.850373411269338
+          },
+          {
+            "case": "json-transform",
+            "ratio": 2.2221578639199664
+          },
+          {
+            "case": "file-read",
+            "ratio": 0.9729633515701117
+          }
+        ]
+      },
+      "compile_stress_change": -0.385132892577965,
+      "compile_stress_baseline_measurement": {
+        "runtime": "lnako",
+        "group": "nadesiko-implementation",
+        "measurement": "compile",
+        "mode": "compile",
+        "timing_scope": "process_wall",
+        "correctness_checked": true,
+        "executable_path": "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\lnako-comparison-Q7DmTp\\compile-stress-medium\\lnako-aot.exe",
+        "executable_size_bytes": 9062400,
+        "warnings": [],
+        "samples_ns": [
+          1035174500,
+          1030439300,
+          1006878700,
+          1036668400,
+          1001326100,
+          1022496700,
+          1004268200,
+          1008206300,
+          1018919700,
+          998275600
+        ],
+        "count": 10,
+        "min_ns": 998275600,
+        "p25_ns": 1004920825,
+        "median_ns": 1013563000,
+        "p75_ns": 1028453650,
+        "max_ns": 1036668400,
+        "iqr_ns": 23532825,
+        "mad_ns": 10765850,
+        "mean_ns": 1016265350,
+        "stddev_ns": 13654369.070905473,
+        "cv": 0.013435830583917353
+      },
+      "compile_stress_after_measurement": {
+        "runtime": "lnako",
+        "group": "nadesiko-implementation",
+        "measurement": "compile",
+        "mode": "compile",
+        "timing_scope": "process_wall",
+        "correctness_checked": true,
+        "executable_path": "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\lnako-comparison-HxzG0v\\compile-stress-medium\\lnako-aot.exe",
+        "executable_size_bytes": 8964096,
+        "warnings": [],
+        "samples_ns": [
+          622097700,
+          616526500,
+          628800000,
+          622876400,
+          632433100,
+          624459100,
+          641306500,
+          623536700,
+          615032000,
+          615606900
+        ],
+        "count": 10,
+        "min_ns": 615032000,
+        "p25_ns": 617919300,
+        "median_ns": 623206550,
+        "p75_ns": 627714775,
+        "max_ns": 641306500,
+        "iqr_ns": 9795475,
+        "mad_ns": 6136750,
+        "mean_ns": 624267490,
+        "stddev_ns": 7778082.055809131,
+        "cv": 0.012459534062568485
+      },
+      "compile_stress_source_hashes": {
+        "lnako": "16a22228c2a23c728ac720e2d814d35fcf7808ea2b9abb5c22627e47e18943e6",
+        "cnako": "16a22228c2a23c728ac720e2d814d35fcf7808ea2b9abb5c22627e47e18943e6"
+      },
+      "aot_sizes": [
+        {
+          "case": "startup-empty",
+          "bytes": 8925184
+        },
+        {
+          "case": "startup-hello",
+          "bytes": 8926720
+        },
+        {
+          "case": "integer-arithmetic",
+          "bytes": 8934912
+        },
+        {
+          "case": "branch-mix",
+          "bytes": 8936448
+        },
+        {
+          "case": "function-call",
+          "bytes": 8934912
+        },
+        {
+          "case": "closure-call",
+          "bytes": 8930816
+        },
+        {
+          "case": "recursion",
+          "bytes": 8933888
+        },
+        {
+          "case": "nbody",
+          "bytes": 8947200
+        },
+        {
+          "case": "array-build",
+          "bytes": 8934912
+        },
+        {
+          "case": "array-scan",
+          "bytes": 8936960
+        },
+        {
+          "case": "hash-lookup",
+          "bytes": 8938496
+        },
+        {
+          "case": "string-concat",
+          "bytes": 8935936
+        },
+        {
+          "case": "string-builder",
+          "bytes": 8936960
+        },
+        {
+          "case": "unicode-scan",
+          "bytes": 8935936
+        },
+        {
+          "case": "sieve",
+          "bytes": 8937472
+        },
+        {
+          "case": "binary-trees",
+          "bytes": 8942080
+        },
+        {
+          "case": "word-count",
+          "bytes": 8937984
+        },
+        {
+          "case": "json-transform",
+          "bytes": 8940544
+        },
+        {
+          "case": "file-read",
+          "bytes": 8935424
+        }
+      ],
+      "reference_numeric": [
+        {
+          "case": "integer-arithmetic",
+          "reference": "c",
+          "ratio": 3.447586373759996
+        },
+        {
+          "case": "integer-arithmetic",
+          "reference": "rust",
+          "ratio": 3.260269873863303
+        }
+      ]
+    }
+  },
+  {
+    "os": "macos",
+    "before_commit": "3c417fab192bbb8648a33525d02fbf9944ae8380",
+    "after_commit": "02457acce036c239d12313da6bd528dd22e48f6b",
+    "artifact_sha256": "6cde692a4862e40f26c544bb03a8ef3a8d7a58bd81d63049acbb34d361dd38d9",
+    "baseline_sha256": "05fb9eff622a7a3937af80a0f36161abea92df976e3dc5028f08d8474758c0e9",
+    "results": {
+      "aot_cnako": {
+        "faster": 17,
+        "compared": 17,
+        "ratios": [
+          {
+            "case": "integer-arithmetic",
+            "ratio": 0.30619673219344257
+          },
+          {
+            "case": "branch-mix",
+            "ratio": 0.3970124911180724
+          },
+          {
+            "case": "function-call",
+            "ratio": 0.12883177436346094
+          },
+          {
+            "case": "closure-call",
+            "ratio": 0.04434721687842268
+          },
+          {
+            "case": "recursion",
+            "ratio": 0.0677381033540863
+          },
+          {
+            "case": "nbody",
+            "ratio": 0.07234490534044138
+          },
+          {
+            "case": "array-build",
+            "ratio": 0.06836905609245279
+          },
+          {
+            "case": "array-scan",
+            "ratio": 0.1420829724367629
+          },
+          {
+            "case": "hash-lookup",
+            "ratio": 0.4507156698503223
+          },
+          {
+            "case": "string-concat",
+            "ratio": 0.6893751757478469
+          },
+          {
+            "case": "string-builder",
+            "ratio": 0.03694780358941799
+          },
+          {
+            "case": "unicode-scan",
+            "ratio": 0.3543969146756591
+          },
+          {
+            "case": "sieve",
+            "ratio": 0.06593714201913799
+          },
+          {
+            "case": "binary-trees",
+            "ratio": 0.10453194386706686
+          },
+          {
+            "case": "word-count",
+            "ratio": 0.14345686794586804
+          },
+          {
+            "case": "json-transform",
+            "ratio": 0.08237929962931277
+          },
+          {
+            "case": "file-read",
+            "ratio": 0.03207667221460605
+          }
+        ]
+      },
+      "aot_gonako": {
+        "faster": 16,
+        "compared": 17,
+        "ratios": [
+          {
+            "case": "integer-arithmetic",
+            "ratio": 0.39559154690264825
+          },
+          {
+            "case": "branch-mix",
+            "ratio": 0.42373761097666574
+          },
+          {
+            "case": "function-call",
+            "ratio": 0.25198643771191076
+          },
+          {
+            "case": "closure-call",
+            "ratio": 0.12136539655121871
+          },
+          {
+            "case": "recursion",
+            "ratio": 0.2231385423784213
+          },
+          {
+            "case": "nbody",
+            "ratio": 0.2617360238008421
+          },
+          {
+            "case": "array-build",
+            "ratio": 0.18213248797257428
+          },
+          {
+            "case": "array-scan",
+            "ratio": 0.23340950151054543
+          },
+          {
+            "case": "hash-lookup",
+            "ratio": 0.9817949663273448
+          },
+          {
+            "case": "string-concat",
+            "ratio": 2.773900159352938
+          },
+          {
+            "case": "string-builder",
+            "ratio": 0.17677760090849504
+          },
+          {
+            "case": "unicode-scan",
+            "ratio": 0.9304165510240469
+          },
+          {
+            "case": "sieve",
+            "ratio": 0.24186529069877025
+          },
+          {
+            "case": "binary-trees",
+            "ratio": 0.3152956166960894
+          },
+          {
+            "case": "word-count",
+            "ratio": 0.5222306837181078
+          },
+          {
+            "case": "json-transform",
+            "ratio": 0.3706405115319632
+          },
+          {
+            "case": "file-read",
+            "ratio": 0.1994344224874454
+          }
+        ]
+      },
+      "aot_interpreter": {
+        "faster": 16,
+        "compared": 17,
+        "ratios": [
+          {
+            "case": "integer-arithmetic",
+            "ratio": 0.058534480408644056
+          },
+          {
+            "case": "branch-mix",
+            "ratio": 0.059509160335576065
+          },
+          {
+            "case": "function-call",
+            "ratio": 0.06584144963148948
+          },
+          {
+            "case": "closure-call",
+            "ratio": 0.02453752549097213
+          },
+          {
+            "case": "recursion",
+            "ratio": 0.2104500358881022
+          },
+          {
+            "case": "nbody",
+            "ratio": 0.02680265167745429
+          },
+          {
+            "case": "array-build",
+            "ratio": 0.040201680336766035
+          },
+          {
+            "case": "array-scan",
+            "ratio": 0.02719188205533205
+          },
+          {
+            "case": "hash-lookup",
+            "ratio": 0.12305582037828217
+          },
+          {
+            "case": "string-concat",
+            "ratio": 2.0826975377909873
+          },
+          {
+            "case": "string-builder",
+            "ratio": 0.07601104848514462
+          },
+          {
+            "case": "unicode-scan",
+            "ratio": 0.12770810114165163
+          },
+          {
+            "case": "sieve",
+            "ratio": 0.02017376720584589
+          },
+          {
+            "case": "binary-trees",
+            "ratio": 0.3983411681949705
+          },
+          {
+            "case": "word-count",
+            "ratio": 0.07256243656769615
+          },
+          {
+            "case": "json-transform",
+            "ratio": 0.15303033158483503
+          },
+          {
+            "case": "file-read",
+            "ratio": 0.47541179635354164
+          }
+        ]
+      },
+      "interpreter_cnako": {
+        "faster": 6,
+        "compared": 17,
+        "ratios": [
+          {
+            "case": "integer-arithmetic",
+            "ratio": 5.23104894851386
+          },
+          {
+            "case": "branch-mix",
+            "ratio": 6.67145173750214
+          },
+          {
+            "case": "function-call",
+            "ratio": 1.9566971122981707
+          },
+          {
+            "case": "closure-call",
+            "ratio": 1.8073222947741387
+          },
+          {
+            "case": "recursion",
+            "ratio": 0.32187261488566876
+          },
+          {
+            "case": "nbody",
+            "ratio": 2.699169701977513
+          },
+          {
+            "case": "array-build",
+            "ratio": 1.7006517021112315
+          },
+          {
+            "case": "array-scan",
+            "ratio": 5.225198173029804
+          },
+          {
+            "case": "hash-lookup",
+            "ratio": 3.662692820744203
+          },
+          {
+            "case": "string-concat",
+            "ratio": 0.33100109989040105
+          },
+          {
+            "case": "string-builder",
+            "ratio": 0.48608464592669
+          },
+          {
+            "case": "unicode-scan",
+            "ratio": 2.7750542957534714
+          },
+          {
+            "case": "sieve",
+            "ratio": 3.2684595468133946
+          },
+          {
+            "case": "binary-trees",
+            "ratio": 0.2624181285121478
+          },
+          {
+            "case": "word-count",
+            "ratio": 1.9770128282838448
+          },
+          {
+            "case": "json-transform",
+            "ratio": 0.5383200753482285
+          },
+          {
+            "case": "file-read",
+            "ratio": 0.06747134265627713
+          }
+        ]
+      },
+      "interpreter_gonako": {
+        "faster": 2,
+        "compared": 17,
+        "ratios": [
+          {
+            "case": "integer-arithmetic",
+            "ratio": 6.758265284682179
+          },
+          {
+            "case": "branch-mix",
+            "ratio": 7.12054427565742
+          },
+          {
+            "case": "function-call",
+            "ratio": 3.827170257068507
+          },
+          {
+            "case": "closure-call",
+            "ratio": 4.946113926437757
+          },
+          {
+            "case": "recursion",
+            "ratio": 1.0602922514922528
+          },
+          {
+            "case": "nbody",
+            "ratio": 9.765303334558043
+          },
+          {
+            "case": "array-build",
+            "ratio": 4.53046953378232
+          },
+          {
+            "case": "array-scan",
+            "ratio": 8.58379353939483
+          },
+          {
+            "case": "hash-lookup",
+            "ratio": 7.9784520822277125
+          },
+          {
+            "case": "string-concat",
+            "ratio": 1.3318785416604826
+          },
+          {
+            "case": "string-builder",
+            "ratio": 2.3256829688784513
+          },
+          {
+            "case": "unicode-scan",
+            "ratio": 7.285493580333208
+          },
+          {
+            "case": "sieve",
+            "ratio": 11.98909892390764
+          },
+          {
+            "case": "binary-trees",
+            "ratio": 0.7915215445212684
+          },
+          {
+            "case": "word-count",
+            "ratio": 7.196983844814799
+          },
+          {
+            "case": "json-transform",
+            "ratio": 2.422006851148278
+          },
+          {
+            "case": "file-read",
+            "ratio": 0.419498262384586
+          }
+        ]
+      },
+      "compile_stress_change": -0.49381808020241147,
+      "compile_stress_baseline_measurement": {
+        "runtime": "lnako",
+        "group": "nadesiko-implementation",
+        "measurement": "compile",
+        "mode": "compile",
+        "timing_scope": "process_wall",
+        "correctness_checked": true,
+        "executable_path": "/var/folders/bl/vzjcvbz95c3dk19cb0fw46180000gn/T/lnako-comparison-g4kljj/compile-stress-medium/lnako-aot",
+        "executable_size_bytes": 7526464,
+        "warnings": [],
+        "samples_ns": [
+          797341459,
+          841726542,
+          749426792,
+          934379542,
+          840073916,
+          770470708,
+          712698042,
+          759485083,
+          680159209,
+          681166458
+        ],
+        "count": 10,
+        "min_ns": 680159209,
+        "p25_ns": 721880230,
+        "median_ns": 764977896,
+        "p75_ns": 829390802,
+        "max_ns": 934379542,
+        "iqr_ns": 107510572,
+        "mad_ns": 63687937,
+        "mean_ns": 776692775.1,
+        "stddev_ns": 75601342.30897893,
+        "cv": 0.0973375119901755
+      },
+      "compile_stress_after_measurement": {
+        "runtime": "lnako",
+        "group": "nadesiko-implementation",
+        "measurement": "compile",
+        "mode": "compile",
+        "timing_scope": "process_wall",
+        "correctness_checked": true,
+        "executable_path": "/var/folders/bl/vzjcvbz95c3dk19cb0fw46180000gn/T/lnako-comparison-FjUa8K/compile-stress-medium/lnako-aot",
+        "executable_size_bytes": 504240,
+        "warnings": [],
+        "samples_ns": [
+          375460041,
+          377859125,
+          379944416,
+          391360125,
+          386410000,
+          383246375,
+          388025959,
+          434651250,
+          412681917,
+          438479417
+        ],
+        "count": 10,
+        "min_ns": 375460041,
+        "p25_ns": 380769906,
+        "median_ns": 387217980,
+        "p75_ns": 407351469,
+        "max_ns": 438479417,
+        "iqr_ns": 26581563,
+        "mad_ns": 8316210,
+        "mean_ns": 396811862.5,
+        "stddev_ns": 22177950.76742328,
+        "cv": 0.05589034215786147
+      },
+      "compile_stress_source_hashes": {
+        "lnako": "16a22228c2a23c728ac720e2d814d35fcf7808ea2b9abb5c22627e47e18943e6",
+        "cnako": "16a22228c2a23c728ac720e2d814d35fcf7808ea2b9abb5c22627e47e18943e6"
+      },
+      "aot_sizes": [
+        {
+          "case": "startup-empty",
+          "bytes": 337568
+        },
+        {
+          "case": "startup-hello",
+          "bytes": 338032
+        },
+        {
+          "case": "integer-arithmetic",
+          "bytes": 504448
+        },
+        {
+          "case": "branch-mix",
+          "bytes": 537664
+        },
+        {
+          "case": "function-call",
+          "bytes": 504592
+        },
+        {
+          "case": "closure-call",
+          "bytes": 405152
+        },
+        {
+          "case": "recursion",
+          "bytes": 537408
+        },
+        {
+          "case": "nbody",
+          "bytes": 554656
+        },
+        {
+          "case": "array-build",
+          "bytes": 504544
+        },
+        {
+          "case": "array-scan",
+          "bytes": 504640
+        },
+        {
+          "case": "hash-lookup",
+          "bytes": 521280
+        },
+        {
+          "case": "string-concat",
+          "bytes": 504560
+        },
+        {
+          "case": "string-builder",
+          "bytes": 7576576
+        },
+        {
+          "case": "unicode-scan",
+          "bytes": 7576592
+        },
+        {
+          "case": "sieve",
+          "bytes": 554224
+        },
+        {
+          "case": "binary-trees",
+          "bytes": 554640
+        },
+        {
+          "case": "word-count",
+          "bytes": 7576752
+        },
+        {
+          "case": "json-transform",
+          "bytes": 7576672
+        },
+        {
+          "case": "file-read",
+          "bytes": 7576400
+        }
+      ],
+      "reference_numeric": [
+        {
+          "case": "integer-arithmetic",
+          "reference": "c",
+          "ratio": 16.816070807850462
+        },
+        {
+          "case": "integer-arithmetic",
+          "reference": "rust",
+          "ratio": 14.271367007137139
+        }
+      ]
+    }
+  }
+]

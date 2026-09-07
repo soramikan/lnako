@@ -1,0 +1,2033 @@
+[
+  {
+    "target": "linux-x64",
+    "profile": {
+      "source_sha256": "93eb9df59c051066c03172db438c70c4065d932108b20c1a43507fa6a156351b",
+      "repository_commit": "02457acce036c239d12313da6bd528dd22e48f6b",
+      "repository_tracked_dirty": false,
+      "compiler_path": "/home/runner/work/lnako/lnako/zig-out/bin/lnako",
+      "schema": "lnako.numeric-profile.v1",
+      "platform": "linux",
+      "arch": "x64",
+      "source": "benchmarks/cases/numeric/nbody/source.nako3",
+      "arguments": [
+        "600"
+      ],
+      "commands": [
+        {
+          "command": "/home/runner/work/lnako/lnako/zig-out/bin/lnako",
+          "args": [
+            "build",
+            "/home/runner/work/lnako/lnako/benchmarks/cases/numeric/nbody/source.nako3",
+            "-O3",
+            "-o",
+            "/home/runner/work/_temp/numeric-profile-linux-x64/nbody"
+          ],
+          "pid": 11156,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "/home/runner/work/lnako/lnako/zig-out/bin/lnako",
+          "args": [
+            "build",
+            "/home/runner/work/lnako/lnako/benchmarks/cases/numeric/nbody/source.nako3",
+            "-O3",
+            "--emit",
+            "llvm-ir",
+            "-o",
+            "/home/runner/work/_temp/numeric-profile-linux-x64/nbody.ll"
+          ],
+          "pid": 11165,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "/home/runner/work/lnako/lnako/.cache/toolchains/llvm-22.1.8-linux-x86_64/bin/clang",
+          "args": [
+            "-S",
+            "-x",
+            "ir",
+            "-O3",
+            "/home/runner/work/_temp/numeric-profile-linux-x64/nbody.ll",
+            "-o",
+            "/home/runner/work/_temp/numeric-profile-linux-x64/nbody.s"
+          ],
+          "pid": 11166,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "/home/runner/work/lnako/lnako/.cache/toolchains/llvm-22.1.8-linux-x86_64/bin/llvm-readobj",
+          "args": [
+            "--needed-libs",
+            "--symbols",
+            "/home/runner/work/_temp/numeric-profile-linux-x64/nbody"
+          ],
+          "pid": 11167,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "/home/runner/work/lnako/lnako/.cache/toolchains/llvm-22.1.8-linux-x86_64/bin/llvm-objdump",
+          "args": [
+            "-d",
+            "/home/runner/work/_temp/numeric-profile-linux-x64/nbody"
+          ],
+          "pid": 11168,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "/home/runner/work/_temp/numeric-profile-linux-x64/nbody",
+          "args": [
+            "600"
+          ],
+          "pid": 11169,
+          "status": 0,
+          "signal": null,
+          "error": null
+        }
+      ],
+      "sampling": "not-requested",
+      "link_map": {
+        "file": "/home/runner/work/_temp/numeric-profile-linux-x64/nbody.map",
+        "sha256": "634ca8f3399f6b81e63de8db571ad456cf6e9606ae3c55765ad0bbcc50f31251"
+      },
+      "assembly_scope": "clang assembly from the optimized LLVM module; linked disassembly is separate",
+      "imports": "collected",
+      "linked_disassembly": "collected",
+      "output_verified": true,
+      "code": {
+        "static_call_sites": {
+          "lnako_aot_dispatch_display_begin_with_epoch": 1,
+          "lnako_aot_display_value": 1,
+          "lnako_aot_dispatch_result": 1,
+          "lnako_aot_runtime_init": 1,
+          "lnako_aot_push_roots": 16,
+          "lnako_aot_string_new": 1,
+          "lnako_aot_node_constants_init": 1,
+          "llvm.lifetime.start.p0": 4,
+          "lnako_aot_global_read_site": 44,
+          "lnako_aot_element_count_call_site": 1,
+          "lnako_aot_exception_pending": 47,
+          "lnako.global.0": 14,
+          "lnako_aot_arithmetic": 22,
+          "lnako_aot_index_get": 13,
+          "lnako_aot_math_unary_value_call_site": 6,
+          "lnako_aot_global_write_site": 16,
+          "lnako_aot_array_new": 4,
+          "lnako_aot_iterator_new": 4,
+          "lnako_aot_iterator_has_next": 5,
+          "lnako_aot_iterator_next": 4,
+          "lnako_aot_compare": 1,
+          "lnako_aot_index_set": 4,
+          "lnako.display": 1,
+          "lnako_aot_pop_roots": 16,
+          "llvm.lifetime.end.p0": 4,
+          "lnako_aot_exception_abort": 2,
+          "lnako_aot_runtime_drain_events_light": 1,
+          "lnako_aot_runtime_deinit": 1
+        },
+        "stack_probe_mentions": 0,
+        "sqrt_mentions": 0,
+        "typed_definitions": []
+      },
+      "binary_sha256": "353fd72bd9d978f383c415e32fefccb66c31c717416e1f27cc3e8ee3e502548b",
+      "compiler_sha256": "ee5c1b59f9b98ff9f54ce86442605e613669204a37b0c14903ccef759a23dcf7",
+      "binary_bytes": 698312
+    },
+    "profile_sha256": "5e645034f7543ae9368003af6a310ec001e4f45c895e875c44ce2f66b0c0d757",
+    "runtime_counter_log_sha256": "e1d5801000e9c6a207218c9706afa4600ef33886aaba1bd682551553518ba502",
+    "runtime_counters": {
+      "counter_values": {
+        "aot_generic_builtin_calls": 0,
+        "aot_generic_builtin_successes": 0,
+        "aot_generic_builtin_failures": 0,
+        "aot_index_get_calls": 52803,
+        "aot_index_get_successes": 52803,
+        "aot_index_get_failures": 0,
+        "aot_index_set_calls": 19200,
+        "aot_index_set_successes": 19200,
+        "aot_index_set_failures": 0,
+        "aot_math_f64_calls": 0,
+        "aot_math_f64_successes": 0,
+        "aot_math_f64_failures": 0,
+        "aot_math_value_calls": 7205,
+        "aot_math_value_successes": 7205,
+        "aot_math_value_failures": 0,
+        "aot_unicode_length_calls": 0,
+        "aot_unicode_length_successes": 0,
+        "aot_unicode_length_failures": 0,
+        "dictionary_probes": 0,
+        "dictionary_hits": 0,
+        "dictionary_misses": 0,
+        "dictionary_linear_steps": 0,
+        "dictionary_index_lookups": 0,
+        "dictionary_entry_comparisons": 0,
+        "dictionary_index_rebuilds": 0,
+        "array_appends": 0,
+        "array_grows": 0,
+        "array_copied_bytes": 0,
+        "allocator_alloc_calls": 3629,
+        "allocator_resize_calls": 0,
+        "allocator_remap_calls": 5,
+        "allocator_free_calls": 3629,
+        "allocator_live_bytes": 0,
+        "allocator_peak_live_bytes": 21660,
+        "allocator_telemetry_active": 1,
+        "allocator_telemetry_init_failures": 0,
+        "allocations": 3610,
+        "allocated_bytes": 1126338,
+        "concat_calls": 0,
+        "concat_output_bytes": 0,
+        "string_payload_allocations": 4,
+        "string_payload_bytes": 134,
+        "string_conversions": 0,
+        "numeric_conversions": 0,
+        "value_copies": 0,
+        "frame_pools_hits": 0,
+        "frame_pools_misses": 0,
+        "root_pushes": 122422,
+        "root_high_water": 26,
+        "object_high_water": 64,
+        "object_pool_hits": 0,
+        "object_pool_misses": 0,
+        "gc_collections": 66,
+        "gc_scanned_objects": 660,
+        "gc_scanned_bytes": 205920,
+        "gc_reclaimed_objects": 3564,
+        "gc_reclaimed_bytes": 1111968,
+        "gc_mark_ns": 11320,
+        "gc_sweep_ns": 130075
+      },
+      "counter_context_count": 1,
+      "counter_contexts": [
+        {
+          "aot_generic_builtin_calls": 0,
+          "aot_generic_builtin_successes": 0,
+          "aot_generic_builtin_failures": 0,
+          "aot_index_get_calls": 52803,
+          "aot_index_get_successes": 52803,
+          "aot_index_get_failures": 0,
+          "aot_index_set_calls": 19200,
+          "aot_index_set_successes": 19200,
+          "aot_index_set_failures": 0,
+          "aot_math_f64_calls": 0,
+          "aot_math_f64_successes": 0,
+          "aot_math_f64_failures": 0,
+          "aot_math_value_calls": 7205,
+          "aot_math_value_successes": 7205,
+          "aot_math_value_failures": 0,
+          "aot_unicode_length_calls": 0,
+          "aot_unicode_length_successes": 0,
+          "aot_unicode_length_failures": 0,
+          "dictionary_probes": 0,
+          "dictionary_hits": 0,
+          "dictionary_misses": 0,
+          "dictionary_linear_steps": 0,
+          "dictionary_index_lookups": 0,
+          "dictionary_entry_comparisons": 0,
+          "dictionary_index_rebuilds": 0,
+          "array_appends": 0,
+          "array_grows": 0,
+          "array_copied_bytes": 0,
+          "allocator_alloc_calls": 3629,
+          "allocator_resize_calls": 0,
+          "allocator_remap_calls": 5,
+          "allocator_free_calls": 3629,
+          "allocator_live_bytes": 0,
+          "allocator_peak_live_bytes": 21660,
+          "allocator_telemetry_active": 1,
+          "allocator_telemetry_init_failures": 0,
+          "allocations": 3610,
+          "allocated_bytes": 1126338,
+          "concat_calls": 0,
+          "concat_output_bytes": 0,
+          "string_payload_allocations": 4,
+          "string_payload_bytes": 134,
+          "string_conversions": 0,
+          "numeric_conversions": 0,
+          "value_copies": 0,
+          "frame_pools_hits": 0,
+          "frame_pools_misses": 0,
+          "root_pushes": 122422,
+          "root_high_water": 26,
+          "object_high_water": 64,
+          "object_pool_hits": 0,
+          "object_pool_misses": 0,
+          "gc_collections": 66,
+          "gc_scanned_objects": 660,
+          "gc_scanned_bytes": 205920,
+          "gc_reclaimed_objects": 3564,
+          "gc_reclaimed_bytes": 1111968,
+          "gc_mark_ns": 11320,
+          "gc_sweep_ns": 130075
+        }
+      ],
+      "counter_scope": "single runtime report",
+      "managed_object_and_payload_fields": {
+        "allocations": 3610,
+        "allocated_bytes": 1126338,
+        "string_payload_allocations": 4,
+        "string_payload_bytes": 134,
+        "concat_calls": 0,
+        "concat_output_bytes": 0,
+        "gc_collections": 66,
+        "gc_scanned_objects": 660,
+        "gc_scanned_bytes": 205920,
+        "gc_reclaimed_objects": 3564,
+        "gc_reclaimed_bytes": 1111968
+      },
+      "allocator_telemetry_fields": {
+        "allocator_telemetry_active": 1,
+        "allocator_telemetry_init_failures": 0,
+        "allocator_alloc_calls": 3629,
+        "allocator_resize_calls": 0,
+        "allocator_remap_calls": 5,
+        "allocator_free_calls": 3629,
+        "allocator_live_bytes": 0,
+        "allocator_peak_live_bytes": 21660,
+        "gc_mark_ns": 11320,
+        "gc_sweep_ns": 130075
+      },
+      "allocator_telemetry_status": "observed by this runtime",
+      "aot_helper_entry_fields": {
+        "aot_generic_builtin_calls": 0,
+        "aot_generic_builtin_successes": 0,
+        "aot_generic_builtin_failures": 0,
+        "aot_index_get_calls": 52803,
+        "aot_index_get_successes": 52803,
+        "aot_index_get_failures": 0,
+        "aot_index_set_calls": 19200,
+        "aot_index_set_successes": 19200,
+        "aot_index_set_failures": 0,
+        "aot_math_f64_calls": 0,
+        "aot_math_f64_successes": 0,
+        "aot_math_f64_failures": 0,
+        "aot_math_value_calls": 7205,
+        "aot_math_value_successes": 7205,
+        "aot_math_value_failures": 0,
+        "aot_unicode_length_calls": 0,
+        "aot_unicode_length_successes": 0,
+        "aot_unicode_length_failures": 0
+      },
+      "allocator_telemetry_missing": [],
+      "units_and_limits": {
+        "allocations": "managed Object headers, not malloc calls",
+        "allocated_bytes": "accounted managed Object/payload bytes, not allocator live bytes",
+        "allocator_telemetry": "allocator vtable operations are unavailable when the corresponding fields are absent",
+        "gc_scanned_bytes": "Object header bytes visited by the mark phase; inline UTF-16 units do not contain roots",
+        "aot_helper_entries": "instrumented ABI entries in the separate counter run; nested wrapper/fallback entries can both count, so these fields must not be summed as unique language calls"
+      }
+    }
+  },
+  {
+    "target": "windows-x64",
+    "profile": {
+      "source_sha256": "93eb9df59c051066c03172db438c70c4065d932108b20c1a43507fa6a156351b",
+      "repository_commit": "02457acce036c239d12313da6bd528dd22e48f6b",
+      "repository_tracked_dirty": false,
+      "compiler_path": "D:\\a\\lnako\\lnako\\zig-out\\bin\\lnako.exe",
+      "schema": "lnako.numeric-profile.v1",
+      "platform": "win32",
+      "arch": "x64",
+      "source": "benchmarks/cases/numeric/nbody/source.nako3",
+      "arguments": [
+        "600"
+      ],
+      "commands": [
+        {
+          "command": "D:\\a\\lnako\\lnako\\zig-out\\bin\\lnako.exe",
+          "args": [
+            "build",
+            "D:\\a\\lnako\\lnako\\benchmarks\\cases\\numeric\\nbody\\source.nako3",
+            "-O3",
+            "-o",
+            "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe"
+          ],
+          "pid": 5320,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\lnako\\lnako\\zig-out\\bin\\lnako.exe",
+          "args": [
+            "build",
+            "D:\\a\\lnako\\lnako\\benchmarks\\cases\\numeric\\nbody\\source.nako3",
+            "-O3",
+            "--emit",
+            "llvm-ir",
+            "-o",
+            "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.ll"
+          ],
+          "pid": 4824,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\lnako\\lnako\\.cache\\toolchains\\llvm-22.1.8-windows-x86_64\\bin\\clang.exe",
+          "args": [
+            "-S",
+            "-x",
+            "ir",
+            "-O3",
+            "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.ll",
+            "-o",
+            "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.s"
+          ],
+          "pid": 6648,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\lnako\\lnako\\.cache\\toolchains\\llvm-22.1.8-windows-x86_64\\bin\\llvm-readobj.exe",
+          "args": [
+            "--coff-imports",
+            "--symbols",
+            "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe"
+          ],
+          "pid": 4392,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\lnako\\lnako\\.cache\\toolchains\\llvm-22.1.8-windows-x86_64\\bin\\llvm-objdump.exe",
+          "args": [
+            "-d",
+            "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe"
+          ],
+          "pid": 9200,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 7760,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "wpr.exe",
+          "args": [
+            "-start",
+            "CPU",
+            "-filemode",
+            "-recordtempto",
+            "D:\\a\\_temp\\numeric-profile-windows-x64",
+            "-instancename",
+            "lnako-nbody-8064"
+          ],
+          "pid": 7004,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 916,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 3240,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 1916,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 6840,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 8584,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 6320,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 3684,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 2920,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 8596,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 7244,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 1680,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 8504,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 3752,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 9204,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 4284,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 2936,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 780,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 5548,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 4388,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 6464,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 7496,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 4108,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 1740,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 8176,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 3636,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 2076,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 8756,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 932,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 5532,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 2252,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 572,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 4120,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 1532,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 5244,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 4932,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 3380,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 8816,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 1672,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 7284,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 3956,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 6376,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 6708,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 1964,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 5352,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 7996,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 7816,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 6968,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 4316,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 3364,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 1856,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 2424,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 3864,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 8424,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 4332,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 6804,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 4032,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 7632,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 3448,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 4160,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 8004,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 2148,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 3140,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 8124,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 8260,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 6992,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 6724,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 7904,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 1028,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 3160,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 5204,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 6456,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 4640,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 7612,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 5980,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 8832,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 8304,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 564,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 7664,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 5904,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 828,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 6176,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 7776,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 5816,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 8784,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 1380,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 6660,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 4364,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 6500,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 6644,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 8384,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 6040,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 4368,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 2680,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 7188,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 8368,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 9016,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 8480,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 6552,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 5324,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe",
+          "args": [
+            "600"
+          ],
+          "pid": 8972,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "wpr.exe",
+          "args": [
+            "-stop",
+            "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody-cpu.etl",
+            "-instancename",
+            "lnako-nbody-8064"
+          ],
+          "pid": 2488,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "tracerpt.exe",
+          "args": [
+            "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody-cpu.etl",
+            "-o",
+            "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody-events.xml",
+            "-of",
+            "XML",
+            "-summary",
+            "D:\\a\\_temp\\numeric-profile-windows-x64\\trace-summary.txt",
+            "-y"
+          ],
+          "pid": 7948,
+          "status": 0,
+          "signal": null,
+          "error": null
+        }
+      ],
+      "sampling": "etl-collected-analysis-required",
+      "link_map": {
+        "file": "D:\\a\\_temp\\numeric-profile-windows-x64\\nbody.exe.map",
+        "sha256": "90a2e3f1527d964b181bedf51d7c5afa7f1d86b16a0cabd2191d887ffe4c50d3"
+      },
+      "assembly_scope": "clang assembly from the optimized LLVM module; linked disassembly is separate",
+      "imports": "collected",
+      "linked_disassembly": "collected",
+      "output_verified": true,
+      "code": {
+        "static_call_sites": {
+          "lnako_aot_dispatch_display_begin_with_epoch": 1,
+          "lnako_aot_display_value": 1,
+          "lnako_aot_dispatch_result": 1,
+          "lnako_aot_runtime_init": 1,
+          "lnako_aot_push_roots": 16,
+          "lnako_aot_string_new": 1,
+          "lnako_aot_node_constants_init_wide": 1,
+          "llvm.lifetime.start.p0": 4,
+          "lnako_aot_global_read_site": 44,
+          "lnako_aot_element_count_call_site": 1,
+          "lnako_aot_exception_pending": 47,
+          "lnako.global.0": 14,
+          "lnako_aot_arithmetic": 22,
+          "lnako_aot_index_get": 13,
+          "lnako_aot_math_unary_value_call_site": 6,
+          "lnako_aot_global_write_site": 16,
+          "lnako_aot_array_new": 4,
+          "lnako_aot_iterator_new": 4,
+          "lnako_aot_iterator_has_next": 5,
+          "lnako_aot_iterator_next": 4,
+          "lnako_aot_compare": 1,
+          "lnako_aot_index_set": 4,
+          "lnako.display": 1,
+          "lnako_aot_pop_roots": 16,
+          "llvm.lifetime.end.p0": 4,
+          "lnako_aot_exception_abort": 2,
+          "lnako_aot_runtime_drain_events_light": 1,
+          "lnako_aot_runtime_deinit": 1
+        },
+        "stack_probe_mentions": 0,
+        "sqrt_mentions": 0,
+        "typed_definitions": []
+      },
+      "binary_sha256": "9fe05133ce7926cef5e796172bc1d7aba79358bdc0796a3b260d745c4bd61022",
+      "compiler_sha256": "1c0e51108c1996c0527d9d6f94ed1feae06c87a902996bcca11b2200ae92bea7",
+      "binary_bytes": 8947200,
+      "trace_export": "xml-and-summary-collected"
+    },
+    "profile_sha256": "8dc4aed164a4845a6602340a4db711570df6de27020e3140ff1a35df768b4c5d",
+    "runtime_counter_log_sha256": "b13d957726d46f87230100662c25eaed657d9c856a3f207d4ba5d82f020038e6",
+    "runtime_counters": {
+      "counter_values": {
+        "aot_generic_builtin_calls": 0,
+        "aot_generic_builtin_successes": 0,
+        "aot_generic_builtin_failures": 0,
+        "aot_index_get_calls": 52803,
+        "aot_index_get_successes": 52803,
+        "aot_index_get_failures": 0,
+        "aot_index_set_calls": 19200,
+        "aot_index_set_successes": 19200,
+        "aot_index_set_failures": 0,
+        "aot_math_f64_calls": 0,
+        "aot_math_f64_successes": 0,
+        "aot_math_f64_failures": 0,
+        "aot_math_value_calls": 7205,
+        "aot_math_value_successes": 7205,
+        "aot_math_value_failures": 0,
+        "aot_unicode_length_calls": 0,
+        "aot_unicode_length_successes": 0,
+        "aot_unicode_length_failures": 0,
+        "dictionary_probes": 0,
+        "dictionary_hits": 0,
+        "dictionary_misses": 0,
+        "dictionary_linear_steps": 0,
+        "dictionary_index_lookups": 0,
+        "dictionary_entry_comparisons": 0,
+        "dictionary_index_rebuilds": 0,
+        "array_appends": 0,
+        "array_grows": 0,
+        "array_copied_bytes": 0,
+        "allocator_alloc_calls": 3627,
+        "allocator_resize_calls": 0,
+        "allocator_remap_calls": 3,
+        "allocator_free_calls": 3627,
+        "allocator_live_bytes": 0,
+        "allocator_peak_live_bytes": 21646,
+        "allocator_telemetry_active": 1,
+        "allocator_telemetry_init_failures": 0,
+        "allocations": 3610,
+        "allocated_bytes": 1126440,
+        "concat_calls": 0,
+        "concat_output_bytes": 0,
+        "string_payload_allocations": 4,
+        "string_payload_bytes": 120,
+        "string_conversions": 0,
+        "numeric_conversions": 0,
+        "value_copies": 0,
+        "frame_pools_hits": 0,
+        "frame_pools_misses": 0,
+        "root_pushes": 122422,
+        "root_high_water": 26,
+        "object_high_water": 64,
+        "object_pool_hits": 0,
+        "object_pool_misses": 0,
+        "gc_collections": 66,
+        "gc_scanned_objects": 660,
+        "gc_scanned_bytes": 205920,
+        "gc_reclaimed_objects": 3564,
+        "gc_reclaimed_bytes": 1111968,
+        "gc_mark_ns": 15100,
+        "gc_sweep_ns": 168400
+      },
+      "counter_context_count": 1,
+      "counter_contexts": [
+        {
+          "aot_generic_builtin_calls": 0,
+          "aot_generic_builtin_successes": 0,
+          "aot_generic_builtin_failures": 0,
+          "aot_index_get_calls": 52803,
+          "aot_index_get_successes": 52803,
+          "aot_index_get_failures": 0,
+          "aot_index_set_calls": 19200,
+          "aot_index_set_successes": 19200,
+          "aot_index_set_failures": 0,
+          "aot_math_f64_calls": 0,
+          "aot_math_f64_successes": 0,
+          "aot_math_f64_failures": 0,
+          "aot_math_value_calls": 7205,
+          "aot_math_value_successes": 7205,
+          "aot_math_value_failures": 0,
+          "aot_unicode_length_calls": 0,
+          "aot_unicode_length_successes": 0,
+          "aot_unicode_length_failures": 0,
+          "dictionary_probes": 0,
+          "dictionary_hits": 0,
+          "dictionary_misses": 0,
+          "dictionary_linear_steps": 0,
+          "dictionary_index_lookups": 0,
+          "dictionary_entry_comparisons": 0,
+          "dictionary_index_rebuilds": 0,
+          "array_appends": 0,
+          "array_grows": 0,
+          "array_copied_bytes": 0,
+          "allocator_alloc_calls": 3627,
+          "allocator_resize_calls": 0,
+          "allocator_remap_calls": 3,
+          "allocator_free_calls": 3627,
+          "allocator_live_bytes": 0,
+          "allocator_peak_live_bytes": 21646,
+          "allocator_telemetry_active": 1,
+          "allocator_telemetry_init_failures": 0,
+          "allocations": 3610,
+          "allocated_bytes": 1126440,
+          "concat_calls": 0,
+          "concat_output_bytes": 0,
+          "string_payload_allocations": 4,
+          "string_payload_bytes": 120,
+          "string_conversions": 0,
+          "numeric_conversions": 0,
+          "value_copies": 0,
+          "frame_pools_hits": 0,
+          "frame_pools_misses": 0,
+          "root_pushes": 122422,
+          "root_high_water": 26,
+          "object_high_water": 64,
+          "object_pool_hits": 0,
+          "object_pool_misses": 0,
+          "gc_collections": 66,
+          "gc_scanned_objects": 660,
+          "gc_scanned_bytes": 205920,
+          "gc_reclaimed_objects": 3564,
+          "gc_reclaimed_bytes": 1111968,
+          "gc_mark_ns": 15100,
+          "gc_sweep_ns": 168400
+        }
+      ],
+      "counter_scope": "single runtime report",
+      "managed_object_and_payload_fields": {
+        "allocations": 3610,
+        "allocated_bytes": 1126440,
+        "string_payload_allocations": 4,
+        "string_payload_bytes": 120,
+        "concat_calls": 0,
+        "concat_output_bytes": 0,
+        "gc_collections": 66,
+        "gc_scanned_objects": 660,
+        "gc_scanned_bytes": 205920,
+        "gc_reclaimed_objects": 3564,
+        "gc_reclaimed_bytes": 1111968
+      },
+      "allocator_telemetry_fields": {
+        "allocator_telemetry_active": 1,
+        "allocator_telemetry_init_failures": 0,
+        "allocator_alloc_calls": 3627,
+        "allocator_resize_calls": 0,
+        "allocator_remap_calls": 3,
+        "allocator_free_calls": 3627,
+        "allocator_live_bytes": 0,
+        "allocator_peak_live_bytes": 21646,
+        "gc_mark_ns": 15100,
+        "gc_sweep_ns": 168400
+      },
+      "allocator_telemetry_status": "observed by this runtime",
+      "aot_helper_entry_fields": {
+        "aot_generic_builtin_calls": 0,
+        "aot_generic_builtin_successes": 0,
+        "aot_generic_builtin_failures": 0,
+        "aot_index_get_calls": 52803,
+        "aot_index_get_successes": 52803,
+        "aot_index_get_failures": 0,
+        "aot_index_set_calls": 19200,
+        "aot_index_set_successes": 19200,
+        "aot_index_set_failures": 0,
+        "aot_math_f64_calls": 0,
+        "aot_math_f64_successes": 0,
+        "aot_math_f64_failures": 0,
+        "aot_math_value_calls": 7205,
+        "aot_math_value_successes": 7205,
+        "aot_math_value_failures": 0,
+        "aot_unicode_length_calls": 0,
+        "aot_unicode_length_successes": 0,
+        "aot_unicode_length_failures": 0
+      },
+      "allocator_telemetry_missing": [],
+      "units_and_limits": {
+        "allocations": "managed Object headers, not malloc calls",
+        "allocated_bytes": "accounted managed Object/payload bytes, not allocator live bytes",
+        "allocator_telemetry": "allocator vtable operations are unavailable when the corresponding fields are absent",
+        "gc_scanned_bytes": "Object header bytes visited by the mark phase; inline UTF-16 units do not contain roots",
+        "aot_helper_entries": "instrumented ABI entries in the separate counter run; nested wrapper/fallback entries can both count, so these fields must not be summed as unique language calls"
+      }
+    }
+  },
+  {
+    "target": "macos-arm64",
+    "profile": {
+      "source_sha256": "93eb9df59c051066c03172db438c70c4065d932108b20c1a43507fa6a156351b",
+      "repository_commit": "02457acce036c239d12313da6bd528dd22e48f6b",
+      "repository_tracked_dirty": false,
+      "compiler_path": "/Users/runner/work/lnako/lnako/zig-out/bin/lnako",
+      "schema": "lnako.numeric-profile.v1",
+      "platform": "darwin",
+      "arch": "arm64",
+      "source": "benchmarks/cases/numeric/nbody/source.nako3",
+      "arguments": [
+        "600"
+      ],
+      "commands": [
+        {
+          "command": "/Users/runner/work/lnako/lnako/zig-out/bin/lnako",
+          "args": [
+            "build",
+            "/Users/runner/work/lnako/lnako/benchmarks/cases/numeric/nbody/source.nako3",
+            "-O3",
+            "-o",
+            "/Users/runner/work/_temp/numeric-profile-macos-arm64/nbody"
+          ],
+          "pid": 14435,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "/Users/runner/work/lnako/lnako/zig-out/bin/lnako",
+          "args": [
+            "build",
+            "/Users/runner/work/lnako/lnako/benchmarks/cases/numeric/nbody/source.nako3",
+            "-O3",
+            "--emit",
+            "llvm-ir",
+            "-o",
+            "/Users/runner/work/_temp/numeric-profile-macos-arm64/nbody.ll"
+          ],
+          "pid": 14442,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "/Users/runner/work/lnako/lnako/.cache/toolchains/llvm-22.1.8-macos-aarch64/bin/clang",
+          "args": [
+            "-S",
+            "-x",
+            "ir",
+            "-O3",
+            "/Users/runner/work/_temp/numeric-profile-macos-arm64/nbody.ll",
+            "-o",
+            "/Users/runner/work/_temp/numeric-profile-macos-arm64/nbody.s"
+          ],
+          "pid": 14451,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "/Users/runner/work/lnako/lnako/.cache/toolchains/llvm-22.1.8-macos-aarch64/bin/llvm-readobj",
+          "args": [
+            "--needed-libs",
+            "--symbols",
+            "/Users/runner/work/_temp/numeric-profile-macos-arm64/nbody"
+          ],
+          "pid": 14452,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "/Users/runner/work/lnako/lnako/.cache/toolchains/llvm-22.1.8-macos-aarch64/bin/llvm-objdump",
+          "args": [
+            "-d",
+            "/Users/runner/work/_temp/numeric-profile-macos-arm64/nbody"
+          ],
+          "pid": 14453,
+          "status": 0,
+          "signal": null,
+          "error": null
+        },
+        {
+          "command": "/Users/runner/work/_temp/numeric-profile-macos-arm64/nbody",
+          "args": [
+            "600"
+          ],
+          "pid": 14454,
+          "status": 0,
+          "signal": null,
+          "error": null
+        }
+      ],
+      "sampling": "not-requested",
+      "link_map": {
+        "file": "/Users/runner/work/_temp/numeric-profile-macos-arm64/nbody.map",
+        "sha256": "a442eda16e5b420dbc3c463bde7ad19ba924786aa9b6238ae632683ed8ac705f"
+      },
+      "assembly_scope": "clang assembly from the optimized LLVM module; linked disassembly is separate",
+      "imports": "collected",
+      "linked_disassembly": "collected",
+      "output_verified": true,
+      "code": {
+        "static_call_sites": {
+          "lnako_aot_dispatch_display_begin_with_epoch": 1,
+          "lnako_aot_display_value": 1,
+          "lnako_aot_dispatch_result": 1,
+          "lnako_aot_runtime_init": 1,
+          "lnako_aot_push_roots": 16,
+          "lnako_aot_string_new": 1,
+          "lnako_aot_node_constants_init": 1,
+          "llvm.lifetime.start.p0": 4,
+          "lnako_aot_global_read_site": 44,
+          "lnako_aot_element_count_call_site": 1,
+          "lnako_aot_exception_pending": 47,
+          "lnako.global.0": 14,
+          "lnako_aot_arithmetic": 22,
+          "lnako_aot_index_get": 13,
+          "lnako_aot_math_unary_value_call_site": 6,
+          "lnako_aot_global_write_site": 16,
+          "lnako_aot_array_new": 4,
+          "lnako_aot_iterator_new": 4,
+          "lnako_aot_iterator_has_next": 7,
+          "lnako_aot_iterator_next": 4,
+          "lnako_aot_compare": 1,
+          "lnako_aot_index_set": 4,
+          "lnako.display": 1,
+          "lnako_aot_pop_roots": 16,
+          "llvm.lifetime.end.p0": 4,
+          "lnako_aot_exception_abort": 2,
+          "lnako_aot_runtime_drain_events_light": 1,
+          "lnako_aot_runtime_deinit": 1
+        },
+        "stack_probe_mentions": 0,
+        "sqrt_mentions": 0,
+        "typed_definitions": []
+      },
+      "binary_sha256": "5b4ccc79af6d72d3a5e5b92b9f5319fa232b9e675fd512aee826b590927f9cb5",
+      "compiler_sha256": "a25cb358cf51c6c611f6f8551f2db0dae3a2b2d842ae86a945cec94494b20545",
+      "binary_bytes": 553920
+    },
+    "profile_sha256": "e84eba29d1405e95b671278c9645c47b8aeb8fe7ea31345af19eac0a9c976804",
+    "runtime_counter_log_sha256": "b8f7fc46e26676da845deb6a9f3c04b42fe4efd968d26c10e67d96282e014fae",
+    "runtime_counters": {
+      "counter_values": {
+        "aot_generic_builtin_calls": 0,
+        "aot_generic_builtin_successes": 0,
+        "aot_generic_builtin_failures": 0,
+        "aot_index_get_calls": 52803,
+        "aot_index_get_successes": 52803,
+        "aot_index_get_failures": 0,
+        "aot_index_set_calls": 19200,
+        "aot_index_set_successes": 19200,
+        "aot_index_set_failures": 0,
+        "aot_math_f64_calls": 0,
+        "aot_math_f64_successes": 0,
+        "aot_math_f64_failures": 0,
+        "aot_math_value_calls": 7205,
+        "aot_math_value_successes": 7205,
+        "aot_math_value_failures": 0,
+        "aot_unicode_length_calls": 0,
+        "aot_unicode_length_successes": 0,
+        "aot_unicode_length_failures": 0,
+        "dictionary_probes": 0,
+        "dictionary_hits": 0,
+        "dictionary_misses": 0,
+        "dictionary_linear_steps": 0,
+        "dictionary_index_lookups": 0,
+        "dictionary_entry_comparisons": 0,
+        "dictionary_index_rebuilds": 0,
+        "array_appends": 0,
+        "array_grows": 0,
+        "array_copied_bytes": 0,
+        "allocator_alloc_calls": 3629,
+        "allocator_resize_calls": 0,
+        "allocator_remap_calls": 5,
+        "allocator_free_calls": 3629,
+        "allocator_live_bytes": 0,
+        "allocator_peak_live_bytes": 21666,
+        "allocator_telemetry_active": 1,
+        "allocator_telemetry_init_failures": 0,
+        "allocations": 3610,
+        "allocated_bytes": 1126338,
+        "concat_calls": 0,
+        "concat_output_bytes": 0,
+        "string_payload_allocations": 4,
+        "string_payload_bytes": 140,
+        "string_conversions": 0,
+        "numeric_conversions": 0,
+        "value_copies": 0,
+        "frame_pools_hits": 0,
+        "frame_pools_misses": 0,
+        "root_pushes": 122422,
+        "root_high_water": 26,
+        "object_high_water": 64,
+        "object_pool_hits": 0,
+        "object_pool_misses": 0,
+        "gc_collections": 66,
+        "gc_scanned_objects": 660,
+        "gc_scanned_bytes": 205920,
+        "gc_reclaimed_objects": 3564,
+        "gc_reclaimed_bytes": 1111968,
+        "gc_mark_ns": 7579,
+        "gc_sweep_ns": 145875
+      },
+      "counter_context_count": 1,
+      "counter_contexts": [
+        {
+          "aot_generic_builtin_calls": 0,
+          "aot_generic_builtin_successes": 0,
+          "aot_generic_builtin_failures": 0,
+          "aot_index_get_calls": 52803,
+          "aot_index_get_successes": 52803,
+          "aot_index_get_failures": 0,
+          "aot_index_set_calls": 19200,
+          "aot_index_set_successes": 19200,
+          "aot_index_set_failures": 0,
+          "aot_math_f64_calls": 0,
+          "aot_math_f64_successes": 0,
+          "aot_math_f64_failures": 0,
+          "aot_math_value_calls": 7205,
+          "aot_math_value_successes": 7205,
+          "aot_math_value_failures": 0,
+          "aot_unicode_length_calls": 0,
+          "aot_unicode_length_successes": 0,
+          "aot_unicode_length_failures": 0,
+          "dictionary_probes": 0,
+          "dictionary_hits": 0,
+          "dictionary_misses": 0,
+          "dictionary_linear_steps": 0,
+          "dictionary_index_lookups": 0,
+          "dictionary_entry_comparisons": 0,
+          "dictionary_index_rebuilds": 0,
+          "array_appends": 0,
+          "array_grows": 0,
+          "array_copied_bytes": 0,
+          "allocator_alloc_calls": 3629,
+          "allocator_resize_calls": 0,
+          "allocator_remap_calls": 5,
+          "allocator_free_calls": 3629,
+          "allocator_live_bytes": 0,
+          "allocator_peak_live_bytes": 21666,
+          "allocator_telemetry_active": 1,
+          "allocator_telemetry_init_failures": 0,
+          "allocations": 3610,
+          "allocated_bytes": 1126338,
+          "concat_calls": 0,
+          "concat_output_bytes": 0,
+          "string_payload_allocations": 4,
+          "string_payload_bytes": 140,
+          "string_conversions": 0,
+          "numeric_conversions": 0,
+          "value_copies": 0,
+          "frame_pools_hits": 0,
+          "frame_pools_misses": 0,
+          "root_pushes": 122422,
+          "root_high_water": 26,
+          "object_high_water": 64,
+          "object_pool_hits": 0,
+          "object_pool_misses": 0,
+          "gc_collections": 66,
+          "gc_scanned_objects": 660,
+          "gc_scanned_bytes": 205920,
+          "gc_reclaimed_objects": 3564,
+          "gc_reclaimed_bytes": 1111968,
+          "gc_mark_ns": 7579,
+          "gc_sweep_ns": 145875
+        }
+      ],
+      "counter_scope": "single runtime report",
+      "managed_object_and_payload_fields": {
+        "allocations": 3610,
+        "allocated_bytes": 1126338,
+        "string_payload_allocations": 4,
+        "string_payload_bytes": 140,
+        "concat_calls": 0,
+        "concat_output_bytes": 0,
+        "gc_collections": 66,
+        "gc_scanned_objects": 660,
+        "gc_scanned_bytes": 205920,
+        "gc_reclaimed_objects": 3564,
+        "gc_reclaimed_bytes": 1111968
+      },
+      "allocator_telemetry_fields": {
+        "allocator_telemetry_active": 1,
+        "allocator_telemetry_init_failures": 0,
+        "allocator_alloc_calls": 3629,
+        "allocator_resize_calls": 0,
+        "allocator_remap_calls": 5,
+        "allocator_free_calls": 3629,
+        "allocator_live_bytes": 0,
+        "allocator_peak_live_bytes": 21666,
+        "gc_mark_ns": 7579,
+        "gc_sweep_ns": 145875
+      },
+      "allocator_telemetry_status": "observed by this runtime",
+      "aot_helper_entry_fields": {
+        "aot_generic_builtin_calls": 0,
+        "aot_generic_builtin_successes": 0,
+        "aot_generic_builtin_failures": 0,
+        "aot_index_get_calls": 52803,
+        "aot_index_get_successes": 52803,
+        "aot_index_get_failures": 0,
+        "aot_index_set_calls": 19200,
+        "aot_index_set_successes": 19200,
+        "aot_index_set_failures": 0,
+        "aot_math_f64_calls": 0,
+        "aot_math_f64_successes": 0,
+        "aot_math_f64_failures": 0,
+        "aot_math_value_calls": 7205,
+        "aot_math_value_successes": 7205,
+        "aot_math_value_failures": 0,
+        "aot_unicode_length_calls": 0,
+        "aot_unicode_length_successes": 0,
+        "aot_unicode_length_failures": 0
+      },
+      "allocator_telemetry_missing": [],
+      "units_and_limits": {
+        "allocations": "managed Object headers, not malloc calls",
+        "allocated_bytes": "accounted managed Object/payload bytes, not allocator live bytes",
+        "allocator_telemetry": "allocator vtable operations are unavailable when the corresponding fields are absent",
+        "gc_scanned_bytes": "Object header bytes visited by the mark phase; inline UTF-16 units do not contain roots",
+        "aot_helper_entries": "instrumented ABI entries in the separate counter run; nested wrapper/fallback entries can both count, so these fields must not be summed as unique language calls"
+      }
+    }
+  }
+]
