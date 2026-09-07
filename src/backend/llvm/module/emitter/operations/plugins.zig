@@ -480,6 +480,11 @@ pub fn writeBuiltinCall(emitter: *Emitter, function: ir.Function, instruction: i
             try emitter.output.writer.print("%builtin.{d}.slot.0", .{result});
         } else try emitter.output.writer.writeAll("null");
         try emitter.output.writer.print(", i64 {d}, i8 {d}, i64 {d})", .{ instruction.operands.len, mode, site_id });
+    } else if (command == .unicode_length and instruction.operands.len == 1) {
+        // `文字数` keeps the Value ABI because String(value) may invoke
+        // user-defined ToPrimitive callbacks. Passing the existing root slot
+        // avoids the generic builtin dispatch while retaining that behavior.
+        try emitter.output.writer.print("  call void @lnako_aot_unicode_length_call_site(ptr %root.slot.{d}, ptr %root.slot.{d}, i16 {d}, i64 {d})", .{ result, instruction.operands[0], @intFromEnum(command), site_id });
     } else if (command == .array_push or command == .element_count) {
         // 配列追加/要素数はループ内の高頻度命令なので、汎用dispatchを迂回する
         // 専用ABIへ出力する。routeは汎用経路と同じ "builtin" を維持する。

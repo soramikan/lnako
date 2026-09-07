@@ -144,3 +144,10 @@ Windowsでは `--windows-sampling` を指定し、独立したWPR instanceでCPU
 - 独立レビューで数値・真偽値・再帰・callback・NaN/Infinity/-0・それのInterpreter/AOT O2同値を確認し、現時点でP1/P2なし。隔離環境のfmt-checkと全単体テスト成功。公式/Interpreter/O0/O1/O2/O3差分11ケースも成功。拡張fixtureを含むdispatch auditは228 fixtures / 4,515 sites / native entry 426で成功。性能の最終評価は継続中。
 - 2,000回の数値更新を並べた追加stressでは、b394fa9とM11の生成LLVM IRが5,220,471 bytes、SHA-256 `164f9337086018e296f4c84f6c329a043b98c7b9d379306e6afb1374eda2e50e`で完全一致。IR生成は42 / 15 msに対しLLVM最適化・object出力が約14 / 19秒を占めた。同時負荷下の単発測定なので速度差を変更効果とは扱わない。typed解析の回帰は検出されず、巨大IRのLLVM処理負荷は残る。
 - M8/M14とWindows callback fixture修正を統合した状態でもfmt-check・全単体・公式11ケース（InterpreterとAOT O0〜O3）が成功。最終dispatchは228 fixtures / 4,516 sites、17証拠再生成後のCI互換baseline 13項目すべて成功。
+
+### Unicode `文字数` Value ABI（6b6899b isolated）
+
+- `/private/tmp/lnako-unicode-length-abi.patch` の6ファイルだけを6b6899bへ適用し、公開AOT ABIを `ptr, ptr, i16, i64` へ追加した。`文字数` の入力はValueのまま保持し、`valueUtf16Alloc`・ToPrimitive・pending exception・dispatch trace・root frameをgeneric経路と揃えた。
+- `out` と `input` が同一slotになる公開ABI境界をレビューで検出し、入力を出力clear前にコピーする修正と回帰テストを追加した。fmt-check成功、全単体 **965/965** 成功。
+- Node 24.15.0固定のReleaseSafe compilerで公式CLI・公式生成JavaScript・Interpreter・AOT O0/O1/O2/O3を **295/295** 比較し、Unicode・数値ABI境界を含め全件一致した（既知の公式経路差はCLI基準24件、生成JavaScript基準44件）。
+- `文字数("A😀B")` のReleaseSafe O3実行は `3`。生成LLVM IRは専用 `lnako_aot_unicode_length_call_site` を1箇所呼び、generic `lnako_aot_builtin_call_site` を呼ばない。`llvm-nm`で専用symbolを確認し、fixture実行ファイルは338,096 bytesだった。runtime countersはconcat 0、object allocation 3、string payload 3件/12 bytes、root high-water 6を記録した。UTF-16 scratchはgenericと同じ `valueUtf16Alloc` 1回のimmutable copy経路で、専用ABIによる追加concat/object copyはない。

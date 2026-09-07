@@ -14,6 +14,48 @@ const valueUtf16Alloc = state.valueUtf16Alloc;
 const staticStringValue = state.staticStringValue;
 const time = state.time;
 
+/// Fixed-shape Value ABI for the hot `文字数` builtin.  The input remains a
+/// Value because String(value) can invoke ToPrimitive callbacks and therefore
+/// cannot use the numeric double ABI.  Keeping this entry beside the existing
+/// math ABI makes the generated call shape identical while avoiding the large
+/// generic builtin switch for statically arity-checked calls.
+pub export fn lnako_aot_unicode_length_call_site(out: *Value, input: *const Value, opcode: u16, site_id: u64) callconv(.c) void {
+    const value = input.*;
+    out.* = .{};
+    const runtime = if (state.active_runtime) |*active| active else return;
+    const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
+        const call_id = runtime.dispatch_trace.begin("unknown", opcode, "builtin", site_id);
+        runtime.setFailure(error.UnknownCommand);
+        runtime.dispatch_trace.result(call_id, "unknown", opcode, "builtin", site_id, false);
+        return;
+    };
+    const command_name = aot_builtin.canonicalOpcodeName(command);
+    const call_id = runtime.dispatch_trace.begin(command_name, opcode, "builtin", site_id);
+    const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.dispatch_trace.result(call_id, command_name, opcode, "builtin", site_id, success);
+    if (command != .unicode_length) {
+        runtime.setFailure(error.UnknownCommand);
+        return;
+    }
+
+    // The caller's root slot already protects the input, but the conversion
+    // path may invoke callbacks and collect. Keep a local rooted copy so the
+    // dedicated ABI has the same GC boundary as the generic Value route.
+    var roots = [_]Value{value};
+    var frame: state.RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    const units = state.valueUtf16Alloc(runtime, roots[0]) catch |failure| {
+        runtime.setFailure(failure);
+        return;
+    };
+    defer runtime.allocator.free(units);
+    out.* = state.numberValue(@floatFromInt(state.codePointCount(units)));
+    success = runtime.failure_epoch == start_epoch;
+}
+
 /// Pure unary builtins which can use a fixed `double` argument ABI once the
 /// compiler has proved the operand is numeric.  Commands omitted here keep
 /// the generic Value ABI because they inspect objects, take two arguments, or

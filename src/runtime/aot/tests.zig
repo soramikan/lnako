@@ -119,6 +119,7 @@ const lnako_aot_builtin_call = state.lnako_aot_builtin_call;
 const lnako_aot_builtin_call_site = state.lnako_aot_builtin_call_site;
 const lnako_aot_array_push_call_site = state.lnako_aot_array_push_call_site;
 const lnako_aot_element_count_call_site = state.lnako_aot_element_count_call_site;
+const lnako_aot_unicode_length_call_site = state.lnako_aot_unicode_length_call_site;
 const lnako_aot_compare = state.lnako_aot_compare;
 const lnako_aot_concat = state.lnako_aot_concat;
 const lnako_aot_cut = state.lnako_aot_cut;
@@ -298,6 +299,7 @@ test "公開AOT ABIは動的値をポインタで受け渡す" {
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_builtin_call_site));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_array_push_call_site));
     try std.testing.expectEqual(*const fn (*Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_element_count_call_site));
+    try std.testing.expectEqual(*const fn (*Value, *const Value, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_unicode_length_call_site));
     try std.testing.expectEqual(*const fn (*Value, *Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_timer_call_site));
     try std.testing.expectEqual(*const fn (*Value, *Value, *Value, ?[*]const Value, usize, u16, u64) callconv(.c) void, @TypeOf(&lnako_aot_promise_call_site));
     try std.testing.expectEqual(*const fn (*Value, ?*const Value, u64, ?[*]const u8, usize, ?*Value, u64) callconv(.c) void, @TypeOf(&lnako_aot_debug_display));
@@ -2152,6 +2154,53 @@ test "AOT文字長検索と要素数はUnicode scalarとUTF-16を区別する" {
     roots[9] = try state.active_runtime.?.createArray(&.{ numberValue(1), numberValue(2) });
     lnako_aot_builtin_call(&roots[10], @ptrCast(&roots[9]), 1, @intFromEnum(aot_builtin.Command.element_count));
     try std.testing.expectEqual(@as(f64, 2), @as(f64, @bitCast(roots[10].payload)));
+}
+
+test "AOT文字数専用ABIは文字列化・例外・ToPrimitive境界をgenericと揃える" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+
+    var roots = [_]Value{.{}} ** 12;
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try state.active_runtime.?.createString(&.{ 'A', 0xd83d, 0xde00, 'B' });
+    lnako_aot_unicode_length_call_site(&roots[1], &roots[0], @intFromEnum(aot_builtin.Command.unicode_length), 0x2350);
+    try std.testing.expectEqual(@as(f64, 3), valueToNumber(roots[1]));
+    lnako_aot_unicode_length_call_site(&roots[0], &roots[0], @intFromEnum(aot_builtin.Command.unicode_length), 0x2356);
+    try std.testing.expectEqual(@as(f64, 3), valueToNumber(roots[0]));
+
+    roots[2] = numberValue(123);
+    lnako_aot_unicode_length_call_site(&roots[3], &roots[2], @intFromEnum(aot_builtin.Command.unicode_length), 0x2351);
+    try std.testing.expectEqual(@as(f64, 3), valueToNumber(roots[3]));
+
+    roots[4] = try state.active_runtime.?.createArray(&.{ numberValue(1), staticStringValue("😀") });
+    lnako_aot_unicode_length_call_site(&roots[5], &roots[4], @intFromEnum(aot_builtin.Command.unicode_length), 0x2352);
+    try std.testing.expectEqual(@as(f64, 3), valueToNumber(roots[5]));
+
+    roots[6] = try state.active_runtime.?.createDictionary(&.{});
+    lnako_aot_unicode_length_call_site(&roots[7], &roots[6], @intFromEnum(aot_builtin.Command.unicode_length), 0x2353);
+    lnako_aot_builtin_call(&roots[8], @ptrCast(&roots[6]), 1, @intFromEnum(aot_builtin.Command.unicode_length));
+    try std.testing.expectEqual(roots[8].payload, roots[7].payload);
+
+    roots[9] = try state.active_runtime.?.createFunction(testAotCustomString, 0, &.{});
+    try state.active_runtime.?.setDictionary(&roots[6].object().?.payload.dictionary, staticStringValue("toString"), roots[9]);
+    lnako_aot_unicode_length_call_site(&roots[7], &roots[6], @intFromEnum(aot_builtin.Command.unicode_length), 0x2354);
+    try std.testing.expectEqual(@as(f64, 6), valueToNumber(roots[7]));
+
+    roots[10] = try state.active_runtime.?.createFunction(testAotToPrimitiveObject, 0, &.{});
+    try state.active_runtime.?.setDictionary(&roots[6].object().?.payload.dictionary, staticStringValue("toString"), roots[10]);
+    try state.active_runtime.?.setDictionary(&roots[6].object().?.payload.dictionary, staticStringValue("valueOf"), roots[10]);
+    lnako_aot_unicode_length_call_site(&roots[11], &roots[6], @intFromEnum(aot_builtin.Command.unicode_length), 0x2355);
+    try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[11].tag)));
+    try std.testing.expect(state.active_runtime.?.has_pending_exception);
+    _ = state.active_runtime.?.takeException();
 }
 
 test "AOT何文字目はArray.from要素境界と辞書ToLengthを再現する" {

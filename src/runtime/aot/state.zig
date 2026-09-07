@@ -402,6 +402,7 @@ pub const isMathUnaryF64Command = math_module.isMathUnaryF64Command;
 pub const mathUnaryF64 = math_module.mathUnaryF64;
 pub const lnako_aot_math_unary_f64_call_site = math_module.lnako_aot_math_unary_f64_call_site;
 pub const lnako_aot_math_unary_value_call_site = math_module.lnako_aot_math_unary_value_call_site;
+pub const lnako_aot_unicode_length_call_site = math_module.lnako_aot_unicode_length_call_site;
 pub const initialRandomState = math_module.initialRandomState;
 pub const default_random_seed = math_module.default_random_seed;
 pub const nextRandom = math_module.nextRandom;

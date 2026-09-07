@@ -128,6 +128,26 @@ test "非同期命令のないモジュールは軽量event drainを出力する
     try std.testing.expect(std.mem.indexOf(u8, module.text, "call void @lnako_aot_runtime_drain_events()\n") == null);
 }
 
+test "文字数は専用Value ABIへ接続しgeneric builtin switchを呼ばない" {
+    const parser = @import("../../frontend/parser.zig");
+    const semantic = @import("../../semantic/analyzer.zig");
+    const hir = @import("../../ir/hir.zig");
+    const lower = @import("../../ir/lower_ssa.zig");
+    var parsed = try parser.parse(std.testing.allocator, "S=\"A😀B\"\n文字数(S)を表示\n", "unicode-length.nako3");
+    defer parsed.deinit();
+    var analyzed = try semantic.analyze(std.testing.allocator, parsed.root.?, "unicode-length.nako3");
+    defer analyzed.deinit();
+    var hir_program = try hir.lowerSingle(std.testing.allocator, parsed.root.?, "main", "unicode-length.nako3", analyzed);
+    defer hir_program.deinit();
+    var program = try lower.lower(std.testing.allocator, hir_program);
+    defer program.deinit();
+    var module = try generate(std.testing.allocator, program, "unicode-length.nako3", true);
+    defer module.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, module.text, "declare void @lnako_aot_unicode_length_call_site(ptr, ptr, i16, i64)\n") != null);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, module.text, "call void @lnako_aot_unicode_length_call_site("));
+    try std.testing.expectEqual(@as(usize, 0), std.mem.count(u8, module.text, "call void @lnako_aot_builtin_call_site("));
+}
+
 test "ネイティブプラグイン命令をAOT ABIへ出力する" {
     const parser = @import("../../frontend/parser.zig");
     const semantic = @import("../../semantic/analyzer.zig");
