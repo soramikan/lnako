@@ -116,7 +116,8 @@ pub fn collectLocalNames(allocator: std.mem.Allocator, function: ir.Function) ![
     for (function.parameters) |parameter| try appendName(allocator, &names, &seen, parameter.name);
     for (function.blocks) |block| for (block.instructions) |instruction| {
         switch (instruction.opcode) {
-            .load_local, .store_local, .array_set, .property_set => try appendName(allocator, &names, &seen, instruction.name),
+            .load_local, .store_local => try appendName(allocator, &names, &seen, instruction.name),
+            .array_set, .property_set => if (!isQualifiedGlobal(instruction.name)) try appendName(allocator, &names, &seen, instruction.name),
             .destructure_store => for (instruction.names) |name| {
                 if (!isQualifiedGlobal(name)) try appendName(allocator, &names, &seen, name);
             },
@@ -333,4 +334,22 @@ test "dynamic executionはlocalのbinding identityを保持する" {
     };
     defer program.arena.deinit();
     try std.testing.expect(requiresCell(program, function, "A"));
+}
+
+test "添字とpropertyのglobal代入をlocal slotへ登録しない" {
+    const span = @import("../frontend/ast.zig").emptySpan();
+    var instructions = [_]ir.Instruction{
+        .{ .result = null, .opcode = .array_set, .type = .void, .name = "main__A", .span = span },
+        .{ .result = null, .opcode = .property_set, .type = .void, .name = "main__B", .span = span },
+        .{ .result = null, .opcode = .increment, .type = .void, .name = "main__I", .span = span },
+        .{ .result = null, .opcode = .array_set, .type = .void, .name = "A", .span = span },
+        .{ .result = null, .opcode = .property_set, .type = .void, .name = "B", .span = span },
+    };
+    var blocks = [_]ir.BasicBlock{.{ .id = 0, .name = "entry", .instructions = &instructions, .terminator = .{ .return_value = null } }};
+    const function: ir.Function = .{ .id = 0, .name = "test", .parameters = &.{}, .blocks = &blocks, .entry = 0, .return_type = .void, .is_async = false, .is_test = false };
+    const names = try collectLocalNames(std.testing.allocator, function);
+    defer std.testing.allocator.free(names);
+    try std.testing.expectEqual(@as(usize, 2), names.len);
+    try std.testing.expectEqualStrings("A", names[0]);
+    try std.testing.expectEqualStrings("B", names[1]);
 }

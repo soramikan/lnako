@@ -35,3 +35,5 @@ packed NumberArray、世代別GC、in-place文字列builderはレビューに従
 - 単体910/910成功。通常関数のcell生成ゼロとcapture維持の生成IRテストを追加。
 - 既存公式差分9ケース（関数、戻り値、それ、引数不足、共有可変capture、捕捉引数型、推移的capture、引数なし呼出し、関数をまたぐ例外）で公式/Interpreter/AOT O0/O2一致。
 - 性能評価とInterpreterの非capture cell除去は未完了。
+
+- 総合dispatch再検証でglobal添字代入をlocalへ誤登録する回帰を検出。qualified名を除外し回帰テスト追加。修正後は単体911/911、上記9公式差分、dispatch総合（Interpreter 944/Node 42/AOT manifest 946/runtime 1888イベント）成功。
