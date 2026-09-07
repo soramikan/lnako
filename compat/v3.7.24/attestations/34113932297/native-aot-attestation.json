@@ -1,0 +1,17 @@
+{
+  "schema": "lnako.native-aot-attestation.v1",
+  "repository": "soramikan/lnako",
+  "workflow": "soramikan/lnako/.github/workflows/ci.yml",
+  "sourceRef": "refs/heads/main",
+  "commit": "00dc21517c7cbe68bc4d85262578ee9de0ede110",
+  "predicateType": "https://slsa.dev/provenance/v1",
+  "verifiedBy": "gh attestation verify",
+  "bundleSha256": "3942179d95a73198991424f0805c4399d8280c10f03ab40a1feaab26d47abd05",
+  "subject": {
+    "file": "lnako-native-aot-aggregate-evidence.json",
+    "sha256": "b8000bc2476a61fa820d29c715991df461ea106d522e00867085854599bf985f",
+    "targetCount": 3,
+    "artifactCount": 27,
+    "fixtureCount": 295
+  }
+}

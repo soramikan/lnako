@@ -32,15 +32,15 @@
 
 | state | entry |
 | --- | ---: |
-| `verified` | 0 |
-| `trace-confirmed-unattested` | 527 |
+| `verified` | 527 |
+| `trace-confirmed-unattested` | 0 |
 | `unverified` | 0 |
 
-これは、全527 entryについて実行siteとの接続をcanonical台帳へ記録済みであることを示します。`verified` は、追跡された現行attestation snapshot（`attestations/current.json`）が現行source manifestと一致し、かつentryのproofを裏付ける証拠ファイルのdigestが署名subjectに含まれる場合にのみ昇格する状態です。
+これは、全527 entryの実行証拠が追跡された現行attestation snapshotで署名済みであることを示します。`verified` は、追跡された現行attestation snapshot（`attestations/current.json` → `attestations/34113932297/`）が現行source manifestと一致し、かつentryのproofを裏付ける証拠ファイルのdigestが署名subjectに含まれる場合にのみ維持される状態です。
 
 ### CIの一時artifact
 
-CI run `34096852822`（commit `f46147266f5b51668f3251c9d57e449edfdc72b6`、54/54 job成功）が生成した一時catalog artifactは `verified: 358`、`trace-confirmed-unattested: 169`、`unverified: 0` でした。このrunのattestationは3 OSのdispatch証拠とnative AOT aggregateだけを署名対象にしており、coverage・static・global binding・expected exit・compat-jsの各証拠namespaceは署名subjectに含まれていませんでした。attestation対象はcanonical証拠17件へ拡張済みで、以降のrunでは全証拠namespaceが昇格対象になります。
+CI run `34113932297`（commit `00dc21517c7cbe68bc4d85262578ee9de0ede110`、attempt 2、54/54 job成功）が生成したcatalog artifactは `verified: 527`、`trace-confirmed-unattested: 0`、`unverified: 0` です。このrunのattestationは3 OSのdispatch証拠・native AOT aggregate・canonical証拠17件を同一Sigstore bundleのsubjectとして署名しており、全証拠namespaceが昇格対象になりました。
 
 一時artifactの値は、実行環境・署名・artifactの保存期間に依存します。追跡対象のcanonical `evidence.json` は、追跡された現行snapshotと現行source manifestの一致が確認できた場合にのみ `verified` を保持します。
 

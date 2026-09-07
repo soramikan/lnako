@@ -1,0 +1,97 @@
+{
+  "schema": "lnako.dispatch-attestation.v2",
+  "repository": "soramikan/lnako",
+  "workflow": "soramikan/lnako/.github/workflows/ci.yml",
+  "sourceRef": "refs/heads/main",
+  "commit": "00dc21517c7cbe68bc4d85262578ee9de0ede110",
+  "predicateType": "https://slsa.dev/provenance/v1",
+  "verifiedBy": "gh attestation verify",
+  "bundleSha256": "3942179d95a73198991424f0805c4399d8280c10f03ab40a1feaab26d47abd05",
+  "subjects": [
+    {
+      "platform": "darwin",
+      "arch": "arm64",
+      "evidenceSha256": "ee91c655ba9249f196d1721a436b9bb9457e6e353679098fef7f026514e75e46"
+    },
+    {
+      "platform": "linux",
+      "arch": "x64",
+      "evidenceSha256": "27e72c758d98b9179011d074cc99d8629fa49940e49280abb5581f72584537a9"
+    },
+    {
+      "platform": "win32",
+      "arch": "x64",
+      "evidenceSha256": "edbfb2b2ca87d19387d6aded20e1ab1a1e0813c01eab70b87c37c93afdfbd70c"
+    }
+  ],
+  "trackedSubjects": [
+    {
+      "path": "compat/v3.7.24/compat-js-evidence.json",
+      "sha256": "ca5fae16c8b5880d3496ce9724eea41e5950914ce1f86d76f8dc4bf51ed8ca30"
+    },
+    {
+      "path": "compat/v3.7.24/directory-binding-evidence.json",
+      "sha256": "5419f8fb209a443157c4b7a33a2735bfa5b28867aeaf86410208b13142bf25ac"
+    },
+    {
+      "path": "compat/v3.7.24/dispatch-coverage-evidence.json",
+      "sha256": "273b9365d9552c91629abff89d8aba719013e6d9aa91323e6e5d56cff1e84e7d"
+    },
+    {
+      "path": "compat/v3.7.24/dispatch-evidence.json",
+      "sha256": "cc0ed12869166be22a23f730db5f729cc540b8958995691013130dd7d01404f4"
+    },
+    {
+      "path": "compat/v3.7.24/expected-exit-evidence.json",
+      "sha256": "6677525d472f53dc88b6893105b27562e673757bccff612d84bb1f7830794a95"
+    },
+    {
+      "path": "compat/v3.7.24/global-binding-evidence.json",
+      "sha256": "97b15006df15993613366ca29edfe9363a1b99832bba8475110fb401ec741479"
+    },
+    {
+      "path": "compat/v3.7.24/static-array-constant-evidence.json",
+      "sha256": "6a169d2c1ab9c08cd518e367e539e76ce2549539f52e67f54627185fa99428be"
+    },
+    {
+      "path": "compat/v3.7.24/static-caniuse-agents-constant-evidence.json",
+      "sha256": "979f7873c9a13ffebbed7a296bbab954ecdcbcba48b9010f8d839af04cd84d72"
+    },
+    {
+      "path": "compat/v3.7.24/static-constant-evidence.json",
+      "sha256": "e8429e62223cf5ade02c6f11d03a5d140b73e5ed4a13375eeded485d08f564f7"
+    },
+    {
+      "path": "compat/v3.7.24/static-datetime-era-constant-evidence.json",
+      "sha256": "34e2ac04acad6c0a4050d68ba609ce1318a91dcaf307e8c6b1f1332e4a76b50d"
+    },
+    {
+      "path": "compat/v3.7.24/static-datetime-plugin-era-constant-evidence.json",
+      "sha256": "3305e3e8086a3deec60a04876ee7d39708c40aea6f4843d52f892d480065d9a0"
+    },
+    {
+      "path": "compat/v3.7.24/static-node-archive-constant-evidence.json",
+      "sha256": "16d3b0e3db660842dbe3ad9cecfe35e632ab97777a9a6353e172de5717ebe17f"
+    },
+    {
+      "path": "compat/v3.7.24/static-node-command-line-constant-evidence.json",
+      "sha256": "ffbe49ee448b13878ef23372a0e39f44d73edca5d11aaea66ebd7c734f56c586"
+    },
+    {
+      "path": "compat/v3.7.24/static-node-http-initial-constant-evidence.json",
+      "sha256": "5b3495e42af512665a7a87b13712b8b62aac5d2a6fb45ff189e3fc16a78fbd83"
+    },
+    {
+      "path": "compat/v3.7.24/static-node-mother-path-constant-evidence.json",
+      "sha256": "5452f91351654530f6c3389b0c2712defa110819aac21c229534db6969183dc5"
+    },
+    {
+      "path": "compat/v3.7.24/static-promise-reject-constant-evidence.json",
+      "sha256": "34ddb2583766287c9a41cc2f8d109c659376f716a03797bae9e4cc6759591c79"
+    },
+    {
+      "path": "compat/v3.7.24/static-string-constant-evidence.json",
+      "sha256": "f41f00ad9b510429d18bf7a3b095eb80c56bbc332f5549104b3d3c4af0a17d9f"
+    }
+  ]
+}
