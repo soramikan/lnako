@@ -59,6 +59,25 @@ Windowsでは `--windows-sampling` を指定し、独立したWPR instanceでCPU
 - fmt-check、単体915/915、公式差分9ケースInterpreter/AOT O0/O2成功。counting allocatorでconcat出力1 allocationを確認。
 - concat/payload/GC scan countersを追加。全allocator malloc/realloc、mark/sweep時間、peak live bytes、3 OS性能目標の検証は未完了。
 
+### M12 telemetry隔離検証（2026-09-07）
+
+- `b394fa9`から作成した`/private/tmp/lnako-performance-telemetry`で、Zig 0.16.0、固定LLVM/LLD 22.1.8、Node.js 24.15.0を使用した。`zig test`のtelemetry filterは8/8（AOT Runtime移動、Interpreter Runtime移動・同一base allocator共有、allocatorのoperation/live bytes、GC mark/sweep時間、遅いtelemetry activation後のunknown free）に成功し、AOT concatの一体copy・GC境界テストは7/7に成功した。
+- 固定Node `/Users/sora/Repositories/soramikan/lnako/.cache/toolchains/node-24.15.0/bin/node`、`LNAKO_LLVM_DIR=/Users/sora/Repositories/soramikan/lnako/.cache/toolchains/llvm-22.1.8-macos-aarch64`で、公式source・公式生成JavaScript・`lnako run`・LLVM AOT O0/O1/O2/O3の公式11境界をtelemetry無効・有効の両条件で比較した。各条件とも11/11成功した。一時的に11 fixtureへ絞った`tests/oracle/native-cases.json`は実行後に295 fixtureへ復元し、fixtureのgit diffが空であることを確認した。
+- `LNAKO_ALLOCATOR_TELEMETRY=0`（`LNAKO_PERF_COUNTERS`未設定）ではcounter行を出さず、`LNAKO_PERF_COUNTERS=1`ではallocator telemetryを有効にしてcounter行を出すことをAOT実行で確認した。下表はtelemetry有効、AOTは-O2、各Nを1回実行した値で、`allocator_*`はwrapper activation後のallocator operation、`allocations`/`allocated_bytes`はmanaged Object単位、`concat_output_bytes`/`string_payload_bytes`はUTF-16 byte数である。`allocator_live_bytes`は全ケース終了時0だった。
+
+| AOT case (N) | stdout | alloc/resize/remap/free | peak live | Object allocations/bytes | concat calls/output | payload allocations/bytes | GC collections/scanned/reclaimed | mark/sweep ns |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| string-copy-fixed (2000) | 20000 | 4024/0/5/4024 | 21746 | 2009/666840 | 2000/40000 | 2006/40154 | 36/324/1980 | 6543/536623 |
+| string-concat (500) | 1000 | 521/0/5/521 | 119508 | 508/659510 | 500/501000 | 506/501126 | 8/64/448 | 3293/422126 |
+| gc-short-lived (1000) | 501500 | 3018/0/5/3018 | 38341 | 1007/314198 | 0/0 | 5/130 | 17/102/986 | 3500/300293 |
+| gc-long-lived (1000) | 500500 | 3022/0/17/3022 | 605864 | 1009/314822 | 0/0 | 5/128 | 4/945/1 | 7834/4917 |
+
+- Interpreterの診断3ケースでもstdoutはAOTと一致し、allocator operation/peak/mark・sweepとmanaged counterを観測できる。Interpreterの`allocations`/`allocated_bytes`は各GC対象の実体構造体サイズと論理UTF-16 payload、`concat_*`は新しいUTF-16出力、`gc_*`は実体構造体単位のmark/reclaimを数える。StringのunitsやArrayのitemsなど別に確保するpayloadはmanaged bytesへ重ねて数えず、UTF-16 string payloadだけを`string_payload_*`として別計上する。これらは総allocator bytesではなく、AOTの一体allocation値とも分けて読む。allocator vtable操作数と観測済みlive/peak bytesはwrapperの`allocator_*`で示すが、process全体の総確保量ではない。固定Node/LLVMでN=2000/1000を実行したmanaged counterは、`string-copy-fixed`: allocations/bytes 6189/364650、concat/output 2000/40000、payload 6162/114450、GC collections/scanned/reclaimed 35/6227/5925、`gc-short-lived`: 2187/198542、0/0、1160/4422、13/2169/1873、`gc-long-lived`: 3188/244462、0/0、2160/10198、7/4278/1982だった。各ケースのgc scanned/reclaimed bytesは順に338616/237000、119360/171952、518912/79280。`value_counters_test.zig`で3文字列のobject/payload/concat/scan/reclaimの期待値を固定した。
+- CLIのCompiler frontendとRuntime activation前の確保はtelemetry範囲外である。Runtimeと同じbase allocatorを`Interpreter.init`へ渡した場合は`allocatorForInterpreter`がwrapperを共有するため、activation後のInterpreter-owned frame buffer、prepared/local/function-index等の確保と解放はallocator operation/live bytesへ含まれる。別allocatorを明示した場合は共有せず、host側の別allocatorも含めない。M8 frame poolの`frame_pools_hits/misses`はRuntime counterへ接続済みであり、pool利用回数はallocator operationと分けて読む。
+- AOTの任意entry telemetryは`LNAKO_PERF_COUNTERS=1`または`LNAKO_ALLOCATOR_TELEMETRY=1`時に有効で、`aot_index_get`/`aot_index_set`、`aot_math_f64`/`aot_math_value`、`aot_unicode_length`、`aot_generic_builtin`を各`calls`/`successes`/`failures`で分離する。これらはABI entryごとの計測であり、専用ABIからgeneric fallbackへ移行した場合には専用側とgeneric側の両entryが記録され得る。したがってこれらを合算して言語のunique呼出し数とは解釈しない。`profile_aot_numeric.mjs`の`static_call_sites`はLLVM IRの静的site数であり、これらの動的entry回数とは別の値である。専用ABIの結果値、例外境界、成功/失敗分類はAOT math/Unicode/indexのunit testで固定する。
+- AOTからdynamic Value Runtimeを起動する場合は、既存のtelemetry wrapper allocatorを借用して再wrapしない。counter行はmanaged objectをdynamic contextとして分離して出力し、借用側の`allocator_telemetry_active=0`、`allocator_*`とGC時間は0になる。これはdynamic context自身のallocator snapshotが未計測で外側wrapperに含まれることを示し、初期化失敗は`allocator_telemetry_init_failures`へ記録する。外側AOT contextだけがwrapperのallocator operation/live/peakとGC時間を持つ。`/private/tmp/lnako-telemetry-dynamic-aot-active.log`でstdout `3`とこの二重観測防止を確認した。
+- `allocator_peak_live_bytes`は単一Runtimeのwrapper内でのpeakである。`Counters.add`で複数Runtimeを集計する場合はcontextごとのpeakの加算になるため、同時全体peakとは表示しない。3 OSの時間・peak比較は未実施であり、上記mark/sweep nsはこのmacOS単発実行の診断値である。
+
 ### 診断toolと追加benchmark
 
 - 既存v2の20ケースを保持し、`benchmarks/suites/diagnostics.json` に12ケースを追加。setupを含むprocess全体計測であることをREADMEへ明記。実装時の公式/Interpreter正解照合12件、比較結果48 rowsを確認。

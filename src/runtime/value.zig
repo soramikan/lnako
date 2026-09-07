@@ -5,6 +5,8 @@ const number_mod = @import("number.zig");
 const toml_temporal = @import("toml_temporal.zig");
 const environment = @import("environment.zig");
 const counters = @import("counters.zig");
+const vc = @import("value_counter_helpers.zig");
+const allocator_telemetry = @import("allocator_telemetry.zig");
 
 pub const String = string_mod.String;
 pub const BigInt = bigint_mod.BigInt;
@@ -597,6 +599,12 @@ const HeapObject = union(enum) {
     promise: *Promise,
 };
 
+fn managedObjectBytes(object: HeapObject) usize {
+    return switch (object) {
+        inline else => |value| @sizeOf(@TypeOf(value.*)),
+    };
+}
+
 pub const CollectionStats = struct { before: usize, after: usize, collected: usize };
 pub const RootProvider = struct {
     context: *anyopaque,
@@ -631,7 +639,7 @@ pub const RootFrame = struct {
     depth: usize,
 
     pub fn protect(self: *RootFrame, value: *Value) !void {
-        try self.runtime.roots.append(self.runtime.backing_allocator, value);
+        try self.runtime.roots.append(self.runtime.allocator(), value);
     }
 
     pub fn deinit(self: *RootFrame) void {
@@ -656,34 +664,78 @@ pub const Runtime = struct {
     next_collection: usize = 64,
     stress_collection: bool = false,
     counters: counters.Counters = .{},
+    allocator_telemetry: ?*allocator_telemetry.Telemetry = null,
+    allocator_telemetry_checked: bool = false,
 
     pub fn init(backing_allocator: std.mem.Allocator) Runtime {
-        return .{ .backing_allocator = backing_allocator };
+        if (allocator_telemetry.Telemetry.isTelemetryAllocator(backing_allocator))
+            return .{ .backing_allocator = backing_allocator, .allocator_telemetry_checked = true };
+        var runtime: Runtime = .{ .backing_allocator = backing_allocator, .allocator_telemetry_checked = true };
+        if (allocator_telemetry.enabled()) {
+            if (allocator_telemetry.Telemetry.init(backing_allocator)) |telemetry| {
+                runtime.allocator_telemetry = telemetry;
+                runtime.backing_allocator = telemetry.allocator();
+                runtime.counters.allocator_telemetry_active = 1;
+            } else |_| {
+                runtime.counters.allocator_telemetry_init_failures = 1;
+            }
+        }
+        return runtime;
     }
 
     pub fn deinit(self: *Runtime) void {
         for (self.objects.items) |object| self.destroyObject(object);
-        self.objects.deinit(self.backing_allocator);
-        self.roots.deinit(self.backing_allocator);
-        self.grey_objects.deinit(self.backing_allocator);
-        self.root_providers.deinit(self.backing_allocator);
-        self.promise_tasks.deinit(self.backing_allocator);
-        self.stringifying_arrays.deinit(self.backing_allocator);
-        for (self.standard_property_cache.items) |entry| self.backing_allocator.free(entry.name);
-        self.standard_property_cache.deinit(self.backing_allocator);
-        self.custom_failure_message.deinit(self.backing_allocator);
-        self.custom_failure_message_units.deinit(self.backing_allocator);
+        const runtime_allocator = self.allocator();
+        self.objects.deinit(runtime_allocator);
+        self.roots.deinit(runtime_allocator);
+        self.grey_objects.deinit(runtime_allocator);
+        self.root_providers.deinit(runtime_allocator);
+        self.promise_tasks.deinit(runtime_allocator);
+        self.stringifying_arrays.deinit(runtime_allocator);
+        for (self.standard_property_cache.items) |entry| runtime_allocator.free(entry.name);
+        self.standard_property_cache.deinit(runtime_allocator);
+        self.custom_failure_message.deinit(runtime_allocator);
+        self.custom_failure_message_units.deinit(runtime_allocator);
+        self.syncAllocatorTelemetry();
         self.reportCounters();
+        self.releaseAllocatorTelemetry();
         self.* = undefined;
     }
 
+    fn syncAllocatorTelemetry(self: *Runtime) void {
+        const telemetry = self.allocator_telemetry orelse return;
+        const snapshot = telemetry.snapshot();
+        self.counters.allocator_alloc_calls = snapshot.alloc_calls;
+        self.counters.allocator_resize_calls = snapshot.resize_calls;
+        self.counters.allocator_remap_calls = snapshot.remap_calls;
+        self.counters.allocator_free_calls = snapshot.free_calls;
+        self.counters.allocator_live_bytes = snapshot.live_bytes;
+        self.counters.allocator_peak_live_bytes = snapshot.peak_live_bytes;
+        self.counters.gc_mark_ns = snapshot.gc_mark_ns;
+        self.counters.gc_sweep_ns = snapshot.gc_sweep_ns;
+    }
+
+    fn releaseAllocatorTelemetry(self: *Runtime) void {
+        const telemetry = self.allocator_telemetry orelse return;
+        self.backing_allocator = telemetry.base;
+        telemetry.deinit();
+        self.allocator_telemetry = null;
+    }
+
     fn reportCounters(self: *const Runtime) void {
-        if (!environment.valueEquals("LNAKO_PERF_COUNTERS", "1")) return;
+        if (!allocator_telemetry.enabled() and !environment.valueEquals("LNAKO_PERF_COUNTERS", "1")) return;
         std.debug.print("lnako perf counters: {}\n", .{self.counters});
     }
 
     pub fn allocator(self: *Runtime) std.mem.Allocator {
         return self.backing_allocator;
+    }
+
+    pub fn allocatorForInterpreter(self: *Runtime, requested: std.mem.Allocator) std.mem.Allocator {
+        const telemetry = self.allocator_telemetry orelse return requested;
+        const shared = telemetry.allocator();
+        if (sameAllocator(requested, telemetry.base) or sameAllocator(requested, shared)) return shared;
+        return requested;
     }
 
     pub fn cachedStandardProperty(self: *Runtime, kind: u8, name: []const u8) ?Value {
@@ -713,8 +765,8 @@ pub const Runtime = struct {
     /// 命令固有の動的な例外文言を、汎用error setとは別に保持する。
     pub fn setFailureMessage(self: *Runtime, message: []const u8) !void {
         errdefer self.clearFailureMessage();
-        const units = try std.unicode.utf8ToUtf16LeAlloc(self.backing_allocator, message);
-        defer self.backing_allocator.free(units);
+        const units = try std.unicode.utf8ToUtf16LeAlloc(self.allocator(), message);
+        defer self.allocator().free(units);
         try self.setFailureMessageUnits(units);
     }
 
@@ -725,10 +777,10 @@ pub const Runtime = struct {
         self.custom_failure_message.clearRetainingCapacity();
         self.custom_failure_message_units.clearRetainingCapacity();
         errdefer self.clearFailureMessage();
-        try self.custom_failure_message_units.appendSlice(self.backing_allocator, units);
-        const utf8 = try (String{ .allocator = self.backing_allocator, .units = @constCast(units) }).toUtf8Lossy(self.backing_allocator);
-        defer self.backing_allocator.free(utf8);
-        try self.custom_failure_message.appendSlice(self.backing_allocator, utf8);
+        try self.custom_failure_message_units.appendSlice(self.allocator(), units);
+        const utf8 = try (String{ .allocator = self.allocator(), .units = @constCast(units) }).toUtf8Lossy(self.allocator());
+        defer self.allocator().free(utf8);
+        try self.custom_failure_message.appendSlice(self.allocator(), utf8);
     }
 
     pub fn failureMessage(self: Runtime) ?[]const u8 {
@@ -780,13 +832,19 @@ pub const Runtime = struct {
         self.stress_collection = enabled;
     }
 
+    fn appendObject(self: *Runtime, object: HeapObject, utf16_units: ?usize) !void {
+        try self.objects.append(self.allocator(), object);
+        vc.recordObject(&self.counters, managedObjectBytes(object), utf16_units);
+        self.counters.object_high_water = @max(self.counters.object_high_water, @as(u64, @intCast(self.objects.items.len)));
+    }
+
     pub fn stringUtf8(self: *Runtime, utf8: []const u8) !Value {
         try self.beforeAllocation();
         const result = try self.allocator().create(String);
         errdefer self.allocator().destroy(result);
         result.* = try String.fromUtf8(self.allocator(), utf8);
         errdefer result.deinit();
-        try self.objects.append(self.allocator(), .{ .string = result });
+        try self.appendObject(.{ .string = result }, result.units.len);
         return .{ .string = result };
     }
 
@@ -796,7 +854,7 @@ pub const Runtime = struct {
         errdefer self.allocator().destroy(result);
         result.* = try String.fromUtf8Lossy(self.allocator(), utf8);
         errdefer result.deinit();
-        try self.objects.append(self.allocator(), .{ .string = result });
+        try self.appendObject(.{ .string = result }, result.units.len);
         return .{ .string = result };
     }
 
@@ -806,7 +864,7 @@ pub const Runtime = struct {
         errdefer self.allocator().destroy(result);
         result.* = try String.fromCodeUnits(self.allocator(), units);
         errdefer result.deinit();
-        try self.objects.append(self.allocator(), .{ .string = result });
+        try self.appendObject(.{ .string = result }, result.units.len);
         return .{ .string = result };
     }
 
@@ -841,7 +899,7 @@ pub const Runtime = struct {
             .kind = kind,
             .storage = storage,
         };
-        try self.objects.append(self.allocator(), .{ .bytes = result });
+        try self.appendObject(.{ .bytes = result }, null);
         return .{ .bytes = result };
     }
 
@@ -866,7 +924,7 @@ pub const Runtime = struct {
             .storage = storage,
             .byte_offset = byte_offset,
         };
-        try self.objects.append(self.allocator(), .{ .bytes = result });
+        try self.appendObject(.{ .bytes = result }, null);
         return .{ .bytes = result };
     }
 
@@ -889,7 +947,7 @@ pub const Runtime = struct {
             .kind = .array_buffer,
             .storage = storage,
         };
-        try self.objects.append(self.allocator(), .{ .bytes = result });
+        try self.appendObject(.{ .bytes = result }, null);
         storage.backing = .{ .bytes = result };
         return storage.backing;
     }
@@ -900,7 +958,7 @@ pub const Runtime = struct {
         errdefer self.allocator().destroy(result);
         result.* = try BigInt.parseLiteral(self.allocator(), source);
         errdefer result.deinit();
-        try self.objects.append(self.allocator(), .{ .bigint = result });
+        try self.appendObject(.{ .bigint = result }, null);
         return .{ .bigint = result };
     }
 
@@ -915,7 +973,7 @@ pub const Runtime = struct {
         errdefer self.allocator().destroy(result);
         result.* = try BigInt.parseString(self.allocator(), utf8);
         errdefer result.deinit();
-        try self.objects.append(self.allocator(), .{ .bigint = result });
+        try self.appendObject(.{ .bigint = result }, null);
         return .{ .bigint = result };
     }
 
@@ -926,7 +984,7 @@ pub const Runtime = struct {
         const result = try self.allocator().create(BigInt);
         errdefer self.allocator().destroy(result);
         result.* = owned;
-        try self.objects.append(self.allocator(), .{ .bigint = result });
+        try self.appendObject(.{ .bigint = result }, null);
         return .{ .bigint = result };
     }
 
@@ -936,7 +994,8 @@ pub const Runtime = struct {
         errdefer self.allocator().destroy(result);
         result.* = try left.concat(self.allocator(), right.*);
         errdefer result.deinit();
-        try self.objects.append(self.allocator(), .{ .string = result });
+        try self.appendObject(.{ .string = result }, result.units.len);
+        vc.recordConcat(&self.counters, result.units.len);
         return .{ .string = result };
     }
 
@@ -945,7 +1004,7 @@ pub const Runtime = struct {
         const result = try self.allocator().create(Array);
         errdefer self.allocator().destroy(result);
         result.* = .{ .allocator = self.allocator() };
-        try self.objects.append(self.allocator(), .{ .array = result });
+        try self.appendObject(.{ .array = result }, null);
         return .{ .array = result };
     }
 
@@ -958,7 +1017,7 @@ pub const Runtime = struct {
         const result = try self.allocator().create(Dictionary);
         errdefer self.allocator().destroy(result);
         result.* = .{ .allocator = self.allocator(), .kind = kind };
-        try self.objects.append(self.allocator(), .{ .dictionary = result });
+        try self.appendObject(.{ .dictionary = result }, null);
         return .{ .dictionary = result };
     }
 
@@ -984,7 +1043,7 @@ pub const Runtime = struct {
         const result = try self.allocator().create(Promise);
         errdefer self.allocator().destroy(result);
         result.* = .{ .allocator = self.allocator() };
-        try self.objects.append(self.allocator(), .{ .promise = result });
+        try self.appendObject(.{ .promise = result }, null);
         return .{ .promise = result };
     }
 
@@ -1073,7 +1132,7 @@ pub const Runtime = struct {
         const result = try self.allocator().create(BindingCell);
         errdefer self.allocator().destroy(result);
         result.* = .{ .value = value };
-        try self.objects.append(self.allocator(), .{ .binding_cell = result });
+        try self.appendObject(.{ .binding_cell = result }, null);
         return result;
     }
 
@@ -1108,7 +1167,7 @@ pub const Runtime = struct {
             .captures = try self.allocator().dupe(Capture, captures),
         };
         errdefer result.deinit();
-        try self.objects.append(self.allocator(), .{ .function = result });
+        try self.appendObject(.{ .function = result }, null);
         return .{ .function = result };
     }
 
@@ -1264,6 +1323,8 @@ pub const Runtime = struct {
     pub fn collect(self: *Runtime) !CollectionStats {
         errdefer self.clearAllMarks();
         const before = self.objects.items.len;
+        self.counters.gc_collections +|= 1;
+        const mark_started = if (self.allocator_telemetry != null) allocator_telemetry.nowNs() else 0;
         for (self.roots.items) |root| try self.markValue(root.*);
         for (self.root_providers.items) |provider| try provider.traceFn(provider.context, self);
         for (self.promise_tasks.items) |task| {
@@ -1273,6 +1334,8 @@ pub const Runtime = struct {
         }
         for (self.standard_property_cache.items) |entry| try self.markValue(entry.value);
         try self.traceGreyObjects();
+        if (self.allocator_telemetry) |telemetry| telemetry.recordMarkNs(allocator_telemetry.nowNs() - mark_started);
+        const sweep_started = if (self.allocator_telemetry != null) allocator_telemetry.nowNs() else 0;
         var index: usize = 0;
         while (index < self.objects.items.len) {
             if (self.objectMarked(self.objects.items[index])) {
@@ -1280,9 +1343,11 @@ pub const Runtime = struct {
                 index += 1;
             } else {
                 const dead = self.objects.swapRemove(index);
+                vc.recordGcReclaim(&self.counters, managedObjectBytes(dead));
                 self.destroyObject(dead);
             }
         }
+        if (self.allocator_telemetry) |telemetry| telemetry.recordSweepNs(allocator_telemetry.nowNs() - sweep_started);
         self.next_collection = @max(@as(usize, 64), self.objects.items.len * 2);
         return .{ .before = before, .after = self.objects.items.len, .collected = before - self.objects.items.len };
     }
@@ -1301,8 +1366,14 @@ pub const Runtime = struct {
 
     fn markValue(self: *Runtime, value: Value) !void {
         switch (value) {
-            .string => |object| object.gc_marked = true,
-            .bigint => |object| object.gc_marked = true,
+            .string => |object| if (!object.gc_marked) {
+                object.gc_marked = true;
+                vc.recordGcScan(&self.counters, managedObjectBytes(.{ .string = object }));
+            },
+            .bigint => |object| if (!object.gc_marked) {
+                object.gc_marked = true;
+                vc.recordGcScan(&self.counters, managedObjectBytes(.{ .bigint = object }));
+            },
             .bytes => |object| try self.markComposite(.{ .bytes = object }),
             .array => |object| try self.markComposite(.{ .array = object }),
             .dictionary => |object| try self.markComposite(.{ .dictionary = object }),
@@ -1318,6 +1389,7 @@ pub const Runtime = struct {
         switch (object) {
             inline else => |value| value.gc_marked = true,
         }
+        vc.recordGcScan(&self.counters, managedObjectBytes(object));
     }
 
     fn traceGreyObjects(self: *Runtime) !void {
@@ -1398,11 +1470,15 @@ pub const Runtime = struct {
         switch (object) {
             inline else => |value| {
                 value.deinit();
-                self.backing_allocator.destroy(value);
+                self.allocator().destroy(value);
             },
         }
     }
 };
+
+fn sameAllocator(left: std.mem.Allocator, right: std.mem.Allocator) bool {
+    return left.ptr == right.ptr and left.vtable == right.vtable;
+}
 
 pub fn parseNumber(value: String, scratch_allocator: std.mem.Allocator) !f64 {
     const trimmed_units = string_mod.trimWhitespace(value.units);
@@ -1793,19 +1869,27 @@ test "UTF-16例外文言は割当失敗時に途中状態を残さない" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, failureMessageUnitsAllocationTest, .{});
 }
 
-fn failureMessageUtf8AllocationTest(allocator: std.mem.Allocator) !void {
-    var runtime = Runtime.init(allocator);
-    defer runtime.deinit();
-    try runtime.custom_failure_message.appendSlice(allocator, "old");
-    try runtime.custom_failure_message_units.appendSlice(allocator, &.{ 'o', 'l', 'd' });
-    runtime.setFailureMessage("新しい文言") catch |failure| {
-        try std.testing.expectEqual(@as(usize, 0), runtime.custom_failure_message.items.len);
-        try std.testing.expectEqual(@as(usize, 0), runtime.custom_failure_message_units.items.len);
-        return failure;
-    };
-    try std.testing.expectEqualStrings("新しい文言", runtime.custom_failure_message.items);
+test "Interpreter Runtimeのallocator telemetryはRuntime移動後も安定する" {
+    var runtime: Runtime = .{ .backing_allocator = std.testing.allocator };
+    const telemetry = try allocator_telemetry.Telemetry.init(std.testing.allocator);
+    runtime.allocator_telemetry = telemetry;
+    runtime.allocator_telemetry_checked = true;
+    runtime.backing_allocator = telemetry.allocator();
+
+    _ = try runtime.stringUtf8("移動前");
+    var moved = runtime;
+    runtime = undefined;
+    _ = try moved.stringUtf8("移動後");
+    moved.syncAllocatorTelemetry();
+
+    try std.testing.expect(moved.counters.allocator_alloc_calls > 0);
+    try std.testing.expect(moved.counters.allocator_peak_live_bytes > 0);
+    try std.testing.expect(moved.counters.gc_mark_ns == 0);
+    moved.deinit();
 }
 
-test "UTF-8例外文言は変換失敗時に古い文言を残さない" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, failureMessageUtf8AllocationTest, .{});
+test {
+    _ = @import("value_allocator_test.zig");
+    _ = @import("value_counter_helpers.zig");
+    _ = @import("value_counters_test.zig");
 }

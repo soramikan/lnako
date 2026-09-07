@@ -77,6 +77,8 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
     out.* = .{};
     const runtime = if (state.active_runtime) |*active| active else return;
     const start_epoch = runtime.failure_epoch;
+    var success = false;
+    defer runtime.recordAotEntry(&runtime.counters.aot_generic_builtin, success);
     const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
         const call_id = runtime.dispatch_trace.begin("unknown", opcode, "builtin", site_id);
         runtime.setFailure(error.UnknownCommand);
@@ -86,7 +88,6 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
     const command_name = aot_builtin.canonicalOpcodeName(command);
     const route = state.builtinDispatchRoute(command);
     const call_id = runtime.dispatch_trace.begin(command_name, opcode, route, site_id);
-    var success = false;
     defer runtime.dispatch_trace.result(call_id, command_name, opcode, route, site_id, success);
     if (arguments == null and len != 0) {
         runtime.setFailure(error.InvalidArgumentCount);

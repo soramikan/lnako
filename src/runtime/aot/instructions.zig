@@ -88,16 +88,28 @@ pub export fn lnako_aot_increment(target: *state.Value, amount: *const state.Val
 pub export fn lnako_aot_index_get(out: *state.Value, container: *const state.Value, key: *const state.Value) callconv(.c) void {
     const container_value = container.*;
     const key_value = key.*;
-    out.* = if (state.active_runtime) |*runtime| runtime.indexGet(container_value, key_value) else .{};
+    const runtime = if (state.active_runtime) |*active| active else {
+        out.* = .{};
+        return;
+    };
+    const start_epoch = runtime.failure_epoch;
+    out.* = runtime.indexGet(container_value, key_value);
+    runtime.recordAotEntry(&runtime.counters.aot_index_get, runtime.failure_epoch == start_epoch);
 }
 
 pub export fn lnako_aot_index_set(container: *const state.Value, key: *const state.Value, value: *const state.Value) callconv(.c) c_int {
     const runtime = if (state.active_runtime) |*active| active else return -1;
+    const start_epoch = runtime.failure_epoch;
     if (container.tag == @intFromEnum(shared.Tag.undefined) or container.tag == @intFromEnum(shared.Tag.null_value)) {
         runtime.setIndexAssignmentFailure(container.*, key.*);
+        runtime.recordAotEntry(&runtime.counters.aot_index_set, false);
         return -1;
     }
-    runtime.indexSet(container.*, key.*, value.*) catch return -1;
+    runtime.indexSet(container.*, key.*, value.*) catch {
+        runtime.recordAotEntry(&runtime.counters.aot_index_set, false);
+        return -1;
+    };
+    runtime.recordAotEntry(&runtime.counters.aot_index_set, runtime.failure_epoch == start_epoch);
     return 0;
 }
 

@@ -453,7 +453,8 @@ pub const Interpreter = struct {
         }
     }
 
-    pub fn init(allocator: std.mem.Allocator, runtime: *Runtime, program: ir.Program, host: Host) Interpreter {
+    pub fn init(requested_allocator: std.mem.Allocator, runtime: *Runtime, program: ir.Program, host: Host) Interpreter {
+        const allocator = runtime.allocatorForInterpreter(requested_allocator);
         return .{ .allocator = allocator, .runtime = runtime, .program = program, .root_program = program, .host = host, .dispatch_trace = .{ .path = host.dispatch_trace_path, .context = host.context, .writeFn = host.dispatch_trace_writeFn }, .compat_js_trace = .{ .path = host.compat_js_trace_path, .context = host.context, .writeFn = host.compat_js_trace_writeFn }, .global_trace = .{ .path = host.global_trace_path, .context = host.context, .writeFn = host.global_trace_writeFn }, .literal_trace = .{ .path = host.literal_trace_path, .context = host.context, .writeFn = host.literal_trace_writeFn }, .csv_state = plugin_csv.State.init(allocator), .quickjs_state = quickjs.State.init(program.compat_js), .native_plugin_state = plugin_native.State.init() };
     }
 

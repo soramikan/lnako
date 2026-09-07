@@ -23,6 +23,8 @@ pub export fn lnako_aot_unicode_length_call_site(out: *Value, input: *const Valu
     const value = input.*;
     out.* = .{};
     const runtime = if (state.active_runtime) |*active| active else return;
+    var success = false;
+    defer runtime.recordAotEntry(&runtime.counters.aot_unicode_length, success);
     const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
         const call_id = runtime.dispatch_trace.begin("unknown", opcode, "builtin", site_id);
         runtime.setFailure(error.UnknownCommand);
@@ -32,7 +34,6 @@ pub export fn lnako_aot_unicode_length_call_site(out: *Value, input: *const Valu
     const command_name = aot_builtin.canonicalOpcodeName(command);
     const call_id = runtime.dispatch_trace.begin(command_name, opcode, "builtin", site_id);
     const start_epoch = runtime.failure_epoch;
-    var success = false;
     defer runtime.dispatch_trace.result(call_id, command_name, opcode, "builtin", site_id, success);
     if (command != .unicode_length) {
         runtime.setFailure(error.UnknownCommand);
@@ -123,6 +124,8 @@ pub fn mathUnaryF64(command: aot_builtin.Command, value: f64) !f64 {
 pub export fn lnako_aot_math_unary_f64_call_site(out: *Value, value: f64, opcode: u16, site_id: u64) callconv(.c) void {
     out.* = .{};
     const runtime = if (state.active_runtime) |*active| active else return;
+    var success = false;
+    defer runtime.recordAotEntry(&runtime.counters.aot_math_f64, success);
     const command = std.enums.fromInt(aot_builtin.Command, opcode) orelse {
         const call_id = runtime.dispatch_trace.begin("unknown", opcode, "builtin", site_id);
         runtime.setFailure(error.UnknownCommand);
@@ -136,7 +139,6 @@ pub export fn lnako_aot_math_unary_f64_call_site(out: *Value, value: f64, opcode
     const route = "builtin";
     const call_id = runtime.dispatch_trace.begin(command_name, opcode, route, site_id);
     const start_epoch = runtime.failure_epoch;
-    var success = false;
     defer runtime.dispatch_trace.result(call_id, command_name, opcode, route, site_id, success);
     if (!isMathUnaryF64Command(command)) {
         runtime.setFailure(error.UnknownCommand);
@@ -153,6 +155,8 @@ pub export fn lnako_aot_math_unary_value_call_site(out: *Value, input: *const Va
     const value = input.*;
     out.* = .{};
     const runtime = if (state.active_runtime) |*active| active else return;
+    var success = false;
+    defer runtime.recordAotEntry(&runtime.counters.aot_math_value, success);
     var roots = [_]Value{value};
     var frame: state.RootFrame = .{};
     const root_input = value.tag != @intFromEnum(Tag.number);
@@ -171,7 +175,6 @@ pub export fn lnako_aot_math_unary_value_call_site(out: *Value, input: *const Va
     const route = "builtin";
     const call_id = runtime.dispatch_trace.begin(command_name, opcode, route, site_id);
     const start_epoch = runtime.failure_epoch;
-    var success = false;
     defer runtime.dispatch_trace.result(call_id, command_name, opcode, route, site_id, success);
     if (!isMathUnaryF64Command(command)) {
         runtime.setFailure(error.UnknownCommand);
@@ -360,6 +363,8 @@ test "AOT純粋数値builtin専用ABIはgeneric結果と例外境界を保つ" {
         runtime = state.active_runtime.?;
         state.active_runtime = null;
     }
+    state.active_runtime.?.perf_counters_checked = true;
+    state.active_runtime.?.perf_counters_enabled = true;
 
     var specialized: Value = .{};
     state.lnako_aot_math_unary_f64_call_site(&specialized, 9, @intFromEnum(aot_builtin.Command.math_sqrt), 0x11);
@@ -389,6 +394,14 @@ test "AOT純粋数値builtin専用ABIはgeneric結果と例外境界を保つ" {
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(specialized.tag)));
     try std.testing.expect(state.active_runtime.?.has_pending_exception);
     _ = state.active_runtime.?.takeException();
+    const math_counters = state.active_runtime.?.counters.aot_math_f64;
+    try std.testing.expectEqual(@as(u64, 7), math_counters.calls);
+    try std.testing.expectEqual(@as(u64, 6), math_counters.successes);
+    try std.testing.expectEqual(@as(u64, 1), math_counters.failures);
+    const generic_counters = state.active_runtime.?.counters.aot_generic_builtin;
+    try std.testing.expectEqual(@as(u64, 1), generic_counters.calls);
+    try std.testing.expectEqual(@as(u64, 1), generic_counters.successes);
+    try std.testing.expectEqual(@as(u64, 0), generic_counters.failures);
 }
 
 test "fixed TOFLOAT normalizes negative zero like parseFloat String" {

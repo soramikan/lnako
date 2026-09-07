@@ -208,6 +208,10 @@ const utf16FailureMessageUtf8Alloc = state.utf16FailureMessageUtf8Alloc;
 const validateFillDimensions = state.validateFillDimensions;
 const valueToNumber = state.valueToNumber;
 const runtimeFailure = state.runtimeFailure;
+
+test {
+    _ = @import("telemetry_test.zig");
+}
 const valueToPrimitive = state.valueToPrimitive;
 const valueUtf16Alloc = state.valueUtf16Alloc;
 const valueUtf8LossyAlloc = state.valueUtf8LossyAlloc;
@@ -2164,6 +2168,8 @@ test "AOT文字数専用ABIは文字列化・例外・ToPrimitive境界をgeneri
         runtime = state.active_runtime.?;
         state.active_runtime = null;
     }
+    state.active_runtime.?.perf_counters_checked = true;
+    state.active_runtime.?.perf_counters_enabled = true;
 
     var roots = [_]Value{.{}} ** 12;
     var frame = RootFrame{};
@@ -2201,6 +2207,51 @@ test "AOT文字数専用ABIは文字列化・例外・ToPrimitive境界をgeneri
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(roots[11].tag)));
     try std.testing.expect(state.active_runtime.?.has_pending_exception);
     _ = state.active_runtime.?.takeException();
+    const unicode_counters = state.active_runtime.?.counters.aot_unicode_length;
+    try std.testing.expectEqual(@as(u64, 7), unicode_counters.calls);
+    try std.testing.expectEqual(@as(u64, 6), unicode_counters.successes);
+    try std.testing.expectEqual(@as(u64, 1), unicode_counters.failures);
+    const generic_counters = state.active_runtime.?.counters.aot_generic_builtin;
+    try std.testing.expectEqual(@as(u64, 1), generic_counters.calls);
+    try std.testing.expectEqual(@as(u64, 1), generic_counters.successes);
+    try std.testing.expectEqual(@as(u64, 0), generic_counters.failures);
+}
+
+test "AOT index entry counters distinguish successful lookup and assignment failure" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    state.active_runtime.?.perf_counters_checked = true;
+    state.active_runtime.?.perf_counters_enabled = true;
+
+    var roots = [_]Value{ .{}, numberValue(0), numberValue(1), numberValue(2) };
+    var frame = RootFrame{};
+    lnako_aot_push_roots(&frame, &roots, roots.len);
+    defer lnako_aot_pop_roots(&frame);
+
+    roots[0] = try state.active_runtime.?.createArray(&.{roots[2]});
+    var result: Value = .{};
+    lnako_aot_index_get(&result, &roots[0], &roots[1]);
+    try std.testing.expectEqual(@as(f64, 1), valueToNumber(result));
+    const get_counters = state.active_runtime.?.counters.aot_index_get;
+    try std.testing.expectEqual(@as(u64, 1), get_counters.calls);
+    try std.testing.expectEqual(@as(u64, 1), get_counters.successes);
+    try std.testing.expectEqual(@as(u64, 0), get_counters.failures);
+
+    try std.testing.expectEqual(@as(c_int, 0), lnako_aot_index_set(&roots[0], &roots[1], &roots[3]));
+    try std.testing.expectEqual(@as(f64, 2), valueToNumber(state.active_runtime.?.indexGet(roots[0], roots[1])));
+    var missing_value: Value = .{};
+    try std.testing.expectEqual(@as(c_int, -1), lnako_aot_index_set(&missing_value, &roots[1], &roots[3]));
+    try std.testing.expect(state.active_runtime.?.has_pending_exception);
+    _ = state.active_runtime.?.takeException();
+    const set_counters = state.active_runtime.?.counters.aot_index_set;
+    try std.testing.expectEqual(@as(u64, 2), set_counters.calls);
+    try std.testing.expectEqual(@as(u64, 1), set_counters.successes);
+    try std.testing.expectEqual(@as(u64, 1), set_counters.failures);
 }
 
 test "AOT何文字目はArray.from要素境界と辞書ToLengthを再現する" {

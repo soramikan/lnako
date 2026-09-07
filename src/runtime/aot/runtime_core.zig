@@ -3,6 +3,7 @@ const aot_state = @import("state.zig");
 const shared = @import("shared.zig");
 const environment = @import("../environment.zig");
 const counters = @import("../counters.zig");
+const allocator_telemetry = @import("../allocator_telemetry.zig");
 const dictionary_module = @import("dictionary.zig");
 const byte_storage = @import("byte_storage.zig");
 const csv_state = @import("csv_state.zig");
@@ -555,6 +556,10 @@ pub const Runtime = struct {
     process_io_initialized: bool = false,
     native_plugin_paths: std.ArrayList([]u8) = .empty,
     counters: counters.Counters = .{},
+    allocator_telemetry: ?*allocator_telemetry.Telemetry = null,
+    allocator_telemetry_checked: bool = false,
+    perf_counters_checked: bool = false,
+    perf_counters_enabled: bool = false,
     live_roots: u64 = 0,
     dynamic_globals: std.ArrayList(DynamicGlobal) = .empty,
     dynamic_state: ?*DynamicInterpreterState = null,
@@ -624,8 +629,57 @@ pub const Runtime = struct {
         }
         self.named_functions.deinit(self.allocator);
         self.stringifying_arrays.deinit(self.allocator);
+        self.syncAllocatorTelemetry();
         self.reportCounters();
+        self.releaseAllocatorTelemetry();
         self.* = undefined;
+    }
+
+    pub fn ensureAllocatorTelemetry(self: *Runtime) !void {
+        if (self.allocator_telemetry_checked) return;
+        self.allocator_telemetry_checked = true;
+        if (!allocator_telemetry.enabled() and !self.perf_counters_enabled) return;
+        if (allocator_telemetry.Telemetry.init(self.allocator)) |telemetry| {
+            self.allocator_telemetry = telemetry;
+            self.allocator = telemetry.allocator();
+            self.counters.allocator_telemetry_active = 1;
+        } else |_| {
+            self.counters.allocator_telemetry_init_failures +|= 1;
+        }
+    }
+
+    fn perfCountersEnabled(self: *Runtime) bool {
+        if (!self.perf_counters_checked) {
+            self.perf_counters_checked = true;
+            self.perf_counters_enabled = allocator_telemetry.enabled();
+        }
+        return self.perf_counters_enabled;
+    }
+
+    pub fn recordAotEntry(self: *Runtime, entry: *counters.Counters.AotEntryCounters, success: bool) void {
+        if (!self.perfCountersEnabled()) return;
+        entry.calls +|= 1;
+        if (success) entry.successes +|= 1 else entry.failures +|= 1;
+    }
+
+    fn syncAllocatorTelemetry(self: *Runtime) void {
+        const telemetry = self.allocator_telemetry orelse return;
+        const snapshot = telemetry.snapshot();
+        self.counters.allocator_alloc_calls = snapshot.alloc_calls;
+        self.counters.allocator_resize_calls = snapshot.resize_calls;
+        self.counters.allocator_remap_calls = snapshot.remap_calls;
+        self.counters.allocator_free_calls = snapshot.free_calls;
+        self.counters.allocator_live_bytes = snapshot.live_bytes;
+        self.counters.allocator_peak_live_bytes = snapshot.peak_live_bytes;
+        self.counters.gc_mark_ns = snapshot.gc_mark_ns;
+        self.counters.gc_sweep_ns = snapshot.gc_sweep_ns;
+    }
+
+    fn releaseAllocatorTelemetry(self: *Runtime) void {
+        const telemetry = self.allocator_telemetry orelse return;
+        self.allocator = telemetry.base;
+        telemetry.deinit();
+        self.allocator_telemetry = null;
     }
 
     pub fn cachedStandardProperty(self: *Runtime, kind: u8, name: []const u8) ?Value {
@@ -637,6 +691,7 @@ pub const Runtime = struct {
 
     pub fn cacheStandardProperty(self: *Runtime, kind: u8, name: []const u8, value: Value) !void {
         if (self.cachedStandardProperty(kind, name) != null) return;
+        try self.ensureAllocatorTelemetry();
         const owned_name = try self.allocator.dupe(u8, name);
         errdefer self.allocator.free(owned_name);
         try self.standard_property_cache.append(self.allocator, .{ .kind = kind, .name = owned_name, .value = value });
@@ -669,6 +724,7 @@ pub const Runtime = struct {
     }
 
     fn allocStringWithoutCollection(self: *Runtime, len: usize) !StringAllocation {
+        try self.ensureAllocatorTelemetry();
         const payload_bytes = std.math.mul(usize, len, @sizeOf(u16)) catch return error.OutOfMemory;
         const allocation_size = std.math.add(usize, @sizeOf(Object), payload_bytes) catch return error.OutOfMemory;
         const block = try self.allocator.alignedAlloc(u8, .of(Object), allocation_size);
@@ -705,6 +761,7 @@ pub const Runtime = struct {
     }
 
     pub fn createByteStorage(self: *Runtime, bytes: []const u8) !*ByteStorage {
+        try self.ensureAllocatorTelemetry();
         const storage = try self.allocator.create(ByteStorage);
         errdefer self.allocator.destroy(storage);
         storage.* = .{ .allocator = self.allocator, .bytes = try self.allocator.dupe(u8, bytes) };
@@ -747,6 +804,7 @@ pub const Runtime = struct {
     }
 
     pub fn setAotSourceDirectory(self: *Runtime, path: []const u8) !void {
+        try self.ensureAllocatorTelemetry();
         const owned = try self.allocator.dupe(u8, path);
         if (self.aot_source_directory) |previous| self.allocator.free(previous);
         self.aot_source_directory = owned;
@@ -883,6 +941,7 @@ pub const Runtime = struct {
         self.pushRoots(&frame, if (captures.len > 0) @constCast(captures.ptr) else null, captures.len);
         defer self.popRoots(&frame);
         try self.beforeAllocation();
+        try self.ensureAllocatorTelemetry();
         const result = blk: {
             const owned_name = try self.allocator.dupe(u8, name);
             errdefer self.allocator.free(owned_name);
@@ -912,6 +971,7 @@ pub const Runtime = struct {
     }
 
     pub fn createObject(self: *Runtime, payload: Payload, tag: Tag) !Value {
+        try self.ensureAllocatorTelemetry();
         const object = try self.allocator.create(Object);
         self.counters.allocations +|= 1;
         self.counters.allocated_bytes +|= @sizeOf(Object);
@@ -938,6 +998,7 @@ pub const Runtime = struct {
     }
 
     pub fn beforeAllocation(self: *Runtime) !void {
+        try self.ensureAllocatorTelemetry();
         if (self.object_count < self.next_collection) return;
         _ = self.collect();
         self.next_collection = @max(@as(usize, 64), self.object_count * 2);
@@ -960,6 +1021,7 @@ pub const Runtime = struct {
 
     pub fn collect(self: *Runtime) usize {
         self.counters.gc_collections +|= 1;
+        const mark_started = if (self.allocator_telemetry != null) allocator_telemetry.nowNs() else 0;
         var frame = self.roots;
         while (frame) |current| : (frame = current.previous) {
             if (current.values) |values| for (values[0..current.len]) |value| self.markValue(value);
@@ -1065,6 +1127,8 @@ pub const Runtime = struct {
                 },
             }
         }
+        if (self.allocator_telemetry) |telemetry| telemetry.recordMarkNs(allocator_telemetry.nowNs() - mark_started);
+        const sweep_started = if (self.allocator_telemetry != null) allocator_telemetry.nowNs() else 0;
         var reclaimed: usize = 0;
         var link = &self.objects;
         while (link.*) |object| {
@@ -1083,6 +1147,7 @@ pub const Runtime = struct {
             self.object_count -= 1;
             reclaimed += 1;
         }
+        if (self.allocator_telemetry) |telemetry| telemetry.recordSweepNs(allocator_telemetry.nowNs() - sweep_started);
         return reclaimed;
     }
 
@@ -1105,6 +1170,7 @@ pub const Runtime = struct {
     }
 
     pub fn setFailureText(self: *Runtime, text: []const u8) void {
+        self.ensureAllocatorTelemetry() catch |allocation_failure| runtimeFailure(allocation_failure);
         const units = std.unicode.utf8ToUtf16LeAlloc(self.allocator, text) catch |allocation_failure| runtimeFailure(allocation_failure);
         defer self.allocator.free(units);
         self.setException(self.createString(units) catch |allocation_failure| runtimeFailure(allocation_failure));
@@ -1128,6 +1194,7 @@ pub const Runtime = struct {
     }
 
     pub fn setIndexAssignmentFailure(self: *Runtime, container: Value, key: Value) void {
+        self.ensureAllocatorTelemetry() catch |allocation_failure| runtimeFailure(allocation_failure);
         const key_units = valueUtf16Alloc(self, key) catch |failure| runtimeFailure(failure);
         defer self.allocator.free(key_units);
         const key_utf8 = std.unicode.utf16LeToUtf8Alloc(self.allocator, key_units) catch |failure| runtimeFailure(failure);
@@ -1643,7 +1710,7 @@ pub const Runtime = struct {
     }
 
     fn reportCounters(self: *const Runtime) void {
-        if (!environment.valueEquals("LNAKO_PERF_COUNTERS", "1")) return;
+        if (!allocator_telemetry.enabled() and !environment.valueEquals("LNAKO_PERF_COUNTERS", "1")) return;
         std.debug.print("lnako perf counters: {}\n", .{self.counters});
     }
 };
@@ -1686,4 +1753,23 @@ test "AOT createString copies borrowed unrooted units before collection" {
     try std.testing.expectEqualSlices(u16, &.{ 'A', 0xd83d, 0xde00 }, copied.object().?.payload.utf16_string);
     try std.testing.expectEqual(@as(usize, 1), runtime.object_count);
     try std.testing.expectEqual(@as(u64, 1), runtime.counters.gc_collections);
+}
+
+test "AOT Runtime移動後もallocator telemetry contextを保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    const telemetry = try allocator_telemetry.Telemetry.init(std.testing.allocator);
+    runtime.allocator_telemetry = telemetry;
+    runtime.allocator_telemetry_checked = true;
+    runtime.allocator = telemetry.allocator();
+
+    _ = try runtime.createString(&.{'A'});
+    var moved = runtime;
+    runtime = undefined;
+    _ = try moved.createString(&.{ 'B', 'C' });
+    moved.syncAllocatorTelemetry();
+
+    try std.testing.expect(moved.counters.allocator_alloc_calls > 0);
+    try std.testing.expect(moved.counters.allocator_peak_live_bytes > 0);
+    try std.testing.expect(moved.allocator.ptr == telemetry.allocator().ptr);
+    moved.deinit();
 }
