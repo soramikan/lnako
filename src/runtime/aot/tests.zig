@@ -225,6 +225,8 @@ const createAotPromiseResolver = state.createAotPromiseResolver;
 const chainAotPromise = state.chainAotPromise;
 const bundleAotPromises = state.bundleAotPromises;
 const aotToDynamicValue = state.aotToDynamicValue;
+const dynamicToAotValue = state.dynamicToAotValue;
+const aotFunctionToDynamicValue = state.aotFunctionToDynamicValue;
 const debugDisplayBuiltin = state.debugDisplayBuiltin;
 const DynamicInterpreterState = state.DynamicInterpreterState;
 const jsonAotContainerCount = state.jsonAotContainerCount;
@@ -6276,6 +6278,174 @@ test "AOTネイティブABI橋渡しは関数とPromiseをAOT値へ変換する"
     try std.testing.expectEqual(@as(f64, 7), dynamic_result.number);
     _ = active.collect();
     try std.testing.expectEqual(Tag.function, @as(Tag, @enumFromInt(roots[1].tag)));
+}
+
+fn testExternalBridgeRelease(context: *anyopaque, handle: *anyopaque) void {
+    _ = context;
+    _ = handle;
+}
+
+fn testExternalBridgeCall(context: *anyopaque, handle: *anyopaque, runtime: *shared.dynamic_value.Runtime, arguments: []const shared.dynamic_value.Value) anyerror!shared.dynamic_value.Value {
+    _ = context;
+    _ = handle;
+    _ = runtime;
+    _ = arguments;
+    return .undefined;
+}
+
+test "AOT→動的ブリッジはGC stress下でも変換済みkeyと値をrootへ保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    const aot_state = try DynamicInterpreterState.init(std.testing.allocator, active);
+    active.dynamic_state = aot_state;
+
+    var roots = [_]Value{ .{}, .{}, .{}, .{} };
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+
+    roots[0] = try active.createArray(&.{});
+    roots[1] = try runtimeUtf8String(active, "プロパティ");
+    roots[2] = try active.createArray(&.{numberValue(7)});
+    try active.setDictionary(&roots[0].object().?.array_properties, roots[1], roots[2]);
+    roots[3] = try active.createDictionary(&.{ roots[1], roots[2] });
+
+    // 全割り当てでcollectするstress下でも、再帰value変換の間にkeyが生存する。
+    aot_state.value_runtime.setGcStress(true);
+    var dynamic_roots = aot_state.value_runtime.rootFrame();
+    defer dynamic_roots.deinit();
+    var converted_array = try aotToDynamicValue(aot_state, roots[0]);
+    try dynamic_roots.protect(&converted_array);
+    var converted_dictionary = try aotToDynamicValue(aot_state, roots[3]);
+    try dynamic_roots.protect(&converted_dictionary);
+
+    var lookup_key = try aot_state.value_runtime.stringUtf8("プロパティ");
+    try dynamic_roots.protect(&lookup_key);
+    try std.testing.expect(converted_array.array.hasProperty(lookup_key.string));
+    const stored = converted_dictionary.dictionary.get(lookup_key.string) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(stored == .array);
+    try std.testing.expectEqual(@as(f64, 7), stored.array.items.items[0].number);
+}
+
+test "動的→AOTブリッジは変換・辞書追加の失敗後にroot chainを復元する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    const aot_state = try DynamicInterpreterState.init(std.testing.allocator, active);
+    active.dynamic_state = aot_state;
+
+    var dynamic_roots = aot_state.value_runtime.rootFrame();
+    defer dynamic_roots.deinit();
+    var fn_name = try aot_state.value_runtime.stringUtf8("unsupported");
+    try dynamic_roots.protect(&fn_name);
+    var unsupported = try aot_state.value_runtime.createExternalFunction(fn_name.string, 0, .{
+        .binding = .{ .context = @ptrCast(active), .handle = @ptrCast(active), .releaseFn = testExternalBridgeRelease },
+        .callFn = testExternalBridgeCall,
+    });
+    try dynamic_roots.protect(&unsupported);
+    var key = try aot_state.value_runtime.stringUtf8("key");
+    try dynamic_roots.protect(&key);
+
+    var dictionary_source = try aot_state.value_runtime.createDictionary();
+    try dynamic_roots.protect(&dictionary_source);
+    try dictionary_source.dictionary.set(key.string, unsupported);
+    var array_source = try aot_state.value_runtime.createArray();
+    try dynamic_roots.protect(&array_source);
+    try array_source.array.setProperty(key.string, unsupported);
+
+    var anchor = [_]Value{.{}};
+    var anchor_frame = RootFrame{};
+    active.pushRoots(&anchor_frame, &anchor, anchor.len);
+    defer active.popRoots(&anchor_frame);
+    const baseline_roots = active.roots;
+    const baseline_live_roots = active.live_roots;
+
+    // 型変換エラー: 全失敗点で呼び出し前後のroot chainが一致する。
+    for ([_]shared.dynamic_value.Value{ dictionary_source, array_source }) |source| {
+        try std.testing.expectError(error.DynamicValueUnsupported, dynamicToAotValue(aot_state, source));
+        try std.testing.expect(active.roots == baseline_roots);
+        try std.testing.expectEqual(baseline_live_roots, active.live_roots);
+    }
+
+    // 割り当て失敗注入: 再帰変換と辞書追加のどの割り当てが失敗しても同じ不変条件を保つ。
+    var clean_source = try aot_state.value_runtime.createDictionary();
+    try dynamic_roots.protect(&clean_source);
+    try clean_source.dictionary.set(key.string, .{ .number = 5 });
+    var injected_failures: usize = 0;
+    var fail_index: usize = 0;
+    while (fail_index < 64) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        active.allocator = failing.allocator();
+        const result = dynamicToAotValue(aot_state, clean_source);
+        active.allocator = std.testing.allocator;
+        if (result) |_| {
+            break;
+        } else |_| {
+            injected_failures += 1;
+        }
+        try std.testing.expect(active.roots == baseline_roots);
+        try std.testing.expectEqual(baseline_live_roots, active.live_roots);
+    }
+    try std.testing.expect(injected_failures > 0);
+
+    // 失敗を捕捉した後もGCと別の変換が正常動作する。
+    active.next_collection = 0;
+    _ = active.collect();
+    const recovered = try dynamicToAotValue(aot_state, clean_source);
+    try std.testing.expectEqual(Tag.dictionary, @as(Tag, @enumFromInt(recovered.tag)));
+    try std.testing.expectEqual(@as(usize, 1), recovered.object().?.payload.dictionary.entries.items.len);
+    try std.testing.expect(active.roots == baseline_roots);
+    try std.testing.expectEqual(baseline_live_roots, active.live_roots);
+}
+
+test "AOT関数ブリッジはdynamic関数生成失敗時にbridgeを一度だけ解放する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    state.active_runtime = runtime;
+    defer {
+        runtime = state.active_runtime.?;
+        state.active_runtime = null;
+    }
+    const active = &state.active_runtime.?;
+    const aot_state = try DynamicInterpreterState.init(std.testing.allocator, active);
+    active.dynamic_state = aot_state;
+
+    var roots = [_]Value{.{}};
+    var frame = RootFrame{};
+    active.pushRoots(&frame, &roots, roots.len);
+    defer active.popRoots(&frame);
+    roots[0] = try active.createNamedFunction(testAotFunction, 1, "main__bridge_failure", &.{});
+
+    const baseline_bridges = active.dynamic_function_bridges.items.len;
+    const saved_allocator = aot_state.value_runtime.backing_allocator;
+    defer aot_state.value_runtime.backing_allocator = saved_allocator;
+
+    var injected_failures: usize = 0;
+    var fail_index: usize = 0;
+    while (fail_index < 64) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        aot_state.value_runtime.backing_allocator = failing.allocator();
+        const result = aotFunctionToDynamicValue(aot_state, roots[0]);
+        aot_state.value_runtime.backing_allocator = saved_allocator;
+        if (result) |_| {
+            break;
+        } else |_| {
+            injected_failures += 1;
+        }
+        try std.testing.expectEqual(baseline_bridges, active.dynamic_function_bridges.items.len);
+    }
+    try std.testing.expect(injected_failures > 0);
 }
 
 test "AOTシステムカタログ命令は一覧の順序と存在判定を保つ" {
