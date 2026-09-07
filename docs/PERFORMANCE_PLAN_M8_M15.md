@@ -100,3 +100,12 @@ Windowsでは `--windows-sampling` を指定し、独立したWPR instanceでCPU
 - fmt-check、全単体テスト（HTTP bind許可）、ReleaseSafe build、公式/Interpreter/AOT O0/O2の11 fixture差分、source structure、diff checkが成功。
 - pre-pushにもsource structure検査を追加。違反で後続検査前に停止する回帰を含むhook 5テスト、numeric profile tool検査が成功。
 - M15証拠更新は43b32a1へ保存。CI修正に伴うsource manifestは改めて更新する。
+
+### M10: AOT root liveness / coloring
+
+- CFGの逆向きlivenessでphi edge・例外targetを含めて生存参照を求め、干渉しないValueのroot slotを共有。確実なprimitive opcodeのみrootから除外し、呼出しからの推論型だけでは除外しない。
+- 512 Valueまたは262,144 instruction×Value cellsを超える関数は専用slotへfallbackし、解析の二次メモリ増大を抑える。境界値・fallbackの非aliasテストを追加。
+- M12基準の隔離単位で919単体と公式差分10ケース成功。M15との統合でもfmt-check、全単体、ReleaseSafe build、公式/Interpreter/O0/O2差分11ケース成功。
+- M12基準のroot slot合計/runtime high-water: nbody 197→22 / 201→26、string-concat 29→9 / 33→13、binary-trees 100→26 / 459→117。各正解を照合済み。
+- M10+M15のmacOS診断snapshotでもnbody正解93200371、runtime root high-water 26、553,904 bytes、汎用builtin静的callゼロを確認。root push回数122,422は削減されておらず、root保持数と呼出し回数を区別する。計測toolはcompiler/binary hashを記録しているが、3 OS性能達成の証拠ではない。
+- 統合後のdiagnostics 12ケース/36測定も正解・JSON/Markdown検査成功。単発測定なので速度比較には使用しない。

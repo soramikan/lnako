@@ -2,6 +2,8 @@ const std = @import("std");
 const target_builtin = @import("builtin");
 const ir = @import("../../../../ir/nako_ir.zig");
 const local_storage = @import("../../../../ir/local_storage.zig");
+const root_liveness = @import("../../../../ir/root_liveness.zig");
+const roots_mod = @import("roots.zig");
 const ast = @import("../../../../frontend/ast.zig");
 const aot_abi = @import("../../../../runtime/aot_abi.zig");
 const aot_builtin = @import("../../../../runtime/aot_builtin.zig");
@@ -43,24 +45,30 @@ pub fn writeFunction(emitter: *Emitter, function: ir.Function) !void {
     try emitter.output.writer.print(") !dbg !{d} {{\n", .{scope});
     const locals = try emitter.localNames(function);
     defer emitter.allocator.free(locals);
+    var root_plan = if (emitter.optimized) try root_liveness.analyze(emitter.allocator, function) else null;
+    defer if (root_plan) |*plan| plan.deinit();
     const value_root_count = context.functionValueCount(function);
     const root_count = value_root_count + locals.len;
     const root_storage_count = @max(@as(usize, 1), root_count);
     const aggregate_count = @max(context.maxAggregateOperandCount(function), context.maxClosureCaptureCount(emitter.program, function));
-    for (function.blocks) |block| {
+    for (function.blocks, 0..) |block, block_index| {
         try emitter.output.writer.print("bb{d}:\n", .{block.id});
         if (block.id == function.entry) {
-            try emitter.output.writer.print("  %root.values = alloca [{d} x %lnako.Value]\n", .{root_storage_count});
-            try emitter.output.writer.writeAll("  %root.frame = alloca %lnako.RootFrame\n");
+            if (root_plan) |plan| {
+                try roots_mod.writeStorage(emitter, plan, locals.len);
+            } else {
+                try emitter.output.writer.print("  %root.values = alloca [{d} x %lnako.Value]\n", .{root_storage_count});
+                try emitter.output.writer.writeAll("  %root.frame = alloca %lnako.RootFrame\n");
+                for (0..root_count) |index| {
+                    try emitter.output.writer.print("  %root.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %root.values, i64 0, i64 {d}\n", .{ index, root_storage_count, index });
+                    try emitter.output.writer.print("  store %lnako.Value {{ i8 0, i64 0 }}, ptr %root.slot.{d}\n", .{index});
+                }
+                if (root_count > 0) {
+                    try emitter.output.writer.print("  call void @lnako_aot_push_roots(ptr %root.frame, ptr %root.slot.0, i64 {d})\n", .{root_count});
+                } else try emitter.output.writer.writeAll("  call void @lnako_aot_push_roots(ptr %root.frame, ptr null, i64 0)\n");
+            }
             try emitter.output.writer.writeAll("  %runtime.scratch = alloca %lnako.Value\n");
             try emitter.output.writer.writeAll("  store %lnako.Value { i8 0, i64 0 }, ptr %runtime.scratch\n");
-            for (0..root_count) |index| {
-                try emitter.output.writer.print("  %root.slot.{d} = getelementptr [{d} x %lnako.Value], ptr %root.values, i64 0, i64 {d}\n", .{ index, root_storage_count, index });
-                try emitter.output.writer.print("  store %lnako.Value {{ i8 0, i64 0 }}, ptr %root.slot.{d}\n", .{index});
-            }
-            if (root_count > 0) {
-                try emitter.output.writer.print("  call void @lnako_aot_push_roots(ptr %root.frame, ptr %root.slot.0, i64 {d})\n", .{root_count});
-            } else try emitter.output.writer.writeAll("  call void @lnako_aot_push_roots(ptr %root.frame, ptr null, i64 0)\n");
             if (aggregate_count > 0) try emitter.output.writer.print("  %aggregate.values = alloca [{d} x %lnako.Value]\n", .{aggregate_count});
             for (function.parameters, 0..) |parameter, index| {
                 try emitter.output.writer.print("  store %lnako.Value %arg.{d}, ptr %root.slot.{d}\n", .{ index, parameter.value });
@@ -97,10 +105,16 @@ pub fn writeFunction(emitter: *Emitter, function: ir.Function) !void {
             try instruction_router_mod.writeInstruction(emitter, function, locals, block.instructions[phi_count], scope, aggregate_count);
         }
         for (block.instructions[0..phi_count]) |instruction| try collections_mod.writeRootStore(emitter, instruction);
-        for (block.instructions[phi_count..]) |instruction| {
+        for (block.instructions[phi_count..], phi_count..) |instruction, instruction_index| {
+            if (root_plan) |plan| if (plan.precise and root_liveness.mayCollect(instruction)) {
+                try roots_mod.writeSafepoint(emitter, plan, plan.blocks[block_index].before[instruction_index]);
+            };
             try instruction_router_mod.writeInstruction(emitter, function, locals, instruction, scope, aggregate_count);
             try collections_mod.writeRootStore(emitter, instruction);
         }
+        if (root_plan) |plan| if (plan.precise and block.terminator == .throw_value) {
+            try roots_mod.writeSafepoint(emitter, plan, plan.blocks[block_index].before[block.instructions.len]);
+        };
         const terminator_span = if (block.instructions.len > 0) block.instructions[block.instructions.len - 1].span else ast.emptySpan();
         try terminators_mod.writeTerminator(emitter, function, block.terminator, terminator_span, scope);
     }
