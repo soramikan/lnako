@@ -57,6 +57,16 @@ if (!workflow.includes('"$ci_job_count" -ne "$CI_EXPECTED_JOB_COUNT"') ||
 if (!workflow.includes("git cat-file -t") || !workflow.includes("verification.verified")) {
   throw new Error("tag Releaseでannotated signed tagを検証していません");
 }
+const preflightBlock = workflow.match(/  preflight:[\s\S]*?(?=\n  build:)/)?.[0];
+if (!preflightBlock) throw new Error("Release workflowにpreflight jobがありません");
+const attestationGate = preflightBlock.match(/- name: Verify canonical compatibility evidence is fully attested\n[\s\S]*?(?=\n      - name:|$)/)?.[0];
+if (!attestationGate) throw new Error("Release workflowのpreflightにcanonical attestation検証stepがありません");
+if (!attestationGate.includes("if: github.event_name == 'push'") ||
+    !attestationGate.includes("attestations/current.json") ||
+    !attestationGate.includes("node tools/sync_compat_evidence.mjs --check") ||
+    !attestationGate.includes("node tools/check_tracked_dispatch_attestation.mjs")) {
+  throw new Error("canonical attestation検証stepが不完全です（current pointer必須・証拠再生成check・追跡snapshotの公式gh verifyが必要）");
+}
 if (!workflow.includes("merge-multiple: true") || !workflow.includes("LNAKO_BENCHMARK_COMMIT")) {
   throw new Error("Release workflowのartifact集約またはbenchmark provenanceが不完全です");
 }

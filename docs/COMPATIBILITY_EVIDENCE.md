@@ -58,6 +58,8 @@ CIの `attest-dispatch-evidence` jobは、`actions/attest@v4.2.2` のSigstore bu
 
 現行の追跡snapshotはCI run `34121804812`（commit `1c096a13fdd41fc6e60d2dddddae7001604e6571`、attempt 1、54/54 job成功）で、3 OSのdispatch証拠とnative AOT aggregateとcanonical証拠17件を同一bundleで署名しました。このattestationでcanonical `evidence.json` は `verified: 527`、`trace-confirmed-unattested: 0`、`unverified: 0` です。前manifest用のsnapshot `attestations/34113932297/`（run `34113932297`）は履歴として残しています。
 
+Release workflow（tag push）はpreflightで `attestations/current.json` の存在・`sync_compat_evidence.mjs --check`（source manifest一致＋証拠再生成の一致）・`check_tracked_dispatch_attestation.mjs`（追跡snapshotの公式 `gh attestation verify` と `verified: 527`）を要求します。canonicalが全527件verifiedでないtag pushはbuild/publishに進めず、GitHub Releaseを作成できません（手動 `workflow_dispatch` の検証実行は対象外）。
+
 ## route別の扱い
 
 - 通常モードは純Zig InterpreterまたはLLVM AOTです。JavaScript runtimeを暗黙にfallbackさせません。

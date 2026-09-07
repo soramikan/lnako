@@ -79,6 +79,22 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "source commit=$GITHUB_SHA / version=$version / run=$GITHUB_RUN_ID"
+      - name: Verify canonical compatibility evidence is fully attested
+        # tag pushでのみ要求する。ここで失敗するとbuild/aggregate/publishが
+        # 実行されずReleaseを作成できない。手動workflow_dispatchは公開しない
+        # 検証用のため対象外。
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f compat/v3.7.24/attestations/current.json ]]; then
+            echo "canonical attestationのcurrent pointer（attestations/current.json）が追跡されていません" >&2
+            exit 1
+          fi
+          node tools/sync_compat_evidence.mjs --check
+          node tools/check_tracked_dispatch_attestation.mjs
 
   build:
     name: ${{ matrix.target }} / build benchmark distribution
