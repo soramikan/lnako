@@ -300,7 +300,20 @@ fn linkExecutable(allocator: std.mem.Allocator, io: std.Io, object_path: []const
         .windows => &.{ tools.clang, linker_argument, object_path, runtime_library, "-lcrypt32", "-liphlpapi", "-lntdll", "-o", output_path, "-Wl,/OPT:REF" },
         else => &.{ tools.clang, linker_argument, object_path, runtime_library, "-o", output_path },
     };
-    const result = try std.process.run(allocator, io, .{ .argv = argv });
+    var link_argv: std.ArrayList([]const u8) = .empty;
+    defer link_argv.deinit(allocator);
+    try link_argv.appendSlice(allocator, argv);
+    // Trace builds retain the actual linker's symbol/address map alongside
+    // the executable so CPU samples can be resolved even for stripped PE.
+    const map_path = if (timer.enabled) try std.fmt.allocPrint(allocator, "{s}.map", .{output_path}) else null;
+    defer if (map_path) |path| allocator.free(path);
+    const map_argument = if (map_path) |path| try linkMapArgument(allocator, builtin.os.tag, path) else null;
+    defer if (map_argument) |argument| allocator.free(argument);
+    if (map_argument) |argument| {
+        if (builtin.os.tag == .macos) try link_argv.appendSlice(allocator, &.{ "-Xlinker", "-map" });
+        try link_argv.appendSlice(allocator, &.{ "-Xlinker", argument });
+    }
+    const result = try std.process.run(allocator, io, .{ .argv = link_argv.items });
     try timer.phase(diagnostics, "リンク実行");
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
@@ -612,4 +625,28 @@ test "Clang/LLDのバージョン出力から最初の3桁バージョンを解�
     try std.testing.expectEqual(api_mod.Version{ .major = 21, .minor = 1, .patch = 7 }, parseVersionFromOutput(ubuntu_clang).?);
     try std.testing.expectEqual(api_mod.Version{ .major = 23, .minor = 1, .patch = 0 }, parseVersionFromOutput(clang_23).?);
     try std.testing.expect(parseVersionFromOutput("no version here") == null);
+}
+
+fn linkMapArgument(allocator: std.mem.Allocator, os: std.Target.Os.Tag, path: []const u8) !?[]u8 {
+    return switch (os) {
+        .linux => try std.fmt.allocPrint(allocator, "-Map={s}", .{path}),
+        .windows => try std.fmt.allocPrint(allocator, "/lldmap:{s}", .{path}),
+        .macos => try allocator.dupe(u8, path),
+        else => null,
+    };
+}
+
+test "link map paths preserve spaces and commas for every supported linker" {
+    const path = "profile output/a,b.map";
+    const cases = .{
+        .{ std.Target.Os.Tag.linux, "-Map=profile output/a,b.map" },
+        .{ std.Target.Os.Tag.windows, "/lldmap:profile output/a,b.map" },
+        .{ std.Target.Os.Tag.macos, "profile output/a,b.map" },
+    };
+    inline for (cases) |case| {
+        const argument = (try linkMapArgument(std.testing.allocator, case[0], path)).?;
+        defer std.testing.allocator.free(argument);
+        try std.testing.expectEqualStrings(case[1], argument);
+    }
+    try std.testing.expectEqual(@as(?[]u8, null), try linkMapArgument(std.testing.allocator, .freestanding, path));
 }

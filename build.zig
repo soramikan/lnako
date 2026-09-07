@@ -76,6 +76,13 @@ pub fn build(b: *std.Build) void {
         .linkage = .static,
         .root_module = aot_module,
     });
+    // ELF --gc-sections and COFF /OPT:REF can only discard unused runtime
+    // code when the archive exposes independent function/data sections.
+    // Mach-O already uses symbol-level subsections for dead stripping.
+    if (target.result.os.tag == .linux or target.result.os.tag == .windows) {
+        aot_runtime.link_function_sections = true;
+        aot_runtime.link_data_sections = true;
+    }
     aot_runtime.bundle_compiler_rt = true;
     b.installArtifact(aot_runtime);
 

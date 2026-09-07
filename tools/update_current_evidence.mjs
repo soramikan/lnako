@@ -48,7 +48,7 @@ const staticFixtures = [
 
 validateArguments();
 if (help) {
-  console.log(`${usage}\n\n追跡済みの互換性証拠を削除せず、cleanな作業ツリーで全17証拠を再生成します。\n--no-build は既存のnormal ReleaseSafeバイナリを使う場合に、最初のnormal buildだけを省略します。\nQuickJS互換証拠の生成後はnormal ReleaseSafe buildへ復元します。`);
+  console.log(`${usage}\n\n追跡済みの互換性証拠を削除せず、manifest対象のコード変更をstageした作業ツリーで全17証拠を再生成します。生成後はコードと証拠を同じコミットにまとめてください。\n--no-build は既存のnormal ReleaseSafeバイナリを使う場合に、最初のnormal buildだけを省略します。\nQuickJS互換証拠の生成後はnormal ReleaseSafe buildへ復元します。`);
 } else {
   await main();
 }
@@ -109,7 +109,7 @@ async function main() {
   await copyStagedEvidence(stage);
   runScript("sync_compat_evidence.mjs", ["--generate"]);
   runScript("check_interpreter_only_classification.mjs", ["--generate"]);
-  console.log(`互換性証拠ファイルを現行HEADで更新しました（17件、stage保持: ${stage}）`);
+  console.log(`互換性証拠ファイルを現行ソースで更新しました（17件、stage保持: ${stage}）`);
 }
 
 async function createStageDirectory() {

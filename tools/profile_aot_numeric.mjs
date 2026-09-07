@@ -48,7 +48,7 @@ export function profile(arguments_) {
   const commands = [];
   function run(command, args, { optional = false, env = process.env, log = null } = {}) {
     const result = spawnSync(command, args, { cwd: output, env, encoding: "utf8", timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
-    commands.push({ command, args, status: result.status, signal: result.signal, error: result.error?.message ?? null });
+    commands.push({ command, args, pid: result.pid ?? null, status: result.status, signal: result.signal, error: result.error?.message ?? null });
     if (log) writeFileSync(join(output, log), (result.stdout ?? "") + (result.stderr ?? ""));
     if (result.status !== 0 && !optional) throw new Error(`${command} failed: ${result.error?.message ?? result.stderr}`);
     return result;
@@ -59,6 +59,8 @@ export function profile(arguments_) {
   try {
     const traceEnv = { ...process.env, LNAKO_LLVM_TRACE: "1" };
     run(compiler, ["build", source, "-O3", "-o", binary], { env: traceEnv, log: "compile-stages.log" });
+    const mapPath = `${binary}.map`;
+    manifest.link_map = existsSync(mapPath) ? { file: mapPath, sha256: createHash("sha256").update(readFileSync(mapPath)).digest("hex") } : null;
     run(compiler, ["build", source, "-O3", "--emit", "llvm-ir", "-o", irPath], { log: "ir-build.log" });
     run(clang, ["-S", "-x", "ir", "-O3", irPath, "-o", assemblyPath], { log: "assembly-build.log" });
     manifest.assembly_scope = "clang assembly from the optimized LLVM module; linked disassembly is separate";

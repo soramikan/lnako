@@ -79,6 +79,6 @@ OS依存値や外部通信を扱うfixtureは、固定入力、loopback、synthe
 
 ## 証拠更新とpush前検査
 
-pre-pushフックは整形・単体テスト・互換性証拠・interpreter-only分類の検査だけを行い、ファイルやコミットを自動生成しません。製品変更で証拠の再生成が必要な場合は、実装を検証して署名付きコミットにした後、cleanな状態で `node tools/update_current_evidence.mjs` を実行します。通常経路と明示的なcompat-js経路をそれぞれビルドし、全証拠が揃うまで追跡済みファイルを保持します。生成後の差分を確認・検証し、証拠更新を別の署名付きコミットにしてください。
+pre-pushフックは整形・単体テスト・ソース構造・互換性証拠・interpreter-only分類の検査を行い、ファイルやコミットを自動生成しません。製品変更で証拠の再生成が必要な場合は、実装を検証し、対象のコード変更をstageしてから `node tools/update_current_evidence.mjs` を実行します。manifest対象にunstaged/untrackedの変更を残さず、生成中はHEADと対象ソースを変更しません。通常経路と明示的なcompat-js経路をそれぞれビルドし、全証拠が揃うまで追跡済みファイルを保持します。生成後の差分を確認・検証し、コード変更と証拠更新を同じ日本語署名付きコミットにまとめてください。証拠のsource manifest SHA-256とbinary hashで検証対象を識別するため、生成前のコード専用コミットは不要です。
 
 `tools/fast_forward_evidence.mjs`による、再実行を伴わないprovenanceの書き換えは廃止しました。既存の証拠は測定したcommitとbinary hashを保持し、検証ツール・文書だけの変更は明示的なfollow-up対象として扱います。

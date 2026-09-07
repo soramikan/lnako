@@ -114,3 +114,17 @@ Windowsでは `--windows-sampling` を指定し、独立したWPR instanceでCPU
 
 - 03b2c41の通常CI coreで、native fixture 295件に対して成果物検査の固定値294が残っていることを検出。成果物検査とattestation検査を295件へ同期。
 - native AOTのshard partition/schema/tamper拒否self-test成功。CI互換基準確認の全コマンドを実行し、未更新source manifestに依存する2検査以外は成功。証拠更新後に同じ全ステップを再実行する。
+
+### コードと証拠の同一コミット / M13 link map
+
+- ユーザー指示に従い、以降は検証済みコードをstageし、source manifestに基づく証拠生成後にコード・証拠を同じ署名付きコミットにする。既存履歴は改変しない。DEVELOPMENTと生成toolの説明を同期。
+- Windows PEのsymbol tableが空だったため、trace有効時に実リンクのmapを保存する。Linux `-Map`、macOS `-map`、Windows LLD `/lldmap`を`-Xlinker`経由で渡し、空白・カンマを含むpathを保持。通常buildはmapを作らない。
+- profileにはmap SHA-256と各child PIDを保存。fmt-check/全単体/ReleaseSafe build成功。macOSで空白・カンマ付きpathのnbody正解、map内の数学専用ABI symbol、PID記録を確認。Windows samplingへの対応付けは新CI artifactで検証する。
+
+### M15: ELF / COFF runtime section分割
+
+- 03b2c41の比較CIは3 OS成功。nbodyはmacOS 554,624 bytesに縮小したが、Linux 8,834,648 / Windows 9,043,456 bytesが残った。
+- Zigのstatic runtime libraryにLinux/Windowsのみfunction/data sectionsを有効化。既存のELF `--gc-sections` / COFF `/OPT:REF`が不要なruntime関数・データを除去できる粒度にする。Mach-Oは既存symbol-level dead stripを保持。
+- Linux x86_64 GNUクロスビルド成功。Runtime初期化・終了だけを参照するCのリンク検証では、同一archiveのno-gc / gcが8,849,008 / 322,920 bytes。これはリンク構造の検証であり、正式ななでしこbenchmarkやLinux実行検証ではない。
+- Windows MSVC向けruntime libraryのクロスビルドは成功。CLIのリンクはmacOS側にWindows SDKのshell32がないため未完了。Windowsでのリンク・実行はCIで検証する。
+- コードをstageした状態で17証拠ファイルを再生成し、CIの互換基準チェック13項目がすべて成功。コードと同じコミットに保存する。
