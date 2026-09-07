@@ -12,7 +12,7 @@ CIは、互換性検証の意味を保ったまま、AOTをfixture shardと最�
 | `parser_fuzz` | 2 | Linux/Windowsの文法生成fuzz |
 | `aot` native | 27 | Linux 12、macOS 3、Windows 12。O0〜O3とfixture shard |
 | `aot` support | 12 | Linux/Windows各6。HTTP、dispatch evidence、coverage 3 shard、smoke |
-| 後段 | 3 | coverage集約、AOT artifact集約、dispatch attestation |
+| 後段 | 3 | coverage集約、AOT artifact集約、dispatch＋canonical証拠のattestation |
 
 job数を増やすことで、1つの巨大なAOT stepに検証を集中させず、失敗箇所と所要時間をjob単位で確認できます。検証suite、O0〜O3、QuickJS、3 OSのいずれも省略しません。
 
@@ -35,6 +35,8 @@ macOSのjobをさらに増やすと実行待ちが発生するため、分割は
 LinuxとWindowsのnative AOTは、fixtureを3 shardに分け、各shardをO0、O1、O2、O3の4 jobで実行します。macOSはfixtureを増やさず、O0＋O1、O2、O3の3 jobで全routeを検証します。
 
 support jobはnative AOTの代替ではありません。HTTP server、dispatch trace、dispatch coverage、smokeという別の証拠経路を担当します。後段jobはmatrix artifactと結果を集約し、欠落・重複・失敗を検査してからattestationを実行します。
+
+attestation jobは、3 OSのdispatch証拠とnative AOT aggregateに加え、`compat/v3.7.24/` のcanonical証拠17件も同一Sigstore bundleのsubjectとして署名します。`dispatch-attestation.json` は `lnako.dispatch-attestation.v2` で、`subjects`（3 OS）と `trackedSubjects`（canonical証拠のpath＋SHA-256）を記録し、全証拠namespaceの `verified` 昇格を可能にします。昇格のcanonical反映には追跡snapshot `compat/v3.7.24/attestations/<run>/` とpointer `current.json` が必要で、現行source manifestとの一致が条件です。
 
 ## artifactとcache
 

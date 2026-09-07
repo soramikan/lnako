@@ -12,7 +12,7 @@
 | [`dispatch-evidence.json`](../compat/v3.7.24/dispatch-evidence.json) | canonical fixtureの実行site、trace、公式比較 |
 | [`dispatch-coverage-evidence.json`](../compat/v3.7.24/dispatch-coverage-evidence.json) | sampled dispatch coverage |
 | [`compat-js-evidence.json`](../compat/v3.7.24/compat-js-evidence.json) | QuickJS互換モード専用証拠 |
-| [`attestations/`](../compat/v3.7.24/attestations/) | 履歴・CI実行のattestation資料 |
+| [`attestations/`](../compat/v3.7.24/attestations/) | CI実行のattestation snapshot（履歴・現行）と現行pointer `current.json` |
 
 ## stateの意味
 
@@ -46,9 +46,17 @@ global binding、static literal、終了・例外、外部host、公式generated
 
 ## CI attestationとの関係
 
-最新の成功例は [`CI run 33748912548`](https://github.com/soramikan/lnako/actions/runs/33748912548) です。commit `6f9dd45946c951d96cf3e3bc6d734980b19d7a9f` で54/54 jobが成功し、macOS arm64、Linux x86_64、Windows x86_64のdispatch attestationを実行しました。CIの一時catalog artifactは `verified: 358`、`trace-confirmed-unattested: 169`、`unverified: 0` でした。
+CIの `attest-dispatch-evidence` jobは、`actions/attest@v4.2.2` のSigstore bundleで次を同一attestationのsubjectとして署名します。
 
-この値はCI実行に紐づく一時成果物です。canonical `evidence.json`へ機械的に転記せず、artifactの署名・provenance・対象commitを併せて確認します。過去attestation資料を現在HEADの証拠に自動転記しない方針も維持します。
+- macOS arm64、Linux x86_64、Windows x86_64のdispatch証拠3件
+- native AOT aggregate 1件
+- `compat/v3.7.24/` のcanonical証拠17件（dispatch・coverage・expected-exit・compat-js・global/directory binding・static系11件）
+
+署名対象は `dispatch-attestation.json`（schema `lnako.dispatch-attestation.v2`）の `subjects`（3 OS）と `trackedSubjects`（canonical証拠のpath＋SHA-256）に記録されます。`sync_compat_evidence.mjs` は、選択したproofを裏付ける証拠ファイルのdigestが署名subject集合に含まれるentryだけを `verified` へ昇格します。digestが署名集合に無い証拠は `trace-confirmed-unattested` のままです。
+
+昇格がcanonical `evidence.json`へ反映されるのは、追跡された現行snapshotが存在するときだけです。`attestations/current.json` が最新runのsnapshotディレクトリ（`attestations/<run>/`）を指し、その `sourceManifestSha256` が現行source manifestと一致する場合に限り、`--check`／`--generate` がそのattestationを自動適用します。manifestが変わるコード変更ではpointerが陳腐化し、一致する新しいsnapshotを追跡するまでverifiedは維持されません。過去runのsnapshotを現在HEADの証拠へ自動転記しない方針は維持します。
+
+最新の成功例はCI run `34096852822`（commit `f46147266f5b51668f3251c9d57e449edfdc72b6`、54/54 job成功）で、従来のdispatch専用attestationでは `verified: 358`、`trace-confirmed-unattested: 169`、`unverified: 0` でした。17件のcanonical証拠署名への拡張以降は、全証拠namespaceが昇格対象になります。
 
 ## route別の扱い
 

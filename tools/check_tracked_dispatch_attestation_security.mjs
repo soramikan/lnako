@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { access, cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 
@@ -157,4 +157,55 @@ try {
   console.log("tracked dispatch attestation安全性検査: 誤ったhistorical commitを拒否");
 } finally {
   await rm(historicalTemporary, { recursive: true, force: true });
+}
+
+// When a current attestation is tracked, forged pointers and forged snapshot
+// metadata must be rejected even in --offline mode.
+const currentPointerPath = resolve(root, "compat/v3.7.24/attestations/current.json");
+const currentPointerExists = await access(currentPointerPath).then(() => true).catch(() => false);
+if (!currentPointerExists) {
+  console.log("current attestationが未追跡のためcurrent pointer偽造検査を省略");
+} else {
+  const currentSource = dirname(currentPointerPath);
+  const pointerTemporary = await mkdtemp(join(tmpdir(), "lnako-current-pointer-"));
+  try {
+    await cp(currentSource, pointerTemporary, { recursive: true });
+    const forgedPointerPath = join(pointerTemporary, "current.json");
+    const pointer = JSON.parse(await readFile(forgedPointerPath, "utf8"));
+    pointer.targetCommit = "0".repeat(40);
+    await writeFile(forgedPointerPath, `${JSON.stringify(pointer, null, 2)}\n`);
+    const result = spawnSync(process.execPath, [resolve(root, "tools/check_tracked_dispatch_attestation.mjs"), "--current-pointer", forgedPointerPath, "--offline"], {
+      cwd: root,
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    if (result.status === 0 || !`${result.stdout}\n${result.stderr}`.includes("current manifest targetCommit")) {
+      throw new Error(`current pointerの対象commit改変を拒否しませんでした: ${JSON.stringify({ status: result.status, stdout: result.stdout, stderr: result.stderr })}`);
+    }
+    console.log("tracked dispatch attestation安全性検査: current pointerの対象commit改変を拒否");
+  } finally {
+    await rm(pointerTemporary, { recursive: true, force: true });
+  }
+
+  const digestTemporary = await mkdtemp(join(tmpdir(), "lnako-current-digest-"));
+  try {
+    await cp(currentSource, digestTemporary, { recursive: true });
+    const forgedPointerPath = join(digestTemporary, "current.json");
+    const pointer = JSON.parse(await readFile(forgedPointerPath, "utf8"));
+    const manifestPath = join(digestTemporary, pointer.directory, "manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.trackedEvidence[0].sha256 = "0".repeat(64);
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    const result = spawnSync(process.execPath, [resolve(root, "tools/check_tracked_dispatch_attestation.mjs"), "--current-pointer", forgedPointerPath, "--offline"], {
+      cwd: root,
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    if (result.status === 0 || !`${result.stdout}\n${result.stderr}`.includes("current tracked")) {
+      throw new Error(`current tracked証拠のdigest改変を拒否しませんでした: ${JSON.stringify({ status: result.status, stdout: result.stdout, stderr: result.stderr })}`);
+    }
+    console.log("tracked dispatch attestation安全性検査: current tracked証拠のdigest改変を拒否");
+  } finally {
+    await rm(digestTemporary, { recursive: true, force: true });
+  }
 }

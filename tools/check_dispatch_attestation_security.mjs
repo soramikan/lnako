@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { platformIndependentOfficialComparison } from "./dispatch_evidence_semantics.mjs";
+import { trackedAttestationSubjects } from "./lib/evidence/attested_files.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const temporary = await mkdtemp(join(tmpdir(), "lnako-attestation-security-"));
@@ -58,7 +59,41 @@ try {
   assertRejected(forged, "公式gh attestation verifyに失敗しました", "偽造bundle");
   await assertAbsent(forgedOutput);
 
-  console.log("dispatch attestation安全性検査: metadata単体・偽造bundle・OS依存出力hashのcross-OS除外を検査");
+  // trackedSubjects (schema v2) structural rejection happens before the online
+  // bundle check, so a fake bundle cannot mask a forged tracked path or digest.
+  const realTrackedSubjects = [];
+  for (const relativePath of trackedAttestationSubjects) {
+    realTrackedSubjects.push({ path: relativePath, sha256: sha256(await readFile(resolve(root, relativePath))) });
+  }
+  const v2Base = { ...attestation, schema: "lnako.dispatch-attestation.v2" };
+
+  const unknownPathAttestation = {
+    ...v2Base,
+    trackedSubjects: [{ path: "compat/v3.7.24/evidence.json", sha256: "0".repeat(64) }, ...realTrackedSubjects.slice(1)],
+  };
+  const unknownPathAttestationPath = resolve(temporary, "unknown-path-attestation.json");
+  await writeFile(unknownPathAttestationPath, `${JSON.stringify(unknownPathAttestation, null, 2)}\n`, { flag: "wx" });
+  const unknownPathOutput = resolve(temporary, "unknown-path-output.json");
+  assertRejected(runSync(evidencePath, unknownPathAttestationPath, bundlePath, unknownPathOutput), "追跡attestation subjectのpathが不正です", "canonical集合外のtracked subject");
+  await assertAbsent(unknownPathOutput);
+
+  const wrongDigestSubjects = realTrackedSubjects.map((subject, index) =>
+    index === 0 ? { ...subject, sha256: "0".repeat(64) } : subject);
+  const wrongDigestAttestation = { ...v2Base, trackedSubjects: wrongDigestSubjects };
+  const wrongDigestAttestationPath = resolve(temporary, "wrong-digest-attestation.json");
+  await writeFile(wrongDigestAttestationPath, `${JSON.stringify(wrongDigestAttestation, null, 2)}\n`, { flag: "wx" });
+  const wrongDigestOutput = resolve(temporary, "wrong-digest-output.json");
+  assertRejected(runSync(evidencePath, wrongDigestAttestationPath, bundlePath, wrongDigestOutput), "追跡attestation subject digestが現行証拠と一致しません", "現行証拠と不一致のtracked digest");
+  await assertAbsent(wrongDigestOutput);
+
+  const missingTrackedAttestation = { ...v2Base, trackedSubjects: realTrackedSubjects.slice(0, -1) };
+  const missingTrackedPath = resolve(temporary, "missing-tracked-attestation.json");
+  await writeFile(missingTrackedPath, `${JSON.stringify(missingTrackedAttestation, null, 2)}\n`, { flag: "wx" });
+  const missingTrackedOutput = resolve(temporary, "missing-tracked-output.json");
+  assertRejected(runSync(evidencePath, missingTrackedPath, bundlePath, missingTrackedOutput), "追跡attestation subjectがcanonical証拠17件の完全集合ではありません", "不完全なtracked subject集合");
+  await assertAbsent(missingTrackedOutput);
+
+  console.log("dispatch attestation安全性検査: metadata単体・偽造bundle・tracked subject偽造・OS依存出力hashのcross-OS除外を検査");
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }

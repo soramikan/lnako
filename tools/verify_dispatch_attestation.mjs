@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { isAbsolute, resolve } from "node:path";
 import { platformIndependentOfficialComparison } from "./dispatch_evidence_semantics.mjs";
 import { computeSourceManifestSha256 } from "./lib/evidence/manifest.mjs";
+import { trackedAttestationSubjects } from "./lib/evidence/attested_files.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const args = process.argv.slice(2);
@@ -75,8 +76,21 @@ for (const file of files) {
 if (evidenceByPlatform.size !== expectedPlatforms.size) throw new Error("dispatch証拠のOS集合が不足しています");
 
 subjects.sort((left, right) => `${left.platform}-${left.arch}`.localeCompare(`${right.platform}-${right.arch}`));
+// The same Sigstore bundle also covers the tracked canonical evidence files.
+// Recording their digests lets the catalog promote every proof namespace
+// (dispatch, coverage, static constant, global binding, expected exit,
+// compat-js) whose backing file is signed, not only the dispatch sites.
+const trackedSubjects = [];
+for (const relativePath of trackedAttestationSubjects) {
+  const trackedPath = resolve(root, relativePath);
+  const trackedBytes = await readFile(trackedPath);
+  rejectForbidden(JSON.parse(trackedBytes.toString("utf8")), relativePath);
+  const trackedSha256 = sha256(trackedBytes);
+  trackedSubjects.push({ path: relativePath, sha256: trackedSha256 });
+  verifyWithGh(trackedPath, trackedSha256);
+}
 const attestation = {
-  schema: "lnako.dispatch-attestation.v1",
+  schema: "lnako.dispatch-attestation.v2",
   repository,
   workflow,
   sourceRef,
@@ -85,6 +99,7 @@ const attestation = {
   verifiedBy: "gh attestation verify",
   bundleSha256,
   subjects,
+  trackedSubjects,
 };
 await writeExclusive(output, `${JSON.stringify(attestation, null, 2)}\n`);
 
@@ -101,7 +116,7 @@ if (catalogOutput !== null) {
   ], { cwd: root, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
   if (result.status !== 0) throw new Error(`attestation済みcatalog evidenceの生成に失敗しました: ${result.stderr}`);
 }
-console.log(`dispatch attestationを検証しました: ${subjects.length} OS・${subjects.reduce((count, subject) => count + subject.evidenceSha256.length, 0) / 2} digest文字`);
+console.log(`dispatch attestationを検証しました: ${subjects.length} OS・${trackedSubjects.length} tracked証拠・${subjects.reduce((count, subject) => count + subject.evidenceSha256.length, 0) / 2} digest文字`);
 
 function absoluteOption(name) {
   const value = valueFor(name);

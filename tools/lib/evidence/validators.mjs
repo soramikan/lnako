@@ -6,6 +6,7 @@ import { evidenceEnv as env } from "./env.mjs";
 import { json, readJson, hashPattern, siteIdPattern, throwStatementOpcode, forbiddenEvidenceFields, runtimeFixtureFiles, dispatchEvidenceFollowUpPaths } from "./constants.mjs";
 import { validDispatchExpectationPlatforms } from "../evidence_common.mjs";
 import { computeSourceManifestSha256Sync } from "./manifest.mjs";
+import { assertTrackedSubjects, signedEvidenceDigests } from "./attested_files.mjs";
 import * as records from "./records.mjs";
 
 export function duplicateNameSet(entries) {
@@ -428,7 +429,7 @@ export function isAllowedDispatchEvidenceFollowUp(evidenceCommit, currentCommit)
 }
 
 
-export function validateDispatchEvidence(evidence, lock, standard, records, inputSha256, inputPath, bundlePath, bundleBytes, historicalCommit = null) {
+export function validateDispatchEvidence(evidence, lock, standard, records, inputSha256, inputPath, bundlePath, bundleBytes, historicalCommit = null, attestationOffline = false) {
   rejectForbiddenEvidenceFields(evidence);
   assertKnownObjectKeys(evidence, ["schema", "generator", "baseline", "fixture", "officialComparison", "attestation", "provenance", "trace", "sites"], "dispatch-evidence");
   if (evidence?.schema !== "lnako.dispatch-evidence.v2" || evidence.generator !== "tools/check_dispatch_trace.mjs") {
@@ -438,7 +439,7 @@ export function validateDispatchEvidence(evidence, lock, standard, records, inpu
   if (evidence.baseline?.tag !== lock.nadesiko3.tag || evidence.baseline?.commit !== lock.nadesiko3.commit) {
     throw new Error("dispatch証拠のbaselineがupstream.lock.jsonと一致しません");
   }
-  if (evidence.attestation !== null) validateAttestation(evidence.attestation, evidence, inputSha256, inputPath, bundlePath, bundleBytes);
+  if (evidence.attestation !== null) validateAttestation(evidence.attestation, evidence, inputSha256, inputPath, bundlePath, bundleBytes, attestationOffline);
   // Historical dispatch evidence may intentionally reference a fixture from
   // the attested commit rather than the current checkout. Reject an invalid
   // historical commit before comparing that historical fixture hash with the
@@ -516,9 +517,12 @@ export function validateDispatchEvidence(evidence, lock, standard, records, inpu
 }
 
 
-export function validateAttestation(attestation, evidence, inputSha256, inputPath, bundlePath, bundleBytes) {
-  assertKnownObjectKeys(attestation, ["schema", "repository", "workflow", "sourceRef", "commit", "predicateType", "verifiedBy", "bundleSha256", "subjects"], "dispatch-evidence.attestation");
-  if (attestation.schema !== "lnako.dispatch-attestation.v1" || attestation.repository !== "soramikan/lnako" ||
+export function validateAttestation(attestation, evidence, inputSha256, inputPath, bundlePath, bundleBytes, offline = false) {
+  const isV2 = attestation?.schema === "lnako.dispatch-attestation.v2";
+  assertKnownObjectKeys(attestation, isV2
+    ? ["schema", "repository", "workflow", "sourceRef", "commit", "predicateType", "verifiedBy", "bundleSha256", "subjects", "trackedSubjects"]
+    : ["schema", "repository", "workflow", "sourceRef", "commit", "predicateType", "verifiedBy", "bundleSha256", "subjects"], "dispatch-evidence.attestation");
+  if (!new Set(["lnako.dispatch-attestation.v1", "lnako.dispatch-attestation.v2"]).has(attestation.schema) || attestation.repository !== "soramikan/lnako" ||
       attestation.workflow !== "soramikan/lnako/.github/workflows/ci.yml" || attestation.sourceRef !== "refs/heads/main" ||
       attestation.predicateType !== "https://slsa.dev/provenance/v1" || attestation.verifiedBy !== "gh attestation verify" ||
       !/^[0-9a-f]{40}$/i.test(attestation.commit) || !/^[0-9a-f]{64}$/.test(attestation.bundleSha256) || !Array.isArray(attestation.subjects) || bundlePath === null) {
@@ -538,22 +542,25 @@ export function validateAttestation(attestation, evidence, inputSha256, inputPat
   if (seen.size !== expectedPlatforms.size || !/^[0-9a-f]{64}$/.test(evidence.provenance?.lnako?.binarySha256 ?? "")) {
     throw new Error("dispatch証拠のattestation OS集合が一致しないかlnako binary hashが不正です");
   }
+  assertTrackedSubjects(attestation, env.root);
   const expectedSourceManifest = computeSourceManifestSha256Sync(env.root).sha256;
   if (evidence.provenance?.lnako?.sourceManifestSha256 !== expectedSourceManifest) {
     throw new Error("dispatch証拠のattestation source manifestが現行ソースと一致しません");
   }
-  const currentPlatform = `${evidence.provenance.environment.platform}-${evidence.provenance.environment.arch}`;
-  const currentSubject = attestation.subjects.find((subject) => `${subject.platform}-${subject.arch}` === currentPlatform);
-  if (currentSubject === undefined || currentSubject.evidenceSha256 !== inputSha256) throw new Error(`dispatch証拠のattestation digestが一致しません: ${currentPlatform}`);
-  verifyAttestationBundle(attestation, inputPath, bundlePath, bundleBytes);
+  if (!signedEvidenceDigests(attestation).has(inputSha256)) {
+    const currentPlatform = `${evidence.provenance.environment.platform}-${evidence.provenance.environment.arch}`;
+    throw new Error(`dispatch証拠のattestation digestが一致しません: ${currentPlatform}`);
+  }
+  verifyAttestationBundle(attestation, inputPath, bundlePath, bundleBytes, offline);
 }
 
 
-export function verifyAttestationBundle(attestation, inputPath, bundlePath, bundleBytes) {
+export function verifyAttestationBundle(attestation, inputPath, bundlePath, bundleBytes, offline = false) {
   if (!Buffer.isBuffer(bundleBytes)) throw new Error("attestation bundleを読み込めません");
   if (createHash("sha256").update(bundleBytes).digest("hex") !== attestation.bundleSha256) {
     throw new Error("dispatch証拠のattestation bundle SHA-256が一致しません");
   }
+  if (offline) return;
   const result = spawnSync("gh", [
     "attestation", "verify", inputPath,
     "--bundle", bundlePath,
@@ -574,7 +581,7 @@ export function verifyAttestationBundle(attestation, inputPath, bundlePath, bund
   } catch (error) {
     throw new Error(`gh attestation verifyのJSON出力が不正です: ${error.message}`);
   }
-  const expectedDigests = attestation.subjects.map((subject) => subject.evidenceSha256).sort();
+  const expectedDigests = [...signedEvidenceDigests(attestation)].sort();
   const matchesAllSubjects = Array.isArray(verified) && verified.some((entry) => {
     const subjects = entry.verificationResult?.statement?.subject;
     if (!Array.isArray(subjects)) return false;
@@ -1056,7 +1063,7 @@ export function validateCompatJsTraceSummary(trace, caseId, operationByName) {
 }
 
 
-export function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, aotFixtureIds, compatJsFixtureIds, standard, matrix, dispatchEvidenceByCatalogId, dispatchCoverageEvidenceByCatalogId, staticConstantEvidenceByCatalogId, globalBindingEvidenceByCatalogId, globalBindingProofByCatalogId, expectedExitEvidenceByCatalogId, compatJsEvidenceByCatalogId) {
+export function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtureIds, aotFixtureIds, compatJsFixtureIds, standard, matrix, dispatchEvidenceByCatalogId, dispatchCoverageEvidenceByCatalogId, staticConstantEvidenceByCatalogId, globalBindingEvidenceByCatalogId, globalBindingProofByCatalogId, expectedExitEvidenceByCatalogId, compatJsEvidenceByCatalogId, attestationContext = null) {
   rejectForbiddenEvidenceFields(actual);
   assertKnownObjectKeys(actual, ["schemaVersion", "baseline", "sourceSha256", "commandCount", "duplicateNameCount", "fixtureInventory", "fixtureCoverageStates", "executionEvidenceStates", "entries"], "evidence");
   assertKnownObjectKeys(actual.baseline, ["tag", "commit"], "evidence.baseline");
@@ -1122,12 +1129,15 @@ export function validateEvidence(actual, lock, catalogSourceSha256, nativeFixtur
           ? compatJsEvidenceByCatalogId.get(entry.id)?.sites ?? []
           : [];
       const expectedSiteIds = proofSites.map((site) => isDispatchCoverageProof ? coverageSiteKey(site) : isCompatJsProof ? `${site.fixtureId}/${site.siteId}` : site.siteId).sort();
-      const validStaticState = isStaticConstantProof && entry.executionEvidenceState === "trace-confirmed-unattested" && entry.status === "native" && matrix.entries.find((candidate) => candidate.id === entry.id)?.type === "定数";
-      const validGlobalBindingState = isGlobalBindingProof && entry.executionEvidenceState === "trace-confirmed-unattested" && entry.status === "native" && hasGlobalBindingProof;
-      const validExpectedExitState = isExpectedExitProof && entry.executionEvidenceState === "trace-confirmed-unattested" && entry.status === "native" && hasExpectedExitProof;
-      const validCompatJsState = isCompatJsProof && entry.executionEvidenceState === "trace-confirmed-unattested" && entry.status === "compat-js" && hasCompatJsProof;
-      const validDispatchState = isDispatchProof && ["verified", "trace-confirmed-unattested"].includes(entry.executionEvidenceState);
-      const validDispatchCoverageState = isDispatchCoverageProof && entry.executionEvidenceState === "trace-confirmed-unattested" && entry.status === "native";
+      const proofDigest = attestationContext?.backingDigestByProof.get(`${proof.proofSchema}|${proof.fixtureId}`) ?? null;
+      const verifiedAllowed = proofDigest !== null && attestationContext.signedDigests.has(proofDigest);
+      const validEvidenceState = entry.executionEvidenceState === "trace-confirmed-unattested" || (entry.executionEvidenceState === "verified" && verifiedAllowed);
+      const validStaticState = isStaticConstantProof && validEvidenceState && entry.status === "native" && matrix.entries.find((candidate) => candidate.id === entry.id)?.type === "定数";
+      const validGlobalBindingState = isGlobalBindingProof && validEvidenceState && entry.status === "native" && hasGlobalBindingProof;
+      const validExpectedExitState = isExpectedExitProof && validEvidenceState && entry.status === "native" && hasExpectedExitProof;
+      const validCompatJsState = isCompatJsProof && validEvidenceState && entry.status === "compat-js" && hasCompatJsProof;
+      const validDispatchState = isDispatchProof && validEvidenceState;
+      const validDispatchCoverageState = isDispatchCoverageProof && validEvidenceState && entry.status === "native";
       if (!new Set(["unique-name", "explicit-catalog-id"]).has(entry.identityResolution) || (!validDispatchState && !validDispatchCoverageState && !validStaticState && !validGlobalBindingState && !validExpectedExitState && !validCompatJsState) ||
           (isDispatchProof && proof.fixtureId !== "native-dispatch-commands") ||
           (isDispatchCoverageProof && proof.fixtureId !== "dispatch-coverage") ||

@@ -29,7 +29,8 @@ const trackedAttestationChecker = await readFile(resolve(root, "tools/check_trac
 const syncEvidence = await readFile(resolve(root, "tools/sync_compat_evidence.mjs"), "utf8") +
   (await readFile(resolve(root, "tools/lib/evidence/validators.mjs"), "utf8")) +
   (await readFile(resolve(root, "tools/lib/evidence/records.mjs"), "utf8")) +
-  (await readFile(resolve(root, "tools/lib/evidence/constants.mjs"), "utf8"));
+  (await readFile(resolve(root, "tools/lib/evidence/constants.mjs"), "utf8")) +
+  (await readFile(resolve(root, "tools/lib/evidence/attested_files.mjs"), "utf8"));
 const verifyAttestation = await readFile(resolve(root, "tools/verify_dispatch_attestation.mjs"), "utf8");
 if (!trackedAttestationChecker.includes("gh") || !trackedAttestationChecker.includes("--cert-oidc-issuer") || !trackedAttestationChecker.includes("--deny-self-hosted-runners") || !syncEvidence.includes("--historical-commit") || !syncEvidence.includes("canonical --output")) {
   throw new Error("tracked dispatch attestation checkerのhistorical commit／公式gh厳格検証が不完全です");
@@ -421,6 +422,39 @@ if (!attestJob || !attestJob.includes("github.event_name == 'push'") || !attestJ
 if (!syncEvidence.includes('extras[0].name !== "lnako-native-aot-aggregate-evidence.json"') ||
     !syncEvidence.includes("expectedDigests.some((digest) => !digests.includes(digest))")) {
   throw new Error("dispatch attestation verifierがnative AOT aggregateの追加subjectを安全に扱っていません");
+}
+// The attestation signs every canonical evidence file so that all proof
+// namespaces can be promoted to verified, and the tracked current snapshot is
+// validated instead of trusting any local artifact.
+const trackedSubjectPaths = attestJob.match(/            compat\/v3\.7\.24\/[a-z-]+\.json/g) ?? [];
+if (trackedSubjectPaths.length !== 17) throw new Error(`attestationがcanonical証拠17件をsubjectに含みません: actual=${trackedSubjectPaths.length}`);
+for (const required of [
+  "compat/v3.7.24/dispatch-evidence.json",
+  "compat/v3.7.24/dispatch-coverage-evidence.json",
+  "compat/v3.7.24/expected-exit-evidence.json",
+  "compat/v3.7.24/compat-js-evidence.json",
+  "compat/v3.7.24/global-binding-evidence.json",
+  "compat/v3.7.24/directory-binding-evidence.json",
+  "compat/v3.7.24/static-constant-evidence.json",
+  "compat/v3.7.24/static-node-http-initial-constant-evidence.json",
+]) {
+  if (!attestJob.includes(`            ${required}\n`)) throw new Error(`attestation subject-pathに${required}がありません`);
+}
+if (!verifyAttestation.includes("lnako.dispatch-attestation.v2") || !verifyAttestation.includes("trackedSubjects") ||
+    !verifyAttestation.includes("trackedAttestationSubjects") || !verifyAttestation.includes("verifyWithGh(trackedPath, trackedSha256)")) {
+  throw new Error("dispatch attestation生成toolがcanonical証拠のtracked subjectsを検証・記録していません");
+}
+if (!syncEvidence.includes("signedEvidenceDigests") || !syncEvidence.includes("backingDigestByProof") ||
+    !syncEvidence.includes("loadCurrentAttestation") || !syncEvidence.includes("current attestation")) {
+  throw new Error("catalog証拠syncがcurrent attestationの自動適用または全証拠種別のverified昇格を実装していません");
+}
+if (!trackedAttestationChecker.includes("current.json") || !trackedAttestationChecker.includes("canonicalAttestationSchema") ||
+    !trackedAttestationChecker.includes("--current-pointer") || !trackedAttestationChecker.includes("current catalog verified count")) {
+  throw new Error("追跡attestation checkerがcurrent snapshot検証に対応していません");
+}
+if (!syncEvidence.includes('"lnako.canonical-attestation.v1"') || !syncEvidence.includes('"lnako.current-attestation.v1"') ||
+    !syncEvidence.includes('"lnako.dispatch-attestation.v2"')) {
+  throw new Error("canonical attestation schema識別子が共有libにありません");
 }
 
 const smokeCommands = {

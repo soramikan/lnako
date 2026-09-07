@@ -65,7 +65,9 @@ for (const [name, expected] of [["native", 523], ["compat-js", 4], ["blocked", 0
   if (standardStatuses?.[name] !== expected) fail(`summary.jsonの${name}分類が不一致です`);
   requireText(currentText, `| \`${name}\` | ${expected} |`, "現行互換性文書");
 }
-for (const [name, expected] of [["verified", 0], ["trace-confirmed-unattested", 527], ["unverified", 0]]) {
+const currentAttestationExists = await access(resolve(root, "compat/v3.7.24/attestations/current.json")).then(() => true).catch(() => false);
+const expectedVerified = currentAttestationExists ? 527 : 0;
+for (const [name, expected] of [["verified", expectedVerified], ["trace-confirmed-unattested", 527 - expectedVerified], ["unverified", 0]]) {
   if (evidenceStates?.[name] !== expected) fail(`evidence.jsonの${name} stateが不一致です`);
 }
 requireText(await read("docs/COMPATIBILITY.md"), `| \`verified\` | ${evidenceStates.verified} |`, "COMPATIBILITY.md");
@@ -138,4 +140,4 @@ for (const relativePath of ["README.md", ...(await walkMarkdown("docs"))]) {
   await assertMarkdownLinks(relativePath, await read(relativePath));
 }
 
-console.log(`現行ドキュメント検査: 成功 (standard native=${standardStatuses.native}, compat-js=${standardStatuses["compat-js"]}, evidence=${evidenceStates["trace-confirmed-unattested"]}/${evidence.commandCount}, CI=54 jobs)`);
+console.log(`現行ドキュメント検査: 成功 (standard native=${standardStatuses.native}, compat-js=${standardStatuses["compat-js"]}, evidence verified=${evidenceStates.verified}/${evidence.commandCount}, CI=54 jobs)`);

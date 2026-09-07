@@ -36,13 +36,13 @@
 | `trace-confirmed-unattested` | 527 |
 | `unverified` | 0 |
 
-これは、全527 entryについて実行siteとの接続をcanonical台帳へ記録済みであることを示します。`verified` は外部署名された3 OS attestationを含む状態であり、canonical JSONへCI実行ごとの署名を自動転記する設計ではありません。
+これは、全527 entryについて実行siteとの接続をcanonical台帳へ記録済みであることを示します。`verified` は、追跡された現行attestation snapshot（`attestations/current.json`）が現行source manifestと一致し、かつentryのproofを裏付ける証拠ファイルのdigestが署名subjectに含まれる場合にのみ昇格する状態です。
 
 ### CIの一時artifact
 
-CI run [`33748912548`](https://github.com/soramikan/lnako/actions/runs/33748912548) は、commit `6f9dd45946c951d96cf3e3bc6d734980b19d7a9f` に対して54/54 job成功、3 OSのdispatch attestation成功でした。このrunが生成した一時catalog artifactは `verified: 358`、`trace-confirmed-unattested: 169`、`unverified: 0` です。native AOT aggregateは27 artifact、292 fixture、O0〜O3を含みます。
+CI run `34096852822`（commit `f46147266f5b51668f3251c9d57e449edfdc72b6`、54/54 job成功）が生成した一時catalog artifactは `verified: 358`、`trace-confirmed-unattested: 169`、`unverified: 0` でした。このrunのattestationは3 OSのdispatch証拠とnative AOT aggregateだけを署名対象にしており、coverage・static・global binding・expected exit・compat-jsの各証拠namespaceは署名subjectに含まれていませんでした。attestation対象はcanonical証拠17件へ拡張済みで、以降のrunでは全証拠namespaceが昇格対象になります。
 
-一時artifactの値は、実行環境・署名・artifactの保存期間に依存します。追跡対象のcanonical `evidence.json` と同じ意味の値として上書きしたり、全527 entryの外部署名済みと解釈したりしません。
+一時artifactの値は、実行環境・署名・artifactの保存期間に依存します。追跡対象のcanonical `evidence.json` は、追跡された現行snapshotと現行source manifestの一致が確認できた場合にのみ `verified` を保持します。
 
 ## route別の境界
 
