@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 416,
-    "nativeAot": 314,
+    "total": 417,
+    "nativeAot": 315,
     "interpreter": 112,
     "compatJs": 9
   },
@@ -14572,6 +14572,7 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
+        "native-numeric-fixed-abi-boundaries",
         "native-system-number-conversion-commands"
       ],
       "compatJsFixtureIds": [],
@@ -14584,6 +14585,9 @@
         },
         "aot": {
           "native-cut-commands": [
+            "fixture.commands"
+          ],
+          "native-numeric-fixed-abi-boundaries": [
             "fixture.commands"
           ],
           "native-system-number-conversion-commands": [
@@ -14622,6 +14626,7 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
+        "native-numeric-fixed-abi-boundaries",
         "native-system-number-conversion-commands"
       ],
       "compatJsFixtureIds": [],
@@ -14634,6 +14639,9 @@
         },
         "aot": {
           "native-cut-commands": [
+            "fixture.commands"
+          ],
+          "native-numeric-fixed-abi-boundaries": [
             "fixture.commands"
           ],
           "native-system-number-conversion-commands": [
@@ -19164,7 +19172,8 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
-        "native-math-deterministic"
+        "native-math-deterministic",
+        "native-numeric-fixed-abi-boundaries"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -19179,6 +19188,9 @@
             "fixture.commands"
           ],
           "native-math-deterministic": [
+            "fixture.commands"
+          ],
+          "native-numeric-fixed-abi-boundaries": [
             "fixture.commands"
           ]
         },
@@ -19664,7 +19676,8 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
-        "native-math-deterministic"
+        "native-math-deterministic",
+        "native-numeric-fixed-abi-boundaries"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -19679,6 +19692,9 @@
             "fixture.commands"
           ],
           "native-math-deterministic": [
+            "fixture.commands"
+          ],
+          "native-numeric-fixed-abi-boundaries": [
             "fixture.commands"
           ]
         },
@@ -19809,7 +19825,8 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
-        "native-math-deterministic"
+        "native-math-deterministic",
+        "native-numeric-fixed-abi-boundaries"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -19824,6 +19841,9 @@
             "fixture.commands"
           ],
           "native-math-deterministic": [
+            "fixture.commands"
+          ],
+          "native-numeric-fixed-abi-boundaries": [
             "fixture.commands"
           ]
         },
