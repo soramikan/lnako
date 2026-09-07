@@ -739,6 +739,10 @@ pub const Object = struct {
     next: ?*Object = null,
     grey_next: ?*Object = null,
     marked: bool = false,
+    /// UTF-16 string objects may keep their code units directly after the
+    /// Object header.  The flag distinguishes that allocation from the
+    /// standalone payload used by `ownString`.
+    inline_utf16: bool = false,
     /// Object-literal `__proto__`; the undefined value means the ordinary
     /// Object prototype and explicit null preserves a null-prototype object.
     prototype: Value = .{},
@@ -749,6 +753,15 @@ pub const Object = struct {
     array_presence: std.ArrayList(bool) = .empty,
     toml_temporal: ?AotTomlTemporal = null,
     payload: Payload,
+};
+
+/// A freshly allocated, exact-sized UTF-16 string payload.  The Object is
+/// already linked into the runtime's GC list, but this helper performs no
+/// further allocation after returning; callers can fill `units` before the
+/// next GC point and return `value` without an intermediate copy.
+pub const StringAllocation = struct {
+    value: Value,
+    units: []u16,
 };
 
 const RegisteredFunction = struct {
@@ -919,10 +932,53 @@ pub const Runtime = struct {
     }
 
     pub fn createString(self: *Runtime, units: []const u16) !Value {
+        // Callers may pass a borrowed slice from an unrooted string. Preserve
+        // copy-before-collection semantics without a temporary payload copy.
+        const collect_due = self.object_count >= self.next_collection;
+        const allocation = try self.allocStringWithoutCollection(units.len);
+        @memcpy(allocation.units, units);
+        if (collect_due) {
+            var roots = [_]Value{allocation.value};
+            var frame: RootFrame = .{};
+            self.pushRoots(&frame, &roots, roots.len);
+            defer self.popRoots(&frame);
+            try self.beforeAllocation();
+        }
+        return allocation.value;
+    }
+
+    /// Allocate an Object and its exact UTF-16 payload in one block.  The
+    /// payload is intentionally left uninitialized so callers that already
+    /// know the output length (notably concat) can write each operand exactly
+    /// once.  No operation that can trigger GC may occur between returning
+    /// this value and filling `units`.
+    pub fn allocString(self: *Runtime, len: usize) !StringAllocation {
         try self.beforeAllocation();
-        const owned = try self.allocator.dupe(u16, units);
-        errdefer self.allocator.free(owned);
-        return self.createObject(.{ .utf16_string = owned }, .utf16_string);
+        return self.allocStringWithoutCollection(len);
+    }
+
+    fn allocStringWithoutCollection(self: *Runtime, len: usize) !StringAllocation {
+        const payload_bytes = std.math.mul(usize, len, @sizeOf(u16)) catch return error.OutOfMemory;
+        const allocation_size = std.math.add(usize, @sizeOf(Object), payload_bytes) catch return error.OutOfMemory;
+        const block = try self.allocator.alignedAlloc(u8, .of(Object), allocation_size);
+        errdefer self.allocator.free(block);
+
+        const object: *Object = @ptrCast(@alignCast(block.ptr));
+        const payload_ptr: [*]u16 = @ptrCast(@alignCast(block.ptr + @sizeOf(Object)));
+        const owned = payload_ptr[0..len];
+        object.* = .{
+            .next = self.objects,
+            .inline_utf16 = true,
+            .payload = .{ .utf16_string = owned },
+        };
+        self.objects = object;
+        self.object_count += 1;
+        self.counters.allocations +|= 1;
+        self.counters.allocated_bytes +|= @as(u64, @intCast(allocation_size));
+        self.counters.string_payload_allocations +|= 1;
+        self.counters.string_payload_bytes +|= @as(u64, @intCast(payload_bytes));
+        self.counters.object_high_water = @max(self.counters.object_high_water, self.object_count);
+        return .{ .value = .{ .tag = @intFromEnum(Tag.utf16_string), .payload = @intFromPtr(object) }, .units = owned };
     }
 
     pub fn createBytes(self: *Runtime, bytes: []const u8) !Value {
@@ -1156,6 +1212,10 @@ pub const Runtime = struct {
             .next = self.objects,
             .payload = payload,
         };
+        if (tag == .utf16_string) {
+            self.counters.string_payload_allocations +|= 1;
+            self.counters.string_payload_bytes +|= @as(u64, @intCast(payload.utf16_string.len)) *| @sizeOf(u16);
+        }
         if (tag == .array) {
             try object.array_presence.resize(self.allocator, object.payload.array.items.len);
             @memset(object.array_presence.items, true);
@@ -1235,6 +1295,8 @@ pub const Runtime = struct {
         while (self.grey) |object| {
             self.grey = object.grey_next;
             object.grey_next = null;
+            self.counters.gc_scanned_objects +|= 1;
+            self.counters.gc_scanned_bytes +|= @sizeOf(Object);
             switch (object.payload) {
                 .utf16_string, .bigint => {},
                 .byte_buffer => {
@@ -1302,6 +1364,9 @@ pub const Runtime = struct {
             }
             link.* = object.next;
             self.counters.gc_reclaimed_objects +|= 1;
+            // Keep the established counter definition as reclaimed Object
+            // header bytes; string payload bytes are reported separately by
+            // `string_payload_bytes` and `allocated_bytes`.
             self.counters.gc_reclaimed_bytes +|= @sizeOf(Object);
             self.destroyObject(object);
             self.object_count -= 1;
@@ -1377,8 +1442,9 @@ pub const Runtime = struct {
 
     pub fn destroyObject(self: *Runtime, object: *Object) void {
         if (object.toml_temporal) |*temporal| temporal.deinit(self.allocator);
+        const inline_utf16 = object.inline_utf16;
         switch (object.payload) {
-            .utf16_string => |units| self.allocator.free(units),
+            .utf16_string => |units| if (!inline_utf16) self.allocator.free(units),
             .byte_buffer => |buffer| {
                 buffer.storage.release();
                 object.array_properties.deinit(self.allocator);
@@ -1413,7 +1479,19 @@ pub const Runtime = struct {
             },
         }
         object.array_presence.deinit(self.allocator);
-        self.allocator.destroy(object);
+        if (inline_utf16) {
+            const units_len = switch (object.payload) {
+                .utf16_string => |units| units.len,
+                else => unreachable,
+            };
+            const payload_bytes = std.math.mul(usize, units_len, @sizeOf(u16)) catch unreachable;
+            const allocation_size = std.math.add(usize, @sizeOf(Object), payload_bytes) catch unreachable;
+            const block_ptr: [*]align(@alignOf(Object)) u8 = @ptrCast(object);
+            const block: []align(@alignOf(Object)) u8 = block_ptr[0..allocation_size];
+            self.allocator.free(block);
+        } else {
+            self.allocator.destroy(object);
+        }
     }
 
     pub fn indexGet(self: *Runtime, container: Value, key: Value) Value {
@@ -1858,3 +1936,43 @@ pub const Runtime = struct {
         std.debug.print("lnako perf counters: {}\n", .{self.counters});
     }
 };
+
+test "AOT文字列はObjectとUTF-16 payloadを一体確保しGCで一体解放する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+
+    const allocation = try runtime.allocString(3);
+    @memcpy(allocation.units, &[_]u16{ 'A', 0xd83d, 0xde00 });
+    var roots = [_]Value{allocation.value};
+    var frame: RootFrame = .{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    const object = allocation.value.object().?;
+    try std.testing.expect(object.inline_utf16);
+    try std.testing.expectEqual(@as(usize, @sizeOf(Object) + 3 * @sizeOf(u16)), @sizeOf(Object) + object.payload.utf16_string.len * @sizeOf(u16));
+    try std.testing.expectEqualSlices(u16, &.{ 'A', 0xd83d, 0xde00 }, object.payload.utf16_string);
+    try std.testing.expectEqual(@as(u64, 1), runtime.counters.allocations);
+    try std.testing.expectEqual(@as(u64, @sizeOf(Object) + 6), runtime.counters.allocated_bytes);
+    try std.testing.expectEqual(@as(u64, 1), runtime.counters.string_payload_allocations);
+    try std.testing.expectEqual(@as(u64, 6), runtime.counters.string_payload_bytes);
+    try std.testing.expectEqual(@as(usize, 0), runtime.collect());
+    // The string payload has no child references, but the Object itself is
+    // still visited once by the mark queue.
+    try std.testing.expectEqual(@as(u64, 1), runtime.counters.gc_scanned_objects);
+    try std.testing.expectEqual(@as(u64, @sizeOf(Object)), runtime.counters.gc_scanned_bytes);
+
+    roots[0] = .{};
+    try std.testing.expectEqual(@as(usize, 1), runtime.collect());
+}
+
+test "AOT createString copies borrowed unrooted units before collection" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const original = try runtime.createString(&.{ 'A', 0xd83d, 0xde00 });
+    runtime.next_collection = 0;
+    const copied = try runtime.createString(original.object().?.payload.utf16_string);
+    try std.testing.expectEqualSlices(u16, &.{ 'A', 0xd83d, 0xde00 }, copied.object().?.payload.utf16_string);
+    try std.testing.expectEqual(@as(usize, 1), runtime.object_count);
+    try std.testing.expectEqual(@as(u64, 1), runtime.counters.gc_collections);
+}

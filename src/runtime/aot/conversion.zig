@@ -703,13 +703,15 @@ const ConcatOperand = union(enum) {
         };
     }
 
-    fn write(self: ConcatOperand, dest: []u16) !usize {
+    fn write(self: ConcatOperand, dest: []u16) usize {
         return switch (self) {
             .utf16 => |units| blk: {
                 @memcpy(dest[0..units.len], units);
                 break :blk units.len;
             },
-            .utf8 => |bytes| std.unicode.utf8ToUtf16Le(dest, bytes),
+            // `unitsLen` validates the same byte sequence immediately before
+            // writing, so a second decode cannot fail for a static literal.
+            .utf8 => |bytes| std.unicode.utf8ToUtf16Le(dest, bytes) catch unreachable,
             .scratch => |units| blk: {
                 @memcpy(dest[0..units.len], units);
                 break :blk units.len;
@@ -727,10 +729,11 @@ fn concatOperand(runtime: *Runtime, value: Value) !ConcatOperand {
 }
 
 pub fn concat(runtime: *Runtime, left: Value, right: Value) !Value {
+    runtime.counters.concat_calls +|= 1;
     // Root both operands: the borrowed arms below alias GC storage, and the
-    // output allocation may collect before `ownString` publishes it.  The
-    // left operand is still materialized before the right one so ToPrimitive
-    // order and exceptions are unchanged.
+    // output allocation may trigger collection before its Object is linked.
+    // The left operand is still materialized before the right one so
+    // ToPrimitive order and exceptions are unchanged.
     var rooted = [_]Value{ left, right };
     var frame = RootFrame{};
     runtime.pushRoots(&frame, &rooted, rooted.len);
@@ -743,12 +746,13 @@ pub fn concat(runtime: *Runtime, left: Value, right: Value) !Value {
 
     const left_len = try left_operand.unitsLen();
     const right_len = try right_operand.unitsLen();
-    const combined = try runtime.allocator.alloc(u16, left_len + right_len);
-    errdefer runtime.allocator.free(combined);
-    const written_left = try left_operand.write(combined);
-    const written_right = try right_operand.write(combined[written_left..]);
+    const output_len = std.math.add(usize, left_len, right_len) catch return error.OutOfMemory;
+    const allocation = try runtime.allocString(output_len);
+    runtime.counters.concat_output_bytes +|= @as(u64, @intCast(output_len)) *| @sizeOf(u16);
+    const written_left = left_operand.write(allocation.units);
+    const written_right = right_operand.write(allocation.units[written_left..]);
     std.debug.assert(written_left == left_len and written_right == right_len);
-    return runtime.ownString(combined);
+    return allocation.value;
 }
 
 pub fn bigIntArithmetic(runtime: *Runtime, operator: Arithmetic, left: Value, right: Value) !Value {
@@ -1010,4 +1014,48 @@ pub fn staticUtf8EqualsUtf16(text: []const u8, units: []const u16) bool {
 pub fn staticUtf8(value: Value) []const u8 {
     const pointer: [*:0]const u8 = @ptrFromInt(value.payload);
     return std.mem.span(pointer);
+}
+
+test "AOT concatはborrowした入力を一度だけ新規UTF-16 payloadへコピーする" {
+    var counted = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var runtime = Runtime{ .allocator = counted.allocator() };
+    defer runtime.deinit();
+
+    var roots = [_]Value{ try runtime.createString(&.{'a'}), .{} };
+    var frame = RootFrame{};
+    runtime.pushRoots(&frame, &roots, roots.len);
+    defer runtime.popRoots(&frame);
+
+    const before_allocations = counted.allocations;
+    roots[1] = try concat(&runtime, roots[0], staticStringValue("😀"));
+    try std.testing.expectEqual(@as(usize, 1), counted.allocations - before_allocations);
+    try std.testing.expectEqualSlices(u16, &.{ 'a', 0xd83d, 0xde00 }, roots[1].object().?.payload.utf16_string);
+    try std.testing.expect(roots[1].object().?.inline_utf16);
+    try std.testing.expect(roots[1].payload != roots[0].payload);
+    try std.testing.expectEqual(@as(u64, 1), runtime.counters.concat_calls);
+    try std.testing.expectEqual(@as(u64, 6), runtime.counters.concat_output_bytes);
+
+    // The result owns an independent immutable copy of the left operand.
+    roots[0].object().?.payload.utf16_string[0] = 'b';
+    try std.testing.expectEqual(@as(u16, 'a'), roots[1].object().?.payload.utf16_string[0]);
+}
+
+test "AOT concatは出力allocation前のGCでもoperandを保持する" {
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+
+    // Do not root the local value outside concat: this makes the concat root
+    // frame the only protection across the GC run in allocString.
+    const left = try runtime.createString(&.{ 'L', 'e', 'f', 't' });
+    runtime.next_collection = runtime.object_count;
+    const result = try concat(&runtime, left, staticStringValue("😀"));
+    var result_roots = [_]Value{result};
+    var result_frame = RootFrame{};
+    runtime.pushRoots(&result_frame, &result_roots, result_roots.len);
+    defer runtime.popRoots(&result_frame);
+
+    try std.testing.expectEqual(@as(usize, 0), runtime.counters.gc_reclaimed_objects);
+    try std.testing.expectEqual(@as(u64, 1), runtime.counters.gc_collections);
+    try std.testing.expectEqualSlices(u16, &.{ 'L', 'e', 'f', 't' }, left.object().?.payload.utf16_string);
+    try std.testing.expectEqualSlices(u16, &.{ 'L', 'e', 'f', 't', 0xd83d, 0xde00 }, result.object().?.payload.utf16_string);
 }

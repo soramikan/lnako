@@ -16,6 +16,13 @@ pub const Counters = struct {
     array_copied_bytes: u64 = 0,
     allocations: u64 = 0,
     allocated_bytes: u64 = 0,
+    /// String concatenations and their newly-owned UTF-16 output payload.
+    concat_calls: u64 = 0,
+    concat_output_bytes: u64 = 0,
+    /// Counts UTF-16 payload allocations separately from object headers.
+    /// Fused Object+payload allocations count once here as well.
+    string_payload_allocations: u64 = 0,
+    string_payload_bytes: u64 = 0,
     string_conversions: u64 = 0,
     numeric_conversions: u64 = 0,
     value_copies: u64 = 0,
@@ -27,6 +34,10 @@ pub const Counters = struct {
     object_pool_hits: u64 = 0,
     object_pool_misses: u64 = 0,
     gc_collections: u64 = 0,
+    /// Objects visited by the mark phase.  Scanned bytes cover the Object
+    /// header visited by the collector; inline UTF-16 units contain no roots.
+    gc_scanned_objects: u64 = 0,
+    gc_scanned_bytes: u64 = 0,
     gc_reclaimed_objects: u64 = 0,
     gc_reclaimed_bytes: u64 = 0,
 
@@ -43,6 +54,10 @@ pub const Counters = struct {
         self.array_copied_bytes +|= other.array_copied_bytes;
         self.allocations +|= other.allocations;
         self.allocated_bytes +|= other.allocated_bytes;
+        self.concat_calls +|= other.concat_calls;
+        self.concat_output_bytes +|= other.concat_output_bytes;
+        self.string_payload_allocations +|= other.string_payload_allocations;
+        self.string_payload_bytes +|= other.string_payload_bytes;
         self.string_conversions +|= other.string_conversions;
         self.numeric_conversions +|= other.numeric_conversions;
         self.value_copies +|= other.value_copies;
@@ -54,16 +69,20 @@ pub const Counters = struct {
         self.object_pool_hits +|= other.object_pool_hits;
         self.object_pool_misses +|= other.object_pool_misses;
         self.gc_collections +|= other.gc_collections;
+        self.gc_scanned_objects +|= other.gc_scanned_objects;
+        self.gc_scanned_bytes +|= other.gc_scanned_bytes;
         self.gc_reclaimed_objects +|= other.gc_reclaimed_objects;
         self.gc_reclaimed_bytes +|= other.gc_reclaimed_bytes;
     }
 };
 
 test "Counters add saturates" {
-    var a: Counters = .{ .dictionary_probes = 10, .dictionary_hits = 5 };
-    const b: Counters = .{ .dictionary_probes = 3, .dictionary_misses = 2 };
+    var a: Counters = .{ .dictionary_probes = 10, .dictionary_hits = 5, .concat_calls = 1, .gc_scanned_objects = 2 };
+    const b: Counters = .{ .dictionary_probes = 3, .dictionary_misses = 2, .concat_calls = 4, .gc_scanned_objects = 3 };
     a.add(b);
     try std.testing.expectEqual(@as(u64, 13), a.dictionary_probes);
     try std.testing.expectEqual(@as(u64, 5), a.dictionary_hits);
     try std.testing.expectEqual(@as(u64, 2), a.dictionary_misses);
+    try std.testing.expectEqual(@as(u64, 5), a.concat_calls);
+    try std.testing.expectEqual(@as(u64, 5), a.gc_scanned_objects);
 }

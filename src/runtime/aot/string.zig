@@ -27,21 +27,24 @@ const safe_array_element_limit = aot_state.safe_array_element_limit;
 pub fn kanaOffsetBuiltin(runtime: *Runtime, value: Value, to_katakana: bool) !Value {
     const units = try valueUtf16Alloc(runtime, value);
     defer runtime.allocator.free(units);
-    const output = try runtime.allocator.dupe(u16, units);
-    errdefer runtime.allocator.free(output);
+    const allocation = try runtime.allocString(units.len);
+    const output = allocation.units;
     const first: u16 = if (to_katakana) 0x3041 else 0x30a1;
     const last: u16 = if (to_katakana) 0x3096 else 0x30f6;
     const offset: i32 = if (to_katakana) 0x60 else -0x60;
+    @memcpy(output, units);
     for (output) |*unit| {
         if (unit.* >= first and unit.* <= last) unit.* = @intCast(@as(i32, unit.*) + offset);
     }
-    return runtime.ownString(output);
+    return allocation.value;
 }
 
 pub fn asciiWidthBuiltin(runtime: *Runtime, value: Value, to_full: bool, symbols: bool) !Value {
     const units = try valueUtf16Alloc(runtime, value);
     defer runtime.allocator.free(units);
-    const output = try runtime.allocator.dupe(u16, units);
+    const allocation = try runtime.allocString(units.len);
+    const output = allocation.units;
+    @memcpy(output, units);
     for (output) |*unit| {
         if (to_full) {
             if (symbols and unit.* == 0x20) {
@@ -63,7 +66,7 @@ pub fn asciiWidthBuiltin(runtime: *Runtime, value: Value, to_full: bool, symbols
             unit.* -= 0xfee0;
         }
     }
-    return runtime.ownString(output);
+    return allocation.value;
 }
 
 pub fn kanaWidthBuiltin(runtime: *Runtime, value: Value, to_full: bool) !Value {
@@ -134,11 +137,11 @@ pub fn padBuiltin(runtime: *Runtime, value: Value, width_value: Value, fill: u16
     };
     if (std.math.isNan(parsed)) {
         const source_len = std.math.add(usize, fill_count, units.len) catch return error.OutOfMemory;
-        const output = try runtime.allocator.alloc(u16, source_len);
-        errdefer runtime.allocator.free(output);
+        const allocation = try runtime.allocString(source_len);
+        const output = allocation.units;
         @memset(output[0..fill_count], fill);
         @memcpy(output[fill_count..], units);
-        return runtime.ownString(output);
+        return allocation.value;
     }
     const requested: usize = if (parsed <= 0) 0 else blk: {
         if (!std.math.isFinite(parsed) or parsed >= @as(f64, @floatFromInt(std.math.maxInt(usize)))) return error.OutOfMemory;
@@ -147,12 +150,12 @@ pub fn padBuiltin(runtime: *Runtime, value: Value, width_value: Value, fill: u16
     const target = @max(units.len, requested);
     const source_len = std.math.add(usize, fill_count, units.len) catch return error.OutOfMemory;
     const result_len = @min(target, source_len);
-    const output = try runtime.allocator.alloc(u16, result_len);
-    errdefer runtime.allocator.free(output);
+    const allocation = try runtime.allocString(result_len);
+    const output = allocation.units;
     const result_fill_count = result_len - units.len;
     @memset(output[0..result_fill_count], fill);
     @memcpy(output[result_fill_count..], units);
-    return runtime.ownString(output);
+    return allocation.value;
 }
 
 pub fn stringPredicateBuiltin(runtime: *Runtime, value: Value, command: aot_builtin.Command) !Value {

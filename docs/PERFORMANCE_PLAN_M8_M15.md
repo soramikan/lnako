@@ -39,3 +39,14 @@ packed NumberArray、世代別GC、in-place文字列builderはレビューに従
 - 総合dispatch再検証でglobal添字代入をlocalへ誤登録する回帰を検出。qualified名を除外し回帰テスト追加。修正後は単体911/911、上記9公式差分、dispatch総合（Interpreter 944/Node 42/AOT manifest 946/runtime 1888イベント）成功。
 
 - 予約globalの配列定数でも同分類問題があることをcoverageで検出したため、array/property代入をlocal新規定義から除外。予約globalを含む回帰テスト、単体911/911、公式差分10ケース、dispatch coverage 56 fixtures/1917 sitesが成功。
+
+### M9a 証拠更新完了
+
+- oracle指定Node 24.15.0で17証拠を再生成。227 fixtures/4489 sites、expected-exit 4ケース、global binding・静的定数・compat-js 9ケースが成功。527 entryの既存分類を維持。
+
+### M12a: 一体文字列割当
+
+- ObjectとUTF-16 payloadを1 allocationで確保。連結・幅変換・paddingが出力を直接埋め、immutable copy量を維持する。
+- borrowed unitsはGC前にコピーし、新しい文字列をroot保持してから回収する。concat入力もGC境界でroot保持する。
+- fmt-check、単体915/915、公式差分9ケースInterpreter/AOT O0/O2成功。counting allocatorでconcat出力1 allocationを確認。
+- concat/payload/GC scan countersを追加。全allocator malloc/realloc、mark/sweep時間、peak live bytes、3 OS性能目標の検証は未完了。
