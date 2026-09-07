@@ -30,8 +30,8 @@
 
 | execution evidence | entry |
 | --- | ---: |
-| `verified` | 527 |
-| `trace-confirmed-unattested` | 0 |
+| `verified` | 0 |
+| `trace-confirmed-unattested` | 527 |
 | `unverified` | 0 |
 
 fixture coverageは `paired: 523`、`compat-js-only: 4`、その他の状態は0です。fixture inventoryは合計417件、native AOT 315件、Interpreter 112件、QuickJS 9件です。inventoryの分類は重複するため、数値を足してfixture総数にしません。
@@ -56,7 +56,7 @@ CIの `attest-dispatch-evidence` jobは、`actions/attest@v4.2.2` のSigstore bu
 
 昇格がcanonical `evidence.json`へ反映されるのは、追跡された現行snapshotが存在するときだけです。`attestations/current.json` が最新runのsnapshotディレクトリ（`attestations/<run>/`）を指し、その `sourceManifestSha256` が現行source manifestと一致する場合に限り、`--check`／`--generate` がそのattestationを自動適用します。manifestが変わるコード変更ではpointerが陳腐化し、一致する新しいsnapshotを追跡するまでverifiedは維持されません。過去runのsnapshotを現在HEADの証拠へ自動転記しない方針は維持します。
 
-現行の追跡snapshotはCI run `34113932297`（commit `00dc21517c7cbe68bc4d85262578ee9de0ede110`、attempt 2、54/54 job成功）で、3 OSのdispatch証拠とnative AOT aggregateとcanonical証拠17件を同一bundleで署名しました。このattestationでcanonical `evidence.json` は `verified: 527`、`trace-confirmed-unattested: 0`、`unverified: 0` です。
+直前のmanifestに対応する追跡snapshotはCI run `34113932297`（commit `00dc21517c7cbe68bc4d85262578ee9de0ede110`、attempt 2、54/54 job成功）で、3 OSのdispatch証拠とnative AOT aggregateとcanonical証拠17件を同一bundleで署名し、`verified: 527` を達成しました。ただしmanifest入力の変更（`plugin-node-process-completion-order` fixtureのタイミング依存をmarker fileによる因果順序へ決定論化）で現行manifestと一致しなくなったため、`current.json` は取り外し、canonicalは `verified: 0` / `trace-confirmed-unattested: 527` へ戻ります。新しいCI runのsnapshotを `attestations/<run>/` へ追跡して `current.json` を更新すれば同じ状態へ戻ります。
 
 ## route別の扱い
 

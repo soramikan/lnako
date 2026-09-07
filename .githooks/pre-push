@@ -73,7 +73,7 @@ echo "pre-push: running zig build fmt-check..." >&2
 "$ZIG" build fmt-check
 
 echo "pre-push: running zig build test..." >&2
-"$ZIG" build test
+"$ZIG" build test --test-timeout 5m
 
 echo "pre-push: checking source structure..." >&2
 "$NODE" tools/check_source_structure.mjs

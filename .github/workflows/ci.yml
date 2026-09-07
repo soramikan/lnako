@@ -209,13 +209,16 @@ jobs:
         run: zig build fmt-check
       - name: Test
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
-        run: zig build test
+        # Zigのtest serverはテスト間で60秒無応答のrunnerを失敗扱いする。
+        # 負荷の高いWindows runnerではtestプロセスのスケジュール遅延が60秒を
+        # 超えることがあるため、上限を5分へ引き上げる。
+        run: zig build test --test-timeout 5m
       - name: Benchmark runner tests
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node --test tools/benchmark_runner_test.mjs tools/setup_benchmark_gonako_test.mjs tools/pre_push_hook_test.mjs
       - name: Test QuickJS build
         if: matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'
-        run: zig build -Dcompat-js=true test
+        run: zig build -Dcompat-js=true test --test-timeout 5m
       - name: Build QuickJS compiler
         if: matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'
         run: zig build -Dcompat-js=true -Doptimize=ReleaseSafe

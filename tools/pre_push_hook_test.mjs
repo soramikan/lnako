@@ -135,7 +135,7 @@ test("successful validation runs all required read-only checks", () => {
       "git rev-parse --show-toplevel",
       "git status --porcelain=v1 --untracked-files=all",
       "zig build fmt-check",
-      "zig build test",
+      "zig build test --test-timeout 5m",
       "node tools/check_source_structure.mjs",
       "node tools/sync_compat_evidence.mjs --check",
       "node tools/check_interpreter_only_classification.mjs --check",

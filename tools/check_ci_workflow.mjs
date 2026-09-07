@@ -215,6 +215,13 @@ if (!testJob) throw new Error("通常test jobがありません");
 if (!testJob.includes("name: Clear generated Zig install outputs\n        shell: bash\n        run: rm -rf -- zig-out")) {
   throw new Error("差分test前に生成Zig install出力を消去する再発防止策がありません");
 }
+// Zigのtest serverはテスト間で60秒無応答のrunnerを失敗扱いする。負荷の高い
+// Windows runnerではtestプロセスがスケジュールされず60秒を超えることがある
+// ため、両単体テストstepで上限を5分へ引き上げる。
+if (!testJob.includes("run: zig build test --test-timeout 5m") ||
+    !testJob.includes("run: zig build -Dcompat-js=true test --test-timeout 5m")) {
+  throw new Error("単体テストstepの--test-timeout 5mがありません（Windows runnerのスケジューラ遅延でtest runnerが60s無応答扱いになるflake対策）");
+}
 if (testJob.includes("Grammar-generating parser fuzz test\n")) {
   throw new Error("Linux／Windowsのparser fuzzを通常core jobへ残さないでください");
 }
