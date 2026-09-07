@@ -71,7 +71,6 @@ gh run view <run-id> --log-failed
 
 - [`COMPATIBILITY.md`](COMPATIBILITY.md): 分類、canonical証拠、CI artifactの読み方
 - [`COMPATIBILITY_EVIDENCE.md`](COMPATIBILITY_EVIDENCE.md): 証拠stateとattestationの規則
-- [`docs/history/CI_PERFORMANCE_2026.md`](history/CI_PERFORMANCE_2026.md): 過去run、cache調整、分割の経緯
 
 ## 性能の継続測定
 

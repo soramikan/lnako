@@ -77,11 +77,6 @@
       "kind": "goal-assessment",
       "file": "2026-09-07-m8-m15-goals.json",
       "sha256": "a7f5655efc91340c3524053f42fa5b50e2adbf867d5acc1eec5dbbb09560eb95"
-    },
-    {
-      "kind": "local-probes",
-      "file": "2026-09-07-m8-m15-local-probes.json",
-      "sha256": "51484d58f6476b6be96eaf6afb2fb53356a85ade86ed06ea6cd1532576777f6c"
     }
   ],
   "notes": [

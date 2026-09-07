@@ -71,7 +71,7 @@ OS依存値や外部通信を扱うfixtureは、固定入力、loopback、synthe
 
 公式ドキュメントの説明不足、公式実装のバグ候補、lnakoの意図的制限、未実装境界は [`COMPATIBILITY_QUIRKS.md`](COMPATIBILITY_QUIRKS.md) の領域別文書へ記録します。各項目には公式実測、lnakoの現在動作、意図的制限か未実装か、対象経路、差分テストID、TODO識別子を含めます。
 
-過去の実装日誌・CI性能測定・証拠化計画は [`docs/history/`](history/) に置き、現行手順へ古い数値を混ぜません。
+文書には現行仕様・検証条件・残る制約を記載し、完了した実装日誌や一時的な計画は残しません。過去の経緯はGit履歴から参照します。性能結果はCIの測定commitと生データを明示します。日本語の「」や（）を含む文にはMarkdownの二重アスタリスクによる強調を使いません。
 
 ## コミットとpush
 
@@ -82,3 +82,9 @@ OS依存値や外部通信を扱うfixtureは、固定入力、loopback、synthe
 pre-pushフックは整形・単体テスト・ソース構造・互換性証拠・interpreter-only分類の検査を行い、ファイルやコミットを自動生成しません。製品変更で証拠の再生成が必要な場合は、実装を検証し、対象のコード変更をstageしてから `node tools/update_current_evidence.mjs` を実行します。manifest対象にunstaged/untrackedの変更を残さず、生成中はHEADと対象ソースを変更しません。通常経路と明示的なcompat-js経路をそれぞれビルドし、全証拠が揃うまで追跡済みファイルを保持します。生成後の差分を確認・検証し、コード変更と証拠更新を同じ日本語署名付きコミットにまとめてください。証拠のsource manifest SHA-256とbinary hashで検証対象を識別するため、生成前のコード専用コミットは不要です。
 
 `tools/fast_forward_evidence.mjs`による、再実行を伴わないprovenanceの書き換えは廃止しました。既存の証拠は測定したcommitとbinary hashを保持し、検証ツール・文書だけの変更は明示的なfollow-up対象として扱います。
+
+## ソース構造の保守
+
+モジュールは行数ではなく、変更理由・状態所有権・依存方向・互換性保証の単位で分けます。公開import/C ABIの入口を薄いファサードとして保ち、状態定義から処理実装への逆向き依存を避けます。分割のためだけの動的dispatchやheap allocationは追加しません。
+
+サイズ閾値・import層・例外台帳は`tools/source_structure.json`を正本とし、`node tools/check_source_structure.mjs`で検査します。frontend/semantic/IRからInterpreterやLLVM実装への依存、LLVM backendからInterpreterへの依存、AOT runtimeからCLIへの依存を追加しません。parserやruntimeの密結合部分は例外台帳の理由を確認し、公開ABI・GC root・非同期の所有権を維持して変更します。

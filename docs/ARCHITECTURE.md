@@ -38,11 +38,13 @@
 
 ### Interpreter
 
-Nako SSA IRを直接実行し、条件・反復・関数・closure・例外・動的実行・Promise・timerを処理します。公式sourceまたは公式生成JavaScriptと比較するfixtureは、実行結果だけでなく終了状態、stderr、必要なtraceを記録します。
+検証・診断用のNako SSA IRを保持し、名前・演算子・callee・Value数を事前解決したPrepared Interpreterで条件・反復・関数・closure・例外・動的実行・Promise・timerを処理します。非capture localは直接Value slotを使い、captureは共有cellを維持します。関数frameはサイズクラスpoolで再利用し、割り込みはblock/call/allocationのsafepointと最大1,024通常命令のbudgetで確認します。公式sourceまたは公式生成JavaScriptと比較するfixtureは、実行結果だけでなく終了状態、stderr、必要なtraceを記録します。
 
 ### LLVM AOT
 
 LLVM/LLD 22.1.8を使い、Nako SSA IRを検証してLLVM IRへ変換します。O0は元IRの動的変換を維持し、O1以上では独立複製したSSA IRへ安全な型推論・定数伝播・直接呼出し・dead code eliminationを適用します。生成実行ファイルはZig製のJS非依存ランタイムを静的リンクし、実行先にZig、LLVM、Node.jsを要求しません。
+
+型が確定したNumber/Booleanの内部関数はtyped ABIへ接続し、名前による動的呼出しにはgeneric Value経路を保持します。AOTの参照rootはlivenessとslot coloringで共有し、解析の上限を超える関数は専用slotへ戻します。文字列はimmutable copyを維持し、ObjectとUTF-16 payloadを一体確保します。
 
 未対応IRは誤変換せず、命令名と元ソース位置を伴って拒否します。AOTの実行証拠とattestationの状態は [`COMPATIBILITY_EVIDENCE.md`](COMPATIBILITY_EVIDENCE.md) の規則に従います。
 

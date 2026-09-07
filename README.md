@@ -10,13 +10,7 @@
 
 実行証拠の読み方、canonical台帳とCI artifactの違いは [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) にまとめています。公式処理系の説明だけでは分かりにくい挙動や、バグの可能性がある挙動は [`docs/COMPATIBILITY_QUIRKS.md`](docs/COMPATIBILITY_QUIRKS.md) から領域別に参照できます。
 
-正式に検証する対象OSは次の3つです。
-
-| OS | CPU | 用途 |
-| --- | --- | --- |
-| macOS 15 | arm64 | macOSネイティブ実行・AOT |
-| Ubuntu 24.04 | x86_64 GNU | Linuxネイティブ実行・AOT |
-| Windows 2025 | x86_64 MSVC | Windowsネイティブ実行・AOT |
+正式検証環境はmacOS 15 arm64、Ubuntu 24.04 x86_64 GNU、Windows 2025 x86_64 MSVCです。
 
 ## 必要なツール
 
@@ -57,31 +51,39 @@ zig build -Dcompat-js=true run -- run program.nako3 --compat-js
 
 QuickJS経路の範囲と証拠は [`docs/compatibility/COMPAT_JS.md`](docs/compatibility/COMPAT_JS.md) にあります。
 
-## CLI
-
-```text
-lnako build <file.nako3> -o <output> [-O0|-O1|-O2|-O3] [--emit exe|obj|llvm-ir]
-lnako run <file.nako3> [--compat-js] -- <program arguments>
-lnako check <file.nako3>
-lnako test <file-or-directory>
-lnako compat report
-lnako benchmark
-```
-
-`build`、`run`、`check`、`test`、`compat report`、`benchmark`、ヘルプ、バージョン表示を利用できます。`benchmark`の結果形式やRelease向けの配布手順は、利用者向け導入手順とは分けて [`docs/RELEASE.md`](docs/RELEASE.md) に記録しています。
+CLIは`build`、`run`、`check`、`test`、`compat report`、`benchmark`に対応します。詳細は`lnako --help`と[開発手順](docs/DEVELOPMENT.md)を参照してください。
 
 ## 性能比較
 
-cnako・gonako・lnakoを正式比較、C・Rustを参考値として測定します。代表値は2026年9月6日（JST）、Linux x86_64のCI（AMD EPYC 7763 64-Core Processor、論理4 CPU）で、warmup 3回・測定10回の**中央値（ms、小さいほど短時間）**です。lnako AOT・C・RustはO2、測定コミットは `d072a54` です。
+起動、言語コア、数値計算、データ構造、文字列、GC、複合処理から代表9ケースを掲載します。改善余地が残るstring-concatも含めています。コンパイル時間は別表です。
 
-| ケース | cnako 3.7.24 | gonako 3.8.1配布版 | lnako解釈 | lnako AOT | C（参考） | Rust（参考） |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 整数演算 | 132.95 | 132.82 | 851.73 | 63.15 | 2.08 | 2.25 |
-| 文字列の反復コピー | 119.80 | 22.92 | 60.65 | 53.63 | 2.27 | 2.49 |
-| 文字列構築 | 123.65 | 22.96 | 74.28 | 9.89 | 1.53 | 1.83 |
-| 辞書検索 | 151.00 | 74.05 | 577.08 | 4,511.79 | — | — |
+測定対象は `02457ac`、2026年9月7日の[3 OS比較CI](https://github.com/soramikan/lnako/actions/runs/34093414459)です。warmup 3回・測定10回の中央値をmsで示します。小さいほど短時間です。lnakoはReleaseSafeビルド、AOTはO2です。
 
-実行時間は起動・終了を含み、事前コンパイルは含みません。200ms未満は起動の影響を受けやすく、辞書検索のようにAOTが遅いケースもあります。—は未測定です。gonakoの構文調整、自己表示バージョンと配布版の差、C・Rustの実装・コンパイラ条件は[詳細結果](docs/benchmarks/RESULTS.md)を参照してください。[実行方法](benchmarks/README.md)も掲載しています。
+cnako・gonako・lnakoを正式比較とします。gonakoは3.8.1配布版をハッシュ固定し、自己表示は3.6.0です。以下はLinux CIの代表表です。Windows・macOSを含む全結果は[詳細結果](docs/benchmarks/RESULTS.md)に掲載しています。
+
+| 分野 | ケース | cnako 3.7.24 | gonako | lnako Interpreter | lnako AOT |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 起動 | `startup-hello` | 107.44 | 6.40 | 2.05 | 1.72 |
+| 関数呼出し | `function-call` | 172.14 | 115.27 | 319.98 | 32.42 |
+| 浮動小数点 | `nbody` | 157.98 | 47.52 | 397.93 | 15.00 |
+| 辞書検索 | `hash-lookup` | 142.47 | 72.37 | 498.49 | 48.68 |
+| 文字列連結 | `string-concat` | 115.47 | 22.42 | 57.50 | 28.80 |
+| Unicode | `unicode-scan` | 131.16 | 59.09 | 339.71 | 31.36 |
+| メモリ・GC | `binary-trees` | 160.93 | 51.33 | 49.29 | 16.98 |
+| 単語集計 | `word-count` | 129.80 | 37.40 | 250.90 | 15.69 |
+| JSON変換 | `json-transform` | 128.60 | 22.16 | 69.04 | 7.13 |
+
+### コンパイル時間
+
+実行時間と分けて、`compile-stress-medium` のネイティブ実行ファイル生成時間を示します。
+
+| ケース | Linux x86_64 | Windows x86_64 | macOS arm64 |
+| --- | ---: | ---: | ---: |
+| `compile-stress-medium` | 443.40 | 623.21 | 387.22 |
+
+実行表はprocessの起動・終了を含み、AOTの事前コンパイル時間は含みません。200 ms未満の値は起動時間やrunner負荷の影響を受けやすく、純粋な処理kernelの速度ではありません。配列・辞書の構築など、ケース内のsetupも含みます。
+
+正式20ケースと追加診断12ケース、測定条件・生サンプル・C/Rustの参考値は[詳細結果](docs/benchmarks/RESULTS.md)を参照してください。C/Rustは別言語の参考比較で、正式比較とは分けています。[再測定の手順](benchmarks/README.md)も掲載しています。
 
 ## 開発者向けドキュメント
 

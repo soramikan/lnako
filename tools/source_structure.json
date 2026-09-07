@@ -1,5 +1,5 @@
 {
-  "comment": "巨大ファイル分割ガードレール（docs/REFACTORING_PLAN.md 参照）。tools/check_source_structure.mjs がこの設定を検査する。",
+  "comment": "巨大ファイル分割ガードレール（docs/DEVELOPMENT.md 参照）。tools/check_source_structure.mjs がこの設定を検査する。",
   "size": {
     "comment": "src/**/*.zig のサイズ上限。生成物・テスト集約・test専用ファイルは対象外。warnKb は警告のみ、limitKb 超過はCI失敗。",
     "excludeDirectories": ["src/generated/"],

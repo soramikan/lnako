@@ -1,22 +1,8 @@
-# 履歴文書
+# 互換性・設計の詳細参照
 
-ここには、現行仕様の入口から分離した2026年の進捗スナップショット、CI性能測定、証拠化計画、旧quirks全文を保全しています。記載された件数・run・TODO・「次に行うこと」は、その時点の履歴であり、現在の状態を上書きしません。
+現行の概要から省略した詳細な設計・互換挙動の参照資料です。記載された件数やTODOは保存時点の情報であり、現在の対応範囲は[互換性概要](../COMPATIBILITY.md)と[証拠の正本](../COMPATIBILITY_EVIDENCE.md)で確認してください。
 
-現行の正本は次を参照してください。
+- [設計の詳細](ARCHITECTURE_2026.md)
+- [公式挙動・互換性境界の詳細](COMPATIBILITY_QUIRKS_2026.md)
 
-- [`../COMPATIBILITY.md`](../COMPATIBILITY.md)
-- [`../COMPATIBILITY_EVIDENCE.md`](../COMPATIBILITY_EVIDENCE.md)
-- [`../COMPATIBILITY_QUIRKS.md`](../COMPATIBILITY_QUIRKS.md)
-- [`../CI.md`](../CI.md)
-- [`../ARCHITECTURE.md`](../ARCHITECTURE.md)
-- [`../DEVELOPMENT.md`](../DEVELOPMENT.md)
-
-## 保全ファイル
-
-| ファイル | 内容 |
-| --- | --- |
-| [`ARCHITECTURE_2026.md`](ARCHITECTURE_2026.md) | 旧アーキテクチャ説明と実装進捗 |
-| [`CI_PERFORMANCE_2026.md`](CI_PERFORMANCE_2026.md) | CI分割、cache、過去runの測定 |
-| [`COMPATIBILITY_EVIDENCE_PROGRESS_2026.md`](COMPATIBILITY_EVIDENCE_PROGRESS_2026.md) | Uxx単位の証拠化経緯 |
-| [`COMPATIBILITY_QUIRKS_2026.md`](COMPATIBILITY_QUIRKS_2026.md) | 分割前のquirks全文 |
-| [`UNVERIFIED_EVIDENCE_PLAN_2026.md`](UNVERIFIED_EVIDENCE_PLAN_2026.md) | `unverified` 証拠化計画の完了履歴 |
+完了した実装日誌・CI調整記録・証拠化計画はGit履歴で参照できます。
