@@ -1,0 +1,19 @@
+# Runtime input: number of reads from a 256-entry dictionary.
+N=INT(コマンドライン[要素数(コマンドライン)-1])
+D={}
+K一覧=[]
+256回
+K="k"&回数
+配列追加(K一覧,K)
+D[K]=回数
+ここまで
+I=0
+S=0
+N回
+S=S+D[K一覧[I]]
+I=I+1
+もし I>=256 ならば
+I=0
+ここまで
+ここまで
+Sを表示

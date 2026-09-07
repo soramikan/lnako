@@ -1,0 +1,14 @@
+# Runtime input: retain nested arrays through the allocation and scan phases.
+N=INT(コマンドライン[要素数(コマンドライン)-1])
+A=[]
+N回
+配列追加(A,[回数])
+ここまで
+I=0
+S=0
+N回
+V=A[I]
+S=S+V[0]
+I=I+1
+ここまで
+Sを表示

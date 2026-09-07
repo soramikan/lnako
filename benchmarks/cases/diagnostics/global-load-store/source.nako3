@@ -1,0 +1,7 @@
+# Runtime input: number of module-global load/store iterations.
+G=0
+N=INT(コマンドライン[要素数(コマンドライン)-1])
+N回
+G=G+3
+ここまで
+Gを表示

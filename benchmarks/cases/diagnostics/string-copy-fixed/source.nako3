@@ -1,0 +1,13 @@
+# Runtime input: fixed-length immutable copy-on-concat operations.
+●(Nを)固定文字列コピーとは
+BASE="base"
+SUFFIX="suffix"
+S=0
+N回
+T=BASE&SUFFIX
+S=S+文字数(T)
+ここまで
+Sで戻る
+ここまで
+N=INT(コマンドライン[要素数(コマンドライン)-1])
+固定文字列コピー(N)を表示

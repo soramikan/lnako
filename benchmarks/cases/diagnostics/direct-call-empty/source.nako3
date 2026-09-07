@@ -1,0 +1,10 @@
+# Runtime input: number of direct calls to a no-argument user function.
+●空呼出とは
+7で戻る
+ここまで
+N=INT(コマンドライン[要素数(コマンドライン)-1])
+S=0
+N回
+S=S+空呼出()
+ここまで
+Sを表示

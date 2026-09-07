@@ -1,0 +1,10 @@
+# Runtime input: number of calls to a two-argument numeric function.
+●(AとBを)数値処理とは
+A*3+B*2+1で戻る
+ここまで
+N=INT(コマンドライン[要素数(コマンドライン)-1])
+S=0
+N回
+S=S+数値処理(回数,回数+1)
+ここまで
+Sを表示

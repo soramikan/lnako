@@ -50,6 +50,12 @@ async function requiredPaths(llvmRoot, platform) {
   const binaries = platform === "win32"
     ? ["bin/clang.exe", "bin/lld-link.exe"]
     : ["bin/clang", platform === "darwin" ? "bin/ld64.lld" : "bin/ld.lld"];
+  // Numeric profiles need the actual linked code and import table as well
+  // as generated IR. Older minimal caches may legitimately lack these.
+  for (const tool of ["llvm-readobj", "llvm-objdump"]) {
+    const path = `bin/${tool}${platform === "win32" ? ".exe" : ""}`;
+    if (await lstat(join(llvmRoot, path)).catch(() => null)) binaries.push(path);
+  }
   const keep = new Set(binaries);
   for (const binary of binaries) {
     const path = join(llvmRoot, ...binary.split("/"));

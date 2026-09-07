@@ -1,0 +1,10 @@
+# Runtime input: number of local load/store iterations.
+●(Nを)局所更新とは
+A=0
+N回
+A=A+3
+ここまで
+Aで戻る
+ここまで
+N=INT(コマンドライン[要素数(コマンドライン)-1])
+局所更新(N)を表示

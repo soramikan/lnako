@@ -1,0 +1,16 @@
+# Runtime input: number of indexed reads after fixed-size setup.
+N=INT(コマンドライン[要素数(コマンドライン)-1])
+A=[]
+64回
+配列追加(A,回数)
+ここまで
+I=0
+S=0
+N回
+S=S+A[I]
+I=I+1
+もし I>=64 ならば
+I=0
+ここまで
+ここまで
+Sを表示

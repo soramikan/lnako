@@ -1,0 +1,13 @@
+# Runtime input: number of calls to a no-argument closure with one capture.
+●(Nを)捕捉空呼出とは
+A=7
+F=関数()それはA
+ここまで
+S=0
+N回
+S=S+F()
+ここまで
+Sで戻る
+ここまで
+N=INT(コマンドライン[要素数(コマンドライン)-1])
+捕捉空呼出(N)を表示

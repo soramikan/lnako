@@ -1,0 +1,19 @@
+# Runtime input: number of indexed writes after fixed-size setup.
+N=INT(コマンドライン[要素数(コマンドライン)-1])
+A=[]
+64回
+配列追加(A,0)
+ここまで
+I=0
+N回
+A[I]=I+1
+I=I+1
+もし I>=64 ならば
+I=0
+ここまで
+ここまで
+S=0
+64回
+S=S+A[回数-1]
+ここまで
+Sを表示

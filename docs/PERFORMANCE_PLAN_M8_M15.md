@@ -8,13 +8,13 @@
 | --- | --- | --- | --- |
 | M8 | Prepared Interpreter、名前・演算子・callee・value countの事前解決、サイズクラスpool | 動的実行・capture・例外の互換性、診断benchmark比較 | 実装中 |
 | M9 | 共通capture/escape解析、Interpreter/AOTの直接local Value | 非capture関数cellゼロ、capture共有維持 | AOT側検証済み、Interpreter側実装中 |
-| M10 | AOT safepoint、参照liveness、root coloring | GC強制時の分岐・phi・loop・callback安全性、root数減少 | 未実装 |
-| M11 | Number/Boolean typed internal ABIとgeneric wrapper | NaN/Infinity/-0維持、直接・動的呼出し同値 | 未実装 |
+| M10 | AOT safepoint、参照liveness、root coloring | GC強制時の分岐・phi・loop・callback安全性、root数減少 | 実装・検証中 |
+| M11 | Number/Boolean typed internal ABIとgeneric wrapper | NaN/Infinity/-0維持、直接・動的呼出し同値 | 実装中 |
 | M12 | exact-size文字列allocation、GC/concat統計 | immutable copy量維持、UTF-16境界・GC安全性、3 OS測定 | 実装中 |
-| M13 | Windows nbody sampling・LLVM IR・assembly・imports診断 | Win64 ABI/stack/helperの実測比較と原因に基づく判断 | 未実装 |
+| M13 | Windows nbody sampling・LLVM IR・assembly・imports診断 | Win64 ABI/stack/helperの実測比較と原因に基づく判断 | 取得tool/CI実装、Windows測定未完了 |
 | M14 | Interpreter interrupt safepoint/budget、dispatch軽量化 | 割り込み応答上限、timer/callback/dynamic/global観測維持 | 未実装 |
-| M15 | compiler stage timing/index/worklist、hot builtin専用ABI/dead strip | コンパイル同値、時間・symbol/size比較 | 未実装 |
-| 診断ケース | local/global/direct/captured/index/dict/string/GC/numeric 12ケース | 正解照合、build/read/write範囲を区別 | 未実装 |
+| M15 | compiler stage timing/index/worklist、hot builtin専用ABI/dead strip | コンパイル同値、時間・symbol/size比較 | 実装・検証中 |
+| 診断ケース | local/global/direct/captured/index/dict/string/GC/numeric 12ケース | 正解照合、build/read/write範囲を区別 | 12件追加、ローカル正解照合成功、3 OS CI追加 |
 
 packed NumberArray、世代別GC、in-place文字列builderはレビューに従い先行解析・測定後に可否を判断する。安全性や測定で採用できない項目は理由と未達事項を明記し、実装済みとは扱わない。
 
@@ -38,6 +38,14 @@ packed NumberArray、世代別GC、in-place文字列builderはレビューに従
 
 - 総合dispatch再検証でglobal添字代入をlocalへ誤登録する回帰を検出。qualified名を除外し回帰テスト追加。修正後は単体911/911、上記9公式差分、dispatch総合（Interpreter 944/Node 42/AOT manifest 946/runtime 1888イベント）成功。
 
+### M13: 数値コード診断の取得手順（実装中）
+
+`tools/profile_aot_numeric.mjs --output <新規ディレクトリ>` はnbodyをO3でビルドし、正解、compiler/binary hash、LLVM IR、再生成assembly、linked disassembly、imports/symbols、runtime counters、compile traceを保存する。`static_call_sites` はIR内の静的call site数であり実行回数ではない。再生成assemblyと実際のlinked disassemblyを区別する。
+
+Windowsでは `--windows-sampling` を指定し、独立したWPR instanceでCPU traceを取得する。コマンドは[Microsoft WPR仕様](https://learn.microsoft.com/en-us/windows-hardware/test/wpt/wpr-command-line-options)に基づく。ETL取得後も解析が必要であり、原因特定済みとは扱わない。比較CIは3 OSのnumeric-profile artifactを保存する設定を追加中。Windowsの実行・分析は未完了。
+
+- macOSで開始commitのReleaseSafe compilerを使い、nbody正解照合・IR/assembly・linked disassembly・imports/symbols取得を確認した。`/private/tmp/lnako-numeric-profile-baseline/profile.json` は作業中の診断用で、3 OS性能目標の達成証拠ではない。
+
 - 予約globalの配列定数でも同分類問題があることをcoverageで検出したため、array/property代入をlocal新規定義から除外。予約globalを含む回帰テスト、単体911/911、公式差分10ケース、dispatch coverage 56 fixtures/1917 sitesが成功。
 
 ### M9a 証拠更新完了
@@ -50,3 +58,9 @@ packed NumberArray、世代別GC、in-place文字列builderはレビューに従
 - borrowed unitsはGC前にコピーし、新しい文字列をroot保持してから回収する。concat入力もGC境界でroot保持する。
 - fmt-check、単体915/915、公式差分9ケースInterpreter/AOT O0/O2成功。counting allocatorでconcat出力1 allocationを確認。
 - concat/payload/GC scan countersを追加。全allocator malloc/realloc、mark/sweep時間、peak live bytes、3 OS性能目標の検証は未完了。
+
+### 診断toolと追加benchmark
+
+- 既存v2の20ケースを保持し、`benchmarks/suites/diagnostics.json` に12ケースを追加。setupを含むprocess全体計測であることをREADMEへ明記。実装時の公式/Interpreter正解照合12件、比較結果48 rowsを確認。
+- numeric profileはsource/compiler/binary hash、取得元repository revision、IR、再生成assemblyと実際のlinked disassembly、imports、runtime countersを保存する。baseline macOSでnbody出力と取得を確認。
+- Nodeの診断suite/profile検査、LLVM prune self-test、CI構成検査と現行文書検査を実施。比較CIに3 OS診断実行とartifact保存を追加。Windows ETLは取得後の解析が必要。

@@ -1,0 +1,7 @@
+# Runtime input: number of read/write operations on a four-entry dictionary.
+N=INT(コマンドライン[要素数(コマンドライン)-1])
+D={"a":0,"b":0,"c":0,"d":0}
+N回
+D["c"]=D["c"]+1
+ここまで
+D["c"]を表示
