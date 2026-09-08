@@ -181,16 +181,25 @@ fn hasExtractComponent(rest: []const u8) bool {
 }
 
 /// 中間成分・最終のdirectory成分を順にno-followで開き、存在しなければ作成する。
-/// 既存のlinkやfileはSymLinkLoop/NotDirで失敗し、追跡しない。
+/// 既存のlink・file・その他の種別はdirectoryとして追跡しない。
+/// 判定とopenの間に差し替えられてもno-followのopenが失敗するためfail-closedで止まる。
 fn openOrCreateDirNoFollow(io: std.Io, parent: std.Io.Dir, name: []const u8) !std.Io.Dir {
-    return parent.openDir(io, name, .{ .follow_symlinks = false }) catch |first| {
-        if (first != error.FileNotFound) return first;
-        parent.createDir(io, name, .default_dir) catch |second| switch (second) {
-            error.PathAlreadyExists => {},
-            else => return second,
+    for (0..8) |_| {
+        const info = parent.statFile(io, name, .{ .follow_symlinks = false }) catch |err| switch (err) {
+            error.FileNotFound => {
+                parent.createDir(io, name, .default_dir) catch |create_err| switch (create_err) {
+                    // 並行して作成された場合は判定からやり直す。
+                    error.PathAlreadyExists => continue,
+                    else => return create_err,
+                };
+                continue;
+            },
+            else => return err,
         };
+        if (info.kind != .directory) return error.NotDir;
         return parent.openDir(io, name, .{ .follow_symlinks = false });
-    };
+    }
+    return error.ZipPathUnstable;
 }
 
 /// directory entryを出力先へ公開する。各成分をno-followで開いて作成する。
@@ -497,9 +506,8 @@ test "ZIP展開は中間成分の既存linkを追跡しない" {
     defer std.testing.allocator.free(zip_path);
     const output_path = try testOutputPath(&temporary);
     defer std.testing.allocator.free(output_path);
-    // no-followのopenはlinkをdirとして開けず失敗する（ENOTDIRまたはELOOP）。
-    const link_result = extract(io, zip_path, output_path);
-    try std.testing.expect(link_result == error.NotDir or link_result == error.SymLinkLoop);
+    // 既存linkはdirectoryとして追跡されず失敗する。
+    try std.testing.expectError(error.NotDir, extract(io, zip_path, output_path));
     // 出力先の外へfileが作成されない。
     try std.testing.expectError(error.FileNotFound, temporary.dir.statFile(io, "outside/evil.txt", .{}));
     // link自体は変更されない。
