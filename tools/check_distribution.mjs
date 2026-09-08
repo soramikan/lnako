@@ -13,7 +13,10 @@ const crcTable = Uint32Array.from({ length: 256 }, (_, index) => {
 
 const root = resolve(import.meta.dirname, "..");
 // 実QuickJSだけが持つparser診断文字列と公開ABIシンボル（同梱境界検査用）。
-const QUICKJS_MARKERS = ["unexpected token in expression", "JS_NewRuntime"];
+// 文字列literalは全OSの配布バイナリに残る。シンボル名はELF/Mach-Oの
+// 文字列表には残るが、MSVC PEではPDB側へ分離されるためpresence判定には使えない。
+const QUICKJS_STRING_MARKERS = ["unexpected token in expression"];
+const QUICKJS_SYMBOL_MARKERS = ["JS_NewRuntime"];
 const arguments_ = process.argv.slice(2);
 if (arguments_.includes("--self-test")) {
   if (arguments_.length !== 1) throw new Error("usage: node tools/check_distribution.mjs --self-test");
@@ -153,8 +156,13 @@ function verifyQuickJsBoundary(manifest, sbom, prefix, entries) {
   if (manifest.build?.compatJsIncluded !== true) throw new Error("配布manifestのcompatJsIncludedがtrueではありません");
   const binary = requireEntry(entries, `${prefix}${manifest.executable}`);
   const runtime = requireEntry(entries, `${prefix}${manifest.runtimeLibrary}`);
-  for (const marker of QUICKJS_MARKERS) {
+  const presenceMarkers = manifest.platform === "win32"
+    ? QUICKJS_STRING_MARKERS
+    : [...QUICKJS_STRING_MARKERS, ...QUICKJS_SYMBOL_MARKERS];
+  for (const marker of presenceMarkers) {
     if (!Buffer.from(binary).includes(marker)) throw new Error(`配布コンパイラにQuickJS markerがありません: ${marker}`);
+  }
+  for (const marker of [...QUICKJS_STRING_MARKERS, ...QUICKJS_SYMBOL_MARKERS]) {
     if (Buffer.from(runtime).includes(marker)) throw new Error(`AOT runtimeライブラリにQuickJS markerが混入しています: ${marker}`);
   }
   const packages = Array.isArray(sbom.packages) ? sbom.packages : [];
@@ -344,7 +352,7 @@ async function selfTest() {
   try {
     const binary = resolve(temporary, "fake-lnako");
     const runtime = resolve(temporary, "fake-runtime.a");
-    await writeFile(binary, `fake executable ${QUICKJS_MARKERS.join(" ")}\n`);
+    await writeFile(binary, `fake executable ${[...QUICKJS_STRING_MARKERS, ...QUICKJS_SYMBOL_MARKERS].join(" ")}\n`);
     await writeFile(runtime, "fake runtime without quickjs\n");
     const output = resolve(temporary, "dist");
     const targets = [...new Set([hostTarget(), "linux-x64", "windows-x64"])];
