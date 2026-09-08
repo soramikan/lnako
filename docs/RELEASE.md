@@ -50,3 +50,53 @@ node tools/check_distribution.mjs \
 このworkflowはタグやReleaseを自動で先行作成しません。source versionが`build.zig.zon`と一致しない、同じcommitの54 job全成功CI runがない、署名を検証できない場合は配布build前に停止します。
 
 `check_distribution.mjs --self-test`は実バイナリを生成せず、両形式のアーカイブ構造、manifest、SPDX SBOM、外部checksumの検証経路に加え、tar/ZIPのメタデータ改変、manifest外entry、tar終端の改変を拒否する経路を確認します。リリース前にはこれに加えて、3正式OSの全CI、互換性証拠、性能結果、署名済みタグを確認し、CIが未完了または失敗の状態でタグを作成しません。
+
+
+## macOS Developer ID署名とApple公証
+
+Release workflowはstandard/full両版でDeveloper ID Application署名と公証を必須にします。
+タグpush・手動実行の両方で実施し、資格情報不足、署名不正、公証がAccepted以外、
+Gatekeeper検証失敗のいずれかなら配布assetのuploadへ進みません。手動実行では公開しません。
+実証明書での成功実績は、資格情報設定後の手動Release workflowで確認してください。
+
+GitHub Environment `release-signing` に次のSecretsを登録します。EnvironmentはmacOS jobだけが使用します。
+
+| Secret | 内容 |
+| --- | --- |
+| `MACOS_CERTIFICATE_P12_BASE64` | 秘密鍵込みのDeveloper ID Application証明書（p12）のBase64 |
+| `MACOS_CERTIFICATE_PASSWORD` | p12のパスワード |
+| `APPLE_NOTARY_KEY_P8_BASE64` | App Store ConnectのチームAPI秘密鍵（p8）のBase64 |
+| `APPLE_NOTARY_KEY_ID` | API Key ID |
+| `APPLE_NOTARY_ISSUER_ID` | チームAPI KeyのIssuer ID |
+
+Environmentのdeployment branch/tag制限は信頼するrelease元に限定してください。
+証明書は一時Keychainへimportし、秘密鍵ファイル・Keychainは`always()`のcleanupで削除します。
+署名identityはimportしたKeychainからDeveloper ID Applicationを一意に選択します。
+証明書そのものや秘密鍵はartifactへ含めません。
+
+`create_distribution.mjs --sign-macos` は配布stagingへコピーしたMach-Oを検出し、
+dylib、補助実行ファイル、lnako本体の順でsecure timestamp付き署名を行います。
+LLVMキャッシュと`zig-out`は変更しません。実行ファイルにはHardened Runtimeを有効にします。
+本体Identifierは **`io.github.soramikan.lnako`**、補助コードはその`.toolchain.`配下です。
+静的ライブラリはcodesign対象外です。
+
+`packaging/macos/lnako.entitlements` の `com.apple.security.cs.disable-library-validation` を
+本体だけに付与し、第三者ネイティブプラグインとstandard版の外部LLVMをロード可能にします。
+JIT、未署名実行メモリ、DYLD環境変数、debug用の例外は追加しません。
+署名後のbytesからmanifest、SBOM、archive、SHA-256を生成します。
+
+完成したtar.gzを検証・展開し、署名済み本体で既存Native Plugin ABI検査
+（Interpreter、AOT O0〜O3、異常系）とQuickJS smokeを実行します。
+full版ではLLVM環境変数を外して同梱LLVMを使用します。
+同じ展開treeを一時ZIPとして`notarytool submit --wait`へ送り、Acceptedを確認した後、
+全Mach-Oを`codesign --verify --strict -R=notarized --check-notarization`で検証します。
+参照計画の`spctl --type execute`はapp向けのため、standalone CLI/dylib向けの検査へ置き換えています。
+submission IDはActions summary、notary log（成功時のwarningを含む）は別artifactへ30日保存します。
+公証ZIPは破棄し、公開するtar.gzの内容や既存のRelease asset数は変更しません。
+
+standalone CLIとtar.gzにはticketをstapleできないため、初回のGatekeeper確認には
+ネット接続が必要になる場合があります。pkg/dmg追加とstaplingは未実装です。
+
+根拠: [Appleの公証workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow)、
+[Library Validation例外](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.cs.disable-library-validation)、
+[CLI等の公証確認](https://developer.apple.com/forums/thread/130560)。

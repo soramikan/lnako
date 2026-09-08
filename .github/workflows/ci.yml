@@ -105,6 +105,8 @@ jobs:
           set -euo pipefail
           node tools/check_ci_workflow.mjs
           node tools/check_release_workflow.mjs
+          # Mock notarization IDs must not be written to the real job summary.
+          GITHUB_STEP_SUMMARY= node --test tools/macos_signing.test.mjs
           node tools/check_dispatch_attestation_security.mjs
           node tools/check_tracked_dispatch_attestation.mjs --offline
           node tools/check_tracked_dispatch_attestation_security.mjs

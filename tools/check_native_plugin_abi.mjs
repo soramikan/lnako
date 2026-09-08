@@ -5,13 +5,13 @@ import { spawnSync } from "node:child_process";
 
 const root = resolve(import.meta.dirname, "..");
 const temporary = await mkdtemp(join(tmpdir(), "lnako-native-plugin-"));
-const executable = resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
+const executable = process.env.LNAKO_TEST_EXECUTABLE ?? resolve(root, "zig-out/bin", process.platform === "win32" ? "lnako.exe" : "lnako");
 const pluginExtension = process.platform === "win32" ? ".dll" : process.platform === "darwin" ? ".dylib" : ".so";
 const buildOptions = process.argv.includes("--release-safe") ? ["-Doptimize=ReleaseSafe"] : [];
 
 try {
   run("zig", ["build", ...buildOptions, "native-plugin-fixture"]);
-  run("zig", ["build", ...buildOptions]);
+  if (!process.env.LNAKO_TEST_EXECUTABLE) run("zig", ["build", ...buildOptions]);
   const plugin = await findPlugin(resolve(root, "zig-out"), /lnako[_-]test[_-]plugin/i);
   const invalidPlugin = await findPlugin(resolve(root, "zig-out"), /lnako[_-]invalid[_-]plugin/i);
   const source = resolve(temporary, "native-plugin.nako3");

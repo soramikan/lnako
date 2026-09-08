@@ -105,6 +105,7 @@ jobs:
         include:
           - target: macos-arm64
             os: macos-15
+            environment: release-signing
             executable: lnako
             runtime: liblnako_runtime.a
             extension: tar.gz
@@ -119,7 +120,8 @@ jobs:
             runtime: lnako_runtime.lib
             extension: zip
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    environment: ${{ matrix.environment }}
+    timeout-minutes: 120
     env:
       LNAKO_VERSION: ${{ needs.preflight.outputs.version }}
     steps:
@@ -214,12 +216,24 @@ jobs:
           node tools/check_benchmark_result.mjs \
             --json "$RUNNER_TEMP/benchmark-${{ matrix.target }}.json" \
             --markdown "$RUNNER_TEMP/benchmark-${{ matrix.target }}.md"
+      - name: Prepare macOS signing keychain
+        if: matrix.target == 'macos-arm64'
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: node tools/macos_signing.mjs setup
       - name: Create distribution archives
         shell: bash
         run: |
+          set -euo pipefail
+          signing_args=()
+          if [[ "${{ matrix.target }}" == "macos-arm64" ]]; then signing_args+=(--sign-macos); fi
           # standard版はLLVMを同梱しない。ユーザーは`lnako toolchain install`で
           # pin済みLLVMを導入するか、LNAKO_LLVM_DIRで既存LLVMを指定する。
-          node tools/create_distribution.mjs \
+          node tools/create_distribution.mjs "${signing_args[@]}" \
             --version "$LNAKO_VERSION" \
             --target "${{ matrix.target }}" \
             --variant standard \
@@ -227,7 +241,7 @@ jobs:
             --binary "$GITHUB_WORKSPACE/zig-out/bin/${{ matrix.executable }}" \
             --runtime "$GITHUB_WORKSPACE/zig-out/lib/${{ matrix.runtime }}"
           # full版はLLVM/LLDをllvm/へ同梱し、導入直後からオフラインで`lnako build`できる。
-          node tools/create_distribution.mjs \
+          node tools/create_distribution.mjs "${signing_args[@]}" \
             --version "$LNAKO_VERSION" \
             --target "${{ matrix.target }}" \
             --variant full \
@@ -243,6 +257,26 @@ jobs:
             --archive "$RUNNER_TEMP/dist-standard/lnako-${LNAKO_VERSION}-${{ matrix.target }}.${{ matrix.extension }}"
           node tools/check_distribution.mjs \
             --archive "$RUNNER_TEMP/dist-full/lnako-${LNAKO_VERSION}-${{ matrix.target }}-full.${{ matrix.extension }}"
+      - name: Notarize and assess signed macOS distributions
+        if: matrix.target == 'macos-arm64'
+        env:
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: >-
+          node tools/macos_signing.mjs notarize
+          "${{ runner.temp }}/dist-standard/lnako-${{ needs.preflight.outputs.version }}-macos-arm64.tar.gz"
+          "${{ runner.temp }}/dist-full/lnako-${{ needs.preflight.outputs.version }}-macos-arm64-full.tar.gz"
+      - name: Preserve macOS notarization logs
+        if: always() && matrix.target == 'macos-arm64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-notarization-logs
+          path: ${{ runner.temp }}/*.notary-log.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Remove macOS signing credentials
+        if: always() && matrix.target == 'macos-arm64'
+        run: node tools/macos_signing.mjs cleanup
       - name: Stage release assets
         shell: bash
         run: |

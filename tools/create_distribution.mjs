@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { signPayload } from "./macos_signing.mjs";
 
 const crcTable = Uint32Array.from({ length: 256 }, (_, index) => {
   let value = index;
@@ -34,6 +35,7 @@ function parseArguments(arguments_) {
     target: hostTarget(),
     requireLlvm: false,
     variant: "standard",
+    signMacos: false,
   };
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index];
@@ -52,6 +54,8 @@ function parseArguments(arguments_) {
     } else if (argument === "--target") {
       parsed.target = nextValue(arguments_, ++index, argument);
       if (!targetSpec(parsed.target)) throw new Error(`正式対象外の配布targetです: ${parsed.target}`);
+    } else if (argument === "--sign-macos") {
+      parsed.signMacos = true;
     } else if (argument === "--require-llvm") {
       parsed.requireLlvm = true;
     } else if (argument === "--variant") {
@@ -70,6 +74,7 @@ function parseArguments(arguments_) {
 
 async function createDistribution(options_) {
   const spec = targetSpec(options_.target);
+  if (options_.signMacos && (spec.platform !== "darwin" || process.platform !== "darwin")) throw new Error("--sign-macos requires a macOS target and host");
   const binary = options_.binary ?? defaultBinary(spec);
   const runtime = options_.runtime ?? defaultRuntime(spec);
   await requireFile(binary, "lnako実行ファイル");
@@ -89,8 +94,11 @@ async function createDistribution(options_) {
 
   try {
     await copyPayload(stagingRoot, binary, runtime, options_.llvm, spec);
+    if (options_.signMacos) await signPayload(stagingRoot, {
+      identity: process.env.LNAKO_SIGNING_IDENTITY, keychain: process.env.LNAKO_SIGNING_KEYCHAIN,
+    });
     const payloadFiles = await collectFiles(stagingRoot);
-    const manifest = createManifest(options_, spec, binary, runtime, payloadFiles, await gitState());
+    const manifest = createManifest(options_, spec, resolve(stagingRoot, "bin", spec.executable), resolve(stagingRoot, "lib", spec.runtimeLibrary), payloadFiles, await gitState());
     await writeJson(resolve(stagingRoot, "manifest.json"), manifest);
     const manifestFiles = await collectFiles(stagingRoot);
     const sbom = createSbom(options_, spec, manifestFiles, manifest);
@@ -502,6 +510,7 @@ function usage() {
   --binary <absolute-path>  lnako実行ファイル
   --runtime <absolute-path> AOTランタイム静的ライブラリ
   --llvm-dir <absolute-path> 同梱するLLVM/LLD配布ルート（full版のみ）
+  --sign-macos               配布用コピーをDeveloper ID署名してからhashを生成する
   --require-llvm             LLVM/LLD同梱を必須にする
   --variant <variant>        standard（既定、LLVM非同梱）/ full（LLVM同梱、--llvm-dir必須）
 `;

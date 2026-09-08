@@ -110,3 +110,23 @@ for (const required of ["lib/libc++.1.dylib", "lib/libc++abi.1.dylib", "lib/libu
   }
 }
 console.log("Release workflow構成検査: 3正式OS build・benchmark・standard/full distribution・checksum／SBOM・tag gate成功");
+
+// Signing must apply to both variants and both tag/manual runs, before upload.
+const signingSetup = workflow.match(/- name: Prepare macOS signing keychain\n[\s\S]*?(?=\n      - name:)/)?.[0] ?? "";
+const notarize = workflow.match(/- name: Notarize and assess signed macOS distributions\n[\s\S]*?(?=\n      - name:)/)?.[0] ?? "";
+const cleanup = workflow.match(/- name: Remove macOS signing credentials\n[\s\S]*?(?=\n      - name:)/)?.[0] ?? "";
+if (!workflow.includes("environment: release-signing") || !workflow.includes("environment: ${{ matrix.environment }}") ||
+    !signingSetup.includes("if: matrix.target == 'macos-arm64'") || signingSetup.includes("github.event_name") ||
+    !notarize.includes("if: matrix.target == 'macos-arm64'") || notarize.includes("github.event_name") ||
+    !notarize.includes("dist-standard/") || !notarize.includes("dist-full/") ||
+    !cleanup.includes("if: always() && matrix.target == 'macos-arm64'") ||
+    !cleanup.includes("node tools/macos_signing.mjs cleanup") ||
+    !workflow.includes("signing_args+=(--sign-macos)") ||
+    (workflow.match(/node tools\/create_distribution.mjs "\$\{signing_args\[@\]\}"/g) ?? []).length !== 2 ||
+    workflow.indexOf("- name: Notarize and assess") > workflow.indexOf("- name: Stage release assets")) {
+  throw new Error("macOSの署名・公証・cleanup gateが不完全です");
+}
+if (distribution.indexOf("await signPayload(stagingRoot") > distribution.indexOf("const payloadFiles = await collectFiles(stagingRoot)") ||
+    !distribution.includes('resolve(stagingRoot, "bin", spec.executable), resolve(stagingRoot, "lib", spec.runtimeLibrary)')) {
+  throw new Error("署名後のpayloadからmanifestを生成してください");
+}
