@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 418,
-    "nativeAot": 316,
+    "total": 419,
+    "nativeAot": 317,
     "interpreter": 112,
     "compatJs": 9
   },
@@ -14418,6 +14418,7 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
+        "native-system-int-string-single-rounding",
         "native-system-number-conversion-commands"
       ],
       "compatJsFixtureIds": [],
@@ -14430,6 +14431,9 @@
         },
         "aot": {
           "native-cut-commands": [
+            "fixture.commands"
+          ],
+          "native-system-int-string-single-rounding": [
             "fixture.commands"
           ],
           "native-system-number-conversion-commands": [
@@ -14468,6 +14472,7 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
+        "native-system-int-string-single-rounding",
         "native-system-number-conversion-commands"
       ],
       "compatJsFixtureIds": [],
@@ -14480,6 +14485,9 @@
         },
         "aot": {
           "native-cut-commands": [
+            "fixture.commands"
+          ],
+          "native-system-int-string-single-rounding": [
             "fixture.commands"
           ],
           "native-system-number-conversion-commands": [
@@ -14627,6 +14635,7 @@
       "aotFixtureIds": [
         "native-cut-commands",
         "native-numeric-fixed-abi-boundaries",
+        "native-system-int-string-single-rounding",
         "native-system-number-conversion-commands"
       ],
       "compatJsFixtureIds": [],
@@ -14642,6 +14651,9 @@
             "fixture.commands"
           ],
           "native-numeric-fixed-abi-boundaries": [
+            "fixture.commands"
+          ],
+          "native-system-int-string-single-rounding": [
             "fixture.commands"
           ],
           "native-system-number-conversion-commands": [

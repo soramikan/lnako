@@ -80,16 +80,49 @@ pub fn parseIntPrefix(source: []const u16, radix_value: ?f64) f64 {
         index += 2;
     }
     if (radix == 0) radix = 10;
-    var result: f64 = 0;
+    // 桁をf64で逐次蓄積すると各stepでbinary64丸めが起き、公式の一度だけの
+    // 丸めと一致しない。u1024で正確に蓄積し、最後にnearest/ties-to-evenで
+    // 一度だけ丸める。u1024はbinary64の有限範囲全体を覆う。
+    var magnitude: u1024 = 0;
+    var overflowed = false;
     var digits: usize = 0;
     while (index < units.len) : (index += 1) {
         const digit = digitValue(units[index]) orelse break;
         if (digit >= radix) break;
-        result = result * @as(f64, @floatFromInt(radix)) + @as(f64, @floatFromInt(digit));
+        if (!overflowed) {
+            if (magnitude > (std.math.maxInt(u1024) - @as(u1024, digit)) / radix) {
+                overflowed = true;
+            } else {
+                magnitude = magnitude * radix + digit;
+            }
+        }
         digits += 1;
     }
     if (digits == 0) return std.math.nan(f64);
+    const result: f64 = if (overflowed) std.math.inf(f64) else integerMagnitudeToF64(magnitude);
     return if (negative) -result else result;
+}
+
+/// 正確な整数の絶対値をbinary64のnearest/ties-to-evenで一度だけ丸める。
+/// `@floatFromInt(u1024)` はこのLLVM環境で未対応のため、上位53bitへの
+/// 切出し＋half/sticky判定＋2のべき乗算で組み立てる。
+fn integerMagnitudeToF64(magnitude: u1024) f64 {
+    if (magnitude == 0) return 0;
+    const bit_count = 1024 - @clz(magnitude);
+    if (bit_count <= 53) return @floatFromInt(@as(u64, @truncate(magnitude)));
+    var shift: u10 = @intCast(bit_count - 53);
+    var top: u64 = @truncate(magnitude >> shift);
+    const remainder = magnitude & ((@as(u1024, 1) << shift) - 1);
+    const half = @as(u1024, 1) << @as(u10, @intCast(shift - 1));
+    if (remainder > half or (remainder == half and (top & 1) == 1)) {
+        top += 1;
+        if (top == (@as(u64, 1) << 53)) {
+            top >>= 1;
+            shift += 1;
+        }
+    }
+    const mantissa: f64 = @floatFromInt(top);
+    return mantissa * std.math.pow(f64, 2, @floatFromInt(shift));
 }
 
 pub fn integerToRadixAlloc(allocator: std.mem.Allocator, number: f64, radix: u8) ![]u8 {
@@ -223,6 +256,12 @@ test "RGBは各parseInt結果の16進表現から末尾2文字を取る" {
     try std.testing.expectEqualStrings("#00010f", wrapped);
 }
 
+fn testUnits(comptime text: []const u8) [text.len]u16 {
+    var units: [text.len]u16 = undefined;
+    for (text, 0..) |character, index| units[index] = character;
+    return units;
+}
+
 test "roundHalfPositiveはbinary64の中間丸めを避け境界を保つ" {
     // 0.5直前の最大有限値は切り捨て側のまま（floor(value+0.5)では1になる）。
     try std.testing.expectEqual(@as(f64, 0), roundHalfPositive(0.49999999999999994));
@@ -251,4 +290,29 @@ test "roundHalfPositiveはbinary64の中間丸めを避け境界を保つ" {
     try std.testing.expectEqual(std.math.inf(f64), roundHalfPositive(std.math.inf(f64)));
     try std.testing.expectEqual(-std.math.inf(f64), roundHalfPositive(-std.math.inf(f64)));
     try std.testing.expect(std.math.isNan(roundHalfPositive(std.math.nan(f64))));
+}
+
+test "parseIntPrefixは整数文字列を一度だけbinary64へ丸める" {
+    const expect_bits = struct {
+        fn call(expected: u64, source: []const u16, radix: ?f64) !void {
+            try std.testing.expectEqual(expected, @as(u64, @bitCast(parseIntPrefix(source, radix))));
+        }
+    }.call;
+    // f64逐次蓄積では0x43a9000000000000になるが、一度だけ丸めると0x...01。
+    try expect_bits(0x43a9000000000001, &testUnits("900719925474099267"), null);
+    try expect_bits(0xc3a9000000000001, &testUnits("-900719925474099267"), null);
+    // 2^53直前・tieの偶数側。
+    try expect_bits(0x4340000000000000, &testUnits("9007199254740993"), null);
+    try expect_bits(0x4340000000000002, &testUnits("9007199254740995"), null);
+    // 16進・36進の長い文字列。
+    try expect_bits(0x43b234567890abce, &testUnits("0x1234567890abcdef"), null);
+    try expect_bits(0x466517168a4523fd, &testUnits("zzzzzzzzzzzzzzzzzzzz"), 36);
+    // 有限最大値の境界と、超過時のInfinity。
+    try expect_bits(0x7fefffffffffffff, &testUnits("17976931348623157" ++ "0" ** 292), null);
+    try expect_bits(0x7ff0000000000000, &testUnits("2" ++ "0" ** 308), null);
+    try expect_bits(0x7ff0000000000000, &testUnits("f" ** 400), 16);
+    // 任意長の先頭ゼロ・末尾無効文字・負のゼロを維持する。
+    try expect_bits(0x43a9000000000001, &testUnits("0000000000900719925474099267tail"), null);
+    try expect_bits(0x8000000000000000, &testUnits("  -0abc"), null);
+    try std.testing.expect(std.math.isNan(parseIntPrefix(&testUnits("xyz"), null)));
 }
