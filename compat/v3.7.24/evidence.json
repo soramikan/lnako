@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 417,
-    "nativeAot": 315,
+    "total": 418,
+    "nativeAot": 316,
     "interpreter": 112,
     "compatJs": 9
   },
@@ -19929,7 +19929,8 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
-        "native-math-deterministic"
+        "native-math-deterministic",
+        "native-math-round-binary64-boundary"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -19944,6 +19945,9 @@
             "fixture.commands"
           ],
           "native-math-deterministic": [
+            "fixture.commands"
+          ],
+          "native-math-round-binary64-boundary": [
             "fixture.commands"
           ]
         },
@@ -19979,7 +19983,8 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
-        "native-math-deterministic"
+        "native-math-deterministic",
+        "native-math-round-binary64-boundary"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -19994,6 +19999,9 @@
             "fixture.commands"
           ],
           "native-math-deterministic": [
+            "fixture.commands"
+          ],
+          "native-math-round-binary64-boundary": [
             "fixture.commands"
           ]
         },
@@ -20129,7 +20137,8 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
-        "native-math-deterministic"
+        "native-math-deterministic",
+        "native-math-round-binary64-boundary"
       ],
       "compatJsFixtureIds": [],
       "associationOrigin": {
@@ -20144,6 +20153,9 @@
             "fixture.commands"
           ],
           "native-math-deterministic": [
+            "fixture.commands"
+          ],
+          "native-math-round-binary64-boundary": [
             "fixture.commands"
           ]
         },

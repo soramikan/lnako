@@ -44,6 +44,18 @@ pub fn parseFloatPrefix(allocator: std.mem.Allocator, source: []const u16) !f64 
     return std.fmt.parseFloat(f64, ascii) catch std.math.nan(f64);
 }
 
+/// ECMAScriptのMath.round相当（同位は+∞側）。`floor(value + 0.5)` は中間の
+/// 加算で先にbinary64丸めが起きるため、整数部分と小数部分を分けて0.5と
+/// 正確に比較する。NaN・±Infinity・±0は保持し、(-0.5, 0]の結果は負のゼロを維持する。
+pub fn roundHalfPositive(value: f64) f64 {
+    if (!std.math.isFinite(value) or value == 0) return value;
+    const lower = @floor(value);
+    const fraction = value - lower;
+    const result = if (fraction >= 0.5) lower + 1 else lower;
+    if (result == 0) return if (std.math.signbit(value)) -0.0 else 0.0;
+    return result;
+}
+
 pub fn parseIntPrefix(source: []const u16, radix_value: ?f64) f64 {
     const units = string_mod.trimWhitespace(source);
     if (units.len == 0) return std.math.nan(f64);
@@ -209,4 +221,34 @@ test "RGBは各parseInt結果の16進表現から末尾2文字を取る" {
     const wrapped = try rgbAlloc(std.testing.allocator, .{ 256, 257, 15 });
     defer std.testing.allocator.free(wrapped);
     try std.testing.expectEqualStrings("#00010f", wrapped);
+}
+
+test "roundHalfPositiveはbinary64の中間丸めを避け境界を保つ" {
+    // 0.5直前の最大有限値は切り捨て側のまま（floor(value+0.5)では1になる）。
+    try std.testing.expectEqual(@as(f64, 0), roundHalfPositive(0.49999999999999994));
+    try std.testing.expectEqual(@as(f64, 0), roundHalfPositive(-0.49999999999999994));
+    // 0.5以降と同位は+∞側へ。
+    try std.testing.expectEqual(@as(f64, 1), roundHalfPositive(0.5));
+    try std.testing.expectEqual(@as(f64, 2), roundHalfPositive(1.5));
+    try std.testing.expectEqual(@as(f64, 3), roundHalfPositive(2.5));
+    try std.testing.expectEqual(@as(f64, -1), roundHalfPositive(-0.6));
+    try std.testing.expectEqual(@as(f64, -1), roundHalfPositive(-1.5));
+    try std.testing.expectEqual(@as(f64, -2), roundHalfPositive(-2.5));
+    // (-0.5, 0)と負のsubnormalは負のゼロを維持する。
+    try std.testing.expect(std.math.signbit(roundHalfPositive(-0.4)));
+    try std.testing.expect(std.math.signbit(roundHalfPositive(-0.5)));
+    try std.testing.expect(std.math.signbit(roundHalfPositive(-5e-324)));
+    try std.testing.expect(!std.math.signbit(roundHalfPositive(0.4)));
+    try std.testing.expect(!std.math.signbit(roundHalfPositive(0)));
+    try std.testing.expect(std.math.signbit(roundHalfPositive(-0.0)));
+    // 安全整数範囲内の正確な整数は変更しない（floor(value+0.5)では+1される）。
+    try std.testing.expectEqual(@as(f64, 4503599627370497), roundHalfPositive(4503599627370497));
+    try std.testing.expectEqual(@as(f64, -4503599627370497), roundHalfPositive(-4503599627370497));
+    try std.testing.expectEqual(@as(f64, 4503599627370496), roundHalfPositive(4503599627370495.5));
+    // subnormal・最大有限値・非有限を保持する。
+    try std.testing.expectEqual(@as(f64, 0), roundHalfPositive(5e-324));
+    try std.testing.expectEqual(@as(f64, 1.7976931348623157e308), roundHalfPositive(1.7976931348623157e308));
+    try std.testing.expectEqual(std.math.inf(f64), roundHalfPositive(std.math.inf(f64)));
+    try std.testing.expectEqual(-std.math.inf(f64), roundHalfPositive(-std.math.inf(f64)));
+    try std.testing.expect(std.math.isNan(roundHalfPositive(std.math.nan(f64))));
 }

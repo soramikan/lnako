@@ -66,16 +66,16 @@
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
     "lnako": {
-      "binarySha256": "f824e2a697e414ec64ed0d210cc73fe90cb7ff63e6e0493ce5bf23595da4ceff",
-      "sourceManifestSha256": "77f6341fd035cb418bbe1725dddff2e48bb9bb89727ba618f8bb79038c3d60f6"
+      "binarySha256": "bbd547d57e5906261c4aded85e2791ca092a84d0eae42415b4ff3dcb1e082e7d",
+      "sourceManifestSha256": "b4050df5180522c47eb5613acb34e93f249427b481b8b305567e67f41c8ab407"
     },
     "raw": {
       "interpreterTraceSha256": "2e6ec07ffc14872d49405eebab21dabbcd5d5d5ac2e000cdef4967cdae5aad3c",
       "aotTraceSha256": "29f838c4860b7a6b36b5bc12699d08cc224529255cd99782c2801558857ee42b",
-      "globalManifestSha256": "2886b2cdceaa6ef4b3b5726af654297ba4b7641087c7f1f2478f81d095dd387d",
+      "globalManifestSha256": "0bdf0b70e93c37daaedf98b7481eb7f19a0498baedbdb51a192881c54cfb0218",
       "literalInterpreterTraceSha256": "d1a240ca85bb6425f4ad3e15b23d56a4366b64e8631f58b1af10c96a38b65232",
       "literalAotTraceSha256": "b503b7eae644c3b3cc2fbe7504669a86aa68f5db0642b31b5d61cde895e2a1ea",
-      "literalManifestSha256": "525292426c975b7da5ccdffe87f21bf2ac3d8cb9a32244db195c645aad7fef33"
+      "literalManifestSha256": "048c61063f64807545716de71a959c6961a1ee00fb72d7b5866b148dd4c3b8dc"
     }
   },
   "trace": {

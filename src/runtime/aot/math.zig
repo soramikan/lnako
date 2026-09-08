@@ -349,10 +349,7 @@ pub fn mathDecimalRound(runtime: *Runtime, source: Value, digits_value: Value, m
 }
 
 pub fn mathRound(value: f64) f64 {
-    if (!std.math.isFinite(value) or value == 0) return value;
-    const result = @floor(value + 0.5);
-    if (result == 0 and value < 0) return -0.0;
-    return result;
+    return number_mod.roundHalfPositive(value);
 }
 
 test "AOT純粋数値builtin専用ABIはgeneric結果と例外境界を保つ" {
@@ -390,13 +387,19 @@ test "AOT純粋数値builtin専用ABIはgeneric結果と例外境界を保つ" {
     state.lnako_aot_builtin_call(&generic, @ptrCast(&input), 1, @intFromEnum(aot_builtin.Command.to_int));
     try std.testing.expectEqual(@as(f64, @bitCast(generic.payload)), @as(f64, @bitCast(specialized.payload)));
 
+    // binary64の中間丸めで誤る境界を専用ABIでもgenericと同じく保つ。
+    state.lnako_aot_math_unary_f64_call_site(&specialized, 0.49999999999999994, @intFromEnum(aot_builtin.Command.math_round), 0x1a);
+    try std.testing.expectEqual(@as(f64, 0), @as(f64, @bitCast(specialized.payload)));
+    state.lnako_aot_math_unary_f64_call_site(&specialized, 4503599627370497, @intFromEnum(aot_builtin.Command.math_round), 0x1b);
+    try std.testing.expectEqual(@as(f64, 4503599627370497), @as(f64, @bitCast(specialized.payload)));
+
     state.lnako_aot_math_unary_f64_call_site(&specialized, 2, @intFromEnum(aot_builtin.Command.math_atan2), 0x17);
     try std.testing.expectEqual(Tag.undefined, @as(Tag, @enumFromInt(specialized.tag)));
     try std.testing.expect(state.active_runtime.?.has_pending_exception);
     _ = state.active_runtime.?.takeException();
     const math_counters = state.active_runtime.?.counters.aot_math_f64;
-    try std.testing.expectEqual(@as(u64, 7), math_counters.calls);
-    try std.testing.expectEqual(@as(u64, 6), math_counters.successes);
+    try std.testing.expectEqual(@as(u64, 9), math_counters.calls);
+    try std.testing.expectEqual(@as(u64, 8), math_counters.successes);
     try std.testing.expectEqual(@as(u64, 1), math_counters.failures);
     const generic_counters = state.active_runtime.?.counters.aot_generic_builtin;
     try std.testing.expectEqual(@as(u64, 1), generic_counters.calls);

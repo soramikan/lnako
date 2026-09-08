@@ -111,13 +111,13 @@
       "treeSha256": "7009b9bc0e96e9dfa3b51ad6a39685abfd4821435b202763b71ac53c6d444e64"
     },
     "lnako": {
-      "binarySha256": "f824e2a697e414ec64ed0d210cc73fe90cb7ff63e6e0493ce5bf23595da4ceff",
-      "sourceManifestSha256": "77f6341fd035cb418bbe1725dddff2e48bb9bb89727ba618f8bb79038c3d60f6"
+      "binarySha256": "bbd547d57e5906261c4aded85e2791ca092a84d0eae42415b4ff3dcb1e082e7d",
+      "sourceManifestSha256": "b4050df5180522c47eb5613acb34e93f249427b481b8b305567e67f41c8ab407"
     },
     "raw": {
       "interpreterTraceSha256": "699eaa0629ccf1fdbc9f8c9045ff30874901343ec9ad13d2c146aa90b4de4933",
       "aotTraceSha256": "c8dcd41352d8ed314224f7848b084affda8e40b2b8c9baba610497a05912f974",
-      "globalManifestSha256": "bb19700872dded34387eea986291d554c69b8b4163f63a53de3bdaa1934a7aec"
+      "globalManifestSha256": "f7193c0217ea8d525e15bd2593931e5ed500992c2f44901d51c68217c1933dc3"
     }
   },
   "trace": {
