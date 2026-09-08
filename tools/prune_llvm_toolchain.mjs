@@ -115,6 +115,8 @@ function shouldKeepFile(path, keep, platform) {
   if (keep.has(path)) return true;
   if (path.startsWith("lib/clang/")) return true;
   if (platform === "win32" && path.toLowerCase().startsWith("lib/clang/")) return true;
+  // 管理markerを残す。消すとcache復元後にisCurrent()がfalseになり全ジョブが再downloadする。
+  if (path === ".lnako-toolchain.json") return true;
   return false;
 }
 

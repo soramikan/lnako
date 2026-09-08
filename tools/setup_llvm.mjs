@@ -33,7 +33,8 @@ try {
 } catch (error) {
   console.error(`setup_llvm.mjs failed: ${error}`);
   if (error.stack) console.error(error.stack);
-  process.exit(1);
+  // Windowsではprocess.exitがpipe宛の未flush stderrを落とすためexitCodeで自然終了させる。
+  process.exitCode = 1;
 }
 
 async function isCurrent() {
@@ -48,6 +49,24 @@ async function isCurrent() {
 }
 
 async function install() {
+  const attempts = 3;
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await installOnce();
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        console.error(`LLVMセットアップに失敗しました（${attempt}/${attempts}）。再試行します: ${error}`);
+        await new Promise((resolve_) => setTimeout(resolve_, 2000 * attempt));
+      }
+    }
+  }
+  throw lastError;
+}
+
+async function installOnce() {
   await mkdir(cacheRoot, { recursive: true });
   const staging = resolve(cacheRoot, `.llvm-staging-${platformKey}-${process.pid}`);
   const archive = resolve(staging, "llvm.tar.xz");

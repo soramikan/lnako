@@ -672,7 +672,8 @@ fn pruneDirectory(allocator: std.mem.Allocator, io: std.Io, directory: std.Io.Di
                 }
             },
             .file, .sym_link => {
-                if (keep.contains(relative) or std.mem.startsWith(u8, relative, "lib/clang/")) continue;
+                if (keep.contains(relative) or std.mem.eql(u8, relative, marker_file_name) or
+                    std.mem.startsWith(u8, relative, "lib/clang/")) continue;
                 directory.deleteFile(io, entry.name) catch directory.deleteTree(io, entry.name) catch {};
             },
             else => {},
@@ -811,6 +812,7 @@ test "pruneLlvmTreeがkeep-listのみ残す" {
         "bin/unused-tool",               llvm_library_candidates[0],
         "lib/clang/22/include/stddef.h", "lib/libunused.a",
         "include/unused.h",              "share/unused/file",
+        marker_file_name,
     };
     for (writes) |relative| {
         const path = try std.fs.path.join(std.testing.allocator, &.{ base, relative });
@@ -819,7 +821,7 @@ test "pruneLlvmTreeがkeep-listのみ残す" {
         try std.Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = path, .data = "fake" });
     }
     try pruneLlvmTree(std.testing.allocator, std.testing.io, base);
-    for ([_][]const u8{ clang_rel, lld_rel, llvm_library_candidates[0], "lib/clang/22/include/stddef.h" }) |relative| {
+    for ([_][]const u8{ clang_rel, lld_rel, llvm_library_candidates[0], "lib/clang/22/include/stddef.h", marker_file_name }) |relative| {
         try std.testing.expect(fileExists(std.testing.io, base, relative));
     }
     for ([_][]const u8{ "bin/unused-tool", "lib/libunused.a", "include", "share" }) |relative| {
