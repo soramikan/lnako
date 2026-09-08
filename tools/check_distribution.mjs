@@ -12,6 +12,8 @@ const crcTable = Uint32Array.from({ length: 256 }, (_, index) => {
 });
 
 const root = resolve(import.meta.dirname, "..");
+// 実QuickJSだけが持つparser診断文字列と公開ABIシンボル（同梱境界検査用）。
+const QUICKJS_MARKERS = ["unexpected token in expression", "JS_NewRuntime"];
 const arguments_ = process.argv.slice(2);
 if (arguments_.includes("--self-test")) {
   if (arguments_.length !== 1) throw new Error("usage: node tools/check_distribution.mjs --self-test");
@@ -69,7 +71,7 @@ function validateManifest(manifest, prefix, entries) {
     throw new Error("配布manifestのschemaまたは識別子が不正です");
   }
   if (!manifest.source || !/^[0-9a-f]{40}$/.test(manifest.source.commit) || typeof manifest.source.dirty !== "boolean") throw new Error("配布manifestのsourceが不正です");
-  if (!manifest.build || manifest.build.zig !== "0.16.0" || manifest.build.llvm !== "22.1.8" || manifest.build.compatJsIncluded !== false) throw new Error("配布manifestの固定toolchain情報が不正です");
+  if (!manifest.build || manifest.build.zig !== "0.16.0" || manifest.build.llvm !== "22.1.8" || manifest.build.compatJsIncluded !== true) throw new Error("配布manifestの固定toolchain情報が不正です");
   if (!manifest.toolchain || typeof manifest.toolchain.included !== "boolean" || !Array.isArray(manifest.toolchain.files)) throw new Error("配布manifestのtoolchainが不正です");
   const binary = validateManifestArtifact(manifest.artifacts?.binary, prefix, entries, "binary");
   const runtime = validateManifestArtifact(manifest.artifacts?.runtime, prefix, entries, "runtime");
@@ -135,6 +137,28 @@ function validateArchiveContents(manifest, sbom, prefix, entries) {
   }
   if (actualSbomFiles.size !== expectedSbomFiles.size) throw new Error("SBOMのfile一覧がアーカイブと一致しません");
   for (const name of expectedSbomFiles) if (!actualSbomFiles.has(name)) throw new Error(`SBOMに対応するfileがありません: ${name}`);
+
+  verifyQuickJsBoundary(manifest, sbom, prefix, entries);
+}
+
+// QuickJSの静的同梱境界をアーカイブ内容で検査する。実QuickJSだけが持つ
+// parser診断文字列と公開ABIシンボルをmarkerとして、配布コンパイラには
+// 含まれ、AOT runtimeライブラリには含まれないことを確認する（AOT生成物へは
+// --compat-js利用時のみ同梱される設計の退行防止）。
+function verifyQuickJsBoundary(manifest, sbom, prefix, entries) {
+  if (manifest.build?.compatJsIncluded !== true) throw new Error("配布manifestのcompatJsIncludedがtrueではありません");
+  const binary = requireEntry(entries, `${prefix}${manifest.executable}`);
+  const runtime = requireEntry(entries, `${prefix}${manifest.runtimeLibrary}`);
+  for (const marker of QUICKJS_MARKERS) {
+    if (!Buffer.from(binary).includes(marker)) throw new Error(`配布コンパイラにQuickJS markerがありません: ${marker}`);
+    if (Buffer.from(runtime).includes(marker)) throw new Error(`AOT runtimeライブラリにQuickJS markerが混入しています: ${marker}`);
+  }
+  const packages = Array.isArray(sbom.packages) ? sbom.packages : [];
+  const quickjsPackage = packages.find((entry) => entry.name === "QuickJS" && entry.versionInfo === "2026-06-04" && entry.licenseConcluded === "MIT");
+  if (!quickjsPackage) throw new Error("SBOMにQuickJS packageがありません");
+  const linked = (sbom.relationships ?? []).some((relation) =>
+    relation.spdxElementId === "SPDXRef-Package-lnako" && relation.relationshipType === "STATICALLY_LINKED_TO" && relation.relatedSpdxElement === quickjsPackage.SPDXID);
+  if (!linked) throw new Error("SBOMにlnako→QuickJSのSTATICALLY_LINKED_TO関係がありません");
 }
 
 function parseTarGz(bytes) {
@@ -316,8 +340,8 @@ async function selfTest() {
   try {
     const binary = resolve(temporary, "fake-lnako");
     const runtime = resolve(temporary, "fake-runtime.a");
-    await writeFile(binary, "fake executable\n");
-    await writeFile(runtime, "fake runtime\n");
+    await writeFile(binary, `fake executable ${QUICKJS_MARKERS.join(" ")}\n`);
+    await writeFile(runtime, "fake runtime without quickjs\n");
     const output = resolve(temporary, "dist");
     const targets = [...new Set([hostTarget(), "linux-x64", "windows-x64"])];
     const archives = [];

@@ -30,7 +30,9 @@ for (const required of [
   "macos-arm64",
   "linux-x64",
   "windows-x64",
-  "zig build -Doptimize=ReleaseSafe",
+  "zig build -Doptimize=ReleaseSafe -Dcompat-js=true",
+  "node tools/setup_quickjs.mjs",
+  "Verify bundled QuickJS packaging boundaries",
   "node tools/create_distribution.mjs",
   "node tools/check_distribution.mjs",
   "node tools/create_release_checksums.mjs",
@@ -77,10 +79,16 @@ const uploadBlock = workflow.match(/- name: Upload target release assets\n[\s\S]
 if (!uploadBlock || !uploadBlock.includes("path: ${{ runner.temp }}/release-assets-${{ matrix.target }}/*")) {
   throw new Error("Release assetのuploadが単一平坦directory経由になっていません");
 }
-if (!workflow.includes("key: release-toolchains-llvm-22.1.8-${{ matrix.target }}-v2-minimal") ||
-    !workflow.includes("restore-keys: |\n            release-toolchains-llvm-22.1.8-${{ matrix.target }}-v1") ||
+if (!workflow.includes("key: release-toolchains-llvm-22.1.8-quickjs-2026-06-04-${{ matrix.target }}-v3-minimal") ||
+    !workflow.includes("release-toolchains-llvm-22.1.8-${{ matrix.target }}-v1") ||
     !workflow.includes("run: node tools/prune_llvm_toolchain.mjs")) {
   throw new Error("Release workflowのLLVM toolchain cache最小化が不完全です");
+}
+// 配布コンパイラはQuickJSを静的同梱し、生成物には利用時のみ含める境界を検証する。
+if (!workflow.includes("run tests/fixtures/compat-js-basic.nako3 --compat-js") ||
+    !workflow.includes("build tests/fixtures/compat-js-basic.nako3 --compat-js") ||
+    !workflow.includes('! grep -aq "unexpected token in expression" zig-out/lib/${{ matrix.runtime }}')) {
+  throw new Error("Release workflowのQuickJS同梱・非同梱境界検証が不完全です");
 }
 for (const required of ["lib/libc++.1.dylib", "lib/libc++abi.1.dylib", "lib/libunwind.1.dylib"]) {
   if (!distribution.includes(`source: \"${required}\"`) || !distribution.includes(`destination: \"${required}\"`)) {

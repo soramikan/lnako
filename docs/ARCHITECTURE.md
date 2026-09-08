@@ -52,6 +52,8 @@ LLVM/LLD 22.1.8を使い、Nako SSA IRを検証してLLVM IRへ変換します�
 
 QuickJSは互換性境界を明示するための別経路です。4命令、9 case（成功6、期待失敗3）を `compat-js-evidence.json` で管理し、native dispatch evidenceへ合算しません。
 
+配布する `lnako` 実行ファイルにはQuickJSを静的リンクし、`run --compat-js` と `build --compat-js` が追加toolchainなしで動作します。一方、native AOTの実行時ライブラリ `liblnako_runtime.a` は常にQuickJS stubだけを持ち、`quickjs_enabled=false` のoptionsを受け取るため、通常のAOT生成物にQuickJSは含まれません。`build --compat-js` が生成する同梱実行ファイル（`lnako` バイナリ＋埋め込みsource）だけがQuickJSを含みます。
+
 ## plugin
 
 標準pluginは、命令登録・global binding・runtime route・AOT ABIを同じcatalog IDへ接続します。外部ネイティブ拡張向けの `lnako_plugin_v1` は、sync／async／pure属性、opaque値、Promise、host callbackを定義し、`run` / `test` 経路で検証します。

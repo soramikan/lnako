@@ -65,7 +65,13 @@ pub fn build(b: *std.Build) void {
         .strip = true,
         .link_libc = true,
     });
-    aot_module.addOptions("build_options", build_options);
+    // AOTランタイムは常にQuickJS stubをリンクする。compat-jsフラグを共有すると
+    // quickjs_enabled=trueになりstub呼出しが実行時失敗へ化けるため、AOT側は
+    // 常に無効化したoptionsを渡す（実QuickJSはnative生成物に含めない）。
+    const aot_build_options = b.addOptions();
+    aot_build_options.addOption(bool, "quickjs_enabled", false);
+    aot_build_options.addOption([]const u8, "compat_summary_json", @embedFile("compat/v3.7.24/summary.json"));
+    aot_module.addOptions("build_options", aot_build_options);
     aot_module.addImport("unicode_case", unicode_case);
     aot_module.addImport("unicode_properties", unicode_properties);
     aot_module.addImport("regexp", regexp);

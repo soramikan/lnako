@@ -12,7 +12,7 @@
 
 manifest入力を変更するどの後続commitでも、tag push前に同じ再attestation手順が必要です。
 
-配布物は、対応OSごとにビルド済みの`lnako`本体とAOTランタイム静的ライブラリ、公開ネイティブプラグインヘッダ、ライセンス、互換性資料を一つのアーカイブへまとめます。`--llvm-dir`を指定した場合は、実行時に必要なLLVM C API共有ライブラリと、AOTリンクに使うClang/LLDの最小セットも`llvm/`へ同梱します。
+配布物は、対応OSごとにビルド済みの`lnako`本体とAOTランタイム静的ライブラリ、公開ネイティブプラグインヘッダ、ライセンス、互換性資料を一つのアーカイブへまとめます。`lnako`本体はQuickJSを静的リンクした`-Dcompat-js`ビルドで、`run --compat-js`・`build --compat-js`がそのまま動作します。AOTランタイムライブラリはQuickJS stubのみを持ち、通常のAOT生成物にはQuickJSを含めません。配布時は`Verify bundled QuickJS packaging boundaries`で、compat-js実行・compat生成物への同梱・runtimeライブラリへの非同梱を3 OSで検証します。`--llvm-dir`を指定した場合は、実行時に必要なLLVM C API共有ライブラリと、AOTリンクに使うClang/LLDの最小セットも`llvm/`へ同梱します。
 
 生成器はアーカイブ内のファイルを固定順で並べ、tar.gzまたはzipを生成し、SPDX 2.3 SBOMとSHA-256 sidecarを同時に出力します。通常の開発ビルドではLLVM/LLDを同梱しません。公開用の生成では、固定lockfileのLLVM/LLDを必ず指定します。
 
