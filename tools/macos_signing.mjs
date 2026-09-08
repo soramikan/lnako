@@ -8,11 +8,16 @@ const root = resolve(import.meta.dirname, "..");
 export const identifier = "io.github.soramikan.lnako";
 const entitlements = join(root, "packaging/macos/lnako.entitlements");
 
-// Never include command arguments or child output in errors: security/notarytool
-// commands can contain credentials. Notary logs are fetched separately.
+// Never include command arguments or child output in errors for commands that
+// take credentials (security/notarytool). codesign/ditto take no credentials,
+// so their stderr is surfaced for diagnosis. Notary logs are fetched separately.
 export function run(command, args, options = {}) {
-  const result = spawnSync(command, args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, ...options });
-  if (result.error || result.status !== 0) throw new Error(`${basename(command)} failed (status ${result.status})`);
+  const { exposeOutput = false, ...spawnOptions } = options;
+  const result = spawnSync(command, args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, ...spawnOptions });
+  if (result.error || result.status !== 0) {
+    const detail = exposeOutput ? `: ${result.stderr || result.stdout || result.error || ""}` : "";
+    throw new Error(`${basename(command)} failed (status ${result.status})${detail}`);
+  }
   return `${result.stdout ?? ""}${result.stderr ?? ""}`;
 }
 
@@ -21,6 +26,7 @@ export async function machoFiles(directory, prefix = "") {
   for (const entry of await readdir(join(directory, prefix), { withFileTypes: true })) {
     const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
     if (entry.isDirectory()) result.push(...await machoFiles(directory, relative));
+    else if (entry.isSymbolicLink()) continue; // symlinkはtarget側の実体pathで署名する
     else if (entry.isFile()) {
       const bytes = await readFile(join(directory, relative));
       const magic = bytes.subarray(0, 4).toString("hex");
@@ -41,10 +47,12 @@ export async function signPayload(directory, { identity, keychain, execute = run
   const paths = await machoFiles(directory);
   if (!paths.includes("bin/lnako")) throw new Error("bin/lnako must be Mach-O");
   for (const path of paths) {
-    const args = ["--force", "--timestamp", "--sign", identity, "--keychain", keychain, "--identifier", codeIdentifier(path)];
+    // codesignの--keychainはidentity解決に使えない（"no identity found"になる）ため、
+    // setup側でkeychainをuser search listへ追加し、ここでは通常検索に委ねる。
+    const args = ["--force", "--timestamp", "--sign", identity, "--identifier", codeIdentifier(path)];
     if (!path.endsWith(".dylib")) args.push("--options", "runtime");
     if (path === "bin/lnako") args.push("--entitlements", entitlements);
-    execute("/usr/bin/codesign", [...args, join(directory, path)]);
+    execute("/usr/bin/codesign", [...args, join(directory, path)], { exposeOutput: true });
   }
   await verifyPayload(directory, { execute });
 }
@@ -54,14 +62,14 @@ export async function verifyPayload(directory, { execute = run } = {}) {
   if (!paths.includes("bin/lnako")) throw new Error("bin/lnako must be Mach-O");
   for (const path of paths) {
     const file = join(directory, path);
-    execute("/usr/bin/codesign", ["--verify", "--strict", "--verbose=2", file]);
-    const details = execute("/usr/bin/codesign", ["--display", "--verbose=4", file]);
+    execute("/usr/bin/codesign", ["--verify", "--strict", "--verbose=2", file], { exposeOutput: true });
+    const details = execute("/usr/bin/codesign", ["--display", "--verbose=4", file], { exposeOutput: true });
     if (!details.includes(`Identifier=${codeIdentifier(path)}\n`) ||
         !details.includes("Authority=Developer ID Application:") || !/^Timestamp=.+$/m.test(details) ||
         (!path.endsWith(".dylib") && !details.includes("runtime"))) {
       throw new Error(`Invalid Developer ID signature: ${path}`);
     }
-    const xml = execute("/usr/bin/codesign", ["--display", "--entitlements", ":-", file]);
+    const xml = execute("/usr/bin/codesign", ["--display", "--entitlements", ":-", file], { exposeOutput: true });
     const keys = [...xml.matchAll(/<key>([^<]+)<\/key>/g)].map((match) => match[1]);
     if (path === "bin/lnako") {
       if (keys.length !== 1 || keys[0] !== "com.apple.security.cs.disable-library-validation" ||
@@ -95,6 +103,11 @@ async function setup() {
   try {
     run("/usr/bin/security", ["create-keychain", "-p", password, keychain]);
     run("/usr/bin/security", ["set-keychain-settings", "-lut", "21600", keychain]);
+    // codesignの--keychain指定だけではidentityを解決できないため、一時keychainを
+    // user search listへ追加する（cleanupで元のlistへ戻す）。
+    const previous = run("/usr/bin/security", ["list-keychains", "-d", "user"]).split("\n").map((line) => line.trim().replace(/^"|"$/g, "")).filter(Boolean);
+    await appendFile(required("GITHUB_ENV"), `LNAKO_SIGNING_PREV_KEYCHAINS=${previous.join(":")}\n`);
+    run("/usr/bin/security", ["list-keychains", "-d", "user", "-s", keychain, ...previous]);
     run("/usr/bin/security", ["unlock-keychain", "-p", password, keychain]);
     run("/usr/bin/security", ["import", p12, "-P", required(names[1]), "-k", keychain, "-T", "/usr/bin/codesign"]);
     run("/usr/bin/security", ["set-key-partition-list", "-S", "apple-tool:,apple:,codesign:", "-s", "-k", password, keychain]);
@@ -107,9 +120,15 @@ async function setup() {
 
 async function cleanup() {
   try {
-    if (process.env.LNAKO_SIGNING_KEYCHAIN) run("/usr/bin/security", ["delete-keychain", process.env.LNAKO_SIGNING_KEYCHAIN]);
+    if (process.env.LNAKO_SIGNING_PREV_KEYCHAINS) {
+      run("/usr/bin/security", ["list-keychains", "-d", "user", "-s", ...process.env.LNAKO_SIGNING_PREV_KEYCHAINS.split(":")]);
+    }
   } finally {
-    if (process.env.LNAKO_SIGNING_TEMP) await rm(process.env.LNAKO_SIGNING_TEMP, { recursive: true, force: true });
+    try {
+      if (process.env.LNAKO_SIGNING_KEYCHAIN) run("/usr/bin/security", ["delete-keychain", process.env.LNAKO_SIGNING_KEYCHAIN]);
+    } finally {
+      if (process.env.LNAKO_SIGNING_TEMP) await rm(process.env.LNAKO_SIGNING_TEMP, { recursive: true, force: true });
+    }
   }
 }
 
@@ -154,7 +173,7 @@ async function notarize(archive) {
     // spctl's execute assessment is for apps, not standalone CLI/dylib code.
     // Require Apple's online notarization ticket for every shipped Mach-O.
     for (const path of paths) {
-      run("/usr/bin/codesign", ["--verify", "--strict", "--verbose=4", "-R=notarized", "--check-notarization", join(tree, path)]);
+      run("/usr/bin/codesign", ["--verify", "--strict", "--verbose=4", "-R=notarized", "--check-notarization", join(tree, path)], { exposeOutput: true });
     }
   } finally { await rm(temporary, { recursive: true, force: true }); }
 }

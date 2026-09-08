@@ -339,8 +339,13 @@ fn copyTreeInner(allocator: std.mem.Allocator, io: std.Io, source: std.Io.Dir, d
 }
 
 fn runProcess(allocator: std.mem.Allocator, io: std.Io, argv: []const []const u8) ![]const u8 {
+    return runProcessAt(allocator, io, argv, .inherit);
+}
+
+fn runProcessAt(allocator: std.mem.Allocator, io: std.Io, argv: []const []const u8, cwd: std.process.Child.Cwd) ![]const u8 {
     const result = try std.process.run(allocator, io, .{
         .argv = argv,
+        .cwd = cwd,
         .stdout_limit = .limited(64 * 1024 * 1024),
         .stderr_limit = .limited(64 * 1024 * 1024),
     });
@@ -401,7 +406,10 @@ fn download(allocator: std.mem.Allocator, io: std.Io, url: []const u8, destinati
 /// tarを外部コマンドで展開する。3正式OSはいずれもOS同梱のtar（bsdtar/GNU tar）が
 /// .tar.xzを扱える。展開ルートの単一directoryを返す。
 fn extractTarball(allocator: std.mem.Allocator, io: std.Io, archive_path: []const u8, staging: []const u8) ![]u8 {
-    _ = try runProcess(allocator, io, &.{ "tar", "-xf", archive_path, "-C", staging });
+    // WindowsのGNU tarは-fの`D:`等をリモートhost指定と誤解するためbasename+cwdで渡す。
+    const archive_dir = std.fs.path.dirname(archive_path) orelse return error.ToolchainSourceInvalid;
+    const archive_name = std.fs.path.basename(archive_path);
+    _ = try runProcessAt(allocator, io, &.{ "tar", "-xf", archive_name, "-C", staging }, .{ .path = archive_dir });
     var directory = try std.Io.Dir.cwd().openDir(io, staging, .{ .iterate = true });
     defer directory.close(io);
     var iterator = directory.iterate();
