@@ -9,6 +9,7 @@
         "build.zig.zon",
         "src",
         "compat/v3.7.24/summary.json",
+        "toolchain.lock.json",
         "include",
         "tests/native_plugin",
         "tools",

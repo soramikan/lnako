@@ -33,6 +33,7 @@ function parseArguments(arguments_) {
     llvm: null,
     target: hostTarget(),
     requireLlvm: false,
+    variant: "standard",
   };
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index];
@@ -53,6 +54,9 @@ function parseArguments(arguments_) {
       if (!targetSpec(parsed.target)) throw new Error(`正式対象外の配布targetです: ${parsed.target}`);
     } else if (argument === "--require-llvm") {
       parsed.requireLlvm = true;
+    } else if (argument === "--variant") {
+      parsed.variant = nextValue(arguments_, ++index, argument);
+      if (parsed.variant !== "standard" && parsed.variant !== "full") throw new Error(`配布variantが不正です: ${parsed.variant}`);
     } else {
       throw new Error(`未知の引数です: ${argument}\n\n${usage()}`);
     }
@@ -70,10 +74,14 @@ async function createDistribution(options_) {
   const runtime = options_.runtime ?? defaultRuntime(spec);
   await requireFile(binary, "lnako実行ファイル");
   await requireFile(runtime, "AOTランタイム静的ライブラリ");
+  // standard版はLLVMを同梱しない。full版はLLVM/LLDをllvm/へ同梱する。
+  if (options_.variant === "full" && options_.llvm === null) throw new Error("full版には--llvm-dirが必要です");
+  if (options_.variant === "standard" && options_.llvm !== null) throw new Error("standard版では--llvm-dirを指定できません");
   if (options_.requireLlvm && options_.llvm === null) throw new Error("release配布には--llvm-dirが必要です");
   if (options_.llvm !== null) await requireDirectory(options_.llvm, "LLVM/LLD配布ルート");
 
-  const baseName = `lnako-${options_.version}-${spec.archiveTarget}`;
+  const suffix = options_.variant === "full" ? "-full" : "";
+  const baseName = `lnako-${options_.version}-${spec.archiveTarget}${suffix}`;
   const stagingParent = resolve(options_.output, `.staging-${baseName}-${process.pid}`);
   const stagingRoot = resolve(stagingParent, baseName);
   await rm(stagingParent, { recursive: true, force: true });
@@ -143,6 +151,7 @@ function createManifest(options_, spec, binary, runtime, payloadFiles, git) {
     schema: "lnako.distribution-manifest.v1",
     name: "lnako",
     version: options_.version,
+    variant: options_.variant,
     target: spec.archiveTarget,
     platform: spec.platform,
     arch: spec.arch,
@@ -200,8 +209,8 @@ function createSbom(options_, spec, files, manifest) {
     spdxVersion: "SPDX-2.3",
     dataLicense: "CC0-1.0",
     SPDXID: "SPDXRef-DOCUMENT",
-    name: `lnako-${options_.version}-${spec.archiveTarget}`,
-    documentNamespace: `https://github.com/soramikan/lnako/spdx/${options_.version}/${spec.archiveTarget}`,
+    name: `lnako-${options_.version}-${spec.archiveTarget}${options_.variant === "full" ? "-full" : ""}`,
+    documentNamespace: `https://github.com/soramikan/lnako/spdx/${options_.version}/${spec.archiveTarget}${options_.variant === "full" ? "-full" : ""}`,
     creationInfo: {
       created: "1970-01-01T00:00:00Z",
       creators: ["Tool: lnako distribution builder"],
@@ -492,7 +501,8 @@ function usage() {
   --output <absolute-path>  出力ディレクトリ（既定: dist）
   --binary <absolute-path>  lnako実行ファイル
   --runtime <absolute-path> AOTランタイム静的ライブラリ
-  --llvm-dir <absolute-path> 同梱するLLVM/LLD配布ルート
+  --llvm-dir <absolute-path> 同梱するLLVM/LLD配布ルート（full版のみ）
   --require-llvm             LLVM/LLD同梱を必須にする
+  --variant <variant>        standard（既定、LLVM非同梱）/ full（LLVM同梱、--llvm-dir必須）
 `;
 }

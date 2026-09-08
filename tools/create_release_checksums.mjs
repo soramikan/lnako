@@ -16,23 +16,26 @@ if (files.some((entry) => entry.isDirectory())) throw new Error("Release asset d
 const archiveCandidates = files
   .filter((entry) => entry.isFile())
   .map((entry) => entry.name)
-  .map((name) => /^(lnako-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)-(macos-arm64|linux-x64|windows-x64)\.(tar\.gz|zip))$/.exec(name))
+  .map((name) => /^(lnako-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)-(macos-arm64|linux-x64|windows-x64)(-full)?\.(tar\.gz|zip))$/.exec(name))
   .filter((match) => match !== null)
-  .map((match) => ({ archive: match[1], version: match[2], target: match[3], extension: match[4] }));
+  .map((match) => ({ archive: match[1], version: match[2], target: match[3], variant: match[4] === "-full" ? "full" : "standard", extension: match[5] }));
 
-if (archiveCandidates.length !== targetSpecifications.size) {
-  throw new Error(`Release archiveは3 targetが必要です: ${archiveCandidates.length}/${targetSpecifications.size}`);
+if (archiveCandidates.length !== targetSpecifications.size * 2) {
+  throw new Error(`Release archiveは3 target×2 variantが必要です: ${archiveCandidates.length}/${targetSpecifications.size * 2}`);
 }
 const targets = new Set();
+const variants = new Set();
 const versions = new Set();
 for (const candidate of archiveCandidates) {
-  if (targets.has(candidate.target)) throw new Error(`Release archiveのtargetが重複しています: ${candidate.target}`);
+  const variantKey = `${candidate.target}-${candidate.variant}`;
+  if (variants.has(variantKey)) throw new Error(`Release archiveのtarget×variantが重複しています: ${candidate.archive}`);
   const specification = targetSpecifications.get(candidate.target);
   if (specification.extension !== candidate.extension) throw new Error(`Release archiveの拡張子が不正です: ${candidate.archive}`);
   targets.add(candidate.target);
+  variants.add(variantKey);
   versions.add(candidate.version);
 }
-if (targets.size !== targetSpecifications.size || versions.size !== 1) throw new Error("Release archiveのtargetまたはversionが揃っていません");
+if (targets.size !== targetSpecifications.size || variants.size !== targetSpecifications.size * 2 || versions.size !== 1) throw new Error("Release archiveのtarget・variantまたはversionが揃っていません");
 const version = [...versions][0];
 if (options.version !== null && options.version !== version) throw new Error(`Release versionが一致しません: ${options.version}/${version}`);
 

@@ -180,6 +180,24 @@ jobs:
           [[ "$("$RUNNER_TEMP/lnako-native-smoke$ext")" == "3" ]]
           ! grep -aq "unexpected token in expression" "$RUNNER_TEMP/lnako-native-smoke$ext"
           ! grep -aq "unexpected token in expression" zig-out/lib/${{ matrix.runtime }}
+      - name: Verify toolchain command manages LLVM
+        shell: bash
+        run: |
+          set -euo pipefail
+          ext=""
+          if [[ "${{ matrix.executable }}" == "lnako.exe" ]]; then ext=".exe"; fi
+          export LNAKO_TOOLCHAIN_DIR="$RUNNER_TEMP/lnako-toolchains"
+          # status/dirが管理dirを表示する。
+          ./zig-out/bin/${{ matrix.executable }} toolchain status
+          [[ "$(./zig-out/bin/${{ matrix.executable }} toolchain dir)" == "$LNAKO_TOOLCHAIN_DIR" ]]
+          # 既存LLVMを管理dirへ登録し、LNAKO_LLVM_DIRなしでAOTビルドできる。
+          ./zig-out/bin/${{ matrix.executable }} toolchain install --from-dir "$LNAKO_LLVM_DIR"
+          env -u LNAKO_LLVM_DIR -u LNAKO_LLVM_LIBRARY ./zig-out/bin/${{ matrix.executable }} toolchain status
+          printf '3*4を表示\n' > "$RUNNER_TEMP/managed.nako3"
+          env -u LNAKO_LLVM_DIR -u LNAKO_LLVM_LIBRARY ./zig-out/bin/${{ matrix.executable }} build "$RUNNER_TEMP/managed.nako3" -o "$RUNNER_TEMP/lnako-managed-smoke$ext"
+          [[ "$("$RUNNER_TEMP/lnako-managed-smoke$ext")" == "12" ]]
+          ./zig-out/bin/${{ matrix.executable }} toolchain remove
+          env -u LNAKO_LLVM_DIR -u LNAKO_LLVM_LIBRARY ./zig-out/bin/${{ matrix.executable }} toolchain status
       - name: Run benchmark for this target
         env:
           LNAKO_BENCHMARK_COMMIT: ${{ github.sha }}
@@ -196,27 +214,41 @@ jobs:
           node tools/check_benchmark_result.mjs \
             --json "$RUNNER_TEMP/benchmark-${{ matrix.target }}.json" \
             --markdown "$RUNNER_TEMP/benchmark-${{ matrix.target }}.md"
-      - name: Create distribution archive
+      - name: Create distribution archives
         shell: bash
         run: |
+          # standard版はLLVMを同梱しない。ユーザーは`lnako toolchain install`で
+          # pin済みLLVMを導入するか、LNAKO_LLVM_DIRで既存LLVMを指定する。
           node tools/create_distribution.mjs \
             --version "$LNAKO_VERSION" \
             --target "${{ matrix.target }}" \
-            --output "$RUNNER_TEMP/dist" \
+            --variant standard \
+            --output "$RUNNER_TEMP/dist-standard" \
+            --binary "$GITHUB_WORKSPACE/zig-out/bin/${{ matrix.executable }}" \
+            --runtime "$GITHUB_WORKSPACE/zig-out/lib/${{ matrix.runtime }}"
+          # full版はLLVM/LLDをllvm/へ同梱し、導入直後からオフラインで`lnako build`できる。
+          node tools/create_distribution.mjs \
+            --version "$LNAKO_VERSION" \
+            --target "${{ matrix.target }}" \
+            --variant full \
+            --output "$RUNNER_TEMP/dist-full" \
             --binary "$GITHUB_WORKSPACE/zig-out/bin/${{ matrix.executable }}" \
             --runtime "$GITHUB_WORKSPACE/zig-out/lib/${{ matrix.runtime }}" \
             --llvm-dir "$LNAKO_LLVM_DIR" \
             --require-llvm
-      - name: Verify distribution archive
+      - name: Verify distribution archives
         shell: bash
         run: |
           node tools/check_distribution.mjs \
-            --archive "$RUNNER_TEMP/dist/lnako-${LNAKO_VERSION}-${{ matrix.target }}.${{ matrix.extension }}"
+            --archive "$RUNNER_TEMP/dist-standard/lnako-${LNAKO_VERSION}-${{ matrix.target }}.${{ matrix.extension }}"
+          node tools/check_distribution.mjs \
+            --archive "$RUNNER_TEMP/dist-full/lnako-${LNAKO_VERSION}-${{ matrix.target }}-full.${{ matrix.extension }}"
       - name: Stage release assets
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/release-assets-${{ matrix.target }}"
-          cp "$RUNNER_TEMP"/dist/lnako-${{ needs.preflight.outputs.version }}-${{ matrix.target }}.* \
+          cp "$RUNNER_TEMP"/dist-standard/lnako-${{ needs.preflight.outputs.version }}-${{ matrix.target }}.* \
+             "$RUNNER_TEMP"/dist-full/lnako-${{ needs.preflight.outputs.version }}-${{ matrix.target }}-full.* \
              "$RUNNER_TEMP/benchmark-${{ matrix.target }}.json" \
              "$RUNNER_TEMP/benchmark-${{ matrix.target }}.md" \
              "$RUNNER_TEMP/release-assets-${{ matrix.target }}/"

@@ -187,6 +187,7 @@ const stepSuites = new Map([
   ["Native plugin ABI test", "host"],
   ["Differential Node host test", "mac-core-host"],
   ["Distribution package self-test", "core"],
+  ["Toolchain command check", "core"],
   ["Zig package isolation check", "core"],
   ["Format", "core"],
   ["Test", "core"],

@@ -71,6 +71,10 @@ pub const backend = struct {
     };
 };
 
+pub const toolchain = struct {
+    pub const manager = @import("toolchain/manager.zig");
+};
+
 pub const Command = enum {
     build,
     run,
@@ -78,6 +82,7 @@ pub const Command = enum {
     test_command,
     compat,
     benchmark,
+    toolchain,
     help,
     version,
 };
@@ -98,6 +103,7 @@ pub fn parseCommand(args: []const []const u8) ParseError!Command {
     if (std.mem.eql(u8, first, "check")) return .check;
     if (std.mem.eql(u8, first, "test")) return .test_command;
     if (std.mem.eql(u8, first, "benchmark")) return .benchmark;
+    if (std.mem.eql(u8, first, "toolchain")) return .toolchain;
     if (std.mem.eql(u8, first, "compat")) {
         if (args.len < 2 or !std.mem.eql(u8, args[1], "report")) return error.MissingCompatAction;
         return .compat;
@@ -110,12 +116,13 @@ pub fn usage(writer: *std.Io.Writer) !void {
         \\lnako - なでしこ3ネイティブコンパイラ
         \\
         \\使い方:
-        \\  lnako build <file.nako3> -o <output> [options]
+        \\  lnako build <file.nako3> -o <output> [-O0..-O3] [--emit exe|obj|llvm-ir] [--llvm-dir <path>]
         \\  lnako run <file.nako3> [--compat-js] -- [arguments]
         \\  lnako check <file.nako3>
         \\  lnako test <file-or-directory>
         \\  lnako compat report
         \\  lnako benchmark
+        \\  lnako toolchain <status|dir|install|update|remove>
         \\
         \\共通オプション:
         \\  -h, --help       このヘルプを表示
@@ -171,6 +178,7 @@ test {
     std.testing.refAllDecls(backend.llvm.api);
     std.testing.refAllDecls(backend.llvm.module);
     std.testing.refAllDecls(backend.llvm.compiler);
+    std.testing.refAllDecls(toolchain.manager);
 }
 
 test "コマンドを解析できる" {

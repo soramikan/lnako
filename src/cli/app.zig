@@ -110,8 +110,9 @@ pub fn run(
                 .output_path = options.output,
                 .optimization = options.optimization,
                 .emit = options.emit,
-                .llvm_root = init.environ_map.get("LNAKO_LLVM_DIR"),
+                .llvm_root = options.llvm_dir orelse init.environ_map.get("LNAKO_LLVM_DIR"),
                 .llvm_library = init.environ_map.get("LNAKO_LLVM_LIBRARY"),
+                .environment = init.environ_map,
                 .runtime_library = init.environ_map.get("LNAKO_AOT_RUNTIME_LIBRARY"),
                 .compile_manifest_path = init.environ_map.get("LNAKO_COMPILE_MANIFEST"),
                 .global_manifest_path = init.environ_map.get("LNAKO_GLOBAL_MANIFEST"),
@@ -220,5 +221,79 @@ pub fn run(
                 std.process.exit(1);
             };
         },
+        .toolchain => {
+            runToolchainCommand(allocator, io, args[1..], executable_path, init.environ_map, stdout, stderr) catch |err| {
+                try stderr.print("toolchain: {s}\n", .{@errorName(err)});
+                try stderr.flush();
+                std.process.exit(1);
+            };
+        },
     }
+}
+
+fn runToolchainCommand(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    args: []const []const u8,
+    executable_path: []const u8,
+    environ_map: *std.process.Environ.Map,
+    stdout: *std.Io.Writer,
+    stderr: *std.Io.Writer,
+) !void {
+    const manager = lnako.toolchain.manager;
+    if (args.len == 0) {
+        try manager.writeStatus(allocator, io, environ_map, executable_path, stdout);
+        return;
+    }
+    const verb = args[0];
+    if (std.mem.eql(u8, verb, "status")) {
+        try manager.writeStatus(allocator, io, environ_map, executable_path, stdout);
+        return;
+    }
+    if (std.mem.eql(u8, verb, "dir")) {
+        const root = try manager.toolchainsRoot(allocator, environ_map);
+        defer allocator.free(root);
+        try stdout.print("{s}\n", .{root});
+        return;
+    }
+    if (std.mem.eql(u8, verb, "install")) {
+        var options: manager.InstallOptions = .{};
+        var index: usize = 1;
+        while (index < args.len) : (index += 1) {
+            const argument = args[index];
+            if (std.mem.eql(u8, argument, "--force")) {
+                options.force = true;
+            } else if (std.mem.eql(u8, argument, "--from-dir") and index + 1 < args.len) {
+                index += 1;
+                options.from_dir = args[index];
+            } else if (std.mem.eql(u8, argument, "--archive") and index + 1 < args.len) {
+                index += 1;
+                options.archive_path = args[index];
+            } else if (std.mem.eql(u8, argument, "--url") and index + 1 < args.len) {
+                index += 1;
+                options.url_override = args[index];
+            } else if (std.mem.eql(u8, argument, "--sha256") and index + 1 < args.len) {
+                index += 1;
+                options.sha256_override = args[index];
+            } else {
+                try stderr.print("toolchain install: 不明な引数です: {s}\n", .{argument});
+                std.process.exit(2);
+            }
+        }
+        const result = try manager.installLlvm(allocator, io, environ_map, options, stdout, stderr);
+        allocator.free(result.root);
+        return;
+    }
+    if (std.mem.eql(u8, verb, "update")) {
+        // pin済みバージョンへ強制再導入（install --forceと同等）。
+        const result = try manager.installLlvm(allocator, io, environ_map, .{ .force = true }, stdout, stderr);
+        allocator.free(result.root);
+        return;
+    }
+    if (std.mem.eql(u8, verb, "remove")) {
+        try manager.removeLlvm(allocator, io, environ_map, stdout);
+        return;
+    }
+    try stderr.print("toolchain: 不明な操作です: {s}（status|dir|install|update|remove）\n", .{verb});
+    std.process.exit(2);
 }

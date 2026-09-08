@@ -219,6 +219,13 @@ jobs:
       - name: Benchmark runner tests
         if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
         run: node --test tools/benchmark_runner_test.mjs tools/setup_benchmark_gonako_test.mjs tools/pre_push_hook_test.mjs
+      - name: Toolchain command check
+        if: matrix.suite == 'core' || matrix.suite == 'mac-core-standard-support'
+        shell: bash
+        run: |
+          set -euo pipefail
+          zig build
+          node tools/check_toolchain_command.mjs
       - name: Test QuickJS build
         if: matrix.suite == 'compat-aot' || matrix.suite == 'mac-host-compat'
         run: zig build -Dcompat-js=true test --test-timeout 5m

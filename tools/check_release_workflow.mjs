@@ -90,9 +90,23 @@ if (!workflow.includes("run tests/fixtures/compat-js-basic.nako3 --compat-js") |
     !workflow.includes('! grep -aq "unexpected token in expression" zig-out/lib/${{ matrix.runtime }}')) {
   throw new Error("Release workflowのQuickJS同梱・非同梱境界検証が不完全です");
 }
+// standard版はLLVMを同梱せずtoolchain機能で管理し、full版のみLLVMを同梱する。
+if (!workflow.includes("--variant standard") || !workflow.includes("--variant full") ||
+    !workflow.includes("Verify toolchain command manages LLVM") ||
+    !workflow.includes("toolchain install --from-dir") ||
+    !workflow.includes("toolchain remove") ||
+    !workflow.includes("-full.${{ matrix.extension }}")) {
+  throw new Error("Release workflowのstandard/full配布・toolchain管理検証が不完全です");
+}
+if (!distribution.includes('parsed.variant !== "standard" && parsed.variant !== "full"') ||
+    !distribution.includes('options_.variant === "full" && options_.llvm === null') ||
+    !distribution.includes('options_.variant === "standard" && options_.llvm !== null') ||
+    !distribution.includes('variant: options_.variant')) {
+  throw new Error("create_distributionのvariant検証が不完全です");
+}
 for (const required of ["lib/libc++.1.dylib", "lib/libc++abi.1.dylib", "lib/libunwind.1.dylib"]) {
   if (!distribution.includes(`source: \"${required}\"`) || !distribution.includes(`destination: \"${required}\"`)) {
     throw new Error(`macOS配布物にLLVM runtime依存がありません: ${required}`);
   }
 }
-console.log("Release workflow構成検査: 3正式OS build・benchmark・distribution・checksum／SBOM・tag gate成功");
+console.log("Release workflow構成検査: 3正式OS build・benchmark・standard/full distribution・checksum／SBOM・tag gate成功");

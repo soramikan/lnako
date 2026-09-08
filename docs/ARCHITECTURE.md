@@ -44,6 +44,8 @@
 
 LLVM/LLD 22.1.8を使い、Nako SSA IRを検証してLLVM IRへ変換します。O0は元IRの動的変換を維持し、O1以上では独立複製したSSA IRへ安全な型推論・定数伝播・直接呼出し・dead code eliminationを適用します。生成実行ファイルはZig製のJS非依存ランタイムを静的リンクし、実行先にZig、LLVM、Node.jsを要求しません。
 
+コンパイラ側のLLVM解決順は`lnako build --llvm-dir` → `LNAKO_LLVM_DIR` → 実行ファイル隣接の`llvm/`（full版配布物）→ `lnako toolchain`管理dir → システムLLVMです。`lnako toolchain install`は`toolchain.lock.json`にpinされたLLVM 22.1.8をダウンロードしてSHA-256検証し、OS標準キャッシュdirへ展開後、AOTに必要な最小構成（Clang・LLD・libLLVM-C・`lib/clang/`）へ縮小します。配布物のvariant詳細は [`RELEASE.md`](RELEASE.md) を参照してください。
+
 型が確定したNumber/Booleanの内部関数はtyped ABIへ接続し、名前による動的呼出しにはgeneric Value経路を保持します。AOTの参照rootはlivenessとslot coloringで共有し、解析の上限を超える関数は専用slotへ戻します。文字列はimmutable copyを維持し、ObjectとUTF-16 payloadを一体確保します。
 
 未対応IRは誤変換せず、命令名と元ソース位置を伴って拒否します。AOTの実行証拠とattestationの状態は [`COMPATIBILITY_EVIDENCE.md`](COMPATIBILITY_EVIDENCE.md) の規則に従います。

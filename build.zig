@@ -7,6 +7,7 @@ pub fn build(b: *std.Build) void {
     const build_options = b.addOptions();
     build_options.addOption(bool, "quickjs_enabled", compat_js);
     build_options.addOption([]const u8, "compat_summary_json", @embedFile("compat/v3.7.24/summary.json"));
+    build_options.addOption([]const u8, "toolchain_lock_json", @embedFile("toolchain.lock.json"));
 
     const unicode_case = b.createModule(.{
         .root_source_file = b.path("src/generated/unicode_case.zig"),

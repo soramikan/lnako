@@ -36,7 +36,7 @@ zig build run -- test tests/
 zig build run -- build program.nako3 -o program -O2
 ```
 
-LLVM/LLDの場所を明示する場合は `LNAKO_LLVM_DIR` または `LNAKO_LLVM_LIBRARY` を使います。詳細なセットアップと検証順序は [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) を参照してください。
+配布バイナリで`lnako build`を使う場合、LLVM/LLDは次の順で解決します: `lnako build --llvm-dir <path>` → `LNAKO_LLVM_DIR` → 同梱`llvm/`（full版のみ）→ `lnako toolchain`管理dir → システムLLVM。pin済みLLVMを導入するには `lnako toolchain install`、状態確認は `lnako toolchain status` を使います。管理dirはOS標準キャッシュdir（macOS `~/Library/Caches/lnako`、Linux `~/.cache/lnako`）で、`LNAKO_TOOLCHAIN_DIR`で上書きできます。詳細なセットアップと検証順序は [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) を参照してください。
 
 ## QuickJS互換モード
 
