@@ -69,6 +69,7 @@ pub const lnako_aot_bigint_truthy = instructions.lnako_aot_bigint_truthy;
 pub const lnako_aot_truthy = instructions.lnako_aot_truthy;
 pub const lnako_aot_unary = instructions.lnako_aot_unary;
 pub const lnako_aot_arithmetic = instructions.lnako_aot_arithmetic;
+pub const lnako_aot_pow_f64 = instructions.lnako_aot_pow_f64;
 pub const lnako_aot_compare = instructions.lnako_aot_compare;
 pub const lnako_aot_shift = instructions.lnako_aot_shift;
 pub const lnako_aot_concat = instructions.lnako_aot_concat;

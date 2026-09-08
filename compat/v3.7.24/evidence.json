@@ -8,8 +8,8 @@
   "commandCount": 527,
   "duplicateNameCount": 31,
   "fixtureInventory": {
-    "total": 419,
-    "nativeAot": 317,
+    "total": 420,
+    "nativeAot": 318,
     "interpreter": 112,
     "compatJs": 9
   },
@@ -2634,6 +2634,7 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
+        "native-numeric-pow-ecmascript-specials",
         "native-system-execute",
         "native-system-promise-timer-await"
       ],
@@ -2647,6 +2648,9 @@
         },
         "aot": {
           "native-cut-commands": [
+            "fixture.commands"
+          ],
+          "native-numeric-pow-ecmascript-specials": [
             "fixture.commands"
           ],
           "native-system-execute": [
@@ -4526,6 +4530,7 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
+        "native-numeric-pow-ecmascript-specials",
         "native-system-arithmetic-comparison-commands"
       ],
       "compatJsFixtureIds": [],
@@ -4538,6 +4543,9 @@
         },
         "aot": {
           "native-cut-commands": [
+            "fixture.commands"
+          ],
+          "native-numeric-pow-ecmascript-specials": [
             "fixture.commands"
           ],
           "native-system-arithmetic-comparison-commands": [
@@ -16705,6 +16713,7 @@
       ],
       "aotFixtureIds": [
         "native-cut-commands",
+        "native-numeric-pow-ecmascript-specials",
         "native-system-array-callback-order",
         "native-system-array-callback-order-large",
         "native-system-array-to-primitive",
@@ -16731,6 +16740,9 @@
         },
         "aot": {
           "native-cut-commands": [
+            "fixture.commands"
+          ],
+          "native-numeric-pow-ecmascript-specials": [
             "fixture.commands"
           ],
           "native-system-array-callback-order": [

@@ -730,6 +730,7 @@ pub const lnako_aot_bigint_truthy = instructions_module.lnako_aot_bigint_truthy;
 pub const lnako_aot_truthy = instructions_module.lnako_aot_truthy;
 pub const lnako_aot_unary = instructions_module.lnako_aot_unary;
 pub const lnako_aot_arithmetic = instructions_module.lnako_aot_arithmetic;
+pub const lnako_aot_pow_f64 = instructions_module.lnako_aot_pow_f64;
 pub const lnako_aot_compare = instructions_module.lnako_aot_compare;
 pub const lnako_aot_shift = instructions_module.lnako_aot_shift;
 pub const lnako_aot_concat = instructions_module.lnako_aot_concat;

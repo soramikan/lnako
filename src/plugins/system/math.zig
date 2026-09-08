@@ -1,6 +1,7 @@
 const std = @import("std");
 const value_mod = @import("../../runtime/value.zig");
 const operators = @import("../../runtime/operators.zig");
+const number_mod = @import("../../runtime/number.zig");
 const common = @import("common.zig");
 const json = @import("json.zig");
 
@@ -20,7 +21,7 @@ pub fn call(runtime: *Runtime, name: []const u8, arguments: []const Value) !?Val
     if (eql(name, "偶数")) return .{ .boolean = @rem(try common.parseIntValue(runtime, a, null), 2) == 0 };
     if (eql(name, "奇数")) return .{ .boolean = @rem(try common.parseIntValue(runtime, a, null), 2) == 1 };
     if (eql(name, "二乗")) return try operators.binary(runtime, .multiply, a, a);
-    if (eql(name, "べき乗")) return .{ .number = std.math.pow(f64, try runtime.valueToNumber(a), try runtime.valueToNumber(b)) };
+    if (eql(name, "べき乗")) return .{ .number = number_mod.pow(try runtime.valueToNumber(a), try runtime.valueToNumber(b)) };
     if (eql(name, "以上")) return try relation(runtime, a, b, .gte);
     if (eql(name, "以下")) return try relation(runtime, a, b, .lte);
     if (eql(name, "未満")) return try relation(runtime, a, b, .lt);

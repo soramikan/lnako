@@ -56,6 +56,18 @@ pub fn roundHalfPositive(value: f64) f64 {
     return result;
 }
 
+/// ECMAScript `Number::exponentiate`（`**`演算子・`べき乗`命令）の特例を含む累乗。
+/// 判定順を仕様に合わせる: 指数がNaNならNaN、指数が±0なら1（`NaN**0`も1）、
+/// 底がNaNならNaN、|底|が1で指数が±InfinityならNaN。残りの±0・±Infinityの
+/// 底、負の底の非整数指数はbinary64のpowが仕様通り処理する。
+pub fn pow(base: f64, exponent: f64) f64 {
+    if (std.math.isNan(exponent)) return std.math.nan(f64);
+    if (exponent == 0) return 1;
+    if (std.math.isNan(base)) return std.math.nan(f64);
+    if (@abs(base) == 1 and std.math.isInf(exponent)) return std.math.nan(f64);
+    return std.math.pow(f64, base, exponent);
+}
+
 pub fn parseIntPrefix(source: []const u16, radix_value: ?f64) f64 {
     const units = string_mod.trimWhitespace(source);
     if (units.len == 0) return std.math.nan(f64);
@@ -315,4 +327,40 @@ test "parseIntPrefixは整数文字列を一度だけbinary64へ丸める" {
     try expect_bits(0x43a9000000000001, &testUnits("0000000000900719925474099267tail"), null);
     try expect_bits(0x8000000000000000, &testUnits("  -0abc"), null);
     try std.testing.expect(std.math.isNan(parseIntPrefix(&testUnits("xyz"), null)));
+}
+
+test "powはECMAScript累乗のNaN・無限大・±0特例を再現する" {
+    const inf = std.math.inf(f64);
+    const nan = std.math.nan(f64);
+    const expect_bits = struct {
+        fn call(expected: u64, base: f64, exponent: f64) !void {
+            try std.testing.expectEqual(expected, @as(u64, @bitCast(pow(base, exponent))));
+        }
+    }.call;
+    // 指数NaNはNaN。指数±0は底がNaN・±Infinityでも1。
+    try std.testing.expect(std.math.isNan(pow(1, nan)));
+    try std.testing.expect(std.math.isNan(pow(2, nan)));
+    try std.testing.expect(std.math.isNan(pow(nan, nan)));
+    try expect_bits(0x3ff0000000000000, nan, 0);
+    try expect_bits(0x3ff0000000000000, inf, -0.0);
+    try expect_bits(0x3ff0000000000000, -inf, 0);
+    // 底NaNはNaN。|底|==1で指数±InfinityはNaN。
+    try std.testing.expect(std.math.isNan(pow(nan, 2)));
+    try std.testing.expect(std.math.isNan(pow(1, inf)));
+    try std.testing.expect(std.math.isNan(pow(1, -inf)));
+    try std.testing.expect(std.math.isNan(pow(-1, inf)));
+    // ±0・±Infinityの底は奇数/偶数/負指数の符号をpowへ正しく委ねる。
+    try expect_bits(0x7ff0000000000000, 0, -1);
+    try expect_bits(0xfff0000000000000, -0.0, -3);
+    try expect_bits(0x7ff0000000000000, -0.0, -2);
+    try expect_bits(0x8000000000000000, -0.0, 3);
+    try expect_bits(0x0000000000000000, inf, -1);
+    try expect_bits(0x8000000000000000, -inf, -3);
+    try expect_bits(0x0000000000000000, -inf, -2);
+    try expect_bits(0x7ff0000000000000, inf, 2);
+    // 負の底の非整数指数はNaN、整数指数は有限のまま。
+    try std.testing.expect(std.math.isNan(pow(-4, 0.5)));
+    try expect_bits(0xc020000000000000, -2, 3);
+    try expect_bits(0x4090000000000000, 2, 10);
+    try expect_bits(0x4000000000000000, 0.5, -1);
 }

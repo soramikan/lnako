@@ -86,7 +86,7 @@ pub fn writeArithmetic(emitter: *Emitter, function: ir.Function, instruction: ir
 
     const opcode = arithmeticOpcode(instruction.operator) orelse return error.UnsupportedBinaryOperator;
     if (std.mem.eql(u8, opcode, "pow")) {
-        try emitter.output.writer.print("  %binary.number.{d} = call double @llvm.pow.f64(double %left.number.{d}, double %right.number.{d})", .{ result, result, result });
+        try emitter.output.writer.print("  %binary.number.{d} = call double @lnako_aot_pow_f64(double %left.number.{d}, double %right.number.{d})", .{ result, result, result });
     } else if (std.mem.eql(u8, opcode, "divfloor")) {
         try emitter.output.writer.print("  %binary.quotient.{d} = fdiv double %left.number.{d}, %right.number.{d}", .{ result, result, result });
         try emitter.debugSuffix(instruction.span, scope);

@@ -1,6 +1,7 @@
 const std = @import("std");
 const value_mod = @import("value.zig");
 const string_mod = @import("string.zig");
+const number_mod = @import("number.zig");
 
 pub const Value = value_mod.Value;
 pub const Runtime = value_mod.Runtime;
@@ -64,7 +65,7 @@ pub fn binary(runtime: *Runtime, operator: Binary, left: Value, right: Value) !V
         .multiply => left_number * right_number,
         .divide => left_number / right_number,
         .remainder => @rem(left_number, right_number),
-        .power => std.math.pow(f64, left_number, right_number),
+        .power => number_mod.pow(left_number, right_number),
         .bit_and => @floatFromInt(toInt32(left_number) & toInt32(right_number)),
         .bit_or => @floatFromInt(toInt32(left_number) | toInt32(right_number)),
         .bit_xor => @floatFromInt(toInt32(left_number) ^ toInt32(right_number)),

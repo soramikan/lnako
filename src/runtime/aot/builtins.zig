@@ -3,6 +3,7 @@ const shared = @import("shared.zig");
 const state = @import("state.zig");
 
 const aot_builtin = shared.aot_builtin;
+const number_mod = shared.number_mod;
 const Tag = shared.Tag;
 const Value = state.Value;
 const Arithmetic = state.Arithmetic;
@@ -697,7 +698,7 @@ pub export fn lnako_aot_builtin_call_site(out: *Value, arguments: ?[*]const Valu
                 runtime.setFailure(failure);
                 return;
             };
-            out.* = state.numberValue(std.math.pow(f64, left, right));
+            out.* = state.numberValue(number_mod.pow(left, right));
         },
         .is_even, .is_odd => {
             const integer = state.parseIntBuiltin(runtime, value) catch |failure| {
