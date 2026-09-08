@@ -114,12 +114,12 @@ pub const Engine = struct {
         }
         engine.stopping = false;
         engine.started = true;
-        engine.accept_thread = std.Thread.spawn(.{ .stack_size = 256 * 1024 }, acceptMain, .{engine}) catch |err| {
+        engine.accept_thread = std.Thread.spawn(.{}, acceptMain, .{engine}) catch |err| {
             engine.started = false;
             engine.unlock();
             return err;
         };
-        engine.watchdog_thread = std.Thread.spawn(.{ .stack_size = 256 * 1024 }, watchdogMain, .{engine}) catch |err| {
+        engine.watchdog_thread = std.Thread.spawn(.{}, watchdogMain, .{engine}) catch |err| {
             engine.stopping = true;
             engine.started = false;
             engine.unlock();
@@ -273,7 +273,7 @@ fn acceptMain(engine: *Engine) void {
             engine.allocator.destroy(worker);
             continue;
         };
-        worker.thread = std.Thread.spawn(.{ .stack_size = 256 * 1024 }, workerMain, .{worker}) catch {
+        worker.thread = std.Thread.spawn(.{}, workerMain, .{worker}) catch {
             _ = engine.workers.pop();
             engine.unlock();
             stream.close(io);
