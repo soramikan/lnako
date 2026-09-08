@@ -121,7 +121,7 @@
     "raw": {
       "interpreterTraceSha256": "6ee351ec2c4f0d11c0ec1f3cf1df9e43a1661e51df8e66f9c70795fa43a8ce03",
       "aotTraceSha256": "8563fae5ec29d621b51a24d9ec37e50d89bb5b8186f336d5e42d28e9467a6cb4",
-      "globalManifestSha256": "854e699540d11d5f8e709534e630e8204c61b46fc9c2f2c08f142724390c2fb5"
+      "globalManifestSha256": "c712089d20f75023cab048c8335b6fb5ed87b4d22087a8189e22d9735bce965a"
     }
   },
   "trace": {
