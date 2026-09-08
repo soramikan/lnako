@@ -312,6 +312,8 @@ pub const aotHttpMimeType = http_server_module.aotHttpMimeType;
 pub const aotHttpParsePost = http_server_module.aotHttpParsePost;
 pub const aotHttpUploadBasename = http_server_module.aotHttpUploadBasename;
 pub const pollAotHttpServer = http_server_module.pollAotHttpServer;
+pub const aotHttpIngressStart = http_server_module.aotHttpIngressStart;
+pub const aotHttpIngressStop = http_server_module.aotHttpIngressStop;
 
 const async_module = @import("async.zig");
 

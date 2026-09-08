@@ -1,6 +1,7 @@
 const std = @import("std");
 const state = @import("state.zig");
 const shared = @import("shared.zig");
+const http_ingress = @import("../../http_ingress.zig");
 
 const aot_builtin = shared.aot_builtin;
 const Runtime = state.Runtime;
@@ -32,21 +33,7 @@ const AotHttpPathStat = state.AotHttpPathStat;
 const resolveAotCallback = state.resolveAotCallback;
 const invokeAotCallback = state.invokeAotCallback;
 
-const AotHttpRequest = struct {
-    method: []u8,
-    target: []u8,
-    content_type: []u8,
-    body: []u8,
-    too_large: bool = false,
-
-    pub fn deinit(self: *AotHttpRequest, allocator: std.mem.Allocator) void {
-        allocator.free(self.method);
-        allocator.free(self.target);
-        allocator.free(self.content_type);
-        allocator.free(self.body);
-        self.* = undefined;
-    }
-};
+const AotHttpRequest = http_ingress.Request;
 
 const AotHttpChunkedBody = struct {
     body: []u8,
@@ -61,6 +48,27 @@ pub fn isHttpServerCommand(command: aot_builtin.Command) bool {
 }
 pub fn aotHttpIo() std.Io {
     return std.Io.Threaded.global_single_threaded.io();
+}
+
+/// listen socketのacceptと要求受信を接続単位のworkerへ分離するengineを起動する。
+/// engineは専用std.Io.Threadedを所有し、global_single_threadedでは並行処理しない。
+pub fn aotHttpIngressStart(runtime: *Runtime) !void {
+    if (runtime.http_ingress != null) return error.HttpServerAlreadyStarted;
+    const server = if (runtime.http_server) |*value| value else return error.HttpServerNotStarted;
+    const engine = try http_ingress.Engine.create(std.heap.page_allocator, server, .{});
+    errdefer engine.destroy();
+    try engine.start();
+    runtime.http_ingress = engine;
+}
+
+/// 受信engineを停止して破棄する。acceptor→watchdog→worker join→queue解放の順で、
+/// 未完了・queue内のsocketを一度だけcloseする。応答中・保持中のsocketと
+/// listen socketは呼び出し側が続けて閉じる。
+pub fn aotHttpIngressStop(runtime: *Runtime) void {
+    const engine = runtime.http_ingress orelse return;
+    engine.stop();
+    engine.destroy();
+    runtime.http_ingress = null;
 }
 
 pub fn aotHttpDictionarySetUtf8(runtime: *Runtime, dictionary: Value, key: []const u8, value: Value) !void {
@@ -87,6 +95,11 @@ pub fn httpServerBuiltin(runtime: *Runtime, command: aot_builtin.Command, argume
             const port: u16 = @intFromFloat(@trunc(port_number));
             const address: std.Io.net.IpAddress = .{ .ip4 = .unspecified(port) };
             runtime.http_server = try address.listen(aotHttpIo(), .{ .reuse_address = true });
+            errdefer {
+                runtime.http_server.?.deinit(aotHttpIo());
+                runtime.http_server = null;
+            }
+            try aotHttpIngressStart(runtime);
             runtime.http_server_state.started = true;
             var message: [128]u8 = undefined;
             const line = try std.fmt.bufPrint(&message, "[簡易HTTPサーバ] ポート番号({d})で監視開始\n", .{runtime.http_server.?.socket.address.getPort()});
@@ -286,7 +299,7 @@ pub fn pollAotHttpServer(runtime: *Runtime) !bool {
         }
         return err;
     };
-    defer request.deinit(runtime.allocator);
+    defer request.deinit();
     if (request.too_large) {
         runtime.http_server_state.response_status = 413;
         runtime.http_server_state.clearHeaders(runtime.allocator);
@@ -335,83 +348,21 @@ pub fn pollAotHttpServer(runtime: *Runtime) !bool {
     return true;
 }
 
+/// 受信完了した要求をengineのqueueから取り出す。header/body受信自体は
+/// 接続単位のworker threadが担うため、低速・切断した接続はこのloopを
+/// 停滞させない。
 pub fn aotHttpReceiveRequest(runtime: *Runtime) !AotHttpRequest {
-    const server = if (runtime.http_server) |*value| value else return error.HttpServerNotStarted;
-    const io = aotHttpIo();
+    if (runtime.http_server == null) return error.HttpServerNotStarted;
     if (runtime.http_connection != null) return error.PreviousHttpResponseNotFinished;
-    const stream = try server.accept(io);
-    errdefer {
-        stream.close(io);
-        resetAotHttpConnection(runtime);
-    }
-    var buffer: [64 * 1024]u8 = undefined;
-    var reader = stream.reader(io, &buffer);
-    const request_line_raw = (reader.interface.takeDelimiter('\n') catch |err| return mapAotHttpReadError(&reader, err)) orelse return error.InvalidHttpRequest;
-    const request_line = std.mem.trimEnd(u8, request_line_raw, "\r");
-    var request_parts = std.mem.splitScalar(u8, request_line, ' ');
-    const method_source = request_parts.next() orelse return error.InvalidHttpRequest;
-    const target_source = request_parts.next() orelse return error.InvalidHttpRequest;
-    if (method_source.len == 0 or std.mem.indexOfAny(u8, method_source, "\r\n\x00") != null) return error.InvalidHttpRequest;
-    if (target_source.len == 0 or std.mem.indexOfAny(u8, target_source, "\r\n\x00") != null) return error.InvalidHttpRequest;
-    const method = try runtime.allocator.dupe(u8, method_source);
-    errdefer runtime.allocator.free(method);
-    for (method) |*byte| byte.* = std.ascii.toUpper(byte.*);
-    const target = try runtime.allocator.dupe(u8, target_source);
-    errdefer runtime.allocator.free(target);
-    var content_length: usize = 0;
-    var transfer_chunked = false;
-    var content_type = try runtime.allocator.alloc(u8, 0);
-    errdefer runtime.allocator.free(content_type);
-    while (true) {
-        const line_raw = (reader.interface.takeDelimiter('\n') catch |err| return mapAotHttpReadError(&reader, err)) orelse return error.InvalidHttpRequest;
-        const line = std.mem.trimEnd(u8, line_raw, "\r");
-        if (line.len == 0) break;
-        const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
-        const header_name = std.mem.trim(u8, line[0..colon], " \t");
-        const header_value = std.mem.trim(u8, line[colon + 1 ..], " \t");
-        if (header_name.len == 0 or std.mem.indexOfAny(u8, header_name, "\r\n\x00") != null or std.mem.indexOfAny(u8, header_value, "\r\n\x00") != null) return error.InvalidHttpHeader;
-        if (std.ascii.eqlIgnoreCase(header_name, "content-length")) {
-            content_length = std.fmt.parseInt(usize, header_value, 10) catch return error.InvalidHttpHeader;
-        } else if (std.ascii.eqlIgnoreCase(header_name, "transfer-encoding")) {
-            transfer_chunked = std.ascii.indexOfIgnoreCase(header_value, "chunked") != null;
-        } else if (std.ascii.eqlIgnoreCase(header_name, "content-type")) {
-            const replacement = try runtime.allocator.dupe(u8, header_value);
-            runtime.allocator.free(content_type);
-            content_type = replacement;
-        }
-    }
-    if (transfer_chunked and content_length > 0) return error.InvalidHttpRequest;
-    if (transfer_chunked) {
-        const chunked = aotHttpReadChunkedBody(runtime.allocator, &reader.interface, 10 * 1024 * 1024) catch |err| return mapAotHttpReadError(&reader, err);
-        runtime.http_connection = stream;
-        runtime.http_head_request = std.ascii.eqlIgnoreCase(method, "HEAD");
-        return .{ .method = method, .target = target, .content_type = content_type, .body = chunked.body, .too_large = chunked.too_large };
-    }
-    if (content_length > 10 * 1024 * 1024) {
-        const discarded = reader.interface.discardShort(content_length) catch |err| return mapAotHttpReadError(&reader, err);
-        if (discarded != content_length) return error.InvalidHttpRequest;
-        const empty_body = try runtime.allocator.alloc(u8, 0);
-        runtime.http_connection = stream;
-        runtime.http_head_request = std.ascii.eqlIgnoreCase(method, "HEAD");
-        return .{ .method = method, .target = target, .content_type = content_type, .body = empty_body, .too_large = true };
-    }
-    const body = try runtime.allocator.alloc(u8, content_length);
-    errdefer runtime.allocator.free(body);
-    reader.interface.readSliceAll(body) catch |err| return mapAotHttpReadError(&reader, err);
-    runtime.http_connection = stream;
-    runtime.http_head_request = std.ascii.eqlIgnoreCase(method, "HEAD");
-    return .{ .method = method, .target = target, .content_type = content_type, .body = body };
-}
-
-fn mapAotHttpReadError(reader: *std.Io.net.Stream.Reader, err: anyerror) anyerror {
-    if (err != error.ReadFailed) return err;
-    return switch (reader.err orelse error.ReadFailed) {
-        error.ConnectionResetByPeer,
-        error.Timeout,
-        error.SocketUnconnected,
-        => error.HttpServerClientDisconnected,
-        else => |underlying| underlying,
+    const engine = runtime.http_ingress orelse return error.HttpServerNotStarted;
+    const received = engine.next() orelse return error.HttpServerStopped;
+    runtime.http_connection = received.stream orelse {
+        var broken = received;
+        broken.deinit();
+        return error.InvalidHttpRequest;
     };
+    runtime.http_head_request = received.head_request;
+    return received;
 }
 
 fn isAotHttpRecoverableReceiveError(err: anyerror) bool {
@@ -433,38 +384,8 @@ fn isAotHttpRecoverableReceiveError(err: anyerror) bool {
 }
 
 pub fn aotHttpReadChunkedBody(allocator: std.mem.Allocator, reader: *std.Io.Reader, maximum_size: usize) !AotHttpChunkedBody {
-    var body: std.ArrayList(u8) = .empty;
-    errdefer body.deinit(allocator);
-    var too_large = false;
-    while (true) {
-        const size_line_raw = (try reader.takeDelimiter('\n')) orelse return error.InvalidHttpChunk;
-        const size_line = std.mem.trim(u8, std.mem.trimEnd(u8, size_line_raw, "\r"), " \t");
-        const extension = std.mem.indexOfScalar(u8, size_line, ';') orelse size_line.len;
-        const size_text = std.mem.trim(u8, size_line[0..extension], " \t");
-        if (size_text.len == 0) return error.InvalidHttpChunk;
-        const chunk_size = std.fmt.parseInt(usize, size_text, 16) catch return error.InvalidHttpChunk;
-        if (chunk_size == 0) {
-            while (true) {
-                const trailer_raw = (try reader.takeDelimiter('\n')) orelse return error.InvalidHttpChunk;
-                if (std.mem.trimEnd(u8, trailer_raw, "\r").len == 0) break;
-            }
-            break;
-        }
-        if (too_large or chunk_size > maximum_size - body.items.len) {
-            too_large = true;
-            if (try reader.discardShort(chunk_size) != chunk_size) return error.InvalidHttpChunk;
-        } else {
-            const destination = try body.addManyAsSlice(allocator, chunk_size);
-            try reader.readSliceAll(destination);
-        }
-        const terminator_raw = (try reader.takeDelimiter('\n')) orelse return error.InvalidHttpChunk;
-        if (std.mem.trimEnd(u8, terminator_raw, "\r").len != 0) return error.InvalidHttpChunk;
-    }
-    if (too_large) {
-        body.deinit(allocator);
-        return .{ .body = try allocator.alloc(u8, 0), .too_large = true };
-    }
-    return .{ .body = try body.toOwnedSlice(allocator), .too_large = false };
+    const chunked = try http_ingress.readChunkedBody(allocator, reader, maximum_size);
+    return .{ .body = chunked.body, .too_large = chunked.too_large };
 }
 
 pub fn aotHttpPathOnly(target: []const u8) []const u8 {
@@ -757,15 +678,29 @@ pub fn aotHttpUploadBasename(path: []const u8) []const u8 {
 }
 
 fn aotHttpTestSendRequest(io: std.Io, port: u16, request: []const u8) !std.Io.net.Stream {
+    var client = try aotHttpTestSendBytes(io, port, request);
+    errdefer client.close(io);
+    try client.shutdown(io, .send);
+    return client;
+}
+
+fn aotHttpTestSendBytes(io: std.Io, port: u16, bytes: []const u8) !std.Io.net.Stream {
     const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(port) };
     var client = try address.connect(io, .{ .mode = .stream });
     errdefer client.close(io);
     var buffer: [4096]u8 = undefined;
     var writer = client.writer(io, &buffer);
-    try writer.interface.writeAll(request);
+    try writer.interface.writeAll(bytes);
     try writer.interface.flush();
-    try client.shutdown(io, .send);
     return client;
+}
+
+/// 接続が応答なしで閉じられたことを確認する。RST由来のread errorも切断として扱う。
+fn expectAotHttpClientClosed(client: std.Io.net.Stream, io: std.Io) !void {
+    var buffer: [512]u8 = undefined;
+    var reader = client.reader(io, &buffer);
+    const line = reader.interface.takeDelimiter('\n') catch return;
+    try std.testing.expect(line == null);
 }
 
 test "AOT HTTPは途中切断と不正chunk/header後に次の要求を受け付ける" {
@@ -774,21 +709,20 @@ test "AOT HTTPは途中切断と不正chunk/header後に次の要求を受け付
     defer runtime.deinit();
     const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
     runtime.http_server = try address.listen(io, .{ .reuse_address = true });
+    try aotHttpIngressStart(&runtime);
     runtime.http_server_state.started = true;
     const port = runtime.http_server.?.socket.address.getPort();
 
-    const malformed = [_]struct {
-        request: []const u8,
-        expected: anyerror,
-    }{
-        .{ .request = "POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 20\r\n\r\nshort", .expected = error.EndOfStream },
-        .{ .request = "POST /echo HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\nZZ\r\nbad\r\n", .expected = error.InvalidHttpChunk },
-        .{ .request = "GET /echo HTTP/1.1\r\nHost: localhost\r\nX-Bad: \x00\r\n\r\n", .expected = error.InvalidHttpHeader },
+    const malformed = [_][]const u8{
+        "POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 20\r\n\r\nshort",
+        "POST /echo HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\nZZ\r\nbad\r\n",
+        "GET /echo HTTP/1.1\r\nHost: localhost\r\nX-Bad: \x00\r\n\r\n",
     };
     for (malformed) |case| {
-        var client = try aotHttpTestSendRequest(io, port, case.request);
+        var client = try aotHttpTestSendRequest(io, port, case);
         defer client.close(io);
-        try std.testing.expectError(case.expected, aotHttpReceiveRequest(&runtime));
+        // 不正な要求は接続単位の受信workerが吸収し、応答なしで閉じる。
+        try expectAotHttpClientClosed(client, io);
         try std.testing.expect(runtime.http_connection == null);
         try std.testing.expect(!runtime.http_head_request);
         try std.testing.expect(!runtime.http_server_state.request_active);
@@ -797,13 +731,44 @@ test "AOT HTTPは途中切断と不正chunk/header後に次の要求を受け付
     var client = try aotHttpTestSendRequest(io, port, "GET /healthy HTTP/1.1\r\nHost: localhost\r\n\r\n");
     defer client.close(io);
     var request = try aotHttpReceiveRequest(&runtime);
-    defer request.deinit(runtime.allocator);
+    defer request.deinit();
     try std.testing.expectEqualStrings("GET", request.method);
     try std.testing.expectEqualStrings("/healthy", request.target);
     try std.testing.expect(runtime.http_connection != null);
     try aotHttpRespondSafe(&runtime, "ok");
     try std.testing.expect(runtime.http_connection == null);
     try std.testing.expect(!runtime.http_server_state.request_active);
+}
+
+test "AOT HTTPは受信中の低速接続に関わらず別接続の完了要求を処理する" {
+    const io = aotHttpIo();
+    var runtime = Runtime{ .allocator = std.testing.allocator };
+    defer runtime.deinit();
+    const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+    runtime.http_server = try address.listen(io, .{ .reuse_address = true });
+    try aotHttpIngressStart(&runtime);
+    runtime.http_server_state.started = true;
+    const port = runtime.http_server.?.socket.address.getPort();
+
+    // body未完のまま送り切らない低速接続。send shutdownしないため
+    // 受信workerのreadが接続内で保留される。
+    var slow = try aotHttpTestSendBytes(io, port, "POST /slow HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\npart");
+    defer slow.close(io);
+
+    var fast = try aotHttpTestSendRequest(io, port, "GET /fast HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    defer fast.close(io);
+    // 低速接続が受信中でも、完了した別接続の要求がqueue経由で返る。
+    var request = try aotHttpReceiveRequest(&runtime);
+    defer request.deinit();
+    try std.testing.expectEqualStrings("GET", request.method);
+    try std.testing.expectEqualStrings("/fast", request.target);
+    try aotHttpRespondSafe(&runtime, "ok");
+
+    var response_buffer: [256]u8 = undefined;
+    var response_reader = fast.reader(io, &response_buffer);
+    const status_line = try response_reader.interface.takeDelimiter('\n');
+    try std.testing.expect(status_line != null);
+    try std.testing.expect(std.mem.startsWith(u8, status_line.?, "HTTP/1.1 200"));
 }
 
 test "AOT HTTP静的配信はファイル、index、404の経路で一時パスを解放する" {
@@ -822,6 +787,7 @@ test "AOT HTTP静的配信はファイル、index、404の経路で一時パス�
     defer runtime.allocator.free(root);
     const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
     runtime.http_server = try address.listen(io, .{ .reuse_address = true });
+    try aotHttpIngressStart(&runtime);
     runtime.http_server_state.started = true;
     const port = runtime.http_server.?.socket.address.getPort();
 
@@ -845,7 +811,7 @@ test "AOT HTTP静的配信はファイル、index、404の経路で一時パス�
         var client = try aotHttpTestSendRequest(io, port, request_bytes);
         defer client.close(io);
         var request = try aotHttpReceiveRequest(&runtime);
-        defer request.deinit(runtime.allocator);
+        defer request.deinit();
         try aotHttpServeStatic(&runtime, route, aotHttpPathOnly(request.target));
         try std.testing.expect(runtime.http_connection == null);
     }

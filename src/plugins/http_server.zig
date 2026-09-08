@@ -10,13 +10,17 @@ pub const Runtime = value_mod.Runtime;
 pub const Header = struct { name: []const u8, value: []const u8 };
 
 pub const Request = struct {
+    /// bufferを割り当てたallocator。受信worker側のthread-safe allocatorで
+    /// 確保したbufferをメイン側へ移譲するため、解放は必ずこれを使う。
+    allocator: std.mem.Allocator,
     method: []u8,
     target: []u8,
     content_type: []u8,
     body: []u8,
     too_large: bool = false,
 
-    pub fn deinit(self: *Request, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *Request) void {
+        const allocator = self.allocator;
         allocator.free(self.method);
         allocator.free(self.target);
         allocator.free(self.content_type);
@@ -215,7 +219,7 @@ pub fn poll(runtime: *Runtime, state: *State, context: Context, effects: Effects
         }
         return err;
     };
-    defer request.deinit(runtime.allocator());
+    defer request.deinit();
     if (request.too_large) {
         try respondConnectionSafe(state, context, 413, &.{}, "Request entity too large.");
         return true;
@@ -727,7 +731,7 @@ fn pollFixtureReceive(context: *anyopaque, allocator: std.mem.Allocator) anyerro
     const content_type = try allocator.alloc(u8, 0);
     errdefer allocator.free(content_type);
     const body = try allocator.alloc(u8, 0);
-    return .{ .method = method, .target = target, .content_type = content_type, .body = body };
+    return .{ .allocator = allocator, .method = method, .target = target, .content_type = content_type, .body = body };
 }
 
 fn pollFixtureRespond(context: *anyopaque, _: u16, _: []const Header, _: []const u8) anyerror!void {

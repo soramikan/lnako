@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const lnako = @import("lnako");
 const archive = @import("archive.zig");
 const http_client = @import("http_client.zig");
+const http_ingress = @import("../http_ingress.zig");
 const process = @import("process.zig");
 const network = @import("network.zig");
 const environment = @import("environment.zig");
@@ -27,6 +28,7 @@ pub const CliHost = struct {
     next_async_token: u64 = 1,
     async_completion_sequence: std.atomic.Value(u64) = .init(1),
     http_server: ?std.Io.net.Server = null,
+    http_ingress: ?*http_ingress.Engine = null,
     http_connection: ?std.Io.net.Stream = null,
     http_head_request: bool = false,
     held_http_connections: std.ArrayList(std.Io.net.Stream) = .empty,
@@ -41,6 +43,13 @@ pub const CliHost = struct {
         if (self.compat_js_trace_file) |file| file.close(self.io);
         if (self.global_trace_file) |file| file.close(self.io);
         if (self.literal_trace_file) |file| file.close(self.io);
+        if (self.http_ingress) |engine| {
+            // 受信workerとacceptorを止めてqueue内socketを閉じてから
+            // 応答中・保持中のsocketとlisten socketを閉じる。
+            engine.stop();
+            engine.destroy();
+            self.http_ingress = null;
+        }
         if (self.http_connection) |stream| stream.close(self.io);
         for (self.held_http_connections.items) |stream| stream.close(self.io);
         self.held_http_connections.deinit(std.heap.page_allocator);
@@ -459,98 +468,40 @@ pub const CliHost = struct {
         if (self.http_server != null) return error.HttpServerAlreadyStarted;
         const address: std.Io.net.IpAddress = .{ .ip4 = .unspecified(port) };
         self.http_server = try address.listen(self.io, .{ .reuse_address = true });
+        errdefer {
+            self.http_server.?.deinit(self.io);
+            self.http_server = null;
+        }
+        // 受信はengineの専用Threaded上の接続単位workerへ分離し、
+        // このイベントループthreadでは受信待ちしない。
+        const engine = try http_ingress.Engine.create(std.heap.page_allocator, &self.http_server.?, .{});
+        errdefer engine.destroy();
+        try engine.start();
+        self.http_ingress = engine;
         return self.http_server.?.socket.address.getPort();
     }
 
     fn receiveHttpServerRequest(context: *anyopaque, allocator: std.mem.Allocator) !lnako.plugins.http_server.Request {
         const self: *CliHost = @ptrCast(@alignCast(context));
+        _ = allocator; // request bufferはengineのthread-safe allocatorが所有する
         if (self.http_connection != null) return error.PreviousHttpResponseNotFinished;
-        const server = if (self.http_server) |*value| value else return error.HttpServerNotStarted;
-        const stream = try server.accept(self.io);
-        // Keep the accepted stream local until the complete request has been
-        // read.  A truncated request must be closed by this errdefer without
-        // leaving a stale stream in `http_connection` for the next poll.
-        errdefer {
-            stream.close(self.io);
-            self.http_connection = null;
-            self.http_head_request = false;
-        }
-        var buffer: [64 * 1024]u8 = undefined;
-        var reader = stream.reader(self.io, &buffer);
-        const request_line_raw = (reader.interface.takeDelimiter('\n') catch |err| return mapHttpReadError(&reader, err)) orelse return error.InvalidHttpRequest;
-        const request_line = std.mem.trimEnd(u8, request_line_raw, "\r");
-        var request_parts = std.mem.splitScalar(u8, request_line, ' ');
-        const method_source = request_parts.next() orelse return error.InvalidHttpRequest;
-        const target_source = request_parts.next() orelse return error.InvalidHttpRequest;
-        if (method_source.len == 0 or std.mem.indexOfAny(u8, method_source, "\r\n\x00") != null) return error.InvalidHttpRequest;
-        if (target_source.len == 0 or std.mem.indexOfAny(u8, target_source, "\r\n\x00") != null) return error.InvalidHttpRequest;
-        const method = try allocator.dupe(u8, method_source);
-        errdefer allocator.free(method);
-        for (method) |*byte| byte.* = std.ascii.toUpper(byte.*);
-        const target = try allocator.dupe(u8, target_source);
-        errdefer allocator.free(target);
-        var content_length: usize = 0;
-        var transfer_chunked = false;
-        var content_type: []u8 = try allocator.alloc(u8, 0);
-        errdefer allocator.free(content_type);
-        while (true) {
-            const line_raw = (reader.interface.takeDelimiter('\n') catch |err| return mapHttpReadError(&reader, err)) orelse return error.InvalidHttpRequest;
-            const line = std.mem.trimEnd(u8, line_raw, "\r");
-            if (line.len == 0) break;
-            const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
-            const header_name = std.mem.trim(u8, line[0..colon], " \t");
-            const header_value = std.mem.trim(u8, line[colon + 1 ..], " \t");
-            if (header_name.len == 0 or std.mem.indexOfAny(u8, header_name, "\r\n\x00") != null or std.mem.indexOfAny(u8, header_value, "\r\n\x00") != null) return error.InvalidHttpHeader;
-            if (std.ascii.eqlIgnoreCase(header_name, "content-length")) {
-                content_length = std.fmt.parseInt(usize, header_value, 10) catch return error.InvalidHttpHeader;
-            } else if (std.ascii.eqlIgnoreCase(header_name, "transfer-encoding")) {
-                transfer_chunked = std.ascii.indexOfIgnoreCase(header_value, "chunked") != null;
-            } else if (std.ascii.eqlIgnoreCase(header_name, "content-type")) {
-                const replacement = try allocator.dupe(u8, header_value);
-                allocator.free(content_type);
-                content_type = replacement;
-            }
-        }
-        if (transfer_chunked and content_length > 0) return error.InvalidHttpRequest;
-        if (transfer_chunked) {
-            const chunked = http_client.readChunkedHttpBody(allocator, &reader.interface, 10 * 1024 * 1024) catch |err| return mapHttpReadError(&reader, err);
-            self.http_connection = stream;
-            self.http_head_request = std.ascii.eqlIgnoreCase(method, "HEAD");
-            return .{
-                .method = method,
-                .target = target,
-                .content_type = content_type,
-                .body = chunked.body,
-                .too_large = chunked.too_large,
-            };
-        }
-        if (content_length > 10 * 1024 * 1024) {
-            const discarded = reader.interface.discardShort(content_length) catch |err| return mapHttpReadError(&reader, err);
-            if (discarded != content_length) return error.InvalidHttpRequest;
-            const empty_body = try allocator.alloc(u8, 0);
-            self.http_connection = stream;
-            self.http_head_request = std.ascii.eqlIgnoreCase(method, "HEAD");
-            return .{
-                .method = method,
-                .target = target,
-                .content_type = content_type,
-                .body = empty_body,
-                .too_large = true,
-            };
-        }
-        const body = try allocator.alloc(u8, content_length);
-        errdefer allocator.free(body);
-        reader.interface.readSliceAll(body) catch |err| return mapHttpReadError(&reader, err);
-        self.http_connection = stream;
-        self.http_head_request = std.ascii.eqlIgnoreCase(method, "HEAD");
-        return .{ .method = method, .target = target, .content_type = content_type, .body = body };
-    }
-
-    fn mapHttpReadError(reader: *std.Io.net.Stream.Reader, err: anyerror) anyerror {
-        if (err != error.ReadFailed) return err;
-        return switch (reader.err orelse error.ReadFailed) {
-            error.ConnectionResetByPeer, error.Timeout, error.SocketUnconnected => error.HttpServerClientDisconnected,
-            else => |underlying| underlying,
+        const engine = self.http_ingress orelse return error.HttpServerNotStarted;
+        // 受信完了した要求だけをqueueから取り出す。受信待ち自体は接続単位の
+        // worker thread側で行われるため、このloopは別接続の完了要求を処理できる。
+        const received = engine.next() orelse return error.HttpServerStopped;
+        self.http_connection = received.stream orelse {
+            var broken = received;
+            broken.deinit();
+            return error.InvalidHttpRequest;
+        };
+        self.http_head_request = received.head_request;
+        return .{
+            .allocator = received.allocator,
+            .method = received.method,
+            .target = received.target,
+            .content_type = received.content_type,
+            .body = received.body,
+            .too_large = received.too_large,
         };
     }
 
@@ -1047,6 +998,14 @@ fn sendHttpTestRequest(io: std.Io, port: u16, bytes: []const u8, half_close: boo
     return client;
 }
 
+/// 接続が応答なしで閉じられたことを確認する。RST由来のread errorも切断として扱う。
+fn expectHttpClientClosed(client: std.Io.net.Stream, io: std.Io) !void {
+    var buffer: [512]u8 = undefined;
+    var reader = client.reader(io, &buffer);
+    const line = reader.interface.takeDelimiter('\n') catch return;
+    try std.testing.expect(line == null);
+}
+
 test "途中切断されたHTTP要求は接続を残さず次の要求を受け付ける" {
     var output: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer output.deinit();
@@ -1063,14 +1022,15 @@ test "途中切断されたHTTP要求は接続を残さず次の要求を受け�
     const port = try CliHost.startHttpServer(&cli_host, 0);
     var truncated = try sendHttpTestRequest(std.testing.io, port, "POST /truncated HTTP/1.1\r\nContent-Length: 4\r\n\r\nx", true);
     defer truncated.close(std.testing.io);
-    try std.testing.expectError(error.EndOfStream, CliHost.receiveHttpServerRequest(&cli_host, std.testing.allocator));
+    // 途中切断された要求は受信worker側で閉じられ、poll側の接続状態を汚さない。
+    try expectHttpClientClosed(truncated, std.testing.io);
     try std.testing.expect(cli_host.http_connection == null);
     try std.testing.expect(!cli_host.http_head_request);
 
     var valid = try sendHttpTestRequest(std.testing.io, port, "GET /healthy HTTP/1.1\r\n\r\n", true);
     defer valid.close(std.testing.io);
     var request = try CliHost.receiveHttpServerRequest(&cli_host, std.testing.allocator);
-    defer request.deinit(std.testing.allocator);
+    defer request.deinit();
     try std.testing.expectEqualStrings("GET", request.method);
     try std.testing.expectEqualStrings("/healthy", request.target);
     try std.testing.expect(cli_host.http_connection != null);
